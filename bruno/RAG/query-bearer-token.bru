@@ -7,12 +7,16 @@ meta {
 post {
   url: {{base_url}}/api/v1/rag/query
   body: json
-  auth: none
+  auth: bearer
 }
 
 headers {
   Content-Type: application/json
-  Authorization: Bearer {{dev_token}}
+  X-Tenant-Id: {{tenant_id}}
+}
+
+auth:bearer {
+  token: rag_live_717c664d7e98de2fe09d700e23e1b169b33c5258918e40f2
 }
 
 body:json {

@@ -7,7 +7,7 @@ meta {
 post {
   url: {{base_url}}/api/v1/rag/query
   body: json
-  auth: none
+  auth: bearer
 }
 
 headers {
@@ -17,9 +17,13 @@ headers {
   X-User-Role: {{role}}
 }
 
+auth:bearer {
+  token: rag_live_dd2adc745cfd75a670a85febb64f5956f6b5507c0fc0912c
+}
+
 body:json {
   {
-    "query": "cual fue la ultima venta",
+    "query": "me duele la columna necesito una silla",
     "role": "admin",
     "top_k": 200,
     "temperature": 0.3,

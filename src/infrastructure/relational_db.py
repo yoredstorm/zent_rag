@@ -264,6 +264,42 @@ class PostgresTenantRepository(TenantRepository):
         finally:
             await session.close()
 
+    async def update_config(self, tenant_id: UUID, config: dict) -> Tenant:
+        session = await get_async_session()
+        import json as _json
+        try:
+            result = await session.execute(
+                text(
+                    "UPDATE tenants SET config_json = CAST(:config AS jsonb), updated_at = NOW() "
+                    "WHERE id = :tid "
+                    "RETURNING id, name, api_key_hash, status, rate_limit_per_minute, "
+                    "max_tokens_per_request, llm_model_override, embedding_model_override, "
+                    "config_json, company_name, ruc, phone, email, country, created_at"
+                ),
+                {"tid": tenant_id, "config": _json.dumps(config)},
+            )
+            row = result.fetchone()
+            await session.commit()
+            if row is None:
+                raise ValueError(f"Tenant {tenant_id} not found")
+            return Tenant(
+                id=row.id, name=row.name, api_key_hash=row.api_key_hash,
+                status=TenantStatus(row.status),
+                rate_limit_per_minute=row.rate_limit_per_minute,
+                max_tokens_per_request=row.max_tokens_per_request,
+                llm_model_override=row.llm_model_override,
+                embedding_model_override=row.embedding_model_override,
+                config_json=row.config_json if isinstance(row.config_json, dict) else {},
+                company_name=row.company_name, ruc=row.ruc,
+                phone=row.phone, email=row.email, country=row.country,
+                created_at=row.created_at,
+            )
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
     async def list_tenants(self) -> list[Tenant]:
         session = await get_async_session()
         try:

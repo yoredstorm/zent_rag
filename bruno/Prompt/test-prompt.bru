@@ -1,0 +1,28 @@
+meta {
+  name: Test Prompt
+  type: http
+  seq: 4
+}
+
+post {
+  url: {{base_url}}/api/v1/admin/prompt/test
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+  X-Tenant-Id: {{tenant_id}}
+}
+
+auth:bearer {
+  token: rag_live_dd2adc745cfd75a670a85febb64f5956f6b5507c0fc0912c
+}
+
+body:json {
+  {
+    "query": "¿Tienen sillas ergonómicas para oficina?",
+    "system_prompt": "Eres un asistente experto en retail. Responde en español de forma amigable.",
+    "custom_instructions": "Sugiere productos complementarios cuando sea relevante."
+  }
+}

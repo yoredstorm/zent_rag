@@ -34,6 +34,7 @@ from src.api.routes.admin import router as admin_router
 from src.api.routes.billing import router as billing_router
 from src.api.routes.health import router as health_router
 from src.api.routes.ingestion import router as ingestion_router
+from src.api.routes.prompt import router as prompt_router
 from src.api.routes.query import router as query_router
 from src.config import Settings, get_settings
 from src.domain.models import ErrorResponse
@@ -160,6 +161,7 @@ app.include_router(admin_router)
 app.include_router(billing_router)
 app.include_router(health_router)
 app.include_router(ingestion_router)
+app.include_router(prompt_router)
 app.include_router(query_router)
 
 

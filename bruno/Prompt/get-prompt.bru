@@ -1,0 +1,20 @@
+meta {
+  name: Get Prompt
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/api/v1/admin/prompt
+  body: none
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+  X-Tenant-Id: {{tenant_id}}
+}
+
+auth:bearer {
+  token: rag_live_dd2adc745cfd75a670a85febb64f5956f6b5507c0fc0912c
+}

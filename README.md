@@ -143,6 +143,12 @@ zent_rag/
 │       └── datasources/datasources.yml
 │
 ├── bruno/                      # Bruno API client collection (Postman alternative)
+│   ├── Admin/
+│   ├── Billing/
+│   ├── Health/
+│   ├── Ingestion/
+│   ├── Prompt/                  # Prompt management requests
+│   └── RAG/
 │
 ├── docker-compose.yml          # Full stack: API + Postgres + Qdrant + Redis + Ollama + PLG
 ├── Dockerfile.api              # Multi-stage Python 3.11-slim build
@@ -244,13 +250,33 @@ POST /api/v1/ingestion/sync/{schema}.{table}       # Sync una tabla específica
 ### Admin (Dev only)
 
 ```bash
-GET    /api/v1/admin/tables                       # Listar todas las tablas
-GET    /api/v1/admin/tables/{schema}.{table}       # Ver rows de una tabla
-GET    /api/v1/admin/tables/{schema}.{table}/columns # Ver columnas
-POST   /api/v1/admin/tables/{schema}.{table}/rows # Insertar rows
-DELETE /api/v1/admin/tables/{schema}.{table}       # Eliminar tabla
-POST   /api/v1/admin/sql                          # Ejecutar SQL raw
+GET    /api/v1/admin/tables                              # Listar todas las tablas
+GET    /api/v1/admin/tables/{schema}.{table}              # Ver rows de una tabla
+GET    /api/v1/admin/tables/{schema}.{table}/columns       # Ver columnas
+POST   /api/v1/admin/tables/{schema}.{table}/rows         # Insertar rows
+DELETE /api/v1/admin/tables/{schema}.{table}              # Eliminar tabla
+POST   /api/v1/admin/sql                                  # Ejecutar SQL raw
 ```
+
+### Prompt Management
+
+Gestiona el system prompt del asistente RAG por tenant sin redeploy. Ideal para iterar con el cliente hasta afinar el tono, dominio y comportamiento.
+
+```bash
+GET    /api/v1/admin/prompt         # Ver prompt actual + default + variables disponibles
+PUT    /api/v1/admin/prompt         # Actualizar system_prompt y/o custom_instructions
+DELETE /api/v1/admin/prompt         # Resetear al prompt por defecto
+POST   /api/v1/admin/prompt/test    # Probar un prompt con una query (dry-run, no guarda)
+```
+
+**Flujo de iteración típico:**
+1. `GET /prompt` para ver el prompt actual y el default
+2. `POST /prompt/test` con un prompt candidato + query de prueba → evaluar respuesta
+3. Repetir paso 2 ajustando hasta obtener el tono deseado
+4. `PUT /prompt` para guardar la versión final
+5. `DELETE /prompt` para volver al default si algo sale mal
+
+**Variables disponibles** en los prompts: `{role}`, `{tenant_name}`, `{date}`, `{top_k}`.
 
 ### Billing
 
@@ -311,7 +337,7 @@ mypy src/
 
 - **Clean Architecture**: Separación estricta entre API → Application → Domain → Infrastructure. El dominio no depende de ningún framework ni librería externa.
 - **Circuit Breaker**: Protege las llamadas a LLM y embeddings con un patrón fail-fast. Tras 3 fallos consecutivos, abre el circuito y rechaza llamadas durante 30s.
-- **Multi-tenant**: Cada tenant tiene su propio collection en Qdrant y su API key. Rate limiting por tenant.
+- **Multi-tenant**: Cada tenant tiene su propio collection en Qdrant, su API key, y su propio system prompt personalizable (vía `config_json`). Rate limiting por tenant.
 - **Conversation History**: Las conversaciones se cachean en Redis con TTL configurable. El contexto incluye el historial de la sesión.
 - **SQL Expert**: Módulo opcional que convierte preguntas en lenguaje natural a SQL, ejecuta contra PostgreSQL y añade los resultados al contexto del LLM.
 

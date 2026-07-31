@@ -51,6 +51,9 @@ class TenantRepository(ABC):
     ) -> Tenant: ...
 
     @abstractmethod
+    async def update_config(self, tenant_id: UUID, config: dict) -> Tenant: ...
+
+    @abstractmethod
     async def list_tenants(self) -> list[Tenant]: ...
 
 

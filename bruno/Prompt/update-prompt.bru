@@ -1,0 +1,27 @@
+meta {
+  name: Update Prompt
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{base_url}}/api/v1/admin/prompt
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+  X-Tenant-Id: {{tenant_id}}
+}
+
+auth:bearer {
+  token: rag_live_dd2adc745cfd75a670a85febb64f5956f6b5507c0fc0912c
+}
+
+body:json {
+  {
+    "system_prompt": "Eres un asistente experto en retail. Tus respuestas deben ser:\n1. Basadas EXCLUSIVAMENTE en los documentos de contexto.\n2. Amigables y orientadas a ventas.\n3. Sugiere productos complementarios cuando sea relevante.\n4. Responde en español.",
+    "custom_instructions": "Trata al usuario como 'cliente VIP'. Ofrece descuentos cuando pregunte por precios."
+  }
+}
