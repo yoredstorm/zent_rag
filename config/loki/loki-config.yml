@@ -1,0 +1,49 @@
+# =============================================================================
+# Loki Configuration — Agregación de Logs Estructurados (JSON)
+# =============================================================================
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: info
+
+common:
+  instance_addr: 0.0.0.0
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+# Esquema de almacenamiento: optimizado para logs JSON con campos tenant_id y trace_id
+schema_config:
+  configs:
+    - from: "2024-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: loki_index_
+        period: 24h
+
+# Límites para Multi-Tenancy en observabilidad
+limits_config:
+  allow_structured_metadata: true
+  volume_enabled: true
+  retention_period: 30d
+  max_entries_limit_per_query: 5000
+
+# Compactor para gestión de retención
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: false
+  compaction_interval: 10m
+
+# Analizador de patrones de log
+analytics:
+  reporting_enabled: false

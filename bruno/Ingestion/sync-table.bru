@@ -1,0 +1,20 @@
+meta {
+  name: Sync One Table
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{base_url}}/api/v1/ingestion/sync/public/sales
+  body: none
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Tenant-Id: {{tenant_id}}
+}
+
+params {
+  full_refresh: false
+}

@@ -1,0 +1,186 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "datasource", "uid": "grafana" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "target": { "limit": 100, "matchAny": false, "tags": [], "type": "dashboard" },
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisCenteredZero": false, "axisColorMode": "text", "axisPlacement": "auto", "fillOpacity": 20, "gradientMode": "none", "lineWidth": 2, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "auto", "spanNulls": false },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 80 }] },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [
+        {
+          "expr": "rate(http_requests_total{job=\"rag-api\"}[5m])",
+          "legendFormat": "{{method}} {{handler}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Throughput — Requests/sec",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "axisCenteredZero": false, "axisColorMode": "text", "axisPlacement": "auto", "fillOpacity": 20, "lineWidth": 2, "pointSize": 5, "showPoints": "auto" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "options": { "legend": { "calcs": ["mean", "p90", "p99"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "single", "sort": "none" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket{job=\"rag-api\"}[5m]))",
+          "legendFormat": "P50 {{handler}}",
+          "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job=\"rag-api\"}[5m]))",
+          "legendFormat": "P95 {{handler}}",
+          "refId": "B"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{job=\"rag-api\"}[5m]))",
+          "legendFormat": "P99 {{handler}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Latencia — Percentiles (P50/P95/P99)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 10 }, { "color": "red", "value": 50 }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 10 },
+      "id": 3,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "pluginVersion": "10.4.0",
+      "targets": [
+        {
+          "expr": "sum(increase(http_requests_total{job=\"rag-api\", status=~\"4..\"}[5m]))",
+          "legendFormat": "4xx Errors",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(http_requests_total{job=\"rag-api\", status=~\"5..\"}[5m]))",
+          "legendFormat": "5xx Errors",
+          "refId": "B"
+        }
+      ],
+      "title": "Errores HTTP (4xx/5xx)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 10 },
+      "id": 4,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_in_flight{job=\"rag-api\"}[1m]))",
+          "legendFormat": "In-Flight",
+          "refId": "A"
+        }
+      ],
+      "title": "Requests en Vuelo",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }] },
+          "unit": "bytes"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 10 },
+      "id": 5,
+      "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+      "targets": [
+        {
+          "expr": "process_resident_memory_bytes{job=\"rag-api\"}",
+          "legendFormat": "Memory",
+          "refId": "A"
+        }
+      ],
+      "title": "Memoria — RSS",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "h": 14, "w": 24, "x": 0, "y": 18 },
+      "id": 6,
+      "options": { "dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": true, "showLabels": true, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": false },
+      "targets": [
+        {
+          "expr": "{job=\"rag-api\"} | json | line_format \"[{{.level}}] tenant={{.tenant_id}} trace={{.trace_id}} user={{.user_id}} — {{.event}} | latency={{.llm_latency_ms}}ms tokens={{.total_tokens}}\"",
+          "refId": "A"
+        }
+      ],
+      "title": "Logs Estructurados — RAG API (Loki)",
+      "type": "logs"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "tags": ["rag", "llm", "observability"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "RAG Platform — Observability Dashboard",
+  "uid": "rag-platform-observability",
+  "version": 1,
+  "weekStart": ""
+}

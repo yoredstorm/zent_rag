@@ -1,0 +1,26 @@
+meta {
+  name: RAG Query (conversation)
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{base_url}}/api/v1/rag/query
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Tenant-Id: {{tenant_id}}
+  X-User-Id: {{user_id}}
+  X-User-Role: {{role}}
+}
+
+body:json {
+  {
+    "query": "dame mas detalles",
+    "role": "admin",
+    "conversation_id": "550e8400-e29b-41d4-a716-446655440000"
+  }
+}

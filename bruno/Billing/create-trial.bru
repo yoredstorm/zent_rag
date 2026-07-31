@@ -1,0 +1,16 @@
+meta {
+  name: Create Trial
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/api/v1/billing/subscription/create-trial
+  body: none
+  auth: none
+}
+
+headers {
+  X-Tenant-Id: {{tenant_id}}
+  X-Tenant-Name: My Test Company
+}

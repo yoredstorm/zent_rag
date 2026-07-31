@@ -1,0 +1,21 @@
+meta {
+  name: Execute SQL
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{base_url}}/api/v1/admin/sql
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+}
+
+body:json {
+  {
+    "query": "SELECT * FROM public.sales ORDER BY created_at DESC LIMIT 5"
+  }
+}

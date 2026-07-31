@@ -1,0 +1,20 @@
+meta {
+  name: Sync All Tables
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/api/v1/ingestion/sync
+  body: none
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Tenant-Id: {{tenant_id}}
+}
+
+params {
+  full_refresh: false
+}

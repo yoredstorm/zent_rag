@@ -1,0 +1,90 @@
+# =============================================================================
+# Alert Rules — RAG-as-a-Service Platform
+# =============================================================================
+groups:
+  - name: rag-alerts
+    rules:
+      # -----------------------------------------------------------------------
+      # Alerta 1: Alta tasa de errores HTTP 5xx (>5% durante 5 minutos)
+      # -----------------------------------------------------------------------
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Tasa de errores HTTP 5xx superior al 5% en la API RAG"
+          description: |
+            El {{ $value | humanizePercentage }} de las solicitudes HTTP están
+            devolviendo errores 5xx. Verificar:
+            - Logs de la API en busca de excepciones no controladas
+            - Estado de la conexión con Qdrant, Redis y PostgreSQL
+            - Recursos del servidor (CPU, memoria)
+
+      # -----------------------------------------------------------------------
+      # Alerta 2: Fallos en consultas RAG
+      # -----------------------------------------------------------------------
+      - alert: RAGQueryFailure
+        expr: rate(rag_errors_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Fallos detectados en consultas RAG"
+          description: |
+            Se están registrando errores en las consultas RAG a razón de
+            {{ $value | humanize }} errores/segundo. Verificar:
+            - Disponibilidad del modelo de embeddings
+            - Conexión con Qdrant (vector store)
+            - Configuración del tenant y permisos
+
+      # -----------------------------------------------------------------------
+      # Alerta 3: Cuota cercana al límite (90% de uso)
+      # -----------------------------------------------------------------------
+      - alert: QuotaNearlyExceeded
+        expr: rag_active_requests{usage="current"} / rag_active_requests{usage="quota"} > 0.90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Uso de cuota superior al 90% para el tenant {{ $labels.tenant_id }}"
+          description: |
+            El tenant {{ $labels.tenant_id }} ha consumido el
+            {{ $value | humanizePercentage }} de su cuota asignada. Verificar:
+            - Plan y límites del tenant en el panel de billing
+            - Posible abuso o fuga de consultas
+            - Necesidad de escalar el plan (upsell)
+
+      # -----------------------------------------------------------------------
+      # Alerta 4: Latencia P99 superior a 10 segundos
+      # -----------------------------------------------------------------------
+      - alert: HighLatency
+        expr: histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m])) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Latencia P99 superior a 10 segundos en la API RAG"
+          description: |
+            La latencia del percentil 99 es de {{ $value }}s. Verificar:
+            - Tiempo de respuesta del modelo de embeddings (Ollama)
+            - Rendimiento de Qdrant en búsquedas vectoriales
+            - Carga de PostgreSQL y Redis
+            - Tamaño de los payloads en las solicitudes
+
+      # -----------------------------------------------------------------------
+      # Alerta 5: Ollama inaccesible (>2 minutos caído)
+      # -----------------------------------------------------------------------
+      - alert: OllamaDown
+        expr: up{job="ollama"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "El servicio Ollama lleva más de 2 minutos inaccesible"
+          description: |
+            El target de Ollama no responde. Verificar:
+            - Estado del contenedor o proceso de Ollama
+            - Modelo cargado correctamente en memoria
+            - Recursos de GPU/CPU del nodo Ollama
+            - Conectividad de red entre la API y Ollama

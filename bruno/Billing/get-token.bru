@@ -1,0 +1,15 @@
+meta {
+  name: Get Token Info
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{base_url}}/api/v1/billing/token
+  body: none
+  auth: none
+}
+
+headers {
+  X-Tenant-Id: {{tenant_id}}
+}

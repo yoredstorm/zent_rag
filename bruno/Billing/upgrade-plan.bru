@@ -1,0 +1,17 @@
+meta {
+  name: Upgrade Plan
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{base_url}}/api/v1/billing/subscription/upgrade
+  body: none
+  auth: none
+}
+
+headers {
+  X-Tenant-Id: {{tenant_id}}
+  X-New-Plan: pro
+  X-Billing-Interval: monthly
+}

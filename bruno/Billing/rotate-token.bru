@@ -1,0 +1,15 @@
+meta {
+  name: Rotate Token
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{base_url}}/api/v1/billing/token/rotate
+  body: none
+  auth: none
+}
+
+headers {
+  X-Tenant-Id: {{tenant_id}}
+}

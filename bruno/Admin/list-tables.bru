@@ -1,0 +1,16 @@
+meta {
+  name: List Tables
+  type: http
+  seq: 1
+}
+
+get {
+  url: {{base_url}}/api/v1/admin/tables
+  body: none
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Tenant-Id: {{tenant_id}}
+}

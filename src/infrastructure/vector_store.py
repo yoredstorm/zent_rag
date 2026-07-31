@@ -1,0 +1,225 @@
+# =============================================================================
+# Qdrant Vector Store Adapter — Búsqueda Semántica Multi-Tenant
+# =============================================================================
+# Cada tenant tiene su propia colección lógica (tenant_{uuid}) para
+# garantizar aislamiento de datos vectoriales entre clientes.
+# =============================================================================
+from __future__ import annotations
+
+import asyncio
+import time
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
+from uuid import UUID
+
+import httpx
+from qdrant_client import AsyncQdrantClient, models as qdrant_models
+
+from src.config import get_settings
+from src.domain.entities import RetrievalChunk, RetrievalContext
+from src.domain.ports import VectorStore
+from src.infrastructure.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+_T = TypeVar("_T")
+
+TRANSIENT_EXCEPTIONS = (
+    httpx.ConnectError,
+    httpx.TimeoutException,
+    httpx.RemoteProtocolError,
+    httpx.NetworkError,
+    asyncio.TimeoutError,
+    ConnectionError,
+    OSError,
+)
+
+RETRY_BACKOFFS = (1.0, 2.0, 4.0)
+
+
+async def _retry_on_transient_error(
+    action: Callable[..., Awaitable[_T]],
+    /,
+    *args: object,
+    **kwargs: object,
+) -> _T:
+    """Retry `action(*args, **kwargs)` up to 3 times with backoff."""
+    last_exc: Exception | None = None
+    for attempt, delay in enumerate(RETRY_BACKOFFS):
+        try:
+            return await action(*args, **kwargs)
+        except TRANSIENT_EXCEPTIONS as exc:
+            last_exc = exc
+            logger.warning(
+                "Qdrant retry attempt failed",
+                attempt=attempt + 1,
+                max_retries=len(RETRY_BACKOFFS),
+                error=str(exc),
+            )
+            await asyncio.sleep(delay)
+    raise last_exc  # type: ignore[misc]
+
+# -----------------------------------------------------------------------------
+# Cliente Singleton
+# -----------------------------------------------------------------------------
+_qdrant_client: AsyncQdrantClient | None = None
+
+
+def _get_collection_name(tenant_id: UUID) -> str:
+    """Genera el nombre de colección aislada por tenant."""
+    return f"tenant_{tenant_id.hex}"
+
+
+async def _get_client() -> AsyncQdrantClient:
+    """Retorna singleton del cliente asíncrono Qdrant."""
+    global _qdrant_client
+    if _qdrant_client is None:
+        settings = get_settings()
+        raw_key = settings.QDRANT_API_KEY.get_secret_value() if settings.QDRANT_API_KEY else ""
+        api_key = raw_key if raw_key else None
+        _qdrant_client = AsyncQdrantClient(
+            host=settings.QDRANT_HOST,
+            port=settings.QDRANT_PORT,
+            api_key=api_key,
+            grpc_port=settings.QDRANT_GRPC_PORT,
+            prefer_grpc=False,  # REST para MVP (más fácil de depurar)
+            timeout=float(settings.QDRANT_TIMEOUT_SECONDS),
+        )
+    return _qdrant_client
+
+
+class QdrantVectorStore(VectorStore):
+    """Implementación de VectorStore usando Qdrant con colecciones multi-tenant."""
+
+    async def _ensure_collection(self, tenant_id: UUID) -> None:
+        """Crea la colección del tenant si no existe."""
+        client = await _get_client()
+        settings = get_settings()
+        collection_name = _get_collection_name(tenant_id)
+        if not await client.collection_exists(collection_name):
+            await client.create_collection(
+                collection_name=collection_name,
+                vectors_config=qdrant_models.VectorParams(
+                    size=settings.VECTOR_DIMENSION,
+                    distance=qdrant_models.Distance.COSINE,
+                ),
+            )
+            logger.info(
+                "Created vector collection for tenant",
+                collection_name=collection_name,
+                vector_dimension=settings.VECTOR_DIMENSION,
+            )
+
+    async def search(
+        self,
+        tenant_id: UUID,
+        query_embedding: list[float],
+        top_k: int = 5,
+        filters: dict[str, str] | None = None,
+        score_threshold: float = 0.1,
+        role: str = "admin",
+    ) -> RetrievalContext:
+        client = await _get_client()
+        await self._ensure_collection(tenant_id)
+        collection_name = _get_collection_name(tenant_id)
+
+        start = time.perf_counter()
+
+        # Construye filtros de Qdrant si se especificaron
+        must_conditions = []
+        if role == "customer":
+            must_conditions.append(
+                qdrant_models.FieldCondition(
+                    key="metadata.visibility",
+                    match=qdrant_models.MatchValue(value="public"),
+                )
+            )
+        if filters:
+            must_conditions.extend([
+                qdrant_models.FieldCondition(
+                    key=key,
+                    match=qdrant_models.MatchValue(value=value),
+                )
+                for key, value in filters.items()
+            ])
+        qdrant_filter = qdrant_models.Filter(must=must_conditions) if must_conditions else None
+
+        results = await _retry_on_transient_error(
+            client.query_points,
+            collection_name=collection_name,
+            query=query_embedding,
+            limit=top_k,
+            query_filter=qdrant_filter,
+            with_payload=True,
+            score_threshold=score_threshold,
+        )
+
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        chunks = [
+            RetrievalChunk(
+                document_id=UUID(point.id) if point.id else UUID(int=0),
+                content=point.payload.get("content", "") if point.payload else "",
+                score=point.score,
+                metadata=point.payload.get("metadata", {}) if point.payload else {},
+            )
+            for point in results.points
+        ]
+
+        logger.info(
+            "Vector search completed",
+            tenant_collection=collection_name,
+            results_count=len(chunks),
+            query_latency_ms=round(latency_ms, 2),
+            top_score=round(chunks[0].score, 4) if chunks else 0.0,
+        )
+
+        return RetrievalContext(
+            chunks=chunks,
+            query_embedding=query_embedding,
+            retrieval_latency_ms=latency_ms,
+        )
+
+    async def upsert(
+        self,
+        tenant_id: UUID,
+        document_id: UUID,
+        embedding: list[float],
+        content: str,
+        metadata: dict[str, str] | None = None,
+    ) -> None:
+        client = await _get_client()
+        await self._ensure_collection(tenant_id)
+        collection_name = _get_collection_name(tenant_id)
+
+        await _retry_on_transient_error(
+            client.upsert,
+            collection_name=collection_name,
+            points=[
+                qdrant_models.PointStruct(
+                    id=str(document_id),
+                    vector=embedding,
+                    payload={
+                        "content": content,
+                        "metadata": metadata or {},
+                        "tenant_id": str(tenant_id),
+                    },
+                )
+            ],
+        )
+
+    async def delete_by_tenant(self, tenant_id: UUID) -> None:
+        """Elimina todos los vectores de un tenant (GDPR right to erasure)."""
+        client = await _get_client()
+        collection_name = _get_collection_name(tenant_id)
+        if await _retry_on_transient_error(client.collection_exists, collection_name):
+            await _retry_on_transient_error(client.delete_collection, collection_name)
+            logger.info("Deleted tenant vector collection", collection_name=collection_name)
+
+
+async def close_qdrant_connection() -> None:
+    """Cierra la conexión con Qdrant."""
+    global _qdrant_client
+    if _qdrant_client:
+        await _qdrant_client.close()
+        _qdrant_client = None

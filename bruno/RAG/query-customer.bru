@@ -1,0 +1,28 @@
+meta {
+  name: RAG Query (customer)
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/api/v1/rag/query
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Tenant-Id: {{tenant_id}}
+  X-User-Id: {{user_id}}
+  X-User-Role: customer
+}
+
+body:json {
+  {
+    "query": "cual fue la ultima venta",
+    "role": "customer",
+    "top_k": 200,
+    "temperature": 0.3,
+    "max_tokens": 2048
+  }
+}

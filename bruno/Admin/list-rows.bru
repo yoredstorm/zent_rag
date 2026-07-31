@@ -1,0 +1,21 @@
+meta {
+  name: List Rows
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{base_url}}/api/v1/admin/tables/public/sales/rows
+  body: none
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Tenant-Id: {{tenant_id}}
+}
+
+params {
+  limit: 100
+  offset: 0
+}

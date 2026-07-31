@@ -1,0 +1,16 @@
+meta {
+  name: Get Columns
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{base_url}}/api/v1/admin/tables/public/sales/columns
+  body: none
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Tenant-Id: {{tenant_id}}
+}

@@ -1,0 +1,47 @@
+meta {
+  name: Insert Rows
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{base_url}}/api/v1/admin/tables/public/sales/rows
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Tenant-Id: {{tenant_id}}
+}
+
+body:json {
+  {
+    "rows": [
+      {
+        "product": "ZentPhone X1 128GB",
+        "amount": "1199980.00",
+        "customer_name": "Maria Silva",
+        "channel": "web",
+        "payment_method": "Tarjeta de Credito",
+        "created_at": "2026-07-27T12:30:00-04:00"
+      },
+      {
+        "product": "ZentPhone X1 256GB",
+        "amount": "1399980.00",
+        "customer_name": "Carlos Perez",
+        "channel": "tienda",
+        "payment_method": "Efectivo",
+        "created_at": "2026-07-27T14:00:00-04:00"
+      },
+      {
+        "product": "ZentPad Pro 11",
+        "amount": "899980.00",
+        "customer_name": "Ana Gomez",
+        "channel": "web",
+        "payment_method": "Debito",
+        "created_at": "2026-07-28T09:15:00-04:00"
+      }
+    ]
+  }
+}

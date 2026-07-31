@@ -1,0 +1,11 @@
+meta {
+  name: Delete Subscription (Admin)
+  type: http
+  seq: 10
+}
+
+delete {
+  url: {{base_url}}/api/v1/billing/admin/subscriptions/20000000-0000-0000-0000-000000000001
+  body: none
+  auth: none
+}

@@ -1,0 +1,34 @@
+# =============================================================================
+# Grafana Datasources — Provisioning Automático
+# =============================================================================
+apiVersion: 1
+
+datasources:
+  # Prometheus — Fuente de métricas
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: "15s"
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: loki
+
+  # Loki — Fuente de logs estructurados
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      maxLines: 1000
+      derivedFields:
+        - datasourceUid: prometheus
+          matcherRegex: "trace_id[\":]*\\s*[:=]\\s*[\"']?(\\w+)"
+          name: trace_id
+          url: "$${__value.raw}"

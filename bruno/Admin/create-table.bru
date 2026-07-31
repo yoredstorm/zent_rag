@@ -1,0 +1,33 @@
+meta {
+  name: Create Table
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/api/v1/admin/tables
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  X-Tenant-Id: {{tenant_id}}
+}
+
+body:json {
+  {
+    "table_name": "sales",
+    "schema_name": "public",
+    "tenant_aware": true,
+    "columns": [
+      {"name": "id", "type": "SERIAL", "nullable": false, "is_pk": true, "auto_increment": true},
+      {"name": "product", "type": "TEXT", "nullable": false},
+      {"name": "amount", "type": "DECIMAL", "nullable": false},
+      {"name": "customer_name", "type": "TEXT", "nullable": true},
+      {"name": "channel", "type": "TEXT", "nullable": true},
+      {"name": "payment_method", "type": "TEXT", "nullable": true},
+      {"name": "created_at", "type": "TIMESTAMPTZ", "nullable": false}
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+meta {
+  name: Get Subscription
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{base_url}}/api/v1/billing/subscription
+  body: none
+  auth: none
+}
+
+headers {
+  X-Tenant-Id: {{tenant_id}}
+}

@@ -1,0 +1,52 @@
+# =============================================================================
+# Promtail Configuration — Agente recolector de logs Docker -> Loki
+# =============================================================================
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+# Cliente Loki
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    tenant_id: "rag-platform"  # Tenant por defecto en Loki para logs de plataforma
+    external_labels:
+      environment: "production"
+      platform: "rag-as-a-service"
+
+# Scrape de logs de contenedores Docker
+scrape_configs:
+  # ---------------------------------------------------------------------------
+  # Contenedores Docker etiquetados con promtail.scrape=true
+  # ---------------------------------------------------------------------------
+  - job_name: docker-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 15s
+        filters:
+          - name: label
+            values: ["promtail.scrape=true"]
+    relabel_configs:
+      - source_labels: ["__meta_docker_container_name"]
+        regex: "/(.*)"
+        target_label: "container"
+      - source_labels: ["__meta_docker_container_label_promtail_job"]
+        target_label: "job"
+      - source_labels: ["__meta_docker_container_id"]
+        target_label: "container_id"
+        action: replace
+        regex: "(.{12}).*"
+        replacement: "$1"
+
+  # ---------------------------------------------------------------------------
+  # Logs de sistema del host (para depuración de infraestructura)
+  # ---------------------------------------------------------------------------
+  - job_name: system-logs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: varlogs
+          __path__: /var/log/*.log
