@@ -109,8 +109,15 @@ class RAGOrchestrator:
         use_cache: bool = True,
         conversation_id: UUID | None = None,
         role: str = "admin",
+        system_prompt_override: str | None = None,
     ) -> RAGQueryResult:
-        """Ejecuta el flujo RAG completo de extremo a extremo."""
+        """Ejecuta el flujo RAG completo de extremo a extremo.
+
+        Args:
+            system_prompt_override: Si se provee, salta toda resolución de
+                config_json y usa este prompt directamente (útil para
+                el endpoint /prompt/test con RAG real).
+        """
 
         query_id = uuid4()
         # Auto-crear conversation_id si no viene uno
@@ -270,12 +277,12 @@ class RAGOrchestrator:
                 cited_chunks_all: list[str] = []
                 for item in history[-_MAX_HISTORY_TURNS * 2:]:
                     msg = json.loads(item)
-                    role = msg.get("role", "unknown")
+                    msg_role = msg.get("role", "unknown")
                     content = msg.get("content", "")
-                    if role == "cited_chunks" and isinstance(content, list):
+                    if msg_role == "cited_chunks" and isinstance(content, list):
                         cited_chunks_all.extend(content)
                     else:
-                        turns.append(f"{role.capitalize()}: {content}")
+                        turns.append(f"{msg_role.capitalize()}: {content}")
                 history_section = "Previous conversation:\n" + "\n".join(turns) + "\n\n"
                 if cited_chunks_all:
                     cited_clean = list(dict.fromkeys(cited_chunks_all))[-5:]
@@ -307,16 +314,37 @@ Answer based on the context above:"""
                     "Only help with products, personal purchases, and "
                     "general product information."
                 )
-            system_prompt = RAG_SYSTEM_PROMPT + rbac_instruction
 
-            tenant_config = tenant.config_json or {}
-            custom_prompt = tenant_config.get("system_prompt")
-            if custom_prompt:
-                system_prompt = custom_prompt + rbac_instruction
+            # Resolución del system prompt:
+            # 1. override explícito (usado por /prompt/test)
+            # 2. prompt específico por rol (system_prompt_admin / system_prompt_customer)
+            # 3. prompt genérico (system_prompt)
+            # 4. default hardcodeado (RAG_SYSTEM_PROMPT)
+            if system_prompt_override:
+                system_prompt = system_prompt_override
+            else:
+                tenant_config = tenant.config_json or {}
+                role_prompt_key = f"system_prompt_{role}"
+                role_instr_key = f"custom_instructions_{role}"
 
-            custom_instructions = tenant_config.get("custom_instructions")
-            if custom_instructions:
-                system_prompt += "\n\n" + custom_instructions
+                custom_prompt = (
+                    tenant_config.get(role_prompt_key)
+                    or tenant_config.get("system_prompt")
+                )
+                if custom_prompt:
+                    system_prompt = custom_prompt
+                else:
+                    system_prompt = RAG_SYSTEM_PROMPT
+
+                if rbac_instruction:
+                    system_prompt += rbac_instruction
+
+                custom_instructions = (
+                    tenant_config.get(role_instr_key)
+                    or tenant_config.get("custom_instructions")
+                )
+                if custom_instructions:
+                    system_prompt += "\n\n" + custom_instructions
 
             # -----------------------------------------------------------------
             # Hard anti-hallucination check:

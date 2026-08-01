@@ -1,0 +1,28 @@
+meta {
+  name: Update Prompt (Admin)
+  type: http
+  seq: 2
+}
+
+put {
+  url: {{base_url}}/api/v1/admin/prompt
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+  X-Tenant-Id: {{tenant_id}}
+}
+
+auth:bearer {
+  token: rag_live_dd2adc745cfd75a670a85febb64f5956f6b5507c0fc0912c
+}
+
+body:json {
+  {
+    "role": "admin",
+    "system_prompt": "Eres el asistente administrativo de Zent. Tu funcion es proveer informacion de negocio: ventas, inventario, metricas, clientes. Responde con precision analitica. Usa el contexto SQL y documentos para dar datos exactos. Formatea montos en soles (S/). Se conciso y directo.",
+    "custom_instructions": "Siempre incluye fechas exactas cuando hables de ventas o transacciones. Prioriza datos numericos sobre narrativa."
+  }
+}

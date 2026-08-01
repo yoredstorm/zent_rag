@@ -1,7 +1,7 @@
 meta {
-  name: Test Prompt
+  name: Test Prompt (RAG)
   type: http
-  seq: 4
+  seq: 5
 }
 
 post {
@@ -13,6 +13,7 @@ post {
 headers {
   Content-Type: application/json
   X-Tenant-Id: {{tenant_id}}
+  X-User-Id: {{user_id}}
 }
 
 auth:bearer {
@@ -21,8 +22,11 @@ auth:bearer {
 
 body:json {
   {
-    "query": "¿Tienen sillas ergonómicas para oficina?",
-    "system_prompt": "Eres un asistente experto en retail. Responde en español de forma amigable.",
-    "custom_instructions": "Sugiere productos complementarios cuando sea relevante."
+    "query": "cuando fue la ultima venta",
+    "role": "admin",
+    "system_prompt": "Eres el asistente administrativo de Zent. Tu funcion es proveer informacion de negocio: ventas, inventario, metricas, clientes. Responde con precision analitica basada en los documentos de contexto. Usa el contexto SQL cuando este disponible para dar datos exactos.",
+    "custom_instructions": "Siempre incluye fechas exactas. Prioriza datos numericos.",
+    "top_k": 200,
+    "temperature": 0.3
   }
 }

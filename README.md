@@ -260,21 +260,49 @@ POST   /api/v1/admin/sql                                  # Ejecutar SQL raw
 
 ### Prompt Management
 
-Gestiona el system prompt del asistente RAG por tenant sin redeploy. Ideal para iterar con el cliente hasta afinar el tono, dominio y comportamiento.
+Gestiona el system prompt del asistente RAG por tenant y por rol (admin vs customer) sin redeploy. El endpoint de test usa el pipeline RAG real (vectores + SQL expert) para pruebas con datos reales.
 
 ```bash
-GET    /api/v1/admin/prompt         # Ver prompt actual + default + variables disponibles
-PUT    /api/v1/admin/prompt         # Actualizar system_prompt y/o custom_instructions
-DELETE /api/v1/admin/prompt         # Resetear al prompt por defecto
-POST   /api/v1/admin/prompt/test    # Probar un prompt con una query (dry-run, no guarda)
+GET    /api/v1/admin/prompt               # Ver prompts por rol (admin + customer)
+PUT    /api/v1/admin/prompt               # Guardar prompt para un rol específico
+DELETE /api/v1/admin/prompt?role=admin    # Resetear prompt de un rol (sin param = todos)
+POST   /api/v1/admin/prompt/test          # Test con RAG real (embedding + vectores + LLM)
+```
+
+**Roles de prompt:**
+| Clave en config_json | Rol | Propósito |
+|---|---|---|
+| `system_prompt_admin` | Admin | BI, métricas, ventas, datos sensibles |
+| `system_prompt_customer` | Customer | Catálogo, precios, recomendaciones |
+| `system_prompt` | Genérico | Fallback si no hay específico |
+
+**PUT acepta `"role"` para guardar por rol:**
+```json
+{
+  "role": "admin",
+  "system_prompt": "Eres el asistente administrativo...",
+  "custom_instructions": "Incluye fechas exactas en cada respuesta."
+}
+```
+
+**POST /test ejecuta el pipeline RAG completo** (embedding → Qdrant → SQL expert → LLM) con el prompt dado, sin guardar cambios ni afectar el caché de conversación:
+```json
+{
+  "query": "cuando fue la ultima venta",
+  "role": "admin",
+  "system_prompt": "...",
+  "custom_instructions": "...",
+  "top_k": 200,
+  "temperature": 0.3
+}
 ```
 
 **Flujo de iteración típico:**
-1. `GET /prompt` para ver el prompt actual y el default
-2. `POST /prompt/test` con un prompt candidato + query de prueba → evaluar respuesta
-3. Repetir paso 2 ajustando hasta obtener el tono deseado
-4. `PUT /prompt` para guardar la versión final
-5. `DELETE /prompt` para volver al default si algo sale mal
+1. `GET /prompt` — ver estado actual por rol
+2. `POST /prompt/test` — probar prompt candidato con datos reales
+3. Repetir paso 2 ajustando hasta obtener el tono/precisión deseado
+4. `PUT /prompt` con `"role": "admin"` o `"customer"` para guardar
+5. `DELETE /prompt?role=admin` para resetear un rol específico
 
 **Variables disponibles** en los prompts: `{role}`, `{tenant_name}`, `{date}`, `{top_k}`.
 
