@@ -79,7 +79,8 @@ async def _get_client() -> AsyncQdrantClient:
             except Exception:
                 pass
         settings = get_settings()
-        raw_key = settings.QDRANT_API_KEY.get_secret_value() if settings.QDRANT_API_KEY else ""
+        raw_key = settings.QDRANT_API_KEY
+        api_key = raw_key if raw_key else None
         api_key = raw_key if raw_key else None
         _qdrant_client = AsyncQdrantClient(
             host=settings.QDRANT_HOST,

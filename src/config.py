@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = Field(default=6333, ge=1, le=65535)
-    QDRANT_API_KEY: SecretStr | None = None
+    QDRANT_API_KEY: str = Field(default="")
     QDRANT_GRPC_PORT: int = Field(default=6334, ge=1, le=65535)
     QDRANT_TIMEOUT_SECONDS: int = Field(default=30, ge=5, le=120)
 
@@ -179,6 +179,26 @@ class Settings(BaseSettings):
             raise ValueError("LITELLM_API_KEY es obligatorio en entorno production")
         return v
 
+    def apply_vault_overrides(self) -> None:
+        """Override sensitive fields from Vault if available (falls back to .env).
+
+        Called by get_settings() after Settings is fully constructed.
+        Separado de model_post_init para evitar import circular.
+        """
+        try:
+            from src.infrastructure.vault import get_secret, vault_is_available
+
+            if not vault_is_available():
+                return
+            if secret := get_secret("POSTGRES_PASSWORD"):
+                object.__setattr__(self, "POSTGRES_PASSWORD", SecretStr(secret))
+            if secret := get_secret("LITELLM_API_KEY"):
+                object.__setattr__(self, "LITELLM_API_KEY", SecretStr(secret))
+            if secret := get_secret("REDIS_URL"):
+                object.__setattr__(self, "REDIS_URL", secret)
+        except Exception:
+            pass
+
 
 # -----------------------------------------------------------------------------
 # Singleton cacheado — Evita re-leer .env en cada instanciación
@@ -186,4 +206,6 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     """Retorna la instancia única de Settings (cacheada)."""
-    return Settings()
+    settings = Settings()
+    settings.apply_vault_overrides()
+    return settings

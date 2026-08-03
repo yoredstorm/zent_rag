@@ -42,6 +42,7 @@ from src.domain.ports import (
 )
 from src.domain.sql_expert import SqlExpert
 from src.infrastructure.logging_config import get_logger
+from src.infrastructure.tracing import trace_span
 
 logger = get_logger(__name__)
 
@@ -222,9 +223,10 @@ class RAGOrchestrator:
             # Paso 3: Generar embedding de la query
             # -----------------------------------------------------------------
             result.status = QueryStatus.RETRIEVING_CONTEXT
-            query_embedding = await self._embedding_provider.embed(
-                query, model=effective_embedding_model
-            )
+            async with trace_span("rag.embedding", model=effective_embedding_model or "default"):
+                query_embedding = await self._embedding_provider.embed(
+                    query, model=effective_embedding_model
+                )
             if isinstance(query_embedding[0], list):
                 query_embedding = query_embedding[0]  # type: ignore[assignment]
 
@@ -277,19 +279,20 @@ class RAGOrchestrator:
                     retrieval_latency_ms=agg_ctx.retrieval_latency_ms + ind_ctx.retrieval_latency_ms,
                 )
 
-            if self._sql_expert:
-                try:
-                    retrieval_context, sql_result = await _asyncio.gather(
-                        _vector_search_full(),
-                        self._sql_expert.execute(tenant_id=tenant_id, question=query, role=role),
-                    )
-                except Exception as _sql_err:
-                    logger.warning("SQL Expert failed in parallel, falling back to vector-only", error=str(_sql_err))
+            async with trace_span("rag.retrieval"):
+                if self._sql_expert:
+                    try:
+                        retrieval_context, sql_result = await _asyncio.gather(
+                            _vector_search_full(),
+                            self._sql_expert.execute(tenant_id=tenant_id, question=query, role=role),
+                        )
+                    except Exception as _sql_err:
+                        logger.warning("SQL Expert failed in parallel, falling back to vector-only", error=str(_sql_err))
+                        retrieval_context = await _vector_search_full()
+                        sql_result = None
+                else:
                     retrieval_context = await _vector_search_full()
                     sql_result = None
-            else:
-                retrieval_context = await _vector_search_full()
-                sql_result = None
 
             result.retrieval_context = retrieval_context
             rag_vector_search_latency.labels(tenant_id=str(tenant_id)).observe(
@@ -447,12 +450,13 @@ Answer based on the context above:"""
             # Paso 6: Invocar LLM (SQL-first o RAG estándar)
             # -----------------------------------------------------------------
             result.status = QueryStatus.GENERATING_RESPONSE
-            llm_response = await self._llm_provider.generate(
-                prompt=augmented_prompt,
-                model=effective_model,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                system_prompt=system_prompt,
+            async with trace_span("rag.llm", model=effective_model or "default"):
+                llm_response = await self._llm_provider.generate(
+                    prompt=augmented_prompt,
+                    model=effective_model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system_prompt=system_prompt,
             )
             result.llm_response = llm_response
 
