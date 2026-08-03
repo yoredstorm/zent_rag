@@ -23,8 +23,8 @@ x-common-env: &common-env
   RAG_LITELLM_API_KEY: ${RAG_LITELLM_API_KEY:-}
   RAG_LITELLM_DEFAULT_MODEL: ${RAG_LITELLM_DEFAULT_MODEL:-gpt-4o-mini}
   RAG_LITELLM_TIMEOUT_SECONDS: ${RAG_LITELLM_TIMEOUT_SECONDS:-60}
-  RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-text-embedding-3-small}
-  RAG_VECTOR_DIMENSION: ${RAG_VECTOR_DIMENSION:-1536}
+  RAG_EMBEDDING_MODEL: ${RAG_EMBEDDING_MODEL:-ollama/bge-m3}
+  RAG_VECTOR_DIMENSION: ${RAG_VECTOR_DIMENSION:-1024}
   RAG_RAG_TOP_K: ${RAG_RAG_TOP_K:-5}
   RAG_RAG_SCORE_THRESHOLD: ${RAG_RAG_SCORE_THRESHOLD:-0.0}
   RAG_RAG_CONVERSATION_TTL_SECONDS: ${RAG_RAG_CONVERSATION_TTL_SECONDS:-3600}
@@ -78,6 +78,33 @@ services:
     restart: unless-stopped
     networks:
       - rag-network
+
+  # ===========================================================================
+  # Ingestion Worker — Procesa cola de ingesta (Redis) independiente de la API
+  # ===========================================================================
+  ingestion-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: rag-ingestion-worker
+    command: ["sh", "-c", "alembic upgrade head && python worker_entry.py"]
+    environment:
+      <<: *common-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - rag-network
+    labels:
+      - "promtail.scrape=true"
+      - "promtail.job=rag-ingestion-worker"
 
   # ===========================================================================
   # Ollama — Embeddings locales (bge-m3, CPU)

@@ -96,8 +96,8 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     # RAG / Embeddings
     # -------------------------------------------------------------------------
-    EMBEDDING_MODEL: str = "text-embedding-3-small"
-    VECTOR_DIMENSION: int = Field(default=1536, ge=1)
+    EMBEDDING_MODEL: str = "ollama/bge-m3"
+    VECTOR_DIMENSION: int = Field(default=1024, ge=1)
     RAG_TOP_K: int = Field(default=200, ge=1, le=500)
     RAG_SCORE_THRESHOLD: float = Field(default=0.0, ge=0.0, le=1.0)
     RAG_CONVERSATION_TTL_SECONDS: int = Field(default=3600, ge=60, le=86400)

@@ -37,7 +37,8 @@ RUN pip install --no-cache-dir \
     prometheus-fastapi-instrumentator>=7.0.0 \
     prometheus-client>=0.20.0 \
     httpx>=0.27.0 \
-    alembic>=1.14.0
+    alembic>=1.14.0 \
+    sqlglot>=26.0.0
 
 # =============================================================================
 # Stage final — Imagen de producción minimalista
@@ -64,6 +65,7 @@ ENV PYTHONPATH="/app"
 COPY src/ ./src/
 COPY pyproject.toml ./
 COPY alembic.ini ./
+COPY worker_entry.py ./
 
 # Usuario no-root por seguridad (CISO requirement)
 RUN groupadd -r rag && useradd -r -g rag -d /app -s /sbin/nologin rag && \

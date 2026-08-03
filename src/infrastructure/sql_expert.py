@@ -24,6 +24,65 @@ _FORBIDDEN_KEYWORDS = re.compile(
 )
 
 
+def _validate_sql_ast(sql: str) -> None:
+    """Valida que el SQL sea solo SELECT usando sqlglot AST.
+
+    Bloquea ataques por CTE como:
+        WITH x AS (DELETE FROM ventas RETURNING *) SELECT * FROM x
+    que pasan un check ingenuo de primera palabra.
+    """
+    import sqlglot
+    from sqlglot.errors import ParseError as SqlglotParseError
+
+    try:
+        statements = sqlglot.parse(sql, error_level=sqlglot.ErrorLevel.RAISE)
+    except SqlglotParseError as exc:
+        raise SqlValidationError(f"Invalid SQL syntax: {exc}", sql) from exc
+
+    if not statements:
+        raise SqlValidationError("Empty or unparseable SQL", sql)
+
+    for stmt in statements:
+        stmt_type = stmt.key.lower() if stmt.key else "unknown"
+        if stmt_type != "select":
+            raise SqlValidationError(
+                f"Only SELECT statements allowed, found: {stmt_type}", sql
+            )
+
+        _check_ctes(stmt, sql)
+
+        _check_subqueries(stmt, sql)
+
+
+def _check_ctes(statement, sql: str) -> None:
+    """Recorre CTEs buscando statements no-SELECT anidados."""
+    if not hasattr(statement, "ctes"):
+        return
+    for cte in statement.ctes:
+        if not cte.this:
+            continue
+        cte_type = cte.this.key.lower() if cte.this.key else "unknown"
+        if cte_type != "select":
+            raise SqlValidationError(
+                f"Non-SELECT statement inside CTE: {cte_type}", sql
+            )
+        _check_ctes(cte.this, sql)
+        _check_subqueries(cte.this, sql)
+
+
+def _check_subqueries(expression, sql: str) -> None:
+    """Recorre subqueries anidadas buscando statements no-SELECT."""
+    try:
+        for node in expression.find_all(sqlglot.exp.Query):
+            node_type = node.key.lower() if node.key else "unknown"
+            if node_type != "select":
+                raise SqlValidationError(
+                    f"Non-SELECT subquery: {node_type}", sql
+                )
+    except Exception:
+        pass
+
+
 def _format_sql_result(result: SqlQueryResult, question: str) -> str:
     """Formatea resultados SQL para presentación al LLM."""
     if not result.rows:
@@ -370,8 +429,7 @@ class PostgresSqlExpert(SqlExpert):
         sources: list[DataSource],
         role: str,
     ) -> None:
-        if not sql.upper().startswith("SELECT"):
-            raise SqlValidationError("Only SELECT statements allowed", sql)
+        _validate_sql_ast(sql)
 
         if _FORBIDDEN_KEYWORDS.search(sql):
             raise SqlValidationError("Forbidden SQL keyword detected", sql)

@@ -25,6 +25,7 @@ prod = [
     "prometheus-client>=0.20.0",
     "httpx>=0.27.0",
     "alembic>=1.14.0",
+    "sqlglot>=26.0.0",
 ]
 
 dev = [
