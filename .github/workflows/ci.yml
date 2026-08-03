@@ -47,7 +47,7 @@ jobs:
           done
 
       - name: Install deps
-        run: pip install -e ".[dev]"
+        run: pip install -e ".[prod,dev]"
 
       - name: Run tests
         run: pytest tests/ -v --tb=short --timeout=60 -x
