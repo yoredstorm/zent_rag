@@ -1,8 +1,8 @@
 # =============================================================================
 # Qdrant Vector Store Adapter — Búsqueda Semántica Multi-Tenant
 # =============================================================================
-# Cada tenant tiene su propia colección lógica (tenant_{uuid}) para
-# garantizar aislamiento de datos vectoriales entre clientes.
+# Colección única compartida (rag_documents) con filtrado por tenant_id
+# en payload. Escala a cientos/miles de tenants sin overhead por colección.
 # =============================================================================
 from __future__ import annotations
 
@@ -37,6 +37,8 @@ TRANSIENT_EXCEPTIONS = (
 
 RETRY_BACKOFFS = (1.0, 2.0, 4.0)
 
+RAG_DOCUMENTS_COLLECTION = "rag_documents"
+
 
 async def _retry_on_transient_error(
     action: Callable[..., Awaitable[_T]],
@@ -44,7 +46,6 @@ async def _retry_on_transient_error(
     *args: object,
     **kwargs: object,
 ) -> _T:
-    """Retry `action(*args, **kwargs)` up to 3 times with backoff."""
     last_exc: Exception | None = None
     for attempt, delay in enumerate(RETRY_BACKOFFS):
         try:
@@ -67,16 +68,7 @@ _qdrant_client: AsyncQdrantClient | None = None
 _qdrant_loop_id: int | None = None
 
 
-def _get_collection_name(tenant_id: UUID) -> str:
-    """Genera el nombre de colección aislada por tenant."""
-    return f"tenant_{tenant_id.hex}"
-
-
 async def _get_client() -> AsyncQdrantClient:
-    """Retorna singleton del cliente asíncrono Qdrant.
-
-    Re-crea si el event loop cambia (tests con ASGITransport).
-    """
     global _qdrant_client, _qdrant_loop_id
     import asyncio as _asyncio
     current_loop_id = id(_asyncio.get_running_loop())
@@ -102,24 +94,22 @@ async def _get_client() -> AsyncQdrantClient:
 
 
 class QdrantVectorStore(VectorStore):
-    """Implementación de VectorStore usando Qdrant con colecciones multi-tenant."""
+    """Implementación de VectorStore con colección única compartida."""
 
-    async def _ensure_collection(self, tenant_id: UUID) -> None:
-        """Crea la colección del tenant si no existe."""
+    async def _ensure_collection(self) -> None:
         client = await _get_client()
         settings = get_settings()
-        collection_name = _get_collection_name(tenant_id)
-        if not await client.collection_exists(collection_name):
+        if not await client.collection_exists(RAG_DOCUMENTS_COLLECTION):
             await client.create_collection(
-                collection_name=collection_name,
+                collection_name=RAG_DOCUMENTS_COLLECTION,
                 vectors_config=qdrant_models.VectorParams(
                     size=settings.VECTOR_DIMENSION,
                     distance=qdrant_models.Distance.COSINE,
                 ),
             )
             logger.info(
-                "Created vector collection for tenant",
-                collection_name=collection_name,
+                "Created shared vector collection",
+                collection_name=RAG_DOCUMENTS_COLLECTION,
                 vector_dimension=settings.VECTOR_DIMENSION,
             )
 
@@ -133,13 +123,17 @@ class QdrantVectorStore(VectorStore):
         role: str = "admin",
     ) -> RetrievalContext:
         client = await _get_client()
-        await self._ensure_collection(tenant_id)
-        collection_name = _get_collection_name(tenant_id)
+        await self._ensure_collection()
 
         start = time.perf_counter()
 
-        # Construye filtros de Qdrant si se especificaron
-        must_conditions = []
+        must_conditions = [
+            qdrant_models.FieldCondition(
+                key="tenant_id",
+                match=qdrant_models.MatchValue(value=str(tenant_id)),
+            )
+        ]
+
         if role == "customer":
             must_conditions.append(
                 qdrant_models.FieldCondition(
@@ -147,6 +141,7 @@ class QdrantVectorStore(VectorStore):
                     match=qdrant_models.MatchValue(value="public"),
                 )
             )
+
         if filters:
             must_conditions.extend([
                 qdrant_models.FieldCondition(
@@ -155,11 +150,12 @@ class QdrantVectorStore(VectorStore):
                 )
                 for key, value in filters.items()
             ])
-        qdrant_filter = qdrant_models.Filter(must=must_conditions) if must_conditions else None
+
+        qdrant_filter = qdrant_models.Filter(must=must_conditions)
 
         results = await _retry_on_transient_error(
             client.query_points,
-            collection_name=collection_name,
+            collection_name=RAG_DOCUMENTS_COLLECTION,
             query=query_embedding,
             limit=top_k,
             query_filter=qdrant_filter,
@@ -181,7 +177,7 @@ class QdrantVectorStore(VectorStore):
 
         logger.info(
             "Vector search completed",
-            tenant_collection=collection_name,
+            tenant_id=str(tenant_id),
             results_count=len(chunks),
             query_latency_ms=round(latency_ms, 2),
             top_score=round(chunks[0].score, 4) if chunks else 0.0,
@@ -202,12 +198,11 @@ class QdrantVectorStore(VectorStore):
         metadata: dict[str, str] | None = None,
     ) -> None:
         client = await _get_client()
-        await self._ensure_collection(tenant_id)
-        collection_name = _get_collection_name(tenant_id)
+        await self._ensure_collection()
 
         await _retry_on_transient_error(
             client.upsert,
-            collection_name=collection_name,
+            collection_name=RAG_DOCUMENTS_COLLECTION,
             points=[
                 qdrant_models.PointStruct(
                     id=str(document_id),
@@ -222,12 +217,25 @@ class QdrantVectorStore(VectorStore):
         )
 
     async def delete_by_tenant(self, tenant_id: UUID) -> None:
-        """Elimina todos los vectores de un tenant (GDPR right to erasure)."""
+        """Elimina todos los vectores de un tenant por filtro de payload."""
         client = await _get_client()
-        collection_name = _get_collection_name(tenant_id)
-        if await _retry_on_transient_error(client.collection_exists, collection_name):
-            await _retry_on_transient_error(client.delete_collection, collection_name)
-            logger.info("Deleted tenant vector collection", collection_name=collection_name)
+        await self._ensure_collection()
+
+        await _retry_on_transient_error(
+            client.delete,
+            collection_name=RAG_DOCUMENTS_COLLECTION,
+            points_selector=qdrant_models.FilterSelector(
+                filter=qdrant_models.Filter(
+                    must=[
+                        qdrant_models.FieldCondition(
+                            key="tenant_id",
+                            match=qdrant_models.MatchValue(value=str(tenant_id)),
+                        )
+                    ]
+                )
+            ),
+        )
+        logger.info("Deleted tenant vectors from shared collection", tenant_id=str(tenant_id))
 
 
 async def close_qdrant_connection() -> None:

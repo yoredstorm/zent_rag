@@ -115,7 +115,7 @@ class Settings(BaseSettings):
     BILLING_TRIAL_DAYS: int = Field(default=30, ge=1, le=365)
 
     # -------------------------------------------------------------------------
-    # Vault (HashiCorp Vault) — Preparado para integración futura
+    # Vault (HashiCorp Vault) — Connected via src/infrastructure/vault.py
     # -------------------------------------------------------------------------
     VAULT_ADDR: str | None = None
     VAULT_TOKEN: SecretStr | None = None
@@ -150,7 +150,8 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     # Expone /metrics para Prometheus. Desactivar solo en entornos sin scraper.
     METRICS_ENABLED: bool = True
-    TRACING_ENABLED: bool = False  # Futuro: OpenTelemetry
+    TRACING_ENABLED: bool = False
+    TRACING_OTLP_ENDPOINT: str | None = None
 
     # -------------------------------------------------------------------------
     # Validaciones de Seguridad

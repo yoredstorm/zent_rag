@@ -32,6 +32,7 @@ from src.api.metrics import setup_metrics
 from src.api.middleware import TraceMiddleware
 from src.api.routes.admin import router as admin_router
 from src.api.routes.billing import router as billing_router
+from src.api.routes.evaluation import router as eval_router
 from src.api.routes.health import router as health_router
 from src.api.routes.ingestion import router as ingestion_router
 from src.api.routes.prompt import router as prompt_router
@@ -42,6 +43,7 @@ from src.infrastructure.cache import close_redis_connection
 from src.infrastructure.ingestion_worker import request_shutdown, run_worker
 from src.infrastructure.logging_config import configure_logging, get_logger
 from src.infrastructure.relational_db import close_db_connections
+from src.infrastructure.tracing import setup_tracing
 from src.infrastructure.vector_store import close_qdrant_connection
 
 # -----------------------------------------------------------------------------
@@ -154,11 +156,16 @@ if settings.METRICS_ENABLED:
 else:
     instrumentator = None
 
+# OpenTelemetry distributed tracing (FastAPI auto-instrumentation)
+if settings.TRACING_ENABLED:
+    setup_tracing(app)
+
 # -----------------------------------------------------------------------------
 # Routers
 # -----------------------------------------------------------------------------
 app.include_router(admin_router)
 app.include_router(billing_router)
+app.include_router(eval_router)
 app.include_router(health_router)
 app.include_router(ingestion_router)
 app.include_router(prompt_router)
