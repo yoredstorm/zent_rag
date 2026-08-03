@@ -10,6 +10,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from dataclasses import dataclass
@@ -548,8 +549,8 @@ class PostgresIngestionService(IngestionService):
                         fk_resolutions[col.name] = (label, resolved)
 
             # Paginated fetch: load rows in pages of 500 to avoid OOM
-            page_size = 500
-            embed_batch_size = 50
+            page_size = 1000
+            embed_batch_size = 100
             offset = 0
             column_names: list[str] | None = None
             page = 0
@@ -622,29 +623,26 @@ class PostgresIngestionService(IngestionService):
                     else:
                         embeddings_list = raw_embeddings  # type: ignore[assignment]
 
+                    upsert_tasks = []
                     for content_text, doc_id, embedding, meta in zip(
                         texts, doc_ids, embeddings_list, metadata_list
                     ):
-                        try:
-                            await self._vector_store.upsert(
+                        upsert_tasks.append(
+                            self._vector_store.upsert(
                                 tenant_id=tenant_id,
                                 document_id=doc_id,
-                                embedding=list(embedding) if not isinstance(embedding, list) else embedding,  # type: ignore[arg-type]
+                                embedding=list(embedding) if not isinstance(embedding, list) else embedding,
                                 content=content_text,
                                 metadata=meta,
                             )
-                            result.vectors_upserted += 1
-                        except Exception as exc:
+                        )
+                    upsert_results = await asyncio.gather(*upsert_tasks, return_exceptions=True)
+                    for i, res in enumerate(upsert_results):
+                        if isinstance(res, Exception):
                             result.failed_rows += 1
-                            result.errors.append(
-                                f"{schema}.{table} row {doc_id}: {exc}"
-                            )
-                            logger.warning(
-                                "Row upsert failed, continuing",
-                                table=f"{schema}.{table}",
-                                doc_id=str(doc_id),
-                                error=str(exc),
-                            )
+                            result.errors.append(f"{schema}.{table} row {doc_ids[i]}: {res}")
+                        else:
+                            result.vectors_upserted += 1
 
                     result.rows_indexed += len(batch_rows)
 

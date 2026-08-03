@@ -13,7 +13,7 @@ import asyncio
 import json
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from src.api.deps import get_cache_provider, get_embedding_provider, get_vector_store
@@ -229,11 +229,11 @@ async def stream_job_progress(
                 return
 
             current_progress = job.get("progress", 0)
-            status = job.get("status", "unknown")
+            job_status = job.get("status", "unknown")
 
-            yield f"data: {json.dumps({'progress': current_progress, 'status': status})}\n\n"
+            yield f"data: {json.dumps({'progress': current_progress, 'status': job_status})}\n\n"
 
-            if status in ("completed", "failed"):
+            if job_status in ("completed", "failed"):
                 return
 
             if current_progress == last_progress:
