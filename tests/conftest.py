@@ -10,7 +10,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import AsyncGenerator
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 import pytest_asyncio
@@ -68,9 +68,8 @@ async def async_client(mock_orchestrator: MockRAGOrchestrator) -> AsyncGenerator
     Sobrescribe la dependencia del orquestador RAG para evitar llamadas
     reales a Qdrant, Redis, LLM, etc.
     """
-    from src.api.main import app
-
     from src.api.deps import get_rag_orchestrator
+    from src.api.main import app
 
     app.dependency_overrides[get_rag_orchestrator] = lambda: mock_orchestrator
 

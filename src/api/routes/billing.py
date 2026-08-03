@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
-from src.infrastructure.billing_service import BillingService, generate_api_token
+from src.infrastructure.billing_service import BillingService
 from src.infrastructure.logging_config import get_logger
 from src.infrastructure.relational_db import PostgresBillingRepository
 

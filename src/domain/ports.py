@@ -11,15 +11,14 @@ from abc import ABC, abstractmethod
 from uuid import UUID
 
 from src.domain.entities import (
+    ApiToken,
     LLMResponse,
+    Plan,
     RAGQueryResult,
     RetrievalContext,
+    Subscription,
     Tenant,
     User,
-    ApiToken,
-    BillingContext,
-    Plan,
-    Subscription,
 )
 
 

@@ -8,19 +8,17 @@
 # =============================================================================
 from __future__ import annotations
 
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Header, Query, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from src.api.deps import (
-    get_embedding_provider,
-    get_llm_provider,
     get_rag_orchestrator,
     get_tenant_repo,
 )
 from src.application.orchestrator import RAG_SYSTEM_PROMPT, RAGOrchestrator
-from src.domain.ports import EmbeddingProvider, TenantRepository
+from src.domain.ports import TenantRepository
 from src.infrastructure.logging_config import get_logger
 
 logger = get_logger(__name__)

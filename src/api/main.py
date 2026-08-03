@@ -40,7 +40,7 @@ from src.config import Settings, get_settings
 from src.domain.models import ErrorResponse
 from src.infrastructure.cache import close_redis_connection
 from src.infrastructure.ingestion_worker import request_shutdown, run_worker
-from src.infrastructure.logging_config import configure_logging, get_logger, set_trace_context
+from src.infrastructure.logging_config import configure_logging, get_logger
 from src.infrastructure.relational_db import close_db_connections
 from src.infrastructure.vector_store import close_qdrant_connection
 

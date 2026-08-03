@@ -6,7 +6,6 @@
 # =============================================================================
 from __future__ import annotations
 
-import hashlib
 import time
 from uuid import UUID, uuid4
 
@@ -15,17 +14,16 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from src.config import get_settings
 from src.domain.entities import (
-    Tenant,
-    TenantStatus,
-    User,
     ApiToken,
-    BillingContext,
+    BillingInterval,
     Plan,
     Subscription,
     SubscriptionStatus,
-    BillingInterval,
+    Tenant,
+    TenantStatus,
+    User,
 )
-from src.domain.ports import TenantRepository, UserRepository, BillingRepository
+from src.domain.ports import BillingRepository, TenantRepository, UserRepository
 from src.infrastructure.logging_config import get_logger
 
 logger = get_logger(__name__)

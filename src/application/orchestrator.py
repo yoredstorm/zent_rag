@@ -20,6 +20,12 @@ import re
 import time
 from uuid import UUID, uuid4
 
+from src.api.metrics import (
+    rag_cache_hits,
+    rag_cache_misses,
+    rag_errors_total,
+    rag_vector_search_latency,
+)
 from src.domain.entities import (
     LLMResponse,
     QueryStatus,
@@ -36,12 +42,6 @@ from src.domain.ports import (
 )
 from src.domain.sql_expert import SqlExpert
 from src.infrastructure.logging_config import get_logger
-from src.api.metrics import (
-    rag_cache_hits,
-    rag_cache_misses,
-    rag_errors_total,
-    rag_vector_search_latency,
-)
 
 logger = get_logger(__name__)
 

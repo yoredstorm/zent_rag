@@ -10,11 +10,10 @@
 # =============================================================================
 from __future__ import annotations
 
+from fastapi import FastAPI
 from prometheus_client import Counter, Gauge, Histogram
 from prometheus_fastapi_instrumentator import Instrumentator, metrics
 from prometheus_fastapi_instrumentator.metrics import Info
-from fastapi import FastAPI
-
 
 # -----------------------------------------------------------------------------
 # Métricas de negocio personalizadas (más allá de las HTTP estándar)

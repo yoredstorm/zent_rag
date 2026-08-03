@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 

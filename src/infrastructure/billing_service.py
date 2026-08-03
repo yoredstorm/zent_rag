@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from src.config import get_settings
 from src.domain.entities import (
-    ApiToken,
     BillingContext,
     Plan,
     Subscription,

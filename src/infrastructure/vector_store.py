@@ -13,7 +13,8 @@ from typing import TypeVar
 from uuid import UUID
 
 import httpx
-from qdrant_client import AsyncQdrantClient, models as qdrant_models
+from qdrant_client import AsyncQdrantClient
+from qdrant_client import models as qdrant_models
 
 from src.config import get_settings
 from src.domain.entities import RetrievalChunk, RetrievalContext

@@ -16,7 +16,6 @@ from src.domain.ports import (
     CacheProvider,
     EmbeddingProvider,
     LLMProvider,
-    RAGQueryStore,
     TenantRepository,
     UserRepository,
     VectorStore,

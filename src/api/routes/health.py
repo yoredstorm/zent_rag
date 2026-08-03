@@ -3,16 +3,16 @@
 # =============================================================================
 from __future__ import annotations
 
-from fastapi import APIRouter, status as http_status
-
+from fastapi import APIRouter
+from fastapi import status as http_status
 from sqlalchemy import text
 
 from src.config import get_settings
 from src.domain.models import HealthResponse
+from src.infrastructure.cache import _get_redis
 from src.infrastructure.logging_config import get_logger
 from src.infrastructure.relational_db import get_async_session
 from src.infrastructure.vector_store import _get_client as _get_qdrant_client
-from src.infrastructure.cache import _get_redis
 
 logger = get_logger(__name__)
 

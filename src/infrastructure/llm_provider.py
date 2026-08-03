@@ -13,6 +13,7 @@ import litellm
 from litellm import acompletion, aembedding
 from litellm.types.utils import ModelResponse
 
+from src.api.metrics import rag_embeddings_latency
 from src.config import get_settings
 from src.domain.entities import LLMResponse
 from src.domain.ports import EmbeddingProvider, LLMProvider
@@ -21,7 +22,6 @@ from src.infrastructure.circuit_breaker import (
     CircuitBreakerOpenError,
 )
 from src.infrastructure.logging_config import get_logger
-from src.api.metrics import rag_embeddings_latency
 
 logger = get_logger(__name__)
 
