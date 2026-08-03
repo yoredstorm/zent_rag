@@ -60,9 +60,10 @@ async def _retry_on_transient_error(
     raise last_exc  # type: ignore[misc]
 
 # -----------------------------------------------------------------------------
-# Cliente Singleton
+# Cliente Singleton, per-event-loop
 # -----------------------------------------------------------------------------
 _qdrant_client: AsyncQdrantClient | None = None
+_qdrant_loop_id: int | None = None
 
 
 def _get_collection_name(tenant_id: UUID) -> str:
@@ -71,9 +72,19 @@ def _get_collection_name(tenant_id: UUID) -> str:
 
 
 async def _get_client() -> AsyncQdrantClient:
-    """Retorna singleton del cliente asíncrono Qdrant."""
-    global _qdrant_client
-    if _qdrant_client is None:
+    """Retorna singleton del cliente asíncrono Qdrant.
+
+    Re-crea si el event loop cambia (tests con ASGITransport).
+    """
+    global _qdrant_client, _qdrant_loop_id
+    import asyncio as _asyncio
+    current_loop_id = id(_asyncio.get_running_loop())
+    if _qdrant_client is None or _qdrant_loop_id != current_loop_id:
+        if _qdrant_client is not None:
+            try:
+                await _qdrant_client.close()
+            except Exception:
+                pass
         settings = get_settings()
         raw_key = settings.QDRANT_API_KEY.get_secret_value() if settings.QDRANT_API_KEY else ""
         api_key = raw_key if raw_key else None
@@ -82,9 +93,10 @@ async def _get_client() -> AsyncQdrantClient:
             port=settings.QDRANT_PORT,
             api_key=api_key,
             grpc_port=settings.QDRANT_GRPC_PORT,
-            prefer_grpc=False,  # REST para MVP (más fácil de depurar)
+            prefer_grpc=False,
             timeout=float(settings.QDRANT_TIMEOUT_SECONDS),
         )
+        _qdrant_loop_id = current_loop_id
     return _qdrant_client
 
 
@@ -219,7 +231,8 @@ class QdrantVectorStore(VectorStore):
 
 async def close_qdrant_connection() -> None:
     """Cierra la conexión con Qdrant."""
-    global _qdrant_client
+    global _qdrant_client, _qdrant_loop_id
     if _qdrant_client:
         await _qdrant_client.close()
         _qdrant_client = None
+        _qdrant_loop_id = None

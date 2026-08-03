@@ -19,15 +19,26 @@ from src.infrastructure.logging_config import get_logger
 logger = get_logger(__name__)
 
 # -----------------------------------------------------------------------------
-# Conexión Singleton
+# Conexión Singleton, per-event-loop
 # -----------------------------------------------------------------------------
 _redis: aioredis.Redis | None = None
+_redis_loop_id: int | None = None
 
 
 async def _get_redis() -> aioredis.Redis:
-    """Retorna el singleton del cliente Redis asíncrono."""
-    global _redis
-    if _redis is None:
+    """Retorna el singleton del cliente Redis asíncrono.
+
+    Re-crea si el event loop cambia (tests con ASGITransport).
+    """
+    global _redis, _redis_loop_id
+    import asyncio as _asyncio
+    current_loop_id = id(_asyncio.get_running_loop())
+    if _redis is None or _redis_loop_id != current_loop_id:
+        if _redis is not None:
+            try:
+                await _redis.close()
+            except Exception:
+                pass
         settings = get_settings()
         _redis = aioredis.from_url(
             settings.REDIS_URL,
@@ -39,16 +50,18 @@ async def _get_redis() -> aioredis.Redis:
             retry_on_timeout=True,
         )
         await _redis.ping()
+        _redis_loop_id = current_loop_id
         logger.info("Redis connection established")
     return _redis
 
 
 async def close_redis_connection() -> None:
     """Cierra la conexión con Redis."""
-    global _redis
+    global _redis, _redis_loop_id
     if _redis:
         await _redis.close()
         _redis = None
+        _redis_loop_id = None
 
 
 class RedisCache(CacheProvider):
