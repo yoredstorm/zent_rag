@@ -124,6 +124,7 @@ class RAGQueryResult:
     total_latency_ms: float = 0.0
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     error_message: str | None = None
+    method: str = "rag"  # "sql" when SQL-first mode, "rag" when vector-only
 
 
 # -----------------------------------------------------------------------------

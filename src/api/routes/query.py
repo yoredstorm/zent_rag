@@ -233,4 +233,5 @@ async def rag_query(
             "total_tokens": result.llm_response.total_tokens if result.llm_response else 0,
         },
         latency_ms=result.total_latency_ms,
+        method=result.method,
     )
