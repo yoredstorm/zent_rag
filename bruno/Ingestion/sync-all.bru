@@ -1,5 +1,5 @@
 meta {
-  name: Sync All Tables
+  name: Sync All
   type: http
   seq: 2
 }
@@ -7,7 +7,7 @@ meta {
 post {
   url: {{base_url}}/api/v1/ingestion/sync
   body: none
-  auth: none
+  auth: bearer
 }
 
 headers {
@@ -15,6 +15,6 @@ headers {
   X-Tenant-Id: {{tenant_id}}
 }
 
-params {
-  full_refresh: false
+auth:bearer {
+  token: rag_live_dd2adc745cfd75a670a85febb64f5956f6b5507c0fc0912c
 }

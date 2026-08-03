@@ -96,7 +96,7 @@ async def list_sources(
 )
 async def sync_all(
     full_refresh: bool = False,
-    background: bool = Query(default=False, description="Ejecutar en background (cola Redis)"),
+    background: bool = Query(default=True, description="Siempre en background para streaming de progreso"),
     x_tenant_id: str = Header(..., alias="X-Tenant-Id"),
     ingestion: PostgresIngestionService = Depends(get_ingestion_service),
 ):
@@ -105,61 +105,47 @@ async def sync_all(
     except ValueError:
         raise HTTPException(400, "X-Tenant-Id debe ser un UUID válido")
 
-    if background:
-        job_id = await enqueue_sync(tenant_id, None, None, full_refresh)
-        return {
-            "job_id": job_id,
-            "status": "pending",
-            "message": "Ingestion job enqueued for background processing",
-        }
-
-    # Modo sync: crear un job para tracking de progreso en tiempo real
     from uuid import uuid4
 
     from src.infrastructure.ingestion_queue import update_job_status
+
     job_id = uuid4().hex
     await update_job_status(job_id, "running", progress=0)
 
     logger.info(
-        "Starting full ingestion sync",
+        "Starting ingestion sync",
         tenant_id=str(tenant_id),
         full_refresh=full_refresh,
         job_id=job_id,
     )
 
-    result: IngestionResult = await ingestion.sync_all(tenant_id, full_refresh, job_id=job_id)
+    # Ejecutar en background task para no bloquear la respuesta HTTP
+    async def _run_sync():
+        try:
+            result: IngestionResult = await ingestion.sync_all(tenant_id, full_refresh, job_id=job_id)
+            if not result.success:
+                await update_job_status(job_id, "failed", progress=100,
+                    result_summary={"errors": result.errors},
+                    error="; ".join(result.errors[:5]))
+            else:
+                await update_job_status(
+                    job_id, "completed", progress=100,
+                    result_summary={
+                        "tables_processed": result.tables_processed,
+                        "rows_indexed": result.rows_indexed,
+                        "vectors_upserted": result.vectors_upserted,
+                        "duration_ms": result.duration_ms,
+                    },
+                )
+        except Exception as exc:
+            await update_job_status(job_id, "failed", progress=100, error=str(exc))
 
-    if not result.success:
-        await update_job_status(job_id, "failed", progress=100)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={
-                "message": "Ingestion completed with errors",
-                "errors": result.errors,
-                **result.__dict__,
-            },
-        )
-
-    await update_job_status(
-        job_id, "completed", progress=100,
-        result_summary={
-            "tables_processed": result.tables_processed,
-            "rows_indexed": result.rows_indexed,
-            "vectors_upserted": result.vectors_upserted,
-            "duration_ms": result.duration_ms,
-            "errors": result.errors,
-        },
-    )
+    asyncio.create_task(_run_sync())
 
     return {
         "job_id": job_id,
-        "status": "completed",
-        "tenant_id": str(result.tenant_id),
-        "tables_processed": result.tables_processed,
-        "rows_indexed": result.rows_indexed,
-        "vectors_upserted": result.vectors_upserted,
-        "duration_ms": result.duration_ms,
-        "errors": result.errors,
+        "status": "running",
+        "message": "Ingestion started. Stream progress at GET /jobs/{job_id}/stream",
     }
 
 

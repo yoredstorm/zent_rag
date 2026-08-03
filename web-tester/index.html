@@ -547,15 +547,16 @@ async function syncAll(full=false){
   const progEta=document.getElementById('syncProgressEta');
   spin.style.display='inline-block';
   progDiv.style.display='block';
-  progBar.style.width='0%'; progText.textContent='0%'; progEta.textContent='';
+  progBar.style.width='0%'; progText.textContent='Iniciando...'; progEta.textContent='';
 
   let startTime=Date.now();
   try{
+    // Enviar POST — devuelve job_id inmediatamente
     const r=await api('POST','/api/v1/ingestion/sync?full_refresh='+full);
     const jobId=r.data?.job_id;
-    if(!jobId) throw new Error('No job_id in response');
+    if(!jobId) throw new Error('No job_id returned: '+JSON.stringify(r.data));
 
-    // Start SSE stream for progress
+    // Conectar SSE para streaming de progreso
     const evt=new EventSource(API_BASE+'/api/v1/ingestion/jobs/'+jobId+'/stream');
     evt.onmessage=function(e){
       try{
@@ -568,25 +569,21 @@ async function syncAll(full=false){
           const eta=Math.round(elapsed/pct*(100-pct));
           progEta.textContent=eta>0?'~'+formatSeconds(eta)+' restante':'';
         }
-        if(d.status==='completed'||d.status==='failed'){
-          evt.close();
-          spin.style.display='none';
-          if(d.status==='completed') progText.textContent='100% Completado';
-          else progText.textContent='Error';
+        if(d.status==='completed'){
+          evt.close(); spin.style.display='none';
+          progText.textContent='100% Completado';
+          loadSources();
+          setTimeout(()=>{progDiv.style.display='none';},5000);
+        }else if(d.status==='failed'){
+          evt.close(); spin.style.display='none';
+          progText.textContent='Error';
         }
       }catch(ex){}
     };
     evt.onerror=function(){evt.close(); spin.style.display='none';};
-
-    // Also wait for the POST to complete for final summary
-    const summary=await r.response;
-    alert('Sync: '+summary.tables_processed+' tablas, '+summary.rows_indexed+' filas, '+summary.vectors_upserted+' vectores en '+summary.duration_ms+'ms');
-    loadSources();
   }catch(ex){
     alert('Sync failed: '+ex);
-  }finally{
     spin.style.display='none';
-    setTimeout(()=>{progDiv.style.display='none';},3000);
   }
 }
 function formatSeconds(s){const m=Math.floor(s/60);const sec=s%60;return m>0?m+'m '+sec+'s':sec+'s';}
