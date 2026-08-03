@@ -25,7 +25,7 @@ _FORBIDDEN_KEYWORDS = re.compile(
 )
 
 
-_READ_ONLY_STATEMENTS = {"select", "explain", "show", "describe"}
+_READ_ONLY_STATEMENTS = {"select"}
 
 
 def _validate_sql_ast(sql: str) -> None:
@@ -49,7 +49,7 @@ def _validate_sql_ast(sql: str) -> None:
         stmt_type = stmt.key.lower() if stmt.key else "unknown"
         if stmt_type not in _READ_ONLY_STATEMENTS:
             raise SqlValidationError(
-                f"Only read-only statements allowed, found: {stmt_type}", sql
+                f"Only SELECT statements allowed, found: {stmt_type}", sql
             )
 
         _check_ctes(stmt, sql)

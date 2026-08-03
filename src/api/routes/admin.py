@@ -449,12 +449,27 @@ async def execute_sql(request: Request):
         raise HTTPException(400, "Query requerida")
 
     # Validar con sqlglot AST — bloquea CTE bypass (WITH x AS DELETE...)
+    # EXPLAIN y SHOW los parsea sqlglot como "command" genérico — los tratamos aparte
     from src.infrastructure.sql_expert import SqlValidationError
 
-    try:
-        _validate_sql_ast(query)
-    except SqlValidationError as exc:
-        raise HTTPException(403, str(exc))
+    _explain_match = re.match(r"^\s*EXPLAIN\b(.+)$", query, re.IGNORECASE)
+    _show_match = re.match(r"^\s*SHOW\b", query, re.IGNORECASE)
+
+    if _show_match:
+        pass  # SHOW es siempre de solo lectura en PostgreSQL
+    elif _explain_match:
+        inner = _explain_match.group(1).strip()
+        if not inner:
+            raise HTTPException(400, "EXPLAIN requiere una query interna")
+        try:
+            _validate_sql_ast(inner)
+        except SqlValidationError as exc:
+            raise HTTPException(403, f"Invalid SQL inside EXPLAIN: {exc}")
+    else:
+        try:
+            _validate_sql_ast(query)
+        except SqlValidationError as exc:
+            raise HTTPException(403, str(exc))
 
     session = await get_async_session()
     try:
