@@ -61,7 +61,7 @@ jobs:
           RAG_QDRANT_HOST: localhost
           RAG_QDRANT_PORT: "6333"
           RAG_BILLING_ENABLED: "false"
-          RAG_ENVIRONMENT: ci
+          RAG_ENVIRONMENT: development
 
   build:
     runs-on: ubuntu-latest
