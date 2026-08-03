@@ -328,11 +328,14 @@ class PostgresIngestionService(IngestionService):
         ]
 
     async def sync_all(
-        self, tenant_id: UUID, full_refresh: bool = False
+        self, tenant_id: UUID, full_refresh: bool = False, job_id: str | None = None
     ) -> IngestionResult:
         """Sincroniza todas las tablas automáticamente."""
         start = time.perf_counter()
         sources = await self.discover_sources(tenant_id)
+        active_sources = [s for s in sources if s.row_count > 0]
+        total_tables = len(active_sources)
+
         result = IngestionResult(
             tenant_id=tenant_id,
             tables_processed=0,
@@ -343,14 +346,17 @@ class PostgresIngestionService(IngestionService):
         if full_refresh:
             await self._vector_store.delete_by_tenant(tenant_id)
 
-        for source in sources:
-            if source.row_count == 0:
-                continue
+        for i, source in enumerate(active_sources):
             table_result = await self._ingest_table(tenant_id, source)
             result.tables_processed += 1
             result.rows_indexed += table_result.rows_indexed
             result.vectors_upserted += table_result.vectors_upserted
             result.errors.extend(table_result.errors)
+
+            if job_id and total_tables > 0:
+                from src.infrastructure.ingestion_queue import update_job_status
+                percent = min(int((i + 1) / total_tables * 100), 100)
+                await update_job_status(job_id, "running", progress=percent)
 
         result.duration_ms = round((time.perf_counter() - start) * 1000, 2)
 

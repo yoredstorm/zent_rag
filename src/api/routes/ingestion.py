@@ -9,9 +9,12 @@
 # =============================================================================
 from __future__ import annotations
 
+import asyncio
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 
 from src.api.deps import get_cache_provider, get_embedding_provider, get_vector_store
 from src.domain.ports import CacheProvider, EmbeddingProvider, VectorStore
@@ -110,15 +113,24 @@ async def sync_all(
             "message": "Ingestion job enqueued for background processing",
         }
 
+    # Modo sync: crear un job para tracking de progreso en tiempo real
+    from uuid import uuid4
+
+    from src.infrastructure.ingestion_queue import update_job_status
+    job_id = uuid4().hex
+    await update_job_status(job_id, "running", progress=0)
+
     logger.info(
         "Starting full ingestion sync",
         tenant_id=str(tenant_id),
         full_refresh=full_refresh,
+        job_id=job_id,
     )
 
-    result: IngestionResult = await ingestion.sync_all(tenant_id, full_refresh)
+    result: IngestionResult = await ingestion.sync_all(tenant_id, full_refresh, job_id=job_id)
 
     if not result.success:
+        await update_job_status(job_id, "failed", progress=100)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={
@@ -128,7 +140,19 @@ async def sync_all(
             },
         )
 
+    await update_job_status(
+        job_id, "completed", progress=100,
+        result_summary={
+            "tables_processed": result.tables_processed,
+            "rows_indexed": result.rows_indexed,
+            "vectors_upserted": result.vectors_upserted,
+            "duration_ms": result.duration_ms,
+            "errors": result.errors,
+        },
+    )
+
     return {
+        "job_id": job_id,
         "status": "completed",
         "tenant_id": str(result.tenant_id),
         "tables_processed": result.tables_processed,
@@ -198,3 +222,48 @@ async def get_job(job_id: str):
 async def list_jobs(limit: int = Query(default=50, ge=1, le=100)):
     jobs = await list_recent_jobs(limit)
     return {"jobs": jobs, "count": len(jobs)}
+
+
+@router.get(
+    "/jobs/{job_id}/stream",
+    summary="Stream del progreso de ingesta (SSE)",
+    description="Server-Sent Events que emite el progreso en tiempo real de un job de ingesta.",
+)
+async def stream_job_progress(
+    job_id: str,
+    interval_ms: int = Query(default=1000, ge=500, le=5000, description="Intervalo entre actualizaciones"),
+):
+    async def event_stream():
+        last_progress = -1
+        consecutive_same = 0
+        while True:
+            job = await get_job_status(job_id)
+            if job is None:
+                yield f"event: error\ndata: {json.dumps({'error': 'Job not found'})}\n\n"
+                return
+
+            current_progress = job.get("progress", 0)
+            status = job.get("status", "unknown")
+
+            yield f"data: {json.dumps({'progress': current_progress, 'status': status})}\n\n"
+
+            if status in ("completed", "failed"):
+                return
+
+            if current_progress == last_progress:
+                consecutive_same += 1
+            else:
+                consecutive_same = 0
+                last_progress = current_progress
+
+            await asyncio.sleep(interval_ms / 1000.0)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

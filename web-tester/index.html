@@ -169,6 +169,15 @@ pre { background: #0d1117; border: 1px solid var(--border); border-radius: var(-
     <button class="secondary" onclick="syncAll(true)">Full Refresh</button>
     <span id="syncSpinner" style="display:none;" class="spinner"></span>
   </div>
+  <div id="syncProgress" style="display:none; margin:8px 0;">
+    <div style="background:var(--surface); border-radius:8px; height:20px; overflow:hidden;">
+      <div id="syncProgressBar" style="background:var(--green); height:100%; width:0%; transition:width 0.3s;"></div>
+    </div>
+    <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--muted); margin-top:4px;">
+      <span id="syncProgressText">0%</span>
+      <span id="syncProgressEta"></span>
+    </div>
+  </div>
   <div id="sourcesResult"></div>
   <h3 style="margin-top:16px;">Sync tabla especifica</h3>
   <div class="form-row">
@@ -531,13 +540,56 @@ async function loadSources(){
   document.getElementById('sourcesResult').innerHTML=h;
 }
 async function syncAll(full=false){
-  const spin=document.getElementById('syncSpinner');spin.style.display='inline-block';
+  const spin=document.getElementById('syncSpinner');
+  const progDiv=document.getElementById('syncProgress');
+  const progBar=document.getElementById('syncProgressBar');
+  const progText=document.getElementById('syncProgressText');
+  const progEta=document.getElementById('syncProgressEta');
+  spin.style.display='inline-block';
+  progDiv.style.display='block';
+  progBar.style.width='0%'; progText.textContent='0%'; progEta.textContent='';
+
+  let startTime=Date.now();
   try{
     const r=await api('POST','/api/v1/ingestion/sync?full_refresh='+full);
-    alert('Sync: '+r.data?.tables_processed+' tablas, '+r.data?.rows_indexed+' filas, '+r.data?.vectors_upserted+' vectores en '+r.data?.duration_ms+'ms');
+    const jobId=r.data?.job_id;
+    if(!jobId) throw new Error('No job_id in response');
+
+    // Start SSE stream for progress
+    const evt=new EventSource(API_BASE+'/api/v1/ingestion/jobs/'+jobId+'/stream');
+    evt.onmessage=function(e){
+      try{
+        const d=JSON.parse(e.data);
+        const pct=d.progress||0;
+        progBar.style.width=pct+'%';
+        progText.textContent=pct+'%';
+        if(pct>0){
+          const elapsed=(Date.now()-startTime)/1000;
+          const eta=Math.round(elapsed/pct*(100-pct));
+          progEta.textContent=eta>0?'~'+formatSeconds(eta)+' restante':'';
+        }
+        if(d.status==='completed'||d.status==='failed'){
+          evt.close();
+          spin.style.display='none';
+          if(d.status==='completed') progText.textContent='100% Completado';
+          else progText.textContent='Error';
+        }
+      }catch(ex){}
+    };
+    evt.onerror=function(){evt.close(); spin.style.display='none';};
+
+    // Also wait for the POST to complete for final summary
+    const summary=await r.response;
+    alert('Sync: '+summary.tables_processed+' tablas, '+summary.rows_indexed+' filas, '+summary.vectors_upserted+' vectores en '+summary.duration_ms+'ms');
     loadSources();
-  }finally{spin.style.display='none';}
+  }catch(ex){
+    alert('Sync failed: '+ex);
+  }finally{
+    spin.style.display='none';
+    setTimeout(()=>{progDiv.style.display='none';},3000);
+  }
 }
+function formatSeconds(s){const m=Math.floor(s/60);const sec=s%60;return m>0?m+'m '+sec+'s':sec+'s';}
 async function syncTable(schema,table){
   if(!schema) schema=document.getElementById('syncSchema').value;
   if(!table) table=document.getElementById('syncTable').value;
