@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from uuid import UUID
 
+import sqlglot
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,13 +26,7 @@ _FORBIDDEN_KEYWORDS = re.compile(
 
 
 def _validate_sql_ast(sql: str) -> None:
-    """Valida que el SQL sea solo SELECT usando sqlglot AST.
-
-    Bloquea ataques por CTE como:
-        WITH x AS (DELETE FROM ventas RETURNING *) SELECT * FROM x
-    que pasan un check ingenuo de primera palabra.
-    """
-    import sqlglot
+    """Valida que el SQL sea solo SELECT usando sqlglot AST."""
     from sqlglot.errors import ParseError as SqlglotParseError
 
     try:
