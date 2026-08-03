@@ -23,24 +23,73 @@ _FORBIDDEN_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
-_SQL_GENERATION_PROMPT = """You are a PostgreSQL SQL expert. Given a database schema and a user question, generate a valid, safe SQL query.
 
-Rules — violation will be rejected:
-1. ONLY SELECT statements. Never INSERT, UPDATE, DELETE, DROP, etc.
-2. Use ONLY tables and columns listed in the schema. Do not invent names.
-3. Use explicit JOINs based on foreign keys documented below.
-4. For text search in strings, use ILIKE or LOWER(col) = LOWER('value').
-5. Always add LIMIT 50 if the query has no LIMIT and could return multiple rows.
-6. Never include user input directly as a column or table name.
-7. Return ONLY the SQL statement. No markdown, no explanation, no prefix.
-8. If you CANNOT answer with the available schema, respond with exactly: NO_QUERY
+def _format_sql_result(result: SqlQueryResult, question: str) -> str:
+    """Formatea resultados SQL para presentación al LLM."""
+    if not result.rows:
+        return "No results found."
+    header = " | ".join(result.columns)
+    rows_text = "\n".join(
+        " | ".join(row) for row in result.rows[:50]
+    )
+    return f"Question: {question}\nColumns: {header}\nRows ({result.row_count} total):\n{rows_text}"
 
-Available schema:
+
+_SQL_GENERATION_PROMPT = """You are a PostgreSQL SQL expert. Generate a valid, safe SQL query from the schema and question below.
+
+## TABLE & COLUMN INVENTORY (every table with every column)
 {schema}
 
-User question: {question}
+## FOREIGN KEY CHAINS (how tables connect — use these to build JOINs)
+{fk_chains}
 
-SQL:"""
+## QUESTION
+{question}
+
+## HOW TO REASON
+1. Identify which table(s) contain the data the user is asking about.
+2. If the answer requires data from multiple tables, FOLLOW THE FK CHAINS above.
+   Example: "sales by category" → sales.product_id → products.id → products.category_id → categories.id
+3. NEVER guess table or column names — only use what's listed in the inventory.
+4. For aggregations (total, sum, count, average) use GROUP BY on the entity name.
+5. For "last / most recent / latest" use ORDER BY date_column DESC LIMIT 1.
+6. For date ranges use >= and <= (not BETWEEN with timestamps).
+7. For text search use ILIKE '%term%' or LOWER(col) = LOWER('term').
+8. If no LIMIT present and the query could return many rows, add LIMIT 50.
+9. ONLY SELECT. Never INSERT, UPDATE, DELETE, DROP, CREATE, ALTER, TRUNCATE.
+
+## OUTPUT FORMAT
+Return ONLY the SQL statement. No markdown, no explanation, no backticks, no prefix.
+If the question CANNOT be answered with this schema, respond with exactly: NO_QUERY
+
+## SQL:"""
+
+
+_DETERMINISTIC_FORMAT_PROMPT = """You are formatting database query results into a natural language answer.
+
+## ORIGINAL QUESTION
+{question}
+
+## SQL EXECUTED
+{sql}
+
+## QUERY RESULTS (THIS IS THE ONLY SOURCE OF TRUTH)
+{results}
+
+## ADDITIONAL CONTEXT (for supplementary details like product descriptions)
+{context}
+
+## CRITICAL RULES
+1. The query results above ARE the answer. Format them, don't invent.
+2. NEVER add data, numbers, dates, or facts not present in the results.
+3. If results are empty (0 rows), say exactly: "No se encontraron resultados para tu consulta."
+4. Format numbers: use thousand separators and currency symbols from context.
+5. Respond in the same language as the question.
+6. Use the additional context ONLY for supplementary descriptions (what a product is, policies, etc.).
+   Never use context to override or supplement the hard data from query results.
+7. Be concise. If the results are a single row, state it directly.
+
+## ANSWER:"""
 
 
 class PostgresSqlExpert(SqlExpert):
@@ -138,10 +187,10 @@ class PostgresSqlExpert(SqlExpert):
             for row in rows.fetchall()
         ]
 
-    def _build_schema_context(self, sources: list[DataSource], role: str) -> str:
-        """Construye un resumen del schema para el LLM."""
+    def _build_schema_context(self, sources: list[DataSource], role: str) -> dict[str, str]:
+        """Construye el inventario de tablas y cadenas FK para el LLM."""
         lines: list[str] = []
-        fk_lines: list[str] = []
+        fk_pairs: list[tuple[str, str, str, str, str]] = []  # (from_table, from_col, to_table, to_col, from_full)
 
         for s in sources:
             cols = []
@@ -150,31 +199,92 @@ class PostgresSqlExpert(SqlExpert):
                 if c.is_primary_key:
                     parts.append("PK")
                 if c.is_foreign_key:
-                    parts.append(f"FK→{c.fk_table}.{c.fk_column}")
-                    fk_lines.append(
-                        f"  {s.schema_name}.{s.table_name}.{c.name}"
-                        f" → {c.fk_table}.{c.fk_column}"
-                    )
+                    parts.append("FK")
+                    fk_pairs.append((
+                        f"{s.schema_name}.{s.table_name}",
+                        c.name,
+                        c.fk_table or "?",
+                        c.fk_column or "?",
+                        f"{s.schema_name}.{s.table_name}.{c.name}",
+                    ))
                 cols.append(" ".join(parts))
             is_view_mark = " [VIEW]" if s.is_view else ""
             lines.append(
-                f"Table: {s.schema_name}.{s.table_name}{is_view_mark}"
-                f"  ({s.row_count} rows)"
-                f"\n  Columns: {', '.join(cols)}"
+                f"{s.schema_name}.{s.table_name}{is_view_mark}"
+                f" ({s.row_count} rows)"
+                f"\n  {', '.join(cols)}"
             )
 
-        if role == "customer" and fk_lines:
+        schema_inventory = "\n\n".join(lines)
+
+        # Build FK chain visualization
+        fk_chain_lines: list[str] = []
+        if fk_pairs:
+            # Group by target table to show chains
+            for from_tbl, from_col, to_tbl, to_col, from_full in fk_pairs:
+                fk_chain_lines.append(
+                    f"  {from_full} → {to_tbl}.{to_col}"
+                )
+            # Add multi-hop examples if we have chains
+            chains = self._find_fk_chains(fk_pairs)
+            if chains:
+                fk_chain_lines.append("\n  Multi-hop chains available:")
+                for chain in chains:
+                    fk_chain_lines.append(f"    {' → '.join(chain)}")
+
+        fk_chains_text = "\n".join(fk_chain_lines) if fk_chain_lines else "  (no foreign keys detected)"
+
+        if role == "customer":
             lines.append("\nIMPORTANT: You are answering for a customer.")
-            lines.append(
-                "Do NOT use GROUP BY, SUM(), COUNT(), AVG() for"
-                " aggregations across all rows."
-            )
+            lines.append("Do NOT use GROUP BY, SUM(), COUNT(), AVG() for aggregations across all rows.")
             lines.append("Only return this customer's own data.")
 
-        if fk_lines:
-            lines.insert(0, "Foreign Keys:\n" + "\n".join(fk_lines) + "\n")
+        return {
+            "schema": schema_inventory,
+            "fk_chains": fk_chains_text,
+            "role_block": "",
+        }
 
-        return "\n".join(lines)
+    def _find_fk_chains(self, fk_pairs: list[tuple]) -> list[list[str]]:
+        """Find multi-hop FK chains: sales → products → categories."""
+        chains: list[list[str]] = []
+        # Build a graph: from_table → [(to_table, edge_label)]
+        graph: dict[str, list[tuple[str, str]]] = {}
+        seen_edges = set()
+        for from_tbl, _from_col, to_tbl, _to_col, edge_label in fk_pairs:
+            key = (from_tbl, to_tbl)
+            if key not in seen_edges:
+                seen_edges.add(key)
+                graph.setdefault(from_tbl, []).append((to_tbl, edge_label or f"{from_tbl}→{to_tbl}"))
+
+        # Find chains of depth 2+
+        for start_node in list(graph.keys()):
+            visited: set[str] = set()
+            path: list[str] = [start_node]
+            self._dfs_chains(graph, start_node, path, visited, chains)
+
+        return chains[:5]  # Max 5 chains to avoid prompt bloat
+
+    def _dfs_chains(
+        self,
+        graph: dict[str, list[tuple[str, str]]],
+        current: str,
+        path: list[str],
+        visited: set[str],
+        chains: list[list[str]],
+        depth: int = 2,
+    ) -> None:
+        if len(path) >= 3 and depth >= 2:
+            chains.append(list(path))
+        if current not in graph:
+            return
+        for next_node, _edge_label in graph[current]:
+            if next_node not in path and next_node not in visited:
+                visited.add(next_node)
+                path.append(next_node)
+                self._dfs_chains(graph, next_node, path, visited, chains, depth + 1)
+                path.pop()
+                visited.discard(next_node)
 
     async def execute(
         self,
@@ -186,7 +296,9 @@ class PostgresSqlExpert(SqlExpert):
         schema_ctx = self._build_schema_context(sources, role)
 
         prompt = _SQL_GENERATION_PROMPT.format(
-            schema=schema_ctx, question=question,
+            schema=schema_ctx["schema"],
+            fk_chains=schema_ctx["fk_chains"],
+            question=question,
         )
 
         try:
@@ -211,6 +323,39 @@ class PostgresSqlExpert(SqlExpert):
             return SqlQueryResult(sql=sql, error=str(exc))
 
         return await self._run_query(sql)
+
+    async def format_results(
+        self,
+        question: str,
+        sql: str,
+        sql_result: SqlQueryResult,
+        context_snippets: str = "",
+    ) -> str:
+        """Formatea resultados SQL en lenguaje natural usando el LLM (modo determinista)."""
+        if sql_result.error:
+            return f"No se pudo ejecutar la consulta: {sql_result.error}"
+
+        if sql_result.row_count == 0:
+            return "No se encontraron resultados para tu consulta."
+
+        formatted = _format_sql_result(sql_result, question)
+        prompt = _DETERMINISTIC_FORMAT_PROMPT.format(
+            question=question,
+            sql=sql,
+            results=formatted,
+            context=context_snippets or "(no additional context available)",
+        )
+
+        try:
+            llm_response = await self._llm.generate(
+                prompt=prompt,
+                max_tokens=1024,
+                temperature=0.1,
+            )
+            return llm_response.content
+        except Exception as exc:
+            logger.error("SQL result formatting failed", error=str(exc))
+            return formatted
 
     def _clean_sql(self, sql: str) -> str:
         sql = sql.strip().rstrip(";")

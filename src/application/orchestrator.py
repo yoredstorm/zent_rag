@@ -168,6 +168,7 @@ class RAGOrchestrator:
             # -----------------------------------------------------------------
             # Paso 2: Verificar caché de respuesta idéntica
             # -----------------------------------------------------------------
+            conv_key = f"rag:conv:{tenant_id.hex}:{conversation_id.hex}"
             cache_key = self._cache._hash_query(  # type: ignore[union-attr]
                 str(tenant_id), query, effective_model or "default"
             )
@@ -209,10 +210,6 @@ class RAGOrchestrator:
 
             # -----------------------------------------------------------------
             # Cargar historial de conversación antes del search
-            # Si es follow-up con cited chunks, reducimos top_k para
-            # que el LLM no se pierda entre cientos de docs irrelevantes.
-            # -----------------------------------------------------------------
-            conv_key = f"rag:conv:{tenant_id.hex}:{conversation_id.hex}"
             history = await self._cache.get_list(conv_key)
 
             is_followup = False
@@ -226,49 +223,61 @@ class RAGOrchestrator:
             effective_top_k = max(top_k // 3, 20) if is_followup else top_k
 
             # -----------------------------------------------------------------
-            # Paso 4: Búsqueda semántica en Qdrant (doble pasada)
+            # Paso 4: Ejecutar vector search + SQL Expert EN PARALELO
             # -----------------------------------------------------------------
-            agg_context = await self._vector_store.search(
-                tenant_id=tenant_id,
-                query_embedding=list(query_embedding),  # type: ignore[arg-type]
-                top_k=top_k,  # todos los docs agregados
-                filters={"metadata.doc_type": "aggregated"},
-                score_threshold=0.0,
-                role=role,
-            )
-            agg_ids = {chunk.document_id for chunk in agg_context.chunks}
+            import asyncio as _asyncio
 
-            remaining = max(effective_top_k - len(agg_context.chunks), 0)
-            indiv_context = await self._vector_store.search(
-                tenant_id=tenant_id,
-                query_embedding=list(query_embedding),  # type: ignore[arg-type]
-                top_k=remaining,
-                score_threshold=self._score_threshold,
-                role=role,
-            )
+            async def _vector_search_full() -> RetrievalContext:
+                agg_ctx = await self._vector_store.search(
+                    tenant_id=tenant_id,
+                    query_embedding=list(query_embedding),  # type: ignore[arg-type]
+                    top_k=top_k,
+                    filters={"metadata.doc_type": "aggregated"},
+                    score_threshold=0.0,
+                    role=role,
+                )
+                agg_ids_set = {chunk.document_id for chunk in agg_ctx.chunks}
+                remaining = max(effective_top_k - len(agg_ctx.chunks), 0)
+                ind_ctx = await self._vector_store.search(
+                    tenant_id=tenant_id,
+                    query_embedding=list(query_embedding),  # type: ignore[arg-type]
+                    top_k=remaining,
+                    score_threshold=self._score_threshold,
+                    role=role,
+                )
+                merged = list(agg_ctx.chunks)
+                seen = set(agg_ids_set)
+                for ch in ind_ctx.chunks:
+                    if ch.document_id not in seen:
+                        merged.append(ch)
+                        seen.add(ch.document_id)
+                return RetrievalContext(
+                    chunks=merged,
+                    query_embedding=agg_ctx.query_embedding,
+                    retrieval_latency_ms=agg_ctx.retrieval_latency_ms + ind_ctx.retrieval_latency_ms,
+                )
 
-            merged_chunks = list(agg_context.chunks)
-            seen_ids = set(agg_ids)
-            for chunk in indiv_context.chunks:
-                if chunk.document_id not in seen_ids:
-                    merged_chunks.append(chunk)
-                    seen_ids.add(chunk.document_id)
+            if self._sql_expert:
+                try:
+                    retrieval_context, sql_result = await _asyncio.gather(
+                        _vector_search_full(),
+                        self._sql_expert.execute(tenant_id=tenant_id, question=query, role=role),
+                    )
+                except Exception as _sql_err:
+                    logger.warning("SQL Expert failed in parallel, falling back to vector-only", error=str(_sql_err))
+                    retrieval_context = await _vector_search_full()
+                    sql_result = None
+            else:
+                retrieval_context = await _vector_search_full()
+                sql_result = None
 
-            retrieval_context = RetrievalContext(
-                chunks=merged_chunks,
-                query_embedding=agg_context.query_embedding,
-                retrieval_latency_ms=(
-                    agg_context.retrieval_latency_ms
-                    + indiv_context.retrieval_latency_ms
-                ),
-            )
             result.retrieval_context = retrieval_context
             rag_vector_search_latency.labels(tenant_id=str(tenant_id)).observe(
                 retrieval_context.retrieval_latency_ms / 1000
             )
 
             # -----------------------------------------------------------------
-            # Paso 5: Ensamblar prompt con contexto e historial
+            # Paso 5: Ensamblar prompt — SQL-first si hay datos, o RAG estándar
             # -----------------------------------------------------------------
             history_section = ""
             cited_section = ""
@@ -297,7 +306,31 @@ class RAGOrchestrator:
                 for i, chunk in enumerate(retrieval_context.chunks)
             )
 
-            augmented_prompt = f"""{history_section}{cited_section}Context documents:
+            # --- Determinar modo: SQL-first vs RAG estándar ---
+            sql_has_data = (
+                sql_result is not None
+                and sql_result.row_count > 0
+                and not sql_result.error
+            )
+
+            if sql_has_data:
+                logger.info(
+                    "SQL-first mode: using deterministic SQL results",
+                    sql=sql_result.sql[:200],  # type: ignore[union-attr]
+                    rows=sql_result.row_count,  # type: ignore[union-attr]
+                )
+                formatted_sql = _format_sql_result(sql_result, query)  # type: ignore[arg-type]
+                augmented_prompt = f"""{history_section}Database query result — THIS IS THE ONLY SOURCE OF TRUTH:
+{formatted_sql}
+
+Supplementary context from documents (use for descriptions only, not hard data):
+{context_snippets}
+
+User question: {query}
+
+Format the database results above into a natural language answer:"""
+            else:
+                augmented_prompt = f"""{history_section}{cited_section}Context documents:
 {context_snippets}
 
 User question: {query}
@@ -315,18 +348,13 @@ Answer based on the context above:"""
                     "general product information."
                 )
 
-            # Resolución del system prompt:
-            # 1. override explícito (usado por /prompt/test)
-            # 2. prompt específico por rol (system_prompt_admin / system_prompt_customer)
-            # 3. prompt genérico (system_prompt)
-            # 4. default hardcodeado (RAG_SYSTEM_PROMPT)
+            # Resolución del system prompt
             if system_prompt_override:
                 system_prompt = system_prompt_override
             else:
                 tenant_config = tenant.config_json or {}
                 role_prompt_key = f"system_prompt_{role}"
                 role_instr_key = f"custom_instructions_{role}"
-
                 custom_prompt = (
                     tenant_config.get(role_prompt_key)
                     or tenant_config.get("system_prompt")
@@ -335,10 +363,8 @@ Answer based on the context above:"""
                     system_prompt = custom_prompt
                 else:
                     system_prompt = RAG_SYSTEM_PROMPT
-
                 if rbac_instruction:
                     system_prompt += rbac_instruction
-
                 custom_instructions = (
                     tenant_config.get(role_instr_key)
                     or tenant_config.get("custom_instructions")
@@ -347,15 +373,14 @@ Answer based on the context above:"""
                     system_prompt += "\n\n" + custom_instructions
 
             # -----------------------------------------------------------------
-            # Hard anti-hallucination check:
-            # If no chunks or all scores below meaningful threshold, don't call LLM
+            # Hard anti-hallucination: sin datos vectoriales ni SQL → respuesta genérica
             # -----------------------------------------------------------------
             MIN_MEANINGFUL_SCORE = 0.1
             meaningful = [
                 c for c in retrieval_context.chunks
                 if c.score >= MIN_MEANINGFUL_SCORE
             ]
-            if not retrieval_context.chunks or not meaningful:
+            if not sql_has_data and (not retrieval_context.chunks or not meaningful):
                 result.status = QueryStatus.COMPLETED
                 result.llm_response = LLMResponse(
                     content="No tengo suficiente información para responder esta pregunta. ¿Podrías reformularla o consultar sobre otro tema?",
@@ -388,7 +413,7 @@ Answer based on the context above:"""
             )
 
             # -----------------------------------------------------------------
-            # Paso 6: Invocar LLM
+            # Paso 6: Invocar LLM (SQL-first o RAG estándar)
             # -----------------------------------------------------------------
             result.status = QueryStatus.GENERATING_RESPONSE
             llm_response = await self._llm_provider.generate(
@@ -399,41 +424,6 @@ Answer based on the context above:"""
                 system_prompt=system_prompt,
             )
             result.llm_response = llm_response
-
-            # SqlExpert fallback: si semantic search no pudo responder
-            _did_fail = (
-                "no tengo suficiente" in llm_response.content.lower()
-                or "don't have enough" in llm_response.content.lower()
-            )
-            if _did_fail and self._sql_expert:
-                try:
-                    sql_result = await self._sql_expert.execute(
-                        tenant_id=tenant_id,
-                        question=query,
-                        role=role,
-                    )
-                    logger.info(
-                        "SqlExpert fallback",
-                        sql=sql_result.sql[:200],
-                        rows=sql_result.row_count,
-                        error=sql_result.error,
-                    )
-                    if not sql_result.error:
-                        formatted = _format_sql_result(sql_result, query)
-                        sql_fallback = await self._llm_provider.generate(
-                            prompt=(
-                                f"Format this SQL query result as a friendly answer"
-                                f" to: {query}\n\nData:\n{formatted}\n\n"
-                                "If there are 0 rows, tell the user no results were"
-                                " found and suggest a broader search. Answer:"
-                            ),
-                            model=effective_model,
-                            max_tokens=max_tokens,
-                            temperature=temperature,
-                        )
-                        result.llm_response = sql_fallback
-                except Exception as exc:
-                    logger.warning("SqlExpert fallback failed", error=str(exc))
 
             # Guardar respuesta del asistente en historial
             await self._cache.append_to_list(
