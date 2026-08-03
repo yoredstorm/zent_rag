@@ -64,9 +64,9 @@ class TestRAGQueryWithUnknownTenant:
 
         response = await async_client.post("/api/v1/rag/query", json=body, headers=headers)
 
-        assert response.status_code == 401
+        assert response.status_code == 400
         data = response.json()
-        assert "not found" in data.get("message", "").lower() or "error" in str(data).lower()
+        assert "tenant" in data.get("message", "").lower() or "not found" in data.get("message", "").lower()
 
 
 class TestRAGQueryWithoutTenant:
