@@ -17,7 +17,7 @@ from sqlalchemy import text
 from src.config import get_settings
 from src.infrastructure.logging_config import get_logger
 from src.infrastructure.relational_db import get_async_session
-from src.infrastructure.sql_expert import _validate_sql_ast
+from src.infrastructure.sql_expert import _FORBIDDEN_KEYWORDS, _validate_sql_ast
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
@@ -456,7 +456,8 @@ async def execute_sql(request: Request):
     _show_match = re.match(r"^\s*SHOW\b", query, re.IGNORECASE)
 
     if _show_match:
-        pass  # SHOW es siempre de solo lectura en PostgreSQL
+        if _FORBIDDEN_KEYWORDS.search(query):
+            raise HTTPException(403, "Forbidden SQL keyword in SHOW query")
     elif _explain_match:
         inner = _explain_match.group(1).strip()
         if not inner:

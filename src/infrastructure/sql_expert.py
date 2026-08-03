@@ -25,7 +25,7 @@ _FORBIDDEN_KEYWORDS = re.compile(
 )
 
 
-_READ_ONLY_STATEMENTS = {"select"}
+_READ_ONLY_STATEMENTS = {"select", "describe"}
 
 
 def _validate_sql_ast(sql: str) -> None:
