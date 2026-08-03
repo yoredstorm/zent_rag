@@ -557,7 +557,7 @@ async function syncAll(full=false){
     if(!jobId) throw new Error('No job_id returned: '+JSON.stringify(r.data));
 
     // Conectar SSE para streaming de progreso
-    const evt=new EventSource(API_BASE+'/api/v1/ingestion/jobs/'+jobId+'/stream');
+    const evt=new EventSource(API+'/api/v1/ingestion/jobs/'+jobId+'/stream');
     evt.onmessage=function(e){
       try{
         const d=JSON.parse(e.data);
