@@ -25,8 +25,16 @@ _FORBIDDEN_KEYWORDS = re.compile(
 )
 
 
+_READ_ONLY_STATEMENTS = {"select", "explain", "show", "describe"}
+
+
 def _validate_sql_ast(sql: str) -> None:
-    """Valida que el SQL sea solo SELECT usando sqlglot AST."""
+    """Valida que el SQL sea solo SELECT/EXPLAIN/SHOW usando sqlglot AST.
+
+    Bloquea ataques por CTE como:
+        WITH x AS (DELETE FROM ventas RETURNING *) SELECT * FROM x
+    que pasan un check ingenuo de primera palabra.
+    """
     from sqlglot.errors import ParseError as SqlglotParseError
 
     try:
@@ -39,9 +47,9 @@ def _validate_sql_ast(sql: str) -> None:
 
     for stmt in statements:
         stmt_type = stmt.key.lower() if stmt.key else "unknown"
-        if stmt_type != "select":
+        if stmt_type not in _READ_ONLY_STATEMENTS:
             raise SqlValidationError(
-                f"Only SELECT statements allowed, found: {stmt_type}", sql
+                f"Only read-only statements allowed, found: {stmt_type}", sql
             )
 
         _check_ctes(stmt, sql)

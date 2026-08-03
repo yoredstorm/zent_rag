@@ -17,6 +17,7 @@ from sqlalchemy import text
 from src.config import get_settings
 from src.infrastructure.logging_config import get_logger
 from src.infrastructure.relational_db import get_async_session
+from src.infrastructure.sql_expert import _validate_sql_ast
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
@@ -447,10 +448,13 @@ async def execute_sql(request: Request):
     if not query:
         raise HTTPException(400, "Query requerida")
 
-    # Solo permitir SELECT/EXPLAIN/SHOW
-    first_word = query.split()[0].upper() if query else ""
-    if first_word not in ("SELECT", "EXPLAIN", "SHOW", "WITH", "DESCRIBE"):
-        raise HTTPException(403, f"Solo queries de lectura permitidas. Recibido: {first_word}")
+    # Validar con sqlglot AST — bloquea CTE bypass (WITH x AS DELETE...)
+    from src.infrastructure.sql_expert import SqlValidationError
+
+    try:
+        _validate_sql_ast(query)
+    except SqlValidationError as exc:
+        raise HTTPException(403, str(exc))
 
     session = await get_async_session()
     try:
