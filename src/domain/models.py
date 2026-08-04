@@ -124,6 +124,7 @@ class RetrievalChunkResponse(BaseModel):
     document_id: UUID
     content: str
     score: float
+    image_base64: str | None = None
 
 
 class RAGQueryResponse(BaseModel):

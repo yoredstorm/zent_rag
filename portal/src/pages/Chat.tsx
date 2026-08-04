@@ -6,7 +6,7 @@ import { useToast } from "../Toast";
 type Message = {
   role: "user" | "assistant";
   content: string;
-  sources?: string[];
+  sources?: { text: string; image?: string }[];
   sqlQuery?: string | null;
   method?: string;
   queryId?: string;
@@ -18,11 +18,23 @@ type RagResponse = {
   answer: string;
   conversation_id: string;
   query_id: string;
-  sources: { content: string; score: number }[];
+  sources: { content: string; score: number; image_base64?: string | null }[];
   latency_ms: number;
   method: string;
   sql_query?: string | null;
 };
+
+function renderContent(text: string) {
+  const urlRegex = /(https?:\/\/[^\s<]+)/g;
+  const parts = text.split(urlRegex);
+  return parts.map((p, i) =>
+    urlRegex.test(p) ? (
+      <a key={i} href={p} target="_blank" rel="noopener noreferrer">{p}</a>
+    ) : (
+      p
+    )
+  );
+}
 
 export default function ChatPage() {
   const { session } = useAuth();
@@ -53,12 +65,16 @@ export default function ChatPage() {
         body: JSON.stringify(body),
       });
       setConversationId(data.conversation_id);
+      const sourceItems = (data.sources || []).slice(0, 4).map((s) => ({
+        text: s.content.slice(0, 180),
+        image: s.image_base64 || undefined,
+      }));
       setMessages((m) => [
         ...m,
         {
           role: "assistant",
           content: data.answer,
-          sources: data.sources?.slice(0, 3).map((s) => s.content.slice(0, 180)),
+          sources: sourceItems.length > 0 ? sourceItems : undefined,
           sqlQuery: data.sql_query ?? null,
           method: data.method,
           queryId: data.query_id,
@@ -108,6 +124,25 @@ export default function ChatPage() {
     }
   }
 
+  const productImages = (sources?: { text: string; image?: string }[]) => {
+    if (!sources) return null;
+    const withImages = sources.filter((s) => s.image);
+    if (withImages.length === 0) return null;
+    return (
+      <div className="product-images">
+        {withImages.slice(0, 3).map((s, j) => (
+          <img
+            key={j}
+            src={`data:image/svg+xml;base64,${s.image}`}
+            alt="Producto"
+            className="product-thumb"
+            title={s.text.slice(0, 80)}
+          />
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div>
       <h1>Pregúntale a tus datos</h1>
@@ -143,7 +178,8 @@ export default function ChatPage() {
         <div className="chat">
           {messages.map((m, i) => (
             <div key={i} className={`bubble ${m.role}`}>
-              <div>{m.content}</div>
+              <div>{renderContent(m.content)}</div>
+              {m.role === "assistant" && productImages(m.sources)}
               {m.role === "assistant" && m.method && (
                 <div className="muted" style={{ marginTop: "0.35rem", fontSize: "0.75rem" }}>
                   {m.method === "sql" ? "Datos de tu base" : "Documentos"}
@@ -158,8 +194,8 @@ export default function ChatPage() {
               {m.sources && m.sources.length > 0 && (
                 <div className="source-chips">
                   {m.sources.map((s, j) => (
-                    <span key={j} className="source-chip" title={s}>
-                      {s.length > 80 ? `${s.slice(0, 80)}…` : s}
+                    <span key={j} className="source-chip" title={s.text}>
+                      {s.text.length > 80 ? `${s.text.slice(0, 80)}…` : s.text}
                     </span>
                   ))}
                 </div>
@@ -207,7 +243,7 @@ export default function ChatPage() {
             style={{ flex: 1, minWidth: "200px" }}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Ej. ¿Cuántas ventas hubo este mes?"
+            placeholder="Ej. ¿Qué analgésicos tienen disponible?"
             disabled={loading}
           />
           <button className="btn" type="submit" disabled={loading}>

@@ -215,8 +215,9 @@ async def rag_query(
         sources = [
             RetrievalChunkResponse(
                 document_id=chunk.document_id,
-                content=chunk.content[:500],  # Truncar para no sobrecargar la respuesta
+                content=chunk.content[:500],
                 score=chunk.score,
+                image_base64=chunk.metadata.get("image_base64") if chunk.metadata else None,
             )
             for chunk in result.retrieval_context.chunks
         ]

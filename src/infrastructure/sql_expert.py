@@ -120,6 +120,14 @@ _SQL_GENERATION_PROMPT = """You are a PostgreSQL SQL expert. Generate a valid, s
 8. If no LIMIT present and the query could return many rows, add LIMIT 50.
 9. ONLY SELECT. Never INSERT, UPDATE, DELETE, DROP, CREATE, ALTER, TRUNCATE.
 
+## CRITICAL — USER-FACING OUTPUT RULES
+10. NEVER select raw ID columns (id, UUID, *_id) in the final output. Use JOINs to resolve them to human-readable names.
+11. ALWAYS include the "name" column (or equivalent display name) when selecting from any entity table.
+12. Prefer: SELECT p.name AS producto, c.name AS categoria, p.price
+    NOT:    SELECT p.id, p.category_id, p.price
+13. For products specifically, always SELECT: name, price, active_ingredient, concentration, presentation_unit.
+    Never SELECT: id, sku, registration_number, cost, slug.
+
 ## OUTPUT FORMAT
 Return ONLY the SQL statement. No markdown, no explanation, no backticks, no prefix.
 If the question CANNOT be answered with this schema, respond with exactly: NO_QUERY

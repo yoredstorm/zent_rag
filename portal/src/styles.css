@@ -587,6 +587,29 @@ select {
   min-height: 240px;
 }
 
+.product-images {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.6rem 0;
+  flex-wrap: wrap;
+}
+
+.product-thumb {
+  width: 72px;
+  height: 72px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  padding: 0.3rem;
+  object-fit: contain;
+  transition: transform 0.15s ease;
+}
+
+.product-thumb:hover {
+  transform: scale(1.1);
+  border-color: var(--accent);
+}
+
 @media (max-width: 800px) {
   .sync-banner {
     margin: -1.25rem -1.25rem 1rem;

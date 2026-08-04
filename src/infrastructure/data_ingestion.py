@@ -103,6 +103,7 @@ COLUMN_HEURISTICS: list[tuple[str, str, int]] = [
     (r"\bphone\b", "", 99),  # Skip — PCI/PII
     (r"\bpassword\b", "", 99),  # Skip — secreto
     (r"\bhash\b", "", 99),  # Skip — irrelevante para búsqueda
+    (r"\bbase64_data\b", "", 99),  # Skip — binario/imagen, no indexar en texto
     (r"\bid$", "", 0),  # ID primario — se usa como key, no en texto
     (r"_id$", "", 0),  # FK — se usa como metadata, no en texto
 ]
@@ -657,6 +658,27 @@ class PostgresIngestionService(IngestionService):
                         label = col.fk_table.replace("_", " ").title()
                         fk_resolutions[col.name] = (label, resolved)
 
+            product_images: dict[str, str] = {}
+            if table == "products":
+                try:
+                    img_rows = await session.execute(
+                        text(
+                            "SELECT product_id::text, base64_data "
+                            "FROM farmacia.product_images "
+                            "WHERE is_primary = true"
+                        )
+                    )
+                    for img_row in img_rows.fetchall():
+                        if img_row[0] and img_row[1]:
+                            product_images[img_row[0]] = img_row[1]
+                    if product_images:
+                        logger.info(
+                            "Loaded product images for ingestion",
+                            count=len(product_images),
+                        )
+                except Exception:
+                    pass
+
             page_size = self._page_size
             embed_batch_size = self._embed_batch_size
             max_rows = self._max_rows_per_table
@@ -761,6 +783,9 @@ class PostgresIngestionService(IngestionService):
                             row_meta["visibility"] = "admin"
                         else:
                             row_meta["visibility"] = "public"
+                        if product_images and pk_str in product_images:
+                            row_meta["image_base64"] = product_images[pk_str]
+                            row_meta["has_image"] = "true"
                         page_metas.append(row_meta)
                     rows_in_page += 1
 
