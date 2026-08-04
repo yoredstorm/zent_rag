@@ -77,7 +77,13 @@ class Settings(BaseSettings):
     QDRANT_PORT: int = Field(default=6333, ge=1, le=65535)
     QDRANT_API_KEY: str = Field(default="")
     QDRANT_GRPC_PORT: int = Field(default=6334, ge=1, le=65535)
-    QDRANT_TIMEOUT_SECONDS: int = Field(default=30, ge=5, le=120)
+    QDRANT_TIMEOUT_SECONDS: int = Field(default=60, ge=5, le=300)
+    QDRANT_UPSERT_CONCURRENCY: int = Field(
+        default=2,
+        ge=1,
+        le=8,
+        description="Max concurrent Qdrant upsert batches (across all tables).",
+    )
 
     # -------------------------------------------------------------------------
     # Redis
@@ -117,11 +123,11 @@ class Settings(BaseSettings):
     INGEST_EMBED_BATCH_SIZE: int = Field(default=64, ge=1, le=512)
     INGEST_EMBED_CONCURRENCY: int = Field(default=8, ge=1, le=32)
     INGEST_TABLE_CONCURRENCY: int = Field(default=3, ge=1, le=16)
-    INGEST_UPSERT_BATCH_SIZE: int = Field(default=200, ge=1, le=500)
+    INGEST_UPSERT_BATCH_SIZE: int = Field(default=100, ge=1, le=500)
     INGEST_PAGE_SIZE: int = Field(default=1000, ge=100, le=10000)
     INGEST_SKIP_TABLES: str = Field(
-        default="sales,product_reviews",
-        description="Comma-separated table names to skip during sync (e.g. sales,product_reviews)",
+        default="sales,product_reviews,inventory",
+        description="Comma-separated table names to skip during sync (e.g. sales,product_reviews,inventory)",
     )
     INGEST_MAX_ROWS_PER_TABLE: int = Field(
         default=0,

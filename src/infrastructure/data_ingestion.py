@@ -815,8 +815,15 @@ class PostgresIngestionService(IngestionService):
                             await self._vector_store.upsert_batch(tenant_id, batch_points)
                             result.vectors_upserted += len(batch_points)
                         except Exception as exc:
+                            err = f"{type(exc).__name__}: {exc}".strip(": ")
                             result.failed_rows += len(batch_points)
-                            result.errors.append(f"{table_full} upsert: {exc}")
+                            result.errors.append(f"{table_full} upsert: {err}")
+                            logger.warning(
+                                "Upsert batch failed",
+                                table=table_full,
+                                batch_size=len(batch_points),
+                                error=err,
+                            )
                         batch_points = []
 
                 if batch_points:
@@ -824,8 +831,15 @@ class PostgresIngestionService(IngestionService):
                         await self._vector_store.upsert_batch(tenant_id, batch_points)
                         result.vectors_upserted += len(batch_points)
                     except Exception as exc:
+                        err = f"{type(exc).__name__}: {exc}".strip(": ")
                         result.failed_rows += len(batch_points)
-                        result.errors.append(f"{table_full} upsert: {exc}")
+                        result.errors.append(f"{table_full} upsert: {err}")
+                        logger.warning(
+                            "Upsert batch failed",
+                            table=table_full,
+                            batch_size=len(batch_points),
+                            error=err,
+                        )
 
                 result.rows_indexed += rows_in_page
                 offset += limit
