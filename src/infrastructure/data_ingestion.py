@@ -167,9 +167,9 @@ def _serialize_row(
         if not value_str or value_str.lower() in ("none", "null", ""):
             continue
 
-        # Truncar textos largos
-        if len(value_str) > 500:
-            value_str = value_str[:497] + "..."
+        # Truncar textos largos (full text still chunked later at vector upsert)
+        if len(value_str) > 2000:
+            value_str = value_str[:1997] + "..."
 
         label = ct.label or ct.column
 
@@ -201,6 +201,22 @@ def _serialize_row(
     return ". ".join(parts) + "."
 
 
+def _chunk_text(text: str, max_chars: int, overlap: int) -> list[str]:
+    """Split long text into overlapping chunks. Short texts return as-is."""
+    if len(text) <= max_chars:
+        return [text]
+    chunks: list[str] = []
+    start = 0
+    step = max(max_chars - overlap, 1)
+    while start < len(text):
+        end = min(start + max_chars, len(text))
+        chunks.append(text[start:end])
+        if end >= len(text):
+            break
+        start += step
+    return chunks
+
+
 # =============================================================================
 # Ingestion Engine Implementation
 # =============================================================================
@@ -221,6 +237,10 @@ class PostgresIngestionService(IngestionService):
         self._vector_store = vector_store
         self._embeddings = embedding_provider
         self._cache = cache_provider
+        from src.config import get_settings
+        settings = get_settings()
+        self._chunk_max_chars = settings.RAG_CHUNK_MAX_CHARS
+        self._chunk_overlap = settings.RAG_CHUNK_OVERLAP
 
     def _sync_key(self, tenant_id: UUID, schema: str, table: str) -> str:
         return f"rag:synced:{tenant_id.hex}:{schema}.{table}"
@@ -347,7 +367,33 @@ class PostgresIngestionService(IngestionService):
         if full_refresh:
             await self._vector_store.delete_by_tenant(tenant_id)
 
+        if job_id:
+            from src.infrastructure.ingestion_queue import update_job_status
+            await update_job_status(
+                job_id,
+                "running",
+                progress=0,
+                message=f"Descubiertas {total_tables} tablas" if total_tables else "Sin tablas con filas",
+                current_table="",
+                tables_done=0,
+                tables_total=total_tables,
+            )
+
         for i, source in enumerate(active_sources):
+            table_label = f"{source.schema_name}.{source.table_name}"
+            if job_id and total_tables > 0:
+                from src.infrastructure.ingestion_queue import update_job_status
+                percent = min(int(i / total_tables * 100), 99)
+                await update_job_status(
+                    job_id,
+                    "running",
+                    progress=percent,
+                    message=f"Sincronizando {table_label}",
+                    current_table=table_label,
+                    tables_done=i,
+                    tables_total=total_tables,
+                )
+
             table_result = await self._ingest_table(tenant_id, source)
             result.tables_processed += 1
             result.rows_indexed += table_result.rows_indexed
@@ -357,7 +403,15 @@ class PostgresIngestionService(IngestionService):
             if job_id and total_tables > 0:
                 from src.infrastructure.ingestion_queue import update_job_status
                 percent = min(int((i + 1) / total_tables * 100), 100)
-                await update_job_status(job_id, "running", progress=percent)
+                await update_job_status(
+                    job_id,
+                    "running",
+                    progress=percent,
+                    message=f"Completada {table_label} ({i + 1}/{total_tables})",
+                    current_table=table_label,
+                    tables_done=i + 1,
+                    tables_total=total_tables,
+                )
 
         result.duration_ms = round((time.perf_counter() - start) * 1000, 2)
 
@@ -595,27 +649,41 @@ class PostgresIngestionService(IngestionService):
                             row_dict, column_templates, table_label,
                             fk_resolutions, is_view=source.is_view,
                         )
-                        texts.append(content_text)
 
                         pk_value = row_dict.get(pk_col.name)
                         pk_str = str(pk_value) if pk_value else str(uuid4())
-                        doc_id = uuid5(_VECTOR_NS, f"{schema}.{table}:{pk_str}")
+                        parent_id = uuid5(_VECTOR_NS, f"{schema}.{table}:{pk_str}")
 
-                        doc_ids.append(doc_id)
+                        text_chunks = _chunk_text(
+                            content_text, self._chunk_max_chars, self._chunk_overlap
+                        )
+                        for chunk_index, chunk_text in enumerate(text_chunks):
+                            if len(text_chunks) == 1:
+                                doc_id = parent_id
+                            else:
+                                doc_id = uuid5(
+                                    _VECTOR_NS,
+                                    f"{schema}.{table}:{pk_str}:chunk:{chunk_index}",
+                                )
+                            texts.append(chunk_text)
+                            doc_ids.append(doc_id)
 
-                        row_meta = {
-                            "tenant_id": str(tenant_id),
-                            "source": f"{schema}.{table}",
-                            "table_name": table,
-                            "schema_name": schema,
-                            **{k: str(v)[:500] if v is not None else "" for k, v in row_dict.items()},
-                        }
-                        if source.is_view:
-                            row_meta["doc_type"] = "aggregated"
-                            row_meta["visibility"] = "admin"
-                        else:
-                            row_meta["visibility"] = "public"
-                        metadata_list.append(row_meta)
+                            row_meta = {
+                                "tenant_id": str(tenant_id),
+                                "source": f"{schema}.{table}",
+                                "table_name": table,
+                                "schema_name": schema,
+                                "parent_row_id": str(parent_id),
+                                "chunk_index": chunk_index,
+                                "chunk_count": len(text_chunks),
+                                **{k: str(v)[:500] if v is not None else "" for k, v in row_dict.items()},
+                            }
+                            if source.is_view:
+                                row_meta["doc_type"] = "aggregated"
+                                row_meta["visibility"] = "admin"
+                            else:
+                                row_meta["visibility"] = "public"
+                            metadata_list.append(row_meta)
 
                     raw_embeddings = await self._embeddings.embed(texts)
                     if isinstance(raw_embeddings[0], float):
@@ -644,6 +712,7 @@ class PostgresIngestionService(IngestionService):
                         else:
                             result.vectors_upserted += 1
 
+                    # Don't double-count rows when chunked
                     result.rows_indexed += len(batch_rows)
 
                 offset += page_size

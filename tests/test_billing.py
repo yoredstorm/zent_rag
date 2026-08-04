@@ -43,48 +43,29 @@ class TestCreateTrialNewTenant:
     async def test_create_trial_with_new_tenant_returns_200(
         self, async_client: AsyncClient
     ) -> None:
-        """POST /api/v1/billing/subscription/create-trial con un tenant nuevo
-        debe crear tenant, usuario, suscripcion y token, retornando 200."""
-        tid = str(uuid4())
-        headers = {
-            "X-Tenant-Id": tid,
-            "X-Tenant-Name": "Test Tenant S.A.",
-        }
-
+        """POST /api/v1/billing/subscription/create-trial crea tenant server-side."""
         response = await async_client.post(
-            "/api/v1/billing/subscription/create-trial", headers=headers
+            "/api/v1/billing/subscription/create-trial",
+            json={"company_name": "Test Tenant S.A.", "email": "test@example.com"},
         )
 
         assert response.status_code == 200
         data = response.json()
-        assert data["tenant_id"] == tid
         assert data["status"] == "trialing"
         assert "api_token" in data
         assert "subscription_id" in data
+        assert "tenant_id" in data
+        assert data["company_name"] == "Test Tenant S.A."
 
     @pytest.mark.asyncio
-    async def test_create_trial_with_existing_tenant_returns_409(
+    async def test_create_trial_requires_company_name(
         self, async_client: AsyncClient
     ) -> None:
-        """Crear trial para un tenant que ya tiene suscripcion debe devolver 409."""
-        tid = str(uuid4())
-        headers = {
-            "X-Tenant-Id": tid,
-            "X-Tenant-Name": "Test Duplicado Ltda.",
-        }
-
-        primera = await async_client.post(
-            "/api/v1/billing/subscription/create-trial", headers=headers
+        response = await async_client.post(
+            "/api/v1/billing/subscription/create-trial",
+            json={},
         )
-        assert primera.status_code == 200
-
-        segunda = await async_client.post(
-            "/api/v1/billing/subscription/create-trial", headers=headers
-        )
-
-        assert segunda.status_code == 409
-        data = segunda.json()
-        assert "already has" in data.get("message", "").lower() or "409" in str(segunda.status_code)
+        assert response.status_code == 422
 
 
 class TestBearerTokenAuth:
@@ -92,14 +73,13 @@ class TestBearerTokenAuth:
 
     @pytest.mark.asyncio
     async def test_bearer_token_on_query_endpoint_returns_200(
-        self, async_client: AsyncClient, dev_api_token: str
+        self, async_client: AsyncClient, trial_auth: dict[str, str]
     ) -> None:
         """POST /api/v1/rag/query con Authorization: Bearer <token_valido>
         debe autenticar al tenant via el token y devolver 200."""
-        headers = {"Authorization": f"Bearer {dev_api_token}"}
         body = {"query": "Cual es el producto mas vendido de ZentStore?"}
 
-        response = await async_client.post("/api/v1/rag/query", json=body, headers=headers)
+        response = await async_client.post("/api/v1/rag/query", json=body, headers=trial_auth)
 
         assert response.status_code == 200
         data = response.json()

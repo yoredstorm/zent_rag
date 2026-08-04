@@ -24,8 +24,10 @@ from src.api.metrics import (
     rag_cache_hits,
     rag_cache_misses,
     rag_errors_total,
+    rag_llm_latency,
     rag_vector_search_latency,
 )
+from src.config import get_settings
 from src.domain.entities import (
     LLMResponse,
     QueryStatus,
@@ -107,6 +109,9 @@ class RAGOrchestrator:
         score_threshold: float = 0.1,
         conv_ttl_seconds: int = 3600,
         sql_expert: SqlExpert | None = None,
+        max_context_tokens: int | None = None,
+        reranker: object | None = None,
+        rerank_top_n: int = 20,
     ) -> None:
         self._tenant_repo = tenant_repo
         self._vector_store = vector_store
@@ -117,6 +122,12 @@ class RAGOrchestrator:
         self._score_threshold = score_threshold
         self._conv_ttl = conv_ttl_seconds
         self._sql_expert = sql_expert
+        settings = get_settings()
+        self._max_context_tokens = max_context_tokens if max_context_tokens is not None else settings.RAG_MAX_CONTEXT_TOKENS
+        self._reranker = reranker
+        self._rerank_top_n = rerank_top_n
+        # Align anti-hallucination gate with configured score threshold (min 0.1 when threshold is 0)
+        self._min_meaningful_score = max(score_threshold, 0.1) if score_threshold > 0 else 0.1
 
     async def execute(
         self,
@@ -255,7 +266,7 @@ class RAGOrchestrator:
                     query_embedding=list(query_embedding),  # type: ignore[arg-type]
                     top_k=top_k,
                     filters={"metadata.doc_type": "aggregated"},
-                    score_threshold=0.0,
+                    score_threshold=self._score_threshold,
                     role=role,
                 )
                 agg_ids_set = {chunk.document_id for chunk in agg_ctx.chunks}
@@ -264,6 +275,7 @@ class RAGOrchestrator:
                     tenant_id=tenant_id,
                     query_embedding=list(query_embedding),  # type: ignore[arg-type]
                     top_k=remaining,
+                    exclude_filters={"metadata.doc_type": "aggregated"},
                     score_threshold=self._score_threshold,
                     role=role,
                 )
@@ -273,6 +285,21 @@ class RAGOrchestrator:
                     if ch.document_id not in seen:
                         merged.append(ch)
                         seen.add(ch.document_id)
+
+                # Optional rerank, then fit to context token budget
+                if self._reranker is not None and merged:
+                    try:
+                        merged = await self._reranker.rerank(  # type: ignore[union-attr]
+                            query=query,
+                            chunks=merged,
+                            top_n=self._rerank_top_n,
+                            tenant_id=str(tenant_id),
+                        )
+                    except Exception as rerank_err:
+                        logger.warning("Rerank failed, using raw retrieval order", error=str(rerank_err))
+
+                merged = self._fit_context_budget(merged)
+
                 return RetrievalContext(
                     chunks=merged,
                     query_embedding=agg_ctx.query_embedding,
@@ -401,10 +428,9 @@ Answer based on the context above:"""
             # -----------------------------------------------------------------
             # Hard anti-hallucination: sin datos vectoriales ni SQL → respuesta genérica
             # -----------------------------------------------------------------
-            MIN_MEANINGFUL_SCORE = 0.1
             meaningful = [
                 c for c in retrieval_context.chunks
-                if c.score >= MIN_MEANINGFUL_SCORE
+                if c.score >= self._min_meaningful_score
             ]
             if not sql_has_data and (not retrieval_context.chunks or not meaningful):
                 result.status = QueryStatus.COMPLETED
@@ -450,6 +476,7 @@ Answer based on the context above:"""
             # Paso 6: Invocar LLM (SQL-first o RAG estándar)
             # -----------------------------------------------------------------
             result.status = QueryStatus.GENERATING_RESPONSE
+            llm_start = time.perf_counter()
             async with trace_span("rag.llm", model=effective_model or "default"):
                 llm_response = await self._llm_provider.generate(
                     prompt=augmented_prompt,
@@ -457,7 +484,11 @@ Answer based on the context above:"""
                     max_tokens=max_tokens,
                     temperature=temperature,
                     system_prompt=system_prompt,
-            )
+                )
+            rag_llm_latency.labels(
+                tenant_id=str(tenant_id),
+                model=effective_model or "default",
+            ).observe(time.perf_counter() - llm_start)
             result.llm_response = llm_response
 
             # Guardar respuesta del asistente en historial
@@ -554,3 +585,24 @@ Answer based on the context above:"""
         logger.info("RAG query completed", **log_payload)
 
         return result
+
+    def _fit_context_budget(self, chunks: list) -> list:
+        """Keep highest-score chunks within RAG_MAX_CONTEXT_TOKENS (~4 chars/token)."""
+        if not chunks:
+            return chunks
+        budget_chars = max(int(self._max_context_tokens * 4), 1000)
+        # Prefer score order while preserving aggregated-first relative order within ties
+        ordered = sorted(chunks, key=lambda c: c.score, reverse=True)
+        selected: list = []
+        used = 0
+        for ch in ordered:
+            cost = len(ch.content or "")
+            if selected and used + cost > budget_chars:
+                continue
+            selected.append(ch)
+            used += cost
+            if used >= budget_chars:
+                break
+        # Restore original relative order among selected
+        selected_ids = {c.document_id for c in selected}
+        return [c for c in chunks if c.document_id in selected_ids]

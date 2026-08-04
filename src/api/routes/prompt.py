@@ -291,6 +291,7 @@ async def test_prompt(
         max_tokens=2048,
         temperature=body.temperature,
         top_k=body.top_k,
+        use_cache=False,
         conversation_id=None,
         role=body.role,
         system_prompt_override=full_prompt,

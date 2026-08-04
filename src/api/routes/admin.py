@@ -1,9 +1,9 @@
 # =============================================================================
-# Admin API — Gestión de Tablas para el Web Tester
+# Admin API — Gestión de Tablas (dev only; gated by RAG_ADMIN_ENABLED)
 # =============================================================================
 # Endpoints seguros para crear, poblar y eliminar tablas dinámicamente.
 # Usa allowlist de nombres de tabla/columna para prevenir SQL Injection.
-# Solo expuesto en development (MVP); en producción se deshabilita.
+# Solo expuesto cuando RAG_ADMIN_ENABLED=true; no forma parte del portal B2B.
 # =============================================================================
 from __future__ import annotations
 
@@ -31,13 +31,7 @@ _RESERVED_WORDS = {
     "grant", "revoke", "commit", "rollback", "begin", "transaction",
 }
 # Tablas del sistema protegidas contra escritura (lectura permitida)
-# En el web-tester de desarrollo, vacio = sin restriccion.
-# En produccion, descomentar la lista para protegerlas.
 _PROTECTED_TABLES: set[str] = set()
-# _PROTECTED_TABLES = {
-#     "tenants", "users", "rate_limit_counters", "usage_logs",
-#     "query_audit_log", "documents", "alembic_version",
-# }
 
 
 def _validate_identifier(value: str, label: str = "identifier") -> str:

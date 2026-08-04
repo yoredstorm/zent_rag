@@ -129,9 +129,10 @@ zent_rag/
 │   ├── test_rag_query.py       # RAG query integration tests
 │   └── test_billing.py         # Billing endpoint tests
 │
-├── web-tester/                 # Dev-only single-page web UI
-│   ├── index.html              # Dashboard, DB Explorer, Chat RAG, API console
-│   └── Dockerfile
+├── portal/                     # Portal B2B (Vite + React) — UI tenant
+│   ├── src/                    # Signup, dashboard, usage, keys, ingestion, prompts, chat
+│   ├── Dockerfile              # Multi-stage nginx static
+│   └── nginx.conf              # Proxy /api → api:8000
 │
 ├── config/                     # Observability configuration files
 │   ├── prometheus/prometheus.yml
@@ -196,7 +197,7 @@ docker exec rag-ollama ollama pull bge-m3
 
 | Servicio | URL | Credenciales |
 |---|---|---|
-| **Web Tester** | http://localhost:8080 | Dev-only, sin auth |
+| **Portal B2B** | http://localhost:8080 | Signup trial / Bearer token |
 | **API Docs (Swagger)** | http://localhost:8000/docs | API Key en header |
 | **API Docs (ReDoc)** | http://localhost:8000/redoc | API Key en header |
 | **Grafana Dashboards** | http://localhost:3000 | admin / admin |
@@ -206,9 +207,10 @@ docker exec rag-ollama ollama pull bge-m3
 
 ### 5. Flujo de uso típico
 
-1. **Crear tenant y API key** → `POST /api/v1/billing/create-trial` o usa el endpoint de billing en la web-tester
-2. **Sincronizar datos** → En la web-tester: pestaña "Ingestion" → "Sync All" (convierte filas SQL en vectores en Qdrant)
-3. **Hacer consultas RAG** → En la web-tester: pestaña "Chat RAG" → escribe tu pregunta
+1. **Crear trial** → http://localhost:8080/signup (empresa → tenant + API token)
+2. **Sincronizar datos** → Portal → Ingestión → Sync All
+3. **Consultas RAG** → Portal → Chat demo
+4. **Ver cuota / rotar key** → Dashboard y API Keys
 
 ## Endpoints Principales
 
@@ -309,12 +311,13 @@ POST   /api/v1/admin/prompt/test          # Test con RAG real (embedding + vecto
 ### Billing
 
 ```bash
-GET    /api/v1/billing/plans                       # Listar planes disponibles
-POST   /api/v1/billing/create-trial                # Crear tenant trial
-GET    /api/v1/billing/subscription                # Ver suscripción actual
-POST   /api/v1/billing/upgrade                     # Cambiar de plan
-GET    /api/v1/billing/token                       # Obtener/ver API key
-POST   /api/v1/billing/rotate-token                # Rotar API key
+GET    /api/v1/billing/plans                              # Listar planes disponibles
+POST   /api/v1/billing/subscription/create-trial          # Crear tenant trial (body: company_name)
+GET    /api/v1/billing/subscription                       # Ver suscripción actual (Bearer)
+POST   /api/v1/billing/subscription/upgrade               # Cambiar de plan (Bearer + X-New-Plan)
+GET    /api/v1/billing/usage                              # Uso del tenant (Bearer)
+GET    /api/v1/billing/token                              # Info API key (Bearer)
+POST   /api/v1/billing/token/rotate                       # Rotar API key (Bearer)
 ```
 
 ## Variables de Entorno

@@ -86,6 +86,7 @@ class VectorStore(ABC):
         query_embedding: list[float],
         top_k: int = 5,
         filters: dict[str, str] | None = None,
+        exclude_filters: dict[str, str] | None = None,
         score_threshold: float = 0.1,
         role: str = "admin",
     ) -> RetrievalContext: ...

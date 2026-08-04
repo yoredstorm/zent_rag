@@ -21,7 +21,26 @@ from prometheus_fastapi_instrumentator.metrics import Info
 rag_queries_total = Counter(
     "rag_queries_total",
     "Total de consultas RAG procesadas",
-    labelnames=["tenant_id", "status"],
+    labelnames=["tenant_id", "status", "method"],
+)
+
+rag_rerank_latency = Histogram(
+    "rag_rerank_latency_seconds",
+    "Latencia de reranking post-retrieval",
+    labelnames=["tenant_id"],
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+
+rag_rerank_top_score = Gauge(
+    "rag_rerank_top_score",
+    "Score del top-1 tras rerank (último request)",
+    labelnames=["tenant_id"],
+)
+
+rag_feedback_approval_rate = Gauge(
+    "rag_feedback_approval_rate",
+    "Tasa de aprobación de feedback humano (0-1)",
+    labelnames=["tenant_id"],
 )
 
 rag_tokens_consumed = Counter(

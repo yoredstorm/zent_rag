@@ -120,6 +120,7 @@ class QdrantVectorStore(VectorStore):
         query_embedding: list[float],
         top_k: int = 5,
         filters: dict[str, str] | None = None,
+        exclude_filters: dict[str, str] | None = None,
         score_threshold: float = 0.1,
         role: str = "admin",
     ) -> RetrievalContext:
@@ -152,7 +153,20 @@ class QdrantVectorStore(VectorStore):
                 for key, value in filters.items()
             ])
 
-        qdrant_filter = qdrant_models.Filter(must=must_conditions)
+        must_not_conditions = []
+        if exclude_filters:
+            must_not_conditions.extend([
+                qdrant_models.FieldCondition(
+                    key=key,
+                    match=qdrant_models.MatchValue(value=value),
+                )
+                for key, value in exclude_filters.items()
+            ])
+
+        qdrant_filter = qdrant_models.Filter(
+            must=must_conditions,
+            must_not=must_not_conditions or None,
+        )
 
         results = await _retry_on_transient_error(
             client.query_points,

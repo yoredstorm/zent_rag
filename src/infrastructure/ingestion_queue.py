@@ -41,9 +41,14 @@ async def enqueue_sync(
         "full_refresh": "1" if full_refresh else "0",
         "status": "pending",
         "progress": "0",
+        "message": "En cola",
+        "current_table": "",
+        "tables_done": "0",
+        "tables_total": "0",
         "result_summary": "",
         "error": "",
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
     client: aioredis.Redis = await _get_redis()
@@ -84,7 +89,15 @@ async def get_job_status(job_id: str) -> dict | None:
     result = dict(data)
     result["full_refresh"] = result.get("full_refresh", "0") == "1"
     progress_val = result.get("progress", "0")
-    result["progress"] = int(progress_val) if progress_val.isdigit() else 0
+    result["progress"] = int(progress_val) if str(progress_val).isdigit() else 0
+
+    for int_key in ("tables_done", "tables_total"):
+        raw = result.get(int_key, "0")
+        result[int_key] = int(raw) if str(raw).isdigit() else 0
+
+    result.setdefault("message", "")
+    result.setdefault("current_table", "")
+    result.setdefault("updated_at", result.get("created_at", ""))
 
     summary_raw = result.get("result_summary", "")
     if summary_raw:
@@ -120,10 +133,17 @@ async def update_job_status(
     progress: int | None = None,
     result_summary: dict | None = None,
     error: str | None = None,
+    message: str | None = None,
+    current_table: str | None = None,
+    tables_done: int | None = None,
+    tables_total: int | None = None,
 ) -> None:
     client: aioredis.Redis = await _get_redis()
     key = f"{JOB_KEY_PREFIX}:{job_id}"
-    mapping: dict[str, str] = {"status": status}
+    mapping: dict[str, str] = {
+        "status": status,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
 
     if progress is not None:
         mapping["progress"] = str(progress)
@@ -131,9 +151,18 @@ async def update_job_status(
         mapping["result_summary"] = json.dumps(result_summary, default=str)
     if error is not None:
         mapping["error"] = error
+    if message is not None:
+        mapping["message"] = message
+    if current_table is not None:
+        mapping["current_table"] = current_table
+    if tables_done is not None:
+        mapping["tables_done"] = str(tables_done)
+    if tables_total is not None:
+        mapping["tables_total"] = str(tables_total)
 
     try:
         await client.hset(key, mapping=mapping)
+        await client.expire(key, JOB_TTL_SECONDS)
     except Exception as exc:
         logger.warning(
             "Failed to update job status",

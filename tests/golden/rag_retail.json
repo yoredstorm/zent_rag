@@ -1,0 +1,37 @@
+[
+  {
+    "id": "retail-001",
+    "query": "¿Cuáles son los productos más vendidos?",
+    "role": "admin",
+    "expected_keywords": ["producto", "venta"],
+    "top_k": 20
+  },
+  {
+    "id": "retail-002",
+    "query": "Muéstrame zapatos disponibles",
+    "role": "customer",
+    "expected_keywords": ["zapato", "calzado", "producto"],
+    "top_k": 20
+  },
+  {
+    "id": "retail-003",
+    "query": "¿Cuál es el precio de los productos en electrónica?",
+    "role": "customer",
+    "expected_keywords": ["precio", "electrón"],
+    "top_k": 20
+  },
+  {
+    "id": "retail-004",
+    "query": "Resumen de ingresos totales por categoría",
+    "role": "admin",
+    "expected_keywords": ["ingreso", "categoría", "venta"],
+    "top_k": 20
+  },
+  {
+    "id": "retail-005",
+    "query": "Hola, ¿me ayudas a encontrar un regalo?",
+    "role": "customer",
+    "expected_keywords": ["hola", "ayuda", "producto", "zent"],
+    "top_k": 10
+  }
+]

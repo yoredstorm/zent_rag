@@ -26,7 +26,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         env_prefix="RAG_",
         case_sensitive=False,
-        extra="forbid",  # Rechaza variables de entorno no declaradas (evita typosquatting)
+        extra="ignore",  # Allow compose-only vars (GRAFANA_*, PORTAL_PORT, etc.) in .env
     )
 
     # -------------------------------------------------------------------------
@@ -104,6 +104,12 @@ class Settings(BaseSettings):
     RAG_SQL_EXPERT_ENABLED: bool = Field(default=False)
     RAG_SQL_TIMEOUT_SECONDS: int = Field(default=5, ge=1, le=30)
     RAG_MAX_CONTEXT_TOKENS: int = Field(default=32000, ge=1)
+    RAG_RERANK_ENABLED: bool = Field(default=False)
+    RAG_RERANK_TOP_N: int = Field(default=20, ge=1, le=100)
+    RAG_RERANK_MODEL: str = Field(default="")
+    RAG_ADMIN_ENABLED: bool = Field(default=True)
+    RAG_CHUNK_MAX_CHARS: int = Field(default=1200, ge=200, le=8000)
+    RAG_CHUNK_OVERLAP: int = Field(default=150, ge=0, le=500)
 
     # -------------------------------------------------------------------------
     # Billing

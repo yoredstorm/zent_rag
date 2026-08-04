@@ -80,6 +80,21 @@ async def async_client(mock_orchestrator: MockRAGOrchestrator) -> AsyncGenerator
     app.dependency_overrides.clear()
 
 
+@pytest_asyncio.fixture
+async def trial_auth(async_client: AsyncClient) -> dict[str, str]:
+    """Crea un trial fresco y retorna headers Authorization + X-Tenant-Id."""
+    response = await async_client.post(
+        "/api/v1/billing/subscription/create-trial",
+        json={"company_name": f"Test Co {uuid4().hex[:8]}"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    return {
+        "Authorization": f"Bearer {data['api_token']}",
+        "X-Tenant-Id": data["tenant_id"],
+    }
+
+
 @pytest.fixture
 def known_tenant_id() -> str:
     """UUID del tenant de desarrollo pre-seeded en la base de datos."""

@@ -107,10 +107,35 @@ async def sync_all(
 
     from uuid import uuid4
 
-    from src.infrastructure.ingestion_queue import update_job_status
+    from src.infrastructure.ingestion_queue import JOB_KEY_PREFIX, JOBS_LIST_KEY, JOB_TTL_SECONDS, update_job_status
+    from src.infrastructure.cache import _get_redis
 
     job_id = uuid4().hex
-    await update_job_status(job_id, "running", progress=0)
+    client = await _get_redis()
+    init = {
+        "job_id": job_id,
+        "tenant_id": str(tenant_id),
+        "status": "running",
+        "progress": "0",
+        "message": "Iniciando sincronización…",
+        "current_table": "",
+        "tables_done": "0",
+        "tables_total": "0",
+        "result_summary": "",
+        "error": "",
+        "full_refresh": "1" if full_refresh else "0",
+    }
+    await client.hset(f"{JOB_KEY_PREFIX}:{job_id}", mapping=init)
+    await client.expire(f"{JOB_KEY_PREFIX}:{job_id}", JOB_TTL_SECONDS)
+    await client.lpush(JOBS_LIST_KEY, job_id)
+    await update_job_status(
+        job_id,
+        "running",
+        progress=0,
+        message="Iniciando sincronización…",
+        tables_done=0,
+        tables_total=0,
+    )
 
     logger.info(
         "Starting ingestion sync",
@@ -124,21 +149,41 @@ async def sync_all(
         try:
             result: IngestionResult = await ingestion.sync_all(tenant_id, full_refresh, job_id=job_id)
             if not result.success:
-                await update_job_status(job_id, "failed", progress=100,
+                await update_job_status(
+                    job_id,
+                    "failed",
+                    progress=100,
                     result_summary={"errors": result.errors},
-                    error="; ".join(result.errors[:5]))
+                    error="; ".join(result.errors[:5]),
+                    message=f"Falló con {len(result.errors)} error(es)",
+                    current_table="",
+                )
             else:
                 await update_job_status(
-                    job_id, "completed", progress=100,
+                    job_id,
+                    "completed",
+                    progress=100,
                     result_summary={
                         "tables_processed": result.tables_processed,
                         "rows_indexed": result.rows_indexed,
                         "vectors_upserted": result.vectors_upserted,
                         "duration_ms": result.duration_ms,
                     },
+                    message=(
+                        f"Listo: {result.tables_processed} tablas, "
+                        f"{result.rows_indexed} filas, {result.vectors_upserted} vectores"
+                    ),
+                    current_table="",
+                    tables_done=result.tables_processed,
                 )
         except Exception as exc:
-            await update_job_status(job_id, "failed", progress=100, error=str(exc))
+            await update_job_status(
+                job_id,
+                "failed",
+                progress=100,
+                error=str(exc),
+                message=f"Error: {exc}",
+            )
 
     asyncio.create_task(_run_sync())
 

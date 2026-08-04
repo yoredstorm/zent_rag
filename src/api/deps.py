@@ -91,6 +91,10 @@ def get_rag_orchestrator() -> RAGOrchestrator:
         sql_expert = None
         if settings.RAG_SQL_EXPERT_ENABLED:
             sql_expert = PostgresSqlExpert(llm_provider=get_llm_provider())
+        reranker = None
+        if settings.RAG_RERANK_ENABLED:
+            from src.infrastructure.reranker import LLMReranker
+            reranker = LLMReranker(llm_provider=get_llm_provider())
         _orchestrator = RAGOrchestrator(
             tenant_repo=get_tenant_repo(),
             vector_store=get_vector_store(),
@@ -100,6 +104,8 @@ def get_rag_orchestrator() -> RAGOrchestrator:
             score_threshold=settings.RAG_SCORE_THRESHOLD,
             conv_ttl_seconds=settings.RAG_CONVERSATION_TTL_SECONDS,
             sql_expert=sql_expert,
-            # query_store=None,  # Se activará cuando la tabla de auditoría esté lista
+            max_context_tokens=settings.RAG_MAX_CONTEXT_TOKENS,
+            reranker=reranker,
+            rerank_top_n=settings.RAG_RERANK_TOP_N,
         )
     return _orchestrator

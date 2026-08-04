@@ -163,7 +163,7 @@ async def rag_query(
     # ---------------------------------------------------------------
     if result.status == "failed":
         rag_queries_total.labels(
-            tenant_id=str(tenant_id), status="failed"
+            tenant_id=str(tenant_id), status="failed", method=getattr(result, "method", "rag") or "rag"
         ).inc()
 
         if "rate limit" in (result.error_message or "").lower():
@@ -185,7 +185,9 @@ async def rag_query(
     # Métricas de negocio
     # ---------------------------------------------------------------
     rag_queries_total.labels(
-        tenant_id=str(tenant_id), status="success"
+        tenant_id=str(tenant_id),
+        status="success",
+        method=getattr(result, "method", "rag") or "rag",
     ).inc()
 
     if result.llm_response:

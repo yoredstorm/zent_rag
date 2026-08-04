@@ -66,15 +66,18 @@ services:
       - "promtail.job=rag-api"
 
   # ===========================================================================
-  # Web Tester — Interfaz de pruebas (solo dev; eliminar en producción)
+  # Portal B2B — UI tenant (reemplaza web-tester)
   # ===========================================================================
-  web-tester:
+  portal:
     build:
-      context: ./web-tester
+      context: ./portal
       dockerfile: Dockerfile
-    container_name: rag-web-tester
+    container_name: rag-portal
     ports:
-      - "${WEB_TESTER_PORT:-8080}:8080"
+      - "${PORTAL_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
     restart: unless-stopped
     networks:
       - rag-network

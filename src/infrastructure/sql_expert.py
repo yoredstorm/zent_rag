@@ -296,15 +296,18 @@ class PostgresSqlExpert(SqlExpert):
 
         fk_chains_text = "\n".join(fk_chain_lines) if fk_chain_lines else "  (no foreign keys detected)"
 
+        role_block = ""
         if role == "customer":
-            lines.append("\nIMPORTANT: You are answering for a customer.")
-            lines.append("Do NOT use GROUP BY, SUM(), COUNT(), AVG() for aggregations across all rows.")
-            lines.append("Only return this customer's own data.")
+            role_block = (
+                "\n\nIMPORTANT: You are answering for a customer.\n"
+                "Do NOT use GROUP BY, SUM(), COUNT(), AVG() for aggregations across all rows.\n"
+                "Only return this customer's own data."
+            )
 
         return {
-            "schema": schema_inventory,
+            "schema": schema_inventory + role_block,
             "fk_chains": fk_chains_text,
-            "role_block": "",
+            "role_block": role_block,
         }
 
     def _find_fk_chains(self, fk_pairs: list[tuple]) -> list[list[str]]:

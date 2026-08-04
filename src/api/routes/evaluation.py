@@ -121,3 +121,31 @@ async def eval_recent(
     tenant_id = _resolve_tenant_id(request, x_tenant_id)
     await ensure_eval_table()
     return await get_recent(tenant_id, limit=limit)
+
+
+@router.post("/run", summary="Ejecutar evaluación golden set (protegido)")
+async def run_golden_eval(
+    request: Request,
+    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+):
+    from src.config import get_settings
+    from src.scripts.eval_rag import run_eval
+
+    if not get_settings().RAG_ADMIN_ENABLED:
+        raise HTTPException(403, "Eval run requires RAG_ADMIN_ENABLED=true")
+
+    tenant_id = _resolve_tenant_id(request, x_tenant_id)
+    user_id = UUID("00000000-0000-0000-0000-000000000002")
+    ctx = getattr(request.state, "billing_context", None)
+    if ctx is not None:
+        tenant_id = ctx.tenant_id
+
+    summary = await run_eval(
+        golden_path=__import__("pathlib").Path(__file__).resolve().parents[3]
+        / "tests"
+        / "golden"
+        / "rag_retail.json",
+        tenant_id=tenant_id,
+        user_id=user_id,
+    )
+    return summary

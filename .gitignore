@@ -23,5 +23,9 @@ Thumbs.db
 # Docker
 docker-compose.override.yml
 
+# Portal
+portal/node_modules/
+portal/dist/
+
 # Observability data
 *.log

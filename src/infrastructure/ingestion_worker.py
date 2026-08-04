@@ -75,12 +75,24 @@ async def process_job(job_data: dict) -> None:
 
         if result.success:
             await update_job_status(
-                job_id, "completed", progress=100, result_summary=summary
+                job_id,
+                "completed",
+                progress=100,
+                result_summary=summary,
+                message=(
+                    f"Listo: {result.tables_processed} tablas, "
+                    f"{result.rows_indexed} filas, {result.vectors_upserted} vectores"
+                ),
             )
             logger.info("Job completed successfully", job_id=job_id, **summary)
         else:
             await update_job_status(
-                job_id, "completed", progress=100, result_summary=summary
+                job_id,
+                "failed",
+                progress=100,
+                result_summary=summary,
+                error="; ".join(result.errors[:5]) if result.errors else "partial failure",
+                message=f"Falló con {len(result.errors)} error(es)",
             )
             logger.warning("Job completed with errors", job_id=job_id, errors=result.errors)
 
@@ -91,6 +103,7 @@ async def process_job(job_data: dict) -> None:
             "failed",
             progress=0,
             error=str(exc),
+            message=f"Error: {exc}",
         )
 
 
