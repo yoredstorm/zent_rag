@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -105,10 +105,13 @@ async def sync_all(
     except ValueError:
         raise HTTPException(400, "X-Tenant-Id debe ser un UUID válido")
 
-    from uuid import uuid4
-
-    from src.infrastructure.ingestion_queue import JOB_KEY_PREFIX, JOBS_LIST_KEY, JOB_TTL_SECONDS, update_job_status
     from src.infrastructure.cache import _get_redis
+    from src.infrastructure.ingestion_queue import (
+        JOB_KEY_PREFIX,
+        JOB_TTL_SECONDS,
+        JOBS_LIST_KEY,
+        update_job_status,
+    )
 
     job_id = uuid4().hex
     client = await _get_redis()

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from src.infrastructure.data_ingestion import _chunk_text, _serialize_row, _column_to_template
+from src.infrastructure.data_ingestion import (
+    _chunk_text,
+    _column_to_template,
+    _serialize_row,
+)
 
 
 def test_chunk_text_short_unchanged():

@@ -765,20 +765,26 @@ class PostgresIngestionService(IngestionService):
                     rows_in_page += 1
 
                 async def _embed_slice(
-                    start: int, end: int
+                    start: int,
+                    end: int,
+                    texts: list[str],
                 ) -> tuple[int, list[list[float]] | Exception]:
-                    texts = page_texts[start:end]
+                    batch = texts[start:end]
                     async with embed_sem:
                         try:
-                            raw = await self._embeddings.embed(texts)
-                            if texts and isinstance(raw[0], float):
+                            raw = await self._embeddings.embed(batch)
+                            if batch and isinstance(raw[0], float):
                                 return start, [raw]  # type: ignore[list-item]
                             return start, raw  # type: ignore[return-value]
                         except Exception as exc:
                             return start, exc
 
                 embed_jobs = [
-                    _embed_slice(i, min(i + embed_batch_size, len(page_texts)))
+                    _embed_slice(
+                        i,
+                        min(i + embed_batch_size, len(page_texts)),
+                        page_texts,
+                    )
                     for i in range(0, len(page_texts), embed_batch_size)
                 ]
                 embed_results = await asyncio.gather(*embed_jobs)
