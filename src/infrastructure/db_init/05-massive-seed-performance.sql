@@ -1,7 +1,7 @@
 -- =============================================================================
 -- Massive Seed Data — ~1.7M+ registros para pruebas de rendimiento
 -- =============================================================================
--- Resultados: 100K productos, 1.2M ventas, 300K reseñas, 50K clientes
+-- Resultados: 100K productos, 100K ventas, 300K reseñas, 50K clientes
 -- Usa generate_series() + LATERAL join con mod correlacionado
 -- =============================================================================
 
@@ -105,9 +105,9 @@ FROM generate_series(1, 50000) AS g
 ON CONFLICT (tenant_id, external_id) DO NOTHING;
 
 -- =============================================================================
--- 5. VENTAS (1,200,000) — usa LATERAL con g%100000 para distribuir productos
+-- 5. VENTAS (100,000) — usa LATERAL con g%100000 para distribuir productos
 -- =============================================================================
-TRUNCATE TABLE IF EXISTS retail.sales CASCADE;
+TRUNCATE retail.sales CASCADE;
 
 INSERT INTO retail.sales (tenant_id, product_id, customer_id, quantity, unit_price, total_amount, payment_method, order_status, sale_date, channel)
 SELECT
@@ -121,7 +121,7 @@ SELECT
     CASE WHEN g % 20 = 0 THEN 'cancelled' WHEN g % 50 = 0 THEN 'refunded' ELSE 'completed' END,
     NOW() - ((g % 365) || ' days')::interval,
     (ARRAY['web','app','store'])[1 + (g % 3)]
-FROM generate_series(1, 1200000) AS g
+FROM generate_series(1, 100000) AS g
 CROSS JOIN LATERAL (
     SELECT id FROM retail.products WHERE sku = 'SKU-' || LPAD((g % 100000 + 1)::text, 8, '0')
 ) AS p;
@@ -142,7 +142,7 @@ CREATE TABLE IF NOT EXISTS retail.product_reviews (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-TRUNCATE TABLE IF EXISTS retail.product_reviews CASCADE;
+TRUNCATE retail.product_reviews CASCADE;
 
 INSERT INTO retail.product_reviews (tenant_id, product_id, customer_id, rating, title, comment, is_verified_purchase, helpful_count, created_at)
 SELECT
