@@ -16,7 +16,9 @@ function ProtectedLayout() {
   if (!ready) {
     return (
       <div className="auth-page">
-        <p className="muted">Cargando sesión…</p>
+        <p className="muted">
+          <span className="loading" aria-label="Cargando" /> Cargando sesión…
+        </p>
       </div>
     );
   }
@@ -28,17 +30,17 @@ function ProtectedLayout() {
         <div className="shell">
           <aside className="sidebar">
             <div className="brand">
-              RAG<span>Portal</span>
+              Zent<span>RAG</span>
             </div>
             <nav className="nav">
               <NavLink to="/" end>
                 Dashboard
               </NavLink>
               <NavLink to="/usage">Uso</NavLink>
-              <NavLink to="/keys">API Keys</NavLink>
+              <NavLink to="/keys">Claves</NavLink>
               <NavLink to="/ingestion">Ingestión</NavLink>
               <NavLink to="/prompts">Prompts</NavLink>
-              <NavLink to="/chat">Chat demo</NavLink>
+              <NavLink to="/chat">Pregúntale a tus datos</NavLink>
             </nav>
             <div className="sidebar-footer">
               <div className="muted">

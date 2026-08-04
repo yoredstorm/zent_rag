@@ -141,6 +141,7 @@ class RAGQueryResponse(BaseModel):
     usage: dict[str, int]  # {"prompt_tokens": N, "completion_tokens": N, "total_tokens": N}
     latency_ms: float
     method: str = "rag"  # "sql" = SQL-first, "rag" = vector-only
+    sql_query: str | None = None  # admin-only when method == "sql"
 
 
 class ErrorResponse(BaseModel):

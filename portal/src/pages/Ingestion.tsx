@@ -22,6 +22,7 @@ export default function IngestionPage() {
   const { session } = useAuth();
   const sync = useSyncJob();
   const [sources, setSources] = useState<Source[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const lastCompleted = useRef<string | null>(null);
 
@@ -35,9 +36,13 @@ export default function IngestionPage() {
   }
 
   useEffect(() => {
-    loadSources().catch((err) =>
-      setError(err instanceof Error ? err.message : "Error cargando sources")
-    );
+    if (!session) return;
+    setLoading(true);
+    loadSources()
+      .catch((err) =>
+        setError(err instanceof Error ? err.message : "Error cargando fuentes")
+      )
+      .finally(() => setLoading(false));
   }, [session]);
 
   useEffect(() => {
@@ -54,9 +59,8 @@ export default function IngestionPage() {
     <div>
       <h1>Ingestión</h1>
       <p className="muted">
-        Descubre tablas y sincroniza SQL → vectores. Puedes cambiar de sección:
-        el sync sigue en segundo plano. Por defecto se omite la tabla{" "}
-        <span className="mono">sales</span>.
+        Descubre tablas y sincroniza tu información para poder hacer preguntas.
+        Puedes cambiar de sección: la sincronización sigue en segundo plano.
       </p>
       {error && <p className="error">{error}</p>}
 
@@ -67,16 +71,17 @@ export default function IngestionPage() {
           onClick={() => void sync.startSyncAll(false)}
           disabled={sync.active}
         >
-          {sync.active ? "Sincronizando…" : "Sync all"}
+          {sync.active ? "Sincronizando…" : "Sincronizar mis datos"}
         </button>
         <button
           className="btn secondary"
           type="button"
-          onClick={() =>
+          onClick={() => {
+            setError("");
             loadSources().catch((err) =>
               setError(err instanceof Error ? err.message : "Error")
-            )
-          }
+            );
+          }}
         >
           Refrescar
         </button>
@@ -121,7 +126,7 @@ export default function IngestionPage() {
             )}
             {sync.stale && (
               <div className="error">
-                Sin heartbeat reciente (&gt;3 min). Si la tabla es grande, el embed
+                Sin heartbeat reciente (&gt;3 min). Si la tabla es grande, el proceso
                 puede seguir en el servidor.
               </div>
             )}
@@ -139,34 +144,45 @@ export default function IngestionPage() {
       )}
 
       <div className="panel">
-        <h2>Sources</h2>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Schema</th>
-              <th>Tabla</th>
-              <th>Filas</th>
-              <th>Synced</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sources.map((s) => (
-              <tr key={`${s.schema}.${s.table}`}>
-                <td>{s.schema}</td>
-                <td className="mono">{s.table}</td>
-                <td>{s.row_count}</td>
-                <td>{s.synced ? "yes" : "no"}</td>
-              </tr>
-            ))}
-            {sources.length === 0 && (
+        <h2>Fuentes de datos</h2>
+        {loading && (
+          <p className="muted">
+            <span className="loading" aria-label="Cargando" /> Cargando…
+          </p>
+        )}
+        {!loading && (
+          <table className="table">
+            <thead>
               <tr>
-                <td colSpan={4} className="muted">
-                  Sin sources
-                </td>
+                <th>Schema</th>
+                <th>Tabla</th>
+                <th>Filas</th>
+                <th>Estado</th>
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sources.map((s) => (
+                <tr key={`${s.schema}.${s.table}`}>
+                  <td>{s.schema}</td>
+                  <td className="mono">{s.table}</td>
+                  <td>{s.row_count}</td>
+                  <td>
+                    <span className={`badge ${s.synced ? "badge-ok" : "badge-pending"}`}>
+                      {s.synced ? "Sincronizada" : "Pendiente"}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {sources.length === 0 && (
+                <tr>
+                  <td colSpan={4} className="muted">
+                    No hay fuentes descubiertas aún. Pulsa «Sincronizar mis datos».
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );

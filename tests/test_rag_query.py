@@ -118,3 +118,77 @@ class TestAntiHallucination:
         answer = data.get("answer", "")
         assert "No tengo suficiente" in answer or "no tengo suficiente" in answer.lower()
         assert data.get("usage", {}).get("total_tokens", 1) == 0
+
+
+class TestSqlQueryAdminOnly:
+    """sql_query solo se expone a role=admin cuando method=sql."""
+
+    @pytest.mark.asyncio
+    async def test_admin_receives_sql_query(
+        self,
+        async_client: AsyncClient,
+        trial_auth: dict[str, str],
+        mock_orchestrator,
+    ) -> None:
+        mock_orchestrator._response = RAGQueryResult(
+            query_id=uuid4(),
+            tenant_id=uuid4(),
+            user_id=uuid4(),
+            query="Cuantas ventas?",
+            role="admin",
+            status=QueryStatus.COMPLETED,
+            llm_response=LLMResponse(
+                content="Hay 42 ventas.",
+                model="gpt-4o-mini",
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+            ),
+            total_latency_ms=100.0,
+            method="sql",
+            sql_query="SELECT COUNT(*) FROM sales",
+        )
+        response = await async_client.post(
+            "/api/v1/rag/query",
+            json={"query": "Cuantas ventas?", "role": "admin"},
+            headers={**trial_auth, "X-User-Role": "admin"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["method"] == "sql"
+        assert data["sql_query"] == "SELECT COUNT(*) FROM sales"
+
+    @pytest.mark.asyncio
+    async def test_customer_does_not_receive_sql_query(
+        self,
+        async_client: AsyncClient,
+        trial_auth: dict[str, str],
+        mock_orchestrator,
+    ) -> None:
+        mock_orchestrator._response = RAGQueryResult(
+            query_id=uuid4(),
+            tenant_id=uuid4(),
+            user_id=uuid4(),
+            query="Cuantas ventas?",
+            role="customer",
+            status=QueryStatus.COMPLETED,
+            llm_response=LLMResponse(
+                content="Hay 42 ventas.",
+                model="gpt-4o-mini",
+                prompt_tokens=10,
+                completion_tokens=5,
+                total_tokens=15,
+            ),
+            total_latency_ms=100.0,
+            method="sql",
+            sql_query="SELECT COUNT(*) FROM sales",
+        )
+        response = await async_client.post(
+            "/api/v1/rag/query",
+            json={"query": "Cuantas ventas?", "role": "customer"},
+            headers={**trial_auth, "X-User-Role": "customer"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["method"] == "sql"
+        assert data.get("sql_query") is None

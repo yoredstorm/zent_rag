@@ -5,34 +5,48 @@ import { useAuth } from "../auth";
 type Usage = {
   totals: { requests: number; tokens: number; avg_latency_ms: number };
   daily: { day: string; requests: number; tokens: number; avg_latency_ms: number }[];
-  recent: { id: number; total_tokens: number; latency_ms: number; model: string | null; created_at: string }[];
+  recent: {
+    id: number;
+    total_tokens: number;
+    latency_ms: number;
+    model: string | null;
+    created_at: string;
+  }[];
 };
 
 export default function UsagePage() {
   const { session } = useAuth();
   const [usage, setUsage] = useState<Usage | null>(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     if (!session) return;
+    setLoading(true);
     api<Usage>("/api/v1/billing/usage?days=30", {
       token: session.token,
       tenantId: session.tenantId,
     })
       .then(setUsage)
-      .catch((err) => setError(err instanceof Error ? err.message : "Error"));
+      .catch((err) => setError(err instanceof Error ? err.message : "Error"))
+      .finally(() => setLoading(false));
   }, [session]);
 
   return (
     <div>
       <h1>Uso</h1>
-      <p className="muted">Últimos 30 días desde usage_logs.</p>
+      <p className="muted">Actividad de consultas en los últimos 30 días.</p>
       {error && <p className="error">{error}</p>}
-      {usage && (
+      {loading && (
+        <p className="muted">
+          <span className="loading" aria-label="Cargando" /> Cargando…
+        </p>
+      )}
+      {!loading && usage && (
         <>
           <div className="grid" style={{ marginTop: "1rem" }}>
             <div className="stat">
-              <div className="label">Requests</div>
+              <div className="label">Consultas</div>
               <div className="value">{usage.totals.requests}</div>
             </div>
             <div className="stat">
@@ -50,7 +64,7 @@ export default function UsagePage() {
               <thead>
                 <tr>
                   <th>Día</th>
-                  <th>Requests</th>
+                  <th>Consultas</th>
                   <th>Tokens</th>
                   <th>Latencia</th>
                 </tr>
@@ -67,7 +81,7 @@ export default function UsagePage() {
                 {usage.daily.length === 0 && (
                   <tr>
                     <td colSpan={4} className="muted">
-                      Sin datos aún
+                      Sin actividad aún
                     </td>
                   </tr>
                 )}
@@ -94,6 +108,13 @@ export default function UsagePage() {
                     <td className="mono">{r.model || "—"}</td>
                   </tr>
                 ))}
+                {usage.recent.length === 0 && (
+                  <tr>
+                    <td colSpan={4} className="muted">
+                      Sin consultas recientes
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

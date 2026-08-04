@@ -363,6 +363,8 @@ class RAGOrchestrator:
                 and not sql_result.error
             )
             result.method = "sql" if sql_has_data else "rag"
+            if sql_has_data and sql_result is not None:
+                result.sql_query = sql_result.sql
 
             if sql_has_data:
                 logger.info(

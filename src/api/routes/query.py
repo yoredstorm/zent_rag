@@ -221,6 +221,15 @@ async def rag_query(
             for chunk in result.retrieval_context.chunks
         ]
 
+    # SQL reveals internal schema — expose only to admin role
+    sql_for_client = None
+    if (
+        result.method == "sql"
+        and result.role == "admin"
+        and result.sql_query
+    ):
+        sql_for_client = result.sql_query
+
     return RAGQueryResponse(
         query_id=result.query_id,
         conversation_id=result.conversation_id,
@@ -236,4 +245,5 @@ async def rag_query(
         },
         latency_ms=result.total_latency_ms,
         method=result.method,
+        sql_query=sql_for_client,
     )

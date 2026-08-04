@@ -127,6 +127,7 @@ class RAGQueryResult:
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     error_message: str | None = None
     method: str = "rag"  # "sql" when SQL-first mode, "rag" when vector-only
+    sql_query: str | None = None  # populated when method == "sql"; exposed to admin only
 
 
 # -----------------------------------------------------------------------------

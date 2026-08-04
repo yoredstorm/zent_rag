@@ -19,11 +19,14 @@ export default function PromptsPage() {
   const [instructions, setInstructions] = useState("");
   const [testQuery, setTestQuery] = useState("¿Cuáles son los productos disponibles?");
   const [testAnswer, setTestAnswer] = useState("");
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
     if (!session) return;
+    setLoading(true);
+    setError("");
     api<PromptStatus>("/api/v1/admin/prompt", {
       token: session.token,
       tenantId: session.tenantId,
@@ -35,7 +38,8 @@ export default function PromptsPage() {
           setInstructions(r.custom_instructions || "");
         }
       })
-      .catch((err) => setError(err instanceof Error ? err.message : "Error"));
+      .catch((err) => setError(err instanceof Error ? err.message : "Error"))
+      .finally(() => setLoading(false));
   }, [session, role]);
 
   async function save(e: FormEvent) {
@@ -86,19 +90,28 @@ export default function PromptsPage() {
   return (
     <div>
       <h1>Prompts</h1>
-      <p className="muted">System prompt por rol (admin / customer).</p>
+      <p className="muted">
+        Instrucciones del asistente según la vista (equipo o cliente).
+      </p>
       {error && <p className="error">{error}</p>}
       {msg && <p className="success">{msg}</p>}
+      {loading && (
+        <p className="muted">
+          <span className="loading" aria-label="Cargando" /> Cargando…
+        </p>
+      )}
+      {!loading && (
+        <>
       <form className="panel" onSubmit={save}>
         <div className="field">
-          <label htmlFor="role">Rol</label>
+          <label htmlFor="role">Vista</label>
           <select
             id="role"
             value={role}
             onChange={(e) => setRole(e.target.value as "admin" | "customer")}
           >
-            <option value="admin">admin</option>
-            <option value="customer">customer</option>
+            <option value="admin">Equipo</option>
+            <option value="customer">Cliente</option>
           </select>
         </div>
         <div className="field">
@@ -122,9 +135,9 @@ export default function PromptsPage() {
         </button>
       </form>
       <div className="panel">
-        <h2>Test (sin cache)</h2>
+        <h2>Probar sin guardar</h2>
         <div className="field">
-          <label htmlFor="tq">Query</label>
+          <label htmlFor="tq">Pregunta</label>
           <input
             id="tq"
             value={testQuery}
@@ -140,6 +153,8 @@ export default function PromptsPage() {
           </pre>
         )}
       </div>
+        </>
+      )}
     </div>
   );
 }

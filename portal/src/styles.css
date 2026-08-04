@@ -93,6 +93,18 @@ select {
 .main {
   padding: 1.75rem 2rem 3rem;
   max-width: 1100px;
+  animation: page-in 0.22s ease;
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .auth-page {
@@ -462,6 +474,117 @@ select {
   display: grid;
   gap: 0.35rem;
   font-size: 0.9rem;
+}
+
+/* Loading spinner */
+.loading {
+  display: inline-block;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: -0.15em;
+  margin-right: 0.4rem;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Source chips + SQL + feedback */
+.source-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.55rem;
+}
+
+.source-chip {
+  max-width: 100%;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sql-details {
+  margin-top: 0.55rem;
+  font-size: 0.85rem;
+}
+
+.sql-details summary {
+  cursor: pointer;
+  color: var(--accent);
+  user-select: none;
+}
+
+.sql-pre {
+  margin: 0.5rem 0 0;
+  padding: 0.65rem 0.75rem;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 8px;
+  overflow: auto;
+  max-height: 200px;
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+}
+
+.feedback-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.feedback-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.15rem 0.4rem;
+  cursor: pointer;
+  line-height: 1.2;
+  font-size: 0.9rem;
+}
+
+.feedback-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.feedback-btn:not(:disabled):hover {
+  border-color: var(--accent);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.badge-ok {
+  background: rgba(90, 200, 160, 0.15);
+  color: var(--accent);
+}
+
+.badge-pending {
+  background: rgba(255, 200, 80, 0.12);
+  color: var(--warn, #e0b050);
+}
+
+.chart-wrap {
+  width: 100%;
+  min-height: 240px;
 }
 
 @media (max-width: 800px) {

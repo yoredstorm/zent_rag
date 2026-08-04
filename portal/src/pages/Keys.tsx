@@ -13,17 +13,20 @@ export default function KeysPage() {
   const { session } = useAuth();
   const [info, setInfo] = useState<TokenInfo | null>(null);
   const [newToken, setNewToken] = useState("");
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
     if (!session) return;
+    setLoading(true);
     api<TokenInfo>("/api/v1/billing/token", {
       token: session.token,
       tenantId: session.tenantId,
     })
       .then(setInfo)
-      .catch((err) => setError(err instanceof Error ? err.message : "Error"));
+      .catch((err) => setError(err instanceof Error ? err.message : "Error"))
+      .finally(() => setLoading(false));
   }, [session]);
 
   async function rotate() {
@@ -38,7 +41,7 @@ export default function KeysPage() {
       });
       setNewToken(data.token);
       setMsg(
-        "API token rotado. Guárdalo ahora — no se vuelve a mostrar. Tu sesión del portal no cambia."
+        "Clave rotada. Guárdala ahora — no se vuelve a mostrar. Tu sesión del portal no cambia."
       );
       const refreshed = await api<TokenInfo>("/api/v1/billing/token", {
         token: session.token,
@@ -52,16 +55,21 @@ export default function KeysPage() {
 
   return (
     <div>
-      <h1>API Keys</h1>
+      <h1>Claves de integración</h1>
       <p className="muted">
-        Token <code>rag_live_…</code> para integraciones. El portal usa tu sesión
-        cifrada (no pegues este token en el login).
+        Usa esta clave en tus sistemas externos. El portal ya te autentica con tu
+        cuenta — no hace falta pegarla aquí.
       </p>
       {error && <p className="error">{error}</p>}
       {msg && <p className="success">{msg}</p>}
       <div className="panel">
-        <h2>Token actual</h2>
-        {info ? (
+        <h2>Clave actual</h2>
+        {loading && (
+          <p className="muted">
+            <span className="loading" aria-label="Cargando" /> Cargando…
+          </p>
+        )}
+        {!loading && info && (
           <table className="table">
             <tbody>
               <tr>
@@ -85,22 +93,23 @@ export default function KeysPage() {
                 </td>
               </tr>
               <tr>
-                <th>Tenant</th>
+                <th>Organización</th>
                 <td className="mono">{session?.tenantId}</td>
               </tr>
             </tbody>
           </table>
-        ) : (
-          <p className="muted">Cargando…</p>
+        )}
+        {!loading && !info && !error && (
+          <p className="muted">No hay clave disponible.</p>
         )}
         <div className="row" style={{ marginTop: "1rem" }}>
-          <button className="btn danger" type="button" onClick={rotate}>
-            Rotar token
+          <button className="btn danger" type="button" onClick={rotate} disabled={loading}>
+            Rotar clave
           </button>
         </div>
         {newToken && (
           <div className="field" style={{ marginTop: "1rem" }}>
-            <label>Nuevo token (cópialo)</label>
+            <label>Nueva clave (cópiala ahora)</label>
             <input className="mono" readOnly value={newToken} />
           </div>
         )}
