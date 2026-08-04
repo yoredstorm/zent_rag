@@ -144,7 +144,7 @@ async def run_golden_eval(
         golden_path=__import__("pathlib").Path(__file__).resolve().parents[3]
         / "tests"
         / "golden"
-        / "rag_retail.json",
+        / "rag_farmacia.json",
         tenant_id=tenant_id,
         user_id=user_id,
     )

@@ -15,7 +15,7 @@ from src.infrastructure.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-DEFAULT_GOLDEN = Path(__file__).resolve().parents[2] / "tests" / "golden" / "rag_retail.json"
+DEFAULT_GOLDEN = Path(__file__).resolve().parents[2] / "tests" / "golden" / "rag_farmacia.json"
 DEFAULT_TENANT = UUID("00000000-0000-0000-0000-000000000001")
 DEFAULT_USER = UUID("00000000-0000-0000-0000-000000000002")
 

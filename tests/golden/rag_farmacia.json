@@ -1,0 +1,51 @@
+[
+  {
+    "id": "farmacia-001",
+    "query": "¿Cuáles son los analgésicos más vendidos y cuánto cuestan?",
+    "role": "admin",
+    "expected_keywords": ["analgésico", "paracetamol", "ibuprofeno", "precio"],
+    "top_k": 20
+  },
+  {
+    "id": "farmacia-002",
+    "query": "Necesito algo para el resfrío y la tos, ¿qué me recomiendan?",
+    "role": "customer",
+    "expected_keywords": ["antigripal", "tos", "resfrío", "propóleo"],
+    "top_k": 20
+  },
+  {
+    "id": "farmacia-003",
+    "query": "¿Cuántos medicamentos requieren receta médica en el catálogo?",
+    "role": "admin",
+    "expected_keywords": ["receta", "prescripción", "requiere"],
+    "top_k": 20
+  },
+  {
+    "id": "farmacia-004",
+    "query": "Resumen de ventas totales por categoría de medicamento",
+    "role": "admin",
+    "expected_keywords": ["venta", "categoría", "medicamento", "ingreso"],
+    "top_k": 20
+  },
+  {
+    "id": "farmacia-005",
+    "query": "Hola, ¿tienen algo natural para poder dormir mejor?",
+    "role": "customer",
+    "expected_keywords": ["dormir", "natural", "valeriana", "melisa", "sueño"],
+    "top_k": 10
+  },
+  {
+    "id": "farmacia-006",
+    "query": "¿Qué proveedores o laboratorios suministran productos cardiovasculares?",
+    "role": "admin",
+    "expected_keywords": ["proveedor", "laboratorio", "cardiovascular", "losartán"],
+    "top_k": 20
+  },
+  {
+    "id": "farmacia-007",
+    "query": "¿Cuánto cubre Fonasa y las isapres en los medicamentos con receta?",
+    "role": "customer",
+    "expected_keywords": ["fonasa", "isapre", "cobertura", "receta", "porcentaje"],
+    "top_k": 20
+  }
+]
