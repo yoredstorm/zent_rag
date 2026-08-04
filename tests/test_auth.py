@@ -120,6 +120,9 @@ class TestAuthSignupLogin:
 
     @pytest.mark.asyncio
     async def test_login_rate_limit(self, async_client: AsyncClient) -> None:
+        from src.infrastructure.auth_rate_limit import reset_memory_rate_limits
+
+        reset_memory_rate_limits()
         email = f"rl_{uuid4().hex[:10]}@example.com"
         await async_client.post(
             "/api/v1/auth/signup",
