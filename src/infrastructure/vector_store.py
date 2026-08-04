@@ -144,7 +144,7 @@ async def _get_client() -> AsyncQdrantClient:
                 pass
         settings = get_settings()
         raw_key = settings.QDRANT_API_KEY
-        api_key = raw_key if raw_key else None
+        api_key = raw_key.get_secret_value() if raw_key else None
         _qdrant_client = AsyncQdrantClient(
             host=settings.QDRANT_HOST,
             port=settings.QDRANT_PORT,

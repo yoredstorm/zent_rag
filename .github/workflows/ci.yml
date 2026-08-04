@@ -62,7 +62,8 @@ jobs:
           RAG_QDRANT_PORT: "6333"
           RAG_BILLING_ENABLED: "false"
           RAG_ENVIRONMENT: development
-
+          # Required — no insecure default allowed in Settings
+          RAG_PORTAL_SESSION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   build:
     runs-on: ubuntu-latest
     needs: [lint, test]
