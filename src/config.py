@@ -90,13 +90,13 @@ class Settings(BaseSettings):
     LITELLM_API_BASE: str | None = None  # URL del proxy LiteLLM
     LITELLM_API_KEY: SecretStr | None = None
     LITELLM_DEFAULT_MODEL: str = "gpt-4o-mini"
-    LITELLM_TIMEOUT_SECONDS: int = Field(default=60, ge=1, le=300)
+    LITELLM_TIMEOUT_SECONDS: int = Field(default=120, ge=1, le=300)
     LITELLM_MAX_RETRIES: int = Field(default=2, ge=0, le=5)
 
     # -------------------------------------------------------------------------
     # RAG / Embeddings
     # -------------------------------------------------------------------------
-    EMBEDDING_MODEL: str = "ollama/bge-m3"
+    EMBEDDING_MODEL: str = "openai/baai/bge-m3"
     VECTOR_DIMENSION: int = Field(default=1024, ge=1)
     RAG_TOP_K: int = Field(default=200, ge=1, le=500)
     RAG_SCORE_THRESHOLD: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -112,6 +112,39 @@ class Settings(BaseSettings):
     RAG_CHUNK_OVERLAP: int = Field(default=150, ge=0, le=500)
 
     # -------------------------------------------------------------------------
+    # Ingestion performance
+    # -------------------------------------------------------------------------
+    INGEST_EMBED_BATCH_SIZE: int = Field(default=64, ge=1, le=512)
+    INGEST_EMBED_CONCURRENCY: int = Field(default=8, ge=1, le=32)
+    INGEST_TABLE_CONCURRENCY: int = Field(default=3, ge=1, le=16)
+    INGEST_UPSERT_BATCH_SIZE: int = Field(default=200, ge=1, le=500)
+    INGEST_PAGE_SIZE: int = Field(default=1000, ge=100, le=10000)
+    INGEST_SKIP_TABLES: str = Field(
+        default="sales,product_reviews",
+        description="Comma-separated table names to skip during sync (e.g. sales,product_reviews)",
+    )
+    INGEST_MAX_ROWS_PER_TABLE: int = Field(
+        default=0,
+        ge=0,
+        description="Cap rows per table during ingest (0 = no cap). Useful for massive transactional tables.",
+    )
+
+    def ingestion_concurrency(self) -> tuple[int, int, int]:
+        """Return (embed_batch, embed_concurrency, table_concurrency) with Ollama auto-limit."""
+        is_ollama = self.EMBEDDING_MODEL.startswith("ollama/")
+        embed_batch = 16 if is_ollama else self.INGEST_EMBED_BATCH_SIZE
+        embed_conc = 1 if is_ollama else self.INGEST_EMBED_CONCURRENCY
+        table_conc = 1 if is_ollama else self.INGEST_TABLE_CONCURRENCY
+        return embed_batch, embed_conc, table_conc
+
+    def ingest_skip_table_set(self) -> set[str]:
+        return {
+            t.strip().lower()
+            for t in self.INGEST_SKIP_TABLES.split(",")
+            if t.strip()
+        }
+
+    # -------------------------------------------------------------------------
     # Billing
     # -------------------------------------------------------------------------
     # NOTA: Si BILLING_ENABLED está desactivado, las rutas de admin deben seguir
@@ -119,6 +152,19 @@ class Settings(BaseSettings):
     BILLING_ENABLED: bool = Field(default=True)
     BILLING_TRIAL_REQUESTS: int = Field(default=500, ge=1)
     BILLING_TRIAL_DAYS: int = Field(default=30, ge=1, le=365)
+
+    # -------------------------------------------------------------------------
+    # Portal auth (email/password + AES-256-GCM session tokens)
+    # -------------------------------------------------------------------------
+    # 32-byte key as hex (64 chars) or urlsafe-base64. Dev default is insecure.
+    PORTAL_SESSION_KEY: SecretStr = SecretStr(
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    )
+    PORTAL_SESSION_TTL_HOURS: int = Field(default=24, ge=1, le=168)
+    AUTH_LOGIN_MAX_ATTEMPTS: int = Field(default=5, ge=1, le=50)
+    AUTH_LOGIN_WINDOW_SECONDS: int = Field(default=900, ge=60, le=86400)
+    PORTAL_DEV_PASSWORD: SecretStr = SecretStr("demo-password-change-me")
+    PORTAL_DEV_EMAIL: str = Field(default="demo@zenttech.com")
 
     # -------------------------------------------------------------------------
     # Vault (HashiCorp Vault) — Connected via src/infrastructure/vault.py

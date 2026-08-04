@@ -38,6 +38,25 @@ class BillingService:
         self._repo = repo
 
     async def validate_token(self, token: str) -> BillingContext:
+        from src.infrastructure.portal_session import (
+            SessionTokenError,
+            decrypt_session,
+            is_portal_session_token,
+        )
+
+        if is_portal_session_token(token):
+            try:
+                session = decrypt_session(token)
+            except SessionTokenError as exc:
+                raise TokenValidationError(str(exc), 401, "invalid_session") from exc
+            return await self._context_for_tenant(
+                session.tenant_id,
+                token_id=None,
+                scopes=["rag:query", "rag:ingest", "portal"],
+                user_id=session.user_id,
+                auth_type="portal_session",
+            )
+
         token_hash = _hash_token(token)
         api_token = await self._repo.get_token_by_hash(token_hash)
         if api_token is None:
@@ -45,14 +64,66 @@ class BillingService:
                 "Invalid or expired API token", 401, "invalid_token"
             )
 
-        subscription = await self._repo.get_subscription_by_id(
-            api_token.subscription_id
+        return await self._context_for_subscription(
+            api_token.subscription_id,
+            token_id=api_token.id,
+            scopes=api_token.scopes,
+            auth_type="api_token",
         )
+
+    async def _context_for_tenant(
+        self,
+        tenant_id: UUID,
+        *,
+        token_id: UUID | None,
+        scopes: list[str],
+        user_id: UUID | None = None,
+        auth_type: str = "api_token",
+    ) -> BillingContext:
+        subscription = await self._repo.get_subscription_by_tenant(tenant_id)
         if subscription is None:
             raise TokenValidationError(
                 "Subscription not found", 401, "subscription_not_found"
             )
+        return await self._build_context(
+            subscription,
+            token_id=token_id,
+            scopes=scopes,
+            user_id=user_id,
+            auth_type=auth_type,
+        )
 
+    async def _context_for_subscription(
+        self,
+        subscription_id: UUID,
+        *,
+        token_id: UUID | None,
+        scopes: list[str],
+        user_id: UUID | None = None,
+        auth_type: str = "api_token",
+    ) -> BillingContext:
+        subscription = await self._repo.get_subscription_by_id(subscription_id)
+        if subscription is None:
+            raise TokenValidationError(
+                "Subscription not found", 401, "subscription_not_found"
+            )
+        return await self._build_context(
+            subscription,
+            token_id=token_id,
+            scopes=scopes,
+            user_id=user_id,
+            auth_type=auth_type,
+        )
+
+    async def _build_context(
+        self,
+        subscription: Subscription,
+        *,
+        token_id: UUID | None,
+        scopes: list[str],
+        user_id: UUID | None = None,
+        auth_type: str = "api_token",
+    ) -> BillingContext:
         if subscription.status == SubscriptionStatus.EXPIRED:
             raise TokenValidationError(
                 "Subscription has expired. Please renew your plan.",
@@ -82,9 +153,7 @@ class BillingService:
                 )
 
         if subscription.is_period_expired and subscription.status == SubscriptionStatus.ACTIVE:
-            if subscription.auto_renew:
-                pass
-            else:
+            if not subscription.auto_renew:
                 await self._repo.update_subscription_status(
                     subscription.id, "expired"
                 )
@@ -112,10 +181,12 @@ class BillingService:
             subscription_id=subscription.id,
             plan_id=plan.id,
             plan_name=plan.name,
-            token_id=api_token.id,
-            scopes=api_token.scopes,
+            token_id=token_id,
+            scopes=scopes,
             requests_limit=plan.requests_per_month,
             status=subscription.status,
+            user_id=user_id,
+            auth_type=auth_type,
         )
 
     async def check_quota(self, ctx: BillingContext) -> bool:
@@ -124,7 +195,9 @@ class BillingService:
         )
         return within
 
-    async def touch_token(self, token_id: UUID) -> None:
+    async def touch_token(self, token_id: UUID | None) -> None:
+        if token_id is None:
+            return
         try:
             await self._repo.touch_token_last_used(token_id)
         except Exception:

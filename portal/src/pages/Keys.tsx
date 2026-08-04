@@ -10,7 +10,7 @@ type TokenInfo = {
 };
 
 export default function KeysPage() {
-  const { session, updateToken } = useAuth();
+  const { session } = useAuth();
   const [info, setInfo] = useState<TokenInfo | null>(null);
   const [newToken, setNewToken] = useState("");
   const [error, setError] = useState("");
@@ -37,8 +37,14 @@ export default function KeysPage() {
         tenantId: session.tenantId,
       });
       setNewToken(data.token);
-      updateToken(data.token);
-      setMsg("Token rotado. Guárdalo ahora — no se vuelve a mostrar.");
+      setMsg(
+        "API token rotado. Guárdalo ahora — no se vuelve a mostrar. Tu sesión del portal no cambia."
+      );
+      const refreshed = await api<TokenInfo>("/api/v1/billing/token", {
+        token: session.token,
+        tenantId: session.tenantId,
+      });
+      setInfo(refreshed);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al rotar");
     }
@@ -47,7 +53,10 @@ export default function KeysPage() {
   return (
     <div>
       <h1>API Keys</h1>
-      <p className="muted">Gestiona el Bearer token del tenant.</p>
+      <p className="muted">
+        Token <code>rag_live_…</code> para integraciones. El portal usa tu sesión
+        cifrada (no pegues este token en el login).
+      </p>
       {error && <p className="error">{error}</p>}
       {msg && <p className="success">{msg}</p>}
       <div className="panel">

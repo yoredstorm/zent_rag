@@ -342,12 +342,29 @@ class PostgresTenantRepository(TenantRepository):
 class PostgresUserRepository(UserRepository):
     """Repositorio de Usuarios sobre PostgreSQL."""
 
+    _USER_COLS = (
+        "id, tenant_id, external_id, email_hash, role, email, password_hash, created_at"
+    )
+
+    @staticmethod
+    def _row_to_user(row) -> User:
+        return User(
+            id=row.id,
+            tenant_id=row.tenant_id,
+            external_id=row.external_id,
+            email_hash=row.email_hash,
+            role=row.role,
+            email=getattr(row, "email", None),
+            password_hash=getattr(row, "password_hash", None),
+            created_at=row.created_at,
+        )
+
     async def get_by_id(self, user_id: UUID, tenant_id: UUID) -> User | None:
         session = await get_async_session()
         try:
             result = await session.execute(
                 text(
-                    "SELECT id, tenant_id, external_id, email_hash, role, created_at "
+                    f"SELECT {self._USER_COLS} "
                     "FROM users WHERE id = :user_id AND tenant_id = :tenant_id"
                 ),
                 {"user_id": user_id, "tenant_id": tenant_id},
@@ -355,14 +372,7 @@ class PostgresUserRepository(UserRepository):
             row = result.fetchone()
             if row is None:
                 return None
-            return User(
-                id=row.id,
-                tenant_id=row.tenant_id,
-                external_id=row.external_id,
-                email_hash=row.email_hash,
-                role=row.role,
-                created_at=row.created_at,
-            )
+            return self._row_to_user(row)
         finally:
             await session.close()
 
@@ -373,7 +383,7 @@ class PostgresUserRepository(UserRepository):
         try:
             result = await session.execute(
                 text(
-                    "SELECT id, tenant_id, external_id, email_hash, role, created_at "
+                    f"SELECT {self._USER_COLS} "
                     "FROM users WHERE tenant_id = :tid AND external_id = :ext_id"
                 ),
                 {"tid": tenant_id, "ext_id": external_id},
@@ -381,11 +391,7 @@ class PostgresUserRepository(UserRepository):
             row = result.fetchone()
             if row is None:
                 return None
-            return User(
-                id=row.id, tenant_id=row.tenant_id,
-                external_id=row.external_id, email_hash=row.email_hash,
-                role=row.role, created_at=row.created_at,
-            )
+            return self._row_to_user(row)
         finally:
             await session.close()
 
@@ -394,7 +400,7 @@ class PostgresUserRepository(UserRepository):
         try:
             result = await session.execute(
                 text(
-                    "SELECT id, tenant_id, external_id, email_hash, role, created_at "
+                    f"SELECT {self._USER_COLS} "
                     "FROM users WHERE tenant_id = :tid LIMIT 1"
                 ),
                 {"tid": tenant_id},
@@ -402,32 +408,69 @@ class PostgresUserRepository(UserRepository):
             row = result.fetchone()
             if row is None:
                 return None
-            return User(
-                id=row.id, tenant_id=row.tenant_id,
-                external_id=row.external_id, email_hash=row.email_hash,
-                role=row.role, created_at=row.created_at,
+            return self._row_to_user(row)
+        finally:
+            await session.close()
+
+    async def get_by_email(self, email: str) -> User | None:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    f"SELECT {self._USER_COLS} "
+                    "FROM users WHERE lower(email) = lower(:email) LIMIT 1"
+                ),
+                {"email": email.strip()},
             )
+            row = result.fetchone()
+            if row is None:
+                return None
+            return self._row_to_user(row)
+        finally:
+            await session.close()
+
+    async def set_password(self, user_id: UUID, password_hash: str) -> None:
+        session = await get_async_session()
+        try:
+            await session.execute(
+                text(
+                    "UPDATE users SET password_hash = :ph WHERE id = :uid"
+                ),
+                {"ph": password_hash, "uid": user_id},
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
         finally:
             await session.close()
 
     async def create_default_user(
-        self, tenant_id: UUID, email_hash: str
+        self,
+        tenant_id: UUID,
+        email_hash: str,
+        *,
+        email: str | None = None,
+        password_hash: str | None = None,
     ) -> User:
         session = await get_async_session()
         user_id = uuid4()
         try:
             result = await session.execute(
                 text(
-                    "INSERT INTO users (id, tenant_id, external_id, email_hash, role) "
-                    "VALUES (:id, :tid, :ext_id, :email_hash, 'admin') "
+                    "INSERT INTO users "
+                    "(id, tenant_id, external_id, email_hash, role, email, password_hash) "
+                    "VALUES (:id, :tid, :ext_id, :email_hash, 'admin', :email, :password_hash) "
                     "ON CONFLICT (tenant_id, external_id) DO NOTHING "
-                    "RETURNING id, tenant_id, external_id, email_hash, role, created_at"
+                    f"RETURNING {self._USER_COLS}"
                 ),
                 {
                     "id": user_id,
                     "tid": tenant_id,
                     "ext_id": "default-admin",
                     "email_hash": email_hash,
+                    "email": email.lower().strip() if email else None,
+                    "password_hash": password_hash,
                 },
             )
             row = result.fetchone()
@@ -435,17 +478,32 @@ class PostgresUserRepository(UserRepository):
             if row is None:
                 result2 = await session.execute(
                     text(
-                        "SELECT id, tenant_id, external_id, email_hash, role, created_at "
+                        f"SELECT {self._USER_COLS} "
                         "FROM users WHERE tenant_id = :tid AND external_id = 'default-admin'"
                     ),
                     {"tid": tenant_id},
                 )
                 row = result2.fetchone()
-            return User(
-                id=row.id, tenant_id=row.tenant_id,
-                external_id=row.external_id, email_hash=row.email_hash,
-                role=row.role, created_at=row.created_at,
-            )
+                if email and password_hash and row is not None:
+                    await session.execute(
+                        text(
+                            "UPDATE users SET email = COALESCE(email, :email), "
+                            "password_hash = COALESCE(password_hash, :ph) "
+                            "WHERE id = :uid"
+                        ),
+                        {
+                            "email": email.lower().strip(),
+                            "ph": password_hash,
+                            "uid": row.id,
+                        },
+                    )
+                    await session.commit()
+                    result3 = await session.execute(
+                        text(f"SELECT {self._USER_COLS} FROM users WHERE id = :uid"),
+                        {"uid": row.id},
+                    )
+                    row = result3.fetchone()
+            return self._row_to_user(row)
         except Exception:
             await session.rollback()
             raise

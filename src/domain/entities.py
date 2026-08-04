@@ -69,6 +69,8 @@ class User:
     external_id: str  # ID del sistema cliente (nunca exponer ID interno)
     email_hash: str  # SHA-256 del email
     role: str = "user"
+    email: str | None = None  # Portal login (normalized)
+    password_hash: str | None = None  # bcrypt hash; never return to clients
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -200,14 +202,16 @@ class ApiToken:
 
 @dataclass(kw_only=True, frozen=True)
 class BillingContext:
-    """Contexto resuelto tras validar token de API."""
+    """Contexto resuelto tras validar token de API o sesión portal."""
 
     tenant_id: UUID
     subscription_id: UUID
     plan_id: UUID
     plan_name: str
-    token_id: UUID
+    token_id: UUID | None  # None for portal AES-GCM sessions
     scopes: list[str]
     requests_used: int = 0
     requests_limit: int = 500
     status: SubscriptionStatus = SubscriptionStatus.ACTIVE
+    user_id: UUID | None = None
+    auth_type: str = "api_token"  # api_token | portal_session

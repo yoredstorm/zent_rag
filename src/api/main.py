@@ -31,6 +31,7 @@ from src.api.billing_middleware import BillingMiddleware
 from src.api.metrics import setup_metrics
 from src.api.middleware import TraceMiddleware
 from src.api.routes.admin import router as admin_router
+from src.api.routes.auth import router as auth_router
 from src.api.routes.billing import router as billing_router
 from src.api.routes.evaluation import router as eval_router
 from src.api.routes.health import router as health_router
@@ -67,6 +68,25 @@ async def lifespan(app: FastAPI):
         metrics_enabled=settings.METRICS_ENABLED,
         background_ingestion=settings.RAG_BACKGROUND_INGESTION,
     )
+
+    if settings.ENVIRONMENT == "development":
+        try:
+            from src.infrastructure.passwords import hash_password
+            from src.infrastructure.relational_db import PostgresUserRepository
+
+            user_repo = PostgresUserRepository()
+            demo = await user_repo.get_by_email(settings.PORTAL_DEV_EMAIL)
+            if demo is not None and not demo.password_hash:
+                await user_repo.set_password(
+                    demo.id,
+                    hash_password(settings.PORTAL_DEV_PASSWORD.get_secret_value()),
+                )
+                logger.info(
+                    "Dev portal password seeded",
+                    email=settings.PORTAL_DEV_EMAIL,
+                )
+        except Exception as exc:
+            logger.warning("Could not seed portal dev password", error=str(exc))
 
     worker_task: asyncio.Task | None = None
     if settings.RAG_BACKGROUND_INGESTION:
@@ -168,6 +188,7 @@ if settings.TRACING_ENABLED:
 # Routers
 # -----------------------------------------------------------------------------
 app.include_router(admin_router)
+app.include_router(auth_router)
 app.include_router(billing_router)
 app.include_router(eval_router)
 app.include_router(health_router)
@@ -182,17 +203,24 @@ app.include_router(query_router)
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
     """Captura errores HTTP y los registra con trace_id en el log JSON."""
+    if isinstance(exc.detail, dict):
+        error_code = str(exc.detail.get("error_code") or f"HTTP_{exc.status_code}")
+        message = str(exc.detail.get("message") or exc.detail)
+    else:
+        error_code = f"HTTP_{exc.status_code}"
+        message = str(exc.detail)
+
     logger.warning(
         "HTTP exception",
         status_code=exc.status_code,
-        detail=str(exc.detail),
+        detail=message,
         path=request.url.path,
     )
     return JSONResponse(
         status_code=exc.status_code,
         content=ErrorResponse(
-            error_code=f"HTTP_{exc.status_code}",
-            message=str(exc.detail),
+            error_code=error_code,
+            message=message,
         ).model_dump(),
         headers={"Access-Control-Allow-Origin": "*"},
     )

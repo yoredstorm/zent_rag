@@ -241,6 +241,14 @@ class PostgresIngestionService(IngestionService):
         settings = get_settings()
         self._chunk_max_chars = settings.RAG_CHUNK_MAX_CHARS
         self._chunk_overlap = settings.RAG_CHUNK_OVERLAP
+        embed_batch, embed_conc, table_conc = settings.ingestion_concurrency()
+        self._embed_batch_size = embed_batch
+        self._embed_concurrency = embed_conc
+        self._table_concurrency = table_conc
+        self._upsert_batch_size = settings.INGEST_UPSERT_BATCH_SIZE
+        self._page_size = settings.INGEST_PAGE_SIZE
+        self._skip_tables = settings.ingest_skip_table_set()
+        self._max_rows_per_table = settings.INGEST_MAX_ROWS_PER_TABLE
 
     def _sync_key(self, tenant_id: UUID, schema: str, table: str) -> str:
         return f"rag:synced:{tenant_id.hex}:{schema}.{table}"
@@ -351,10 +359,20 @@ class PostgresIngestionService(IngestionService):
     async def sync_all(
         self, tenant_id: UUID, full_refresh: bool = False, job_id: str | None = None
     ) -> IngestionResult:
-        """Sincroniza todas las tablas automáticamente."""
+        """Sincroniza todas las tablas automáticamente (con concurrencia configurable)."""
         start = time.perf_counter()
         sources = await self.discover_sources(tenant_id)
-        active_sources = [s for s in sources if s.row_count > 0]
+        active_sources = [
+            s for s in sources
+            if s.row_count > 0 and s.table_name.lower() not in self._skip_tables
+        ]
+        skipped = [
+            s.table_name for s in sources
+            if s.row_count > 0 and s.table_name.lower() in self._skip_tables
+        ]
+        if skipped:
+            logger.info("Skipping tables during sync", tables=skipped)
+
         total_tables = len(active_sources)
 
         result = IngestionResult(
@@ -369,49 +387,82 @@ class PostgresIngestionService(IngestionService):
 
         if job_id:
             from src.infrastructure.ingestion_queue import update_job_status
+            msg = f"Descubiertas {total_tables} tablas"
+            if skipped:
+                msg += f" (omitidas: {', '.join(skipped)})"
             await update_job_status(
                 job_id,
                 "running",
                 progress=0,
-                message=f"Descubiertas {total_tables} tablas" if total_tables else "Sin tablas con filas",
+                message=msg if total_tables else "Sin tablas con filas",
                 current_table="",
                 tables_done=0,
                 tables_total=total_tables,
             )
 
-        for i, source in enumerate(active_sources):
+        done_lock = asyncio.Lock()
+        tables_done = 0
+
+        async def _run_one(source: DataSource) -> IngestionResult:
+            nonlocal tables_done
             table_label = f"{source.schema_name}.{source.table_name}"
             if job_id and total_tables > 0:
                 from src.infrastructure.ingestion_queue import update_job_status
-                percent = min(int(i / total_tables * 100), 99)
-                await update_job_status(
-                    job_id,
-                    "running",
-                    progress=percent,
-                    message=f"Sincronizando {table_label}",
-                    current_table=table_label,
-                    tables_done=i,
-                    tables_total=total_tables,
-                )
+                async with done_lock:
+                    percent = min(int(tables_done / total_tables * 100), 99)
+                    await update_job_status(
+                        job_id,
+                        "running",
+                        progress=percent,
+                        message=f"Sincronizando {table_label}",
+                        current_table=table_label,
+                        tables_done=tables_done,
+                        tables_total=total_tables,
+                    )
 
-            table_result = await self._ingest_table(tenant_id, source)
-            result.tables_processed += 1
-            result.rows_indexed += table_result.rows_indexed
-            result.vectors_upserted += table_result.vectors_upserted
-            result.errors.extend(table_result.errors)
+            table_result = await self._ingest_table(
+                tenant_id, source, job_id=job_id
+            )
 
-            if job_id and total_tables > 0:
-                from src.infrastructure.ingestion_queue import update_job_status
-                percent = min(int((i + 1) / total_tables * 100), 100)
-                await update_job_status(
-                    job_id,
-                    "running",
-                    progress=percent,
-                    message=f"Completada {table_label} ({i + 1}/{total_tables})",
-                    current_table=table_label,
-                    tables_done=i + 1,
-                    tables_total=total_tables,
-                )
+            async with done_lock:
+                tables_done += 1
+                if job_id and total_tables > 0:
+                    from src.infrastructure.ingestion_queue import update_job_status
+                    percent = min(int(tables_done / total_tables * 100), 100)
+                    await update_job_status(
+                        job_id,
+                        "running",
+                        progress=percent,
+                        message=f"Completada {table_label} ({tables_done}/{total_tables})",
+                        current_table=table_label,
+                        tables_done=tables_done,
+                        tables_total=total_tables,
+                    )
+            return table_result
+
+        sem = asyncio.Semaphore(self._table_concurrency)
+
+        async def _bounded(source: DataSource) -> IngestionResult:
+            async with sem:
+                return await _run_one(source)
+
+        if active_sources:
+            outcomes = await asyncio.gather(
+                *[_bounded(s) for s in active_sources],
+                return_exceptions=True,
+            )
+            for source, outcome in zip(active_sources, outcomes):
+                if isinstance(outcome, Exception):
+                    result.errors.append(
+                        f"{source.schema_name}.{source.table_name}: {outcome}"
+                    )
+                    result.tables_processed += 1
+                    continue
+                result.tables_processed += 1
+                result.rows_indexed += outcome.rows_indexed
+                result.vectors_upserted += outcome.vectors_upserted
+                result.errors.extend(outcome.errors)
+                result.failed_rows += outcome.failed_rows
 
         result.duration_ms = round((time.perf_counter() - start) * 1000, 2)
 
@@ -423,6 +474,9 @@ class PostgresIngestionService(IngestionService):
             vectors=result.vectors_upserted,
             duration_ms=result.duration_ms,
             errors=len(result.errors),
+            skipped=skipped,
+            table_concurrency=self._table_concurrency,
+            embed_concurrency=self._embed_concurrency,
         )
 
         return result
@@ -563,35 +617,36 @@ class PostgresIngestionService(IngestionService):
         return mapping if mapping else None
 
     async def _ingest_table(
-        self, tenant_id: UUID, source: DataSource, since_timestamp: str | None = None
+        self,
+        tenant_id: UUID,
+        source: DataSource,
+        since_timestamp: str | None = None,
+        job_id: str | None = None,
     ) -> IngestionResult:
-        """Ingiere todas las filas de una tabla a Qdrant."""
+        """Ingiere filas de una tabla a Qdrant (embed paralelo + upsert batch)."""
         result = IngestionResult(tenant_id=tenant_id, tables_processed=1)
 
-        # Mapeo heurístico de columnas
         column_templates = [
             _column_to_template(col.name, col.data_type)
             for col in source.columns
-            if not col.is_primary_key  # PKs no van en el texto (son metadata)
+            if not col.is_primary_key
         ]
 
         table_label = source.table_name.replace("_", " ").title()
+        schema = source.schema_name
+        table = source.table_name
+        table_full = f"{schema}.{table}"
 
         session = await get_async_session()
         try:
-            schema = source.schema_name
-            table = source.table_name
-
-            # Descubrir columna PK para usarla como document_id
             pk_col = next(
                 (col for col in source.columns if col.is_primary_key),
                 source.columns[0] if source.columns else None,
             )
             if pk_col is None:
-                result.errors.append(f"Table {schema}.{table} has no columns")
+                result.errors.append(f"Table {table_full} has no columns")
                 return result
 
-            # FK resolution: resolve foreign key UUIDs to display names
             fk_resolutions: dict[str, tuple[str, dict[str, str]]] = {}
             for col in source.columns:
                 if col.is_foreign_key and col.fk_table and col.fk_column:
@@ -602,20 +657,33 @@ class PostgresIngestionService(IngestionService):
                         label = col.fk_table.replace("_", " ").title()
                         fk_resolutions[col.name] = (label, resolved)
 
-            # Paginated fetch: load rows in pages of 500 to avoid OOM
-            page_size = 1000
-            embed_batch_size = 100
+            page_size = self._page_size
+            embed_batch_size = self._embed_batch_size
+            max_rows = self._max_rows_per_table
             offset = 0
             column_names: list[str] | None = None
             page = 0
+            embed_sem = asyncio.Semaphore(self._embed_concurrency)
 
             while True:
+                if max_rows and offset >= max_rows:
+                    logger.info(
+                        "Hit max rows cap for table",
+                        table=table_full,
+                        max_rows=max_rows,
+                    )
+                    break
+
+                limit = page_size
+                if max_rows:
+                    limit = min(page_size, max_rows - offset)
+
                 if since_timestamp:
                     query = text(
                         f'SELECT * FROM "{schema}"."{table}" '
                         f'WHERE "updated_at" > :since_ts '
                         f'ORDER BY "{pk_col.name}" '
-                        f"LIMIT {page_size} OFFSET {offset}"
+                        f"LIMIT {limit} OFFSET {offset}"
                     )
                     rows = await session.execute(query, {"since_ts": since_timestamp})
                 else:
@@ -623,7 +691,7 @@ class PostgresIngestionService(IngestionService):
                         text(
                             f'SELECT * FROM "{schema}"."{table}" '
                             f'ORDER BY "{pk_col.name}" '
-                            f"LIMIT {page_size} OFFSET {offset}"
+                            f"LIMIT {limit} OFFSET {offset}"
                         )
                     )
                 page_rows = rows.fetchall()
@@ -634,107 +702,146 @@ class PostgresIngestionService(IngestionService):
                     column_names = list(rows.keys())
 
                 page += 1
+                if job_id:
+                    from src.infrastructure.ingestion_queue import update_job_status
+                    await update_job_status(
+                        job_id,
+                        "running",
+                        message=(
+                            f"{table_full} página {page}, "
+                            f"filas indexadas {result.rows_indexed}+…"
+                        ),
+                        current_table=table_full,
+                    )
 
-                # Split each page into embed-batches of 50
-                for batch_start in range(0, len(page_rows), embed_batch_size):
-                    batch_rows = page_rows[batch_start : batch_start + embed_batch_size]
-                    texts: list[str] = []
-                    doc_ids: list[UUID] = []
-                    metadata_list: list[dict] = []
+                # Build all text chunks for this page, then embed in parallel batches
+                page_texts: list[str] = []
+                page_doc_ids: list[UUID] = []
+                page_metas: list[dict] = []
+                rows_in_page = 0
 
-                    for row in batch_rows:
-                        row_dict = dict(zip(column_names, row, strict=True))
-
-                        content_text = _serialize_row(
-                            row_dict, column_templates, table_label,
-                            fk_resolutions, is_view=source.is_view,
-                        )
-
-                        pk_value = row_dict.get(pk_col.name)
-                        pk_str = str(pk_value) if pk_value else str(uuid4())
-                        parent_id = uuid5(_VECTOR_NS, f"{schema}.{table}:{pk_str}")
-
-                        text_chunks = _chunk_text(
-                            content_text, self._chunk_max_chars, self._chunk_overlap
-                        )
-                        for chunk_index, chunk_text in enumerate(text_chunks):
-                            if len(text_chunks) == 1:
-                                doc_id = parent_id
-                            else:
-                                doc_id = uuid5(
-                                    _VECTOR_NS,
-                                    f"{schema}.{table}:{pk_str}:chunk:{chunk_index}",
-                                )
-                            texts.append(chunk_text)
-                            doc_ids.append(doc_id)
-
-                            row_meta = {
-                                "tenant_id": str(tenant_id),
-                                "source": f"{schema}.{table}",
-                                "table_name": table,
-                                "schema_name": schema,
-                                "parent_row_id": str(parent_id),
-                                "chunk_index": chunk_index,
-                                "chunk_count": len(text_chunks),
-                                **{k: str(v)[:500] if v is not None else "" for k, v in row_dict.items()},
-                            }
-                            if source.is_view:
-                                row_meta["doc_type"] = "aggregated"
-                                row_meta["visibility"] = "admin"
-                            else:
-                                row_meta["visibility"] = "public"
-                            metadata_list.append(row_meta)
-
-                    raw_embeddings = await self._embeddings.embed(texts)
-                    if isinstance(raw_embeddings[0], float):
-                        embeddings_list = [raw_embeddings]  # type: ignore[list-item]
-                    else:
-                        embeddings_list = raw_embeddings  # type: ignore[assignment]
-
-                    upsert_tasks = []
-                    for content_text, doc_id, embedding, meta in zip(
-                        texts, doc_ids, embeddings_list, metadata_list
-                    ):
-                        upsert_tasks.append(
-                            self._vector_store.upsert(
-                                tenant_id=tenant_id,
-                                document_id=doc_id,
-                                embedding=list(embedding) if not isinstance(embedding, list) else embedding,
-                                content=content_text,
-                                metadata=meta,
+                for row in page_rows:
+                    row_dict = dict(zip(column_names, row, strict=True))
+                    content_text = _serialize_row(
+                        row_dict, column_templates, table_label,
+                        fk_resolutions, is_view=source.is_view,
+                    )
+                    pk_value = row_dict.get(pk_col.name)
+                    pk_str = str(pk_value) if pk_value else str(uuid4())
+                    parent_id = uuid5(_VECTOR_NS, f"{schema}.{table}:{pk_str}")
+                    text_chunks = _chunk_text(
+                        content_text, self._chunk_max_chars, self._chunk_overlap
+                    )
+                    for chunk_index, chunk_text in enumerate(text_chunks):
+                        doc_id = (
+                            parent_id
+                            if len(text_chunks) == 1
+                            else uuid5(
+                                _VECTOR_NS,
+                                f"{schema}.{table}:{pk_str}:chunk:{chunk_index}",
                             )
                         )
-                    upsert_results = await asyncio.gather(*upsert_tasks, return_exceptions=True)
-                    for i, res in enumerate(upsert_results):
-                        if isinstance(res, Exception):
-                            result.failed_rows += 1
-                            result.errors.append(f"{schema}.{table} row {doc_ids[i]}: {res}")
+                        page_texts.append(chunk_text)
+                        page_doc_ids.append(doc_id)
+                        row_meta = {
+                            "tenant_id": str(tenant_id),
+                            "source": table_full,
+                            "table_name": table,
+                            "schema_name": schema,
+                            "parent_row_id": str(parent_id),
+                            "chunk_index": str(chunk_index),
+                            "chunk_count": str(len(text_chunks)),
+                            **{
+                                k: str(v)[:500] if v is not None else ""
+                                for k, v in row_dict.items()
+                            },
+                        }
+                        if source.is_view:
+                            row_meta["doc_type"] = "aggregated"
+                            row_meta["visibility"] = "admin"
                         else:
-                            result.vectors_upserted += 1
+                            row_meta["visibility"] = "public"
+                        page_metas.append(row_meta)
+                    rows_in_page += 1
 
-                    # Don't double-count rows when chunked
-                    result.rows_indexed += len(batch_rows)
+                async def _embed_slice(
+                    start: int, end: int
+                ) -> tuple[int, list[list[float]] | Exception]:
+                    texts = page_texts[start:end]
+                    async with embed_sem:
+                        try:
+                            raw = await self._embeddings.embed(texts)
+                            if texts and isinstance(raw[0], float):
+                                return start, [raw]  # type: ignore[list-item]
+                            return start, raw  # type: ignore[return-value]
+                        except Exception as exc:
+                            return start, exc
 
-                offset += page_size
+                embed_jobs = [
+                    _embed_slice(i, min(i + embed_batch_size, len(page_texts)))
+                    for i in range(0, len(page_texts), embed_batch_size)
+                ]
+                embed_results = await asyncio.gather(*embed_jobs)
+
+                # Reconstruct embeddings in order
+                embeddings_by_idx: dict[int, list[float]] = {}
+                for start_idx, payload in embed_results:
+                    if isinstance(payload, Exception):
+                        result.failed_rows += embed_batch_size
+                        result.errors.append(f"{table_full} embed@{start_idx}: {payload}")
+                        continue
+                    for j, emb in enumerate(payload):
+                        embeddings_by_idx[start_idx + j] = (
+                            list(emb) if not isinstance(emb, list) else emb  # type: ignore[arg-type]
+                        )
+
+                # Upsert in batches
+                batch_points: list[tuple[UUID, list[float], str, dict | None]] = []
+                for idx, (doc_id, content_text, meta) in enumerate(
+                    zip(page_doc_ids, page_texts, page_metas)
+                ):
+                    emb = embeddings_by_idx.get(idx)
+                    if emb is None:
+                        continue
+                    batch_points.append((doc_id, emb, content_text, meta))
+                    if len(batch_points) >= self._upsert_batch_size:
+                        try:
+                            await self._vector_store.upsert_batch(tenant_id, batch_points)
+                            result.vectors_upserted += len(batch_points)
+                        except Exception as exc:
+                            result.failed_rows += len(batch_points)
+                            result.errors.append(f"{table_full} upsert: {exc}")
+                        batch_points = []
+
+                if batch_points:
+                    try:
+                        await self._vector_store.upsert_batch(tenant_id, batch_points)
+                        result.vectors_upserted += len(batch_points)
+                    except Exception as exc:
+                        result.failed_rows += len(batch_points)
+                        result.errors.append(f"{table_full} upsert: {exc}")
+
+                result.rows_indexed += rows_in_page
+                offset += limit
 
                 logger.info(
                     "Page ingested",
-                    table=f"{schema}.{table}",
+                    table=table_full,
                     page=page,
                     total_rows=result.rows_indexed,
+                    vectors=result.vectors_upserted,
                 )
 
-            # Marcar tabla como sincronizada en cache
             if self._cache and result.rows_indexed > 0:
                 await self._cache.set(
                     self._sync_key(tenant_id, schema, table), "1", ttl_seconds=86400
                 )
 
         except Exception as exc:
-            result.errors.append(f"{schema}.{table}: {exc}")
+            result.errors.append(f"{table_full}: {exc}")
             logger.error(
                 "Table ingestion failed",
-                table=f"{schema}.{table}",
+                table=table_full,
                 error=str(exc),
                 exc_info=True,
             )

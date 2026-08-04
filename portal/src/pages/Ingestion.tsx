@@ -55,7 +55,8 @@ export default function IngestionPage() {
       <h1>Ingestión</h1>
       <p className="muted">
         Descubre tablas y sincroniza SQL → vectores. Puedes cambiar de sección:
-        el sync sigue en segundo plano.
+        el sync sigue en segundo plano. Por defecto se omite la tabla{" "}
+        <span className="mono">sales</span>.
       </p>
       {error && <p className="error">{error}</p>}
 
@@ -120,7 +121,8 @@ export default function IngestionPage() {
             )}
             {sync.stale && (
               <div className="error">
-                Sin heartbeat reciente (&gt;45s). El proceso puede seguir en el servidor.
+                Sin heartbeat reciente (&gt;3 min). Si la tabla es grande, el embed
+                puede seguir en el servidor.
               </div>
             )}
             {sync.error && <div className="error">{sync.error}</div>}

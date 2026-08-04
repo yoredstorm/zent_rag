@@ -12,7 +12,14 @@ import SignupPage from "./pages/Signup";
 import UsagePage from "./pages/Usage";
 
 function ProtectedLayout() {
-  const { session, logout } = useAuth();
+  const { session, ready, logout } = useAuth();
+  if (!ready) {
+    return (
+      <div className="auth-page">
+        <p className="muted">Cargando sesión…</p>
+      </div>
+    );
+  }
   if (!session) return <Navigate to="/login" replace />;
 
   return (
@@ -35,7 +42,7 @@ function ProtectedLayout() {
             </nav>
             <div className="sidebar-footer">
               <div className="muted">
-                {session.companyName || session.tenantId.slice(0, 8)}
+                {session.email || session.companyName || session.tenantId.slice(0, 8)}
               </div>
               <button className="btn secondary" type="button" onClick={logout}>
                 Cerrar sesión

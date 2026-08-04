@@ -117,9 +117,16 @@ async def run_worker(poll_timeout: int = 5) -> None:
     while not _shutdown_flag:
         try:
             result = await client.blpop(QUEUE_KEY, timeout=poll_timeout)
+        except (TimeoutError, aioredis.TimeoutError):
+            # Empty queue + socket_timeout ≈ poll timeout — not an error
+            continue
         except Exception as exc:
             logger.warning("Worker BLPOP error, retrying", error=str(exc))
             await asyncio.sleep(1)
+            try:
+                client = await _get_redis()
+            except Exception:
+                pass
             continue
 
         if result is None:

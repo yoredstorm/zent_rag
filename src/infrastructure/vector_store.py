@@ -212,23 +212,37 @@ class QdrantVectorStore(VectorStore):
         content: str,
         metadata: dict[str, str] | None = None,
     ) -> None:
+        await self.upsert_batch(
+            tenant_id,
+            [(document_id, embedding, content, metadata)],
+        )
+
+    async def upsert_batch(
+        self,
+        tenant_id: UUID,
+        points: list[tuple[UUID, list[float], str, dict[str, str] | None]],
+    ) -> None:
+        if not points:
+            return
         client = await _get_client()
         await self._ensure_collection()
 
+        structs = [
+            qdrant_models.PointStruct(
+                id=str(document_id),
+                vector=embedding,
+                payload={
+                    "content": content,
+                    "metadata": metadata or {},
+                    "tenant_id": str(tenant_id),
+                },
+            )
+            for document_id, embedding, content, metadata in points
+        ]
         await _retry_on_transient_error(
             client.upsert,
             collection_name=RAG_DOCUMENTS_COLLECTION,
-            points=[
-                qdrant_models.PointStruct(
-                    id=str(document_id),
-                    vector=embedding,
-                    payload={
-                        "content": content,
-                        "metadata": metadata or {},
-                        "tenant_id": str(tenant_id),
-                    },
-                )
-            ],
+            points=structs,
         )
 
     async def delete_by_tenant(self, tenant_id: UUID) -> None:

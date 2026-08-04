@@ -49,7 +49,7 @@ const emptyState: SyncJobState = {
 
 const SyncJobContext = createContext<SyncJobContextValue | null>(null);
 
-const STALE_MS = 45_000;
+const STALE_MS = 180_000;
 const POLL_MS = 1500;
 const TABLE_TOAST_THROTTLE_MS = 3000;
 
@@ -142,8 +142,8 @@ export function SyncJobProvider({ children }: { children: ReactNode }) {
         staleToastSent.current = true;
         pushToast(
           "warn",
-          "Sync sin actualización reciente",
-          "El job puede seguir en el servidor. Espera o revisa más tarde."
+          "Tabla grande en curso…",
+          "Sin actualización reciente (>3 min). El job puede seguir embebiendo en el servidor."
         );
       }
       if (!stale) staleToastSent.current = false;

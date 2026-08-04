@@ -21,6 +21,7 @@ _billing_service: BillingService | None = None
 # Exact public paths beyond PUBLIC_PATHS
 _PUBLIC_BILLING_GET = {"/api/v1/billing/plans"}
 _PUBLIC_BILLING_POST = {"/api/v1/billing/subscription/create-trial"}
+_PUBLIC_AUTH_POST = {"/api/v1/auth/login", "/api/v1/auth/signup"}
 
 # Dev-only SQL admin (not prompt management)
 _ADMIN_SQL_PREFIXES = (
@@ -43,6 +44,8 @@ def _is_public(path: str, method: str) -> bool:
     if method == "GET" and path in _PUBLIC_BILLING_GET:
         return True
     if method == "POST" and path in _PUBLIC_BILLING_POST:
+        return True
+    if method == "POST" and path in _PUBLIC_AUTH_POST:
         return True
     return False
 

@@ -72,8 +72,19 @@ class UserRepository(ABC):
 
     @abstractmethod
     async def create_default_user(
-        self, tenant_id: UUID, email_hash: str
+        self,
+        tenant_id: UUID,
+        email_hash: str,
+        *,
+        email: str | None = None,
+        password_hash: str | None = None,
     ) -> User: ...
+
+    @abstractmethod
+    async def get_by_email(self, email: str) -> User | None: ...
+
+    @abstractmethod
+    async def set_password(self, user_id: UUID, password_hash: str) -> None: ...
 
 
 class VectorStore(ABC):
@@ -99,6 +110,13 @@ class VectorStore(ABC):
         embedding: list[float],
         content: str,
         metadata: dict[str, str] | None = None,
+    ) -> None: ...
+
+    @abstractmethod
+    async def upsert_batch(
+        self,
+        tenant_id: UUID,
+        points: list[tuple[UUID, list[float], str, dict[str, str] | None]],
     ) -> None: ...
 
     @abstractmethod

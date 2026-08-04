@@ -11,7 +11,7 @@ AI Agent Orchestration con Retrieval-Augmented Generation (RAG) multi-tenant, fu
 | **BD Vectorial** | Qdrant v1.13 | Embeddings y búsqueda semántica (HNSW) |
 | **Caché** | Redis 7 | Rate limiting, caché de embeddings, colas de tareas |
 | **LLM Proxy** | LiteLLM | Proxy unificado: OpenAI, Anthropic, Ollama, Azure, etc. |
-| **Embeddings** | Ollama (bge-m3) | Embeddings locales de 1024 dimensiones |
+| **Embeddings** | LiteLLM → Novita/Ollama (bge-m3) | 1024-d; cloud rápido / Ollama CPU lento |
 | **Observabilidad** | Prometheus + Loki + Promtail + Grafana | Métricas + Logs centralizados + Dashboards |
 | **DB Migrations** | Alembic | Migraciones versionadas para PostgreSQL |
 | **Tests** | PyTest + httpx | Tests asíncronos con ASGITransport |
@@ -61,7 +61,7 @@ AI Agent Orchestration con Retrieval-Augmented Generation (RAG) multi-tenant, fu
 │
 2. Resolver tenant + validar API Key / rate limit
 │
-3. Generar embedding de la pregunta (LiteLLM → Ollama bge-m3)
+3. Generar embedding de la pregunta (LiteLLM → Novita/Ollama bge-m3)
 │
 4. Búsqueda semántica en Qdrant (top-k chunks relevantes)
 │
@@ -208,7 +208,8 @@ docker exec rag-ollama ollama pull bge-m3
 ### 5. Flujo de uso típico
 
 1. **Crear trial** → http://localhost:8080/signup (empresa → tenant + API token)
-2. **Sincronizar datos** → Portal → Ingestión → Sync All
+2. **Sincronizar datos** → Portal → Ingestión → Sync All  
+   (por defecto omite `sales`; embeddings cloud vía Novita. Si usas Ollama CPU, espera tiempos largos en BD masiva.)
 3. **Consultas RAG** → Portal → Chat demo
 4. **Ver cuota / rotar key** → Dashboard y API Keys
 
@@ -308,11 +309,19 @@ POST   /api/v1/admin/prompt/test          # Test con RAG real (embedding + vecto
 
 **Variables disponibles** en los prompts: `{role}`, `{tenant_name}`, `{date}`, `{top_k}`.
 
+### Auth (portal)
+
+```bash
+POST   /api/v1/auth/signup                                # Trial: company_name + email + password → rag_sess_ (AES-256-GCM)
+POST   /api/v1/auth/login                                 # email + password → rag_sess_
+GET    /api/v1/auth/me                                    # Perfil (Bearer rag_sess_ o rag_live_)
+```
+
 ### Billing
 
 ```bash
 GET    /api/v1/billing/plans                              # Listar planes disponibles
-POST   /api/v1/billing/subscription/create-trial          # Crear tenant trial (body: company_name)
+POST   /api/v1/billing/subscription/create-trial          # Crear tenant trial (API/legacy; body: company_name)
 GET    /api/v1/billing/subscription                       # Ver suscripción actual (Bearer)
 POST   /api/v1/billing/subscription/upgrade               # Cambiar de plan (Bearer + X-New-Plan)
 GET    /api/v1/billing/usage                              # Uso del tenant (Bearer)
@@ -334,8 +343,15 @@ Todas las variables usan el prefijo `RAG_` (configurado en `src/config.py` con `
 | `RAG_LITELLM_API_BASE` | — | API base del LLM (OpenAI, Novita, Ollama...) |
 | `RAG_LITELLM_API_KEY` | — | API key del proveedor LLM |
 | `RAG_LITELLM_DEFAULT_MODEL` | `gpt-4o-mini` | Modelo LLM por defecto |
-| `RAG_EMBEDDING_MODEL` | `text-embedding-3-small` | Modelo de embeddings |
-| `RAG_VECTOR_DIMENSION` | `1536` | Dimensiones del vector de embedding |
+| `RAG_EMBEDDING_MODEL` | `openai/baai/bge-m3` | Embeddings (Novita cloud). Usa `ollama/bge-m3` solo en local CPU |
+| `RAG_VECTOR_DIMENSION` | `1024` | Dimensiones del vector (debe coincidir con el modelo) |
+| `RAG_INGEST_SKIP_TABLES` | `sales,product_reviews` | Tablas omitidas en Sync All (comma-separated) |
+| `RAG_INGEST_MAX_ROWS_PER_TABLE` | `0` | Tope de filas/tabla (0 = sin tope) |
+| `RAG_INGEST_EMBED_CONCURRENCY` | `8` | Batches de embed en paralelo (forzado a 1 si Ollama) |
+| `RAG_INGEST_TABLE_CONCURRENCY` | `3` | Tablas en paralelo (forzado a 1 si Ollama) |
+| `RAG_INGEST_UPSERT_BATCH_SIZE` | `200` | Vectors por upsert a Qdrant |
+| `RAG_PORTAL_SESSION_KEY` | (dev default) | Clave AES-256 (32 bytes hex/base64) para `rag_sess_` |
+| `RAG_AUTH_LOGIN_MAX_ATTEMPTS` | `5` | Fallos de login antes de 429 |
 | `RAG_RAG_TOP_K` | `5` | Chunks a recuperar en búsqueda vectorial |
 | `RAG_RAG_MAX_CONTEXT_TOKENS` | `32000` | Tokens máximos en el contexto ensamblado |
 | `RAG_RAG_SQL_EXPERT_ENABLED` | `false` | Activar módulo Text-to-SQL |
