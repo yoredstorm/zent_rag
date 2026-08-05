@@ -16,6 +16,7 @@ type Source = {
   table: string;
   row_count: number;
   synced?: boolean;
+  skipped?: boolean;
   columns?: number;
   progress?: TableProgress;
 };
@@ -108,7 +109,7 @@ export default function IngestionPage() {
     }
   }, [sync.status, sync.jobId]);
 
-  const pendingCount = sources.filter((s) => s.row_count > 0 && !s.synced).length;
+  const pendingCount = sources.filter((s) => s.row_count > 0 && !s.synced && !s.skipped).length;
   const hasPending = pendingCount > 0;
 
   useEffect(() => {
@@ -243,12 +244,12 @@ export default function IngestionPage() {
                       <ProgressBar progress={s.progress} />
                     </td>
                     <td>
-                      <span className={`badge ${s.synced ? "badge-ok" : hasProgress ? "badge-pending" : "badge-pending"}`}>
-                        {s.synced ? "Sincronizada" : hasProgress ? "Sincronizando…" : "Pendiente"}
+                      <span className={`badge ${s.synced ? "badge-ok" : s.skipped ? "badge-pending" : hasProgress ? "badge-pending" : "badge-pending"}`}>
+                        {s.synced ? "Sincronizada" : s.skipped ? "Omitida" : hasProgress ? "Sincronizando…" : "Pendiente"}
                       </span>
                     </td>
                     <td>
-                      {!s.synced && s.row_count > 0 && (
+                      {!s.synced && s.row_count > 0 && !s.skipped && (
                         <button
                           className="btn secondary"
                           style={{ padding: "0.25rem 0.6rem", fontSize: "0.8rem" }}

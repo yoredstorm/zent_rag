@@ -59,11 +59,13 @@ async def list_sources(
         raise HTTPException(400, "X-Tenant-Id debe ser un UUID válido")
 
     sources = await ingestion.discover_sources(tenant_id)
+    skip_set = ingestion._skip_tables
     synced_count = 0
     source_list = []
     for s in sources:
         is_synced = await ingestion.is_synced(tenant_id, s.schema_name, s.table_name)
         progress = await ingestion.get_table_progress(tenant_id, s.schema_name, s.table_name)
+        is_skipped = s.table_name.lower() in skip_set
         if is_synced:
             synced_count += 1
         source_list.append({
@@ -72,6 +74,7 @@ async def list_sources(
             "columns": len(s.columns),
             "row_count": s.row_count,
             "synced": is_synced,
+            "skipped": is_skipped,
             "progress": progress,
             "columns_detail": [
                 {"name": c.name, "type": c.data_type, "nullable": c.is_nullable, "is_pk": c.is_primary_key}
