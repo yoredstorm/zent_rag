@@ -263,8 +263,21 @@ class PostgresIngestionService(IngestionService):
         results = []
         for s in sources:
             synced = await self.is_synced(tenant_id, s.schema_name, s.table_name)
-            results.append({**s.__dict__, "synced": synced})
+            progress = await self.get_table_progress(tenant_id, s.schema_name, s.table_name)
+            results.append({**s.__dict__, "synced": synced, "progress": progress})
         return results
+
+    async def get_table_progress(self, tenant_id: UUID, schema: str, table: str) -> dict | None:
+        if not self._cache:
+            return None
+        import json
+        raw = await self._cache.get(f"rag:progress:{tenant_id.hex}:{schema}.{table}")
+        if raw:
+            try:
+                return json.loads(raw)
+            except Exception:
+                pass
+        return None
 
     async def discover_sources(self, tenant_id: UUID) -> list[DataSource]:
         """Descubre todas las tablas indexables para un tenant."""
@@ -421,9 +434,26 @@ class PostgresIngestionService(IngestionService):
                         tables_total=total_tables,
                     )
 
+            has_updated_at = any(c.name == "updated_at" for c in source.columns)
+            since_ts = None
+            if has_updated_at and self._cache and not full_refresh:
+                since_ts = await self._cache.get(
+                    self._sync_ts_key(tenant_id, source.schema_name, source.table_name)
+                )
+                if since_ts:
+                    logger.info("Incremental sync", table=table_label, since=since_ts)
+
             table_result = await self._ingest_table(
-                tenant_id, source, job_id=job_id
+                tenant_id, source, job_id=job_id, since_timestamp=since_ts
             )
+
+            if has_updated_at and self._cache and table_result.rows_indexed > 0:
+                from datetime import datetime, timezone
+                await self._cache.set(
+                    self._sync_ts_key(tenant_id, source.schema_name, source.table_name),
+                    datetime.now(timezone.utc).isoformat(),
+                    ttl_seconds=86400 * 30,
+                )
 
             async with done_lock:
                 tables_done += 1
@@ -869,6 +899,21 @@ class PostgresIngestionService(IngestionService):
                 result.rows_indexed += rows_in_page
                 offset += limit
 
+                if self._cache and source.row_count and source.row_count > 0:
+                    import json
+                    pct = min(int(result.rows_indexed / source.row_count * 100), 99)
+                    await self._cache.set(
+                        f"rag:progress:{tenant_id.hex}:{schema}.{table}",
+                        json.dumps({
+                            "rows_indexed": result.rows_indexed,
+                            "row_count": source.row_count,
+                            "page": page,
+                            "pct": pct,
+                            "status": "running",
+                        }),
+                        ttl_seconds=3600,
+                    )
+
                 logger.info(
                     "Page ingested",
                     table=table_full,
@@ -880,6 +925,17 @@ class PostgresIngestionService(IngestionService):
             if self._cache and result.rows_indexed > 0:
                 await self._cache.set(
                     self._sync_key(tenant_id, schema, table), "1", ttl_seconds=86400
+                )
+                import json
+                await self._cache.set(
+                    f"rag:progress:{tenant_id.hex}:{schema}.{table}",
+                    json.dumps({
+                        "rows_indexed": result.rows_indexed,
+                        "row_count": source.row_count,
+                        "pct": 100,
+                        "status": "completed",
+                    }),
+                    ttl_seconds=86400,
                 )
 
         except Exception as exc:

@@ -63,6 +63,7 @@ async def list_sources(
     source_list = []
     for s in sources:
         is_synced = await ingestion.is_synced(tenant_id, s.schema_name, s.table_name)
+        progress = await ingestion.get_table_progress(tenant_id, s.schema_name, s.table_name)
         if is_synced:
             synced_count += 1
         source_list.append({
@@ -71,6 +72,7 @@ async def list_sources(
             "columns": len(s.columns),
             "row_count": s.row_count,
             "synced": is_synced,
+            "progress": progress,
             "columns_detail": [
                 {"name": c.name, "type": c.data_type, "nullable": c.is_nullable, "is_pk": c.is_primary_key}
                 for c in s.columns[:10]

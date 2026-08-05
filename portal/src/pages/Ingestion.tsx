@@ -3,12 +3,21 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { useSyncJob } from "../syncJob";
 
+type TableProgress = {
+  rows_indexed: number;
+  row_count: number;
+  pct: number;
+  status: string;
+  page?: number;
+} | null;
+
 type Source = {
   schema: string;
   table: string;
   row_count: number;
   synced?: boolean;
   columns?: number;
+  progress?: TableProgress;
 };
 
 function secondsAgo(iso: string): number {
@@ -16,6 +25,29 @@ function secondsAgo(iso: string): number {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return 0;
   return Math.max(0, Math.floor((Date.now() - t) / 1000));
+}
+
+function ProgressBar({ progress }: { progress: TableProgress }) {
+  if (!progress) return null;
+  const pct = progress.status === "completed" ? 100 : progress.pct || 0;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", minWidth: 120 }}>
+      <div className="sync-progress-track" style={{ flex: 1, height: 6, borderRadius: 3 }}>
+        <div
+          className="sync-progress-fill"
+          style={{
+            width: `${pct}%`,
+            background: progress.status === "completed" ? "var(--accent)" : "#f0a030",
+          }}
+        />
+      </div>
+      <span className="muted" style={{ fontSize: "0.7rem", whiteSpace: "nowrap" }}>
+        {progress.status === "completed"
+          ? "100%"
+          : `${(progress.rows_indexed ?? 0).toLocaleString()}/${(progress.row_count ?? 0).toLocaleString()}`}
+      </span>
+    </div>
+  );
 }
 
 export default function IngestionPage() {
@@ -95,7 +127,7 @@ export default function IngestionPage() {
       <h1>Ingestión</h1>
       <p className="muted">
         Descubre tablas y sincroniza tu información para poder hacer preguntas.
-        Puedes cambiar de sección: la sincronización sigue en segundo plano.
+        Las tablas con <code>updated_at</code> se sincronizan incrementalmente (solo lo nuevo).
       </p>
       {error && <p className="error">{error}</p>}
 
@@ -192,6 +224,7 @@ export default function IngestionPage() {
                 <th>Schema</th>
                 <th>Tabla</th>
                 <th>Filas</th>
+                <th>Progreso</th>
                 <th>Estado</th>
                 <th style={{ width: 120 }}>Acción</th>
               </tr>
@@ -200,26 +233,30 @@ export default function IngestionPage() {
               {sources.map((s) => {
                 const key = `${s.schema}.${s.table}`;
                 const isSyncing = syncingTables.has(key);
+                const hasProgress = s.progress && s.progress.status === "running";
                 return (
                   <tr key={key}>
                     <td>{s.schema}</td>
                     <td className="mono">{s.table}</td>
-                    <td>{s.row_count}</td>
+                    <td>{(s.row_count ?? 0).toLocaleString()}</td>
                     <td>
-                      <span className={`badge ${s.synced ? "badge-ok" : "badge-pending"}`}>
-                        {s.synced ? "Sincronizada" : "Pendiente"}
+                      <ProgressBar progress={s.progress} />
+                    </td>
+                    <td>
+                      <span className={`badge ${s.synced ? "badge-ok" : hasProgress ? "badge-pending" : "badge-pending"}`}>
+                        {s.synced ? "Sincronizada" : hasProgress ? "Sincronizando…" : "Pendiente"}
                       </span>
                     </td>
                     <td>
-                      {!s.synced && (
+                      {!s.synced && s.row_count > 0 && (
                         <button
                           className="btn secondary"
                           style={{ padding: "0.25rem 0.6rem", fontSize: "0.8rem" }}
                           type="button"
-                          disabled={isSyncing}
+                          disabled={isSyncing || hasProgress}
                           onClick={() => void syncTable(s.schema, s.table)}
                         >
-                          {isSyncing ? "..." : "Sincronizar"}
+                          {isSyncing ? "..." : hasProgress ? "En curso" : "Sincronizar"}
                         </button>
                       )}
                     </td>
@@ -228,7 +265,7 @@ export default function IngestionPage() {
               })}
               {sources.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="muted">
+                  <td colSpan={6} className="muted">
                     No hay fuentes descubiertas aún. Pulsa «Sincronizar mis datos».
                   </td>
                 </tr>
