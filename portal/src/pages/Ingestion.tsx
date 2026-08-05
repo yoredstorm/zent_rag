@@ -24,6 +24,7 @@ export default function IngestionPage() {
   const [sources, setSources] = useState<Source[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [syncingTables, setSyncingTables] = useState<Set<string>>(new Set());
   const lastCompleted = useRef<string | null>(null);
 
   async function loadSources() {
@@ -33,6 +34,29 @@ export default function IngestionPage() {
       tenantId: session.tenantId,
     });
     setSources(data.sources || []);
+  }
+
+  async function syncTable(schema: string, table: string) {
+    if (!session) return;
+    const key = `${schema}.${table}`;
+    setSyncingTables((prev) => new Set(prev).add(key));
+    try {
+      await api(`/api/v1/ingestion/sync/${schema}/${table}?background=true`, {
+        method: "POST",
+        token: session.token,
+        tenantId: session.tenantId,
+        headers: { "X-User-Role": "admin" },
+      });
+      await loadSources();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error sincronizando tabla");
+    } finally {
+      setSyncingTables((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
   }
 
   useEffect(() => {
@@ -51,6 +75,17 @@ export default function IngestionPage() {
       loadSources().catch(() => undefined);
     }
   }, [sync.status, sync.jobId]);
+
+  const pendingCount = sources.filter((s) => s.row_count > 0 && !s.synced).length;
+  const hasPending = pendingCount > 0;
+
+  useEffect(() => {
+    if (!hasPending && !sync.active) return;
+    const interval = setInterval(() => {
+      loadSources().catch(() => undefined);
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [hasPending, sync.active, session]);
 
   const ago = secondsAgo(sync.updatedAt);
   const showProgress = Boolean(sync.jobId);
@@ -71,7 +106,7 @@ export default function IngestionPage() {
           onClick={() => void sync.startSyncAll(false)}
           disabled={sync.active}
         >
-          {sync.active ? "Sincronizando…" : "Sincronizar mis datos"}
+          {sync.active ? "Sincronizando…" : `Sincronizar todos mis datos${hasPending ? ` (${pendingCount} pendientes)` : ""}`}
         </button>
         <button
           className="btn secondary"
@@ -158,24 +193,42 @@ export default function IngestionPage() {
                 <th>Tabla</th>
                 <th>Filas</th>
                 <th>Estado</th>
+                <th style={{ width: 120 }}>Acción</th>
               </tr>
             </thead>
             <tbody>
-              {sources.map((s) => (
-                <tr key={`${s.schema}.${s.table}`}>
-                  <td>{s.schema}</td>
-                  <td className="mono">{s.table}</td>
-                  <td>{s.row_count}</td>
-                  <td>
-                    <span className={`badge ${s.synced ? "badge-ok" : "badge-pending"}`}>
-                      {s.synced ? "Sincronizada" : "Pendiente"}
-                    </span>
-                  </td>
-                </tr>
-              ))}
+              {sources.map((s) => {
+                const key = `${s.schema}.${s.table}`;
+                const isSyncing = syncingTables.has(key);
+                return (
+                  <tr key={key}>
+                    <td>{s.schema}</td>
+                    <td className="mono">{s.table}</td>
+                    <td>{s.row_count}</td>
+                    <td>
+                      <span className={`badge ${s.synced ? "badge-ok" : "badge-pending"}`}>
+                        {s.synced ? "Sincronizada" : "Pendiente"}
+                      </span>
+                    </td>
+                    <td>
+                      {!s.synced && (
+                        <button
+                          className="btn secondary"
+                          style={{ padding: "0.25rem 0.6rem", fontSize: "0.8rem" }}
+                          type="button"
+                          disabled={isSyncing}
+                          onClick={() => void syncTable(s.schema, s.table)}
+                        >
+                          {isSyncing ? "..." : "Sincronizar"}
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
               {sources.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="muted">
+                  <td colSpan={5} className="muted">
                     No hay fuentes descubiertas aún. Pulsa «Sincronizar mis datos».
                   </td>
                 </tr>
