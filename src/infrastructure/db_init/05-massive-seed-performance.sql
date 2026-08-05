@@ -130,8 +130,12 @@ SELECT
     conc[1 + ((g * 3) % array_length(conc, 1))],
     units[1 + ((g * 5) % array_length(units, 1))] || ' ' || pres[1 + (g % array_length(pres, 1))],
     g % 4 = 0,
-    ((g * 17 + 500 * (g % 50) + 1000) % 40000 + 1500)::decimal(12,2),
-    ((g * 11 + 300 * (g % 50) + 500) % 28000 + 800)::decimal(12,2),
+    (( (1 + (g % array_length(ingredient, 1))) * 137 +
+       (1 + ((g * 3) % array_length(conc, 1))) * 251 +
+       (1 + ((g * 5) % array_length(units, 1))) * 73 ) % 40000 + 1500)::decimal(12,2),
+    (( (1 + (g % array_length(ingredient, 1))) * 103 +
+       (1 + ((g * 3) % array_length(conc, 1))) * 197 +
+       (1 + ((g * 5) % array_length(units, 1))) * 61 ) % 28000 + 800)::decimal(12,2),
     ARRAY[
         lower(ingredient[1 + (g % array_length(ingredient, 1))]),
         lower(pres[1 + (g % array_length(pres, 1))]),
