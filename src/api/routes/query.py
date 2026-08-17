@@ -344,7 +344,9 @@ async def rag_query_stream(
             if not streamed_parts and result.llm_response and result.llm_response.content:
                 await queue.put(("delta", result.llm_response.content))
 
-            sources = sources_for_client(result)
+            sources = [
+                s.model_dump(mode="json") for s in sources_for_client(result)[:6]
+            ]
             sql_for_client = None
             if result.method == "sql" and result.role == "admin" and result.sql_query:
                 sql_for_client = result.sql_query

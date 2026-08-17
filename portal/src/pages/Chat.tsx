@@ -201,7 +201,7 @@ export default function ChatPage() {
           setStreamPhase("");
         } else if (event === "sources") {
           const payload = JSON.parse(data) as {
-            sources: { content: string; score: number; image_base64?: string | null }[];
+            sources: ({ content?: string; score?: number; image_base64?: string | null } | string)[];
             method: string;
             sql_query: string | null;
             lazy_ingested: boolean;
@@ -209,11 +209,17 @@ export default function ChatPage() {
           const sources: SourceItem[] =
             payload.method === "sql"
               ? []
-              : (payload.sources || []).slice(0, 6).map((s) => ({
-                  text: s.content.slice(0, 240),
-                  image: s.image_base64 || undefined,
-                  score: s.score,
-                }));
+              : (payload.sources || [])
+                  .filter(
+                    (s): s is { content?: string; score?: number; image_base64?: string | null } =>
+                      typeof s === "object" && s !== null
+                  )
+                  .slice(0, 6)
+                  .map((s) => ({
+                    text: (s.content || "").slice(0, 240),
+                    image: s.image_base64 || undefined,
+                    score: s.score,
+                  }));
           meta = {
             sources,
             sqlQuery: payload.sql_query ?? null,

@@ -9,7 +9,13 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.domain.entities import QueryStatus, RAGQueryResult
+from src.domain.entities import (
+    LLMResponse,
+    QueryStatus,
+    RAGQueryResult,
+    RetrievalChunk,
+    RetrievalContext,
+)
 from tests.conftest import MockRAGOrchestrator
 
 
@@ -100,6 +106,68 @@ async def test_stream_returns_status_delta_done(stream_client: AsyncClient):
     assert done["conversation_id"]
     assert done["query_id"]
     assert done["latency_ms"] is not None
+
+
+@pytest.mark.asyncio
+async def test_stream_sources_are_json_objects(stream_client: AsyncClient):
+    """Las fuentes llegan como objetos JSON (no repr) con content/score."""
+    from uuid import uuid4 as _uuid4
+
+    from src.api.deps import get_rag_orchestrator
+    from src.api.main import app
+
+    def make_result(**kwargs) -> RAGQueryResult:
+        return RAGQueryResult(
+            query_id=_uuid4(),
+            tenant_id=kwargs.get("tenant_id", _uuid4()),
+            user_id=kwargs.get("user_id", _uuid4()),
+            query=kwargs.get("query", ""),
+            status=QueryStatus.COMPLETED,
+            method="rag",
+            retrieval_context=RetrievalContext(
+                chunks=[
+                    RetrievalChunk(
+                        document_id=_uuid4(),
+                        content="Producto de prueba",
+                        score=0.42,
+                        metadata={"image_base64": "PHN2Zy8+"},
+                    )
+                ]
+            ),
+            llm_response=LLMResponse(
+                content="Respuesta de prueba generada por el mock del orquestador.",
+                model="gpt-4o-mini",
+            ),
+            total_latency_ms=350.0,
+        )
+
+    app.dependency_overrides[get_rag_orchestrator] = (
+        lambda: MockRAGOrchestrator(response=make_result())
+    )
+    try:
+        headers = await _create_trial_headers(stream_client)
+        async with stream_client.stream(
+            "POST",
+            "/api/v1/rag/query/stream",
+            json={"query": "productos", "role": "admin"},
+            headers=headers,
+        ) as response:
+            assert response.status_code == 200
+            raw = ""
+            async for chunk in response.aiter_text():
+                raw += chunk
+    finally:
+        app.dependency_overrides.clear()
+
+    events = _parse_sse(raw)
+    sources_ev = next(d for e, d in events if e == "sources")
+    srcs = sources_ev["sources"]
+    assert isinstance(srcs, list) and len(srcs) == 1
+    first = srcs[0]
+    assert isinstance(first, dict)
+    assert first["content"] == "Producto de prueba"
+    assert abs(first["score"] - 0.42) < 1e-6
+    assert first["image_base64"] == "PHN2Zy8+"
 
 
 @pytest.mark.asyncio
