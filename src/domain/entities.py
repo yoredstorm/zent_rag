@@ -128,6 +128,9 @@ class RAGQueryResult:
     error_message: str | None = None
     method: str = "rag"  # "sql" when SQL-first mode, "rag" when vector-only
     sql_query: str | None = None  # populated when method == "sql"; exposed to admin only
+    lazy_ingested: bool = False
+    lazy_rows_indexed: int = 0
+    lazy_tables: list[str] = field(default_factory=list)
 
 
 # -----------------------------------------------------------------------------

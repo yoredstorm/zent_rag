@@ -190,6 +190,33 @@ class Settings(BaseSettings):
         ge=0,
         description="Cap rows per table during ingest (0 = no cap).",
     )
+    RAG_LAZY_INGESTION_ENABLED: bool = Field(
+        default=False,
+        description="Enable lazy ingestion fallback when SQL Expert + vector search find nothing.",
+    )
+    RAG_LAZY_INGEST_MAX_ROWS_PER_TABLE: int = Field(
+        default=25,
+        ge=1,
+        le=200,
+        description="Max candidate rows to embed per table during lazy ingestion.",
+    )
+    RAG_LAZY_INGEST_MAX_TABLES: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description="Max tables scanned during a lazy ingestion fallback.",
+    )
+    RAG_LAZY_INGEST_TIMEOUT_SECONDS: int = Field(
+        default=4,
+        ge=1,
+        le=30,
+        description="Global timeout for a lazy ingestion fallback attempt.",
+    )
+    RAG_LAZY_INGEST_PROMOTE_THRESHOLD: int = Field(
+        default=10,
+        ge=1,
+        description="Lazy triggers before auto-promoting a table to full sync (phase 2, unused in MVP).",
+    )
 
     def ingestion_concurrency(self) -> tuple[int, int, int]:
         """Return (embed_batch, embed_concurrency, table_concurrency) with Ollama auto-limit."""

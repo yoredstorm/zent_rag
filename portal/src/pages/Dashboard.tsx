@@ -25,11 +25,24 @@ type Usage = {
   daily: { day: string; requests: number; tokens: number; avg_latency_ms: number }[];
 };
 
+type LazyEvent = {
+  tables: string[];
+  rows_indexed: number;
+  query_preview: string;
+  at: string;
+};
+
+type LazyActivity = {
+  trigger_count: number;
+  recent: LazyEvent[];
+};
+
 export default function DashboardPage() {
   const { session } = useAuth();
   const [sub, setSub] = useState<Subscription | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [health, setHealth] = useState<string | null>(null);
+  const [lazyActivity, setLazyActivity] = useState<LazyActivity | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -41,7 +54,7 @@ export default function DashboardPage() {
       try {
         const h = await fetch("/health");
         setHealth(h.ok ? "OK" : `HTTP ${h.status}`);
-        const [subData, usageData] = await Promise.all([
+        const [subData, usageData, lazyData] = await Promise.all([
           api<Subscription>("/api/v1/billing/subscription", {
             token: session.token,
             tenantId: session.tenantId,
@@ -50,9 +63,14 @@ export default function DashboardPage() {
             token: session.token,
             tenantId: session.tenantId,
           }),
+          api<LazyActivity>("/api/v1/ingestion/lazy-activity?days=30", {
+            token: session.token,
+            tenantId: session.tenantId,
+          }).catch(() => ({ trigger_count: 0, recent: [] as LazyEvent[] })),
         ]);
         setSub(subData);
         setUsage(usageData);
+        setLazyActivity(lazyData);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Error cargando dashboard");
       } finally {
@@ -99,6 +117,10 @@ export default function DashboardPage() {
               <div className="value" style={{ fontSize: "1rem" }}>
                 {sub?.trial_end ? new Date(sub.trial_end).toLocaleDateString() : "—"}
               </div>
+            </div>
+            <div className="stat">
+              <div className="label">Indexados al vuelo (30d)</div>
+              <div className="value">{lazyActivity?.trigger_count ?? 0}</div>
             </div>
           </div>
 

@@ -15,15 +15,20 @@
 # =============================================================================
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from src.api.metrics import (
     rag_cache_hits,
     rag_cache_misses,
     rag_errors_total,
+    rag_lazy_ingestion_latency,
+    rag_lazy_ingestion_rows_indexed,
+    rag_lazy_ingestion_triggers_total,
     rag_llm_latency,
     rag_vector_search_latency,
 )
@@ -42,7 +47,12 @@ from src.domain.ports import (
     TenantRepository,
     VectorStore,
 )
+from src.domain.services import IngestionService
 from src.domain.sql_expert import SqlExpert
+from src.infrastructure.lazy_activity import (
+    lazy_log_cache_key,
+    lazy_rows_cache_key,
+)
 from src.infrastructure.logging_config import get_logger
 from src.infrastructure.tracing import trace_span
 
@@ -62,6 +72,15 @@ RAG_SYSTEM_PROMPT = """Eres un asistente virtual amable y eficiente. Tus respues
 9. NUNCA muestres IDs internos, UUIDs, SKUs, códigos de registro ni claves foráneas. Siempre usa nombres legibles de productos, categorías, laboratorios y proveedores.
 10. Al listar productos, menciona: nombre, principio activo, concentración, presentación, precio y laboratorio. Omite cualquier dato técnico interno.
 11. NUNCA generes imágenes, enlaces de imágenes ni código base64 en tu respuesta. El sistema muestra las imágenes automáticamente."""
+
+RAG_SQL_SYSTEM_PROMPT = """Eres un asistente que formatea resultados de una consulta a base de datos.
+1. Los resultados SQL son la ÚNICA fuente de verdad. No inventes datos, números, fechas ni productos.
+2. No uses documentos, recuerdos ni el catálogo: solo las filas del resultado.
+3. Si una columna no viene en el resultado, no la afirmes.
+4. Responde en el idioma de la pregunta. Sé conciso.
+5. NUNCA muestres IDs, UUIDs, SKUs ni claves internas.
+6. Formatea montos con separador de miles y dos decimales.
+7. No cites documentos con [Doc: N]."""
 
 RAG_SYSTEM_PROMPT_CUSTOMER = """Eres un vendedor virtual de ZentFarmacia, amable y persuasivo. Tu misión es ayudar al cliente a encontrar productos de farmacia y cerrar ventas.
 
@@ -117,6 +136,7 @@ class RAGOrchestrator:
         max_context_tokens: int | None = None,
         reranker: object | None = None,
         rerank_top_n: int = 20,
+        lazy_ingestion: IngestionService | None = None,
     ) -> None:
         self._tenant_repo = tenant_repo
         self._vector_store = vector_store
@@ -131,6 +151,7 @@ class RAGOrchestrator:
         self._max_context_tokens = max_context_tokens if max_context_tokens is not None else settings.RAG_MAX_CONTEXT_TOKENS
         self._reranker = reranker
         self._rerank_top_n = rerank_top_n
+        self._lazy_ingestion = lazy_ingestion
         # Align anti-hallucination gate with configured score threshold (min 0.1 when threshold is 0)
         self._min_meaningful_score = max(score_threshold, 0.1) if score_threshold > 0 else 0.1
 
@@ -263,8 +284,6 @@ class RAGOrchestrator:
             # -----------------------------------------------------------------
             # Paso 4: Ejecutar vector search + SQL Expert EN PARALELO
             # -----------------------------------------------------------------
-            import asyncio as _asyncio
-
             async def _vector_search_full() -> RetrievalContext:
                 agg_ctx = await self._vector_store.search(
                     tenant_id=tenant_id,
@@ -314,7 +333,7 @@ class RAGOrchestrator:
             async with trace_span("rag.retrieval"):
                 if self._sql_expert:
                     try:
-                        retrieval_context, sql_result = await _asyncio.gather(
+                        retrieval_context, sql_result = await asyncio.gather(
                             _vector_search_full(),
                             self._sql_expert.execute(tenant_id=tenant_id, question=query, role=role),
                         )
@@ -336,8 +355,8 @@ class RAGOrchestrator:
             # -----------------------------------------------------------------
             history_section = ""
             cited_section = ""
+            turns: list[str] = []
             if history:
-                turns: list[str] = []
                 cited_chunks_all: list[str] = []
                 for item in history[-_MAX_HISTORY_TURNS * 2:]:
                     msg = json.loads(item)
@@ -356,11 +375,6 @@ class RAGOrchestrator:
                         + "\n\n"
                     )
 
-            context_snippets = "\n\n---\n\n".join(
-                f"[Doc: {i + 1}] {chunk.content}"
-                for i, chunk in enumerate(retrieval_context.chunks)
-            )
-
             # --- Determinar modo: SQL-first vs RAG estándar ---
             sql_has_data = (
                 sql_result is not None
@@ -371,6 +385,29 @@ class RAGOrchestrator:
             if sql_has_data and sql_result is not None:
                 result.sql_query = sql_result.sql
 
+            # -----------------------------------------------------------------
+            # Hard anti-hallucination: sin datos vectoriales ni SQL → lazy ingest
+            # -----------------------------------------------------------------
+            meaningful = [
+                c for c in retrieval_context.chunks
+                if c.score >= self._min_meaningful_score
+            ]
+            if not sql_has_data and (not retrieval_context.chunks or not meaningful):
+                retrieval_context, meaningful = await self._try_lazy_ingestion(
+                    tenant_id=tenant_id,
+                    query=query,
+                    role=role,
+                    retrieval_context=retrieval_context,
+                    vector_search_full=_vector_search_full,
+                    result=result,
+                )
+                result.retrieval_context = retrieval_context
+
+            context_snippets = "\n\n---\n\n".join(
+                f"[Doc: {i + 1}] {chunk.content}"
+                for i, chunk in enumerate(retrieval_context.chunks)
+            )
+
             if sql_has_data:
                 logger.info(
                     "SQL-first mode: using deterministic SQL results",
@@ -378,18 +415,18 @@ class RAGOrchestrator:
                     rows=sql_result.row_count,  # type: ignore[union-attr]
                 )
                 formatted_sql = _format_sql_result(sql_result, query)  # type: ignore[arg-type]
-                augmented_prompt = f"""{history_section}Database query result — THIS IS THE ONLY SOURCE OF TRUTH:
+                sql_history = ""
+                if turns:
+                    sql_history = "Previous conversation:\n" + "\n".join(turns) + "\n\n"
+                augmented_prompt = f"""{sql_history}Database query result — THIS IS THE ONLY SOURCE OF TRUTH:
 {formatted_sql}
-
-Supplementary context from documents (use for descriptions, images, and supplementary details only, not hard data):
-{context_snippets}
 
 User question: {query}
 
-CRITICAL FORMATTING RULES:
-- NUNCA muestres IDs, UUIDs, SKUs, códigos internos ni claves foráneas en tu respuesta.
-- Usa SIEMPRE los nombres legibles de productos, laboratorios y categorías.
-- NUNCA generes markdown de imágenes, enlaces de imágenes, ni código base64.
+CRITICAL RULES:
+- The query results above ARE the answer. Format them; do not invent.
+- NEVER add data, numbers, dates, or facts not present in the results.
+- NUNCA muestres IDs, UUIDs, SKUs, códigos internos ni claves foráneas.
 - Formatea la respuesta en lenguaje natural, no como tabla SQL:"""
             else:
                 augmented_prompt = f"""{history_section}{cited_section}Context documents:
@@ -413,6 +450,10 @@ Answer based on the context above:"""
             # Resolución del system prompt
             if system_prompt_override:
                 system_prompt = system_prompt_override
+            elif sql_has_data:
+                system_prompt = RAG_SQL_SYSTEM_PROMPT
+                if rbac_instruction:
+                    system_prompt += rbac_instruction
             else:
                 tenant_config = tenant.config_json or {}
                 role_prompt_key = f"system_prompt_{role}"
@@ -437,12 +478,8 @@ Answer based on the context above:"""
                     system_prompt += "\n\n" + custom_instructions
 
             # -----------------------------------------------------------------
-            # Hard anti-hallucination: sin datos vectoriales ni SQL → respuesta genérica
+            # Hard anti-hallucination: si el fallback no aportó contexto, rendirse
             # -----------------------------------------------------------------
-            meaningful = [
-                c for c in retrieval_context.chunks
-                if c.score >= self._min_meaningful_score
-            ]
             if not sql_has_data and (not retrieval_context.chunks or not meaningful):
                 result.status = QueryStatus.COMPLETED
                 if role == "customer":
@@ -493,7 +530,7 @@ Answer based on the context above:"""
                     prompt=augmented_prompt,
                     model=effective_model,
                     max_tokens=max_tokens,
-                    temperature=temperature,
+                    temperature=0.0 if sql_has_data else temperature,
                     system_prompt=system_prompt,
                 )
             rag_llm_latency.labels(
@@ -596,6 +633,135 @@ Answer based on the context above:"""
         logger.info("RAG query completed", **log_payload)
 
         return result
+
+    async def _try_lazy_ingestion(
+        self,
+        tenant_id: UUID,
+        query: str,
+        role: str,
+        retrieval_context: RetrievalContext,
+        vector_search_full,
+        result: RAGQueryResult,
+    ) -> tuple[RetrievalContext, list]:
+        """Intenta indexar candidatos por texto plano y rehacer la búsqueda vectorial."""
+        settings = get_settings()
+        meaningful = [
+            c for c in retrieval_context.chunks
+            if c.score >= self._min_meaningful_score
+        ]
+        if not settings.RAG_LAZY_INGESTION_ENABLED or self._lazy_ingestion is None:
+            return retrieval_context, meaningful
+
+        tenant_label = str(tenant_id)
+        start = time.perf_counter()
+        ingest_result = None
+        try:
+            rag_lazy_ingestion_triggers_total.labels(tenant_id=tenant_label).inc()
+            logger.info(
+                "Lazy ingestion fallback triggered",
+                tenant_id=tenant_label,
+                query_length=len(query),
+                role=role,
+            )
+            ingest_result = await asyncio.wait_for(
+                self._lazy_ingestion.ingest_candidates(
+                    tenant_id=tenant_id,
+                    query=query,
+                    role=role,
+                    max_tables=settings.RAG_LAZY_INGEST_MAX_TABLES,
+                    max_rows_per_table=settings.RAG_LAZY_INGEST_MAX_ROWS_PER_TABLE,
+                    timeout_seconds=settings.RAG_LAZY_INGEST_TIMEOUT_SECONDS,
+                ),
+                timeout=float(settings.RAG_LAZY_INGEST_TIMEOUT_SECONDS),
+            )
+            rag_lazy_ingestion_rows_indexed.labels(tenant_id=tenant_label).inc(
+                ingest_result.rows_indexed
+            )
+            logger.info(
+                "Lazy ingestion completed",
+                tenant_id=tenant_label,
+                tables=ingest_result.tables_processed,
+                rows=ingest_result.rows_indexed,
+                vectors=ingest_result.vectors_upserted,
+                errors=ingest_result.errors,
+            )
+            if ingest_result.rows_indexed > 0 or ingest_result.vectors_upserted > 0:
+                retrieval_context = await vector_search_full()
+        except TimeoutError:
+            logger.warning(
+                "Lazy ingestion timed out",
+                tenant_id=tenant_label,
+                timeout_seconds=settings.RAG_LAZY_INGEST_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Lazy ingestion failed",
+                tenant_id=tenant_label,
+                error=str(exc),
+            )
+        finally:
+            rag_lazy_ingestion_latency.labels(tenant_id=tenant_label).observe(
+                time.perf_counter() - start
+            )
+
+        meaningful = [
+            c for c in retrieval_context.chunks
+            if c.score >= self._min_meaningful_score
+        ]
+        if (
+            ingest_result is not None
+            and meaningful
+            and (ingest_result.rows_indexed > 0 or ingest_result.vectors_upserted > 0)
+        ):
+            await self._record_lazy_success(tenant_id, query, ingest_result, result)
+        return retrieval_context, meaningful
+
+    async def _record_lazy_success(
+        self,
+        tenant_id: UUID,
+        query: str,
+        ingest_result,
+        result: RAGQueryResult,
+    ) -> None:
+        """Marca el resultado y registra el evento de UI (Redis). Nunca propaga errores."""
+        qualified = list(ingest_result.indexed_tables or [])
+        table_names = list(
+            dict.fromkeys(q.split(".", 1)[-1] if "." in q else q for q in qualified)
+        )
+        result.lazy_ingested = True
+        result.lazy_rows_indexed = ingest_result.rows_indexed
+        result.lazy_tables = table_names
+        try:
+            event = {
+                "tables": table_names,
+                "rows_indexed": ingest_result.rows_indexed,
+                "query_preview": query[:80],
+                "at": datetime.now(timezone.utc).isoformat(),
+            }
+            log_key = lazy_log_cache_key(tenant_id)
+            await self._cache.append_to_list(
+                log_key, json.dumps(event), ttl_seconds=86400 * 30
+            )
+            await self._cache.trim_list(log_key, max_items=200)
+            counts = ingest_result.table_row_counts or {}
+            for qualified_name in qualified:
+                schema, _, table = qualified_name.partition(".")
+                if not table:
+                    schema, table = "", qualified_name
+                key = lazy_rows_cache_key(tenant_id, schema, table)
+                raw = await self._cache.get(key)
+                try:
+                    current = int(raw) if raw else 0
+                except (TypeError, ValueError):
+                    current = 0
+                delta = counts.get(qualified_name, ingest_result.rows_indexed if len(qualified) == 1 else 0)
+                await self._cache.set(key, str(current + max(delta, 0)), ttl_seconds=86400 * 30)
+        except Exception as exc:
+            logger.warning(
+                "Failed to record lazy ingestion activity",
+                tenant_id=str(tenant_id),
+                error=str(exc),
+            )
 
     def _fit_context_budget(self, chunks: list) -> list:
         """Keep highest-score chunks within RAG_MAX_CONTEXT_TOKENS (~4 chars/token)."""

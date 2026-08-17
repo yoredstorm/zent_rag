@@ -12,6 +12,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+from src.domain.entities import RAGQueryResult
+
 # -----------------------------------------------------------------------------
 # Constantes de validación
 # -----------------------------------------------------------------------------
@@ -127,6 +129,21 @@ class RetrievalChunkResponse(BaseModel):
     image_base64: str | None = None
 
 
+def sources_for_client(result: RAGQueryResult) -> list[RetrievalChunkResponse]:
+    """Vector chunks are document provenance; SQL-first answers must not show them."""
+    if result.method == "sql" or not result.retrieval_context:
+        return []
+    return [
+        RetrievalChunkResponse(
+            document_id=chunk.document_id,
+            content=chunk.content[:500],
+            score=chunk.score,
+            image_base64=chunk.metadata.get("image_base64") if chunk.metadata else None,
+        )
+        for chunk in result.retrieval_context.chunks
+    ]
+
+
 class RAGQueryResponse(BaseModel):
     """Respuesta de la API RAG para el cliente."""
 
@@ -143,6 +160,7 @@ class RAGQueryResponse(BaseModel):
     latency_ms: float
     method: str = "rag"  # "sql" = SQL-first, "rag" = vector-only
     sql_query: str | None = None  # admin-only when method == "sql"
+    lazy_ingested: bool = False
 
 
 class ErrorResponse(BaseModel):

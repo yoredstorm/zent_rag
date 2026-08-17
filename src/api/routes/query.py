@@ -18,11 +18,7 @@ from src.api.metrics import (
     rag_tokens_consumed,
 )
 from src.application.orchestrator import RAGOrchestrator
-from src.domain.models import (
-    RAGQueryRequest,
-    RAGQueryResponse,
-    RetrievalChunkResponse,
-)
+from src.domain.models import RAGQueryRequest, RAGQueryResponse, sources_for_client
 from src.infrastructure.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -210,17 +206,7 @@ async def rag_query(
     # ---------------------------------------------------------------
     # Construcción de la respuesta
     # ---------------------------------------------------------------
-    sources = []
-    if result.retrieval_context:
-        sources = [
-            RetrievalChunkResponse(
-                document_id=chunk.document_id,
-                content=chunk.content[:500],
-                score=chunk.score,
-                image_base64=chunk.metadata.get("image_base64") if chunk.metadata else None,
-            )
-            for chunk in result.retrieval_context.chunks
-        ]
+    sources = sources_for_client(result)
 
     # SQL reveals internal schema — expose only to admin role
     sql_for_client = None
@@ -247,4 +233,5 @@ async def rag_query(
         latency_ms=result.total_latency_ms,
         method=result.method,
         sql_query=sql_for_client,
+        lazy_ingested=bool(getattr(result, "lazy_ingested", False)),
     )

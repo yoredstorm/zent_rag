@@ -9,6 +9,7 @@ type Message = {
   sources?: { text: string; image?: string }[];
   sqlQuery?: string | null;
   method?: string;
+  lazyIngested?: boolean;
   queryId?: string;
   userQuery?: string;
   rated?: "up" | "down";
@@ -22,6 +23,7 @@ type RagResponse = {
   latency_ms: number;
   method: string;
   sql_query?: string | null;
+  lazy_ingested?: boolean;
 };
 
 function renderContent(text: string) {
@@ -45,6 +47,7 @@ export default function ChatPage() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingHint, setLoadingHint] = useState("");
 
   async function send(e: FormEvent) {
     e.preventDefault();
@@ -53,7 +56,11 @@ export default function ChatPage() {
     setInput("");
     setMessages((m) => [...m, { role: "user", content: query }]);
     setLoading(true);
+    setLoadingHint("");
     setError("");
+    const hintTimer = window.setTimeout(() => {
+      setLoadingHint("Buscando más a fondo en tus datos…");
+    }, 2500);
     try {
       const body: Record<string, unknown> = { query, role };
       if (conversationId) body.conversation_id = conversationId;
@@ -65,10 +72,13 @@ export default function ChatPage() {
         body: JSON.stringify(body),
       });
       setConversationId(data.conversation_id);
-      const sourceItems = (data.sources || []).slice(0, 4).map((s) => ({
-        text: s.content.slice(0, 180),
-        image: s.image_base64 || undefined,
-      }));
+      const sourceItems =
+        data.method === "sql"
+          ? []
+          : (data.sources || []).slice(0, 4).map((s) => ({
+              text: s.content.slice(0, 180),
+              image: s.image_base64 || undefined,
+            }));
       setMessages((m) => [
         ...m,
         {
@@ -77,6 +87,7 @@ export default function ChatPage() {
           sources: sourceItems.length > 0 ? sourceItems : undefined,
           sqlQuery: data.sql_query ?? null,
           method: data.method,
+          lazyIngested: data.lazy_ingested ?? false,
           queryId: data.query_id,
           userQuery: query,
         },
@@ -84,6 +95,8 @@ export default function ChatPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo obtener una respuesta");
     } finally {
+      window.clearTimeout(hintTimer);
+      setLoadingHint("");
       setLoading(false);
     }
   }
@@ -105,6 +118,7 @@ export default function ChatPage() {
           query_id: msg.queryId,
           conversation_id: conversationId,
           role,
+          lazy_ingested: msg.lazyIngested ?? false,
         }),
       });
       setMessages((prev) =>
@@ -179,10 +193,15 @@ export default function ChatPage() {
           {messages.map((m, i) => (
             <div key={i} className={`bubble ${m.role}`}>
               <div>{renderContent(m.content)}</div>
-              {m.role === "assistant" && productImages(m.sources)}
+              {m.role === "assistant" && m.method !== "sql" && productImages(m.sources)}
               {m.role === "assistant" && m.method && (
                 <div className="muted" style={{ marginTop: "0.35rem", fontSize: "0.75rem" }}>
                   {m.method === "sql" ? "Datos de tu base" : "Documentos"}
+                </div>
+              )}
+              {m.role === "assistant" && m.lazyIngested && (
+                <div className="muted" style={{ marginTop: "0.15rem", fontSize: "0.75rem" }}>
+                  🔍 Se indexó información nueva para responder esto
                 </div>
               )}
               {m.sqlQuery && (
@@ -191,7 +210,7 @@ export default function ChatPage() {
                   <pre className="mono sql-pre">{m.sqlQuery}</pre>
                 </details>
               )}
-              {m.sources && m.sources.length > 0 && (
+              {m.method !== "sql" && m.sources && m.sources.length > 0 && (
                 <div className="source-chips">
                   {m.sources.map((s, j) => (
                     <span key={j} className="source-chip" title={s.text}>
@@ -232,6 +251,11 @@ export default function ChatPage() {
           {loading && (
             <div className="bubble assistant">
               <span className="loading" aria-label="Cargando" />
+              {loadingHint && (
+                <div className="muted" style={{ fontSize: "0.75rem", marginTop: "0.35rem" }}>
+                  {loadingHint}
+                </div>
+              )}
             </div>
           )}
           {messages.length === 0 && !loading && (

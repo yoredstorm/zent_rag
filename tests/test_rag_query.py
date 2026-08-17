@@ -3,12 +3,69 @@
 # =============================================================================
 from __future__ import annotations
 
+import importlib.util
 from uuid import uuid4
 
 import pytest
 from httpx import AsyncClient
 
-from src.domain.entities import LLMResponse, QueryStatus, RAGQueryResult
+from src.domain.entities import (
+    LLMResponse,
+    QueryStatus,
+    RAGQueryResult,
+    RetrievalChunk,
+    RetrievalContext,
+)
+from src.domain.models import RAGQueryResponse, sources_for_client
+
+_HAS_LITELLM = importlib.util.find_spec("litellm") is not None
+
+
+def test_rag_query_response_lazy_ingested_defaults_false() -> None:
+    payload = RAGQueryResponse(
+        query_id=uuid4(),
+        status="completed",
+        answer="ok",
+        model="none",
+        usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        latency_ms=1.0,
+    )
+    assert payload.lazy_ingested is False
+
+
+def test_sql_method_hides_vector_sources() -> None:
+    chunk = RetrievalChunk(
+        document_id=uuid4(),
+        content="Pañales y Toallitas FONASA",
+        score=0.91,
+        metadata={"image_base64": "abc"},
+    )
+    result = RAGQueryResult(
+        tenant_id=uuid4(),
+        user_id=uuid4(),
+        query="último producto vendido",
+        method="sql",
+        retrieval_context=RetrievalContext(chunks=[chunk]),
+    )
+    assert sources_for_client(result) == []
+
+
+def test_rag_method_keeps_vector_sources() -> None:
+    chunk = RetrievalChunk(
+        document_id=uuid4(),
+        content="Pañales y Toallitas FONASA",
+        score=0.91,
+    )
+    result = RAGQueryResult(
+        tenant_id=uuid4(),
+        user_id=uuid4(),
+        query="qué pañales hay",
+        method="rag",
+        retrieval_context=RetrievalContext(chunks=[chunk]),
+    )
+    out = sources_for_client(result)
+    assert len(out) == 1
+    assert "Pañales" in out[0].content
 
 
 class TestRAGQueryWithValidTenant:
@@ -30,6 +87,7 @@ class TestRAGQueryWithValidTenant:
         assert "Respuesta de prueba" in data["answer"]
         assert "query_id" in data
         assert "model" in data
+        assert data.get("lazy_ingested") is False
 
 
 class TestRAGQueryRequiresBearer:
@@ -192,3 +250,42 @@ class TestSqlQueryAdminOnly:
         data = response.json()
         assert data["method"] == "sql"
         assert data.get("sql_query") is None
+
+
+@pytest.mark.skipif(not _HAS_LITELLM, reason="API tests require litellm")
+class TestLazyIngestedFlag:
+    """lazy_ingested se propaga en RAGQueryResponse solo cuando el orchestrator lo marca."""
+
+    @pytest.mark.asyncio
+    async def test_query_response_includes_lazy_ingested_true(
+        self,
+        async_client: AsyncClient,
+        trial_auth: dict[str, str],
+        mock_orchestrator,
+    ) -> None:
+        mock_orchestrator._response = RAGQueryResult(
+            query_id=uuid4(),
+            tenant_id=uuid4(),
+            user_id=uuid4(),
+            query="precio del paracetamol",
+            status=QueryStatus.COMPLETED,
+            llm_response=LLMResponse(
+                content="El paracetamol cuesta $1.990",
+                model="gpt-4o-mini",
+                prompt_tokens=10,
+                completion_tokens=8,
+                total_tokens=18,
+            ),
+            total_latency_ms=80.0,
+            lazy_ingested=True,
+        )
+        response = await async_client.post(
+            "/api/v1/rag/query",
+            json={"query": "precio del paracetamol"},
+            headers=trial_auth,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["lazy_ingested"] is True
+        assert "lazy_rows_indexed" not in data
+        assert "lazy_tables" not in data

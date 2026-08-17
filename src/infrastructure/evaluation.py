@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS rag_evaluations (
     total_tokens INTEGER DEFAULT 0,
     latency_ms DOUBLE PRECISION DEFAULT 0,
     method VARCHAR(10) DEFAULT 'rag',
+    lazy_ingested BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -64,6 +65,7 @@ async def ensure_eval_table() -> None:
                 total_tokens INTEGER DEFAULT 0,
                 latency_ms DOUBLE PRECISION DEFAULT 0,
                 method VARCHAR(10) DEFAULT 'rag',
+                lazy_ingested BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """))
@@ -82,6 +84,14 @@ async def ensure_eval_table() -> None:
         await session.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_rag_evals_role "
             "ON rag_evaluations(tenant_id, role, created_at DESC)"
+        ))
+        await session.commit()
+    except Exception:
+        await session.rollback()
+    try:
+        await session.execute(text(
+            "ALTER TABLE rag_evaluations "
+            "ADD COLUMN IF NOT EXISTS lazy_ingested BOOLEAN DEFAULT FALSE"
         ))
         await session.commit()
     except Exception:
@@ -105,6 +115,7 @@ async def store_feedback(
     latency_ms: float = 0.0,
     method: str = "rag",
     comment: str = "",
+    lazy_ingested: bool = False,
 ) -> None:
     session: AsyncSession = await get_async_session()
     try:
@@ -112,10 +123,12 @@ async def store_feedback(
             text(
                 "INSERT INTO rag_evaluations (tenant_id, query_id, conversation_id, "
                 "query, answer, role, rating, comment, model, "
-                "prompt_tokens, completion_tokens, total_tokens, latency_ms, method) "
+                "prompt_tokens, completion_tokens, total_tokens, latency_ms, method, "
+                "lazy_ingested) "
                 "VALUES (:tenant_id, :query_id, :conversation_id, "
                 ":query, :answer, :role, :rating, :comment, :model, "
-                ":prompt_tokens, :completion_tokens, :total_tokens, :latency_ms, :method)"
+                ":prompt_tokens, :completion_tokens, :total_tokens, :latency_ms, :method, "
+                ":lazy_ingested)"
             ),
             {
                 "tenant_id": tenant_id,
@@ -132,6 +145,7 @@ async def store_feedback(
                 "total_tokens": total_tokens,
                 "latency_ms": latency_ms,
                 "method": method,
+                "lazy_ingested": lazy_ingested,
             },
         )
         await session.commit()

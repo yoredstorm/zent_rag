@@ -94,6 +94,25 @@ rag_active_requests = Gauge(
     labelnames=["tenant_id"],
 )
 
+rag_lazy_ingestion_triggers_total = Counter(
+    "rag_lazy_ingestion_triggers_total",
+    "Total de fallbacks de ingesta perezosa disparados",
+    labelnames=["tenant_id"],
+)
+
+rag_lazy_ingestion_rows_indexed = Counter(
+    "rag_lazy_ingestion_rows_indexed_total",
+    "Filas indexadas por ingesta perezosa",
+    labelnames=["tenant_id"],
+)
+
+rag_lazy_ingestion_latency = Histogram(
+    "rag_lazy_ingestion_latency_seconds",
+    "Latencia del fallback de ingesta perezosa",
+    labelnames=["tenant_id"],
+    buckets=(0.1, 0.25, 0.5, 1.0, 2.5, 4.0, 8.0, 15.0, 30.0),
+)
+
 
 def setup_metrics(app: FastAPI) -> Instrumentator:
     """Configura y expone /metrics para Prometheus scraping.

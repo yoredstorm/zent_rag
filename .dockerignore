@@ -1,0 +1,13 @@
+.git
+.mypy_cache
+.pytest_cache
+.ruff_cache
+.venv
+venv
+portal/node_modules
+portal/dist
+web-tester
+*.md
+.env
+.env.*
+!.env.example

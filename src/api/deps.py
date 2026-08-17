@@ -95,6 +95,14 @@ def get_rag_orchestrator() -> RAGOrchestrator:
         if settings.RAG_RERANK_ENABLED:
             from src.infrastructure.reranker import LLMReranker
             reranker = LLMReranker(llm_provider=get_llm_provider())
+        lazy_ingestion = None
+        if settings.RAG_LAZY_INGESTION_ENABLED:
+            from src.infrastructure.data_ingestion import PostgresIngestionService
+            lazy_ingestion = PostgresIngestionService(
+                get_vector_store(),
+                get_embedding_provider(),
+                get_cache_provider(),
+            )
         _orchestrator = RAGOrchestrator(
             tenant_repo=get_tenant_repo(),
             vector_store=get_vector_store(),
@@ -107,5 +115,6 @@ def get_rag_orchestrator() -> RAGOrchestrator:
             max_context_tokens=settings.RAG_MAX_CONTEXT_TOKENS,
             reranker=reranker,
             rerank_top_n=settings.RAG_RERANK_TOP_N,
+            lazy_ingestion=lazy_ingestion,
         )
     return _orchestrator

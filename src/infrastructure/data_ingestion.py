@@ -21,22 +21,51 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.ports import CacheProvider, EmbeddingProvider, VectorStore
 from src.domain.services import ColumnMeta, DataSource, IngestionResult, IngestionService
+from src.infrastructure.lazy_activity import lazy_rows_cache_key
 from src.infrastructure.logging_config import get_logger
 from src.infrastructure.relational_db import get_async_session
+from src.infrastructure.schema_discovery import (
+    SYSTEM_SCHEMAS,
+    SYSTEM_TABLES,
+    quote_ident,
+)
+from src.infrastructure.schema_discovery import (
+    discover_columns as fetch_columns,
+)
+from src.infrastructure.schema_discovery import (
+    discover_sources as fetch_sources,
+)
 
 logger = get_logger(__name__)
 
 # Namespace fijo para UUID v5 — garantiza unicidad entre tablas
 _VECTOR_NS = UUID("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 
-# -----------------------------------------------------------------------------
-# Tablas del sistema que NUNCA se indexan (metadatos de la plataforma)
-# -----------------------------------------------------------------------------
-SYSTEM_SCHEMAS = {"information_schema", "pg_catalog", "pg_toast"}
-SYSTEM_TABLES = {
-    "tenants", "users", "rate_limit_counters", "usage_logs",
-    "query_audit_log", "documents", "alembic_version",
-}
+# Stopwords cortas (ES/EN) para extraer keywords del fallback lazy.
+_LAZY_STOPWORDS = frozenset(
+    {
+        "the", "a", "an", "and", "or", "of", "in", "on", "for", "to", "is", "are",
+        "was", "were", "be", "been", "with", "from", "that", "this", "what",
+        "which", "how", "when", "where", "who", "does", "do", "did", "can",
+        "el", "la", "los", "las", "un", "una", "unos", "unas", "de", "del",
+        "y", "o", "en", "con", "por", "para", "que", "qué", "como", "cómo",
+        "cuál", "cual", "cuales", "cuáles", "este", "esta", "esto", "hay",
+        "tiene", "tienen", "ser", "está", "estan", "están", "me", "mi", "tu",
+        "su", "al", "lo", "le", "se", "es", "son", "fue", "era", "sobre",
+        "desde", "hasta", "entre", "sin", "más", "mas", "muy",
+    }
+)
+
+_TEXT_COLUMN_TYPES = frozenset(
+    {
+        "text",
+        "character varying",
+        "character",
+        "varchar",
+        "citext",
+        "name",
+    }
+)
 
 # -----------------------------------------------------------------------------
 # Heurísticas de serialización: patrón de columna → template de texto
@@ -218,6 +247,28 @@ def _chunk_text(text: str, max_chars: int, overlap: int) -> list[str]:
     return chunks
 
 
+def extract_query_keywords(query: str) -> list[str]:
+    """Tokeniza la query, quita stopwords ES/EN y tokens de menos de 3 caracteres."""
+    tokens = re.findall(r"[a-záéíóúñü0-9]+", query.lower())
+    seen: set[str] = set()
+    keywords: list[str] = []
+    for token in tokens:
+        if len(token) < 3 or token in _LAZY_STOPWORDS or token in seen:
+            continue
+        seen.add(token)
+        keywords.append(token)
+    return keywords
+
+
+def _escape_like(term: str) -> str:
+    return term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _is_text_column(col: ColumnMeta) -> bool:
+    dtype = col.data_type.lower()
+    return dtype in _TEXT_COLUMN_TYPES or "char" in dtype or dtype.endswith("text")
+
+
 # =============================================================================
 # Ingestion Engine Implementation
 # =============================================================================
@@ -259,6 +310,15 @@ class PostgresIngestionService(IngestionService):
             return False
         return await self._cache.exists(self._sync_key(tenant_id, schema, table))
 
+    async def get_lazy_rows_indexed(self, tenant_id: UUID, schema: str, table: str) -> int:
+        if not self._cache:
+            return 0
+        raw = await self._cache.get(lazy_rows_cache_key(tenant_id, schema, table))
+        try:
+            return int(raw) if raw else 0
+        except (TypeError, ValueError):
+            return 0
+
     async def get_sync_statuses(self, tenant_id: UUID, sources: list[DataSource]) -> list[dict]:
         results = []
         for s in sources:
@@ -283,37 +343,7 @@ class PostgresIngestionService(IngestionService):
         """Descubre todas las tablas indexables para un tenant."""
         session: AsyncSession = await get_async_session()
         try:
-            rows = await session.execute(
-                text(
-                    "SELECT table_schema, table_name, table_type "
-                    "FROM information_schema.tables "
-                    "WHERE table_type IN ('BASE TABLE', 'VIEW') "
-                    "AND table_schema NOT IN ('information_schema', 'pg_catalog', 'pg_toast') "
-                    "AND table_name NOT IN ("
-                    "  'tenants', 'users', 'rate_limit_counters', 'usage_logs', "
-                    "  'query_audit_log', 'documents', 'alembic_version'"
-                    ") "
-                    "ORDER BY table_schema, table_name"
-                )
-            )
-            tables = rows.fetchall()
-
-            sources: list[DataSource] = []
-            for schema_name, table_name, table_type in tables:
-                columns = await self._discover_columns(session, schema_name, table_name)
-                count_result = await session.execute(
-                    text(f'SELECT COUNT(*) FROM "{schema_name}"."{table_name}"')
-                )
-                row_count = count_result.scalar() or 0
-                sources.append(DataSource(
-                    schema_name=schema_name,
-                    table_name=table_name,
-                    columns=columns,
-                    row_count=row_count,
-                    is_view=(table_type == "VIEW"),
-                ))
-
-            return sources
+            return await fetch_sources(session)
         finally:
             await session.close()
 
@@ -321,54 +351,7 @@ class PostgresIngestionService(IngestionService):
         self, session: AsyncSession, schema: str, table: str
     ) -> list[ColumnMeta]:
         """Descubre columnas, tipos, PKs y FKs de una tabla."""
-        rows = await session.execute(
-            text(
-                "SELECT "
-                "  c.column_name, c.data_type, c.is_nullable, "
-                "  CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END AS is_pk, "
-                "  CASE WHEN fk.column_name IS NOT NULL THEN true ELSE false END AS is_fk, "
-                "  fk.foreign_table_name AS fk_table, "
-                "  fk.foreign_column_name AS fk_column "
-                "FROM information_schema.columns c "
-                "LEFT JOIN ("
-                "  SELECT ku.table_schema, ku.table_name, ku.column_name "
-                "  FROM information_schema.table_constraints tc "
-                "  JOIN information_schema.key_column_usage ku "
-                "    ON tc.constraint_name = ku.constraint_name "
-                "  WHERE tc.constraint_type = 'PRIMARY KEY'"
-                ") pk ON c.table_schema = pk.table_schema "
-                "     AND c.table_name = pk.table_name "
-                "     AND c.column_name = pk.column_name "
-                "LEFT JOIN ("
-                "  SELECT kcu.table_schema, kcu.table_name, kcu.column_name, "
-                "    ccu.table_name AS foreign_table_name, "
-                "    ccu.column_name AS foreign_column_name "
-                "  FROM information_schema.table_constraints tc "
-                "  JOIN information_schema.key_column_usage kcu "
-                "    ON tc.constraint_name = kcu.constraint_name "
-                "  JOIN information_schema.constraint_column_usage ccu "
-                "    ON tc.constraint_name = ccu.constraint_name "
-                "  WHERE tc.constraint_type = 'FOREIGN KEY'"
-                ") fk ON c.table_schema = fk.table_schema "
-                "     AND c.table_name = fk.table_name "
-                "     AND c.column_name = fk.column_name "
-                "WHERE c.table_schema = :schema AND c.table_name = :table "
-                "ORDER BY c.ordinal_position"
-            ),
-            {"schema": schema, "table": table},
-        )
-        return [
-            ColumnMeta(
-                name=row.column_name,
-                data_type=str(row.data_type),
-                is_nullable=row.is_nullable == "YES",
-                is_primary_key=row.is_pk,
-                is_foreign_key=row.is_fk,
-                fk_table=row.fk_table,
-                fk_column=row.fk_column,
-            )
-            for row in rows.fetchall()
-        ]
+        return await fetch_columns(session, schema, table)
 
     async def sync_all(
         self, tenant_id: UUID, full_refresh: bool = False, job_id: str | None = None
@@ -656,14 +639,6 @@ class PostgresIngestionService(IngestionService):
     ) -> IngestionResult:
         """Ingiere filas de una tabla a Qdrant (embed paralelo + upsert batch)."""
         result = IngestionResult(tenant_id=tenant_id, tables_processed=1)
-
-        column_templates = [
-            _column_to_template(col.name, col.data_type)
-            for col in source.columns
-            if not col.is_primary_key
-        ]
-
-        table_label = source.table_name.replace("_", " ").title()
         schema = source.schema_name
         table = source.table_name
         table_full = f"{schema}.{table}"
@@ -678,44 +653,17 @@ class PostgresIngestionService(IngestionService):
                 result.errors.append(f"Table {table_full} has no columns")
                 return result
 
-            fk_resolutions: dict[str, tuple[str, dict[str, str]]] = {}
-            for col in source.columns:
-                if col.is_foreign_key and col.fk_table and col.fk_column:
-                    resolved = await self._resolve_fk_values(
-                        session, schema, col.fk_table, col.fk_column
-                    )
-                    if resolved:
-                        label = col.fk_table.replace("_", " ").title()
-                        fk_resolutions[col.name] = (label, resolved)
-
-            product_images: dict[str, str] = {}
-            if table == "products":
-                try:
-                    img_rows = await session.execute(
-                        text(
-                            "SELECT product_id::text, base64_data "
-                            "FROM farmacia.product_images "
-                            "WHERE is_primary = true"
-                        )
-                    )
-                    for img_row in img_rows.fetchall():
-                        if img_row[0] and img_row[1]:
-                            product_images[img_row[0]] = img_row[1]
-                    if product_images:
-                        logger.info(
-                            "Loaded product images for ingestion",
-                            count=len(product_images),
-                        )
-                except Exception:
-                    pass
+            fk_resolutions = await self._build_fk_resolutions(session, source)
+            product_images = await self._load_product_images(session, table)
 
             page_size = self._page_size
-            embed_batch_size = self._embed_batch_size
             max_rows = self._max_rows_per_table
             offset = 0
             column_names: list[str] | None = None
             page = 0
-            embed_sem = asyncio.Semaphore(self._embed_concurrency)
+            schema_q = quote_ident(schema)
+            table_q = quote_ident(table)
+            pk_q = quote_ident(pk_col.name)
 
             while True:
                 if max_rows and offset >= max_rows:
@@ -732,17 +680,17 @@ class PostgresIngestionService(IngestionService):
 
                 if since_timestamp:
                     query = text(
-                        f'SELECT * FROM "{schema}"."{table}" '
+                        f"SELECT * FROM {schema_q}.{table_q} "
                         f'WHERE "updated_at" > :since_ts '
-                        f'ORDER BY "{pk_col.name}" '
+                        f"ORDER BY {pk_q} "
                         f"LIMIT {limit} OFFSET {offset}"
                     )
                     rows = await session.execute(query, {"since_ts": since_timestamp})
                 else:
                     rows = await session.execute(
                         text(
-                            f'SELECT * FROM "{schema}"."{table}" '
-                            f'ORDER BY "{pk_col.name}" '
+                            f"SELECT * FROM {schema_q}.{table_q} "
+                            f"ORDER BY {pk_q} "
                             f"LIMIT {limit} OFFSET {offset}"
                         )
                     )
@@ -766,137 +714,20 @@ class PostgresIngestionService(IngestionService):
                         current_table=table_full,
                     )
 
-                # Build all text chunks for this page, then embed in parallel batches
-                page_texts: list[str] = []
-                page_doc_ids: list[UUID] = []
-                page_metas: list[dict] = []
-                rows_in_page = 0
-
-                for row in page_rows:
-                    row_dict = dict(zip(column_names, row, strict=True))
-                    content_text = _serialize_row(
-                        row_dict, column_templates, table_label,
-                        fk_resolutions, is_view=source.is_view,
-                    )
-                    pk_value = row_dict.get(pk_col.name)
-                    pk_str = str(pk_value) if pk_value else str(uuid4())
-                    parent_id = uuid5(_VECTOR_NS, f"{schema}.{table}:{pk_str}")
-                    text_chunks = _chunk_text(
-                        content_text, self._chunk_max_chars, self._chunk_overlap
-                    )
-                    for chunk_index, chunk_text in enumerate(text_chunks):
-                        doc_id = (
-                            parent_id
-                            if len(text_chunks) == 1
-                            else uuid5(
-                                _VECTOR_NS,
-                                f"{schema}.{table}:{pk_str}:chunk:{chunk_index}",
-                            )
-                        )
-                        page_texts.append(chunk_text)
-                        page_doc_ids.append(doc_id)
-                        row_meta = {
-                            "tenant_id": str(tenant_id),
-                            "source": table_full,
-                            "table_name": table,
-                            "schema_name": schema,
-                            "parent_row_id": str(parent_id),
-                            "chunk_index": str(chunk_index),
-                            "chunk_count": str(len(text_chunks)),
-                            **{
-                                k: str(v)[:500] if v is not None else ""
-                                for k, v in row_dict.items()
-                            },
-                        }
-                        if source.is_view:
-                            row_meta["doc_type"] = "aggregated"
-                            row_meta["visibility"] = "admin"
-                        else:
-                            row_meta["visibility"] = "public"
-                        if product_images and pk_str in product_images:
-                            row_meta["image_base64"] = product_images[pk_str]
-                            row_meta["has_image"] = "true"
-                        page_metas.append(row_meta)
-                    rows_in_page += 1
-
-                async def _embed_slice(
-                    start: int,
-                    end: int,
-                    texts: list[str],
-                ) -> tuple[int, list[list[float]] | Exception]:
-                    batch = texts[start:end]
-                    async with embed_sem:
-                        try:
-                            raw = await self._embeddings.embed(batch)
-                            if batch and isinstance(raw[0], float):
-                                return start, [raw]  # type: ignore[list-item]
-                            return start, raw  # type: ignore[return-value]
-                        except Exception as exc:
-                            return start, exc
-
-                embed_jobs = [
-                    _embed_slice(
-                        i,
-                        min(i + embed_batch_size, len(page_texts)),
-                        page_texts,
-                    )
-                    for i in range(0, len(page_texts), embed_batch_size)
-                ]
-                embed_results = await asyncio.gather(*embed_jobs)
-
-                # Reconstruct embeddings in order
-                embeddings_by_idx: dict[int, list[float]] = {}
-                for start_idx, payload in embed_results:
-                    if isinstance(payload, Exception):
-                        result.failed_rows += embed_batch_size
-                        result.errors.append(f"{table_full} embed@{start_idx}: {payload}")
-                        continue
-                    for j, emb in enumerate(payload):
-                        embeddings_by_idx[start_idx + j] = (
-                            list(emb) if not isinstance(emb, list) else emb  # type: ignore[arg-type]
-                        )
-
-                # Upsert in batches
-                batch_points: list[tuple[UUID, list[float], str, dict | None]] = []
-                for idx, (doc_id, content_text, meta) in enumerate(
-                    zip(page_doc_ids, page_texts, page_metas)
-                ):
-                    emb = embeddings_by_idx.get(idx)
-                    if emb is None:
-                        continue
-                    batch_points.append((doc_id, emb, content_text, meta))
-                    if len(batch_points) >= self._upsert_batch_size:
-                        try:
-                            await self._vector_store.upsert_batch(tenant_id, batch_points)
-                            result.vectors_upserted += len(batch_points)
-                        except Exception as exc:
-                            err = f"{type(exc).__name__}: {exc}".strip(": ")
-                            result.failed_rows += len(batch_points)
-                            result.errors.append(f"{table_full} upsert: {err}")
-                            logger.warning(
-                                "Upsert batch failed",
-                                table=table_full,
-                                batch_size=len(batch_points),
-                                error=err,
-                            )
-                        batch_points = []
-
-                if batch_points:
-                    try:
-                        await self._vector_store.upsert_batch(tenant_id, batch_points)
-                        result.vectors_upserted += len(batch_points)
-                    except Exception as exc:
-                        err = f"{type(exc).__name__}: {exc}".strip(": ")
-                        result.failed_rows += len(batch_points)
-                        result.errors.append(f"{table_full} upsert: {err}")
-                        logger.warning(
-                            "Upsert batch failed",
-                            table=table_full,
-                            batch_size=len(batch_points),
-                            error=err,
-                        )
-
-                result.rows_indexed += rows_in_page
+                page_dicts = [dict(zip(column_names, row, strict=True)) for row in page_rows]
+                page_result = await self._ingest_rows(
+                    tenant_id,
+                    source,
+                    page_dicts,
+                    since=since_timestamp,
+                    ingestion_mode="full",
+                    fk_resolutions=fk_resolutions,
+                    product_images=product_images,
+                )
+                result.rows_indexed += page_result.rows_indexed
+                result.vectors_upserted += page_result.vectors_upserted
+                result.failed_rows += page_result.failed_rows
+                result.errors.extend(page_result.errors)
                 offset += limit
 
                 if self._cache and source.row_count and source.row_count > 0:
@@ -950,3 +781,404 @@ class PostgresIngestionService(IngestionService):
             await session.close()
 
         return result
+
+    async def _build_fk_resolutions(
+        self, session: AsyncSession, source: DataSource
+    ) -> dict[str, tuple[str, dict[str, str]]]:
+        fk_resolutions: dict[str, tuple[str, dict[str, str]]] = {}
+        for col in source.columns:
+            if col.is_foreign_key and col.fk_table and col.fk_column:
+                resolved = await self._resolve_fk_values(
+                    session, source.schema_name, col.fk_table, col.fk_column
+                )
+                if resolved:
+                    label = col.fk_table.replace("_", " ").title()
+                    fk_resolutions[col.name] = (label, resolved)
+        return fk_resolutions
+
+    async def _load_product_images(
+        self, session: AsyncSession, table: str
+    ) -> dict[str, str]:
+        product_images: dict[str, str] = {}
+        if table != "products":
+            return product_images
+        try:
+            img_rows = await session.execute(
+                text(
+                    "SELECT product_id::text, base64_data "
+                    "FROM farmacia.product_images "
+                    "WHERE is_primary = true"
+                )
+            )
+            for img_row in img_rows.fetchall():
+                if img_row[0] and img_row[1]:
+                    product_images[img_row[0]] = img_row[1]
+            if product_images:
+                logger.info("Loaded product images for ingestion", count=len(product_images))
+        except Exception:
+            pass
+        return product_images
+
+    async def _ingest_rows(
+        self,
+        tenant_id: UUID,
+        source: DataSource,
+        rows: list[dict],
+        since: str | None = None,
+        *,
+        ingestion_mode: str = "full",
+        fk_resolutions: dict[str, tuple[str, dict[str, str]]] | None = None,
+        product_images: dict[str, str] | None = None,
+    ) -> IngestionResult:
+        """Serializa, embebe y hace upsert de filas ya obtenidas (sync y lazy)."""
+        del since  # rows are pre-fetched; incremental filter happens at query time
+        result = IngestionResult(tenant_id=tenant_id, tables_processed=1)
+        if not rows:
+            return result
+
+        column_templates = [
+            _column_to_template(col.name, col.data_type)
+            for col in source.columns
+            if not col.is_primary_key
+        ]
+        table_label = source.table_name.replace("_", " ").title()
+        schema = source.schema_name
+        table = source.table_name
+        table_full = f"{schema}.{table}"
+        pk_col = next(
+            (col for col in source.columns if col.is_primary_key),
+            source.columns[0] if source.columns else None,
+        )
+        if pk_col is None:
+            result.errors.append(f"Table {table_full} has no columns")
+            return result
+
+        fk_resolutions = fk_resolutions or {}
+        product_images = product_images or {}
+        embed_batch_size = self._embed_batch_size
+        embed_sem = asyncio.Semaphore(self._embed_concurrency)
+
+        page_texts: list[str] = []
+        page_doc_ids: list[UUID] = []
+        page_metas: list[dict] = []
+
+        for row_dict in rows:
+            content_text = _serialize_row(
+                row_dict,
+                column_templates,
+                table_label,
+                fk_resolutions,
+                is_view=source.is_view,
+            )
+            pk_value = row_dict.get(pk_col.name)
+            pk_str = str(pk_value) if pk_value else str(uuid4())
+            parent_id = uuid5(_VECTOR_NS, f"{schema}.{table}:{pk_str}")
+            text_chunks = _chunk_text(
+                content_text, self._chunk_max_chars, self._chunk_overlap
+            )
+            for chunk_index, chunk_text in enumerate(text_chunks):
+                doc_id = (
+                    parent_id
+                    if len(text_chunks) == 1
+                    else uuid5(
+                        _VECTOR_NS,
+                        f"{schema}.{table}:{pk_str}:chunk:{chunk_index}",
+                    )
+                )
+                page_texts.append(chunk_text)
+                page_doc_ids.append(doc_id)
+                row_meta = {
+                    "tenant_id": str(tenant_id),
+                    "source": table_full,
+                    "table_name": table,
+                    "schema_name": schema,
+                    "parent_row_id": str(parent_id),
+                    "chunk_index": str(chunk_index),
+                    "chunk_count": str(len(text_chunks)),
+                    "ingestion_mode": ingestion_mode,
+                    **{
+                        k: str(v)[:500] if v is not None else ""
+                        for k, v in row_dict.items()
+                    },
+                }
+                if source.is_view:
+                    row_meta["doc_type"] = "aggregated"
+                    row_meta["visibility"] = "admin"
+                else:
+                    row_meta["visibility"] = "public"
+                if product_images and pk_str in product_images:
+                    row_meta["image_base64"] = product_images[pk_str]
+                    row_meta["has_image"] = "true"
+                page_metas.append(row_meta)
+
+        async def _embed_slice(
+            start: int,
+            end: int,
+            texts: list[str],
+        ) -> tuple[int, list[list[float]] | Exception]:
+            batch = texts[start:end]
+            async with embed_sem:
+                try:
+                    raw = await self._embeddings.embed(batch)
+                    if batch and isinstance(raw[0], float):
+                        return start, [raw]  # type: ignore[list-item]
+                    return start, raw  # type: ignore[return-value]
+                except Exception as exc:
+                    return start, exc
+
+        embed_jobs = [
+            _embed_slice(
+                i,
+                min(i + embed_batch_size, len(page_texts)),
+                page_texts,
+            )
+            for i in range(0, len(page_texts), embed_batch_size)
+        ]
+        embed_results = await asyncio.gather(*embed_jobs)
+
+        embeddings_by_idx: dict[int, list[float]] = {}
+        for start_idx, payload in embed_results:
+            if isinstance(payload, Exception):
+                result.failed_rows += embed_batch_size
+                result.errors.append(f"{table_full} embed@{start_idx}: {payload}")
+                continue
+            for j, emb in enumerate(payload):
+                embeddings_by_idx[start_idx + j] = (
+                    list(emb) if not isinstance(emb, list) else emb  # type: ignore[arg-type]
+                )
+
+        batch_points: list[tuple[UUID, list[float], str, dict | None]] = []
+        for idx, (doc_id, content_text, meta) in enumerate(
+            zip(page_doc_ids, page_texts, page_metas)
+        ):
+            emb: list[float] | None = embeddings_by_idx.get(idx)
+            if emb is None:
+                continue
+            batch_points.append((doc_id, emb, content_text, meta))
+            if len(batch_points) >= self._upsert_batch_size:
+                try:
+                    await self._vector_store.upsert_batch(tenant_id, batch_points)
+                    result.vectors_upserted += len(batch_points)
+                except Exception as exc:
+                    err = f"{type(exc).__name__}: {exc}".strip(": ")
+                    result.failed_rows += len(batch_points)
+                    result.errors.append(f"{table_full} upsert: {err}")
+                    logger.warning(
+                        "Upsert batch failed",
+                        table=table_full,
+                        batch_size=len(batch_points),
+                        error=err,
+                    )
+                batch_points = []
+
+        if batch_points:
+            try:
+                await self._vector_store.upsert_batch(tenant_id, batch_points)
+                result.vectors_upserted += len(batch_points)
+            except Exception as exc:
+                err = f"{type(exc).__name__}: {exc}".strip(": ")
+                result.failed_rows += len(batch_points)
+                result.errors.append(f"{table_full} upsert: {err}")
+                logger.warning(
+                    "Upsert batch failed",
+                    table=table_full,
+                    batch_size=len(batch_points),
+                    error=err,
+                )
+
+        result.rows_indexed += len(rows)
+        return result
+
+    async def ingest_candidates(
+        self,
+        tenant_id: UUID,
+        query: str,
+        role: str,
+        max_tables: int,
+        max_rows_per_table: int,
+        timeout_seconds: int,
+    ) -> IngestionResult:
+        """Busca filas por texto plano, las embebe y las sube a Qdrant (fallback RAG)."""
+        start = time.perf_counter()
+        result = IngestionResult(tenant_id=tenant_id, tables_processed=0)
+        try:
+            result = await asyncio.wait_for(
+                self._ingest_candidates_impl(
+                    tenant_id=tenant_id,
+                    query=query,
+                    role=role,
+                    max_tables=max_tables,
+                    max_rows_per_table=max_rows_per_table,
+                ),
+                timeout=timeout_seconds,
+            )
+        except TimeoutError:
+            result.errors.append("timeout")
+            logger.warning(
+                "Lazy ingestion timed out",
+                tenant_id=str(tenant_id),
+                timeout_seconds=timeout_seconds,
+            )
+        except Exception as exc:
+            result.errors.append(str(exc))
+            logger.warning(
+                "Lazy ingestion failed",
+                tenant_id=str(tenant_id),
+                error=str(exc),
+            )
+        result.duration_ms = round((time.perf_counter() - start) * 1000, 2)
+        return result
+
+    async def _ingest_candidates_impl(
+        self,
+        tenant_id: UUID,
+        query: str,
+        role: str,
+        max_tables: int,
+        max_rows_per_table: int,
+    ) -> IngestionResult:
+        result = IngestionResult(tenant_id=tenant_id, tables_processed=0)
+        keywords = extract_query_keywords(query)
+        if not keywords:
+            logger.info("Lazy ingestion skipped: no keywords", tenant_id=str(tenant_id))
+            return result
+
+        sources = await self.discover_sources(tenant_id)
+        candidates: list[DataSource] = []
+        for source in sources:
+            if source.schema_name.lower() in SYSTEM_SCHEMAS:
+                continue
+            if source.table_name.lower() in SYSTEM_TABLES:
+                continue
+            if source.table_name.lower() in self._skip_tables:
+                continue
+            if source.row_count <= 0:
+                continue
+            if role == "customer" and source.is_view:
+                continue
+            if await self.is_synced(tenant_id, source.schema_name, source.table_name):
+                continue
+            candidates.append(source)
+            if len(candidates) >= max_tables:
+                break
+
+        if not candidates:
+            logger.info(
+                "Lazy ingestion: no candidate tables",
+                tenant_id=str(tenant_id),
+                keywords=keywords,
+            )
+            return result
+
+        session = await get_async_session()
+        try:
+            use_trgm = await self._pg_trgm_available(session)
+            for source in candidates:
+                try:
+                    rows = await self._find_candidate_rows(
+                        session,
+                        source,
+                        keywords,
+                        max_rows_per_table,
+                        use_trgm=use_trgm,
+                    )
+                    if not rows:
+                        continue
+                    fk_resolutions = await self._build_fk_resolutions(session, source)
+                    product_images = await self._load_product_images(session, source.table_name)
+                    table_result = await self._ingest_rows(
+                        tenant_id,
+                        source,
+                        rows,
+                        ingestion_mode="lazy",
+                        fk_resolutions=fk_resolutions,
+                        product_images=product_images,
+                    )
+                    result.tables_processed += 1
+                    result.rows_indexed += table_result.rows_indexed
+                    result.vectors_upserted += table_result.vectors_upserted
+                    result.failed_rows += table_result.failed_rows
+                    result.errors.extend(table_result.errors)
+                    qualified = f"{source.schema_name}.{source.table_name}"
+                    result.indexed_tables.append(qualified)
+                    result.table_row_counts[qualified] = (
+                        result.table_row_counts.get(qualified, 0) + table_result.rows_indexed
+                    )
+                except Exception as exc:
+                    result.errors.append(f"{source.schema_name}.{source.table_name}: {exc}")
+                    logger.warning(
+                        "Lazy ingestion table failed",
+                        table=f"{source.schema_name}.{source.table_name}",
+                        error=str(exc),
+                    )
+        finally:
+            await session.close()
+
+        logger.info(
+            "Lazy ingestion indexed candidates",
+            tenant_id=str(tenant_id),
+            tables=result.tables_processed,
+            rows=result.rows_indexed,
+            vectors=result.vectors_upserted,
+            keywords=keywords,
+        )
+        return result
+
+    async def _pg_trgm_available(self, session: AsyncSession) -> bool:
+        try:
+            rows = await session.execute(
+                text("SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm')")
+            )
+            return bool(rows.scalar())
+        except Exception:
+            return False
+
+    async def _find_candidate_rows(
+        self,
+        session: AsyncSession,
+        source: DataSource,
+        keywords: list[str],
+        limit: int,
+        use_trgm: bool = False,
+    ) -> list[dict]:
+        text_cols = [
+            col
+            for col in source.columns
+            if _is_text_column(col) and not col.is_primary_key
+        ]
+        if not text_cols or not keywords:
+            return []
+
+        schema_q = quote_ident(source.schema_name)
+        table_q = quote_ident(source.table_name)
+        params: dict[str, object] = {"lim": int(limit)}
+        keyword_clauses: list[str] = []
+        for i, keyword in enumerate(keywords):
+            col_ors: list[str] = []
+            params[f"pat{i}"] = f"%{_escape_like(keyword)}%"
+            params[f"raw{i}"] = keyword
+            for col in text_cols:
+                col_q = quote_ident(col.name)
+                ilike = f"{col_q} ILIKE :pat{i} ESCAPE '\\'"
+                if use_trgm:
+                    col_ors.append(f"({ilike} OR {col_q} % :raw{i})")
+                else:
+                    col_ors.append(ilike)
+            keyword_clauses.append("(" + " OR ".join(col_ors) + ")")
+
+        where_sql = " OR ".join(keyword_clauses)
+        sql = text(
+            f"SELECT * FROM {schema_q}.{table_q} WHERE {where_sql} LIMIT :lim"
+        )
+        try:
+            result = await session.execute(sql, params)
+        except Exception:
+            if not use_trgm:
+                raise
+            # pg_trgm operator unavailable at runtime — retry with ILIKE only
+            return await self._find_candidate_rows(
+                session, source, keywords, limit, use_trgm=False
+            )
+
+        column_names = list(result.keys())
+        return [dict(zip(column_names, row, strict=True)) for row in result.fetchall()]

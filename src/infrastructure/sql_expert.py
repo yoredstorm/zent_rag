@@ -12,6 +12,16 @@ from src.domain.services import ColumnMeta, DataSource
 from src.domain.sql_expert import SqlExpert, SqlQueryResult, SqlValidationError
 from src.infrastructure.logging_config import get_logger
 from src.infrastructure.relational_db import get_async_session
+from src.infrastructure.schema_discovery import (
+    SYSTEM_SCHEMAS,
+    SYSTEM_TABLES,
+)
+from src.infrastructure.schema_discovery import (
+    discover_columns as fetch_columns,
+)
+from src.infrastructure.schema_discovery import (
+    discover_sources as fetch_sources,
+)
 
 logger = get_logger(__name__)
 
@@ -97,6 +107,108 @@ def _format_sql_result(result: SqlQueryResult, question: str) -> str:
     return f"Question: {question}\nColumns: {header}\nRows ({result.row_count} total):\n{rows_text}"
 
 
+_LAST_SALE_QUESTION = re.compile(
+    r"(últim[oa]|ultimo|last|most recent|latest).{0,80}(vendid|venta|sold)|"
+    r"(vendid|venta|sold).{0,80}(últim[oa]|ultimo|last|más reciente|mas reciente)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _from_table(select: sqlglot.exp.Select) -> sqlglot.exp.Table | None:
+    from_clause = select.find(sqlglot.exp.From)
+    if from_clause is None:
+        return None
+    table = from_clause.this
+    if isinstance(table, sqlglot.exp.Table):
+        return table
+    return None
+
+
+def _sales_alias(select: sqlglot.exp.Select) -> str | None:
+    for table in select.find_all(sqlglot.exp.Table):
+        if table.name.lower() == "sales":
+            return table.alias_or_name
+    return None
+
+
+def _order_has_root_id(select: sqlglot.exp.Select, alias: str) -> bool:
+    order = select.args.get("order")
+    if order is None:
+        return False
+    alias_l = alias.lower()
+    for ordered in order.expressions:
+        col = ordered.this
+        if not isinstance(col, sqlglot.exp.Column):
+            continue
+        if col.name.lower() != "id":
+            continue
+        tbl = (col.table or "").lower()
+        if not tbl or tbl == alias_l:
+            return True
+    return False
+
+
+def _has_order_status_predicate(select: sqlglot.exp.Select) -> bool:
+    for col in select.find_all(sqlglot.exp.Column):
+        if col.name.lower() == "order_status":
+            return True
+    return False
+
+
+def stabilize_sql(sql: str, question: str = "") -> str:
+    """Hace determinista un SELECT con LIMIT: ORDER BY ... id DESC y ventas completed.
+
+    Si el parseo falla, devuelve el SQL original.
+    """
+    try:
+        parsed = sqlglot.parse_one(sql, dialect="postgres")
+    except Exception:
+        return sql
+    if not isinstance(parsed, sqlglot.exp.Select):
+        return sql
+
+    root = _from_table(parsed)
+    alias = root.alias_or_name if root is not None else None
+    if (
+        alias
+        and parsed.args.get("limit") is not None
+        and parsed.args.get("order") is not None
+        and not _order_has_root_id(parsed, alias)
+    ):
+        id_col = sqlglot.exp.Column(
+            this=sqlglot.exp.to_identifier("id"),
+            table=sqlglot.exp.to_identifier(alias),
+        )
+        parsed.args["order"].append(
+            "expressions",
+            sqlglot.exp.Ordered(this=id_col, desc=True),
+        )
+
+    if (
+        question
+        and _LAST_SALE_QUESTION.search(question)
+        and _sales_alias(parsed)
+        and not _has_order_status_predicate(parsed)
+    ):
+        sales_alias = _sales_alias(parsed)
+        if sales_alias:
+            parsed = parsed.where(
+                sqlglot.exp.EQ(
+                    this=sqlglot.exp.Column(
+                        this=sqlglot.exp.to_identifier("order_status"),
+                        table=sqlglot.exp.to_identifier(sales_alias),
+                    ),
+                    expression=sqlglot.exp.Literal.string("completed"),
+                ),
+                copy=False,
+            )
+
+    try:
+        return parsed.sql(dialect="postgres")
+    except Exception:
+        return sql
+
+
 _SQL_GENERATION_PROMPT = """You are a PostgreSQL SQL expert. Generate a valid, safe SQL query from the schema and question below.
 
 ## TABLE & COLUMN INVENTORY (every table with every column)
@@ -114,18 +226,22 @@ _SQL_GENERATION_PROMPT = """You are a PostgreSQL SQL expert. Generate a valid, s
    Example: "sales by category" → sales.product_id → products.id → products.category_id → categories.id
 3. NEVER guess table or column names — only use what's listed in the inventory.
 4. For aggregations (total, sum, count, average) use GROUP BY on the entity name.
-5. For "last / most recent / latest" use ORDER BY date_column DESC LIMIT 1.
-6. For date ranges use >= and <= (not BETWEEN with timestamps).
-7. For text search use ILIKE '%term%' or LOWER(col) = LOWER('term').
-8. If no LIMIT present and the query could return many rows, add LIMIT 50.
-9. ONLY SELECT. Never INSERT, UPDATE, DELETE, DROP, CREATE, ALTER, TRUNCATE.
+5. For "last / most recent / latest" use ORDER BY date_column DESC, id DESC LIMIT 1.
+   Never ORDER BY a timestamp alone: ties make LIMIT 1 non-deterministic.
+6. For questions about sold / last sale / "último vendido" on sales, add
+   order_status = 'completed' (exclude cancelled and refunded).
+7. For date ranges use >= and <= (not BETWEEN with timestamps).
+8. For text search use ILIKE '%term%' or LOWER(col) = LOWER('term').
+9. If no LIMIT present and the query could return many rows, add LIMIT 50.
+10. ONLY SELECT. Never INSERT, UPDATE, DELETE, DROP, CREATE, ALTER, TRUNCATE.
 
 ## CRITICAL — USER-FACING OUTPUT RULES
-10. NEVER select raw ID columns (id, UUID, *_id) in the final output. Use JOINs to resolve them to human-readable names.
-11. ALWAYS include the "name" column (or equivalent display name) when selecting from any entity table.
-12. Prefer: SELECT p.name AS producto, c.name AS categoria, p.price
+11. NEVER select raw ID columns (id, UUID, *_id) in the final output. Use JOINs to resolve them to human-readable names.
+    ORDER BY table_alias.id DESC is required for stable LIMIT; do not SELECT that id.
+12. ALWAYS include the "name" column (or equivalent display name) when selecting from any entity table.
+13. Prefer: SELECT p.name AS producto, c.name AS categoria, p.price
     NOT:    SELECT p.id, p.category_id, p.price
-13. For products specifically, always SELECT: name, price, active_ingredient, concentration, presentation_unit.
+14. For products specifically, always SELECT: name, price, active_ingredient, concentration, presentation_unit.
     Never SELECT: id, sku, registration_number, cost, slug.
 
 ## OUTPUT FORMAT
@@ -165,11 +281,8 @@ _DETERMINISTIC_FORMAT_PROMPT = """You are formatting database query results into
 class PostgresSqlExpert(SqlExpert):
     """Implementación de SqlExpert usando PostgreSQL + LLM."""
 
-    SYSTEM_SCHEMAS = {"information_schema", "pg_catalog", "pg_toast"}
-    SYSTEM_TABLES = {
-        "tenants", "users", "rate_limit_counters", "usage_logs",
-        "query_audit_log", "documents", "alembic_version",
-    }
+    SYSTEM_SCHEMAS = SYSTEM_SCHEMAS
+    SYSTEM_TABLES = SYSTEM_TABLES
 
     def __init__(self, llm_provider: LLMProvider) -> None:
         self._llm = llm_provider
@@ -177,85 +290,14 @@ class PostgresSqlExpert(SqlExpert):
     async def _discover_sources(self, tenant_id: UUID) -> list[DataSource]:
         session: AsyncSession = await get_async_session()
         try:
-            rows = await session.execute(
-                text(
-                    "SELECT table_schema, table_name, table_type "
-                    "FROM information_schema.tables "
-                    "WHERE table_type IN ('BASE TABLE', 'VIEW') "
-                    "AND table_schema NOT IN ('information_schema', 'pg_catalog', 'pg_toast') "
-                    "AND table_name NOT IN ("
-                    "  'tenants', 'users', 'rate_limit_counters', 'usage_logs', "
-                    "  'query_audit_log', 'documents', 'alembic_version'"
-                    ") ORDER BY table_schema, table_name"
-                )
-            )
-            sources: list[DataSource] = []
-            for schema_name, table_name, table_type in rows.fetchall():
-                cols = await self._discover_columns(session, schema_name, table_name)
-                count_r = await session.execute(
-                    text(f'SELECT COUNT(*) FROM "{schema_name}"."{table_name}"')
-                )
-                sources.append(DataSource(
-                    schema_name=schema_name,
-                    table_name=table_name,
-                    columns=cols,
-                    row_count=count_r.scalar() or 0,
-                    is_view=(table_type == "VIEW"),
-                ))
-            return sources
+            return await fetch_sources(session)
         finally:
             await session.close()
 
     async def _discover_columns(
         self, session: AsyncSession, schema: str, table: str
     ) -> list[ColumnMeta]:
-        rows = await session.execute(
-            text(
-                "SELECT c.column_name, c.data_type, c.is_nullable, "
-                "  CASE WHEN pk.column_name IS NOT NULL THEN true ELSE false END AS is_pk, "
-                "  CASE WHEN fk.column_name IS NOT NULL THEN true ELSE false END AS is_fk, "
-                "  fk.foreign_table_name AS fk_table, "
-                "  fk.foreign_column_name AS fk_column "
-                "FROM information_schema.columns c "
-                "LEFT JOIN ("
-                "  SELECT ku.table_schema, ku.table_name, ku.column_name "
-                "  FROM information_schema.table_constraints tc "
-                "  JOIN information_schema.key_column_usage ku "
-                "    ON tc.constraint_name = ku.constraint_name "
-                "  WHERE tc.constraint_type = 'PRIMARY KEY'"
-                ") pk ON c.table_schema = pk.table_schema "
-                "     AND c.table_name = pk.table_name "
-                "     AND c.column_name = pk.column_name "
-                "LEFT JOIN ("
-                "  SELECT kcu.table_schema, kcu.table_name, kcu.column_name, "
-                "    ccu.table_name AS foreign_table_name, "
-                "    ccu.column_name AS foreign_column_name "
-                "  FROM information_schema.table_constraints tc "
-                "  JOIN information_schema.key_column_usage kcu "
-                "    ON tc.constraint_name = kcu.constraint_name "
-                "  JOIN information_schema.constraint_column_usage ccu "
-                "    ON tc.constraint_name = ccu.constraint_name "
-                "  WHERE tc.constraint_type = 'FOREIGN KEY'"
-                ") fk ON c.table_schema = fk.table_schema "
-                "     AND c.table_name = fk.table_name "
-                "     AND c.column_name = fk.column_name "
-                "WHERE c.table_schema = :schema AND c.table_name = :table "
-                "ORDER BY c.ordinal_position"
-            ),
-            {"schema": schema, "table": table},
-        )
-        return [
-            ColumnMeta(
-                name=row.column_name,
-                data_type=str(row.data_type),
-                is_nullable=row.is_nullable == "YES",
-                is_primary_key=row.is_pk,
-                is_foreign_key=row.is_fk,
-                fk_table=row.fk_table,
-                fk_column=row.fk_column,
-            )
-            for row in rows.fetchall()
-        ]
+        return await fetch_columns(session, schema, table)
 
     def _build_schema_context(self, sources: list[DataSource], role: str) -> dict[str, str]:
         """Construye el inventario de tablas y cadenas FK para el LLM."""
@@ -389,6 +431,7 @@ class PostgresSqlExpert(SqlExpert):
             return SqlQueryResult(sql="", error="Cannot generate query for this question")
 
         sql = self._clean_sql(sql)
+        sql = stabilize_sql(sql, question)
 
         try:
             await self.validate_sql(sql, sources, role)

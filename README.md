@@ -250,6 +250,18 @@ POST /api/v1/ingestion/sync                       # Sync todas las tablas
 POST /api/v1/ingestion/sync/{schema}.{table}       # Sync una tabla específica
 ```
 
+**Ingesta perezosa (lazy ingestion):** cuando SQL Expert y la búsqueda vectorial no encuentran contexto suficiente, el orquestador puede buscar candidatos por texto plano (`ILIKE`) en PostgreSQL, embeber solo esas filas y reintentar Qdrant antes de responder "no tengo información". Es un complemento del sync completo (catálogos pequeños/estáticos), no un reemplazo. Queda **apagada por defecto**.
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `RAG_RAG_LAZY_INGESTION_ENABLED` | `false` | Activa el fallback de ingesta perezosa |
+| `RAG_RAG_LAZY_INGEST_MAX_ROWS_PER_TABLE` | `25` | Máximo de filas candidatas a embeber por tabla |
+| `RAG_RAG_LAZY_INGEST_MAX_TABLES` | `5` | Máximo de tablas a escanear por fallback |
+| `RAG_RAG_LAZY_INGEST_TIMEOUT_SECONDS` | `4` | Timeout global del fallback (no cuelga la request RAG) |
+| `RAG_RAG_LAZY_INGEST_PROMOTE_THRESHOLD` | `10` | Reservado (fase 2): triggers antes de promover a `sync_table` |
+
+Las tablas de `RAG_INGEST_SKIP_TABLES` nunca se lazy-ingestan (siguen siendo SQL-only). El rol `customer` no indexa vistas agregadas (admin-only).
+
 ### Admin (Dev only)
 
 ```bash
@@ -355,6 +367,10 @@ Todas las variables usan el prefijo `RAG_` (configurado en `src/config.py` con `
 | `RAG_RAG_TOP_K` | `5` | Chunks a recuperar en búsqueda vectorial |
 | `RAG_RAG_MAX_CONTEXT_TOKENS` | `32000` | Tokens máximos en el contexto ensamblado |
 | `RAG_RAG_SQL_EXPERT_ENABLED` | `false` | Activar módulo Text-to-SQL |
+| `RAG_RAG_LAZY_INGESTION_ENABLED` | `false` | Fallback de ingesta perezosa si no hay SQL ni vectores |
+| `RAG_RAG_LAZY_INGEST_MAX_ROWS_PER_TABLE` | `25` | Filas candidatas por tabla en lazy ingest |
+| `RAG_RAG_LAZY_INGEST_MAX_TABLES` | `5` | Tablas máximas escaneadas en lazy ingest |
+| `RAG_RAG_LAZY_INGEST_TIMEOUT_SECONDS` | `4` | Timeout del fallback lazy (segundos) |
 
 ## Comandos Útiles
 

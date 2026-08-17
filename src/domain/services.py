@@ -48,6 +48,8 @@ class IngestionResult:
     errors: list[str] = field(default_factory=list)
     failed_rows: int = 0
     duration_ms: float = 0.0
+    indexed_tables: list[str] = field(default_factory=list)
+    table_row_counts: dict[str, int] = field(default_factory=dict)
 
     @property
     def success(self) -> bool:
@@ -80,4 +82,20 @@ class IngestionService(ABC):
         self, tenant_id: UUID, schema_name: str, table_name: str, full_refresh: bool = False
     ) -> IngestionResult:
         """Sincroniza una tabla específica."""
+        ...
+
+    @abstractmethod
+    async def ingest_candidates(
+        self,
+        tenant_id: UUID,
+        query: str,
+        role: str,
+        max_tables: int,
+        max_rows_per_table: int,
+        timeout_seconds: int,
+    ) -> IngestionResult:
+        """Busca filas candidatas por texto plano en tablas aún no vectorizadas,
+        las embebe y las sube a Qdrant. Usado como fallback cuando SQL Expert +
+        vector search no encuentran nada. Debe ser tolerante a timeout/errores:
+        nunca debe propagar una excepción que rompa el flujo RAG."""
         ...

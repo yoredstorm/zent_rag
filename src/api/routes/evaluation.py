@@ -44,6 +44,7 @@ class FeedbackRequest(BaseModel):
     latency_ms: float = Field(default=0.0, ge=0)
     method: str = Field(default="rag")
     comment: str = Field(default="", max_length=500)
+    lazy_ingested: bool = Field(default=False)
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +86,7 @@ async def submit_feedback(
         latency_ms=body.latency_ms,
         method=body.method,
         comment=body.comment,
+        lazy_ingested=body.lazy_ingested,
     )
 
     return {"status": "ok", "rating": body.rating}

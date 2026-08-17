@@ -13,7 +13,7 @@ import asyncio
 import json
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from src.api.deps import get_cache_provider, get_embedding_provider, get_vector_store
@@ -21,10 +21,27 @@ from src.domain.ports import CacheProvider, EmbeddingProvider, VectorStore
 from src.domain.services import IngestionResult
 from src.infrastructure.data_ingestion import PostgresIngestionService
 from src.infrastructure.ingestion_queue import enqueue_sync, get_job_status, list_recent_jobs
+from src.infrastructure.lazy_activity import (
+    lazy_log_cache_key,
+    parse_lazy_activity,
+    preferred_tenant_id,
+)
 from src.infrastructure.logging_config import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/ingestion", tags=["Ingestion"])
+
+
+def _tenant_id_from_auth(request: Request, x_tenant_id: str) -> UUID:
+    """Usa el tenant del Bearer; el header solo aplica si aún no hay auth."""
+    tid = preferred_tenant_id(getattr(request.state, "tenant_id", ""), x_tenant_id)
+    if not tid:
+        raise HTTPException(400, "X-Tenant-Id debe ser un UUID válido")
+    try:
+        return UUID(str(tid))
+    except ValueError:
+        raise HTTPException(400, "X-Tenant-Id debe ser un UUID válido")
+
 
 # Singleton del ingestion service
 _ingestion_service: PostgresIngestionService | None = None
@@ -50,13 +67,11 @@ def get_ingestion_service(
     ),
 )
 async def list_sources(
+    request: Request,
     x_tenant_id: str = Header(..., alias="X-Tenant-Id"),
     ingestion: PostgresIngestionService = Depends(get_ingestion_service),
 ):
-    try:
-        tenant_id = UUID(x_tenant_id)
-    except ValueError:
-        raise HTTPException(400, "X-Tenant-Id debe ser un UUID válido")
+    tenant_id = _tenant_id_from_auth(request, x_tenant_id)
 
     sources = await ingestion.discover_sources(tenant_id)
     skip_set = ingestion._skip_tables
@@ -76,6 +91,9 @@ async def list_sources(
             "synced": is_synced,
             "skipped": is_skipped,
             "progress": progress,
+            "lazy_rows_indexed": await ingestion.get_lazy_rows_indexed(
+                tenant_id, s.schema_name, s.table_name
+            ),
             "columns_detail": [
                 {"name": c.name, "type": c.data_type, "nullable": c.is_nullable, "is_pk": c.is_primary_key}
                 for c in s.columns[:10]
@@ -86,6 +104,30 @@ async def list_sources(
         "total_sources": len(sources),
         "synced_sources": synced_count,
         "sources": source_list,
+    }
+
+
+@router.get(
+    "/lazy-activity",
+    summary="Actividad de indexado por demanda",
+    description="Eventos recientes de ingesta perezosa para el tenant autenticado.",
+)
+async def lazy_activity(
+    request: Request,
+    days: int = Query(default=30, ge=1, le=365),
+    limit: int = Query(default=20, ge=1, le=100),
+    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    cache: CacheProvider = Depends(get_cache_provider),
+):
+    tenant_id = _tenant_id_from_auth(request, x_tenant_id)
+
+    entries = await cache.get_list(lazy_log_cache_key(tenant_id))
+    trigger_count, recent = parse_lazy_activity(entries, days=days, limit=limit)
+    return {
+        "tenant_id": str(tenant_id),
+        "days": days,
+        "trigger_count": trigger_count,
+        "recent": recent,
     }
 
 

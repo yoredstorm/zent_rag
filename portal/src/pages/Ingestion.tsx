@@ -19,6 +19,14 @@ type Source = {
   skipped?: boolean;
   columns?: number;
   progress?: TableProgress;
+  lazy_rows_indexed?: number;
+};
+
+type LazyEvent = {
+  tables: string[];
+  rows_indexed: number;
+  query_preview: string;
+  at: string;
 };
 
 function secondsAgo(iso: string): number {
@@ -26,6 +34,27 @@ function secondsAgo(iso: string): number {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return 0;
   return Math.max(0, Math.floor((Date.now() - t) / 1000));
+}
+
+function timeAgo(iso: string): string {
+  const s = secondsAgo(iso);
+  if (s < 60) return `hace ${s}s`;
+  if (s < 3600) return `hace ${Math.floor(s / 60)} min`;
+  if (s < 86400) return `hace ${Math.floor(s / 3600)} h`;
+  return `hace ${Math.floor(s / 86400)} d`;
+}
+
+function sourceStatus(s: Source, hasProgress: boolean): { label: string; badge: string } {
+  if (s.synced) return { label: "Sincronizada", badge: "badge-ok" };
+  if (s.skipped) return { label: "Omitida", badge: "badge-pending" };
+  if (hasProgress) return { label: "Sincronizando…", badge: "badge-pending" };
+  if ((s.lazy_rows_indexed ?? 0) > 0) {
+    return {
+      label: `Parcial · ${s.lazy_rows_indexed} filas por demanda`,
+      badge: "badge-pending",
+    };
+  }
+  return { label: "Pendiente", badge: "badge-pending" };
 }
 
 function ProgressBar({ progress }: { progress: TableProgress }) {
@@ -58,15 +87,23 @@ export default function IngestionPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [syncingTables, setSyncingTables] = useState<Set<string>>(new Set());
+  const [lazyEvents, setLazyEvents] = useState<LazyEvent[]>([]);
   const lastCompleted = useRef<string | null>(null);
 
   async function loadSources() {
     if (!session) return;
-    const data = await api<{ sources: Source[] }>("/api/v1/ingestion/sources", {
-      token: session.token,
-      tenantId: session.tenantId,
-    });
+    const [data, activity] = await Promise.all([
+      api<{ sources: Source[] }>("/api/v1/ingestion/sources", {
+        token: session.token,
+        tenantId: session.tenantId,
+      }),
+      api<{ recent: LazyEvent[] }>("/api/v1/ingestion/lazy-activity?days=30&limit=20", {
+        token: session.token,
+        tenantId: session.tenantId,
+      }).catch(() => ({ recent: [] as LazyEvent[] })),
+    ]);
     setSources(data.sources || []);
+    setLazyEvents(activity.recent || []);
   }
 
   async function syncTable(schema: string, table: string) {
@@ -128,11 +165,13 @@ export default function IngestionPage() {
       <h1>Ingestión</h1>
       <p className="muted">
         Descubre tablas y sincroniza tu información para poder hacer preguntas.
-        Las tablas con <code>updated_at</code> se sincronizan incrementalmente (solo lo nuevo).
+        No es obligatorio sincronizar todo antes de empezar: las tablas grandes se
+        indexan solas a medida que las preguntas las necesitan. Las tablas con{" "}
+        <code>updated_at</code> se sincronizan incrementalmente (solo lo nuevo).
       </p>
       {error && <p className="error">{error}</p>}
 
-      <div className="row" style={{ marginBottom: "1rem" }}>
+      <div className="row" style={{ marginBottom: "1rem", alignItems: "center", flexWrap: "wrap" }}>
         <button
           className="btn"
           type="button"
@@ -140,6 +179,14 @@ export default function IngestionPage() {
           disabled={sync.active}
         >
           {sync.active ? "Sincronizando…" : `Sincronizar todos mis datos${hasPending ? ` (${pendingCount} pendientes)` : ""}`}
+        </button>
+        <button
+          type="button"
+          className="help-icon"
+          title="No es obligatorio sincronizar todo antes de empezar. Las tablas grandes se indexan automáticamente a medida que las preguntas las necesitan."
+          aria-label="No es obligatorio sincronizar todo antes de empezar. Las tablas grandes se indexan automáticamente a medida que las preguntas las necesitan."
+        >
+          ⓘ
         </button>
         <button
           className="btn secondary"
@@ -219,60 +266,98 @@ export default function IngestionPage() {
           </p>
         )}
         {!loading && (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Schema</th>
-                <th>Tabla</th>
-                <th>Filas</th>
-                <th>Progreso</th>
-                <th>Estado</th>
-                <th style={{ width: 120 }}>Acción</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sources.map((s) => {
-                const key = `${s.schema}.${s.table}`;
-                const isSyncing = syncingTables.has(key);
-                const hasProgress = s.progress && s.progress.status === "running";
-                return (
-                  <tr key={key}>
-                    <td>{s.schema}</td>
-                    <td className="mono">{s.table}</td>
-                    <td>{(s.row_count ?? 0).toLocaleString()}</td>
-                    <td>
-                      <ProgressBar progress={s.progress} />
-                    </td>
-                    <td>
-                      <span className={`badge ${s.synced ? "badge-ok" : s.skipped ? "badge-pending" : hasProgress ? "badge-pending" : "badge-pending"}`}>
-                        {s.synced ? "Sincronizada" : s.skipped ? "Omitida" : hasProgress ? "Sincronizando…" : "Pendiente"}
-                      </span>
-                    </td>
-                    <td>
-                      {!s.synced && s.row_count > 0 && !s.skipped && (
-                        <button
-                          className="btn secondary"
-                          style={{ padding: "0.25rem 0.6rem", fontSize: "0.8rem" }}
-                          type="button"
-                          disabled={isSyncing || hasProgress}
-                          onClick={() => void syncTable(s.schema, s.table)}
-                        >
-                          {isSyncing ? "..." : hasProgress ? "En curso" : "Sincronizar"}
-                        </button>
-                      )}
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Schema</th>
+                  <th>Tabla</th>
+                  <th>Filas</th>
+                  <th>Progreso</th>
+                  <th>Estado</th>
+                  <th style={{ width: 200 }}>Acción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sources.map((s) => {
+                  const key = `${s.schema}.${s.table}`;
+                  const isSyncing = syncingTables.has(key);
+                  const hasProgress = Boolean(s.progress && s.progress.status === "running");
+                  const status = sourceStatus(s, hasProgress);
+                  const isPartial = !s.synced && !s.skipped && !hasProgress && (s.lazy_rows_indexed ?? 0) > 0;
+                  return (
+                    <tr key={key}>
+                      <td>{s.schema}</td>
+                      <td className="mono">{s.table}</td>
+                      <td>{(s.row_count ?? 0).toLocaleString()}</td>
+                      <td>
+                        <ProgressBar progress={s.progress ?? null} />
+                      </td>
+                      <td>
+                        <span className={`badge ${status.badge}`}>{status.label}</span>
+                      </td>
+                      <td>
+                        {!s.synced && s.row_count > 0 && !s.skipped && (
+                          <button
+                            className="btn secondary"
+                            style={{ padding: "0.25rem 0.6rem", fontSize: "0.8rem", minHeight: 44 }}
+                            type="button"
+                            disabled={isSyncing || hasProgress}
+                            onClick={() => void syncTable(s.schema, s.table)}
+                          >
+                            {isSyncing
+                              ? "..."
+                              : hasProgress
+                                ? "En curso"
+                                : isPartial
+                                  ? "Completar sincronización"
+                                  : "Sincronizar"}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {sources.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="muted">
+                      No hay fuentes descubiertas aún. Pulsa «Sincronizar mis datos».
                     </td>
                   </tr>
-                );
-              })}
-              {sources.length === 0 && (
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      <div className="panel">
+        <h2>Actividad de indexado por demanda</h2>
+        <p className="muted">Consultas recientes que dispararon indexado automático.</p>
+        {lazyEvents.length === 0 ? (
+          <p className="muted">Todavía no hay indexados al vuelo en los últimos 30 días.</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
                 <tr>
-                  <td colSpan={6} className="muted">
-                    No hay fuentes descubiertas aún. Pulsa «Sincronizar mis datos».
-                  </td>
+                  <th>Tablas</th>
+                  <th>Filas</th>
+                  <th>Consulta</th>
+                  <th>Cuándo</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {lazyEvents.map((ev, i) => (
+                  <tr key={`${ev.at}-${i}`}>
+                    <td>{(ev.tables || []).join(", ") || "—"}</td>
+                    <td>{ev.rows_indexed}</td>
+                    <td className="muted">{ev.query_preview || "—"}</td>
+                    <td className="muted">{timeAgo(ev.at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>
