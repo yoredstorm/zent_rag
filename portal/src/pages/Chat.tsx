@@ -1,11 +1,13 @@
 import {
   CaretDown,
   ChatCircleDots,
+  Copy,
   Database,
   Files,
   MagnifyingGlass,
   PaperPlaneRight,
   PencilSimple,
+  Play,
   Plus,
   Stop,
   ThumbsDown,
@@ -20,6 +22,7 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { useToast } from "../Toast";
 import { ErrorInline, LoadingDots } from "../components/ui";
+import SqlRunnerModal from "../components/SqlRunnerModal";
 import { fmtLatency, timeAgo } from "../lib/format";
 import {
   deleteConversation,
@@ -672,6 +675,19 @@ function MessageBubble({
   onFeedback: (rating: "up" | "down") => void;
 }) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [sqlOpen, setSqlOpen] = useState(false);
+  const [sqlModalOpen, setSqlModalOpen] = useState(false);
+  const { pushToast } = useToast();
+
+  async function copySql() {
+    if (!message.sqlQuery) return;
+    try {
+      await navigator.clipboard.writeText(message.sqlQuery);
+      pushToast("success", "SQL copiado");
+    } catch {
+      pushToast("error", "No se pudo copiar");
+    }
+  }
 
   if (message.role === "user") {
     return (
@@ -717,19 +733,54 @@ function MessageBubble({
           )}
 
           {message.sqlQuery && (
-            <details className="group mt-2 rounded-xs border border-border/70 bg-black/20">
-              <summary className="flex cursor-pointer items-center gap-1.5 px-2.5 py-1.5 text-xs text-muted transition-colors hover:text-text">
-                <CaretDown
-                  size={12}
-                  className="transition-transform group-open:rotate-180"
-                  aria-hidden
-                />
-                Ver consulta SQL
-              </summary>
-              <pre className="overflow-x-auto px-3 pb-3 font-mono text-[12px] leading-relaxed text-accent">
-                {message.sqlQuery}
-              </pre>
-            </details>
+            <div className="mt-2 rounded-xs border border-border/70 bg-black/20">
+              <div className="flex items-center gap-1 px-2.5 py-1.5">
+                <button
+                  type="button"
+                  className="flex cursor-pointer items-center gap-1.5 text-xs text-muted transition-colors hover:text-text"
+                  aria-expanded={sqlOpen}
+                  onClick={() => setSqlOpen((o) => !o)}
+                >
+                  <CaretDown
+                    size={12}
+                    className={`transition-transform ${sqlOpen ? "rotate-180" : ""}`}
+                    aria-hidden
+                  />
+                  Ver consulta SQL
+                </button>
+                <span className="ml-auto flex items-center gap-1">
+                  <button
+                    type="button"
+                    className="cursor-pointer rounded-xs p-1 text-faint transition-colors hover:bg-raised hover:text-text"
+                    aria-label="Copiar SQL"
+                    title="Copiar SQL"
+                    onClick={() => void copySql()}
+                  >
+                    <Copy size={12} aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    className="flex cursor-pointer items-center gap-1 rounded-xs px-1.5 py-1 text-[11px] text-accent transition-colors hover:bg-raised"
+                    onClick={() => setSqlModalOpen(true)}
+                  >
+                    <Play size={11} weight="fill" aria-hidden />
+                    Ejecutar
+                  </button>
+                </span>
+              </div>
+              {sqlOpen && (
+                <pre className="overflow-x-auto border-t border-border/50 px-3 py-2.5 font-mono text-[12px] leading-relaxed text-accent">
+                  {message.sqlQuery}
+                </pre>
+              )}
+            </div>
+          )}
+
+          {sqlModalOpen && message.sqlQuery && (
+            <SqlRunnerModal
+              sql={message.sqlQuery}
+              onClose={() => setSqlModalOpen(false)}
+            />
           )}
 
           {(message.sources?.length ?? 0) > 0 && (
