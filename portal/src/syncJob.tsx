@@ -298,30 +298,37 @@ export function SyncBanner() {
   const ago = secondsAgo(state.updatedAt);
 
   return (
-    <div className={`sync-banner${state.stale ? " sync-banner-stale" : ""}`}>
-      <div className="sync-banner-top">
-        <strong>Sincronizando datos</strong>
-        <span className="muted">
-          {state.progress}%
+    <div
+      className={`mb-5 rounded-md border px-4 py-3 shadow-pop ${
+        state.stale
+          ? "border-warn/40 bg-warn-soft"
+          : "border-accent/25 bg-[#122c26]"
+      }`}
+      role="status"
+    >
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+        <strong className="text-sm font-medium text-text">Sincronizando datos</strong>
+        <span className="mono text-xs text-muted">
+          {Math.round(state.progress)}%
           {state.tablesTotal > 0
             ? ` · ${state.tablesDone}/${state.tablesTotal} tablas`
             : ""}
           {ago > 0 ? ` · hace ${ago}s` : ""}
         </span>
       </div>
-      <div className="sync-progress-track">
+      <div className="progress-track">
         <div
-          className="sync-progress-fill"
+          className={`progress-fill ${state.stale ? "bg-warn" : ""}`}
           style={{ width: `${Math.min(state.progress, 100)}%` }}
         />
       </div>
-      <div className="sync-banner-msg">
+      <div className="mt-2 text-[13px] text-muted">
         {state.message ||
           (state.currentTable
             ? `Trabajando en ${state.currentTable}`
             : "Procesando…")}
         {state.stale && (
-          <span className="sync-stale-hint"> — sin heartbeat reciente</span>
+          <span className="ml-1 text-warn">— sin heartbeat reciente</span>
         )}
       </div>
     </div>

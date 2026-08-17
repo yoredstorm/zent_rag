@@ -242,6 +242,23 @@ Body:
 }
 ```
 
+### RAG Query Streaming (SSE)
+
+Igual que `/rag/query` pero con respuesta token a token vía Server-Sent Events.
+El portal usa este endpoint para el chat en vivo.
+
+```bash
+POST /api/v1/rag/query/stream   # mismo body y headers que /rag/query
+Content-Type: text/event-stream
+
+Eventos:
+  event: status   data: {"phase": "searching"}          # fase del pipeline
+  event: delta    data: {"text": "..."}                 # tokens de respuesta
+  event: sources  data: {"sources": [...], "method": "rag|sql", "sql_query": null, "lazy_ingested": false}
+  event: done     data: {"conversation_id": "...", "query_id": "...", "usage": {...}, "latency_ms": 123}
+  event: error    data: {"message": "..."}
+```
+
 ### Ingestion (SQL → Vectores)
 
 ```bash

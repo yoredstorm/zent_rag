@@ -19,6 +19,7 @@ import asyncio
 import json
 import re
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
@@ -168,6 +169,7 @@ class RAGOrchestrator:
         conversation_id: UUID | None = None,
         role: str = "admin",
         system_prompt_override: str | None = None,
+        on_delta: Callable[[str], Awaitable[None]] | None = None,
     ) -> RAGQueryResult:
         """Ejecuta el flujo RAG completo de extremo a extremo.
 
@@ -175,6 +177,10 @@ class RAGOrchestrator:
             system_prompt_override: Si se provee, salta toda resolución de
                 config_json y usa este prompt directamente (útil para
                 el endpoint /prompt/test con RAG real).
+            on_delta: Si se provee, la respuesta del LLM se genera en modo
+                streaming y se invoca esta corrutina por cada fragmento
+                de texto. El resultado devuelto conserva la respuesta
+                completa y el uso de tokens.
         """
 
         query_id = uuid4()
@@ -526,13 +532,51 @@ Answer based on the context above:"""
             result.status = QueryStatus.GENERATING_RESPONSE
             llm_start = time.perf_counter()
             async with trace_span("rag.llm", model=effective_model or "default"):
-                llm_response = await self._llm_provider.generate(
-                    prompt=augmented_prompt,
-                    model=effective_model,
-                    max_tokens=max_tokens,
-                    temperature=0.0 if sql_has_data else temperature,
-                    system_prompt=system_prompt,
-                )
+                if on_delta is not None:
+                    content_parts: list[str] = []
+                    usage_data: dict[str, int] = {
+                        "prompt_tokens": 0,
+                        "completion_tokens": 0,
+                        "total_tokens": 0,
+                    }
+                    finish_reason = "stop"
+                    llm_latency = 0.0
+                    async for event in self._llm_provider.generate_stream(
+                        prompt=augmented_prompt,
+                        model=effective_model,
+                        max_tokens=max_tokens,
+                        temperature=0.0 if sql_has_data else temperature,
+                        system_prompt=system_prompt,
+                    ):
+                        if event.get("type") == "delta":
+                            text = str(event.get("text") or "")
+                            content_parts.append(text)
+                            await on_delta(text)
+                        elif event.get("type") == "done":
+                            usage_data = {
+                                "prompt_tokens": int(event.get("usage", {}).get("prompt_tokens") or 0),
+                                "completion_tokens": int(event.get("usage", {}).get("completion_tokens") or 0),
+                                "total_tokens": int(event.get("usage", {}).get("total_tokens") or 0),
+                            }
+                            finish_reason = str(event.get("finish_reason") or "stop")
+                            llm_latency = float(event.get("latency_ms") or 0.0)
+                    llm_response = LLMResponse(
+                        content="".join(content_parts),
+                        model=effective_model or "default",
+                        prompt_tokens=usage_data["prompt_tokens"],
+                        completion_tokens=usage_data["completion_tokens"],
+                        total_tokens=usage_data["total_tokens"],
+                        latency_ms=llm_latency,
+                        finish_reason=finish_reason,
+                    )
+                else:
+                    llm_response = await self._llm_provider.generate(
+                        prompt=augmented_prompt,
+                        model=effective_model,
+                        max_tokens=max_tokens,
+                        temperature=0.0 if sql_has_data else temperature,
+                        system_prompt=system_prompt,
+                    )
             rag_llm_latency.labels(
                 tenant_id=str(tenant_id),
                 model=effective_model or "default",

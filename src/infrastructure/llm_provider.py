@@ -140,6 +140,92 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
 
         return llm_response
 
+    async def generate_stream(
+        self,
+        prompt: str,
+        model: str | None = None,
+        max_tokens: int = 2048,
+        temperature: float = 0.3,
+        system_prompt: str | None = None,
+    ):
+        settings = get_settings()
+        model_name = model or settings.LITELLM_DEFAULT_MODEL
+        llm_kwargs = _get_llm_kwargs()
+
+        messages: list[dict[str, str]] = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        messages.append({"role": "user", "content": prompt})
+
+        start = time.perf_counter()
+        try:
+            response = await _circuit_breaker.call(
+                "generate",
+                acompletion,
+                model=model_name,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=settings.LITELLM_TIMEOUT_SECONDS,
+                stream=True,
+                stream_options={"include_usage": True},
+                **llm_kwargs,
+            )
+        except CircuitBreakerOpenError:
+            logger.warning(
+                "LLM streaming generation rejected by circuit breaker (circuit is OPEN)",
+                model=model_name,
+            )
+            raise
+        except Exception as exc:
+            logger.error(
+                "LLM streaming generation failed to start",
+                model=model_name,
+                error=str(exc),
+                exc_info=True,
+            )
+            raise
+
+        content_parts: list[str] = []
+        usage = litellm.Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+        finish_reason = "stop"
+        try:
+            async for chunk in response:
+                choices = chunk.choices or []
+                if choices:
+                    delta = choices[0].delta
+                    piece = getattr(delta, "content", None) or ""
+                    if piece:
+                        content_parts.append(piece)
+                        yield {"type": "delta", "text": piece}
+                    if choices[0].finish_reason:
+                        finish_reason = str(choices[0].finish_reason)
+                chunk_usage = getattr(chunk, "usage", None)
+                if chunk_usage is not None:
+                    usage = chunk_usage
+        except Exception as exc:
+            logger.error(
+                "LLM streaming generation failed mid-stream",
+                model=model_name,
+                error=str(exc),
+                exc_info=True,
+            )
+            raise
+
+        latency_ms = (time.perf_counter() - start) * 1000
+        yield {
+            "type": "done",
+            "content": "".join(content_parts),
+            "model": model_name,
+            "usage": {
+                "prompt_tokens": usage.prompt_tokens or 0,
+                "completion_tokens": usage.completion_tokens or 0,
+                "total_tokens": usage.total_tokens or 0,
+            },
+            "finish_reason": finish_reason,
+            "latency_ms": round(latency_ms, 2),
+        }
+
     async def embed(
         self, text: str | list[str], model: str | None = None
     ) -> list[float] | list[list[float]]:

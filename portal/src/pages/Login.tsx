@@ -1,6 +1,8 @@
+import { SignIn } from "@phosphor-icons/react";
 import { FormEvent, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { useAuth } from "../auth";
+import { Spinner } from "../components/ui";
 
 export default function LoginPage() {
   const { session, ready, login } = useAuth();
@@ -25,41 +27,81 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="auth-page">
-      <form className="auth-card" onSubmit={onSubmit}>
-        <h1>Entrar</h1>
-        <p>Inicia sesión con el email y contraseña de tu trial.</p>
-        <div className="field">
-          <label htmlFor="email">Email</label>
-          <input
-            id="email"
-            type="email"
-            autoComplete="username"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
+    <div className="flex min-h-[100dvh] items-center justify-center px-4 py-10">
+      <div className="w-full max-w-[400px]">
+        <div className="mb-8 flex flex-col items-center gap-3 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-accent/30 bg-accent-soft shadow-glow">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path
+                d="M4 6.5 12 3l8 3.5v6.2c0 4.6-3.2 7.8-8 9.3-4.8-1.5-8-4.7-8-9.3V6.5Z"
+                stroke="var(--color-accent)"
+                strokeWidth="1.6"
+                strokeLinejoin="round"
+              />
+              <path
+                d="m8.5 12.5 2.4 2.4 4.6-4.9"
+                stroke="var(--color-accent)"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </div>
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight text-text">
+              Entrar a Zent<span className="text-accent">RAG</span>
+            </h1>
+            <p className="mt-1 text-sm text-muted">
+              Inicia sesión con el email y contraseña de tu trial.
+            </p>
+          </div>
         </div>
-        <div className="field">
-          <label htmlFor="password">Contraseña</label>
-          <input
-            id="password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            minLength={1}
-          />
-        </div>
-        {error && <p className="error">{error}</p>}
-        <button className="btn" type="submit" disabled={loading}>
-          {loading ? "Entrando…" : "Continuar"}
-        </button>
-        <p className="muted" style={{ marginTop: "1rem" }}>
-          ¿Nuevo? <Link to="/signup">Crear trial</Link>
-        </p>
-      </form>
+
+        <form className="panel space-y-4 p-6" onSubmit={onSubmit}>
+          <div className="field">
+            <label htmlFor="email">Email</label>
+            <input
+              id="email"
+              type="email"
+              autoComplete="username"
+              placeholder="tu@empresa.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </div>
+          <div className="field">
+            <label htmlFor="password">Contraseña</label>
+            <input
+              id="password"
+              type="password"
+              autoComplete="current-password"
+              placeholder="••••••••"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+            />
+          </div>
+          {error && <p className="field-error" role="alert">{error}</p>}
+          <button className="btn btn-primary w-full py-2.5" type="submit" disabled={loading}>
+            {loading ? (
+              <>
+                <Spinner size={15} /> Entrando…
+              </>
+            ) : (
+              <>
+                <SignIn size={17} aria-hidden /> Continuar
+              </>
+            )}
+          </button>
+          <p className="text-center text-[13px] text-muted">
+            ¿Nuevo?{" "}
+            <Link className="font-medium text-accent hover:underline" to="/signup">
+              Crear trial
+            </Link>
+          </p>
+        </form>
+      </div>
     </div>
   );
 }

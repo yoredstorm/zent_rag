@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from uuid import UUID
 
 from src.domain.entities import (
@@ -135,6 +136,23 @@ class LLMProvider(ABC):
         temperature: float = 0.3,
         system_prompt: str | None = None,
     ) -> LLMResponse: ...
+
+    @abstractmethod
+    async def generate_stream(
+        self,
+        prompt: str,
+        model: str | None = None,
+        max_tokens: int = 2048,
+        temperature: float = 0.3,
+        system_prompt: str | None = None,
+    ) -> AsyncIterator[dict[str, object]]:
+        """Genera una respuesta token a token.
+
+        Yields:
+            {"type": "delta", "text": str} por cada fragmento.
+            {"type": "done", "content": str, "model": str, "usage": {...},
+             "finish_reason": str, "latency_ms": float} al finalizar.
+        """
 
     @abstractmethod
     async def embed(self, text: str | list[str], model: str | None = None) -> list[float] | list[list[float]]: ...
