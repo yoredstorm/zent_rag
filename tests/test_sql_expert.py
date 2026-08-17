@@ -4,8 +4,14 @@
 from __future__ import annotations
 
 import re
+from uuid import UUID
 
-from src.infrastructure.sql_expert import stabilize_sql
+import pytest
+
+from src.domain.entities import LLMResponse
+from src.domain.services import ColumnMeta, DataSource
+from src.domain.sql_expert import SqlQueryResult, SqlValidationError
+from src.infrastructure.sql_expert import PostgresSqlExpert, stabilize_sql
 
 _LAST_SALE_SQL = """
 SELECT p.name AS producto, p.price, s.quantity, s.payment_method, s.sale_date
@@ -85,3 +91,110 @@ def test_stabilize_is_deterministic_across_calls() -> None:
 def test_stabilize_returns_original_on_unparseable_sql() -> None:
     raw = "NOT VALID SQL )))"
     assert stabilize_sql(raw, "último vendido") == raw
+
+
+def test_stabilize_does_not_append_id_on_group_by_queries() -> None:
+    """Un agregado con GROUP BY no puede ordenar por s.id (rompe el GROUP BY)."""
+    sql = """
+    SELECT p.name, SUM(s.quantity) AS total_vendido
+    FROM farmacia.sales s
+    JOIN farmacia.products p ON s.product_id = p.id
+    GROUP BY p.id, p.name
+    ORDER BY total_vendido DESC
+    LIMIT 1
+    """
+    out = stabilize_sql(sql, "cuál es el producto más vendido")
+    assert "s.id" not in _flat(out)
+    assert "group by" in _flat(out)
+
+
+# ---------------------------------------------------------------------------
+# Auto-reparación de SQL inválido
+# ---------------------------------------------------------------------------
+
+_BROKEN_SQL = (
+    "SELECT p.name, SUM(s.quantity) AS total FROM farmacia.sales s "
+    "JOIN farmacia.products p ON s.product_id = p.id "
+    "GROUP BY p.id, p.name ORDER BY total DESC, s.id DESC LIMIT 1"
+)
+
+_REPAIRED_SQL = (
+    "SELECT p.name, SUM(s.quantity) AS total FROM farmacia.sales s "
+    "JOIN farmacia.products p ON s.product_id = p.id "
+    "GROUP BY p.id, p.name ORDER BY total DESC LIMIT 1"
+)
+
+
+class _ScriptedLLM:
+    """LLM que devuelve respuestas predefinidas en orden."""
+
+    def __init__(self, contents: list[str]) -> None:
+        self.contents = contents
+        self.calls: list[dict] = []
+
+    async def generate(self, **kwargs) -> LLMResponse:
+        idx = min(self.calls.__len__(), len(self.contents) - 1)
+        self.calls.append(kwargs)
+        return LLMResponse(content=self.contents[idx], model="fake-llm")
+
+
+class _RepairExpert(PostgresSqlExpert):
+    def __init__(self, llm) -> None:
+        super().__init__(llm)
+        self.validated: list[str] = []
+
+    async def _discover_sources(self, tenant_id: UUID) -> list[DataSource]:
+        return [
+            DataSource(
+                schema_name="farmacia",
+                table_name="sales",
+                columns=[
+                    ColumnMeta(name="id", data_type="uuid", is_nullable=False),
+                    ColumnMeta(name="product_id", data_type="uuid", is_nullable=False),
+                    ColumnMeta(name="quantity", data_type="integer", is_nullable=False),
+                ],
+                row_count=1,
+            )
+        ]
+
+    async def validate_sql(self, sql: str, sources: list[DataSource], role: str) -> None:
+        self.validated.append(sql)
+        if len(self.validated) == 1:
+            raise SqlValidationError('column "s.id" must appear in GROUP BY', sql)
+
+    async def _run_query(self, sql: str) -> SqlQueryResult:
+        return SqlQueryResult(
+            sql=sql,
+            columns=["producto", "total"],
+            rows=[["Paracetamol", "42"]],
+            row_count=1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_repairs_sql_after_validation_failure() -> None:
+    llm = _ScriptedLLM([_BROKEN_SQL, _REPAIRED_SQL])
+    expert = _RepairExpert(llm)
+    result = await expert.execute(
+        tenant_id=UUID("00000000-0000-0000-0000-000000000001"),
+        question="cuál es el producto más vendido",
+        role="admin",
+    )
+    assert result.error is None
+    assert result.row_count == 1
+    assert len(expert.validated) == 2
+    assert "GROUP BY" in result.sql and "ORDER BY" in result.sql
+    assert len(llm.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_repair_gives_up_when_llm_cannot_fix() -> None:
+    llm = _ScriptedLLM([_BROKEN_SQL, "NO_QUERY"])
+    expert = _RepairExpert(llm)
+    result = await expert.execute(
+        tenant_id=UUID("00000000-0000-0000-0000-000000000001"),
+        question="cuál es el producto más vendido",
+        role="admin",
+    )
+    assert result.error is not None
+    assert len(expert.validated) == 1

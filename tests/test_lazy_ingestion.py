@@ -261,6 +261,47 @@ def test_extract_query_keywords_drops_stopwords_and_short_tokens() -> None:
 # Orchestrator gates
 # -----------------------------------------------------------------------------
 @pytest.mark.asyncio
+async def test_cached_no_info_answer_is_regenerated() -> None:
+    """Una respuesta 'no tengo información' cacheada se descarta y se regenera.
+
+    Evita que un fallo transitorio del SQL Expert sirva respuestas negativas
+    obsoletas durante 5 minutos.
+    """
+    tenant = _tenant()
+    vs = FakeVectorStore()
+    vs.enqueue_search(_chunk_ctx())
+    vs.enqueue_search(_chunk_ctx())
+    llm = FakeLLM(content="El producto más vendido es Paracetamol.")
+    cache = FakeCache()
+    key = cache._hash_query(
+        str(tenant.id), "cuál es el producto más vendido", "default"
+    )
+    cache.store[key] = json.dumps(
+        "No tengo suficiente información para responder esta pregunta. "
+        "¿Podrías reformularla o consultar sobre otro tema?"
+    )
+    orch = _build_orchestrator(
+        tenant=tenant,
+        vector_store=vs,
+        llm=llm,
+        embed=FakeEmbed(),
+        cache=cache,
+    )
+
+    result = await orch.execute(
+        tenant_id=tenant.id,
+        user_id=uuid4(),
+        query="cuál es el producto más vendido",
+        use_cache=True,
+    )
+
+    assert len(llm.calls) == 1
+    assert result.llm_response is not None
+    assert result.llm_response.content == "El producto más vendido es Paracetamol."
+    assert cache.store[key] == json.dumps("El producto más vendido es Paracetamol.")
+
+
+@pytest.mark.asyncio
 async def test_lazy_disabled_keeps_anti_hallucination_message() -> None:
     """RAG_LAZY_INGESTION_ENABLED=False → mismo mensaje de 'no tengo información'."""
     tenant = _tenant()

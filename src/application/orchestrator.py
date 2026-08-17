@@ -108,6 +108,19 @@ REGLAS DE ORO:
 # Máximo de pares user/assistant a mantener en historial
 _MAX_HISTORY_TURNS = 10
 
+# Respuestas "sin información" que nunca deben cachearse (dependen del estado
+# de los datos y de fallos transitorios del SQL Expert; cachearlas serviría
+# respuestas negativas obsoletas durante 5 minutos).
+_NO_INFO_ANSWER_PHRASES = (
+    "No tengo suficiente información para responder esta pregunta",
+    "No encontramos exactamente lo que buscas",
+)
+
+
+def _is_no_info_answer(content: str) -> bool:
+    lowered = content.lower()
+    return any(phrase.lower() in lowered for phrase in _NO_INFO_ANSWER_PHRASES)
+
 
 def _format_sql_result(result, question: str) -> str:
     """Formatea resultados SQL para que el LLM los interprete."""
@@ -239,26 +252,35 @@ class RAGOrchestrator:
             if use_cache:
                 cached = await self._cache.get(cache_key)
                 if cached:
-                    logger.info("Cache hit for RAG query", cache_key=cache_key)
-                    rag_cache_hits.labels(tenant_id=str(tenant_id)).inc()
                     content = json.loads(cached)
-                    result.llm_response = LLMResponse(
-                        content=content,
-                        model=effective_model or "default",
-                    )
-                    result.status = QueryStatus.COMPLETED
-                    result.total_latency_ms = (time.perf_counter() - total_start) * 1000
-                    await self._cache.append_to_list(
-                        conv_key,
-                        json.dumps({"role": "user", "content": query}),
-                        ttl_seconds=self._conv_ttl,
-                    )
-                    await self._cache.append_to_list(
-                        conv_key,
-                        json.dumps({"role": "assistant", "content": content}),
-                        ttl_seconds=self._conv_ttl,
-                    )
-                    return result
+                    if isinstance(content, str) and _is_no_info_answer(content):
+                        # Respuesta negativa cacheada (fallo transitorio previo):
+                        # descartarla y regenerar con el pipeline completo.
+                        logger.info(
+                            "Discarding cached no-info answer, regenerating",
+                            cache_key=cache_key,
+                        )
+                        await self._cache.delete(cache_key)
+                    else:
+                        logger.info("Cache hit for RAG query", cache_key=cache_key)
+                        rag_cache_hits.labels(tenant_id=str(tenant_id)).inc()
+                        result.llm_response = LLMResponse(
+                            content=content,
+                            model=effective_model or "default",
+                        )
+                        result.status = QueryStatus.COMPLETED
+                        result.total_latency_ms = (time.perf_counter() - total_start) * 1000
+                        await self._cache.append_to_list(
+                            conv_key,
+                            json.dumps({"role": "user", "content": query}),
+                            ttl_seconds=self._conv_ttl,
+                        )
+                        await self._cache.append_to_list(
+                            conv_key,
+                            json.dumps({"role": "assistant", "content": content}),
+                            ttl_seconds=self._conv_ttl,
+                        )
+                        return result
                 else:
                     rag_cache_misses.labels(tenant_id=str(tenant_id)).inc()
 
@@ -610,7 +632,11 @@ Answer based on the context above:"""
             # -----------------------------------------------------------------
             # Paso 7: Cachear respuesta para futuras consultas idénticas
             # -----------------------------------------------------------------
-            if use_cache and llm_response.content:
+            if (
+                use_cache
+                and llm_response.content
+                and not _is_no_info_answer(llm_response.content)
+            ):
                 await self._cache.set(
                     cache_key,
                     json.dumps(llm_response.content),

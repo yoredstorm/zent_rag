@@ -173,6 +173,7 @@ def stabilize_sql(sql: str, question: str = "") -> str:
         alias
         and parsed.args.get("limit") is not None
         and parsed.args.get("order") is not None
+        and parsed.args.get("group") is None  # aggregates no pueden ordenar por s.id
         and not _order_has_root_id(parsed, alias)
     ):
         id_col = sqlglot.exp.Column(
@@ -276,6 +277,36 @@ _DETERMINISTIC_FORMAT_PROMPT = """You are formatting database query results into
 7. Be concise. If the results are a single row, state it directly.
 
 ## ANSWER:"""
+
+
+_SQL_REPAIR_PROMPT = """You are a PostgreSQL SQL expert. Fix the invalid SQL below.
+
+## TABLE & COLUMN INVENTORY (every table with every column)
+{schema}
+
+## QUESTION
+{question}
+
+## INVALID SQL
+{sql}
+
+## DATABASE ERROR
+{error}
+
+## HOW TO FIX
+1. Ensure every column in ORDER BY is either aggregated or in GROUP BY.
+2. If the query aggregates (GROUP BY / SUM / COUNT), include all non-aggregated
+   selected and ordered columns in the GROUP BY.
+3. NEVER guess table or column names — only use what's listed in the inventory.
+4. NEVER select raw ID columns (id, UUID, *_id) in the final output.
+5. ONLY SELECT. Never INSERT, UPDATE, DELETE, DROP, CREATE, ALTER, TRUNCATE.
+6. Keep the query's original intent.
+
+## OUTPUT FORMAT
+Return ONLY the corrected SQL statement. No markdown, no explanation, no backticks.
+If it cannot be fixed, respond with exactly: NO_QUERY
+
+## SQL:"""
 
 
 class PostgresSqlExpert(SqlExpert):
@@ -436,9 +467,68 @@ class PostgresSqlExpert(SqlExpert):
         try:
             await self.validate_sql(sql, sources, role)
         except SqlValidationError as exc:
+            repaired = await self._repair_sql(
+                schema=schema_ctx["schema"],
+                fk_chains=schema_ctx["fk_chains"],
+                question=question,
+                sql=sql,
+                error=str(exc),
+            )
+            if repaired is not None:
+                repaired = self._clean_sql(repaired)
+                repaired = stabilize_sql(repaired, question)
+                try:
+                    await self.validate_sql(repaired, sources, role)
+                    logger.info(
+                        "SQL repaired after validation failure",
+                        original=sql[:300],
+                        repaired=repaired[:300],
+                    )
+                    return await self._run_query(repaired)
+                except SqlValidationError as exc2:
+                    logger.info(
+                        "SQL repair failed validation",
+                        sql=repaired[:300],
+                        error=str(exc2),
+                    )
+                    return SqlQueryResult(sql=repaired, error=str(exc2))
+            logger.info(
+                "SQL failed validation, falling back",
+                sql=sql[:300],
+                error=str(exc),
+            )
             return SqlQueryResult(sql=sql, error=str(exc))
 
         return await self._run_query(sql)
+
+    async def _repair_sql(
+        self,
+        schema: str,
+        fk_chains: str,
+        question: str,
+        sql: str,
+        error: str,
+    ) -> str | None:
+        """Pide al LLM una corrección del SQL inválido (un solo intento)."""
+        prompt = _SQL_REPAIR_PROMPT.format(
+            schema=schema,
+            question=question,
+            sql=sql,
+            error=error[:800],
+        )
+        try:
+            llm_response = await self._llm.generate(
+                prompt=prompt,
+                max_tokens=512,
+                temperature=0.0,
+            )
+        except Exception as exc:
+            logger.error("LLM SQL repair failed", error=str(exc))
+            return None
+        repaired = llm_response.content.strip()
+        if not repaired or repaired.upper().startswith("NO_QUERY"):
+            return None
+        return repaired
 
     async def format_results(
         self,
