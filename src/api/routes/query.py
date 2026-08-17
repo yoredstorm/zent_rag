@@ -301,7 +301,10 @@ async def rag_query_stream(
     queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
     await queue.put(("status", {"phase": "searching"}))
 
+    streamed_parts: list[str] = []
+
     async def on_delta(text: str) -> None:
+        streamed_parts.append(text)
         await queue.put(("delta", text))
 
     async def run_pipeline() -> None:
@@ -334,6 +337,12 @@ async def rag_query_stream(
                     )
                 )
                 return
+
+            # Respuestas sin streaming real (cache hit, "no hay información",
+            # etc.) devuelven contenido sin pasar por on_delta: emitirlo
+            # completo para que el cliente lo muestre.
+            if not streamed_parts and result.llm_response and result.llm_response.content:
+                await queue.put(("delta", result.llm_response.content))
 
             sources = sources_for_client(result)
             sql_for_client = None

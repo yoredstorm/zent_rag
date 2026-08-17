@@ -103,6 +103,41 @@ async def test_stream_returns_status_delta_done(stream_client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_stream_emits_full_content_when_no_deltas(
+    stream_client: AsyncClient,
+):
+    """Cache hit / respuestas sin LLM: el contenido completo llega como delta.
+
+    El orquestador mock (sin on_delta) simula un cache hit: la respuesta se
+    devuelve al cliente como un único delta para que el chat la muestre.
+    """
+    from src.api.deps import get_rag_orchestrator
+    from src.api.main import app
+
+    app.dependency_overrides[get_rag_orchestrator] = lambda: MockRAGOrchestrator()
+    try:
+        headers = await _create_trial_headers(stream_client)
+        async with stream_client.stream(
+            "POST",
+            "/api/v1/rag/query/stream",
+            json={"query": "misma pregunta repetida", "role": "admin"},
+            headers=headers,
+        ) as response:
+            assert response.status_code == 200
+            raw = ""
+            async for chunk in response.aiter_text():
+                raw += chunk
+    finally:
+        app.dependency_overrides.clear()
+
+    events = _parse_sse(raw)
+    deltas = [d["text"] for e, d in events if e == "delta"]
+    assert deltas == ["Respuesta de prueba generada por el mock del orquestador."]
+    kinds = [e for e, _ in events]
+    assert "done" in kinds
+
+
+@pytest.mark.asyncio
 async def test_stream_error_event_on_failed_result(
     stream_client: AsyncClient
 ):
