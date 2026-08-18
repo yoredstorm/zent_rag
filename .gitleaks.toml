@@ -1,0 +1,17 @@
+# =============================================================================
+# Gitleaks configuration — allowlists con justificación explícita
+# =============================================================================
+# El allowlist global aplica a todas las reglas (no reemplaza definiciones).
+title = "zent_rag gitleaks config"
+
+[allowlist]
+description = """
+False positives conocidos:
+- '86400': aritmética de TTL de caché (segundos por día) en orchestrator.py.
+- 'rag_test_dev_token_for_local_testing_123': token dev sembrado SOLO cuando
+  RAG_SEED_DEMO_DATA=true (07-dev-seed.sh / tests). Nunca existe en producción.
+"""
+regexes = [
+  '''^86400$''',
+  '''^rag_test_dev_token_for_local_testing_123$''',
+]
