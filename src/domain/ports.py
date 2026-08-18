@@ -197,6 +197,15 @@ class CacheProvider(ABC):
         """Recorta la lista a max_items más recientes."""
         ...
 
+    @abstractmethod
+    async def incr(self, key: str, ttl_seconds: int | None = None, by: int = 1) -> int:
+        """Incrementa un contador atómicamente y devuelve el valor.
+
+        Si la clave no existe, se crea con valor `by` y se le aplica
+        `ttl_seconds` (solo en la creación).
+        """
+        ...
+
 
 class RAGQueryStore(ABC):
     """Puerto para persistencia de resultados de consultas (auditoría)."""

@@ -43,6 +43,15 @@ async def get_async_session() -> AsyncSession:
     """
     global _engine, _session_factory, _engine_loop_id
 
+    engine = await _ensure_engine()
+    assert _session_factory is not None
+    return _session_factory()
+
+
+async def _ensure_engine():
+    """Crea (o devuelve) el engine asíncrono del event loop actual."""
+    global _engine, _session_factory, _engine_loop_id
+
     import asyncio as _asyncio
     current_loop_id = id(_asyncio.get_running_loop())
     if _engine is None or _engine_loop_id != current_loop_id:
@@ -58,8 +67,12 @@ async def get_async_session() -> AsyncSession:
         )
         _session_factory = async_sessionmaker(_engine, expire_on_commit=False)
         _engine_loop_id = current_loop_id
-    assert _session_factory is not None
-    return _session_factory()
+    return _engine
+
+
+async def get_engine():
+    """Engine asíncrono del loop actual (para conexiones raw/AUTOCOMMIT)."""
+    return await _ensure_engine()
 
 
 async def close_db_connections() -> None:

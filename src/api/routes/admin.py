@@ -426,15 +426,50 @@ async def drop_table(
         await session.close()
 
 
-@router.post("/sql", summary="Ejecutar SQL directo (solo SELECT en development)")
-async def execute_sql(request: Request):
-    """Endpoint de escape para queries SQL avanzadas. Solo SELECT.
+@router.post("/sql", summary="Ejecutar SQL directo (solo SELECT, admin verificado)")
+async def execute_sql(request: Request, x_tenant_id: str = Header(default="", alias="X-Tenant-Id")):
+    """Ejecuta SQL raw de solo lectura. Exige sesión autenticada con rol admin.
 
-    Deshabilitado en producción por seguridad. Útil para testing rápido.
+    Seguridad:
+    - Deshabilitado en producción (ENVIRONMENT == "production").
+    - Requiere Bearer token validado por el BillingMiddleware
+      (portal session del dueño del tenant, o API token con scope `admin:*`).
+    - El X-Tenant-Id, si viene, debe coincidir con el tenant de la sesión.
+    - El SQL se valida por AST (sqlglot): solo SELECT/EXPLAIN/SHOW.
+    - Cada ejecución queda registrada en logs estructurados para auditoría.
     """
     settings = get_settings()
     if settings.ENVIRONMENT == "production":
         raise HTTPException(403, "SQL directo no disponible en producción")
+
+    # La autenticación corre en BillingMiddleware (Bearer obligatorio para
+    # rutas no públicas). Verificamos rol admin sobre el contexto resuelto.
+    ctx = getattr(request.state, "billing_context", None)
+    if ctx is None:
+        raise HTTPException(
+            401,
+            "Autenticación requerida (Authorization: Bearer <token>)",
+        )
+
+    is_admin = (
+        ctx.auth_type == "portal_session"
+        or "admin:*" in (getattr(ctx, "scopes", None) or [])
+    )
+    if not is_admin:
+        raise HTTPException(
+            403,
+            "Se requiere rol admin para ejecutar SQL directo",
+        )
+
+    if x_tenant_id:
+        try:
+            header_tenant = UUID(x_tenant_id)
+        except ValueError:
+            raise HTTPException(400, "X-Tenant-Id inválido")
+        if header_tenant != ctx.tenant_id:
+            raise HTTPException(
+                403, "X-Tenant-Id no coincide con la sesión autenticada"
+            )
 
     body = await request.json()
     query = body.get("query", "").strip()
@@ -465,6 +500,14 @@ async def execute_sql(request: Request):
             _validate_sql_ast(query)
         except SqlValidationError as exc:
             raise HTTPException(403, str(exc))
+
+    logger.info(
+        "Admin SQL executed",
+        tenant_id=str(ctx.tenant_id),
+        user_id=str(getattr(ctx, "user_id", None) or "anonymous"),
+        auth_type=ctx.auth_type,
+        query_preview=query[:500],
+    )
 
     session = await get_async_session()
     try:

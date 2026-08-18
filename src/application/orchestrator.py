@@ -723,9 +723,25 @@ Answer based on the context above:"""
             return retrieval_context, meaningful
 
         tenant_label = str(tenant_id)
+
+        # Rate limit por tenant: evita abuso de costo vía preguntas raras
+        # repetidas. Nunca rompe la respuesta — solo desactiva el fallback.
+        from src.infrastructure.lazy_rate_limit import (
+            lazy_trigger_allowed,
+            record_lazy_trigger,
+        )
+
+        if not await lazy_trigger_allowed(tenant_id):
+            logger.info(
+                "Lazy ingestion rate limited, skipping fallback",
+                tenant_id=tenant_label,
+            )
+            return retrieval_context, meaningful
+
         start = time.perf_counter()
         ingest_result = None
         try:
+            await record_lazy_trigger(tenant_id)
             rag_lazy_ingestion_triggers_total.labels(tenant_id=tenant_label).inc()
             logger.info(
                 "Lazy ingestion fallback triggered",
@@ -793,7 +809,15 @@ Answer based on the context above:"""
         ingest_result,
         result: RAGQueryResult,
     ) -> None:
-        """Marca el resultado y registra el evento de UI (Redis). Nunca propaga errores."""
+        """Marca el resultado y registra el evento de UI (Redis). Nunca propaga errores.
+
+        Nota: el contador `rag:lazy_rows:*` es informativo y aproximado para la
+        UI (Ingestion.tsx). No usar para facturación ni analítica: la fuente de
+        verdad de volúmenes es la métrica Prometheus `rag_lazy_ingestion_rows_indexed`
+        (Counter atómico del lado del cliente de métricas). El incremento de Redis
+        es atómico (INCRBY) pero puede perder eventos si el proceso muere entre
+        pasos o si el tenant es multi-proceso con fallos parciales.
+        """
         qualified = list(ingest_result.indexed_tables or [])
         table_names = list(
             dict.fromkeys(q.split(".", 1)[-1] if "." in q else q for q in qualified)
@@ -819,19 +843,72 @@ Answer based on the context above:"""
                 if not table:
                     schema, table = "", qualified_name
                 key = lazy_rows_cache_key(tenant_id, schema, table)
-                raw = await self._cache.get(key)
-                try:
-                    current = int(raw) if raw else 0
-                except (TypeError, ValueError):
-                    current = 0
                 delta = counts.get(qualified_name, ingest_result.rows_indexed if len(qualified) == 1 else 0)
-                await self._cache.set(key, str(current + max(delta, 0)), ttl_seconds=86400 * 30)
+                await self._cache.incr(key, ttl_seconds=86400 * 30, by=max(delta, 0))
+
+            # Total acumulado del tenant (para el endpoint /lazy-activity)
+            await self._cache.incr(
+                f"rag:lazy_rows_total:{tenant_id.hex}",
+                ttl_seconds=86400 * 30,
+                by=max(ingest_result.rows_indexed, 0),
+            )
+
+            # Auto-promoción: tablas que acumulan muchos triggers lazy se
+            # encolan para un sync completo en background (no bloquea la request).
+            await self._maybe_promote_tables(tenant_id, qualified)
         except Exception as exc:
             logger.warning(
                 "Failed to record lazy ingestion activity",
                 tenant_id=str(tenant_id),
                 error=str(exc),
             )
+
+    async def _maybe_promote_tables(self, tenant_id: UUID, qualified: list[str]) -> None:
+        """Encola sync_table en background cuando una tabla supera el umbral de triggers.
+
+        Usa contadores Redis con ventana (RAG_LAZY_INGEST_PROMOTE_WINDOW_SECONDS).
+        Tras encolar, marca la tabla como promovida durante la misma ventana
+        para no re-encolar en cada trigger posterior. Cualquier fallo se loguea
+        y se ignora: la auto-promoción es un optimización, no un requisito.
+        """
+        settings = get_settings()
+        threshold = settings.RAG_LAZY_INGEST_PROMOTE_THRESHOLD
+        window = settings.RAG_LAZY_INGEST_PROMOTE_WINDOW_SECONDS
+        for qualified_name in qualified:
+            schema, _, table = qualified_name.partition(".")
+            if not table:
+                schema, table = "", qualified_name
+            counter_key = f"rag:lazy_promote:{tenant_id.hex}:{schema}.{table}"
+            promoted_key = f"rag:lazy_promoted:{tenant_id.hex}:{schema}.{table}"
+            try:
+                if await self._cache.get(promoted_key):
+                    continue
+                count = await self._cache.incr(counter_key, ttl_seconds=window)
+                if count >= threshold:
+                    from src.infrastructure.ingestion_queue import enqueue_sync
+
+                    job_id = await enqueue_sync(
+                        tenant_id,
+                        schema_name=schema or None,
+                        table_name=table or None,
+                        full_refresh=False,
+                    )
+                    await self._cache.set(promoted_key, job_id, ttl_seconds=window)
+                    logger.info(
+                        "Lazy table auto-promoted to background sync",
+                        tenant_id=str(tenant_id),
+                        table=f"{schema}.{table}",
+                        triggers=count,
+                        threshold=threshold,
+                        job_id=job_id,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Lazy auto-promotion check failed",
+                    tenant_id=str(tenant_id),
+                    table=f"{schema}.{table}",
+                    error=str(exc),
+                )
 
     def _fit_context_budget(self, chunks: list) -> list:
         """Keep highest-score chunks within RAG_MAX_CONTEXT_TOKENS (~4 chars/token)."""

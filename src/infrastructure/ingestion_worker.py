@@ -36,9 +36,83 @@ async def _build_ingestion_service() -> PostgresIngestionService:
     return PostgresIngestionService(vs, emb, cache)
 
 
+async def process_trigram_index_job(job_id: str, job_data: dict) -> None:
+    """Crea índices GIN trigram (CREATE INDEX CONCURRENTLY) en background."""
+    from sqlalchemy import text
+
+    from src.infrastructure.relational_db import get_engine
+    from src.infrastructure.schema_discovery import quote_ident
+
+    schema_name = str(job_data.get("schema_name", "") or "")
+    table_name = str(job_data.get("table_name", "") or "")
+    columns_raw = str(job_data.get("columns", "") or "[]")
+    try:
+        import json
+
+        columns = json.loads(columns_raw)
+        columns = [str(c) for c in columns]
+    except (json.JSONDecodeError, TypeError):
+        columns = []
+
+    if not schema_name or not table_name or not columns:
+        await update_job_status(job_id, "failed", progress=100, error="job data incompleto")
+        return
+
+    await update_job_status(
+        job_id,
+        "running",
+        progress=0,
+        message=f"Creando índices trigram para {schema_name}.{table_name}",
+        current_table=f"{schema_name}.{table_name}",
+    )
+
+    schema_q = quote_ident(schema_name)
+    table_q = quote_ident(table_name)
+    statements: list[str] = []
+    for col in columns:
+        col_q = quote_ident(col)
+        idx_name = f"idx_trgm_{table_name}_{col}"[:60].rstrip("_")
+        statements.append(
+            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {quote_ident(idx_name)} "
+            f"ON {schema_q}.{table_q} USING gin ({col_q} gin_trgm_ops)"
+        )
+
+    try:
+        engine = await get_engine()
+        async with engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            for statement in statements:
+                await conn.execute(text(statement))
+                logger.info(
+                    "Trigram index created",
+                    job_id=job_id,
+                    table=f"{schema_name}.{table_name}",
+                )
+        await update_job_status(
+            job_id,
+            "completed",
+            progress=100,
+            message=f"Índices trigram creados para {schema_name}.{table_name}",
+        )
+    except Exception as exc:
+        logger.error(
+            "Trigram index job failed",
+            job_id=job_id,
+            table=f"{schema_name}.{table_name}",
+            error=str(exc),
+            exc_info=True,
+        )
+        await update_job_status(job_id, "failed", progress=100, error=str(exc))
+
+
 async def process_job(job_data: dict) -> None:
     job_id: str = job_data["job_id"]
     tenant_id = UUID(job_data["tenant_id"])
+
+    if job_data.get("job_type") == "create_trigram_index":
+        await process_trigram_index_job(job_id, job_data)
+        return
+
     schema_name_raw: str = job_data.get("schema_name", "")
     table_name_raw: str = job_data.get("table_name", "")
     full_refresh = job_data.get("full_refresh", "0") == "1"

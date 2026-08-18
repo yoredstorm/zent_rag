@@ -1072,9 +1072,56 @@ class PostgresIngestionService(IngestionService):
 
         session = await get_async_session()
         try:
+            from src.config import get_settings
+
+            settings = get_settings()
             use_trgm = await self._pg_trgm_available(session)
+            max_scan_rows = settings.RAG_LAZY_INGEST_MAX_TABLE_ROWS_FOR_SCAN
+            cooldown_seconds = settings.RAG_LAZY_INGEST_COOLDOWN_SECONDS
             for source in candidates:
                 try:
+                    # Cooldown por tabla: si falló hace poco, no reintentar en
+                    # cada query (evita golpear la base en loop durante incidentes).
+                    cooldown_key = (
+                        f"rag:lazy_cooldown:{tenant_id.hex}:"
+                        f"{source.schema_name}.{source.table_name}"
+                    )
+                    if self._cache and await self._cache.exists(cooldown_key):
+                        logger.info(
+                            "Lazy ingestion table in cooldown, skipping",
+                            tenant_id=str(tenant_id),
+                            table=f"{source.schema_name}.{source.table_name}",
+                        )
+                        continue
+
+                    # Salvaguarda anti full-scan: tablas grandes sin índice
+                    # trigram confirmado se saltan (y se encola la creación
+                    # del índice en background para futuros triggers).
+                    if source.row_count > max_scan_rows:
+                        indexed = await self._trigram_indexed_columns(
+                            session, source.schema_name, source.table_name
+                        )
+                        text_names = {
+                            col.name
+                            for col in source.columns
+                            if _is_text_column(col) and not col.is_primary_key
+                        }
+                        if not text_names or not (text_names & indexed):
+                            logger.info(
+                                "Lazy ingestion skipped large table without trigram index",
+                                tenant_id=str(tenant_id),
+                                table=f"{source.schema_name}.{source.table_name}",
+                                row_count=source.row_count,
+                                max_scan_rows=max_scan_rows,
+                            )
+                            await self._ensure_trigram_index_background(
+                                tenant_id,
+                                source.schema_name,
+                                source.table_name,
+                                sorted(text_names),
+                            )
+                            continue
+
                     rows = await self._find_candidate_rows(
                         session,
                         source,
@@ -1111,6 +1158,17 @@ class PostgresIngestionService(IngestionService):
                         table=f"{source.schema_name}.{source.table_name}",
                         error=str(exc),
                     )
+                    if self._cache:
+                        try:
+                            await self._cache.set(
+                                cooldown_key, "1", ttl_seconds=cooldown_seconds
+                            )
+                        except Exception as cd_exc:
+                            logger.warning(
+                                "Failed to set lazy cooldown",
+                                table=f"{source.schema_name}.{source.table_name}",
+                                error=str(cd_exc),
+                            )
         finally:
             await session.close()
 
@@ -1132,6 +1190,62 @@ class PostgresIngestionService(IngestionService):
             return bool(rows.scalar())
         except Exception:
             return False
+
+    async def _trigram_indexed_columns(
+        self, session: AsyncSession, schema: str, table: str
+    ) -> set[str]:
+        """Devuelve las columnas de la tabla con índice GIN trigram confirmado.
+
+        El operador % y el ILIKE solo son rápidos si existe un índice
+        `USING gin (columna gin_trgm_ops)`; la extensión pg_trgm sola no alcanza.
+        """
+        try:
+            rows = await session.execute(
+                text(
+                    "SELECT indexdef FROM pg_indexes "
+                    "WHERE schemaname = :schema AND tablename = :table "
+                    "AND indexdef ILIKE '%gin_trgm_ops%'"
+                ),
+                {"schema": schema, "table": table},
+            )
+            indexed: set[str] = set()
+            for (indexdef,) in rows.fetchall():
+                for match in re.finditer(r"(\w+)\s+gin_trgm_ops", indexdef or ""):
+                    indexed.add(match.group(1))
+            return indexed
+        except Exception as exc:
+            logger.warning(
+                "Failed to inspect trigram indexes",
+                table=f"{schema}.{table}",
+                error=str(exc),
+            )
+            return set()
+
+    async def _ensure_trigram_index_background(
+        self, tenant_id: UUID, schema: str, table: str, columns: list[str]
+    ) -> None:
+        """Encola la creación de índices GIN trigram para la tabla (best-effort).
+
+        No bloquea la request: el job lo procesa el ingestion worker en
+        background. Cualquier fallo (Redis caído, worker ausente) se ignora.
+        """
+        if not columns:
+            return
+        try:
+            from src.infrastructure.ingestion_queue import enqueue_trigram_index
+
+            await enqueue_trigram_index(
+                tenant_id=tenant_id,
+                schema_name=schema,
+                table_name=table,
+                columns=columns[:3],
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to enqueue trigram index creation",
+                table=f"{schema}.{table}",
+                error=str(exc),
+            )
 
     async def _find_candidate_rows(
         self,

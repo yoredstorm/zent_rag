@@ -56,6 +56,11 @@ class FakeCache:
     async def trim_list(self, key: str, max_items: int) -> None:
         self.lists[key] = self.lists.get(key, [])[-max_items:]
 
+    async def incr(self, key: str, ttl_seconds: int | None = None, by: int = 1) -> int:
+        current = int(self.store.get(key, 0))
+        self.store[key] = str(current + by)
+        return current + by
+
 
 class FakeTenantRepo:
     def __init__(self, tenant: Tenant) -> None:
@@ -302,8 +307,12 @@ async def test_cached_no_info_answer_is_regenerated() -> None:
 
 
 @pytest.mark.asyncio
-async def test_lazy_disabled_keeps_anti_hallucination_message() -> None:
+async def test_lazy_disabled_keeps_anti_hallucination_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """RAG_LAZY_INGESTION_ENABLED=False → mismo mensaje de 'no tengo información'."""
+    settings = get_settings()
+    monkeypatch.setattr(settings, "RAG_LAZY_INGESTION_ENABLED", False)
     tenant = _tenant()
     vs = FakeVectorStore()
     vs.enqueue_search(_empty_ctx())
@@ -631,6 +640,275 @@ async def test_lazy_ingest_without_vector_hits_does_not_set_flag(enable_lazy) ->
     assert result.lazy_ingested is False
     log_key = lazy_log_cache_key(tenant.id)
     assert cache.lists.get(log_key, []) == []
+
+
+# -----------------------------------------------------------------------------
+# Salvaguarda anti full-scan: tablas grandes sin índice trigram (B1)
+# -----------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_large_table_without_trigram_index_is_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "RAG_LAZY_INGEST_MAX_TABLE_ROWS_FOR_SCAN", 100)
+    vs = FakeVectorStore()
+    svc = PostgresIngestionService(vs, FakeEmbed(), FakeCache())
+    big_source = DataSource(
+        schema_name="farmacia",
+        table_name="products",
+        columns=[
+            ColumnMeta(name="id", data_type="uuid", is_nullable=False, is_primary_key=True),
+            ColumnMeta(name="name", data_type="text", is_nullable=False),
+        ],
+        row_count=10_000,
+    )
+    queried: list[str] = []
+    enqueued: list[dict] = []
+
+    async def fake_discover(tenant_id: UUID) -> list[DataSource]:
+        return [big_source]
+
+    async def fake_find(self, session, source, keywords, limit, **kwargs):  # type: ignore[no-untyped-def]
+        queried.append(source.table_name)
+        return [{"id": "1", "name": "x"}]
+
+    async def fake_indexed(self, session, schema, table):  # type: ignore[no-untyped-def]
+        return set()  # sin índice trigram
+
+    async def fake_ensure(self, tenant_id, schema, table, columns):  # type: ignore[no-untyped-def]
+        enqueued.append({"tenant_id": tenant_id, "schema": schema, "table": table, "columns": columns})
+
+    monkeypatch.setattr(svc, "discover_sources", fake_discover)
+    monkeypatch.setattr(PostgresIngestionService, "_find_candidate_rows", fake_find)
+    monkeypatch.setattr(PostgresIngestionService, "_trigram_indexed_columns", fake_indexed)
+    monkeypatch.setattr(svc, "_ensure_trigram_index_background", fake_ensure)
+    monkeypatch.setattr(
+        "src.infrastructure.data_ingestion.get_async_session",
+        _dummy_async_session,
+    )
+
+    result = await svc.ingest_candidates(
+        tenant_id=uuid4(),
+        query="paracetamol",
+        role="admin",
+        max_tables=5,
+        max_rows_per_table=25,
+        timeout_seconds=4,
+    )
+
+    assert queried == []  # nunca se escaneó la tabla grande
+    assert len(enqueued) == 1  # y se encoló la creación del índice
+    assert enqueued[0]["table"] == "products"
+    assert "name" in enqueued[0]["columns"]
+
+
+@pytest.mark.asyncio
+async def test_large_table_with_trigram_index_proceeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "RAG_LAZY_INGEST_MAX_TABLE_ROWS_FOR_SCAN", 100)
+    vs = FakeVectorStore()
+    svc = PostgresIngestionService(vs, FakeEmbed(), FakeCache())
+    big_source = DataSource(
+        schema_name="farmacia",
+        table_name="products",
+        columns=[
+            ColumnMeta(name="id", data_type="uuid", is_nullable=False, is_primary_key=True),
+            ColumnMeta(name="name", data_type="text", is_nullable=False),
+        ],
+        row_count=10_000,
+    )
+    queried: list[str] = []
+
+    async def fake_discover(tenant_id: UUID) -> list[DataSource]:
+        return [big_source]
+
+    async def fake_find(self, session, source, keywords, limit, **kwargs):  # type: ignore[no-untyped-def]
+        queried.append(source.table_name)
+        return []
+
+    async def fake_indexed(self, session, schema, table):  # type: ignore[no-untyped-def]
+        return {"name"}  # índice confirmado
+
+    monkeypatch.setattr(svc, "discover_sources", fake_discover)
+    monkeypatch.setattr(PostgresIngestionService, "_find_candidate_rows", fake_find)
+    monkeypatch.setattr(PostgresIngestionService, "_trigram_indexed_columns", fake_indexed)
+    monkeypatch.setattr(
+        "src.infrastructure.data_ingestion.get_async_session",
+        _dummy_async_session,
+    )
+
+    await svc.ingest_candidates(
+        tenant_id=uuid4(),
+        query="paracetamol",
+        role="admin",
+        max_tables=5,
+        max_rows_per_table=25,
+        timeout_seconds=4,
+    )
+
+    assert queried == ["products"]
+
+
+# -----------------------------------------------------------------------------
+# Concurrencia: ingest_candidates simultáneos sobre la misma tabla (B5)
+# -----------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_ingest_candidates_concurrent_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vs = FakeVectorStore()
+    svc = PostgresIngestionService(vs, FakeEmbed(), FakeCache())
+    source = _products_source()
+    rows = [
+        {"id": "row-1", "name": "Paracetamol", "description": "500mg"},
+        {"id": "row-2", "name": "Ibuprofeno", "description": "400mg"},
+    ]
+
+    async def fake_discover(tenant_id: UUID) -> list[DataSource]:
+        return [source]
+
+    async def fake_find(self, session, source, keywords, limit, **kwargs):  # type: ignore[no-untyped-def]
+        return rows
+
+    async def fake_fk(self, session, source):  # type: ignore[no-untyped-def]
+        return {}
+
+    async def fake_images(self, session, table):  # type: ignore[no-untyped-def]
+        return {}
+
+    monkeypatch.setattr(svc, "discover_sources", fake_discover)
+    monkeypatch.setattr(PostgresIngestionService, "_find_candidate_rows", fake_find)
+    monkeypatch.setattr(PostgresIngestionService, "_build_fk_resolutions", fake_fk)
+    monkeypatch.setattr(PostgresIngestionService, "_load_product_images", fake_images)
+
+    tenant_id = uuid4()
+    results = await asyncio.gather(
+        *[
+            svc.ingest_candidates(
+                tenant_id=tenant_id,
+                query="paracetamol ibuprofeno",
+                role="admin",
+                max_tables=5,
+                max_rows_per_table=25,
+                timeout_seconds=4,
+            )
+            for _ in range(5)
+        ]
+    )
+
+    assert all(not r.errors for r in results)
+    expected_ids = {
+        uuid5(_VECTOR_NS, f"farmacia.products:{pk}") for pk in ("row-1", "row-2")
+    }
+    assert set(vs.points) == expected_ids
+    for r in results:
+        assert r.rows_indexed == 2
+
+
+# -----------------------------------------------------------------------------
+# Rate limiting de triggers por tenant (B2)
+# -----------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_lazy_rate_limited_after_max_triggers(
+    enable_lazy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "RAG_LAZY_INGEST_MAX_TRIGGERS_PER_HOUR", 1)
+    tenant = _tenant()
+    vs = FakeVectorStore()
+    vs.enqueue_search(_empty_ctx())
+    vs.enqueue_search(_empty_ctx())
+    vs.enqueue_search(_chunk_ctx())
+    lazy = FakeLazyIngestion()
+    llm = FakeLLM(content="ok")
+    orch = _build_orchestrator(
+        tenant=tenant,
+        vector_store=vs,
+        llm=llm,
+        embed=FakeEmbed(),
+        cache=FakeCache(),
+        lazy_ingestion=lazy,
+    )
+
+    first = await orch.execute(
+        tenant_id=tenant.id,
+        user_id=uuid4(),
+        query="precio del paracetamol",
+        use_cache=False,
+    )
+    assert len(lazy.calls) == 1
+    assert first.lazy_ingested is True
+
+    vs.enqueue_search(_empty_ctx())
+    vs.enqueue_search(_empty_ctx())
+    second = await orch.execute(
+        tenant_id=tenant.id,
+        user_id=uuid4(),
+        query="otra pregunta muy rara",
+        use_cache=False,
+    )
+
+    assert len(lazy.calls) == 1  # rate limited: no segundo trigger
+    assert second.lazy_ingested is False
+    assert second.llm_response is not None
+    assert NO_INFO_ADMIN in second.llm_response.content
+
+
+# -----------------------------------------------------------------------------
+# Auto-promoción de tablas tras N triggers (A2)
+# -----------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_lazy_table_auto_promoted_after_threshold(
+    enable_lazy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "RAG_LAZY_INGEST_PROMOTE_THRESHOLD", 2)
+    enqueued: list[dict] = []
+
+    async def fake_enqueue(tenant_id, schema_name=None, table_name=None, full_refresh=False):  # type: ignore[no-untyped-def]
+        enqueued.append(
+            {
+                "tenant_id": tenant_id,
+                "schema_name": schema_name,
+                "table_name": table_name,
+                "full_refresh": full_refresh,
+            }
+        )
+        return "job-1"
+
+    monkeypatch.setattr("src.infrastructure.ingestion_queue.enqueue_sync", fake_enqueue)
+
+    tenant = _tenant()
+    vs = FakeVectorStore()
+    lazy = FakeLazyIngestion()
+    llm = FakeLLM(content="ok")
+    orch = _build_orchestrator(
+        tenant=tenant,
+        vector_store=vs,
+        llm=llm,
+        embed=FakeEmbed(),
+        cache=FakeCache(),
+        lazy_ingestion=lazy,
+    )
+
+    for _ in range(2):
+        vs.enqueue_search(_empty_ctx())
+        vs.enqueue_search(_empty_ctx())
+        vs.enqueue_search(_chunk_ctx())
+        result = await orch.execute(
+            tenant_id=tenant.id,
+            user_id=uuid4(),
+            query="precio del paracetamol",
+            use_cache=False,
+        )
+        assert result.lazy_ingested is True
+
+    assert len(enqueued) == 1
+    assert enqueued[0]["tenant_id"] == tenant.id
+    assert enqueued[0]["schema_name"] == "farmacia"
+    assert enqueued[0]["table_name"] == "products"
 
 
 # -----------------------------------------------------------------------------

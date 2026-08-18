@@ -10,21 +10,14 @@ import {
   TrendDown,
   TrendUp,
 } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { EmptyState, ErrorInline, PageHeader, SkeletonBlock, StatCard } from "../components/ui";
 import { fmtDateTime, fmtLatency, fmtNum, timeAgo } from "../lib/format";
+
+const UsageChart = lazy(() => import("../components/UsageChart"));
 
 type Subscription = {
   plan_name: string | null;
@@ -55,6 +48,8 @@ type LazyEvent = {
 
 type LazyActivity = {
   trigger_count: number;
+  total_rows_indexed?: number;
+  rate_limited?: boolean;
   recent: LazyEvent[];
 };
 
@@ -175,7 +170,24 @@ export default function DashboardPage() {
               label="Indexados al vuelo (30d)"
               value={fmtNum(lazyActivity?.trigger_count ?? 0)}
               icon={Lightning}
-              hint="Consultas que auto-indexaron datos"
+              hint={
+                lazyActivity?.total_rows_indexed !== undefined &&
+                lazyActivity.total_rows_indexed > 0 ? (
+                  <span>
+                    <span className="mono">
+                      {fmtNum(lazyActivity.total_rows_indexed)}
+                    </span>{" "}
+                    filas indexadas
+                    {lazyActivity?.rate_limited && (
+                      <span className="ml-1.5 inline-flex items-center gap-1 rounded-xs bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn">
+                        límite por hora alcanzado
+                      </span>
+                    )}
+                  </span>
+                ) : (
+                  "Consultas que auto-indexaron datos"
+                )
+              }
             />
           </div>
 
@@ -198,45 +210,18 @@ export default function DashboardPage() {
                     }
                   />
                 ) : (
-                  <ResponsiveContainer width="100%" height={240}>
-                    <BarChart data={daily}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" vertical={false} />
-                      <XAxis
-                        dataKey="day"
-                        tick={{ fill: "var(--color-muted)", fontSize: 11 }}
-                        tickLine={false}
-                        axisLine={{ stroke: "var(--color-border)" }}
-                        tickFormatter={(v: string) =>
-                          typeof v === "string" && v.length >= 10 ? v.slice(5) : v
-                        }
-                      />
-                      <YAxis
-                        allowDecimals={false}
-                        tick={{ fill: "var(--color-muted)", fontSize: 11 }}
-                        tickLine={false}
-                        axisLine={false}
-                        width={30}
-                      />
-                      <Tooltip
-                        cursor={{ fill: "rgba(255,255,255,0.04)" }}
-                        contentStyle={{
-                          background: "var(--color-raised)",
-                          border: "1px solid var(--color-border)",
-                          borderRadius: 8,
-                          color: "var(--color-text)",
-                          fontSize: 12,
-                        }}
-                        labelStyle={{ color: "var(--color-muted)" }}
-                      />
-                      <Bar
-                        dataKey="requests"
-                        name="Consultas"
-                        fill="var(--color-accent)"
-                        radius={[4, 4, 0, 0]}
-                        maxBarSize={26}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  <Suspense
+                    fallback={
+                      <div className="flex h-[240px] items-center justify-center">
+                        <span
+                          className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-border-strong border-t-accent"
+                          aria-label="Cargando gráfico"
+                        />
+                      </div>
+                    }
+                  >
+                    <UsageChart daily={daily} />
+                  </Suspense>
                 )}
               </div>
             </div>

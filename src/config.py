@@ -215,7 +215,40 @@ class Settings(BaseSettings):
     RAG_LAZY_INGEST_PROMOTE_THRESHOLD: int = Field(
         default=10,
         ge=1,
-        description="Lazy triggers before auto-promoting a table to full sync (phase 2, unused in MVP).",
+        description=(
+            "Triggers de lazy ingestion sobre una misma tabla antes de encolar "
+            "automáticamente un sync_table completo en background."
+        ),
+    )
+    RAG_LAZY_INGEST_PROMOTE_WINDOW_SECONDS: int = Field(
+        default=86400,
+        ge=300,
+        le=604800,
+        description="Ventana de conteo de triggers para la auto-promoción (default 24h).",
+    )
+    RAG_LAZY_INGEST_MAX_TRIGGERS_PER_HOUR: int = Field(
+        default=20,
+        ge=1,
+        le=1000,
+        description=(
+            "Máximo de triggers de lazy ingestion por tenant por hora. "
+            "Al excederse, el fallback se desactiva temporalmente (no rompe la respuesta RAG)."
+        ),
+    )
+    RAG_LAZY_INGEST_MAX_TABLE_ROWS_FOR_SCAN: int = Field(
+        default=500_000,
+        ge=1_000,
+        description=(
+            "Tope de filas de una tabla para intentar el escaneo ILIKE/% del "
+            "fallback sin índice trigram confirmado. Tablas mayores se saltan "
+            "para no arriesgar un full scan dentro del timeout."
+        ),
+    )
+    RAG_LAZY_INGEST_COOLDOWN_SECONDS: int = Field(
+        default=300,
+        ge=60,
+        le=86400,
+        description="Cooldown por tabla tras un fallo de lazy ingestion (default 5 min).",
     )
 
     def ingestion_concurrency(self) -> tuple[int, int, int]:

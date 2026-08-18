@@ -135,3 +135,17 @@ class RedisCache(CacheProvider):
             await client.ltrim(key, -max_items, -1)
         except Exception as exc:
             logger.warning("Redis LTRIM failed", key=key, error=str(exc))
+
+    async def incr(self, key: str, ttl_seconds: int | None = None, by: int = 1) -> int:
+        client = await _get_redis()
+        try:
+            if by == 1:
+                count = await client.incr(key)
+            else:
+                count = await client.incrby(key, by)
+            if ttl_seconds is not None and (count == by or by != 1):
+                await client.expire(key, ttl_seconds)
+            return int(count)
+        except Exception as exc:
+            logger.warning("Redis INCR failed", key=key, error=str(exc))
+            raise

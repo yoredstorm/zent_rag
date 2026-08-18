@@ -47,6 +47,11 @@ class _FakeCache:
     async def trim_list(self, key: str, max_items: int) -> None:
         self.lists[key] = self.lists.get(key, [])[-max_items:]
 
+    async def incr(self, key: str, ttl_seconds: int | None = None, by: int = 1) -> int:
+        current = int(self.store.get(key, 0))
+        self.store[key] = str(current + by)
+        return current + by
+
 
 class _FakeEmbed:
     async def embed(self, text: str | list[str], model: str | None = None) -> list[float] | list[list[float]]:

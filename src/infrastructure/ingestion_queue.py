@@ -35,6 +35,7 @@ async def enqueue_sync(
 
     job_data = {
         "job_id": job_id,
+        "job_type": "sync",
         "tenant_id": str(tenant_id),
         "schema_name": schema_name or "",
         "table_name": table_name or "",
@@ -67,10 +68,65 @@ async def enqueue_sync(
     logger.info(
         "Ingestion job enqueued",
         job_id=job_id,
+        job_type="sync",
         tenant_id=str(tenant_id),
         schema_name=schema_name,
         table_name=table_name,
         full_refresh=full_refresh,
+    )
+    return job_id
+
+
+async def enqueue_trigram_index(
+    tenant_id: UUID,
+    schema_name: str,
+    table_name: str,
+    columns: list[str],
+) -> str:
+    """Encola la creación de índices GIN trigram para columnas de texto.
+
+    Job procesado por el ingestion worker en background; la request del
+    usuario nunca espera a que se cree el índice.
+    """
+    job_id = uuid4().hex
+
+    job_data = {
+        "job_id": job_id,
+        "job_type": "create_trigram_index",
+        "tenant_id": str(tenant_id),
+        "schema_name": schema_name,
+        "table_name": table_name,
+        "columns": json.dumps(columns),
+        "status": "pending",
+        "progress": "0",
+        "message": "En cola",
+        "current_table": "",
+        "result_summary": "",
+        "error": "",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    client: aioredis.Redis = await _get_redis()
+    try:
+        async with client.pipeline() as pipe:
+            pipe.hset(f"{JOB_KEY_PREFIX}:{job_id}", mapping=job_data)
+            pipe.expire(f"{JOB_KEY_PREFIX}:{job_id}", JOB_TTL_SECONDS)
+            pipe.rpush(QUEUE_KEY, job_id)
+            pipe.lpush(JOBS_LIST_KEY, job_id)
+            pipe.ltrim(JOBS_LIST_KEY, 0, MAX_RECENT_JOBS - 1)
+            await pipe.execute()
+    except Exception as exc:
+        logger.error("Failed to enqueue trigram index job", job_id=job_id, error=str(exc))
+        raise
+
+    logger.info(
+        "Trigram index job enqueued",
+        job_id=job_id,
+        tenant_id=str(tenant_id),
+        schema_name=schema_name,
+        table_name=table_name,
+        columns=columns,
     )
     return job_id
 

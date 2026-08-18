@@ -123,10 +123,28 @@ async def lazy_activity(
 
     entries = await cache.get_list(lazy_log_cache_key(tenant_id))
     trigger_count, recent = parse_lazy_activity(entries, days=days, limit=limit)
+
+    # Estado del rate limit por tenant (transparencia para el admin)
+    rate_limited = False
+    total_rows_indexed = 0
+    try:
+        from src.infrastructure.lazy_rate_limit import lazy_trigger_limited
+
+        rate_limited = await lazy_trigger_limited(tenant_id)
+        raw_total = await cache.get(f"rag:lazy_rows_total:{tenant_id.hex}")
+        try:
+            total_rows_indexed = int(raw_total) if raw_total else 0
+        except (TypeError, ValueError):
+            total_rows_indexed = 0
+    except Exception:
+        rate_limited = False
+
     return {
         "tenant_id": str(tenant_id),
         "days": days,
         "trigger_count": trigger_count,
+        "total_rows_indexed": total_rows_indexed,
+        "rate_limited": rate_limited,
         "recent": recent,
     }
 
