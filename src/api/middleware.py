@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import contextvars
+import re
 import time
 import uuid
 
@@ -28,12 +29,16 @@ request_latency_var: contextvars.ContextVar[float] = contextvars.ContextVar(
     "request_latency", default=0.0
 )
 
+_TRACE_ID_RE = re.compile(r"^[A-Za-z0-9\-_]{8,128}$")
+
 
 class TraceMiddleware(BaseHTTPMiddleware):
     """Middleware que inyecta trace_id, tenant_id y user_id en cada request.
 
-    - Trace ID: UUID v4 (compatible con Loki + Prometheus exemplars)
-    - Si el cliente envía X-Tenant-Id y X-User-Id, se respetan
+    - Trace ID: hereda X-Trace-Id del cliente SOLO si es un formato válido
+      (anti log poisoning); en caso contrario genera UUID v4.
+    - tenant_id/user_id para logs parten en 'system'/'anonymous' y son
+      reemplazados por BillingMiddleware con la identidad autenticada real.
     - Se añade X-Trace-Id a la respuesta para que el cliente pueda referenciarlo
     - Mide latencia total del request para el log estructurado
     """
@@ -41,13 +46,15 @@ class TraceMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        # Genera o hereda trace_id
-        trace_id = request.headers.get("X-Trace-Id", str(uuid.uuid4()))
-        tenant_id = request.headers.get("X-Tenant-Id", "system")
-        user_id = request.headers.get("X-User-Id", "anonymous")
+        # Genera o hereda trace_id (solo formatos válidos del cliente)
+        header_trace = request.headers.get("X-Trace-Id", "")
+        if _TRACE_ID_RE.match(header_trace):
+            trace_id = header_trace
+        else:
+            trace_id = str(uuid.uuid4())
 
-        # Inyecta en ContextVar para que todos los logs de esta request lo incluyan
-        set_trace_context(trace_id=trace_id, tenant_id=tenant_id, user_id=user_id)
+        # Identidad real la inyecta BillingMiddleware para rutas autenticadas.
+        set_trace_context(trace_id=trace_id, tenant_id="system", user_id="anonymous")
 
         start = time.perf_counter()
 

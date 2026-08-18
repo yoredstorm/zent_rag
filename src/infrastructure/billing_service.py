@@ -15,7 +15,8 @@ from src.infrastructure.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-PUBLIC_PATHS = {"/health", "/metrics", "/docs", "/redoc", "/openapi.json", "/favicon.ico"}
+# /metrics NO es pública: si RAG_METRICS_TOKEN está configurado exige token.
+PUBLIC_PATHS = {"/health", "/docs", "/redoc", "/openapi.json", "/favicon.ico"}
 
 
 def _hash_token(token: str) -> str:
@@ -42,6 +43,7 @@ class BillingService:
             SessionTokenError,
             decrypt_session,
             is_portal_session_token,
+            session_is_active,
         )
 
         if is_portal_session_token(token):
@@ -49,6 +51,12 @@ class BillingService:
                 session = decrypt_session(token)
             except SessionTokenError as exc:
                 raise TokenValidationError(str(exc), 401, "invalid_session") from exc
+            if not await session_is_active(session.sid):
+                raise TokenValidationError(
+                    "Session has been revoked. Log in again.",
+                    401,
+                    "session_revoked",
+                )
             return await self._context_for_tenant(
                 session.tenant_id,
                 token_id=None,

@@ -17,13 +17,13 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { marked } from "marked";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { useToast } from "../Toast";
 import { ErrorInline, LoadingDots } from "../components/ui";
 import SqlRunnerModal from "../components/SqlRunnerModal";
 import { fmtLatency, timeAgo } from "../lib/format";
+import { renderMarkdownHtml } from "../lib/markdown";
 import {
   deleteConversation,
   groupByDay,
@@ -35,11 +35,8 @@ import {
   type StoredMessage,
 } from "../chatHistory";
 
-marked.setOptions({ gfm: true, breaks: true });
-
 function renderMarkdown(text: string) {
-  const html = marked.parse(text, { async: false }) as string;
-  return { __html: html };
+  return renderMarkdownHtml(text);
 }
 
 type SourceItem = { text: string; image?: string; score?: number };

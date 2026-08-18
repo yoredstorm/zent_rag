@@ -28,8 +28,11 @@ if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 from src.api.billing_middleware import BillingMiddleware
+from src.api.body_limit_middleware import BodySizeLimitMiddleware
+from src.api.idempotency_middleware import IdempotencyMiddleware
 from src.api.metrics import setup_metrics
 from src.api.middleware import TraceMiddleware
+from src.api.rate_limit_middleware import RateLimitMiddleware
 from src.api.routes.admin import router as admin_router
 from src.api.routes.auth import router as auth_router
 from src.api.routes.billing import router as billing_router
@@ -162,6 +165,14 @@ app.add_middleware(
 )
 
 # -----------------------------------------------------------------------------
+# Middleware de seguridad (orden de ejecución: Trace -> Billing -> RateLimit
+# -> Idempotency -> BodyLimit -> CORS -> rutas)
+# -----------------------------------------------------------------------------
+app.add_middleware(BodySizeLimitMiddleware)
+app.add_middleware(IdempotencyMiddleware)
+app.add_middleware(RateLimitMiddleware)
+
+# -----------------------------------------------------------------------------
 # Middleware de Facturación (antes de Trace para inyectar tenant_id)
 # -----------------------------------------------------------------------------
 app.add_middleware(BillingMiddleware)
@@ -222,7 +233,6 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
             error_code=error_code,
             message=message,
         ).model_dump(),
-        headers={"Access-Control-Allow-Origin": "*"},
     )
 
 
@@ -233,9 +243,15 @@ async def validation_exception_handler(
     """Captura errores de validación Pydantic (payload malformado)."""
     errors = exc.errors()
     detail = errors[0]["msg"] if errors else "Validation error"
+    # No loguear el valor `input` de cada error: puede contener passwords
+    # o datos sensibles del cliente.
+    safe_errors = [
+        {k: v for k, v in e.items() if k != "input"}
+        for e in errors[:20]
+    ]
     logger.warning(
         "Validation error",
-        errors=errors,
+        errors=safe_errors,
         path=request.url.path,
     )
     return JSONResponse(
@@ -244,7 +260,6 @@ async def validation_exception_handler(
             error_code="VALIDATION_ERROR",
             message=detail,
         ).model_dump(),
-        headers={"Access-Control-Allow-Origin": "*"},
     )
 
 
@@ -264,7 +279,6 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
             error_code="INTERNAL_ERROR",
             message="An unexpected error occurred. Reference the X-Trace-Id header for support.",
         ).model_dump(),
-        headers={"Access-Control-Allow-Origin": "*"},
     )
 
 

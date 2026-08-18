@@ -157,10 +157,13 @@ class _RepairExpert(PostgresSqlExpert):
             )
         ]
 
-    async def validate_sql(self, sql: str, sources: list[DataSource], role: str) -> None:
+    async def validate_sql(
+        self, sql: str, sources: list[DataSource], role: str, tenant_id: UUID
+    ) -> str:
         self.validated.append(sql)
         if len(self.validated) == 1:
             raise SqlValidationError('column "s.id" must appear in GROUP BY', sql)
+        return sql
 
     async def _run_query(self, sql: str) -> SqlQueryResult:
         return SqlQueryResult(

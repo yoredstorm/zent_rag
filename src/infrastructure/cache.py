@@ -73,9 +73,13 @@ class RedisCache(CacheProvider):
         return f"rag:{prefix}:{raw}"
 
     @staticmethod
-    def _hash_query(tenant_id: str, query: str, model: str) -> str:
-        """Genera un hash determinista para la query (caché de respuestas)."""
-        raw = f"{tenant_id}:{query}:{model}"
+    def _hash_query(tenant_id: str, query: str, model: str, role: str = "") -> str:
+        """Genera un hash determinista para la query (caché de respuestas).
+
+        Incluye el rol: una respuesta admin (agregados, chunks no públicos)
+        no debe servirse a un customer y viceversa.
+        """
+        raw = f"{tenant_id}:{query}:{model}:{role}"
         return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
     async def get(self, key: str) -> str | None:

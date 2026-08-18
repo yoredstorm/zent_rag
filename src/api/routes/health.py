@@ -40,7 +40,7 @@ async def health_check() -> HealthResponse:
             await session.close()
     except Exception as exc:
         logger.warning("Health check: PostgreSQL failed", error=str(exc))
-        checks["postgres"] = f"error: {exc}"
+        checks["postgres"] = "error"
         degraded = True
 
     # --- Qdrant ---
@@ -50,7 +50,7 @@ async def health_check() -> HealthResponse:
         checks["qdrant"] = "ok"
     except Exception as exc:
         logger.warning("Health check: Qdrant failed", error=str(exc))
-        checks["qdrant"] = f"error: {exc}"
+        checks["qdrant"] = "error"
         degraded = True
 
     # --- Redis ---
@@ -60,7 +60,7 @@ async def health_check() -> HealthResponse:
         checks["redis"] = "ok"
     except Exception as exc:
         logger.warning("Health check: Redis failed", error=str(exc))
-        checks["redis"] = f"error: {exc}"
+        checks["redis"] = "error"
         degraded = True
 
     return HealthResponse(

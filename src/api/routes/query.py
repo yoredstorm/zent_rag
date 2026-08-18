@@ -31,51 +31,15 @@ router = APIRouter(prefix="/api/v1", tags=["RAG"])
 async def _resolve_tenant_user(
     request: Request, x_tenant_id: str, x_user_id: str
 ) -> tuple[UUID, UUID]:
-    """Resuelve tenant_id y user_id desde Bearer token o headers."""
-    tenant_id_str = x_tenant_id or getattr(request.state, "tenant_id", "")
-    if not tenant_id_str:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Se requiere X-Tenant-Id header o Authorization: Bearer token",
-        )
+    """Resuelve tenant_id y user_id desde la identidad autenticada.
 
-    try:
-        tenant_id = UUID(tenant_id_str)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="X-Tenant-Id debe ser un UUID valido",
-        )
+    El Bearer autenticado SIEMPRE gana: X-Tenant-Id / X-User-Id que no
+    coincidan con la sesión reciben 403 (anti cross-tenant / impersonación).
+    """
+    from src.api.security import resolve_tenant, resolve_user_id
 
-    # Resolver user_id: header o default del tenant
-    user_id_str = x_user_id
-    if not user_id_str:
-        try:
-            from src.infrastructure.relational_db import PostgresUserRepository
-            user_repo = PostgresUserRepository()
-            default_user = await user_repo.get_by_external_id(tenant_id, "default-admin")
-            if default_user is None:
-                default_user = await user_repo.get_any_user(tenant_id)
-            if default_user is None:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="No users found for this tenant. Create a user first.",
-                )
-            user_id_str = str(default_user.id)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Error resolving user: {exc}",
-            )
-    try:
-        user_id = UUID(user_id_str)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="X-User-Id debe ser un UUID valido",
-        )
+    tenant_id = resolve_tenant(request, x_tenant_id)
+    user_id = await resolve_user_id(request, x_user_id)
     return tenant_id, user_id
 
 
@@ -148,10 +112,12 @@ async def rag_query(
     # ---------------------------------------------------------------
     tenant_id, user_id = await _resolve_tenant_user(request, x_tenant_id, x_user_id)
 
-    # El body.role tiene prioridad sobre el header
-    role = body.role if body.role else x_user_role
-    if role not in ("admin", "customer"):
-        role = "admin"
+    # Rol server-side: el cliente solo puede degradar (admin -> customer),
+    # nunca elevar (customer -> admin).
+    from src.api.security import resolve_effective_role
+
+    requested_role = body.role if body.role else x_user_role
+    role = await resolve_effective_role(request, requested_role)
 
     # ---------------------------------------------------------------
     # Registro de advertencia de seguridad (prompt injection detection)
@@ -294,9 +260,10 @@ async def rag_query_stream(
 ) -> StreamingResponse:
     tenant_id, user_id = await _resolve_tenant_user(request, x_tenant_id, x_user_id)
 
-    role = body.role if body.role else x_user_role
-    if role not in ("admin", "customer"):
-        role = "admin"
+    from src.api.security import resolve_effective_role
+
+    requested_role = body.role if body.role else x_user_role
+    role = await resolve_effective_role(request, requested_role)
 
     queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
     await queue.put(("status", {"phase": "searching"}))

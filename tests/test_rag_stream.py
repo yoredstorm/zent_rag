@@ -66,7 +66,10 @@ async def stream_client(streaming_orchestrator: StreamingMockOrchestrator):
 async def _create_trial_headers(client: AsyncClient) -> dict[str, str]:
     response = await client.post(
         "/api/v1/billing/subscription/create-trial",
-        json={"company_name": f"Test Co {uuid4().hex[:8]}"},
+        json={
+            "company_name": f"Test Co {uuid4().hex[:8]}",
+            "email": f"test-{uuid4().hex[:8]}@example.com",
+        },
     )
     assert response.status_code == 200, response.text
     data = response.json()

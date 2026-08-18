@@ -19,6 +19,11 @@ SYSTEM_TABLES = {
     "query_audit_log",
     "documents",
     "alembic_version",
+    "api_tokens",
+    "subscriptions",
+    "plans",
+    "request_quota",
+    "rag_evaluations",
 }
 
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -85,16 +90,14 @@ async def discover_columns(session: AsyncSession, schema: str, table: str) -> li
 
 async def discover_sources(session: AsyncSession) -> list[DataSource]:
     """Descubre tablas y vistas indexables (excluye esquemas/tablas de sistema)."""
+    excluded = "', '".join(sorted(SYSTEM_TABLES))
     rows = await session.execute(
         text(
             "SELECT table_schema, table_name, table_type "
             "FROM information_schema.tables "
             "WHERE table_type IN ('BASE TABLE', 'VIEW') "
             "AND table_schema NOT IN ('information_schema', 'pg_catalog', 'pg_toast') "
-            "AND table_name NOT IN ("
-            "  'tenants', 'users', 'rate_limit_counters', 'usage_logs', "
-            "  'query_audit_log', 'documents', 'alembic_version'"
-            ") "
+            f"AND table_name NOT IN ('{excluded}') "
             "ORDER BY table_schema, table_name"
         )
     )

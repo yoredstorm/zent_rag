@@ -32,8 +32,8 @@ class FakeCache:
         self.lists: dict[str, list[str]] = {}
 
     @staticmethod
-    def _hash_query(tenant_id: str, query: str, model: str) -> str:
-        return f"hash:{tenant_id}:{query}:{model}"
+    def _hash_query(tenant_id: str, query: str, model: str, role: str = "") -> str:
+        return f"hash:{tenant_id}:{query}:{model}:{role}"
 
     async def get(self, key: str) -> str | None:
         return self.store.get(key)
@@ -279,7 +279,7 @@ async def test_cached_no_info_answer_is_regenerated() -> None:
     llm = FakeLLM(content="El producto más vendido es Paracetamol.")
     cache = FakeCache()
     key = cache._hash_query(
-        str(tenant.id), "cuál es el producto más vendido", "default"
+        str(tenant.id), "cuál es el producto más vendido", "default", "admin"
     )
     cache.store[key] = json.dumps(
         "No tengo suficiente información para responder esta pregunta. "
@@ -675,7 +675,7 @@ async def test_large_table_without_trigram_index_is_skipped(
     async def fake_indexed(self, session, schema, table):  # type: ignore[no-untyped-def]
         return set()  # sin índice trigram
 
-    async def fake_ensure(self, tenant_id, schema, table, columns):  # type: ignore[no-untyped-def]
+    async def fake_ensure(tenant_id, schema, table, columns):  # type: ignore[no-untyped-def]
         enqueued.append({"tenant_id": tenant_id, "schema": schema, "table": table, "columns": columns})
 
     monkeypatch.setattr(svc, "discover_sources", fake_discover)

@@ -80,12 +80,32 @@ async def async_client(mock_orchestrator: MockRAGOrchestrator) -> AsyncGenerator
     app.dependency_overrides.clear()
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def _reset_rate_limits() -> AsyncGenerator[None, None]:
+    """Limpia contadores de rate-limit (Redis + in-memory) entre tests.
+
+    Los tests de auth registran fallos bajo ip:testclient que persisten en
+    Redis local entre ejecuciones y contaminan tests posteriores.
+    """
+    from src.infrastructure.auth_rate_limit import (
+        clear_auth_failures,
+        reset_memory_rate_limits,
+    )
+
+    reset_memory_rate_limits()
+    await clear_auth_failures("ip:testclient", "ip:127.0.0.1")
+    yield
+
+
 @pytest_asyncio.fixture
 async def trial_auth(async_client: AsyncClient) -> dict[str, str]:
     """Crea un trial fresco y retorna headers Authorization + X-Tenant-Id."""
     response = await async_client.post(
         "/api/v1/billing/subscription/create-trial",
-        json={"company_name": f"Test Co {uuid4().hex[:8]}"},
+        json={
+            "company_name": f"Test Co {uuid4().hex[:8]}",
+            "email": f"test-{uuid4().hex[:8]}@example.com",
+        },
     )
     assert response.status_code == 200, response.text
     data = response.json()

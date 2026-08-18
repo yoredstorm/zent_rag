@@ -163,15 +163,5 @@ SELECT
 WHERE EXISTS (SELECT 1 FROM tenants WHERE id = '00000000-0000-0000-0000-000000000001')
 AND NOT EXISTS (SELECT 1 FROM subscriptions WHERE tenant_id = '00000000-0000-0000-0000-000000000001');
 
--- API Token de desarrollo (SHA-256 del token en texto plano)
--- Token: rag_test_dev_token_for_local_testing_123
-INSERT INTO api_tokens (id, subscription_id, token_hash, token_prefix, name, scopes)
-SELECT
-    '30000000-0000-0000-0000-000000000001',
-    '20000000-0000-0000-0000-000000000001',
-    encode(sha256('rag_test_dev_token_for_local_testing_123'::bytea), 'hex'),
-    'rag_test_',
-    'Dev Token',
-    '["rag:query", "rag:ingest", "admin:*"]'::jsonb
-WHERE EXISTS (SELECT 1 FROM subscriptions WHERE id = '20000000-0000-0000-0000-000000000001')
-AND NOT EXISTS (SELECT 1 FROM api_tokens WHERE subscription_id = '20000000-0000-0000-0000-000000000001');
+-- El token API de desarrollo (scope admin:*) se siembra SOLO si
+-- RAG_SEED_DEMO_DATA=true, vía 07-dev-seed.sh (nunca en producción).

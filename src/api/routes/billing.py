@@ -19,7 +19,7 @@ def get_billing() -> BillingService:
 
 class CreateTrialRequest(BaseModel):
     company_name: str = Field(..., min_length=1, max_length=200)
-    email: str | None = Field(default=None, max_length=200)
+    email: str = Field(..., min_length=5, max_length=200)
     phone: str | None = Field(default=None, max_length=50)
     country: str | None = Field(default=None, max_length=100)
     ruc: str | None = Field(default=None, max_length=50)
@@ -128,7 +128,7 @@ async def create_trial(
         raise
     except Exception as exc:
         logger.error("create-trial failed", error=str(exc), exc_info=True)
-        raise HTTPException(500, f"Trial creation failed: {type(exc).__name__}: {exc}")
+        raise HTTPException(500, "Trial creation failed")
 
 
 async def _do_create_trial(
@@ -161,17 +161,18 @@ async def _do_create_trial(
     logger.info("Created tenant for trial", tenant_id=tenant_id_str, name=tenant_name)
 
     user_repo = PostgresUserRepository()
-    email_seed = body.email or f"default@{tenant_id_str}"
-    email_hash = hashlib.sha256(email_seed.encode()).hexdigest()
+    email_hash = hashlib.sha256(body.email.encode()).hexdigest()
     await user_repo.create_default_user(tenant_id, email_hash)
     logger.info("Auto-created default user", tenant_id=tenant_id_str)
 
     try:
         subscription, token = await billing.create_trial_subscription(tenant_id)
     except ValueError as exc:
-        raise HTTPException(500, str(exc))
+        logger.error("No trial plan configured", error=str(exc))
+        raise HTTPException(500, "No trial plan configured")
     except Exception as exc:
-        raise HTTPException(500, f"Failed to create trial: {exc}")
+        logger.error("Failed to create trial subscription", error=str(exc), exc_info=True)
+        raise HTTPException(500, "Failed to create trial")
 
     return {
         "subscription_id": str(subscription.id),
@@ -332,6 +333,16 @@ async def upgrade_plan(
     billing_interval: str = Header(default="monthly", alias="X-Billing-Interval"),
     billing: BillingService = Depends(get_billing),
 ):
+    from src.config import get_settings
+
+    # Anti fraude: el upgrade a planes pagos exige flujo de pago. Sin
+    # proveedor de pagos verificado, el self-service queda deshabilitado.
+    if not get_settings().SELF_SERVICE_UPGRADE_ENABLED:
+        raise HTTPException(
+            403,
+            "Plan upgrades require a verified payment flow. Contact support.",
+        )
+
     tenant_id = _tenant_from_request(request, x_tenant_id)
     if not new_plan_name:
         raise HTTPException(400, "X-New-Plan required (plan name: starter, pro, enterprise)")
@@ -344,6 +355,12 @@ async def upgrade_plan(
         billing_interval = "monthly"
 
     result = await billing.upgrade_plan(sub.id, new_plan_name, billing_interval)
+    logger.info(
+        "Plan upgraded",
+        tenant_id=str(tenant_id),
+        plan=result["plan_name"],
+        interval=billing_interval,
+    )
     return {
         "subscription_id": str(result["subscription_id"]),
         "plan": result["plan_name"],
@@ -414,5 +431,12 @@ async def list_tenants(request: Request):
 
 def _require_admin_billing(request: Request) -> None:
     from src.config import get_settings
+
     if not get_settings().RAG_ADMIN_ENABLED:
         raise HTTPException(403, "Admin billing endpoints disabled")
+
+    # Admin de plataforma REAL: token con scope admin:*. Las sesiones del
+    # portal (dueños de tenant) NO son admin de plataforma.
+    from src.api.security import require_platform_admin
+
+    require_platform_admin(request)

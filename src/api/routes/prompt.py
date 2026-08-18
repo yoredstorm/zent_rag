@@ -26,13 +26,10 @@ router = APIRouter(prefix="/api/v1/admin", tags=["Prompt Management"])
 
 
 def _resolve_tenant_id(request: Request, x_tenant_id: str) -> UUID:
-    tid = x_tenant_id or getattr(request.state, "tenant_id", "")
-    if not tid:
-        raise HTTPException(400, "X-Tenant-Id header required")
-    try:
-        return UUID(tid)
-    except ValueError:
-        raise HTTPException(400, "X-Tenant-Id must be a valid UUID")
+    """Tenant autenticado gana; header distinto -> 403 (anti cross-tenant)."""
+    from src.api.security import resolve_tenant
+
+    return resolve_tenant(request, x_tenant_id)
 
 
 # ---------------------------------------------------------------------------
@@ -71,9 +68,14 @@ class PromptStatus(BaseModel):
 
 
 class PromptConfig(BaseModel):
-    system_prompt: str = Field(..., description="System prompt para el asistente RAG")
+    system_prompt: str = Field(
+        ...,
+        max_length=16000,
+        description="System prompt para el asistente RAG",
+    )
     custom_instructions: str = Field(
         default="",
+        max_length=16000,
         description="Instrucciones adicionales que se concatenan al system_prompt",
     )
     role: str | None = Field(
@@ -85,8 +87,8 @@ class PromptConfig(BaseModel):
 
 class PromptTestRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=4000, description="Query de prueba")
-    system_prompt: str = Field(..., description="Prompt a testear (no se guarda)")
-    custom_instructions: str = Field(default="", description="Instrucciones adicionales")
+    system_prompt: str = Field(..., max_length=16000, description="Prompt a testear (no se guarda)")
+    custom_instructions: str = Field(default="", max_length=16000, description="Instrucciones adicionales")
     role: str = Field(default="admin", pattern=r"^(admin|customer)$", description="Rol para la prueba")
     top_k: int = Field(default=200, ge=1, le=500)
     temperature: float = Field(default=0.3, ge=0.0, le=2.0)
@@ -159,6 +161,9 @@ async def update_prompt(
     x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
     repo: TenantRepository = Depends(get_tenant_repo),
 ) -> PromptStatus:
+    from src.api.security import require_tenant_admin
+
+    require_tenant_admin(request)
     tenant_id = _resolve_tenant_id(request, x_tenant_id)
     tenant = await repo.get_by_id(tenant_id)
     if tenant is None:
@@ -216,6 +221,9 @@ async def reset_prompt(
     role: str | None = Query(default=None, pattern=r"^(admin|customer)$"),
     repo: TenantRepository = Depends(get_tenant_repo),
 ) -> PromptStatus:
+    from src.api.security import require_tenant_admin
+
+    require_tenant_admin(request)
     tenant_id = _resolve_tenant_id(request, x_tenant_id)
     tenant = await repo.get_by_id(tenant_id)
     if tenant is None:
@@ -269,6 +277,9 @@ async def test_prompt(
     orchestrator: RAGOrchestrator = Depends(get_rag_orchestrator),
     repo: TenantRepository = Depends(get_tenant_repo),
 ) -> PromptTestResponse:
+    from src.api.security import require_tenant_admin
+
+    require_tenant_admin(request)
     tenant_id = _resolve_tenant_id(request, x_tenant_id)
     tenant = await repo.get_by_id(tenant_id)
     if tenant is None:

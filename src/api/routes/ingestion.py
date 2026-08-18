@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -24,23 +24,11 @@ from src.infrastructure.ingestion_queue import enqueue_sync, get_job_status, lis
 from src.infrastructure.lazy_activity import (
     lazy_log_cache_key,
     parse_lazy_activity,
-    preferred_tenant_id,
 )
 from src.infrastructure.logging_config import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/ingestion", tags=["Ingestion"])
-
-
-def _tenant_id_from_auth(request: Request, x_tenant_id: str) -> UUID:
-    """Usa el tenant del Bearer; el header solo aplica si aún no hay auth."""
-    tid = preferred_tenant_id(getattr(request.state, "tenant_id", ""), x_tenant_id)
-    if not tid:
-        raise HTTPException(400, "X-Tenant-Id debe ser un UUID válido")
-    try:
-        return UUID(str(tid))
-    except ValueError:
-        raise HTTPException(400, "X-Tenant-Id debe ser un UUID válido")
 
 
 # Singleton del ingestion service
@@ -68,10 +56,12 @@ def get_ingestion_service(
 )
 async def list_sources(
     request: Request,
-    x_tenant_id: str = Header(..., alias="X-Tenant-Id"),
+    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
     ingestion: PostgresIngestionService = Depends(get_ingestion_service),
 ):
-    tenant_id = _tenant_id_from_auth(request, x_tenant_id)
+    from src.api.security import resolve_tenant
+
+    tenant_id = resolve_tenant(request, x_tenant_id)
 
     sources = await ingestion.discover_sources(tenant_id)
     skip_set = ingestion._skip_tables
@@ -119,7 +109,9 @@ async def lazy_activity(
     x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
     cache: CacheProvider = Depends(get_cache_provider),
 ):
-    tenant_id = _tenant_id_from_auth(request, x_tenant_id)
+    from src.api.security import resolve_tenant
+
+    tenant_id = resolve_tenant(request, x_tenant_id)
 
     entries = await cache.get_list(lazy_log_cache_key(tenant_id))
     trigger_count, recent = parse_lazy_activity(entries, days=days, limit=limit)
@@ -160,15 +152,16 @@ async def lazy_activity(
     ),
 )
 async def sync_all(
+    request: Request,
     full_refresh: bool = False,
     background: bool = Query(default=True, description="Siempre en background para streaming de progreso"),
-    x_tenant_id: str = Header(..., alias="X-Tenant-Id"),
+    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
     ingestion: PostgresIngestionService = Depends(get_ingestion_service),
 ):
-    try:
-        tenant_id = UUID(x_tenant_id)
-    except ValueError:
-        raise HTTPException(400, "X-Tenant-Id debe ser un UUID válido")
+    from src.api.security import require_scope, resolve_tenant
+
+    require_scope(request, "rag:ingest")
+    tenant_id = resolve_tenant(request, x_tenant_id)
 
     from src.infrastructure.cache import _get_redis
     from src.infrastructure.ingestion_queue import (
@@ -178,8 +171,26 @@ async def sync_all(
         update_job_status,
     )
 
-    job_id = uuid4().hex
+    # Lock por tenant: un solo sync activo a la vez (evita tareas duplicadas).
+    lock_key = f"rag:ingest_lock:{tenant_id.hex}"
     client = await _get_redis()
+    try:
+        acquired = await client.set(lock_key, "1", nx=True, ex=3600)
+    except Exception:
+        acquired = None
+    if not acquired:
+        raise HTTPException(
+            409,
+            "A sync is already running for this tenant. Wait for it to finish.",
+        )
+
+    async def _release_lock():
+        try:
+            await client.delete(lock_key)
+        except Exception:
+            pass
+
+    job_id = uuid4().hex
     init = {
         "job_id": job_id,
         "tenant_id": str(tenant_id),
@@ -252,6 +263,8 @@ async def sync_all(
                 error=str(exc),
                 message=f"Error: {exc}",
             )
+        finally:
+            await _release_lock()
 
     asyncio.create_task(_run_sync())
 
@@ -267,17 +280,26 @@ async def sync_all(
     summary="Sincronizar una tabla específica",
 )
 async def sync_table(
+    request: Request,
     schema_name: str,
     table_name: str,
     full_refresh: bool = False,
     background: bool = Query(default=False, description="Ejecutar en background (cola Redis)"),
-    x_tenant_id: str = Header(..., alias="X-Tenant-Id"),
+    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
     ingestion: PostgresIngestionService = Depends(get_ingestion_service),
 ):
+    from src.api.security import require_scope, resolve_tenant
+    from src.infrastructure.schema_discovery import quote_ident
+
+    require_scope(request, "rag:ingest")
+    tenant_id = resolve_tenant(request, x_tenant_id)
+
+    # Validar identificadores ANTES de cualquier ejecución SQL (anti inyección).
     try:
-        tenant_id = UUID(x_tenant_id)
+        quote_ident(schema_name)
+        quote_ident(table_name)
     except ValueError:
-        raise HTTPException(400, "X-Tenant-Id debe ser un UUID válido")
+        raise HTTPException(400, "Schema o tabla inválidos (solo letras, números y _)")
 
     if background:
         job_id = await enqueue_sync(tenant_id, schema_name, table_name, full_refresh)
@@ -306,9 +328,18 @@ async def sync_table(
     summary="Consultar estado de un job de ingesta",
     description="Retorna el estado, progreso y resultado de un job en la cola de ingesta.",
 )
-async def get_job(job_id: str):
+async def get_job(
+    request: Request,
+    job_id: str,
+    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+):
+    from src.api.security import resolve_tenant
+
+    tenant_id = resolve_tenant(request, x_tenant_id)
     job = await get_job_status(job_id)
     if job is None:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+    if job.get("tenant_id") != str(tenant_id):
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
     return job
 
@@ -316,11 +347,19 @@ async def get_job(job_id: str):
 @router.get(
     "/jobs",
     summary="Listar jobs recientes de ingesta",
-    description="Lista los jobs más recientes en la cola de ingesta (máximo 100).",
+    description="Lista los jobs más recientes del tenant autenticado (máximo 100).",
 )
-async def list_jobs(limit: int = Query(default=50, ge=1, le=100)):
-    jobs = await list_recent_jobs(limit)
-    return {"jobs": jobs, "count": len(jobs)}
+async def list_jobs(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=100),
+    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+):
+    from src.api.security import resolve_tenant
+
+    tenant_id = resolve_tenant(request, x_tenant_id)
+    jobs = await list_recent_jobs(100)
+    own_jobs = [j for j in jobs if j.get("tenant_id") == str(tenant_id)][:limit]
+    return {"jobs": own_jobs, "count": len(own_jobs)}
 
 
 @router.get(
@@ -329,15 +368,27 @@ async def list_jobs(limit: int = Query(default=50, ge=1, le=100)):
     description="Server-Sent Events que emite el progreso en tiempo real de un job de ingesta.",
 )
 async def stream_job_progress(
+    request: Request,
     job_id: str,
     interval_ms: int = Query(default=1000, ge=500, le=5000, description="Intervalo entre actualizaciones"),
+    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
 ):
+    from src.api.security import resolve_tenant
+
+    tenant_id = resolve_tenant(request, x_tenant_id)
+
     async def event_stream():
         last_progress = -1
         consecutive_same = 0
+        start = asyncio.get_running_loop().time()
         while True:
+            # Cap de duración total del stream (anti resource exhaustion)
+            if asyncio.get_running_loop().time() - start > 600:
+                yield f"event: error\ndata: {json.dumps({'error': 'Stream timeout'})}\n\n"
+                return
+
             job = await get_job_status(job_id)
-            if job is None:
+            if job is None or job.get("tenant_id") != str(tenant_id):
                 yield f"event: error\ndata: {json.dumps({'error': 'Job not found'})}\n\n"
                 return
 
@@ -354,6 +405,11 @@ async def stream_job_progress(
             else:
                 consecutive_same = 0
                 last_progress = current_progress
+
+            # Job estancado (mismo progreso durante > 2 min): cerrar stream.
+            if consecutive_same * (interval_ms / 1000.0) > 120:
+                yield f"event: error\ndata: {json.dumps({'error': 'No progress detected'})}\n\n"
+                return
 
             await asyncio.sleep(interval_ms / 1000.0)
 

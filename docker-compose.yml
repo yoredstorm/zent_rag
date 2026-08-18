@@ -18,8 +18,8 @@ x-common-env: &common-env
   RAG_POSTGRES_DB: ${POSTGRES_DB:-rag_platform}
   RAG_QDRANT_HOST: qdrant
   RAG_QDRANT_PORT: "6333"
-  RAG_QDRANT_API_KEY: ${QDRANT_API_KEY:-}
-  RAG_REDIS_URL: redis://redis:6379/0
+  RAG_QDRANT_API_KEY: ${QDRANT_API_KEY:-dev-qdrant-key-change-me}
+  RAG_REDIS_URL: redis://:${REDIS_PASSWORD:-dev-redis-password-change-me}@redis:6379/0
   RAG_LITELLM_API_BASE: ${RAG_LITELLM_API_BASE:-}
   RAG_LITELLM_API_KEY: ${RAG_LITELLM_API_KEY:-}
   RAG_LITELLM_DEFAULT_MODEL: ${RAG_LITELLM_DEFAULT_MODEL:-gpt-4o-mini}
@@ -55,6 +55,9 @@ x-common-env: &common-env
   RAG_VAULT_ADDR: ${VAULT_ADDR:-}
   RAG_VAULT_TOKEN: ${VAULT_TOKEN:-}
   RAG_LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  RAG_METRICS_TOKEN: ${METRICS_TOKEN:-rag-metrics-scrape-token}
+  RAG_RATE_LIMIT_ENABLED: ${RAG_RATE_LIMIT_ENABLED:-true}
+  RAG_TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
   OLLAMA_API_BASE: http://ollama:11434
 
 services:
@@ -162,11 +165,14 @@ services:
     image: pgvector/pgvector:pg16
     container_name: rag-postgres
     ports:
-      - "${POSTGRES_EXPOSE_PORT:-5432}:5432"
+      # Solo loopback del host: Postgres NO debe quedar expuesto a la red.
+      - "127.0.0.1:${POSTGRES_EXPOSE_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-rag_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
       POSTGRES_DB: ${POSTGRES_DB:-rag_platform}
+      # Seeds demo (token admin dev) SOLO si se pide explícitamente
+      RAG_SEED_DEMO_DATA: ${RAG_SEED_DEMO_DATA:-true}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./src/infrastructure/db_init:/docker-entrypoint-initdb.d
@@ -186,8 +192,11 @@ services:
     image: qdrant/qdrant:v1.13.4
     container_name: rag-qdrant
     ports:
-      - "${QDRANT_EXPOSE_REST_PORT:-6333}:6333"
-      - "${QDRANT_EXPOSE_GRPC_PORT:-6334}:6334"
+      # Solo loopback del host
+      - "127.0.0.1:${QDRANT_EXPOSE_REST_PORT:-6333}:6333"
+      - "127.0.0.1:${QDRANT_EXPOSE_GRPC_PORT:-6334}:6334"
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-dev-qdrant-key-change-me}
     volumes:
       - qdrant_data:/qdrant/storage
     restart: unless-stopped
@@ -201,12 +210,15 @@ services:
     image: redis:7-alpine
     container_name: rag-redis
     ports:
-      - "${REDIS_EXPOSE_PORT:-6379}:6379"
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+      # Solo loopback del host
+      - "127.0.0.1:${REDIS_EXPOSE_PORT:-6379}:6379"
+    command: >
+      redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD:-dev-redis-password-change-me}
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a ${REDIS_PASSWORD:-dev-redis-password-change-me} ping | grep PONG"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -221,9 +233,10 @@ services:
     image: prom/prometheus:v2.54.1
     container_name: rag-prometheus
     ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"
+      # Solo loopback del host
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
     volumes:
-      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./config/prometheus:/etc/prometheus
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
@@ -242,7 +255,8 @@ services:
     image: grafana/loki:3.2.0
     container_name: rag-loki
     ports:
-      - "${LOKI_PORT:-3100}:3100"
+      # Solo loopback del host
+      - "127.0.0.1:${LOKI_PORT:-3100}:3100"
     volumes:
       - ./config/loki/loki-config.yml:/etc/loki/loki-config.yml
       - loki_data:/loki
@@ -259,7 +273,8 @@ services:
     container_name: rag-promtail
     volumes:
       - ./config/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml
-      - /var/run/docker.sock:/var/run/docker.sock
+      # Read-only: promtail solo necesita descubrir contenedores.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
     command: -config.file=/etc/promtail/promtail-config.yml
     restart: unless-stopped
@@ -273,10 +288,13 @@ services:
     image: grafana/grafana:11.3.0
     container_name: rag-grafana
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"
+      # Solo loopback del host
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-grafana-dev-insecure-change-me}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_ALLOW_ORG_CREATE: "false"
       GF_INSTALL_PLUGINS: ""
     volumes:
       - ./config/grafana/datasources/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml

@@ -34,6 +34,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
 
   const logout = useCallback(() => {
+    const current = loadSession();
+    if (current) {
+      // Revocar la sesión server-side (best-effort; el token es opaco y
+      // queda invalidado en Redis tras el logout).
+      void api("/api/v1/auth/logout", {
+        method: "POST",
+        token: current.token,
+        tenantId: current.tenantId,
+      }).catch(() => undefined);
+    }
     clearSession();
     setSession(null);
   }, []);

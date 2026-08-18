@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from uuid import uuid4
-
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -79,6 +77,30 @@ class BillingMiddleware(BaseHTTPMiddleware):
                 },
             )
 
+        # /metrics: protegido. Token compartido si está configurado; si no,
+        # solo accesible desde loopback (desarrollo local).
+        if path == "/metrics":
+            if settings.METRICS_TOKEN is not None:
+                provided = request.headers.get("Authorization", "")
+                if provided != f"Bearer {settings.METRICS_TOKEN.get_secret_value()}":
+                    return JSONResponse(
+                        status_code=401,
+                        content={
+                            "error_code": "metrics_unauthorized",
+                            "message": "Scrape token required for /metrics",
+                        },
+                    )
+            else:
+                client_ip = request.client.host if request.client else ""
+                if client_ip not in ("127.0.0.1", "::1", "testclient"):
+                    return JSONResponse(
+                        status_code=401,
+                        content={
+                            "error_code": "metrics_unauthorized",
+                            "message": "Metrics endpoint is not public",
+                        },
+                    )
+
         auth_header = request.headers.get("Authorization", "")
         if not auth_header.startswith("Bearer "):
             return JSONResponse(
@@ -111,7 +133,11 @@ class BillingMiddleware(BaseHTTPMiddleware):
             request.state.billing_context = ctx
             request.state.tenant_id = str(ctx.tenant_id)
 
-            set_trace_context(trace_id=str(uuid4()), tenant_id=str(ctx.tenant_id))
+            # Mantener el trace_id del request; solo fijar identidad real.
+            set_trace_context(
+                tenant_id=str(ctx.tenant_id),
+                user_id=str(ctx.user_id) if ctx.user_id else "anonymous",
+            )
         except TokenValidationError as exc:
             return JSONResponse(
                 status_code=exc.status_code,
@@ -130,7 +156,7 @@ class BillingMiddleware(BaseHTTPMiddleware):
                 status_code=500,
                 content={
                     "error_code": "BILLING_ERROR",
-                    "message": str(exc),
+                    "message": "Internal billing error. Reference the X-Trace-Id header for support.",
                 },
             )
 

@@ -503,11 +503,25 @@ class PostgresIngestionService(IngestionService):
     ) -> IngestionResult:
         """Sincroniza una tabla específica."""
         start = time.perf_counter()
+
+        # Validar y quotear identificadores ANTES de ejecutar SQL (anti inyección).
+        # Cubre tanto el path HTTP como el path de cola (ingestion_worker).
+        try:
+            schema_q = quote_ident(schema_name)
+            table_q = quote_ident(table_name)
+        except ValueError as exc:
+            return IngestionResult(
+                tenant_id=tenant_id,
+                tables_processed=0,
+                success=False,
+                errors=[f"Invalid table identifier: {exc}"],
+            )
+
         session = await get_async_session()
         try:
             columns = await self._discover_columns(session, schema_name, table_name)
             count_result = await session.execute(
-                text(f'SELECT COUNT(*) FROM "{schema_name}"."{table_name}"')
+                text(f"SELECT COUNT(*) FROM {schema_q}.{table_q}")
             )
             row_count = count_result.scalar() or 0
         finally:
@@ -664,6 +678,7 @@ class PostgresIngestionService(IngestionService):
             schema_q = quote_ident(schema)
             table_q = quote_ident(table)
             pk_q = quote_ident(pk_col.name)
+            has_tenant_col = any(c.name == "tenant_id" for c in source.columns)
 
             while True:
                 if max_rows and offset >= max_rows:
@@ -678,7 +693,29 @@ class PostgresIngestionService(IngestionService):
                 if max_rows:
                     limit = min(page_size, max_rows - offset)
 
-                if since_timestamp:
+                # Aislamiento multi-tenant: si la tabla tiene tenant_id,
+                # SOLO se ingieren las filas del tenant autenticado.
+                if has_tenant_col and since_timestamp:
+                    query = text(
+                        f"SELECT * FROM {schema_q}.{table_q} "
+                        f'WHERE "updated_at" > :since_ts AND "tenant_id" = :tenant_id '
+                        f"ORDER BY {pk_q} "
+                        f"LIMIT {limit} OFFSET {offset}"
+                    )
+                    rows = await session.execute(
+                        query, {"since_ts": since_timestamp, "tenant_id": tenant_id}
+                    )
+                elif has_tenant_col:
+                    rows = await session.execute(
+                        text(
+                            f"SELECT * FROM {schema_q}.{table_q} "
+                            f'WHERE "tenant_id" = :tenant_id '
+                            f"ORDER BY {pk_q} "
+                            f"LIMIT {limit} OFFSET {offset}"
+                        ),
+                        {"tenant_id": tenant_id},
+                    )
+                elif since_timestamp:
                     query = text(
                         f"SELECT * FROM {schema_q}.{table_q} "
                         f'WHERE "updated_at" > :since_ts '

@@ -245,11 +245,7 @@ async def test_lazy_activity_uses_authenticated_tenant_not_spoofed_header(
             "/api/v1/ingestion/lazy-activity?days=30&limit=20",
             headers=spoofed,
         )
-        assert response.status_code == 200
-        data = response.json()
-        assert data["tenant_id"] == str(tenant_id)
-        assert data["trigger_count"] == 1
-        assert data["recent"][0]["tables"] == ["productos"]
-        assert all(ev["tables"] != ["secret"] for ev in data["recent"])
+        # Hardening: header que no coincide con el Bearer -> 403 (anti cross-tenant).
+        assert response.status_code == 403
     finally:
         app.dependency_overrides.pop(get_cache_provider, None)

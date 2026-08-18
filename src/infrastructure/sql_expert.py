@@ -7,6 +7,7 @@ import sqlglot
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.config import get_settings
 from src.domain.ports import LLMProvider
 from src.domain.services import ColumnMeta, DataSource
 from src.domain.sql_expert import SqlExpert, SqlQueryResult, SqlValidationError
@@ -28,9 +29,12 @@ logger = get_logger(__name__)
 # Palabras prohibidas en SQL — prevención de inyección estructural
 _FORBIDDEN_KEYWORDS = re.compile(
     r"\b(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE"
-    r"|EXECUTE|GRANT|REVOKE|COPY|VACUUM|REINDEX"
-    r"|SET\s+role|RESET\s+role|pg_read_file|pg_write_file"
-    r"|lo_import|lo_export)\b",
+    r"|EXECUTE|GRANT|REVOKE|COPY|VACUUM|REINDEX|INTO"
+    r"|SET\s+role|RESET\s+role|SET\s+SESSION|SET\s+LOCAL"
+    r"|pg_read_file|pg_write_file|pg_read_binary_file|pg_ls_dir"
+    r"|lo_import|lo_export|lo_get|dblink|set_config|pg_terminate_backend"
+    r"|pg_sleep|current_setting)\b"
+    r"|\bFOR\s+(SHARE|UPDATE|KEY\s+SHARE|NO\s+KEY\s+UPDATE)\b",
     re.IGNORECASE,
 )
 
@@ -54,6 +58,9 @@ def _validate_sql_ast(sql: str) -> None:
 
     if not statements:
         raise SqlValidationError("Empty or unparseable SQL", sql)
+
+    if len(statements) > 1:
+        raise SqlValidationError("Multi-statement SQL is not allowed", sql)
 
     for stmt in statements:
         stmt_type = stmt.key.lower() if stmt.key else "unknown"
@@ -465,7 +472,7 @@ class PostgresSqlExpert(SqlExpert):
         sql = stabilize_sql(sql, question)
 
         try:
-            await self.validate_sql(sql, sources, role)
+            safe_sql = await self.validate_sql(sql, sources, role, tenant_id)
         except SqlValidationError as exc:
             repaired = await self._repair_sql(
                 schema=schema_ctx["schema"],
@@ -478,13 +485,15 @@ class PostgresSqlExpert(SqlExpert):
                 repaired = self._clean_sql(repaired)
                 repaired = stabilize_sql(repaired, question)
                 try:
-                    await self.validate_sql(repaired, sources, role)
+                    safe_sql = await self.validate_sql(
+                        repaired, sources, role, tenant_id
+                    )
                     logger.info(
                         "SQL repaired after validation failure",
                         original=sql[:300],
                         repaired=repaired[:300],
                     )
-                    return await self._run_query(repaired)
+                    return await self._run_query(safe_sql)
                 except SqlValidationError as exc2:
                     logger.info(
                         "SQL repair failed validation",
@@ -499,7 +508,7 @@ class PostgresSqlExpert(SqlExpert):
             )
             return SqlQueryResult(sql=sql, error=str(exc))
 
-        return await self._run_query(sql)
+        return await self._run_query(safe_sql)
 
     async def _repair_sql(
         self,
@@ -570,12 +579,145 @@ class PostgresSqlExpert(SqlExpert):
             sql = re.sub(r"\n?```$", "", sql)
         return sql.strip()
 
+    # -------------------------------------------------------------------------
+    # Tenant isolation & table allowlist (enforced deterministically)
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _table_identity(node: sqlglot.exp.Table) -> tuple[str, str]:
+        """(schema, table) de un nodo Table; schema '' si no calificado."""
+        schema = node.catalog or node.db or ""
+        return str(schema).lower(), str(node.name).lower()
+
+    def _check_table_allowlist(
+        self, sql: str, sources: list[DataSource]
+    ) -> None:
+        """Rechaza cualquier tabla fuera del inventario del tenant.
+
+        Bloquea en seco tablas de plataforma (users, api_tokens, ...) y
+        esquemas de otros tenants aunque existan en la BD.
+        """
+        sources_by_schema: dict[str, set[str]] = {}
+        bare_owners: dict[str, set[str]] = {}
+        for s in sources:
+            sources_by_schema.setdefault(s.schema_name.lower(), set()).add(
+                s.table_name.lower()
+            )
+            bare_owners.setdefault(s.table_name.lower(), set()).add(
+                s.schema_name.lower()
+            )
+
+        statements = sqlglot.parse(sql, error_level=sqlglot.ErrorLevel.RAISE)
+        for stmt in statements:
+            for node in stmt.find_all(sqlglot.exp.Table):
+                schema, table = self._table_identity(node)
+                if schema:
+                    if table not in sources_by_schema.get(schema, set()):
+                        raise SqlValidationError(
+                            f"Table '{schema}.{table}' is not available for this tenant",
+                            sql,
+                        )
+                else:
+                    owners = bare_owners.get(table, set())
+                    if not owners:
+                        raise SqlValidationError(
+                            f"Table '{table}' is not available for this tenant",
+                            sql,
+                        )
+                    if len(owners) > 1:
+                        raise SqlValidationError(
+                            f"Ambiguous table '{table}': qualify it with a schema",
+                            sql,
+                        )
+
+    @staticmethod
+    def _direct_tables(select: sqlglot.exp.Select) -> list[sqlglot.exp.Table]:
+        """Tablas referenciadas directamente por este SELECT (sin subqueries)."""
+        tables: list[sqlglot.exp.Table] = []
+        from_clause = select.args.get("from")
+        if from_clause is not None and isinstance(from_clause.this, sqlglot.exp.Table):
+            tables.append(from_clause.this)
+        for join in select.args.get("joins") or []:
+            if isinstance(join.this, sqlglot.exp.Table):
+                tables.append(join.this)
+        return tables
+
+    def _inject_tenant_filter(
+        self, sql: str, tenant_id: UUID, sources: list[DataSource]
+    ) -> str:
+        """Inyecta `tenant_id = '<tid>'::uuid` en tablas tenant-aware.
+
+        Solo aplica a tablas del inventario con columna tenant_id que no
+        tengan ya un predicado de tenant. Reescritura determinística por AST.
+        """
+        tenant_aware: set[str] = {
+            f"{s.schema_name}.{s.table_name}".lower()
+            for s in sources
+            if any(c.name == "tenant_id" for c in s.columns)
+        }
+        if not tenant_aware:
+            return sql
+
+        bare_aware: set[str] = {t.split(".", 1)[-1] for t in tenant_aware}
+
+        expr = sqlglot.parse_one(sql, error_level=sqlglot.ErrorLevel.RAISE)
+        targets: list[tuple[sqlglot.exp.Select, str]] = []
+        for select in expr.find_all(sqlglot.exp.Select):
+            for table in self._direct_tables(select):
+                schema, name = self._table_identity(table)
+                if name not in bare_aware:
+                    continue
+                if schema and f"{schema}.{name}" not in tenant_aware:
+                    continue
+                targets.append((select, table.alias_or_name))
+
+        for select, ref in targets:
+            where = select.args.get("where")
+            where_sql = where.sql() if where is not None else ""
+            if re.search(rf"\b{re.escape(ref)}\.tenant_id\s*=", where_sql, re.IGNORECASE):
+                continue
+            if re.search(r"\btenant_id\s*=", where_sql, re.IGNORECASE):
+                continue
+            pred = sqlglot.parse_one(
+                f"{ref}.tenant_id = '{tenant_id}'::uuid"
+            )
+            if where is None:
+                select.set("where", pred)
+            else:
+                select.set("where", sqlglot.exp.and_(where, pred, copy=False))
+
+        return expr.sql()
+
+    @staticmethod
+    def _cap_limit(sql: str, max_limit: int = 500) -> str:
+        """Recorta cualquier LIMIT > max_limit en el SQL parseado."""
+        try:
+            expr = sqlglot.parse_one(sql, error_level=sqlglot.ErrorLevel.RAISE)
+        except Exception:
+            return sql
+        for limit_node in expr.find_all(sqlglot.exp.Limit):
+            raw = limit_node.expression
+            if raw is None:
+                continue
+            try:
+                value = int(raw.name)
+            except (ValueError, TypeError):
+                continue
+            if value > max_limit:
+                limit_node.set("expression", sqlglot.exp.Literal.number(max_limit))
+        return expr.sql()
+
     async def validate_sql(
         self,
         sql: str,
         sources: list[DataSource],
         role: str,
-    ) -> None:
+        tenant_id: UUID,
+    ) -> str:
+        """Valida y reescribe el SQL generado por el LLM.
+
+        Retorna el SQL seguro a ejecutar (tenant-filtered + LIMIT capped).
+        """
         _validate_sql_ast(sql)
 
         if _FORBIDDEN_KEYWORDS.search(sql):
@@ -590,25 +732,28 @@ class PostgresSqlExpert(SqlExpert):
                         f"Cannot use {kw.strip('(')}() as customer", sql
                     )
 
-        valid_tables = {
-            f"{s.schema_name}.{s.table_name}".lower() for s in sources
-        }
-        valid_tables |= {s.table_name.lower() for s in sources}
-        valid_columns: set[str] = set()
-        for s in sources:
-            for c in s.columns:
-                valid_columns.add(c.name.lower())
+        # Allowlist determinística de tablas (no regex, no dead code).
+        self._check_table_allowlist(sql, sources)
 
-        table_refs = set(re.findall(r'"(\w+)"\."(\w+)"', sql))
-        table_refs |= set((m,) for m in re.findall(r'\bFROM\s+(\w+)', sql, re.IGNORECASE))
-        table_refs |= set((m,) for m in re.findall(r'\bJOIN\s+(\w+)', sql, re.IGNORECASE))
+        # Aislamiento multi-tenant: inyectar predicado tenant_id.
+        safe_sql = self._inject_tenant_filter(sql, tenant_id, sources)
 
-        # Validate via EXPLAIN instead of regex — catches all invalid refs
-        await self._explain_validate(sql)
+        # Cap de filas: LIMIT <= 500.
+        safe_sql = self._cap_limit(safe_sql)
+
+        # Validate via EXPLAIN (con timeout) como verificación final.
+        await self._explain_validate(safe_sql)
+
+        return safe_sql
 
     async def _explain_validate(self, sql: str) -> None:
+        settings = get_settings()
+        timeout_seconds = settings.RAG_SQL_TIMEOUT_SECONDS
         session: AsyncSession = await get_async_session()
         try:
+            await session.execute(
+                text(f"SET LOCAL statement_timeout = '{timeout_seconds}s'")
+            )
             await session.execute(text(f"EXPLAIN {sql}"))
         except Exception as exc:
             raise SqlValidationError(f"Invalid SQL: {exc}", sql) from exc
@@ -616,9 +761,13 @@ class PostgresSqlExpert(SqlExpert):
             await session.close()
 
     async def _run_query(self, sql: str) -> SqlQueryResult:
+        settings = get_settings()
+        timeout_seconds = settings.RAG_SQL_TIMEOUT_SECONDS
         session: AsyncSession = await get_async_session()
         try:
-            await session.execute(text("SET LOCAL statement_timeout = '5s'"))
+            await session.execute(
+                text(f"SET LOCAL statement_timeout = '{timeout_seconds}s'")
+            )
             if not re.search(r"\bLIMIT\s+\d+\s*$", sql, re.IGNORECASE):
                 sql = f"{sql} LIMIT 100"
             rows_result = await session.execute(text(sql))

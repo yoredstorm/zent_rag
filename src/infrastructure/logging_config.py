@@ -21,11 +21,21 @@ tenant_id_var: ContextVar[str] = ContextVar("tenant_id", default="system")
 user_id_var: ContextVar[str] = ContextVar("user_id", default="anonymous")
 
 
-def set_trace_context(trace_id: str, tenant_id: str = "unknown", user_id: str = "anonymous") -> None:
-    """Establece el contexto de trazabilidad para la request actual."""
-    trace_id_var.set(trace_id)
-    tenant_id_var.set(tenant_id)
-    user_id_var.set(user_id)
+def set_trace_context(
+    trace_id: str | None = None,
+    tenant_id: str | None = None,
+    user_id: str | None = None,
+) -> None:
+    """Establece el contexto de trazabilidad para la request actual.
+
+    Los parámetros None conservan el valor actual del ContextVar.
+    """
+    if trace_id is not None:
+        trace_id_var.set(trace_id)
+    if tenant_id is not None:
+        tenant_id_var.set(tenant_id)
+    if user_id is not None:
+        user_id_var.set(user_id)
 
 
 def _add_observability_context(

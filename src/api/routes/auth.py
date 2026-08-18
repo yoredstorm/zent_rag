@@ -38,7 +38,7 @@ def get_billing() -> BillingService:
 class SignupRequest(BaseModel):
     company_name: str = Field(..., min_length=1, max_length=200)
     email: str = Field(..., min_length=5, max_length=320)
-    password: str = Field(..., min_length=8, max_length=128)
+    password: str = Field(..., min_length=8, max_length=72)
 
     @field_validator("email")
     @classmethod
@@ -47,6 +47,15 @@ class SignupRequest(BaseModel):
         if not _EMAIL_RE.match(email):
             raise ValueError("Invalid email")
         return email
+
+    @field_validator("password")
+    @classmethod
+    def check_password_bytes(cls, v: str) -> str:
+        # bcrypt trunca a 72 bytes: rechazar passwords que excedan ese límite
+        # en bytes (multi-byte UTF-8) para no crear clases de equivalencia.
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError("Password must be at most 72 bytes")
+        return v
 
 
 class LoginRequest(BaseModel):
@@ -60,9 +69,17 @@ class LoginRequest(BaseModel):
 
 
 def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("X-Forwarded-For", "")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    from src.config import get_settings
+
+    trusted = {
+        p.strip()
+        for p in get_settings().TRUSTED_PROXIES.split(",")
+        if p.strip()
+    }
+    if trusted:
+        forwarded = request.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
     if request.client:
         return request.client.host
     return "unknown"
@@ -186,6 +203,17 @@ async def login(body: LoginRequest, request: Request):
         "company_name": company,
         "email": user.email or body.email,
     }
+
+
+@router.post("/logout", summary="Revocar la sesión portal actual")
+async def logout(request: Request):
+    """Invalida la sesión en el registro server-side (revocación real)."""
+    from src.infrastructure.portal_session import revoke_session
+
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        await revoke_session(auth_header[7:])
+    return {"status": "logged_out"}
 
 
 @router.get("/me", summary="Perfil de la sesión portal actual")

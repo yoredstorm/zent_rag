@@ -131,7 +131,10 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = Field(default=6333, ge=1, le=65535)
-    QDRANT_API_KEY: SecretStr | None = None
+    QDRANT_API_KEY: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("QDRANT_API_KEY", "RAG_QDRANT_API_KEY"),
+    )
     QDRANT_GRPC_PORT: int = Field(default=6334, ge=1, le=65535)
     QDRANT_TIMEOUT_SECONDS: int = Field(default=60, ge=5, le=300)
     QDRANT_UPSERT_CONCURRENCY: int = Field(
@@ -302,7 +305,41 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     RATE_LIMIT_PER_MINUTE: int = Field(default=60, ge=1)
     RATE_LIMIT_PER_TENANT_MINUTE: int = Field(default=600, ge=1)
+    RATE_LIMIT_ENABLED: bool = Field(default=True)
+    RATE_LIMIT_PUBLIC_PER_MINUTE: int = Field(
+        default=10,
+        ge=1,
+        description="Max requests/min per IP on public endpoints (signup/trial).",
+    )
     MAX_PROMPT_LENGTH_CHARS: int = Field(default=32000, ge=1)
+    MAX_BODY_BYTES: int = Field(
+        default=1_048_576,
+        ge=1024,
+        description="Tamaño máximo del body HTTP (default 1 MB).",
+    )
+    METRICS_TOKEN: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("METRICS_TOKEN", "RAG_METRICS_TOKEN"),
+    )
+    TRUSTED_PROXIES: str = Field(
+        default="",
+        description="Comma-separated IPs/CIDRs de proxies confiables para X-Forwarded-For.",
+    )
+    SELF_SERVICE_UPGRADE_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Permite cambios de plan self-service. Habilitar solo cuando exista "
+            "un flujo de pago verificado (Stripe) con webhook."
+        ),
+    )
+    SEED_DEMO_DATA: bool = Field(
+        default=True,
+        description="Permite sembrar datos demo/dev (token admin) en la BD.",
+    )
+    REDIS_PASSWORD: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("REDIS_PASSWORD", "RAG_REDIS_PASSWORD"),
+    )
     PROMPT_INJECTION_PATTERNS: list[str] = Field(
         default_factory=lambda: [
             "ignore previous instructions",
@@ -357,7 +394,6 @@ class Settings(BaseSettings):
                 stacklevel=2,
             )
         return v
-
     @field_validator("LITELLM_API_KEY", mode="before")
     @classmethod
     def ensure_api_key_in_production(
@@ -400,6 +436,21 @@ class Settings(BaseSettings):
                     "PORTAL_DEV_PASSWORD must not use the insecure development "
                     "default in production. Unset it or set a strong password."
                 )
+            if _secret_raw(self.POSTGRES_PASSWORD) == "changeme_in_production":
+                raise ValueError(
+                    "POSTGRES_PASSWORD must not use the insecure default "
+                    "('changeme_in_production') in production."
+                )
+            if self.RAG_ADMIN_ENABLED:
+                raise ValueError(
+                    "RAG_ADMIN_ENABLED must be false in production. "
+                    "Admin SQL/table endpoints are dev-only surfaces."
+                )
+            if "*" in {o.strip() for o in self.CORS_ALLOWED_ORIGINS.split(",")}:
+                raise ValueError(
+                    "CORS_ALLOWED_ORIGINS='*' is not allowed in production. "
+                    "Set explicit comma-separated origins."
+                )
         elif insecure:
             warnings.warn(
                 "SECURITY: PORTAL_SESSION_KEY is using the insecure development "
@@ -411,11 +462,13 @@ class Settings(BaseSettings):
 
     def apply_vault_overrides(self) -> None:
         """Override sensitive fields from Vault if available (falls back to .env)."""
+        if not self.VAULT_ADDR:
+            return
         try:
             from src.infrastructure.vault import get_secret, vault_is_available
 
             if not vault_is_available():
-                return
+                raise RuntimeError("Vault configured but not available")
             if secret := get_secret("POSTGRES_PASSWORD"):
                 object.__setattr__(self, "POSTGRES_PASSWORD", SecretStr(secret))
             if secret := get_secret("LITELLM_API_KEY"):
@@ -426,8 +479,20 @@ class Settings(BaseSettings):
                 object.__setattr__(self, "PORTAL_SESSION_KEY", SecretStr(secret))
             if secret := get_secret("QDRANT_API_KEY"):
                 object.__setattr__(self, "QDRANT_API_KEY", SecretStr(secret))
-        except Exception:
-            pass
+        except Exception as exc:
+            # Fail-closed: con Vault configurado, correr con secretos de
+            # .env (posiblemente defaults) es peor que no arrancar.
+            if self.ENVIRONMENT == "production":
+                raise RuntimeError(
+                    "Vault is configured (VAULT_ADDR) but secrets could not be "
+                    "loaded. Refusing to start with fallback secrets."
+                ) from exc
+            import warnings as _warnings
+
+            _warnings.warn(
+                "Vault configured but unavailable; falling back to .env secrets.",
+                stacklevel=2,
+            )
 
 
 @lru_cache

@@ -1,10 +1,10 @@
 import { Flask, FloppyDisk, User, Users } from "@phosphor-icons/react";
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { marked } from "marked";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { useToast } from "../Toast";
 import { ErrorInline, PageHeader, SkeletonBlock, Spinner } from "../components/ui";
+import { renderMarkdownHtml } from "../lib/markdown";
 
 type RolePrompt = {
   system_prompt: string;
@@ -16,11 +16,8 @@ type PromptStatus = {
   roles: Record<string, RolePrompt>;
 };
 
-marked.setOptions({ gfm: true, breaks: true });
-
 function renderMarkdown(text: string) {
-  const html = marked.parse(text, { async: false }) as string;
-  return { __html: html };
+  return renderMarkdownHtml(text);
 }
 
 export default function PromptsPage() {

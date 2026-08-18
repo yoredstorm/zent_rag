@@ -7,6 +7,16 @@ on:
     branches: [master]
 
 jobs:
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -45,6 +55,10 @@ jobs:
           for f in src/infrastructure/db_init/0*.sql; do
             PGPASSWORD=changeme_in_production psql -h localhost -U rag_user -d rag_platform -f "$f"
           done
+
+      - name: Seed dev token (CI-only, mirrors 07-dev-seed.sh)
+        run: |
+          PGPASSWORD=changeme_in_production psql -h localhost -U rag_user -d rag_platform -c "INSERT INTO api_tokens (id, subscription_id, token_hash, token_prefix, name, scopes) SELECT '30000000-0000-0000-0000-000000000001','20000000-0000-0000-0000-000000000001',encode(sha256('rag_test_dev_token_for_local_testing_123'::bytea),'hex'),'rag_test_','Dev Token','[\"rag:query\",\"rag:ingest\",\"admin:*\"]'::jsonb WHERE EXISTS (SELECT 1 FROM subscriptions WHERE id='20000000-0000-0000-0000-000000000001') AND NOT EXISTS (SELECT 1 FROM api_tokens WHERE subscription_id='20000000-0000-0000-0000-000000000001');"
 
       - name: Install deps
         run: pip install -e ".[prod,dev]"

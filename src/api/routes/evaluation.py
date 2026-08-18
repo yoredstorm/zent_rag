@@ -16,13 +16,10 @@ router = APIRouter(prefix="/api/v1/eval", tags=["Evaluation"])
 
 
 def _resolve_tenant_id(request: Request, x_tenant_id: str) -> UUID:
-    tid = x_tenant_id or getattr(request.state, "tenant_id", "")
-    if not tid:
-        raise HTTPException(400, "X-Tenant-Id header required")
-    try:
-        return UUID(tid)
-    except ValueError:
-        raise HTTPException(400, "X-Tenant-Id must be a valid UUID")
+    """Tenant autenticado gana; header distinto -> 403 (anti cross-tenant)."""
+    from src.api.security import resolve_tenant
+
+    return resolve_tenant(request, x_tenant_id)
 
 
 # ---------------------------------------------------------------------------
@@ -130,17 +127,16 @@ async def run_golden_eval(
     request: Request,
     x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
 ):
+    from src.api.security import require_tenant_admin, resolve_tenant
     from src.config import get_settings
     from src.scripts.eval_rag import run_eval
 
     if not get_settings().RAG_ADMIN_ENABLED:
         raise HTTPException(403, "Eval run requires RAG_ADMIN_ENABLED=true")
 
-    tenant_id = _resolve_tenant_id(request, x_tenant_id)
-    user_id = UUID("00000000-0000-0000-0000-000000000002")
-    ctx = getattr(request.state, "billing_context", None)
-    if ctx is not None:
-        tenant_id = ctx.tenant_id
+    ctx = require_tenant_admin(request)
+    tenant_id = resolve_tenant(request, x_tenant_id)
+    user_id = ctx.user_id or UUID("00000000-0000-0000-0000-000000000002")
 
     summary = await run_eval(
         golden_path=__import__("pathlib").Path(__file__).resolve().parents[3]

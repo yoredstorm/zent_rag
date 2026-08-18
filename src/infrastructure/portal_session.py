@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import secrets
 import time
 from dataclasses import dataclass
 from uuid import UUID
@@ -13,6 +14,9 @@ from uuid import UUID
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from src.config import get_settings
+from src.infrastructure.logging_config import get_logger
+
+logger = get_logger(__name__)
 
 SESSION_PREFIX = "rag_sess_"
 _NONCE_LEN = 12
@@ -28,6 +32,7 @@ class SessionPayload:
     tenant_id: UUID
     exp: int
     typ: str = "portal"
+    sid: str | None = None  # session id for server-side revocation
 
 
 def _decode_key(raw: str) -> bytes:
@@ -57,9 +62,11 @@ def encrypt_session(
 ) -> str:
     settings = get_settings()
     hours = ttl_hours if ttl_hours is not None else settings.PORTAL_SESSION_TTL_HOURS
+    sid = secrets.token_hex(16)
     payload = {
         "uid": str(user_id),
         "tid": str(tenant_id),
+        "sid": sid,
         "exp": int(time.time()) + int(hours * 3600),
         "typ": "portal",
     }
@@ -68,6 +75,43 @@ def encrypt_session(
     ciphertext = _aesgcm().encrypt(nonce, plaintext, None)
     blob = base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii").rstrip("=")
     return f"{SESSION_PREFIX}{blob}"
+
+
+async def revoke_session(token: str) -> None:
+    """Invalida una sesión portal (logout): añade su sid a la lista de revocación.
+
+    Diseño libre de carreras: la sesión es válida por defecto; solo el logout
+    (con el token en mano) escribe la revocación con TTL hasta su expiración.
+    """
+    try:
+        payload = decrypt_session(token)
+    except SessionTokenError:
+        return
+    if not payload.sid:
+        return
+    ttl_seconds = max(int(payload.exp - time.time()), 1)
+    try:
+        from src.infrastructure.cache import _get_redis
+
+        client = await _get_redis()
+        await client.set(f"rag:session:revoked:{payload.sid}", "1", ex=ttl_seconds)
+    except Exception as exc:
+        logger.warning("Could not revoke portal session", error=str(exc))
+
+
+async def session_is_active(sid: str | None) -> bool:
+    """False si la sesión fue revocada (logout). Sid None (tokens legacy) -> True."""
+    if not sid:
+        return True
+    try:
+        from src.infrastructure.cache import _get_redis
+
+        client = await _get_redis()
+        revoked = await client.exists(f"rag:session:revoked:{sid}")
+        return not bool(revoked)
+    except Exception as exc:
+        logger.warning("Session registry unavailable; fail-open", error=str(exc))
+        return True
 
 
 def decrypt_session(token: str) -> SessionPayload:
@@ -101,6 +145,7 @@ def decrypt_session(token: str) -> SessionPayload:
             tenant_id=UUID(data["tid"]),
             exp=exp,
             typ="portal",
+            sid=data.get("sid"),
         )
     except (KeyError, ValueError) as exc:
         raise SessionTokenError("Invalid session claims") from exc

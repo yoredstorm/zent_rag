@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from uuid import UUID
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 
@@ -30,8 +30,28 @@ _RESERVED_WORDS = {
     "table", "from", "where", "join", "union", "into", "values", "set",
     "grant", "revoke", "commit", "rollback", "begin", "transaction",
 }
-# Tablas del sistema protegidas contra escritura (lectura permitida)
-_PROTECTED_TABLES: set[str] = set()
+# Tablas del sistema protegidas contra escritura/lectura masiva
+_PROTECTED_TABLES: set[str] = {
+    "tenants",
+    "users",
+    "subscriptions",
+    "plans",
+    "api_tokens",
+    "request_quota",
+    "usage_logs",
+    "query_audit_log",
+    "rate_limit_counters",
+    "rag_evaluations",
+    "documents",
+    "alembic_version",
+}
+
+
+def _require_admin(request: Request):
+    """Toda ruta /admin/* exige tenant admin (sesión portal o scope admin:*)."""
+    from src.api.security import require_tenant_admin
+
+    return require_tenant_admin(request)
 
 
 def _validate_identifier(value: str, label: str = "identifier") -> str:
@@ -111,12 +131,13 @@ class InsertRowsRequest(BaseModel):
 # -----------------------------------------------------------------------------
 @router.get("/tables", summary="Listar todas las tablas")
 async def list_tables(
-    x_tenant_id: str = Header(..., alias="X-Tenant-Id"),
+    request: Request,
+    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
 ):
-    try:
-        UUID(x_tenant_id)
-    except ValueError:
-        raise HTTPException(400, "X-Tenant-Id inválido")
+    from src.api.security import resolve_tenant
+
+    _require_admin(request)
+    resolve_tenant(request, x_tenant_id)
 
     session = await get_async_session()
     try:
@@ -147,12 +168,13 @@ async def list_tables(
 @router.post("/tables", status_code=201, summary="Crear una nueva tabla")
 async def create_table(
     body: CreateTableRequest,
-    x_tenant_id: str = Header(..., alias="X-Tenant-Id"),
+    request: Request,
+    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
 ):
-    try:
-        tenant_id = UUID(x_tenant_id)
-    except ValueError:
-        raise HTTPException(400, "X-Tenant-Id inválido")
+    from src.api.security import resolve_tenant
+
+    _require_admin(request)
+    tenant_id = resolve_tenant(request, x_tenant_id)
 
     schema = _validate_identifier(body.schema_name, "Schema")
     table = body.table_name
@@ -212,7 +234,7 @@ async def create_table(
     except Exception as exc:
         await session.rollback()
         logger.error("Failed to create table", error=str(exc))
-        raise HTTPException(500, f"Error creando tabla: {exc}")
+        raise HTTPException(500, "Error creando tabla")
     finally:
         await session.close()
 
@@ -222,12 +244,13 @@ async def insert_rows(
     schema_name: str,
     table_name: str,
     body: InsertRowsRequest,
-    x_tenant_id: str = Header(..., alias="X-Tenant-Id"),
+    request: Request,
+    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
 ):
-    try:
-        tenant_id = UUID(x_tenant_id)
-    except ValueError:
-        raise HTTPException(400, "X-Tenant-Id inválido")
+    from src.api.security import resolve_tenant
+
+    _require_admin(request)
+    tenant_id = resolve_tenant(request, x_tenant_id)
 
     schema = _validate_identifier(schema_name, "Schema")
     table = _validate_identifier(table_name, "Tabla")
@@ -283,7 +306,8 @@ async def insert_rows(
         return {"status": "inserted", "rows": inserted, "schema": schema, "table": table}
     except Exception as exc:
         await session.rollback()
-        raise HTTPException(500, f"Error insertando filas: {exc}")
+        logger.error("Failed to insert rows", error=str(exc))
+        raise HTTPException(500, "Error insertando filas")
     finally:
         await session.close()
 
@@ -292,15 +316,17 @@ async def insert_rows(
 async def get_columns(
     schema_name: str,
     table_name: str,
-    x_tenant_id: str = Header(..., alias="X-Tenant-Id"),
+    request: Request,
+    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
 ):
-    try:
-        UUID(x_tenant_id)
-    except ValueError:
-        raise HTTPException(400, "X-Tenant-Id inválido")
+    from src.api.security import resolve_tenant
+
+    _require_admin(request)
+    resolve_tenant(request, x_tenant_id)
 
     schema = _validate_identifier(schema_name, "Schema")
     table = _validate_identifier(table_name, "Tabla")
+    _check_not_protected(table)
 
     session = await get_async_session()
     try:
@@ -343,17 +369,19 @@ async def get_columns(
 async def list_rows(
     schema_name: str,
     table_name: str,
-    limit: int = 100,
-    offset: int = 0,
-    x_tenant_id: str = Header(..., alias="X-Tenant-Id"),
+    request: Request,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0, le=100_000),
+    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
 ):
-    try:
-        UUID(x_tenant_id)
-    except ValueError:
-        raise HTTPException(400, "X-Tenant-Id inválido")
+    from src.api.security import resolve_tenant
+
+    _require_admin(request)
+    resolve_tenant(request, x_tenant_id)
 
     schema = _validate_identifier(schema_name, "Schema")
     table = _validate_identifier(table_name, "Tabla")
+    _check_not_protected(table)
 
     session = await get_async_session()
     try:
@@ -403,12 +431,13 @@ async def list_rows(
 async def drop_table(
     schema_name: str,
     table_name: str,
-    x_tenant_id: str = Header(..., alias="X-Tenant-Id"),
+    request: Request,
+    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
 ):
-    try:
-        UUID(x_tenant_id)
-    except ValueError:
-        raise HTTPException(400, "X-Tenant-Id inválido")
+    from src.api.security import resolve_tenant
+
+    _require_admin(request)
+    resolve_tenant(request, x_tenant_id)
 
     schema = _validate_identifier(schema_name, "Schema")
     table = _validate_identifier(table_name, "Tabla")
@@ -421,7 +450,8 @@ async def drop_table(
         return {"status": "dropped", "schema": schema, "table": table}
     except Exception as exc:
         await session.rollback()
-        raise HTTPException(500, f"Error eliminando tabla: {exc}")
+        logger.error("Failed to drop table", error=str(exc))
+        raise HTTPException(500, "Error eliminando tabla")
     finally:
         await session.close()
 
@@ -477,16 +507,32 @@ async def execute_sql(request: Request, x_tenant_id: str = Header(default="", al
     if not query:
         raise HTTPException(400, "Query requerida")
 
+    if len(query) > 8000:
+        raise HTTPException(400, "Query demasiado larga (max 8000 chars)")
+
     # Validar con sqlglot AST — bloquea CTE bypass (WITH x AS DELETE...)
     # EXPLAIN y SHOW los parsea sqlglot como "command" genérico — los tratamos aparte
+    import sqlglot
+
     from src.infrastructure.sql_expert import SqlValidationError
+
+    # Bloquear palabras/patrones prohibidos en TODOS los statements
+    if _FORBIDDEN_KEYWORDS.search(query):
+        raise HTTPException(403, "Forbidden SQL keyword detected")
+
+    # Rechazar multi-statement (defensa en profundidad; no depender del driver)
+    try:
+        parsed_statements = sqlglot.parse(query, error_level=sqlglot.ErrorLevel.RAISE)
+    except Exception as exc:
+        raise HTTPException(403, "Invalid SQL syntax")
+    if len(parsed_statements) > 1:
+        raise HTTPException(403, "Multi-statement SQL is not allowed")
 
     _explain_match = re.match(r"^\s*EXPLAIN\b(.+)$", query, re.IGNORECASE)
     _show_match = re.match(r"^\s*SHOW\b", query, re.IGNORECASE)
 
     if _show_match:
-        if _FORBIDDEN_KEYWORDS.search(query):
-            raise HTTPException(403, "Forbidden SQL keyword in SHOW query")
+        pass
     elif _explain_match:
         inner = _explain_match.group(1).strip()
         if not inner:
@@ -509,8 +555,13 @@ async def execute_sql(request: Request, x_tenant_id: str = Header(default="", al
         query_preview=query[:500],
     )
 
+    settings = get_settings()
+    timeout_seconds = settings.RAG_SQL_TIMEOUT_SECONDS
     session = await get_async_session()
     try:
+        await session.execute(
+            text(f"SET LOCAL statement_timeout = '{timeout_seconds}s'")
+        )
         result = await session.execute(text(query))
         if result.returns_rows:
             cols = list(result.keys())
@@ -520,6 +571,7 @@ async def execute_sql(request: Request, x_tenant_id: str = Header(default="", al
             return {"columns": cols, "rows": rows, "count": len(rows)}
         return {"message": "Query ejecutada (sin resultados)", "affected": result.rowcount}
     except Exception as exc:
-        raise HTTPException(500, f"Error SQL: {exc}")
+        logger.error("Admin SQL execution failed", error=str(exc), exc_info=True)
+        raise HTTPException(500, "Error SQL")
     finally:
         await session.close()

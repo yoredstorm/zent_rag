@@ -216,7 +216,7 @@ class PostgresTenantRepository(TenantRepository):
             result = await session.execute(
                 text(
                     "INSERT INTO tenants (id, name, api_key_hash, status, rate_limit_per_minute) "
-                    "VALUES (:id, :name, :hash, 'active', 999999) "
+                    "VALUES (:id, :name, :hash, 'active', 600) "
                     "ON CONFLICT (id) DO UPDATE SET name = :name2, api_key_hash = :hash2 "
                     "RETURNING id, name, api_key_hash, status, rate_limit_per_minute, "
                     "max_tokens_per_request, llm_model_override, embedding_model_override, "
