@@ -7,6 +7,7 @@ import base64
 import json
 import os
 import secrets
+import threading
 import time
 from dataclasses import dataclass
 from uuid import UUID
@@ -20,6 +21,28 @@ logger = get_logger(__name__)
 
 SESSION_PREFIX = "rag_sess_"
 _NONCE_LEN = 12
+
+# Fallback in-memory de la lista de revocación cuando Redis no está
+# disponible (CI, single-process dev). Mismo patrón que auth_rate_limit.
+_mem_lock = threading.Lock()
+_mem_revoked: dict[str, float] = {}  # sid -> expires_at (epoch)
+
+
+def _mem_revoke(sid: str, ttl_seconds: int) -> None:
+    with _mem_lock:
+        _mem_revoked[sid] = time.time() + ttl_seconds
+
+
+def _mem_is_revoked(sid: str) -> bool:
+    now = time.time()
+    with _mem_lock:
+        exp = _mem_revoked.get(sid)
+        if exp is None:
+            return False
+        if now >= exp:
+            del _mem_revoked[sid]
+            return False
+        return True
 
 
 class SessionTokenError(Exception):
@@ -96,7 +119,11 @@ async def revoke_session(token: str) -> None:
         client = await _get_redis()
         await client.set(f"rag:session:revoked:{payload.sid}", "1", ex=ttl_seconds)
     except Exception as exc:
-        logger.warning("Could not revoke portal session", error=str(exc))
+        logger.warning(
+            "Redis unavailable; recording revocation in-memory",
+            error=str(exc),
+        )
+        _mem_revoke(payload.sid, ttl_seconds)
 
 
 async def session_is_active(sid: str | None) -> bool:
@@ -110,8 +137,8 @@ async def session_is_active(sid: str | None) -> bool:
         revoked = await client.exists(f"rag:session:revoked:{sid}")
         return not bool(revoked)
     except Exception as exc:
-        logger.warning("Session registry unavailable; fail-open", error=str(exc))
-        return True
+        logger.warning("Session registry unavailable; using in-memory", error=str(exc))
+        return not _mem_is_revoked(sid)
 
 
 def decrypt_session(token: str) -> SessionPayload:
