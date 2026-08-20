@@ -36,7 +36,7 @@ groups:
             {{ $value | humanize }} errores/segundo. Verificar:
             - Disponibilidad del modelo de embeddings
             - Conexión con Qdrant (vector store)
-            - Configuración del tenant y permisos
+            - Configuración del organization y permisos
 
       # -----------------------------------------------------------------------
       # Alerta 3: Cuota cercana al límite (90% de uso)
@@ -47,11 +47,11 @@ groups:
         labels:
           severity: warning
         annotations:
-          summary: "Uso de cuota superior al 90% para el tenant {{ $labels.tenant_id }}"
+          summary: "Uso de cuota superior al 90% para el organization {{ $labels.organization_id }}"
           description: |
-            El tenant {{ $labels.tenant_id }} ha consumido el
+            El organization {{ $labels.organization_id }} ha consumido el
             {{ $value | humanizePercentage }} de su cuota asignada. Verificar:
-            - Plan y límites del tenant en el panel de billing
+            - Plan y límites del organization en el panel de billing
             - Posible abuso o fuga de consultas
             - Necesidad de escalar el plan (upsell)
 

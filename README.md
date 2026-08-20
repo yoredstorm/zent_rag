@@ -1,13 +1,13 @@
 # RAG-as-a-Service Platform
 
-AI Agent Orchestration con Retrieval-Augmented Generation (RAG) multi-tenant, full observability y facturación integrada.
+AI Agent Orchestration con Retrieval-Augmented Generation (RAG) multi-organization, full observability y facturación integrada.
 
 ## Stack Tecnológico
 
 | Capa | Tecnología | Rol |
 |---|---|---|
 | **API Gateway** | FastAPI (Python 3.11) | REST API, validación Pydantic, Swagger/ReDoc autodocumentado |
-| **BD Relacional** | PostgreSQL 16 + pgvector | Tenants, usuarios, billing, schemas de datos de dominio |
+| **BD Relacional** | PostgreSQL 16 + pgvector | Organizations, usuarios, billing, schemas de datos de dominio |
 | **BD Vectorial** | Qdrant v1.13 | Embeddings y búsqueda semántica (HNSW) |
 | **Caché** | Redis 7 | Rate limiting, caché de embeddings, colas de tareas |
 | **LLM Proxy** | LiteLLM | Proxy unificado: OpenAI, Anthropic, Ollama, Azure, etc. |
@@ -22,29 +22,38 @@ AI Agent Orchestration con Retrieval-Augmented Generation (RAG) multi-tenant, fu
 ┌─────────────────────────────────────────────────────────────────┐
 │                    RAG-as-a-Service Platform                    │
 ├─────────────────────────────────────────────────────────────────┤
-│  API Layer (FastAPI)                                            │
+│  API Layer (FastAPI) — composition root                        │
 │  ├── /health          Health check                              │
-│  ├── /metrics         Prometheus metrics                        │
+│  ├── /metrics         Prometheus metrics (scrape token)         │
 │  ├── /api/v1/rag/*    RAG Query endpoint                        │
 │  ├── /api/v1/ingestion/*  Data ingestion (SQL → Vector DB)     │
 │  ├── /api/v1/admin/*  Dynamic table management (dev only)       │
 │  ├── /api/v1/billing/*  Subscription & API key management       │
 │  └── /docs            Swagger UI auto-generated                 │
 ├─────────────────────────────────────────────────────────────────┤
-│  Application Layer (Use Cases)                                  │
-│  └── RAGOrchestrator: embedding → search → assemble → generate │
+│  agents/runtime — Orquestador (SQL-first vs RAG) + policies     │
 ├─────────────────────────────────────────────────────────────────┤
-│  Domain Layer (Entities & Ports)                                │
-│  ├── LLMProvider, EmbeddingProvider, VectorStore, CacheProvider │
-│  └── LLMResponse, RAGQueryResult, RetrievalContext              │
+│  core/ — isla agnóstica de negocio                             │
+│  ├── domain/   entidades puras (Organization, RetrievalChunk, ...)    │
+│  ├── ports/    ABCs: repos, LLMProvider, VectorStore, Cache...  │
+│  └── config.py  settings validados (fail-fast en producción)    │
 ├─────────────────────────────────────────────────────────────────┤
-│  Infrastructure Layer (Adapters)                                │
-│  ├── LiteLLMProvider      LLM + Embeddings via LiteLLM          │
-│  ├── QdrantVectorStore    Vector DB CRUD + semantic search      │
-│  ├── PostgresRepositories Tenants, users, billing, SQL data     │
-│  ├── RedisCache           Rate limiting & conversation cache    │
-│  ├── CircuitBreaker       Fail-fast protection for LLM calls    │
-│  └── DataIngestion        SQL rows → embeddings → Qdrant       │
+│  platform/  auth · organizations · users · billing · usage            │
+│  rag/       retrieval · chunking · reranking · evaluation       │
+│  connectors/sql  schema discovery · ingestion · queue · worker  │
+├─────────────────────────────────────────────────────────────────┤
+│  infrastructure/ — adaptadores concretos (implementan ports)    │
+│  ├── postgres/  session factory + repos                         │
+│  ├── redis/     cache                                            │
+│  ├── qdrant/    vector store                                     │
+│  ├── llm/       LiteLLM provider + circuit breaker (resilience)  │
+│  ├── observability/  logging · tracing · metrics                 │
+│  └── secrets/   Vault                                            │
+├─────────────────────────────────────────────────────────────────┤
+│  verticals/ — lógica vertical como plugins (demo_farmacia)      │
+│  ├── prompts.py      system prompts del dominio                  │
+│  ├── heuristics.py   reescrituras SQL del dominio                │
+│  └── golden/         golden sets de evaluación                   │
 ├─────────────────────────────────────────────────────────────────┤
 │  Observability Stack (PLG)                                      │
 │  ├── Prometheus   Metrics scraping from /metrics                │
@@ -52,14 +61,21 @@ AI Agent Orchestration con Retrieval-Augmented Generation (RAG) multi-tenant, fu
 │  ├── Promtail     Log tailing agent for Docker containers       │
 │  └── Grafana      Pre-configured dashboards (health, billing)   │
 └─────────────────────────────────────────────────────────────────┘
+
+Reglas de dependencia (enforced por tests/test_architecture.py):
+- core/ es una isla: no importa nada fuera de src.core.
+- infrastructure/ no importa capas superiores (api/rag/agents/platform/connectors/verticals).
+- rag/ y agents/ no importan adaptadores (solo puertos + factory de sesión).
+- Sin strings de negocio vertical (farmacia, order_status, ...) en core/rag/agents/platform.
+- Toda lógica vertical vive en verticals/ (plugins) o en organizations.config_json.
 ```
 
 ## Flujo RAG (Query → Response)
 
 ```
-1. POST /api/v1/rag/query  { query, tenant_id, user_id, model? }
+1. POST /api/v1/rag/query  { query, organization_id, user_id, model? }
 │
-2. Resolver tenant + validar API Key / rate limit
+2. Resolver organization + validar API Key / rate limit
 │
 3. Generar embedding de la pregunta (LiteLLM → Novita/Ollama bge-m3)
 │
@@ -82,57 +98,65 @@ AI Agent Orchestration con Retrieval-Augmented Generation (RAG) multi-tenant, fu
 ```
 zent_rag/
 ├── src/
-│   ├── api/                    # FastAPI REST Layer
+│   ├── api/                    # FastAPI REST Layer (composition root)
 │   │   ├── main.py             # App factory, middleware, routers, lifespan
 │   │   ├── deps.py             # Dependency injection (Clean Architecture)
-│   │   ├── metrics.py          # Prometheus metric definitions
+│   │   ├── schemas.py          # DTOs HTTP (request/response Pydantic)
+│   │   ├── security.py         # Authz HTTP (organization/rol desde Bearer)
 │   │   ├── middleware.py       # Trace ID injection, structured logging
-│   │   ├── billing_middleware.py  # Tenant/user resolution from Bearer token
-│   │   └── routes/
-│   │       ├── query.py        # POST /api/v1/rag/query
-│   │       ├── ingestion.py    # POST /api/v1/ingestion/sync
-│   │       ├── admin.py        # GET/POST/DELETE /api/v1/admin/*
-│   │       ├── billing.py      # GET/POST /api/v1/billing/*
-│   │       └── health.py       # GET /health, GET /metrics
+│   │   ├── tenant_middleware.py # Auth + TenantContext (org/user/roles/perms)
+│   │   ├── rate_limit_middleware.py / body_limit / idempotency
+│   │   └── routes/             # query, ingestion, admin, billing, auth, eval,
+│   │                           # prompt, health, organizations, projects,
+│   │                           # knowledge_bases, agents, connectors, audit
 │   │
-│   ├── application/            # Use Cases / Orchestrators
-│   │   └── orchestrator.py     # RAG query execution flow
+│   ├── core/                   # Isla agnóstica de negocio (cero frameworks)
+│   │   ├── domain/             # entities.py, services.py
+│   │   ├── ports/              # ABCs: platform_repos, rag_ports, sql_expert
+│   │   └── config.py           # Settings tipados (prefix RAG_)
 │   │
-│   ├── domain/                 # Pure domain logic (no external deps)
-│   │   ├── entities.py         # LLMResponse, RAGQueryResult, etc.
-│   │   ├── models.py           # Pydantic request/response models
-│   │   ├── ports.py            # ABC interfaces (LLMProvider, VectorStore, etc.)
-│   │   ├── services.py         # Domain services (rate limiting, context assembly)
-│   │   └── sql_expert.py       # Natural Language → SQL (Text-to-SQL)
+│   ├── agents/                 # Runtime del agente
+│   │   ├── runtime/            # orchestrator.py (SQL-first vs RAG)
+│   │   ├── tools/              # sql_expert_postgres.py (NL → SQL validado)
+│   │   └── policies/           # authorization.py (RBAC puro), prompt injection
 │   │
-│   ├── infrastructure/         # External adapters (DB, Cache, LLM, Qdrant)
-│   │   ├── llm_provider.py     # LiteLLM unified adapter (LLM + Embeddings)
-│   │   ├── vector_store.py     # Qdrant vector store adapter
-│   │   ├── relational_db.py    # PostgreSQL async repositories
-│   │   ├── cache.py            # Redis cache provider
-│   │   ├── data_ingestion.py   # SQL → Embeddings → Qdrant pipeline
-│   │   ├── circuit_breaker.py  # Fail-fast pattern for LLM/embedding calls
-│   │   ├── billing_service.py  # Billing/subscription domain
-│   │   ├── sql_expert.py       # SQL schema introspection + query execution
-│   │   ├── logging_config.py   # Structlog JSON configuration
-│   │   └── db_init/            # SQL init schemas & Alembic migrations
-│   │       ├── 01-init-schema.sql
-│   │       ├── 02-seed-retail.sql
-│   │       ├── 03-billing.sql
-│   │       ├── 04-tenant-fields.sql
-│   │       └── versions/001_initial.py
+│   ├── platform/               # Capacidades SaaS de plataforma
+│   │   ├── auth/               # session.py, passwords.py, rate_limit.py
+│   │   ├── billing/            # service.py (planes, suscripciones, tokens)
+│   │   └── usage/              # lazy_rate_limit.py, lazy_activity.py
 │   │
-│   └── config.py               # Typed settings via pydantic-settings (prefix RAG_)
+│   ├── rag/                    # Capacidad RAG genérica
+│   │   ├── reranking/          # reranker.py
+│   │   └── evaluation/         # store.py (feedback/stats)
+│   │
+│   ├── connectors/sql/         # schema_discovery, ingestion, queue, worker
+│   │
+│   ├── infrastructure/         # Adaptadores concretos (implementan ports)
+│   │   ├── postgres/           # session.py + relational_db.py (repos)
+│   │   ├── redis/              # cache.py
+│   │   ├── qdrant/             # vector_store.py
+│   │   ├── llm/                # provider.py (LiteLLM)
+│   │   ├── resilience/         # circuit_breaker.py
+│   │   ├── observability/      # logging_config, tracing, metrics
+│   │   ├── secrets/            # vault.py
+│   │   └── db_init/            # SQL schemas + Alembic + seed-demo/ (gated)
+│   │
+│   ├── verticals/              # Lógica vertical como plugins (NO está en core)
+│   │   └── demo_farmacia/      # prompts.py, heuristics.py, golden/
+│   │
+│   └── scripts/eval_rag.py     # Runner de evaluación golden set
 │
 ├── tests/
 │   ├── conftest.py             # Async fixtures (mock DB, Qdrant, Redis, LLM)
+│   ├── test_architecture.py    # Guardas de dependencias entre capas
+│   ├── test_security_hardening.py  # Organization isolation, RBAC, rate limits
 │   ├── test_rag_query.py       # RAG query integration tests
 │   └── test_billing.py         # Billing endpoint tests
 │
-├── portal/                     # Portal B2B (Vite + React) — UI tenant
+├── portal/                     # Portal B2B (Vite + React) — UI organization
 │   ├── src/                    # Signup, dashboard, usage, keys, ingestion, prompts, chat
 │   ├── Dockerfile              # Multi-stage nginx static
-│   └── nginx.conf              # Proxy /api → api:8000
+│   └── nginx.conf              # Proxy /api → api:8000 + security headers/CSP
 │
 ├── config/                     # Observability configuration files
 │   ├── prometheus/prometheus.yml
@@ -207,7 +231,7 @@ docker exec rag-ollama ollama pull bge-m3
 
 ### 5. Flujo de uso típico
 
-1. **Crear trial** → http://localhost:8080/signup (empresa → tenant + API token)
+1. **Crear trial** → http://localhost:8080/signup (empresa → organization + API token)
 2. **Sincronizar datos** → Portal → Ingestión → Sync All  
    (por defecto omite `sales`; embeddings cloud vía Novita. Si usas Ollama CPU, espera tiempos largos en BD masiva.)
 3. **Consultas RAG** → Portal → Chat demo
@@ -227,7 +251,7 @@ GET  /metrics       # Prometheus metrics
 ```bash
 POST /api/v1/rag/query
 Headers:
-  X-Tenant-Id: <uuid>
+  X-Organization-Id: <uuid>
   X-User-Id: <uuid>
   X-User-Role: admin|customer
 Body:
@@ -292,7 +316,7 @@ POST   /api/v1/admin/sql                                  # Ejecutar SQL raw
 
 ### Prompt Management
 
-Gestiona el system prompt del asistente RAG por tenant y por rol (admin vs customer) sin redeploy. El endpoint de test usa el pipeline RAG real (vectores + SQL expert) para pruebas con datos reales.
+Gestiona el system prompt del asistente RAG por organization y por rol (admin vs customer) sin redeploy. El endpoint de test usa el pipeline RAG real (vectores + SQL expert) para pruebas con datos reales.
 
 ```bash
 GET    /api/v1/admin/prompt               # Ver prompts por rol (admin + customer)
@@ -336,7 +360,7 @@ POST   /api/v1/admin/prompt/test          # Test con RAG real (embedding + vecto
 4. `PUT /prompt` con `"role": "admin"` o `"customer"` para guardar
 5. `DELETE /prompt?role=admin` para resetear un rol específico
 
-**Variables disponibles** en los prompts: `{role}`, `{tenant_name}`, `{date}`, `{top_k}`.
+**Variables disponibles** en los prompts: `{role}`, `{organization_name}`, `{date}`, `{top_k}`.
 
 ### Auth (portal)
 
@@ -350,12 +374,40 @@ GET    /api/v1/auth/me                                    # Perfil (Bearer rag_s
 
 ```bash
 GET    /api/v1/billing/plans                              # Listar planes disponibles
-POST   /api/v1/billing/subscription/create-trial          # Crear tenant trial (API/legacy; body: company_name)
+POST   /api/v1/billing/subscription/create-trial          # Crear organization trial (API/legacy; body: company_name)
 GET    /api/v1/billing/subscription                       # Ver suscripción actual (Bearer)
 POST   /api/v1/billing/subscription/upgrade               # Cambiar de plan (Bearer + X-New-Plan)
-GET    /api/v1/billing/usage                              # Uso del tenant (Bearer)
-GET    /api/v1/billing/token                              # Info API key (Bearer)
+GET    /api/v1/billing/usage                              # Uso del organization (Bearer)
+GET    /api/v1/billing/token                              # Listar API keys (Bearer)
 POST   /api/v1/billing/token/rotate                       # Rotar API key (Bearer)
+```
+
+### Organización, proyectos y recursos (RBAC)
+
+```bash
+# Organización (identidad = Bearer; nunca body/header)
+GET    /api/v1/organizations                              # Perfil
+PUT    /api/v1/organizations                              # Actualizar (permiso org:write)
+GET    /api/v1/organizations/members                      # Miembros + roles (users:read)
+POST   /api/v1/organizations/members/{user_id}/role       # Asignar rol (users:write)
+DELETE /api/v1/organizations/members/{user_id}            # Remover miembro (users:write)
+GET    /api/v1/organizations/roles                        # Roles de sistema
+GET    /api/v1/organizations/api-keys                     # Listar API keys (apikeys:read)
+POST   /api/v1/organizations/api-keys                     # Crear key (apikeys:write)
+DELETE /api/v1/organizations/api-keys/{key_id}            # Revocar key (apikeys:write)
+
+# Recursos (todos organization-scoped; project_id opcional)
+GET/POST        /api/v1/projects          # projects:read / projects:write
+GET/PUT/DELETE  /api/v1/projects/{id}
+GET/POST        /api/v1/knowledge-bases   # kbs:read / kbs:write (delete purga vectores org+kb)
+GET/PUT/DELETE  /api/v1/knowledge-bases/{id}
+GET/POST        /api/v1/agents            # agents:read / agents:write
+GET/PUT/DELETE  /api/v1/agents/{id}
+GET/POST        /api/v1/connectors        # connectors:read / connectors:write
+GET/PUT/DELETE  /api/v1/connectors/{id}
+
+# Auditoría (solo entradas de la organización autenticada)
+GET    /api/v1/audit-logs                 # audit:read
 ```
 
 ## Variables de Entorno
@@ -417,9 +469,32 @@ mypy src/
 
 - **Clean Architecture**: Separación estricta entre API → Application → Domain → Infrastructure. El dominio no depende de ningún framework ni librería externa.
 - **Circuit Breaker**: Protege las llamadas a LLM y embeddings con un patrón fail-fast. Tras 3 fallos consecutivos, abre el circuito y rechaza llamadas durante 30s.
-- **Multi-tenant**: Cada tenant tiene su propio collection en Qdrant, su API key, y su propio system prompt personalizable (vía `config_json`). Rate limiting por tenant.
+- **Multi-tenant con aislamiento estricto**: colección Qdrant única compartida (`rag_documents`) con filtro obligatorio por `organization_id` en cada búsqueda/upsert; SQL Expert inyecta `organization_id` en tablas organization-aware; Redis keys, jobs de ingestion y audit logs namespaced por organización.
 - **Conversation History**: Las conversaciones se cachean en Redis con TTL configurable. El contexto incluye el historial de la sesión.
 - **SQL Expert**: Módulo opcional que convierte preguntas en lenguaje natural a SQL, ejecuta contra PostgreSQL y añade los resultados al contexto del LLM.
+
+## Seguridad Multi-Tenant (cross-tenant leakage prevention)
+
+1. **La identidad manda**: el tenant se deriva EXCLUSIVAMENTE del Bearer validado
+   (hash SHA-256 de la API key en `api_keys`, o sesión portal AES-256-GCM).
+2. **Nunca se confía en headers/body**: `X-Organization-Id`, `X-User-Id`,
+   `X-User-Role` y `organization_id` del body no definen la identidad; si
+   difieren del contexto autenticado → **403** (validado centralmente en
+   `TenantMiddleware`, src/api/tenant_middleware.py).
+3. **TenantContext** (`tenant_id`, `user_id`, `roles`, `permissions`) se
+   propaga vía `request.state` + ContextVar a API, RAG, Vector Store, SQL,
+   Connectors, Usage, Billing y Audit (`src/platform/tenants/context.py`).
+4. **RBAC**: `memberships(org, user, role) → roles → role_permissions →
+   permissions`. Roles de sistema: `owner`, `admin`, `member`, `viewer`.
+   Política en `src/platform/rbac/policy.py` (`require_permission(...)`).
+5. **404 (no 403)** al acceder por ID a recursos de otra organización: no se
+   revela ni la existencia del recurso.
+6. **Auditoría**: toda acción sensible (projects, kbs, agents, connectors,
+   api keys, roles) escribe en `audit_logs` con la organización del contexto
+   autenticado; cada organización solo lee sus propias entradas.
+7. **Tests de aislamiento**: `tests/test_tenant_isolation.py` demuestra con
+   dos organizaciones reales (A y B) que A no puede leer, modificar ni
+   vector-search datos de B; incluye integración real con Qdrant.
 
 ## Licencia
 

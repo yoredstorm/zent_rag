@@ -31,6 +31,8 @@ x-common-env: &common-env
   RAG_RAG_CONVERSATION_TTL_SECONDS: ${RAG_RAG_CONVERSATION_TTL_SECONDS:-3600}
   RAG_RAG_SQL_EXPERT_ENABLED: ${RAG_RAG_SQL_EXPERT_ENABLED:-false}
   RAG_RAG_SQL_TIMEOUT_SECONDS: ${RAG_RAG_SQL_TIMEOUT_SECONDS:-5}
+  RAG_SQL_HEURISTICS_MODULES: ${RAG_SQL_HEURISTICS_MODULES:-}
+  RAG_GOLDEN_SET_PATH: ${RAG_GOLDEN_SET_PATH:-}
   RAG_RAG_MAX_CONTEXT_TOKENS: ${RAG_RAG_MAX_CONTEXT_TOKENS:-32000}
   RAG_RAG_LAZY_INGESTION_ENABLED: ${RAG_RAG_LAZY_INGESTION_ENABLED:-false}
   RAG_RAG_LAZY_INGEST_MAX_ROWS_PER_TABLE: ${RAG_RAG_LAZY_INGEST_MAX_ROWS_PER_TABLE:-25}
@@ -57,6 +59,7 @@ x-common-env: &common-env
   RAG_LOG_LEVEL: ${LOG_LEVEL:-INFO}
   RAG_METRICS_TOKEN: ${METRICS_TOKEN:-rag-metrics-scrape-token}
   RAG_RATE_LIMIT_ENABLED: ${RAG_RATE_LIMIT_ENABLED:-true}
+  RAG_RATE_LIMIT_PER_ORGANIZATION_MINUTE: ${RAG_RATE_LIMIT_PER_ORGANIZATION_MINUTE:-600}
   RAG_TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
   OLLAMA_API_BASE: http://ollama:11434
 
@@ -90,7 +93,7 @@ services:
       - "promtail.job=rag-api"
 
   # ===========================================================================
-  # Portal B2B — UI tenant (reemplaza web-tester)
+  # Portal B2B — UI organization (reemplaza web-tester)
   # ===========================================================================
   portal:
     build:
@@ -159,7 +162,7 @@ services:
       retries: 3
 
   # ===========================================================================
-  # PostgreSQL — Base Relacional (Tenants, Usuarios, Facturación)
+  # PostgreSQL — Base Relacional (Organizations, Usuarios, Facturación)
   # ===========================================================================
   postgres:
     image: pgvector/pgvector:pg16

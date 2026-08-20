@@ -77,14 +77,16 @@ ignore = [
 "tests/**/*.py" = ["S101", "E402", "E501", "S105"]
 "src/api/main.py" = ["E402"]  # sys.path.insert before imports
 "src/api/routes/prompt.py" = ["E501"]  # long description strings
-"src/application/orchestrator.py" = ["E501"]  # prompt string constants
-"src/api/metrics.py" = ["F401"]  # Info imported for registry side-effect
-"src/infrastructure/evaluation.py" = ["S608"]
-"src/infrastructure/sql_expert.py" = ["E501", "S608", "B007"]  # prompt strings, validated SQL, FK chains loop
+"src/agents/runtime/orchestrator.py" = ["E501"]  # prompt string constants
+"src/infrastructure/observability/metrics.py" = ["F401"]  # Info imported for registry side-effect
+"src/rag/evaluation/store.py" = ["S608"]
+"src/agents/tools/sql_expert_postgres.py" = ["E501", "S608", "B007"]  # prompt strings, validated SQL, FK chains loop
 "src/api/routes/admin.py" = ["S608", "F841"]  # validated identifiers, dev-only
-"src/infrastructure/relational_db.py" = ["E402", "S608"]
-"src/infrastructure/data_ingestion.py" = ["S608"]
-"src/infrastructure/schema_discovery.py" = ["S608"]
+"src/infrastructure/postgres/relational_db.py" = ["E402", "S608"]
+"src/connectors/sql/ingestion.py" = ["S608"]
+"src/connectors/sql/schema_discovery.py" = ["S608"]
+"src/infrastructure/db_init/versions/*.py" = ["S608", "E501"]  # identifiers de constantes internas
+"src/verticals/**/*.py" = ["E501"]  # prompt string constants de verticals
 "src/scripts/**/*.py" = ["T201"]  # CLI scripts use print for stdout
 
 [tool.ruff.lint.isort]

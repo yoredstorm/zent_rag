@@ -12,14 +12,14 @@ post {
 
 headers {
   Content-Type: application/json
-  X-Tenant-Id: {{tenant_id}}
+  X-Organization-Id: {{organization_id}}
 }
 
 body:json {
   {
     "table_name": "sales",
     "schema_name": "public",
-    "tenant_aware": true,
+    "organization_aware": true,
     "columns": [
       {"name": "id", "type": "SERIAL", "nullable": false, "is_pk": true, "auto_increment": true},
       {"name": "product", "type": "TEXT", "nullable": false},

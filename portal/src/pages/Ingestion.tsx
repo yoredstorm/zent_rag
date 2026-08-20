@@ -96,11 +96,11 @@ export default function IngestionPage() {
     const [data, activity] = await Promise.all([
       api<{ sources: Source[] }>("/api/v1/ingestion/sources", {
         token: session.token,
-        tenantId: session.tenantId,
+        organizationId: session.organizationId,
       }),
       api<{ recent: LazyEvent[] }>("/api/v1/ingestion/lazy-activity?days=30&limit=20", {
         token: session.token,
-        tenantId: session.tenantId,
+        organizationId: session.organizationId,
       }).catch(() => ({ recent: [] as LazyEvent[] })),
     ]);
     setSources(data.sources || []);
@@ -115,7 +115,7 @@ export default function IngestionPage() {
       await api(`/api/v1/ingestion/sync/${schema}/${table}?background=true`, {
         method: "POST",
         token: session.token,
-        tenantId: session.tenantId,
+        organizationId: session.organizationId,
         headers: { "X-User-Role": "admin" },
       });
       await loadSources();

@@ -11,13 +11,13 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from src.domain.services import ColumnMeta, DataSource
-from src.infrastructure.data_ingestion import PostgresIngestionService
-from src.infrastructure.lazy_activity import (
+from src.connectors.sql.ingestion import PostgresIngestionService
+from src.core.domain.services import ColumnMeta, DataSource
+from src.platform.usage.lazy_activity import (
     lazy_log_cache_key,
     lazy_rows_cache_key,
     parse_lazy_activity,
-    preferred_tenant_id,
+    preferred_organization_id,
 )
 
 NOW = datetime(2026, 8, 16, 12, 0, tzinfo=timezone.utc)
@@ -70,7 +70,7 @@ class _FakeVectorStore:
     async def upsert_batch(self, *args: Any, **kwargs: Any) -> None:
         return None
 
-    async def delete_by_tenant(self, tenant_id: UUID) -> None:
+    async def delete_by_organization(self, organization_id: UUID) -> None:
         return None
 
 
@@ -86,15 +86,15 @@ def _event(days_ago: float, tables: list[str], rows: int = 1, preview: str = "q"
     )
 
 
-def test_preferred_tenant_id_ignores_spoofed_header_when_auth_present() -> None:
+def test_preferred_organization_id_ignores_spoofed_header_when_auth_present() -> None:
     auth = str(uuid4())
     spoof = str(uuid4())
-    assert preferred_tenant_id(auth, spoof) == auth
-    assert preferred_tenant_id("", spoof) == spoof
-    assert preferred_tenant_id(None, spoof) == spoof
+    assert preferred_organization_id(auth, spoof) == auth
+    assert preferred_organization_id("", spoof) == spoof
+    assert preferred_organization_id(None, spoof) == spoof
 
 
-def test_lazy_cache_keys_are_tenant_scoped() -> None:
+def test_lazy_cache_keys_are_organization_scoped() -> None:
     a = uuid4()
     b = uuid4()
     assert lazy_log_cache_key(a) != lazy_log_cache_key(b)
@@ -132,17 +132,17 @@ def test_parse_lazy_activity_newest_first() -> None:
 
 
 @pytest.mark.asyncio
-async def test_get_lazy_rows_indexed_reads_own_tenant_key() -> None:
+async def test_get_lazy_rows_indexed_reads_own_organization_key() -> None:
     cache = _FakeCache()
-    tenant = uuid4()
+    organization = uuid4()
     other = uuid4()
-    cache.store[lazy_rows_cache_key(tenant, "farmacia", "products")] = "18"
+    cache.store[lazy_rows_cache_key(organization, "farmacia", "products")] = "18"
     cache.store[lazy_rows_cache_key(other, "farmacia", "products")] = "99"
     svc = PostgresIngestionService(_FakeVectorStore(), _FakeEmbed(), cache)
 
-    assert await svc.get_lazy_rows_indexed(tenant, "farmacia", "products") == 18
+    assert await svc.get_lazy_rows_indexed(organization, "farmacia", "products") == 18
     assert await svc.get_lazy_rows_indexed(other, "farmacia", "products") == 99
-    assert await svc.get_lazy_rows_indexed(tenant, "farmacia", "sales") == 0
+    assert await svc.get_lazy_rows_indexed(organization, "farmacia", "sales") == 0
 
 
 @pytest.mark.asyncio
@@ -157,7 +157,7 @@ class _FakeIngestion:
     def __init__(self, lazy_rows: int = 18) -> None:
         self.lazy_rows = lazy_rows
 
-    async def discover_sources(self, tenant_id: UUID) -> list[DataSource]:
+    async def discover_sources(self, organization_id: UUID) -> list[DataSource]:
         return [
             DataSource(
                 schema_name="farmacia",
@@ -174,13 +174,13 @@ class _FakeIngestion:
             )
         ]
 
-    async def is_synced(self, tenant_id: UUID, schema: str, table: str) -> bool:
+    async def is_synced(self, organization_id: UUID, schema: str, table: str) -> bool:
         return False
 
-    async def get_table_progress(self, tenant_id: UUID, schema: str, table: str) -> dict | None:
+    async def get_table_progress(self, organization_id: UUID, schema: str, table: str) -> dict | None:
         return None
 
-    async def get_lazy_rows_indexed(self, tenant_id: UUID, schema: str, table: str) -> int:
+    async def get_lazy_rows_indexed(self, organization_id: UUID, schema: str, table: str) -> int:
         return self.lazy_rows
 
 
@@ -206,18 +206,18 @@ async def test_sources_include_lazy_rows_indexed(
 
 @pytest.mark.skipif(not _HAS_LITELLM, reason="API tests require litellm")
 @pytest.mark.asyncio
-async def test_lazy_activity_uses_authenticated_tenant_not_spoofed_header(
+async def test_lazy_activity_uses_authenticated_organization_not_spoofed_header(
     async_client, trial_auth: dict[str, str]
 ) -> None:
     from src.api.deps import get_cache_provider
     from src.api.main import app
 
-    tenant_id = UUID(trial_auth["X-Tenant-Id"])
+    organization_id = UUID(trial_auth["X-Organization-Id"])
     other = uuid4()
     cache = _FakeCache()
     at = datetime.now(timezone.utc).isoformat()
     await cache.append_to_list(
-        lazy_log_cache_key(tenant_id),
+        lazy_log_cache_key(organization_id),
         json.dumps(
             {
                 "tables": ["productos"],
@@ -240,12 +240,12 @@ async def test_lazy_activity_uses_authenticated_tenant_not_spoofed_header(
     )
     app.dependency_overrides[get_cache_provider] = lambda: cache
     try:
-        spoofed = {**trial_auth, "X-Tenant-Id": str(other)}
+        spoofed = {**trial_auth, "X-Organization-Id": str(other)}
         response = await async_client.get(
             "/api/v1/ingestion/lazy-activity?days=30&limit=20",
             headers=spoofed,
         )
-        # Hardening: header que no coincide con el Bearer -> 403 (anti cross-tenant).
+        # Hardening: header que no coincide con el Bearer -> 403 (anti cross-organization).
         assert response.status_code == 403
     finally:
         app.dependency_overrides.pop(get_cache_provider, None)

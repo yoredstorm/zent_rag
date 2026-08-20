@@ -1,5 +1,5 @@
 # =============================================================================
-# Security Hardening Tests — tenant isolation, role elevation, admin authz
+# Security Hardening Tests — organization isolation, role elevation, admin authz
 # =============================================================================
 from __future__ import annotations
 
@@ -10,50 +10,50 @@ from httpx import AsyncClient
 
 
 @pytest.mark.asyncio
-async def test_rag_query_rejects_mismatched_tenant_header(
+async def test_rag_query_rejects_mismatched_organization_header(
     async_client: AsyncClient, trial_auth: dict[str, str]
 ) -> None:
-    """X-Tenant-Id distinto del Bearer -> 403 (anti cross-tenant)."""
+    """X-Organization-Id distinto del Bearer -> 403 (anti cross-organization)."""
     other = str(uuid4())
     response = await async_client.post(
         "/api/v1/rag/query",
         json={"query": "hola"},
-        headers={**trial_auth, "X-Tenant-Id": other},
+        headers={**trial_auth, "X-Organization-Id": other},
     )
     assert response.status_code == 403, response.text
 
 
 @pytest.mark.asyncio
-async def test_prompt_endpoint_rejects_mismatched_tenant_header(
+async def test_prompt_endpoint_rejects_mismatched_organization_header(
     async_client: AsyncClient, trial_auth: dict[str, str]
 ) -> None:
     response = await async_client.get(
         "/api/v1/admin/prompt",
-        headers={**trial_auth, "X-Tenant-Id": str(uuid4())},
+        headers={**trial_auth, "X-Organization-Id": str(uuid4())},
     )
     assert response.status_code == 403, response.text
 
 
 @pytest.mark.asyncio
-async def test_eval_feedback_rejects_mismatched_tenant_header(
+async def test_eval_feedback_rejects_mismatched_organization_header(
     async_client: AsyncClient, trial_auth: dict[str, str]
 ) -> None:
     response = await async_client.post(
         "/api/v1/eval/feedback",
         json={"query": "hola", "rating": "up"},
-        headers={**trial_auth, "X-Tenant-Id": str(uuid4())},
+        headers={**trial_auth, "X-Organization-Id": str(uuid4())},
     )
     assert response.status_code == 403, response.text
 
 
 @pytest.mark.asyncio
-async def test_admin_tables_require_tenant_admin(
+async def test_admin_tables_require_organization_admin(
     async_client: AsyncClient, trial_auth: dict[str, str]
 ) -> None:
     """API token normal (sin admin:*) no puede listar/crear tablas."""
     response = await async_client.get(
         "/api/v1/admin/tables",
-        headers={**trial_auth, "X-Tenant-Id": trial_auth["X-Tenant-Id"]},
+        headers={**trial_auth, "X-Organization-Id": trial_auth["X-Organization-Id"]},
     )
     assert response.status_code == 403, response.text
 
@@ -62,9 +62,9 @@ async def test_admin_tables_require_tenant_admin(
 async def test_billing_admin_requires_platform_admin_scope(
     async_client: AsyncClient, trial_auth: dict[str, str]
 ) -> None:
-    """Listar todos los tenants exige scope admin:* (no basta token de tenant)."""
+    """Listar todos los organizations exige scope admin:* (no basta token de organization)."""
     response = await async_client.get(
-        "/api/v1/billing/admin/tenants",
+        "/api/v1/billing/admin/organizations",
         headers=trial_auth,
     )
     assert response.status_code == 403, response.text
@@ -118,7 +118,7 @@ async def test_admin_sql_rejects_select_into(
         json={"query": "SELECT * INTO hack_table FROM farmacia.products"},
         headers={
             "Authorization": f"Bearer {dev_api_token}",
-            "X-Tenant-Id": "00000000-0000-0000-0000-000000000001",
+            "X-Organization-Id": "00000000-0000-0000-0000-000000000001",
         },
     )
     assert response.status_code == 403, response.text
@@ -133,7 +133,7 @@ async def test_admin_sql_rejects_pg_sleep(
         json={"query": "SELECT pg_sleep(60)"},
         headers={
             "Authorization": f"Bearer {dev_api_token}",
-            "X-Tenant-Id": "00000000-0000-0000-0000-000000000001",
+            "X-Organization-Id": "00000000-0000-0000-0000-000000000001",
         },
     )
     assert response.status_code == 403, response.text
@@ -148,7 +148,7 @@ async def test_admin_sql_rejects_multi_statement(
         json={"query": "SELECT 1; SELECT 2"},
         headers={
             "Authorization": f"Bearer {dev_api_token}",
-            "X-Tenant-Id": "00000000-0000-0000-0000-000000000001",
+            "X-Organization-Id": "00000000-0000-0000-0000-000000000001",
         },
     )
     assert response.status_code == 403, response.text
@@ -159,7 +159,7 @@ async def test_body_size_limit_returns_413(
     async_client: AsyncClient, trial_auth: dict[str, str]
 ) -> None:
     """Bodies > MAX_BODY_BYTES son rechazados por el middleware."""
-    from src.config import get_settings
+    from src.core.config import get_settings
 
     limit = get_settings().MAX_BODY_BYTES
     response = await async_client.post(
@@ -177,14 +177,14 @@ async def test_session_token_contains_sid_and_revokes(
     """encrypt_session incluye sid; revoke_session lo marca revocado."""
     from uuid import UUID as _UUID
 
-    from src.infrastructure.portal_session import (
+    from src.platform.auth.session import (
         decrypt_session,
         encrypt_session,
         revoke_session,
         session_is_active,
     )
 
-    token = encrypt_session(uuid4(), _UUID(trial_auth["X-Tenant-Id"]))
+    token = encrypt_session(uuid4(), _UUID(trial_auth["X-Organization-Id"]))
     payload = decrypt_session(token)
     assert payload.sid is not None
     assert await session_is_active(payload.sid) is True

@@ -1,7 +1,7 @@
 # =============================================================================
-# Rate Limit Middleware — sliding window (Redis) por tenant e IP
+# Rate Limit Middleware — sliding window (Redis) por organization e IP
 # =============================================================================
-# - Tenant autenticado: RATE_LIMIT_PER_TENANT_MINUTE requests/min por tenant.
+# - Organization autenticado: RATE_LIMIT_PER_ORGANIZATION_MINUTE requests/min por organization.
 # - IP global (rutas costosas): RATE_LIMIT_PER_MINUTE requests/min.
 # - Endpoints públicos (signup/trial): RATE_LIMIT_PUBLIC_PER_MINUTE por IP
 #   (skip loopback para no romper dev/tests locales).
@@ -17,9 +17,9 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from src.config import get_settings
-from src.infrastructure.cache import _get_redis
-from src.infrastructure.logging_config import get_logger
+from src.core.config import get_settings
+from src.infrastructure.observability.logging_config import get_logger
+from src.infrastructure.redis.cache import _get_redis
 
 logger = get_logger(__name__)
 
@@ -106,27 +106,27 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # -----------------------------------------------------------------
-        # Tenant autenticado: limitar por tenant (rutas costosas).
+        # Organization autenticado: limitar por organization (rutas costosas).
         # -----------------------------------------------------------------
-        tenant_id = getattr(request.state, "tenant_id", None) or getattr(
+        organization_id = getattr(request.state, "organization_id", None) or getattr(
             request.state, "billing_context", None
         )
-        if tenant_id is not None and hasattr(tenant_id, "tenant_id"):
-            tenant_id = tenant_id.tenant_id
-        if tenant_id:
-            tenant_id = str(tenant_id)
+        if organization_id is not None and hasattr(organization_id, "organization_id"):
+            organization_id = organization_id.organization_id
+        if organization_id:
+            organization_id = str(organization_id)
 
-        if tenant_id:
-            key = f"rl:tenant:{tenant_id}"
+        if organization_id:
+            key = f"rl:organization:{organization_id}"
             allowed = await self._check(
-                key, settings.RATE_LIMIT_PER_TENANT_MINUTE, 60
+                key, settings.RATE_LIMIT_PER_ORGANIZATION_MINUTE, 60
             )
             if not allowed:
                 return JSONResponse(
                     status_code=429,
                     content={
-                        "error_code": "tenant_rate_limited",
-                        "message": "Rate limit exceeded for this tenant. Try again shortly.",
+                        "error_code": "organization_rate_limited",
+                        "message": "Rate limit exceeded for this organization. Try again shortly.",
                     },
                 )
             return await call_next(request)

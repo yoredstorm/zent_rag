@@ -1,27 +1,31 @@
 const TOKEN_KEY = "rag_portal_token";
-const TENANT_KEY = "rag_portal_tenant";
+const ORG_KEY = "rag_portal_org";
 const COMPANY_KEY = "rag_portal_company";
 const EMAIL_KEY = "rag_portal_email";
 
 export type Session = {
   token: string;
-  tenantId: string;
+  organizationId: string;
   companyName: string;
   email?: string;
 };
 
 export function loadSession(): Session | null {
   const token = localStorage.getItem(TOKEN_KEY);
-  const tenantId = localStorage.getItem(TENANT_KEY);
+  const organizationId =
+    localStorage.getItem(ORG_KEY) ||
+    // migración de sesiones previas (tenant)
+    localStorage.getItem("rag_portal_tenant");
   const companyName = localStorage.getItem(COMPANY_KEY) || "";
   const email = localStorage.getItem(EMAIL_KEY) || undefined;
-  if (!token || !tenantId) return null;
-  return { token, tenantId, companyName, email };
+  if (!token || !organizationId) return null;
+  return { token, organizationId, companyName, email };
 }
 
 export function saveSession(session: Session) {
   localStorage.setItem(TOKEN_KEY, session.token);
-  localStorage.setItem(TENANT_KEY, session.tenantId);
+  localStorage.setItem(ORG_KEY, session.organizationId);
+  localStorage.removeItem("rag_portal_tenant");
   localStorage.setItem(COMPANY_KEY, session.companyName);
   if (session.email) {
     localStorage.setItem(EMAIL_KEY, session.email);
@@ -32,7 +36,8 @@ export function saveSession(session: Session) {
 
 export function clearSession() {
   localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(TENANT_KEY);
+  localStorage.removeItem(ORG_KEY);
+  localStorage.removeItem("rag_portal_tenant");
   localStorage.removeItem(COMPANY_KEY);
   localStorage.removeItem(EMAIL_KEY);
 }
@@ -54,13 +59,13 @@ async function parseError(res: Response): Promise<string> {
 
 export async function api<T>(
   path: string,
-  options: RequestInit & { token?: string; tenantId?: string } = {}
+  options: RequestInit & { token?: string; organizationId?: string } = {}
 ): Promise<T> {
-  const { token, tenantId, headers, ...rest } = options;
+  const { token, organizationId, headers, ...rest } = options;
   const h = new Headers(headers);
   h.set("Content-Type", "application/json");
   if (token) h.set("Authorization", `Bearer ${token}`);
-  if (tenantId) h.set("X-Tenant-Id", tenantId);
+  if (organizationId) h.set("X-Organization-Id", organizationId);
 
   const res = await fetch(path, { ...rest, headers: h });
   if (!res.ok) {

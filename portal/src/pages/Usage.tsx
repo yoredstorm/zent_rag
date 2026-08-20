@@ -34,7 +34,7 @@ export default function UsagePage() {
     setLoading(true);
     api<Usage>("/api/v1/billing/usage?days=30", {
       token: session.token,
-      tenantId: session.tenantId,
+      organizationId: session.organizationId,
     })
       .then(setUsage)
       .catch((err) => setError(err instanceof Error ? err.message : "Error"))

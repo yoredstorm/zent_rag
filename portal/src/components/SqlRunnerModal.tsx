@@ -60,7 +60,7 @@ export default function SqlRunnerModal({
       const data = await api<SqlResponse>("/api/v1/admin/sql", {
         method: "POST",
         token: session.token,
-        tenantId: session.tenantId,
+        organizationId: session.organizationId,
         body: JSON.stringify({ query: editable.trim() }),
       });
       if ("columns" in data) {

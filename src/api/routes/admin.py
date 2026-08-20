@@ -14,10 +14,10 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 
-from src.config import get_settings
-from src.infrastructure.logging_config import get_logger
-from src.infrastructure.relational_db import get_async_session
-from src.infrastructure.sql_expert import _FORBIDDEN_KEYWORDS, _validate_sql_ast
+from src.agents.tools.sql_expert_postgres import _FORBIDDEN_KEYWORDS, _validate_sql_ast
+from src.core.config import get_settings
+from src.infrastructure.observability.logging_config import get_logger
+from src.infrastructure.postgres.relational_db import get_async_session
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
@@ -32,11 +32,11 @@ _RESERVED_WORDS = {
 }
 # Tablas del sistema protegidas contra escritura/lectura masiva
 _PROTECTED_TABLES: set[str] = {
-    "tenants",
+    "organizations",
     "users",
     "subscriptions",
     "plans",
-    "api_tokens",
+    "api_keys",
     "request_quota",
     "usage_logs",
     "query_audit_log",
@@ -48,10 +48,10 @@ _PROTECTED_TABLES: set[str] = {
 
 
 def _require_admin(request: Request):
-    """Toda ruta /admin/* exige tenant admin (sesión portal o scope admin:*)."""
-    from src.api.security import require_tenant_admin
+    """Toda ruta /admin/* exige organization admin (sesión portal o scope admin:*)."""
+    from src.api.security import require_organization_admin
 
-    return require_tenant_admin(request)
+    return require_organization_admin(request)
 
 
 def _validate_identifier(value: str, label: str = "identifier") -> str:
@@ -106,9 +106,9 @@ class CreateTableRequest(BaseModel):
     table_name: str = Field(..., min_length=1, max_length=63)
     schema_name: str = Field(default="public", min_length=1, max_length=63)
     columns: list[ColumnDef] = Field(..., min_length=1, max_length=50)
-    tenant_aware: bool = Field(
+    organization_aware: bool = Field(
         default=True,
-        description="Añade automáticamente columna tenant_id y FK a tenants",
+        description="Añade automáticamente columna organization_id y FK a organizations",
     )
 
     @field_validator("table_name")
@@ -132,12 +132,12 @@ class InsertRowsRequest(BaseModel):
 @router.get("/tables", summary="Listar todas las tablas")
 async def list_tables(
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
 ):
-    from src.api.security import resolve_tenant
+    from src.api.security import resolve_organization
 
     _require_admin(request)
-    resolve_tenant(request, x_tenant_id)
+    resolve_organization(request, x_organization_id)
 
     session = await get_async_session()
     try:
@@ -169,12 +169,12 @@ async def list_tables(
 async def create_table(
     body: CreateTableRequest,
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
 ):
-    from src.api.security import resolve_tenant
+    from src.api.security import resolve_organization
 
     _require_admin(request)
-    tenant_id = resolve_tenant(request, x_tenant_id)
+    organization_id = resolve_organization(request, x_organization_id)
 
     schema = _validate_identifier(body.schema_name, "Schema")
     table = body.table_name
@@ -188,8 +188,8 @@ async def create_table(
         col_defs: list[str] = []
         pk_cols: list[str] = []
 
-        if body.tenant_aware:
-            col_defs.append("tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE")
+        if body.organization_aware:
+            col_defs.append("organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE")
 
         for col in body.columns:
             nullable = "NOT NULL" if not col.nullable else ""
@@ -215,11 +215,11 @@ async def create_table(
         ddl = f'CREATE TABLE "{schema}"."{table}" ({", ".join(col_defs)})'
         await session.execute(text(ddl))
 
-        if body.tenant_aware:
+        if body.organization_aware:
             await session.execute(
                 text(
-                    f'CREATE INDEX IF NOT EXISTS idx_{table}_tenant '
-                    f'ON "{schema}"."{table}" (tenant_id)'
+                    f'CREATE INDEX IF NOT EXISTS idx_{table}_organization '
+                    f'ON "{schema}"."{table}" (organization_id)'
                 )
             )
 
@@ -245,12 +245,12 @@ async def insert_rows(
     table_name: str,
     body: InsertRowsRequest,
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
 ):
-    from src.api.security import resolve_tenant
+    from src.api.security import resolve_organization
 
     _require_admin(request)
-    tenant_id = resolve_tenant(request, x_tenant_id)
+    organization_id = resolve_organization(request, x_organization_id)
 
     schema = _validate_identifier(schema_name, "Schema")
     table = _validate_identifier(table_name, "Tabla")
@@ -266,8 +266,8 @@ async def insert_rows(
 
     session = await get_async_session()
     try:
-        # Verificar si la tabla tiene tenant_id
-        has_tenant = False
+        # Verificar si la tabla tiene organization_id
+        has_organization = False
         cols_result = await session.execute(
             text(
                 "SELECT column_name FROM information_schema.columns "
@@ -276,13 +276,13 @@ async def insert_rows(
             {"schema": schema, "table": table},
         )
         existing_cols = {r.column_name for r in cols_result.fetchall()}
-        if "tenant_id" in existing_cols:
-            has_tenant = True
+        if "organization_id" in existing_cols:
+            has_organization = True
 
         # Insertar filas en batch
         all_cols = set(columns)
-        if has_tenant and "tenant_id" not in all_cols:
-            all_cols.add("tenant_id")
+        if has_organization and "organization_id" not in all_cols:
+            all_cols.add("organization_id")
 
         col_list = sorted(all_cols)
         placeholders = ", ".join(f":{c}" for c in col_list)
@@ -291,8 +291,8 @@ async def insert_rows(
         inserted = 0
         for row in body.rows:
             params = {c: row.get(c) for c in col_list}
-            if has_tenant and "tenant_id" not in row:
-                params["tenant_id"] = tenant_id
+            if has_organization and "organization_id" not in row:
+                params["organization_id"] = organization_id
             await session.execute(
                 text(
                     f'INSERT INTO "{schema}"."{table}" ({quoted_cols}) '
@@ -317,12 +317,12 @@ async def get_columns(
     schema_name: str,
     table_name: str,
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
 ):
-    from src.api.security import resolve_tenant
+    from src.api.security import resolve_organization
 
     _require_admin(request)
-    resolve_tenant(request, x_tenant_id)
+    resolve_organization(request, x_organization_id)
 
     schema = _validate_identifier(schema_name, "Schema")
     table = _validate_identifier(table_name, "Tabla")
@@ -372,12 +372,12 @@ async def list_rows(
     request: Request,
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0, le=100_000),
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
 ):
-    from src.api.security import resolve_tenant
+    from src.api.security import resolve_organization
 
     _require_admin(request)
-    resolve_tenant(request, x_tenant_id)
+    resolve_organization(request, x_organization_id)
 
     schema = _validate_identifier(schema_name, "Schema")
     table = _validate_identifier(table_name, "Tabla")
@@ -432,12 +432,12 @@ async def drop_table(
     schema_name: str,
     table_name: str,
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
 ):
-    from src.api.security import resolve_tenant
+    from src.api.security import resolve_organization
 
     _require_admin(request)
-    resolve_tenant(request, x_tenant_id)
+    resolve_organization(request, x_organization_id)
 
     schema = _validate_identifier(schema_name, "Schema")
     table = _validate_identifier(table_name, "Tabla")
@@ -457,14 +457,14 @@ async def drop_table(
 
 
 @router.post("/sql", summary="Ejecutar SQL directo (solo SELECT, admin verificado)")
-async def execute_sql(request: Request, x_tenant_id: str = Header(default="", alias="X-Tenant-Id")):
+async def execute_sql(request: Request, x_organization_id: str = Header(default="", alias="X-Organization-Id")):
     """Ejecuta SQL raw de solo lectura. Exige sesión autenticada con rol admin.
 
     Seguridad:
     - Deshabilitado en producción (ENVIRONMENT == "production").
     - Requiere Bearer token validado por el BillingMiddleware
-      (portal session del dueño del tenant, o API token con scope `admin:*`).
-    - El X-Tenant-Id, si viene, debe coincidir con el tenant de la sesión.
+      (portal session del dueño del organization, o API token con scope `admin:*`).
+    - El X-Organization-Id, si viene, debe coincidir con el organization de la sesión.
     - El SQL se valida por AST (sqlglot): solo SELECT/EXPLAIN/SHOW.
     - Cada ejecución queda registrada en logs estructurados para auditoría.
     """
@@ -472,33 +472,30 @@ async def execute_sql(request: Request, x_tenant_id: str = Header(default="", al
     if settings.ENVIRONMENT == "production":
         raise HTTPException(403, "SQL directo no disponible en producción")
 
-    # La autenticación corre en BillingMiddleware (Bearer obligatorio para
+    # La autenticación corre en TenantMiddleware (Bearer obligatorio para
     # rutas no públicas). Verificamos rol admin sobre el contexto resuelto.
-    ctx = getattr(request.state, "billing_context", None)
+    ctx = getattr(request.state, "tenant_context", None)
     if ctx is None:
         raise HTTPException(
             401,
             "Autenticación requerida (Authorization: Bearer <token>)",
         )
 
-    is_admin = (
-        ctx.auth_type == "portal_session"
-        or "admin:*" in (getattr(ctx, "scopes", None) or [])
-    )
+    is_admin = ctx.is_organization_admin()
     if not is_admin:
         raise HTTPException(
             403,
             "Se requiere rol admin para ejecutar SQL directo",
         )
 
-    if x_tenant_id:
+    if x_organization_id:
         try:
-            header_tenant = UUID(x_tenant_id)
+            header_organization = UUID(x_organization_id)
         except ValueError:
-            raise HTTPException(400, "X-Tenant-Id inválido")
-        if header_tenant != ctx.tenant_id:
+            raise HTTPException(400, "X-Organization-Id inválido")
+        if header_organization != ctx.organization_id:
             raise HTTPException(
-                403, "X-Tenant-Id no coincide con la sesión autenticada"
+                403, "X-Organization-Id no coincide con la sesión autenticada"
             )
 
     body = await request.json()
@@ -514,7 +511,7 @@ async def execute_sql(request: Request, x_tenant_id: str = Header(default="", al
     # EXPLAIN y SHOW los parsea sqlglot como "command" genérico — los tratamos aparte
     import sqlglot
 
-    from src.infrastructure.sql_expert import SqlValidationError
+    from src.core.ports.sql_expert import SqlValidationError
 
     # Bloquear palabras/patrones prohibidos en TODOS los statements
     if _FORBIDDEN_KEYWORDS.search(query):
@@ -549,7 +546,7 @@ async def execute_sql(request: Request, x_tenant_id: str = Header(default="", al
 
     logger.info(
         "Admin SQL executed",
-        tenant_id=str(ctx.tenant_id),
+        organization_id=str(ctx.organization_id),
         user_id=str(getattr(ctx, "user_id", None) or "anonymous"),
         auth_type=ctx.auth_type,
         query_preview=query[:500],

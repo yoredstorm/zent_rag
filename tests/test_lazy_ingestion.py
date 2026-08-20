@@ -10,18 +10,18 @@ from uuid import UUID, uuid4, uuid5
 
 import pytest
 
-from src.config import get_settings
-from src.domain.entities import (
+from src.connectors.sql.ingestion import _VECTOR_NS, PostgresIngestionService, extract_query_keywords
+from src.core.config import get_settings
+from src.core.domain.entities import (
     LLMResponse,
+    Organization,
+    OrganizationStatus,
     RetrievalChunk,
     RetrievalContext,
-    Tenant,
-    TenantStatus,
 )
-from src.domain.services import ColumnMeta, DataSource, IngestionResult, IngestionService
-from src.domain.sql_expert import SqlQueryResult
-from src.infrastructure.data_ingestion import _VECTOR_NS, PostgresIngestionService, extract_query_keywords
-from src.infrastructure.lazy_activity import lazy_log_cache_key, lazy_rows_cache_key
+from src.core.domain.services import ColumnMeta, DataSource, IngestionResult, IngestionService
+from src.core.ports.sql_expert import SqlQueryResult
+from src.platform.usage.lazy_activity import lazy_log_cache_key, lazy_rows_cache_key
 
 NO_INFO_ADMIN = "No tengo suficiente información"
 
@@ -32,8 +32,8 @@ class FakeCache:
         self.lists: dict[str, list[str]] = {}
 
     @staticmethod
-    def _hash_query(tenant_id: str, query: str, model: str, role: str = "") -> str:
-        return f"hash:{tenant_id}:{query}:{model}:{role}"
+    def _hash_query(organization_id: str, query: str, model: str, role: str = "") -> str:
+        return f"hash:{organization_id}:{query}:{model}:{role}"
 
     async def get(self, key: str) -> str | None:
         return self.store.get(key)
@@ -62,14 +62,14 @@ class FakeCache:
         return current + by
 
 
-class FakeTenantRepo:
-    def __init__(self, tenant: Tenant) -> None:
-        self.tenant = tenant
+class FakeOrganizationRepo:
+    def __init__(self, organization: Organization) -> None:
+        self.organization = organization
 
-    async def get_by_id(self, tenant_id: UUID) -> Tenant | None:
-        return self.tenant if tenant_id == self.tenant.id else None
+    async def get_by_id(self, organization_id: UUID) -> Organization | None:
+        return self.organization if organization_id == self.organization.id else None
 
-    async def check_rate_limit(self, tenant_id: UUID) -> bool:
+    async def check_rate_limit(self, organization_id: UUID) -> bool:
         return True
 
     async def log_usage(self, **kwargs: Any) -> None:
@@ -108,14 +108,14 @@ class FakeVectorStore:
             return self.search_queue.pop(0)
         return RetrievalContext(chunks=[], query_embedding=[0.1] * 8, retrieval_latency_ms=1.0)
 
-    async def upsert(self, tenant_id: UUID, document_id: UUID, embedding: list[float], content: str, metadata: dict | None = None) -> None:
+    async def upsert(self, organization_id: UUID, document_id: UUID, embedding: list[float], content: str, metadata: dict | None = None) -> None:
         self.points[document_id] = (embedding, content, metadata)
 
-    async def upsert_batch(self, tenant_id: UUID, points: list) -> None:
+    async def upsert_batch(self, organization_id: UUID, points: list) -> None:
         for doc_id, emb, content, meta in points:
             self.points[doc_id] = (emb, content, meta)
 
-    async def delete_by_tenant(self, tenant_id: UUID) -> None:
+    async def delete_by_organization(self, organization_id: UUID) -> None:
         self.points.clear()
 
 
@@ -124,7 +124,7 @@ class FakeSqlExpert:
         self.result = result or SqlQueryResult(sql="", error="Cannot generate query for this question")
         self.calls = 0
 
-    async def execute(self, tenant_id: UUID, question: str, role: str) -> SqlQueryResult:
+    async def execute(self, organization_id: UUID, question: str, role: str) -> SqlQueryResult:
         self.calls += 1
         return self.result
 
@@ -144,20 +144,20 @@ class FakeLazyIngestion(IngestionService):
         self.delay = delay
         self.error = error
 
-    async def discover_sources(self, tenant_id: UUID) -> list[DataSource]:
+    async def discover_sources(self, organization_id: UUID) -> list[DataSource]:
         return []
 
-    async def sync_all(self, tenant_id: UUID, full_refresh: bool = False) -> IngestionResult:
-        return IngestionResult(tenant_id=tenant_id, tables_processed=0)
+    async def sync_all(self, organization_id: UUID, full_refresh: bool = False) -> IngestionResult:
+        return IngestionResult(organization_id=organization_id, tables_processed=0)
 
     async def sync_table(
-        self, tenant_id: UUID, schema_name: str, table_name: str, full_refresh: bool = False
+        self, organization_id: UUID, schema_name: str, table_name: str, full_refresh: bool = False
     ) -> IngestionResult:
-        return IngestionResult(tenant_id=tenant_id, tables_processed=0)
+        return IngestionResult(organization_id=organization_id, tables_processed=0)
 
     async def ingest_candidates(
         self,
-        tenant_id: UUID,
+        organization_id: UUID,
         query: str,
         role: str,
         max_tables: int,
@@ -166,7 +166,7 @@ class FakeLazyIngestion(IngestionService):
     ) -> IngestionResult:
         self.calls.append(
             {
-                "tenant_id": tenant_id,
+                "organization_id": organization_id,
                 "query": query,
                 "role": role,
                 "max_tables": max_tables,
@@ -179,7 +179,7 @@ class FakeLazyIngestion(IngestionService):
         if self.error:
             raise self.error
         return self.result or IngestionResult(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             tables_processed=1,
             rows_indexed=2,
             vectors_upserted=2,
@@ -188,12 +188,11 @@ class FakeLazyIngestion(IngestionService):
         )
 
 
-def _tenant(tid: UUID | None = None) -> Tenant:
-    return Tenant(
+def _organization(tid: UUID | None = None) -> Organization:
+    return Organization(
         id=tid or uuid4(),
         name="Test",
-        api_key_hash="hash",
-        status=TenantStatus.ACTIVE,
+        status=OrganizationStatus.ACTIVE,
     )
 
 
@@ -218,7 +217,7 @@ def _chunk_ctx(score: float = 0.9, content: str = "Paracetamol 500mg tabletas") 
 
 def _build_orchestrator(
     *,
-    tenant: Tenant,
+    organization: Organization,
     vector_store: FakeVectorStore,
     llm: FakeLLM,
     embed: FakeEmbed,
@@ -226,10 +225,10 @@ def _build_orchestrator(
     sql_expert: FakeSqlExpert | None = None,
     lazy_ingestion: IngestionService | None = None,
 ):
-    from src.application.orchestrator import RAGOrchestrator
+    from src.agents.runtime.orchestrator import RAGOrchestrator
 
     return RAGOrchestrator(
-        tenant_repo=FakeTenantRepo(tenant),
+        organization_repo=FakeOrganizationRepo(organization),
         vector_store=vector_store,
         llm_provider=llm,
         embedding_provider=embed,
@@ -272,21 +271,21 @@ async def test_cached_no_info_answer_is_regenerated() -> None:
     Evita que un fallo transitorio del SQL Expert sirva respuestas negativas
     obsoletas durante 5 minutos.
     """
-    tenant = _tenant()
+    organization = _organization()
     vs = FakeVectorStore()
     vs.enqueue_search(_chunk_ctx())
     vs.enqueue_search(_chunk_ctx())
     llm = FakeLLM(content="El producto más vendido es Paracetamol.")
     cache = FakeCache()
     key = cache._hash_query(
-        str(tenant.id), "cuál es el producto más vendido", "default", "admin"
+        str(organization.id), "cuál es el producto más vendido", "default", "admin"
     )
     cache.store[key] = json.dumps(
         "No tengo suficiente información para responder esta pregunta. "
         "¿Podrías reformularla o consultar sobre otro tema?"
     )
     orch = _build_orchestrator(
-        tenant=tenant,
+        organization=organization,
         vector_store=vs,
         llm=llm,
         embed=FakeEmbed(),
@@ -294,7 +293,7 @@ async def test_cached_no_info_answer_is_regenerated() -> None:
     )
 
     result = await orch.execute(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=uuid4(),
         query="cuál es el producto más vendido",
         use_cache=True,
@@ -313,14 +312,14 @@ async def test_lazy_disabled_keeps_anti_hallucination_message(
     """RAG_LAZY_INGESTION_ENABLED=False → mismo mensaje de 'no tengo información'."""
     settings = get_settings()
     monkeypatch.setattr(settings, "RAG_LAZY_INGESTION_ENABLED", False)
-    tenant = _tenant()
+    organization = _organization()
     vs = FakeVectorStore()
     vs.enqueue_search(_empty_ctx())
     vs.enqueue_search(_empty_ctx())
     lazy = FakeLazyIngestion()
     llm = FakeLLM()
     orch = _build_orchestrator(
-        tenant=tenant,
+        organization=organization,
         vector_store=vs,
         llm=llm,
         embed=FakeEmbed(),
@@ -329,7 +328,7 @@ async def test_lazy_disabled_keeps_anti_hallucination_message(
     )
 
     result = await orch.execute(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=uuid4(),
         query="precio del paracetamol",
         use_cache=False,
@@ -347,7 +346,7 @@ async def test_lazy_disabled_keeps_anti_hallucination_message(
 
 @pytest.mark.asyncio
 async def test_lazy_not_triggered_when_sql_has_data(enable_lazy) -> None:
-    tenant = _tenant()
+    organization = _organization()
     vs = FakeVectorStore()
     vs.enqueue_search(_empty_ctx())
     vs.enqueue_search(_empty_ctx())
@@ -357,7 +356,7 @@ async def test_lazy_not_triggered_when_sql_has_data(enable_lazy) -> None:
         SqlQueryResult(sql="SELECT COUNT(*) FROM sales", columns=["count"], rows=[["42"]], row_count=1)
     )
     orch = _build_orchestrator(
-        tenant=tenant,
+        organization=organization,
         vector_store=vs,
         llm=llm,
         embed=FakeEmbed(),
@@ -367,7 +366,7 @@ async def test_lazy_not_triggered_when_sql_has_data(enable_lazy) -> None:
     )
 
     result = await orch.execute(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=uuid4(),
         query="cuantas ventas hay",
         use_cache=False,
@@ -383,7 +382,7 @@ async def test_lazy_not_triggered_when_sql_has_data(enable_lazy) -> None:
 @pytest.mark.asyncio
 async def test_sql_first_prompt_excludes_vector_chunks_and_uses_temp_zero() -> None:
     poison = "POISON_DOC_PANALES_BAGO"
-    tenant = _tenant()
+    organization = _organization()
     vs = FakeVectorStore()
     vs.enqueue_search(_chunk_ctx(score=0.95, content=poison))
     vs.enqueue_search(_empty_ctx())
@@ -398,13 +397,13 @@ async def test_sql_first_prompt_excludes_vector_chunks_and_uses_temp_zero() -> N
     )
     cache = FakeCache()
     conversation_id = uuid4()
-    conv_key = f"rag:conv:{tenant.id.hex}:{conversation_id.hex}"
+    conv_key = f"rag:conv:{organization.id.hex}:{conversation_id.hex}"
     await cache.append_to_list(
         conv_key,
         json.dumps({"role": "cited_chunks", "content": [poison]}),
     )
     orch = _build_orchestrator(
-        tenant=tenant,
+        organization=organization,
         vector_store=vs,
         llm=llm,
         embed=FakeEmbed(),
@@ -413,7 +412,7 @@ async def test_sql_first_prompt_excludes_vector_chunks_and_uses_temp_zero() -> N
     )
 
     result = await orch.execute(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=uuid4(),
         query="cuál es el último producto vendido",
         use_cache=False,
@@ -435,14 +434,14 @@ async def test_sql_first_prompt_excludes_vector_chunks_and_uses_temp_zero() -> N
 
 @pytest.mark.asyncio
 async def test_lazy_not_triggered_when_meaningful_chunks(enable_lazy) -> None:
-    tenant = _tenant()
+    organization = _organization()
     vs = FakeVectorStore()
     vs.enqueue_search(_chunk_ctx(score=0.9))
     vs.enqueue_search(_empty_ctx())
     lazy = FakeLazyIngestion()
     llm = FakeLLM(content="El paracetamol cuesta $1.990")
     orch = _build_orchestrator(
-        tenant=tenant,
+        organization=organization,
         vector_store=vs,
         llm=llm,
         embed=FakeEmbed(),
@@ -451,7 +450,7 @@ async def test_lazy_not_triggered_when_meaningful_chunks(enable_lazy) -> None:
     )
 
     result = await orch.execute(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=uuid4(),
         query="precio del paracetamol",
         use_cache=False,
@@ -465,7 +464,7 @@ async def test_lazy_not_triggered_when_meaningful_chunks(enable_lazy) -> None:
 
 @pytest.mark.asyncio
 async def test_lazy_fallback_indexes_and_retries_vector_search(enable_lazy) -> None:
-    tenant = _tenant()
+    organization = _organization()
     vs = FakeVectorStore()
     vs.enqueue_search(_empty_ctx())
     vs.enqueue_search(_empty_ctx())
@@ -475,7 +474,7 @@ async def test_lazy_fallback_indexes_and_retries_vector_search(enable_lazy) -> N
     llm = FakeLLM(content="El Paracetamol cuesta $1.990 [Doc: 1]")
     cache = FakeCache()
     orch = _build_orchestrator(
-        tenant=tenant,
+        organization=organization,
         vector_store=vs,
         llm=llm,
         embed=FakeEmbed(),
@@ -485,7 +484,7 @@ async def test_lazy_fallback_indexes_and_retries_vector_search(enable_lazy) -> N
 
     query = "precio del paracetamol"
     result = await orch.execute(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=uuid4(),
         query=query,
         use_cache=False,
@@ -503,7 +502,7 @@ async def test_lazy_fallback_indexes_and_retries_vector_search(enable_lazy) -> N
     assert result.lazy_ingested is True
     assert result.lazy_rows_indexed == 2
     assert result.lazy_tables == ["products"]
-    log_key = lazy_log_cache_key(tenant.id)
+    log_key = lazy_log_cache_key(organization.id)
     assert log_key in cache.lists
     assert len(cache.lists[log_key]) == 1
     event = json.loads(cache.lists[log_key][0])
@@ -511,22 +510,22 @@ async def test_lazy_fallback_indexes_and_retries_vector_search(enable_lazy) -> N
     assert event["rows_indexed"] == 2
     assert event["query_preview"] == query[:80]
     assert "at" in event
-    rows_key = lazy_rows_cache_key(tenant.id, "farmacia", "products")
+    rows_key = lazy_rows_cache_key(organization.id, "farmacia", "products")
     assert cache.store[rows_key] == "2"
 
 
 @pytest.mark.asyncio
 async def test_lazy_no_candidates_falls_back_to_no_info(enable_lazy) -> None:
-    tenant = _tenant()
+    organization = _organization()
     vs = FakeVectorStore()
     vs.enqueue_search(_empty_ctx())
     vs.enqueue_search(_empty_ctx())
     lazy = FakeLazyIngestion(
-        result=IngestionResult(tenant_id=tenant.id, tables_processed=0, rows_indexed=0)
+        result=IngestionResult(organization_id=organization.id, tables_processed=0, rows_indexed=0)
     )
     llm = FakeLLM()
     orch = _build_orchestrator(
-        tenant=tenant,
+        organization=organization,
         vector_store=vs,
         llm=llm,
         embed=FakeEmbed(),
@@ -535,7 +534,7 @@ async def test_lazy_no_candidates_falls_back_to_no_info(enable_lazy) -> None:
     )
 
     result = await orch.execute(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=uuid4(),
         query="precio del unicornio espacial",
         use_cache=False,
@@ -553,14 +552,14 @@ async def test_lazy_no_candidates_falls_back_to_no_info(enable_lazy) -> None:
 async def test_lazy_timeout_returns_no_info_without_raising(enable_lazy, monkeypatch: pytest.MonkeyPatch) -> None:
     settings = get_settings()
     monkeypatch.setattr(settings, "RAG_LAZY_INGEST_TIMEOUT_SECONDS", 1)
-    tenant = _tenant()
+    organization = _organization()
     vs = FakeVectorStore()
     vs.enqueue_search(_empty_ctx())
     vs.enqueue_search(_empty_ctx())
     lazy = FakeLazyIngestion(delay=5.0)
     llm = FakeLLM()
     orch = _build_orchestrator(
-        tenant=tenant,
+        organization=organization,
         vector_store=vs,
         llm=llm,
         embed=FakeEmbed(),
@@ -569,7 +568,7 @@ async def test_lazy_timeout_returns_no_info_without_raising(enable_lazy, monkeyp
     )
 
     result = await orch.execute(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=uuid4(),
         query="precio del paracetamol",
         use_cache=False,
@@ -585,13 +584,13 @@ async def test_lazy_timeout_returns_no_info_without_raising(enable_lazy, monkeyp
 
 @pytest.mark.asyncio
 async def test_lazy_exception_does_not_break_request(enable_lazy) -> None:
-    tenant = _tenant()
+    organization = _organization()
     vs = FakeVectorStore()
     vs.enqueue_search(_empty_ctx())
     vs.enqueue_search(_empty_ctx())
     lazy = FakeLazyIngestion(error=RuntimeError("db down"))
     orch = _build_orchestrator(
-        tenant=tenant,
+        organization=organization,
         vector_store=vs,
         llm=FakeLLM(),
         embed=FakeEmbed(),
@@ -600,7 +599,7 @@ async def test_lazy_exception_does_not_break_request(enable_lazy) -> None:
     )
 
     result = await orch.execute(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=uuid4(),
         query="precio del paracetamol",
         use_cache=False,
@@ -614,7 +613,7 @@ async def test_lazy_exception_does_not_break_request(enable_lazy) -> None:
 
 @pytest.mark.asyncio
 async def test_lazy_ingest_without_vector_hits_does_not_set_flag(enable_lazy) -> None:
-    tenant = _tenant()
+    organization = _organization()
     vs = FakeVectorStore()
     vs.enqueue_search(_empty_ctx())
     vs.enqueue_search(_empty_ctx())
@@ -622,7 +621,7 @@ async def test_lazy_ingest_without_vector_hits_does_not_set_flag(enable_lazy) ->
     vs.enqueue_search(_empty_ctx())
     cache = FakeCache()
     orch = _build_orchestrator(
-        tenant=tenant,
+        organization=organization,
         vector_store=vs,
         llm=FakeLLM(),
         embed=FakeEmbed(),
@@ -631,14 +630,14 @@ async def test_lazy_ingest_without_vector_hits_does_not_set_flag(enable_lazy) ->
     )
 
     result = await orch.execute(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=uuid4(),
         query="precio del paracetamol",
         use_cache=False,
     )
 
     assert result.lazy_ingested is False
-    log_key = lazy_log_cache_key(tenant.id)
+    log_key = lazy_log_cache_key(organization.id)
     assert cache.lists.get(log_key, []) == []
 
 
@@ -665,7 +664,7 @@ async def test_large_table_without_trigram_index_is_skipped(
     queried: list[str] = []
     enqueued: list[dict] = []
 
-    async def fake_discover(tenant_id: UUID) -> list[DataSource]:
+    async def fake_discover(organization_id: UUID) -> list[DataSource]:
         return [big_source]
 
     async def fake_find(self, session, source, keywords, limit, **kwargs):  # type: ignore[no-untyped-def]
@@ -675,20 +674,20 @@ async def test_large_table_without_trigram_index_is_skipped(
     async def fake_indexed(self, session, schema, table):  # type: ignore[no-untyped-def]
         return set()  # sin índice trigram
 
-    async def fake_ensure(tenant_id, schema, table, columns):  # type: ignore[no-untyped-def]
-        enqueued.append({"tenant_id": tenant_id, "schema": schema, "table": table, "columns": columns})
+    async def fake_ensure(organization_id, schema, table, columns):  # type: ignore[no-untyped-def]
+        enqueued.append({"organization_id": organization_id, "schema": schema, "table": table, "columns": columns})
 
     monkeypatch.setattr(svc, "discover_sources", fake_discover)
     monkeypatch.setattr(PostgresIngestionService, "_find_candidate_rows", fake_find)
     monkeypatch.setattr(PostgresIngestionService, "_trigram_indexed_columns", fake_indexed)
     monkeypatch.setattr(svc, "_ensure_trigram_index_background", fake_ensure)
     monkeypatch.setattr(
-        "src.infrastructure.data_ingestion.get_async_session",
+        "src.connectors.sql.ingestion.get_async_session",
         _dummy_async_session,
     )
 
     result = await svc.ingest_candidates(
-        tenant_id=uuid4(),
+        organization_id=uuid4(),
         query="paracetamol",
         role="admin",
         max_tables=5,
@@ -721,7 +720,7 @@ async def test_large_table_with_trigram_index_proceeds(
     )
     queried: list[str] = []
 
-    async def fake_discover(tenant_id: UUID) -> list[DataSource]:
+    async def fake_discover(organization_id: UUID) -> list[DataSource]:
         return [big_source]
 
     async def fake_find(self, session, source, keywords, limit, **kwargs):  # type: ignore[no-untyped-def]
@@ -735,12 +734,12 @@ async def test_large_table_with_trigram_index_proceeds(
     monkeypatch.setattr(PostgresIngestionService, "_find_candidate_rows", fake_find)
     monkeypatch.setattr(PostgresIngestionService, "_trigram_indexed_columns", fake_indexed)
     monkeypatch.setattr(
-        "src.infrastructure.data_ingestion.get_async_session",
+        "src.connectors.sql.ingestion.get_async_session",
         _dummy_async_session,
     )
 
     await svc.ingest_candidates(
-        tenant_id=uuid4(),
+        organization_id=uuid4(),
         query="paracetamol",
         role="admin",
         max_tables=5,
@@ -766,7 +765,7 @@ async def test_ingest_candidates_concurrent_is_idempotent(
         {"id": "row-2", "name": "Ibuprofeno", "description": "400mg"},
     ]
 
-    async def fake_discover(tenant_id: UUID) -> list[DataSource]:
+    async def fake_discover(organization_id: UUID) -> list[DataSource]:
         return [source]
 
     async def fake_find(self, session, source, keywords, limit, **kwargs):  # type: ignore[no-untyped-def]
@@ -775,7 +774,7 @@ async def test_ingest_candidates_concurrent_is_idempotent(
     async def fake_fk(self, session, source):  # type: ignore[no-untyped-def]
         return {}
 
-    async def fake_images(self, session, table):  # type: ignore[no-untyped-def]
+    async def fake_images(self, session, schema, table):  # type: ignore[no-untyped-def]
         return {}
 
     monkeypatch.setattr(svc, "discover_sources", fake_discover)
@@ -783,11 +782,11 @@ async def test_ingest_candidates_concurrent_is_idempotent(
     monkeypatch.setattr(PostgresIngestionService, "_build_fk_resolutions", fake_fk)
     monkeypatch.setattr(PostgresIngestionService, "_load_product_images", fake_images)
 
-    tenant_id = uuid4()
+    organization_id = uuid4()
     results = await asyncio.gather(
         *[
             svc.ingest_candidates(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 query="paracetamol ibuprofeno",
                 role="admin",
                 max_tables=5,
@@ -808,7 +807,7 @@ async def test_ingest_candidates_concurrent_is_idempotent(
 
 
 # -----------------------------------------------------------------------------
-# Rate limiting de triggers por tenant (B2)
+# Rate limiting de triggers por organization (B2)
 # -----------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_lazy_rate_limited_after_max_triggers(
@@ -816,7 +815,7 @@ async def test_lazy_rate_limited_after_max_triggers(
 ) -> None:
     settings = get_settings()
     monkeypatch.setattr(settings, "RAG_LAZY_INGEST_MAX_TRIGGERS_PER_HOUR", 1)
-    tenant = _tenant()
+    organization = _organization()
     vs = FakeVectorStore()
     vs.enqueue_search(_empty_ctx())
     vs.enqueue_search(_empty_ctx())
@@ -824,7 +823,7 @@ async def test_lazy_rate_limited_after_max_triggers(
     lazy = FakeLazyIngestion()
     llm = FakeLLM(content="ok")
     orch = _build_orchestrator(
-        tenant=tenant,
+        organization=organization,
         vector_store=vs,
         llm=llm,
         embed=FakeEmbed(),
@@ -833,7 +832,7 @@ async def test_lazy_rate_limited_after_max_triggers(
     )
 
     first = await orch.execute(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=uuid4(),
         query="precio del paracetamol",
         use_cache=False,
@@ -844,7 +843,7 @@ async def test_lazy_rate_limited_after_max_triggers(
     vs.enqueue_search(_empty_ctx())
     vs.enqueue_search(_empty_ctx())
     second = await orch.execute(
-        tenant_id=tenant.id,
+        organization_id=organization.id,
         user_id=uuid4(),
         query="otra pregunta muy rara",
         use_cache=False,
@@ -867,10 +866,10 @@ async def test_lazy_table_auto_promoted_after_threshold(
     monkeypatch.setattr(settings, "RAG_LAZY_INGEST_PROMOTE_THRESHOLD", 2)
     enqueued: list[dict] = []
 
-    async def fake_enqueue(tenant_id, schema_name=None, table_name=None, full_refresh=False):  # type: ignore[no-untyped-def]
+    async def fake_enqueue(organization_id, schema_name=None, table_name=None, full_refresh=False):  # type: ignore[no-untyped-def]
         enqueued.append(
             {
-                "tenant_id": tenant_id,
+                "organization_id": organization_id,
                 "schema_name": schema_name,
                 "table_name": table_name,
                 "full_refresh": full_refresh,
@@ -878,14 +877,14 @@ async def test_lazy_table_auto_promoted_after_threshold(
         )
         return "job-1"
 
-    monkeypatch.setattr("src.infrastructure.ingestion_queue.enqueue_sync", fake_enqueue)
+    monkeypatch.setattr("src.connectors.sql.queue.enqueue_sync", fake_enqueue)
 
-    tenant = _tenant()
+    organization = _organization()
     vs = FakeVectorStore()
     lazy = FakeLazyIngestion()
     llm = FakeLLM(content="ok")
     orch = _build_orchestrator(
-        tenant=tenant,
+        organization=organization,
         vector_store=vs,
         llm=llm,
         embed=FakeEmbed(),
@@ -898,7 +897,7 @@ async def test_lazy_table_auto_promoted_after_threshold(
         vs.enqueue_search(_empty_ctx())
         vs.enqueue_search(_chunk_ctx())
         result = await orch.execute(
-            tenant_id=tenant.id,
+            organization_id=organization.id,
             user_id=uuid4(),
             query="precio del paracetamol",
             use_cache=False,
@@ -906,7 +905,7 @@ async def test_lazy_table_auto_promoted_after_threshold(
         assert result.lazy_ingested is True
 
     assert len(enqueued) == 1
-    assert enqueued[0]["tenant_id"] == tenant.id
+    assert enqueued[0]["organization_id"] == organization.id
     assert enqueued[0]["schema_name"] == "farmacia"
     assert enqueued[0]["table_name"] == "products"
 
@@ -985,7 +984,7 @@ async def test_ingest_candidates_never_touches_skip_tables(monkeypatch: pytest.M
     svc = PostgresIngestionService(vs, FakeEmbed(), FakeCache())
     queried: list[str] = []
 
-    async def fake_discover(tenant_id: UUID) -> list[DataSource]:
+    async def fake_discover(organization_id: UUID) -> list[DataSource]:
         return [_sales_source(), _products_source()]
 
     async def fake_find(self, session, source, keywords, limit, **kwargs):  # type: ignore[no-untyped-def]
@@ -995,12 +994,12 @@ async def test_ingest_candidates_never_touches_skip_tables(monkeypatch: pytest.M
     monkeypatch.setattr(svc, "discover_sources", fake_discover)
     monkeypatch.setattr(PostgresIngestionService, "_find_candidate_rows", fake_find)
     monkeypatch.setattr(
-        "src.infrastructure.data_ingestion.get_async_session",
+        "src.connectors.sql.ingestion.get_async_session",
         _dummy_async_session,
     )
 
     result = await svc.ingest_candidates(
-        tenant_id=uuid4(),
+        organization_id=uuid4(),
         query="notas de venta paracetamol",
         role="admin",
         max_tables=5,
@@ -1017,14 +1016,14 @@ async def test_ingest_candidates_timeout_swallows_error(monkeypatch: pytest.Monk
     vs = FakeVectorStore()
     svc = PostgresIngestionService(vs, FakeEmbed(), FakeCache())
 
-    async def fake_discover(tenant_id: UUID) -> list[DataSource]:
+    async def fake_discover(organization_id: UUID) -> list[DataSource]:
         await asyncio.sleep(5)
         return [_products_source()]
 
     monkeypatch.setattr(svc, "discover_sources", fake_discover)
 
     result = await svc.ingest_candidates(
-        tenant_id=uuid4(),
+        organization_id=uuid4(),
         query="paracetamol",
         role="admin",
         max_tables=5,
@@ -1041,12 +1040,12 @@ async def test_ingest_rows_idempotent_uuid5() -> None:
     vs = FakeVectorStore()
     svc = PostgresIngestionService(vs, FakeEmbed(), FakeCache())
     source = _products_source()
-    tenant_id = uuid4()
+    organization_id = uuid4()
     rows = [{"id": "row-1", "name": "Paracetamol", "description": "500mg"}]
 
-    first = await svc._ingest_rows(tenant_id, source, rows, ingestion_mode="lazy")
+    first = await svc._ingest_rows(organization_id, source, rows, ingestion_mode="lazy")
     ids_first = set(vs.points)
-    second = await svc._ingest_rows(tenant_id, source, rows, ingestion_mode="lazy")
+    second = await svc._ingest_rows(organization_id, source, rows, ingestion_mode="lazy")
 
     expected = uuid5(_VECTOR_NS, "farmacia.products:row-1")
     assert expected in vs.points
@@ -1056,7 +1055,7 @@ async def test_ingest_rows_idempotent_uuid5() -> None:
     meta = vs.points[expected][2]
     assert meta is not None
     assert meta.get("ingestion_mode") == "lazy"
-    assert meta.get("tenant_id") == str(tenant_id)
+    assert meta.get("organization_id") == str(organization_id)
 
 
 @pytest.mark.asyncio
@@ -1065,7 +1064,7 @@ async def test_ingest_candidates_customer_skips_admin_only_views(monkeypatch: py
     svc = PostgresIngestionService(vs, FakeEmbed(), FakeCache())
     queried: list[str] = []
 
-    async def fake_discover(tenant_id: UUID) -> list[DataSource]:
+    async def fake_discover(organization_id: UUID) -> list[DataSource]:
         return [_admin_view_source(), _products_source()]
 
     async def fake_find(self, session, source, keywords, limit, **kwargs):  # type: ignore[no-untyped-def]
@@ -1075,12 +1074,12 @@ async def test_ingest_candidates_customer_skips_admin_only_views(monkeypatch: py
     monkeypatch.setattr(svc, "discover_sources", fake_discover)
     monkeypatch.setattr(PostgresIngestionService, "_find_candidate_rows", fake_find)
     monkeypatch.setattr(
-        "src.infrastructure.data_ingestion.get_async_session",
+        "src.connectors.sql.ingestion.get_async_session",
         _dummy_async_session,
     )
 
     await svc.ingest_candidates(
-        tenant_id=uuid4(),
+        organization_id=uuid4(),
         query="ingresos totales paracetamol",
         role="customer",
         max_tables=5,

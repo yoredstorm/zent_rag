@@ -20,7 +20,7 @@ _SRC_DIR = Path(__file__).resolve().parent.parent / "src"
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-from src.domain.entities import LLMResponse, QueryStatus, RAGQueryResult
+from src.core.domain.entities import LLMResponse, QueryStatus, RAGQueryResult
 
 
 class MockRAGOrchestrator:
@@ -39,7 +39,7 @@ class MockRAGOrchestrator:
             return self._response
         return RAGQueryResult(
             query_id=uuid4(),
-            tenant_id=kwargs.get("tenant_id", uuid4()),
+            organization_id=kwargs.get("organization_id", uuid4()),
             user_id=kwargs.get("user_id", uuid4()),
             query=kwargs.get("query", ""),
             status=QueryStatus.COMPLETED,
@@ -87,7 +87,7 @@ async def _reset_rate_limits() -> AsyncGenerator[None, None]:
     Los tests de auth registran fallos bajo ip:testclient que persisten en
     Redis local entre ejecuciones y contaminan tests posteriores.
     """
-    from src.infrastructure.auth_rate_limit import (
+    from src.platform.auth.rate_limit import (
         clear_auth_failures,
         reset_memory_rate_limits,
     )
@@ -99,7 +99,7 @@ async def _reset_rate_limits() -> AsyncGenerator[None, None]:
 
 @pytest_asyncio.fixture
 async def trial_auth(async_client: AsyncClient) -> dict[str, str]:
-    """Crea un trial fresco y retorna headers Authorization + X-Tenant-Id."""
+    """Crea un trial fresco y retorna headers Authorization + X-Organization-Id."""
     response = await async_client.post(
         "/api/v1/billing/subscription/create-trial",
         json={
@@ -111,13 +111,13 @@ async def trial_auth(async_client: AsyncClient) -> dict[str, str]:
     data = response.json()
     return {
         "Authorization": f"Bearer {data['api_token']}",
-        "X-Tenant-Id": data["tenant_id"],
+        "X-Organization-Id": data["organization_id"],
     }
 
 
 @pytest.fixture
-def known_tenant_id() -> str:
-    """UUID del tenant de desarrollo pre-seeded en la base de datos."""
+def known_organization_id() -> str:
+    """UUID del organization de desarrollo pre-seeded en la base de datos."""
     return "00000000-0000-0000-0000-000000000001"
 
 
@@ -128,12 +128,12 @@ def dev_api_token() -> str:
 
 
 @pytest.fixture
-def unknown_tenant_id() -> str:
-    """UUID de un tenant que no existe en la base de datos."""
+def unknown_organization_id() -> str:
+    """UUID de un organization que no existe en la base de datos."""
     return "ffffffff-ffff-ffff-ffff-ffffffffffff"
 
 
 @pytest.fixture
-def new_tenant_id() -> str:
-    """UUID unico para crear un tenant nuevo en cada test."""
+def new_organization_id() -> str:
+    """UUID unico para crear un organization nuevo en cada test."""
     return str(uuid4())

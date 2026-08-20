@@ -73,15 +73,15 @@ export default function DashboardPage() {
         const [subData, usageData, lazyData] = await Promise.all([
           api<Subscription>("/api/v1/billing/subscription", {
             token: session.token,
-            tenantId: session.tenantId,
+            organizationId: session.organizationId,
           }),
           api<Usage>("/api/v1/billing/usage?days=30", {
             token: session.token,
-            tenantId: session.tenantId,
+            organizationId: session.organizationId,
           }),
           api<LazyActivity>("/api/v1/ingestion/lazy-activity?days=30", {
             token: session.token,
-            tenantId: session.tenantId,
+            organizationId: session.organizationId,
           }).catch(() => ({ trigger_count: 0, recent: [] as LazyEvent[] })),
         ]);
         setSub(subData);

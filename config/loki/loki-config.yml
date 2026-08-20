@@ -20,7 +20,7 @@ common:
     kvstore:
       store: inmemory
 
-# Esquema de almacenamiento: optimizado para logs JSON con campos tenant_id y trace_id
+# Esquema de almacenamiento: optimizado para logs JSON con campos organization_id y trace_id
 schema_config:
   configs:
     - from: "2024-01-01"

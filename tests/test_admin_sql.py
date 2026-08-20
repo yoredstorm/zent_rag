@@ -3,8 +3,6 @@
 # =============================================================================
 from __future__ import annotations
 
-from uuid import uuid4
-
 import pytest
 from httpx import AsyncClient
 
@@ -27,7 +25,7 @@ async def test_admin_sql_allows_select_with_admin_scope(
         json={"query": "SELECT 1 AS uno, 2 AS dos"},
         headers={
             "Authorization": f"Bearer {dev_api_token}",
-            "X-Tenant-Id": "00000000-0000-0000-0000-000000000001",
+            "X-Organization-Id": "00000000-0000-0000-0000-000000000001",
         },
     )
     assert response.status_code == 200, response.text
@@ -55,7 +53,7 @@ async def test_admin_sql_rejects_non_select(
         json={"query": query},
         headers={
             "Authorization": f"Bearer {dev_api_token}",
-            "X-Tenant-Id": "00000000-0000-0000-0000-000000000001",
+            "X-Organization-Id": "00000000-0000-0000-0000-000000000001",
         },
     )
     assert response.status_code == 403, response.text
@@ -78,21 +76,30 @@ async def test_admin_sql_rejects_non_admin_api_token(
 async def test_admin_sql_allows_portal_session(
     async_client: AsyncClient, trial_auth: dict[str, str]
 ) -> None:
-    """La sesión del portal (dueño del tenant) sí puede ejecutar SQL."""
+    """La sesión del portal (owner de la organización) sí puede ejecutar SQL."""
     from uuid import UUID as _UUID
 
-    from src.infrastructure.portal_session import encrypt_session
+    from src.infrastructure.postgres.relational_db import PostgresUserRepository
+    from src.platform.auth.session import encrypt_session
+
+    # La sesión debe pertenecer a un usuario REAL de la organización
+    # (con membership owner) — el RBAC ya no concede admin a sesiones sueltas.
+    user_repo = PostgresUserRepository()
+    user = await user_repo.get_by_external_id(
+        _UUID(trial_auth["X-Organization-Id"]), "default-admin"
+    )
+    assert user is not None
 
     session_token = encrypt_session(
-        user_id=uuid4(),
-        tenant_id=_UUID(trial_auth["X-Tenant-Id"]),
+        user_id=user.id,
+        organization_id=_UUID(trial_auth["X-Organization-Id"]),
     )
     response = await async_client.post(
         "/api/v1/admin/sql",
         json={"query": "SELECT 42 AS respuesta"},
         headers={
             "Authorization": f"Bearer {session_token}",
-            "X-Tenant-Id": trial_auth["X-Tenant-Id"],
+            "X-Organization-Id": trial_auth["X-Organization-Id"],
         },
     )
     assert response.status_code == 200, response.text
@@ -100,7 +107,7 @@ async def test_admin_sql_allows_portal_session(
 
 
 @pytest.mark.asyncio
-async def test_admin_sql_rejects_mismatched_tenant_header(
+async def test_admin_sql_rejects_mismatched_organization_header(
     async_client: AsyncClient, dev_api_token: str
 ) -> None:
     response = await async_client.post(
@@ -108,7 +115,7 @@ async def test_admin_sql_rejects_mismatched_tenant_header(
         json={"query": "SELECT 1"},
         headers={
             "Authorization": f"Bearer {dev_api_token}",
-            "X-Tenant-Id": "ffffffff-ffff-ffff-ffff-ffffffffffff",
+            "X-Organization-Id": "ffffffff-ffff-ffff-ffff-ffffffffffff",
         },
     )
     assert response.status_code == 403, response.text

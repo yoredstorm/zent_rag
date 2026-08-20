@@ -2,7 +2,7 @@
 # Tests para el endpoint Billing — /api/v1/billing/*
 # =============================================================================
 # Estos tests requieren PostgreSQL corriendo con el esquema completo
-# (tablas de billing, tenants, plans pre-seeded).
+# (tablas de billing, organizations, plans pre-seeded).
 # =============================================================================
 from __future__ import annotations
 
@@ -35,17 +35,17 @@ class TestListPlans:
         assert plan_names == {"trial", "starter", "pro", "enterprise"}
 
 
-class TestCreateTrialNewTenant:
-    """Verifica la creacion de trial para un tenant nuevo."""
+class TestCreateTrialNewOrganization:
+    """Verifica la creacion de trial para un organization nuevo."""
 
     @pytest.mark.asyncio
-    async def test_create_trial_with_new_tenant_returns_200(
+    async def test_create_trial_with_new_organization_returns_200(
         self, async_client: AsyncClient
     ) -> None:
-        """POST /api/v1/billing/subscription/create-trial crea tenant server-side."""
+        """POST /api/v1/billing/subscription/create-trial crea organization server-side."""
         response = await async_client.post(
             "/api/v1/billing/subscription/create-trial",
-            json={"company_name": "Test Tenant S.A.", "email": "test@example.com"},
+            json={"company_name": "Test Organization S.A.", "email": "test@example.com"},
         )
 
         assert response.status_code == 200
@@ -53,8 +53,8 @@ class TestCreateTrialNewTenant:
         assert data["status"] == "trialing"
         assert "api_token" in data
         assert "subscription_id" in data
-        assert "tenant_id" in data
-        assert data["company_name"] == "Test Tenant S.A."
+        assert "organization_id" in data
+        assert data["company_name"] == "Test Organization S.A."
 
     @pytest.mark.asyncio
     async def test_create_trial_requires_company_name(
@@ -75,7 +75,7 @@ class TestBearerTokenAuth:
         self, async_client: AsyncClient, trial_auth: dict[str, str]
     ) -> None:
         """POST /api/v1/rag/query con Authorization: Bearer <token_valido>
-        debe autenticar al tenant via el token y devolver 200."""
+        debe autenticar al organization via el token y devolver 200."""
         body = {"query": "Cual es el producto mas vendido de ZentStore?"}
 
         response = await async_client.post("/api/v1/rag/query", json=body, headers=trial_auth)

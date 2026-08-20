@@ -14,7 +14,7 @@ from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from src.config import Settings
+from src.core.config import Settings
 
 config = context.config
 

@@ -17,15 +17,15 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 
 from src.api.deps import get_cache_provider, get_embedding_provider, get_vector_store
-from src.domain.ports import CacheProvider, EmbeddingProvider, VectorStore
-from src.domain.services import IngestionResult
-from src.infrastructure.data_ingestion import PostgresIngestionService
-from src.infrastructure.ingestion_queue import enqueue_sync, get_job_status, list_recent_jobs
-from src.infrastructure.lazy_activity import (
+from src.connectors.sql.ingestion import PostgresIngestionService
+from src.connectors.sql.queue import enqueue_sync, get_job_status, list_recent_jobs
+from src.core.domain.services import IngestionResult
+from src.core.ports import CacheProvider, EmbeddingProvider, VectorStore
+from src.infrastructure.observability.logging_config import get_logger
+from src.platform.usage.lazy_activity import (
     lazy_log_cache_key,
     parse_lazy_activity,
 )
-from src.infrastructure.logging_config import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/ingestion", tags=["Ingestion"])
@@ -51,25 +51,25 @@ def get_ingestion_service(
     summary="Listar fuentes de datos descubiertas",
     description=(
         "Descubre automáticamente todas las tablas disponibles en PostgreSQL "
-        "para el tenant. Retorna esquema, nombre, columnas y conteo de filas."
+        "para el organization. Retorna esquema, nombre, columnas y conteo de filas."
     ),
 )
 async def list_sources(
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
     ingestion: PostgresIngestionService = Depends(get_ingestion_service),
 ):
-    from src.api.security import resolve_tenant
+    from src.api.security import resolve_organization
 
-    tenant_id = resolve_tenant(request, x_tenant_id)
+    organization_id = resolve_organization(request, x_organization_id)
 
-    sources = await ingestion.discover_sources(tenant_id)
+    sources = await ingestion.discover_sources(organization_id)
     skip_set = ingestion._skip_tables
     synced_count = 0
     source_list = []
     for s in sources:
-        is_synced = await ingestion.is_synced(tenant_id, s.schema_name, s.table_name)
-        progress = await ingestion.get_table_progress(tenant_id, s.schema_name, s.table_name)
+        is_synced = await ingestion.is_synced(organization_id, s.schema_name, s.table_name)
+        progress = await ingestion.get_table_progress(organization_id, s.schema_name, s.table_name)
         is_skipped = s.table_name.lower() in skip_set
         if is_synced:
             synced_count += 1
@@ -82,7 +82,7 @@ async def list_sources(
             "skipped": is_skipped,
             "progress": progress,
             "lazy_rows_indexed": await ingestion.get_lazy_rows_indexed(
-                tenant_id, s.schema_name, s.table_name
+                organization_id, s.schema_name, s.table_name
             ),
             "columns_detail": [
                 {"name": c.name, "type": c.data_type, "nullable": c.is_nullable, "is_pk": c.is_primary_key}
@@ -90,7 +90,7 @@ async def list_sources(
             ],
         })
     return {
-        "tenant_id": str(tenant_id),
+        "organization_id": str(organization_id),
         "total_sources": len(sources),
         "synced_sources": synced_count,
         "sources": source_list,
@@ -100,30 +100,30 @@ async def list_sources(
 @router.get(
     "/lazy-activity",
     summary="Actividad de indexado por demanda",
-    description="Eventos recientes de ingesta perezosa para el tenant autenticado.",
+    description="Eventos recientes de ingesta perezosa para el organization autenticado.",
 )
 async def lazy_activity(
     request: Request,
     days: int = Query(default=30, ge=1, le=365),
     limit: int = Query(default=20, ge=1, le=100),
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
     cache: CacheProvider = Depends(get_cache_provider),
 ):
-    from src.api.security import resolve_tenant
+    from src.api.security import resolve_organization
 
-    tenant_id = resolve_tenant(request, x_tenant_id)
+    organization_id = resolve_organization(request, x_organization_id)
 
-    entries = await cache.get_list(lazy_log_cache_key(tenant_id))
+    entries = await cache.get_list(lazy_log_cache_key(organization_id))
     trigger_count, recent = parse_lazy_activity(entries, days=days, limit=limit)
 
-    # Estado del rate limit por tenant (transparencia para el admin)
+    # Estado del rate limit por organization (transparencia para el admin)
     rate_limited = False
     total_rows_indexed = 0
     try:
-        from src.infrastructure.lazy_rate_limit import lazy_trigger_limited
+        from src.platform.usage.lazy_rate_limit import lazy_trigger_limited
 
-        rate_limited = await lazy_trigger_limited(tenant_id)
-        raw_total = await cache.get(f"rag:lazy_rows_total:{tenant_id.hex}")
+        rate_limited = await lazy_trigger_limited(organization_id)
+        raw_total = await cache.get(f"rag:lazy_rows_total:{organization_id.hex}")
         try:
             total_rows_indexed = int(raw_total) if raw_total else 0
         except (TypeError, ValueError):
@@ -132,7 +132,7 @@ async def lazy_activity(
         rate_limited = False
 
     return {
-        "tenant_id": str(tenant_id),
+        "organization_id": str(organization_id),
         "days": days,
         "trigger_count": trigger_count,
         "total_rows_indexed": total_rows_indexed,
@@ -146,7 +146,7 @@ async def lazy_activity(
     response_model=dict,
     summary="Sincronizar todas las tablas con la BD vectorial",
     description=(
-        "Descubre e indexa automáticamente todas las tablas del tenant en Qdrant. "
+        "Descubre e indexa automáticamente todas las tablas del organization en Qdrant. "
         "Cada fila se convierte en texto enriquecido, se genera su embedding y se "
         "almacena con metadatos completos para búsqueda semántica."
     ),
@@ -155,24 +155,24 @@ async def sync_all(
     request: Request,
     full_refresh: bool = False,
     background: bool = Query(default=True, description="Siempre en background para streaming de progreso"),
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
     ingestion: PostgresIngestionService = Depends(get_ingestion_service),
 ):
-    from src.api.security import require_scope, resolve_tenant
+    from src.api.security import require_scope, resolve_organization
 
     require_scope(request, "rag:ingest")
-    tenant_id = resolve_tenant(request, x_tenant_id)
+    organization_id = resolve_organization(request, x_organization_id)
 
-    from src.infrastructure.cache import _get_redis
-    from src.infrastructure.ingestion_queue import (
+    from src.connectors.sql.queue import (
         JOB_KEY_PREFIX,
         JOB_TTL_SECONDS,
         JOBS_LIST_KEY,
         update_job_status,
     )
+    from src.infrastructure.redis.cache import _get_redis
 
-    # Lock por tenant: un solo sync activo a la vez (evita tareas duplicadas).
-    lock_key = f"rag:ingest_lock:{tenant_id.hex}"
+    # Lock por organization: un solo sync activo a la vez (evita tareas duplicadas).
+    lock_key = f"rag:ingest_lock:{organization_id.hex}"
     client = await _get_redis()
     try:
         acquired = await client.set(lock_key, "1", nx=True, ex=3600)
@@ -181,7 +181,7 @@ async def sync_all(
     if not acquired:
         raise HTTPException(
             409,
-            "A sync is already running for this tenant. Wait for it to finish.",
+            "A sync is already running for this organization. Wait for it to finish.",
         )
 
     async def _release_lock():
@@ -193,7 +193,7 @@ async def sync_all(
     job_id = uuid4().hex
     init = {
         "job_id": job_id,
-        "tenant_id": str(tenant_id),
+        "organization_id": str(organization_id),
         "status": "running",
         "progress": "0",
         "message": "Iniciando sincronización…",
@@ -218,7 +218,7 @@ async def sync_all(
 
     logger.info(
         "Starting ingestion sync",
-        tenant_id=str(tenant_id),
+        organization_id=str(organization_id),
         full_refresh=full_refresh,
         job_id=job_id,
     )
@@ -226,7 +226,7 @@ async def sync_all(
     # Ejecutar en background task para no bloquear la respuesta HTTP
     async def _run_sync():
         try:
-            result: IngestionResult = await ingestion.sync_all(tenant_id, full_refresh, job_id=job_id)
+            result: IngestionResult = await ingestion.sync_all(organization_id, full_refresh, job_id=job_id)
             if not result.success:
                 await update_job_status(
                     job_id,
@@ -285,14 +285,14 @@ async def sync_table(
     table_name: str,
     full_refresh: bool = False,
     background: bool = Query(default=False, description="Ejecutar en background (cola Redis)"),
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
     ingestion: PostgresIngestionService = Depends(get_ingestion_service),
 ):
-    from src.api.security import require_scope, resolve_tenant
-    from src.infrastructure.schema_discovery import quote_ident
+    from src.api.security import require_scope, resolve_organization
+    from src.connectors.sql.schema_discovery import quote_ident
 
     require_scope(request, "rag:ingest")
-    tenant_id = resolve_tenant(request, x_tenant_id)
+    organization_id = resolve_organization(request, x_organization_id)
 
     # Validar identificadores ANTES de cualquier ejecución SQL (anti inyección).
     try:
@@ -302,18 +302,18 @@ async def sync_table(
         raise HTTPException(400, "Schema o tabla inválidos (solo letras, números y _)")
 
     if background:
-        job_id = await enqueue_sync(tenant_id, schema_name, table_name, full_refresh)
+        job_id = await enqueue_sync(organization_id, schema_name, table_name, full_refresh)
         return {
             "job_id": job_id,
             "status": "pending",
             "message": "Ingestion job enqueued for background processing",
         }
 
-    result = await ingestion.sync_table(tenant_id, schema_name, table_name, full_refresh)
+    result = await ingestion.sync_table(organization_id, schema_name, table_name, full_refresh)
 
     return {
         "status": "completed" if result.success else "partial",
-        "tenant_id": str(result.tenant_id),
+        "organization_id": str(result.organization_id),
         "schema": schema_name,
         "table": table_name,
         "rows_indexed": result.rows_indexed,
@@ -331,15 +331,15 @@ async def sync_table(
 async def get_job(
     request: Request,
     job_id: str,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
 ):
-    from src.api.security import resolve_tenant
+    from src.api.security import resolve_organization
 
-    tenant_id = resolve_tenant(request, x_tenant_id)
+    organization_id = resolve_organization(request, x_organization_id)
     job = await get_job_status(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
-    if job.get("tenant_id") != str(tenant_id):
+    if job.get("organization_id") != str(organization_id):
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
     return job
 
@@ -347,18 +347,18 @@ async def get_job(
 @router.get(
     "/jobs",
     summary="Listar jobs recientes de ingesta",
-    description="Lista los jobs más recientes del tenant autenticado (máximo 100).",
+    description="Lista los jobs más recientes del organization autenticado (máximo 100).",
 )
 async def list_jobs(
     request: Request,
     limit: int = Query(default=50, ge=1, le=100),
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
 ):
-    from src.api.security import resolve_tenant
+    from src.api.security import resolve_organization
 
-    tenant_id = resolve_tenant(request, x_tenant_id)
+    organization_id = resolve_organization(request, x_organization_id)
     jobs = await list_recent_jobs(100)
-    own_jobs = [j for j in jobs if j.get("tenant_id") == str(tenant_id)][:limit]
+    own_jobs = [j for j in jobs if j.get("organization_id") == str(organization_id)][:limit]
     return {"jobs": own_jobs, "count": len(own_jobs)}
 
 
@@ -371,11 +371,11 @@ async def stream_job_progress(
     request: Request,
     job_id: str,
     interval_ms: int = Query(default=1000, ge=500, le=5000, description="Intervalo entre actualizaciones"),
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
 ):
-    from src.api.security import resolve_tenant
+    from src.api.security import resolve_organization
 
-    tenant_id = resolve_tenant(request, x_tenant_id)
+    organization_id = resolve_organization(request, x_organization_id)
 
     async def event_stream():
         last_progress = -1
@@ -388,7 +388,7 @@ async def stream_job_progress(
                 return
 
             job = await get_job_status(job_id)
-            if job is None or job.get("tenant_id") != str(tenant_id):
+            if job is None or job.get("organization_id") != str(organization_id):
                 yield f"event: error\ndata: {json.dumps({'error': 'Job not found'})}\n\n"
                 return
 

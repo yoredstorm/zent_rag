@@ -9,14 +9,14 @@ from uuid import uuid4
 import pytest
 from httpx import AsyncClient
 
-from src.domain.entities import (
+from src.api.schemas import RAGQueryResponse, sources_for_client
+from src.core.domain.entities import (
     LLMResponse,
     QueryStatus,
     RAGQueryResult,
     RetrievalChunk,
     RetrievalContext,
 )
-from src.domain.models import RAGQueryResponse, sources_for_client
 
 _HAS_LITELLM = importlib.util.find_spec("litellm") is not None
 
@@ -41,7 +41,7 @@ def test_sql_method_hides_vector_sources() -> None:
         metadata={"image_base64": "abc"},
     )
     result = RAGQueryResult(
-        tenant_id=uuid4(),
+        organization_id=uuid4(),
         user_id=uuid4(),
         query="último producto vendido",
         method="sql",
@@ -57,7 +57,7 @@ def test_rag_method_keeps_vector_sources() -> None:
         score=0.91,
     )
     result = RAGQueryResult(
-        tenant_id=uuid4(),
+        organization_id=uuid4(),
         user_id=uuid4(),
         query="qué pañales hay",
         method="rag",
@@ -68,11 +68,11 @@ def test_rag_method_keeps_vector_sources() -> None:
     assert "Pañales" in out[0].content
 
 
-class TestRAGQueryWithValidTenant:
+class TestRAGQueryWithValidOrganization:
     """Verifica que una consulta RAG con Bearer valido retorna 200."""
 
     @pytest.mark.asyncio
-    async def test_valid_tenant_returns_200(
+    async def test_valid_organization_returns_200(
         self, async_client: AsyncClient, trial_auth: dict[str, str]
     ) -> None:
         body = {"query": "Cual es el precio del ZentPhone X1?"}
@@ -97,9 +97,9 @@ class TestRAGQueryRequiresBearer:
     async def test_missing_bearer_returns_401(
         self,
         async_client: AsyncClient,
-        unknown_tenant_id: str,
+        unknown_organization_id: str,
     ) -> None:
-        headers = {"X-Tenant-Id": unknown_tenant_id}
+        headers = {"X-Organization-Id": unknown_organization_id}
         body = {"query": "Cualquier pregunta"}
 
         response = await async_client.post("/api/v1/rag/query", json=body, headers=headers)
@@ -109,7 +109,7 @@ class TestRAGQueryRequiresBearer:
         assert data.get("error_code") == "missing_token"
 
 
-class TestRAGQueryWithoutTenant:
+class TestRAGQueryWithoutOrganization:
     """Verifica que una consulta sin auth retorne 401."""
 
     @pytest.mark.asyncio
@@ -151,7 +151,7 @@ class TestAntiHallucination:
     ) -> None:
         mock_orchestrator._response = RAGQueryResult(
             query_id=uuid4(),
-            tenant_id=uuid4(),
+            organization_id=uuid4(),
             user_id=uuid4(),
             query="Pregunta sin datos",
             status=QueryStatus.COMPLETED,
@@ -190,7 +190,7 @@ class TestSqlQueryAdminOnly:
     ) -> None:
         mock_orchestrator._response = RAGQueryResult(
             query_id=uuid4(),
-            tenant_id=uuid4(),
+            organization_id=uuid4(),
             user_id=uuid4(),
             query="Cuantas ventas?",
             role="admin",
@@ -225,7 +225,7 @@ class TestSqlQueryAdminOnly:
     ) -> None:
         mock_orchestrator._response = RAGQueryResult(
             query_id=uuid4(),
-            tenant_id=uuid4(),
+            organization_id=uuid4(),
             user_id=uuid4(),
             query="Cuantas ventas?",
             role="customer",
@@ -265,7 +265,7 @@ class TestLazyIngestedFlag:
     ) -> None:
         mock_orchestrator._response = RAGQueryResult(
             query_id=uuid4(),
-            tenant_id=uuid4(),
+            organization_id=uuid4(),
             user_id=uuid4(),
             query="precio del paracetamol",
             status=QueryStatus.COMPLETED,

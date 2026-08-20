@@ -10,30 +10,51 @@
 # =============================================================================
 from __future__ import annotations
 
-from src.application.orchestrator import RAGOrchestrator
-from src.config import get_settings
-from src.domain.ports import (
+from src.agents.runtime.orchestrator import RAGOrchestrator
+from src.agents.tools.sql_expert_postgres import PostgresSqlExpert
+from src.core.config import get_settings
+from src.core.ports import (
+    AgentRepository,
+    ApiKeyRepository,
+    AuditLogRepository,
     CacheProvider,
+    ConnectorRepository,
     EmbeddingProvider,
+    KnowledgeBaseRepository,
     LLMProvider,
-    TenantRepository,
+    MembershipRepository,
+    OrganizationRepository,
+    ProjectRepository,
     UserRepository,
     VectorStore,
 )
-from src.infrastructure.cache import RedisCache
-from src.infrastructure.llm_provider import LiteLLMProvider
-from src.infrastructure.relational_db import (
-    PostgresTenantRepository,
+from src.infrastructure.llm.provider import LiteLLMProvider
+from src.infrastructure.postgres.relational_db import (
+    PostgresAgentRepository,
+    PostgresApiKeyRepository,
+    PostgresAuditLogRepository,
+    PostgresConnectorRepository,
+    PostgresKnowledgeBaseRepository,
+    PostgresMembershipRepository,
+    PostgresOrganizationRepository,
+    PostgresProjectRepository,
     PostgresUserRepository,
 )
-from src.infrastructure.sql_expert import PostgresSqlExpert
-from src.infrastructure.vector_store import QdrantVectorStore
+from src.infrastructure.qdrant.vector_store import QdrantVectorStore
+from src.infrastructure.redis.cache import RedisCache
 
 # -----------------------------------------------------------------------------
 # Singletons de infraestructura (inicialización lazy, thread-safe con FastAPI)
 # -----------------------------------------------------------------------------
-_tenant_repo: TenantRepository | None = None
+_organization_repo: OrganizationRepository | None = None
 _user_repo: UserRepository | None = None
+_membership_repo: MembershipRepository | None = None
+_api_key_repo: ApiKeyRepository | None = None
+_project_repo: ProjectRepository | None = None
+_kb_repo: KnowledgeBaseRepository | None = None
+_agent_repo: AgentRepository | None = None
+_connector_repo: ConnectorRepository | None = None
+_audit_repo: AuditLogRepository | None = None
 _vector_store: VectorStore | None = None
 _llm_provider: LLMProvider | None = None
 _embedding_provider: EmbeddingProvider | None = None
@@ -41,11 +62,11 @@ _cache_provider: CacheProvider | None = None
 _orchestrator: RAGOrchestrator | None = None
 
 
-def get_tenant_repo() -> TenantRepository:
-    global _tenant_repo
-    if _tenant_repo is None:
-        _tenant_repo = PostgresTenantRepository()
-    return _tenant_repo
+def get_organization_repo() -> OrganizationRepository:
+    global _organization_repo
+    if _organization_repo is None:
+        _organization_repo = PostgresOrganizationRepository()
+    return _organization_repo
 
 
 def get_user_repo() -> UserRepository:
@@ -53,6 +74,55 @@ def get_user_repo() -> UserRepository:
     if _user_repo is None:
         _user_repo = PostgresUserRepository()
     return _user_repo
+
+
+def get_membership_repo() -> MembershipRepository:
+    global _membership_repo
+    if _membership_repo is None:
+        _membership_repo = PostgresMembershipRepository()
+    return _membership_repo
+
+
+def get_api_key_repo() -> ApiKeyRepository:
+    global _api_key_repo
+    if _api_key_repo is None:
+        _api_key_repo = PostgresApiKeyRepository()
+    return _api_key_repo
+
+
+def get_project_repo() -> ProjectRepository:
+    global _project_repo
+    if _project_repo is None:
+        _project_repo = PostgresProjectRepository()
+    return _project_repo
+
+
+def get_kb_repo() -> KnowledgeBaseRepository:
+    global _kb_repo
+    if _kb_repo is None:
+        _kb_repo = PostgresKnowledgeBaseRepository()
+    return _kb_repo
+
+
+def get_agent_repo() -> AgentRepository:
+    global _agent_repo
+    if _agent_repo is None:
+        _agent_repo = PostgresAgentRepository()
+    return _agent_repo
+
+
+def get_connector_repo() -> ConnectorRepository:
+    global _connector_repo
+    if _connector_repo is None:
+        _connector_repo = PostgresConnectorRepository()
+    return _connector_repo
+
+
+def get_audit_repo() -> AuditLogRepository:
+    global _audit_repo
+    if _audit_repo is None:
+        _audit_repo = PostgresAuditLogRepository()
+    return _audit_repo
 
 
 def get_vector_store() -> VectorStore:
@@ -93,18 +163,18 @@ def get_rag_orchestrator() -> RAGOrchestrator:
             sql_expert = PostgresSqlExpert(llm_provider=get_llm_provider())
         reranker = None
         if settings.RAG_RERANK_ENABLED:
-            from src.infrastructure.reranker import LLMReranker
+            from src.rag.reranking.reranker import LLMReranker
             reranker = LLMReranker(llm_provider=get_llm_provider())
         lazy_ingestion = None
         if settings.RAG_LAZY_INGESTION_ENABLED:
-            from src.infrastructure.data_ingestion import PostgresIngestionService
+            from src.connectors.sql.ingestion import PostgresIngestionService
             lazy_ingestion = PostgresIngestionService(
                 get_vector_store(),
                 get_embedding_provider(),
                 get_cache_provider(),
             )
         _orchestrator = RAGOrchestrator(
-            tenant_repo=get_tenant_repo(),
+            organization_repo=get_organization_repo(),
             vector_store=get_vector_store(),
             llm_provider=get_llm_provider(),
             embedding_provider=get_embedding_provider(),

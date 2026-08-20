@@ -8,18 +8,18 @@ from uuid import UUID
 from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from src.infrastructure.evaluation import ensure_eval_table, get_recent, get_stats, store_feedback
-from src.infrastructure.logging_config import get_logger
+from src.infrastructure.observability.logging_config import get_logger
+from src.rag.evaluation.store import ensure_eval_table, get_recent, get_stats, store_feedback
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/eval", tags=["Evaluation"])
 
 
-def _resolve_tenant_id(request: Request, x_tenant_id: str) -> UUID:
-    """Tenant autenticado gana; header distinto -> 403 (anti cross-tenant)."""
-    from src.api.security import resolve_tenant
+def _resolve_organization_id(request: Request, x_organization_id: str) -> UUID:
+    """Organization autenticado gana; header distinto -> 403 (anti cross-organization)."""
+    from src.api.security import resolve_organization
 
-    return resolve_tenant(request, x_tenant_id)
+    return resolve_organization(request, x_organization_id)
 
 
 # ---------------------------------------------------------------------------
@@ -53,9 +53,9 @@ class FeedbackRequest(BaseModel):
 async def submit_feedback(
     body: FeedbackRequest,
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
 ):
-    tenant_id = _resolve_tenant_id(request, x_tenant_id)
+    organization_id = _resolve_organization_id(request, x_organization_id)
     await ensure_eval_table()
 
     try:
@@ -69,7 +69,7 @@ async def submit_feedback(
         cid = None
 
     await store_feedback(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         query=body.query,
         rating=body.rating,
         query_id=qid,
@@ -97,13 +97,13 @@ async def submit_feedback(
 @router.get("/stats", summary="Estadísticas de calidad RAG")
 async def eval_stats(
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
     role: str | None = Query(default=None, pattern=r"^(admin|customer)$"),
     days: int = Query(default=30, ge=1, le=365),
 ):
-    tenant_id = _resolve_tenant_id(request, x_tenant_id)
+    organization_id = _resolve_organization_id(request, x_organization_id)
     await ensure_eval_table()
-    return await get_stats(tenant_id, role=role, days=days)
+    return await get_stats(organization_id, role=role, days=days)
 
 
 # ---------------------------------------------------------------------------
@@ -114,36 +114,48 @@ async def eval_stats(
 @router.get("/recent", summary="Evaluaciones recientes")
 async def eval_recent(
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
     limit: int = Query(default=20, ge=1, le=100),
 ):
-    tenant_id = _resolve_tenant_id(request, x_tenant_id)
+    organization_id = _resolve_organization_id(request, x_organization_id)
     await ensure_eval_table()
-    return await get_recent(tenant_id, limit=limit)
+    return await get_recent(organization_id, limit=limit)
 
 
 @router.post("/run", summary="Ejecutar evaluación golden set (protegido)")
 async def run_golden_eval(
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
 ):
-    from src.api.security import require_tenant_admin, resolve_tenant
-    from src.config import get_settings
+    from src.api.security import require_organization_admin, resolve_organization
+    from src.core.config import get_settings
     from src.scripts.eval_rag import run_eval
 
     if not get_settings().RAG_ADMIN_ENABLED:
         raise HTTPException(403, "Eval run requires RAG_ADMIN_ENABLED=true")
 
-    ctx = require_tenant_admin(request)
-    tenant_id = resolve_tenant(request, x_tenant_id)
+    ctx = require_organization_admin(request)
+    organization_id = resolve_organization(request, x_organization_id)
     user_id = ctx.user_id or UUID("00000000-0000-0000-0000-000000000002")
 
+    import pathlib
+
+    settings = get_settings()
+    if settings.GOLDEN_SET_PATH:
+        golden_path = pathlib.Path(settings.GOLDEN_SET_PATH)
+    else:
+        # Golden set por defecto: el del vertical demo (RAG_SEED_DEMO_DATA).
+        golden_path = (
+            pathlib.Path(__file__).resolve().parents[2]
+            / "verticals"
+            / "demo_farmacia"
+            / "golden"
+            / "rag_farmacia.json"
+        )
+
     summary = await run_eval(
-        golden_path=__import__("pathlib").Path(__file__).resolve().parents[3]
-        / "tests"
-        / "golden"
-        / "rag_farmacia.json",
-        tenant_id=tenant_id,
+        golden_path=golden_path,
+        organization_id=organization_id,
         user_id=user_id,
     )
     return summary

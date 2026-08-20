@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.domain.entities import (
+from src.core.domain.entities import (
     LLMResponse,
     QueryStatus,
     RAGQueryResult,
@@ -75,7 +75,7 @@ async def _create_trial_headers(client: AsyncClient) -> dict[str, str]:
     data = response.json()
     return {
         "Authorization": f"Bearer {data['api_token']}",
-        "X-Tenant-Id": data["tenant_id"],
+        "X-Organization-Id": data["organization_id"],
         "X-User-Role": "admin",
     }
 
@@ -122,7 +122,7 @@ async def test_stream_sources_are_json_objects(stream_client: AsyncClient):
     def make_result(**kwargs) -> RAGQueryResult:
         return RAGQueryResult(
             query_id=_uuid4(),
-            tenant_id=kwargs.get("tenant_id", _uuid4()),
+            organization_id=kwargs.get("organization_id", _uuid4()),
             user_id=kwargs.get("user_id", _uuid4()),
             query=kwargs.get("query", ""),
             status=QueryStatus.COMPLETED,
@@ -219,11 +219,11 @@ async def test_stream_error_event_on_failed_result(
     failing = MockRAGOrchestrator(
         response=RAGQueryResult(
             query_id=uuid4(),
-            tenant_id=uuid4(),
+            organization_id=uuid4(),
             user_id=uuid4(),
             query="x",
             status=QueryStatus.FAILED,
-            error_message="Rate limit exceeded for this tenant",
+            error_message="Rate limit exceeded for this organization",
         )
     )
     app.dependency_overrides[get_rag_orchestrator] = lambda: failing
@@ -251,7 +251,7 @@ async def test_stream_error_event_on_failed_result(
 
 @pytest.mark.asyncio
 async def test_stream_missing_auth_returns_401(stream_client: AsyncClient):
-    """Sin tenant/token, el endpoint responde 401 antes de emitir SSE."""
+    """Sin organization/token, el endpoint responde 401 antes de emitir SSE."""
     response = await stream_client.post(
         "/api/v1/rag/query/stream",
         json={"query": "x", "role": "admin"},

@@ -11,7 +11,7 @@ positions:
 # Cliente Loki
 clients:
   - url: http://loki:3100/loki/api/v1/push
-    tenant_id: "rag-platform"  # Tenant por defecto en Loki para logs de plataforma
+    organization_id: "rag-platform"  # Organization por defecto en Loki para logs de plataforma
     external_labels:
       environment: "production"
       platform: "rag-as-a-service"

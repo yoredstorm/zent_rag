@@ -10,20 +10,21 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from src.infrastructure.auth_rate_limit import (
+from src.infrastructure.observability.logging_config import get_logger
+from src.infrastructure.postgres.relational_db import (
+    PostgresBillingRepository,
+    PostgresMembershipRepository,
+    PostgresOrganizationRepository,
+    PostgresUserRepository,
+)
+from src.platform.auth.passwords import hash_password, verify_password
+from src.platform.auth.rate_limit import (
     clear_auth_failures,
     is_auth_blocked,
     record_auth_failure,
 )
-from src.infrastructure.billing_service import BillingService
-from src.infrastructure.logging_config import get_logger
-from src.infrastructure.passwords import hash_password, verify_password
-from src.infrastructure.portal_session import encrypt_session
-from src.infrastructure.relational_db import (
-    PostgresBillingRepository,
-    PostgresTenantRepository,
-    PostgresUserRepository,
-)
+from src.platform.auth.session import encrypt_session
+from src.platform.billing.service import BillingService
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/auth", tags=["Auth"])
@@ -32,7 +33,11 @@ _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 def get_billing() -> BillingService:
-    return BillingService(PostgresBillingRepository())
+    from src.infrastructure.postgres.relational_db import (
+        PostgresApiKeyRepository,
+    )
+
+    return BillingService(PostgresBillingRepository(), PostgresApiKeyRepository())
 
 
 class SignupRequest(BaseModel):
@@ -69,7 +74,7 @@ class LoginRequest(BaseModel):
 
 
 def _client_ip(request: Request) -> str:
-    from src.config import get_settings
+    from src.core.config import get_settings
 
     trusted = {
         p.strip()
@@ -116,44 +121,47 @@ async def signup(
             },
         )
 
-    tenant_id = uuid4()
-    tenant_name = body.company_name.strip()
-    tenant_repo = PostgresTenantRepository()
-    api_key_hash = hashlib.sha256(f"auto-{tenant_id}".encode()).hexdigest()
-    await tenant_repo.create_tenant(tenant_id, tenant_name, api_key_hash)
-    await tenant_repo.update_tenant(
-        tenant_id,
-        company_name=tenant_name,
+    organization_id = uuid4()
+    organization_name = body.company_name.strip()
+    organization_repo = PostgresOrganizationRepository()
+    await organization_repo.create_organization(organization_id, organization_name)
+    await organization_repo.update_organization(
+        organization_id,
+        company_name=organization_name,
         email=body.email,
     )
 
     email_hash = hashlib.sha256(body.email.encode()).hexdigest()
     password_hash = hash_password(body.password)
     user = await user_repo.create_default_user(
-        tenant_id,
+        organization_id,
         email_hash,
         email=body.email,
         password_hash=password_hash,
     )
 
+    # El creador es owner de la organización (memberships = fuente de verdad RBAC).
+    membership_repo = PostgresMembershipRepository()
+    await membership_repo.assign_role(organization_id, user.id, "owner")
+
     try:
-        subscription, _api_token = await billing.create_trial_subscription(tenant_id)
+        subscription, _api_token = await billing.create_trial_subscription(organization_id)
     except ValueError as exc:
         raise HTTPException(500, str(exc)) from exc
 
-    access_token = encrypt_session(user.id, tenant_id)
+    access_token = encrypt_session(user.id, organization_id)
     await clear_auth_failures(email_key, ip_key)
 
     logger.info(
         "Portal signup",
-        tenant_id=str(tenant_id),
+        organization_id=str(organization_id),
         email=body.email,
     )
     return {
         "access_token": access_token,
         "token_type": "Bearer",
-        "tenant_id": str(tenant_id),
-        "company_name": tenant_name,
+        "organization_id": str(organization_id),
+        "company_name": organization_name,
         "email": body.email,
         "subscription_id": str(subscription.id),
         "status": "trialing",
@@ -189,17 +197,17 @@ async def login(body: LoginRequest, request: Request):
             },
         )
 
-    access_token = encrypt_session(user.id, user.tenant_id)
+    access_token = encrypt_session(user.id, user.organization_id)
     await clear_auth_failures(email_key, ip_key)
 
-    tenant_repo = PostgresTenantRepository()
-    tenant = await tenant_repo.get_by_id(user.tenant_id)
-    company = (tenant.company_name or tenant.name) if tenant else ""
+    organization_repo = PostgresOrganizationRepository()
+    organization = await organization_repo.get_by_id(user.organization_id)
+    company = (organization.company_name or organization.name) if organization else ""
 
     return {
         "access_token": access_token,
         "token_type": "Bearer",
-        "tenant_id": str(user.tenant_id),
+        "organization_id": str(user.organization_id),
         "company_name": company,
         "email": user.email or body.email,
     }
@@ -208,7 +216,7 @@ async def login(body: LoginRequest, request: Request):
 @router.post("/logout", summary="Revocar la sesión portal actual")
 async def logout(request: Request):
     """Invalida la sesión en el registro server-side (revocación real)."""
-    from src.infrastructure.portal_session import revoke_session
+    from src.platform.auth.session import revoke_session
 
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
@@ -218,26 +226,29 @@ async def logout(request: Request):
 
 @router.get("/me", summary="Perfil de la sesión portal actual")
 async def me(request: Request):
-    ctx = getattr(request.state, "billing_context", None)
+    ctx = getattr(request.state, "tenant_context", None)
     if ctx is None:
         raise HTTPException(401, "Not authenticated")
+    billing_ctx = getattr(request.state, "billing_context", None)
 
-    tenant_repo = PostgresTenantRepository()
-    tenant = await tenant_repo.get_by_id(ctx.tenant_id)
+    organization_repo = PostgresOrganizationRepository()
+    organization = await organization_repo.get_by_id(ctx.organization_id)
     user_repo = PostgresUserRepository()
     user = None
     if ctx.user_id is not None:
-        user = await user_repo.get_by_id(ctx.user_id, ctx.tenant_id)
+        user = await user_repo.get_by_id(ctx.user_id, ctx.organization_id)
     if user is None:
-        user = await user_repo.get_any_user(ctx.tenant_id)
+        user = await user_repo.get_any_user(ctx.organization_id)
 
     return {
-        "tenant_id": str(ctx.tenant_id),
-        "company_name": (tenant.company_name or tenant.name) if tenant else "",
+        "organization_id": str(ctx.organization_id),
+        "company_name": (organization.company_name or organization.name) if organization else "",
         "email": user.email if user else None,
         "user_id": str(user.id) if user else None,
         "role": user.role if user else None,
-        "plan_name": ctx.plan_name,
-        "status": ctx.status.value,
+        "roles": sorted(ctx.roles),
+        "permissions": sorted(ctx.permissions),
+        "plan_name": billing_ctx.plan_name if billing_ctx else None,
+        "status": billing_ctx.status.value if billing_ctx else None,
         "auth_type": ctx.auth_type,
     }

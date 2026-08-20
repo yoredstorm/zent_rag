@@ -55,7 +55,7 @@ export default function PromptsPage() {
     setTestAnswer("");
     api<PromptStatus>("/api/v1/admin/prompt", {
       token: session.token,
-      tenantId: session.tenantId,
+      organizationId: session.organizationId,
     })
       .then((data) => {
         setRoles(data.roles || {});
@@ -85,7 +85,7 @@ export default function PromptsPage() {
       await api("/api/v1/admin/prompt", {
         method: "PUT",
         token: session.token,
-        tenantId: session.tenantId,
+        organizationId: session.organizationId,
         body: JSON.stringify({
           system_prompt: prompt,
           custom_instructions: instructions,
@@ -119,7 +119,7 @@ export default function PromptsPage() {
       const data = await api<{ answer: string }>("/api/v1/admin/prompt/test", {
         method: "POST",
         token: session.token,
-        tenantId: session.tenantId,
+        organizationId: session.organizationId,
         body: JSON.stringify({
           query: testQuery,
           system_prompt: prompt,

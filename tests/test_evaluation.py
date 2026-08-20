@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel, Field
 
-from src.infrastructure.evaluation import ensure_eval_table, store_feedback
+from src.rag.evaluation.store import ensure_eval_table, store_feedback
 
 _EVAL_ROUTE = Path(__file__).resolve().parents[1] / "src" / "api" / "routes" / "evaluation.py"
 
@@ -64,7 +64,7 @@ async def test_ensure_eval_table_alter_lazy_ingested_is_idempotent(
     async def fake_session() -> _FakeSession:
         return _FakeSession(statements, params_log)
 
-    monkeypatch.setattr("src.infrastructure.evaluation.get_async_session", fake_session)
+    monkeypatch.setattr("src.rag.evaluation.store.get_async_session", fake_session)
     await ensure_eval_table()
     await ensure_eval_table()
     alters = [
@@ -84,9 +84,9 @@ async def test_store_feedback_persists_lazy_ingested(
     async def fake_session() -> _FakeSession:
         return _FakeSession(statements, params_log)
 
-    monkeypatch.setattr("src.infrastructure.evaluation.get_async_session", fake_session)
+    monkeypatch.setattr("src.rag.evaluation.store.get_async_session", fake_session)
     await store_feedback(
-        tenant_id=uuid4(),
+        organization_id=uuid4(),
         query="precio",
         rating="up",
         lazy_ingested=True,

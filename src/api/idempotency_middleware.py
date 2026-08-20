@@ -15,8 +15,8 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
-from src.infrastructure.cache import _get_redis
-from src.infrastructure.logging_config import get_logger
+from src.infrastructure.observability.logging_config import get_logger
+from src.infrastructure.redis.cache import _get_redis
 
 logger = get_logger(__name__)
 
@@ -38,9 +38,9 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         if not idem_key or not _IDEMPOTENCY_KEY_RE.match(idem_key):
             return await call_next(request)
 
-        tenant_id = getattr(request.state, "tenant_id", "")
+        organization_id = getattr(request.state, "organization_id", "")
         client_ip = request.client.host if request.client else "unknown"
-        namespace = f"tenant:{tenant_id}" if tenant_id else f"ip:{client_ip}"
+        namespace = f"organization:{organization_id}" if organization_id else f"ip:{client_ip}"
         redis_key = f"rag:idem:{namespace}:{idem_key}"
 
         try:

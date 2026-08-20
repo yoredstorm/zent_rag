@@ -164,7 +164,7 @@
       "options": { "dedupStrategy": "none", "enableLogDetails": true, "prettifyLogMessage": false, "showCommonLabels": true, "showLabels": true, "showTime": true, "sortOrder": "Descending", "wrapLogMessage": false },
       "targets": [
         {
-          "expr": "{job=\"rag-api\"} | json | line_format \"[{{.level}}] tenant={{.tenant_id}} trace={{.trace_id}} user={{.user_id}} — {{.event}} | latency={{.llm_latency_ms}}ms tokens={{.total_tokens}}\"",
+          "expr": "{job=\"rag-api\"} | json | line_format \"[{{.level}}] organization={{.organization_id}} trace={{.trace_id}} user={{.user_id}} — {{.event}} | latency={{.llm_latency_ms}}ms tokens={{.total_tokens}}\"",
           "refId": "A"
         }
       ],

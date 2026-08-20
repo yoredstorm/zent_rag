@@ -20,7 +20,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import Response
 
-from src.infrastructure.logging_config import get_logger, set_trace_context
+from src.infrastructure.observability.logging_config import get_logger, set_trace_context
 
 logger = get_logger(__name__)
 
@@ -33,11 +33,11 @@ _TRACE_ID_RE = re.compile(r"^[A-Za-z0-9\-_]{8,128}$")
 
 
 class TraceMiddleware(BaseHTTPMiddleware):
-    """Middleware que inyecta trace_id, tenant_id y user_id en cada request.
+    """Middleware que inyecta trace_id, organization_id y user_id en cada request.
 
     - Trace ID: hereda X-Trace-Id del cliente SOLO si es un formato válido
       (anti log poisoning); en caso contrario genera UUID v4.
-    - tenant_id/user_id para logs parten en 'system'/'anonymous' y son
+    - organization_id/user_id para logs parten en 'system'/'anonymous' y son
       reemplazados por BillingMiddleware con la identidad autenticada real.
     - Se añade X-Trace-Id a la respuesta para que el cliente pueda referenciarlo
     - Mide latencia total del request para el log estructurado
@@ -54,7 +54,7 @@ class TraceMiddleware(BaseHTTPMiddleware):
             trace_id = str(uuid.uuid4())
 
         # Identidad real la inyecta BillingMiddleware para rutas autenticadas.
-        set_trace_context(trace_id=trace_id, tenant_id="system", user_id="anonymous")
+        set_trace_context(trace_id=trace_id, organization_id="system", user_id="anonymous")
 
         start = time.perf_counter()
 
@@ -69,6 +69,19 @@ class TraceMiddleware(BaseHTTPMiddleware):
         response.headers["X-Trace-Id"] = trace_id
         response.headers["X-Request-Duration-Ms"] = f"{elapsed_ms:.2f}"
 
+        # Identidad para el access log: leerla del request.state (el
+        # TenantMiddleware la fija); los ContextVars no fluyen "hacia afuera"
+        # entre capas de middleware en Starlette 1.x.
+        tenant_ctx = getattr(request.state, "tenant_context", None)
+        log_organization = (
+            str(tenant_ctx.tenant_id) if tenant_ctx is not None else "system"
+        )
+        log_user = (
+            str(tenant_ctx.user_id)
+            if tenant_ctx is not None and tenant_ctx.user_id
+            else "anonymous"
+        )
+
         # Log de acceso estructurado (JSON)
         logger.info(
             "Request completed",
@@ -78,6 +91,8 @@ class TraceMiddleware(BaseHTTPMiddleware):
             latency_ms=round(elapsed_ms, 2),
             client_ip=request.client.host if request.client else "unknown",
             user_agent=request.headers.get("User-Agent", "unknown")[:255],
+            organization_id=log_organization,
+            user_id=log_user,
         )
 
         return response

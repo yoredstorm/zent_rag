@@ -21,13 +21,13 @@ export type Conversation = {
 
 const KEY_PREFIX = "rag_chat_conv_";
 
-function storageKey(tenantId: string) {
-  return `${KEY_PREFIX}${tenantId}`;
+function storageKey(organizationId: string) {
+  return `${KEY_PREFIX}${organizationId}`;
 }
 
-export function listConversations(tenantId: string): Conversation[] {
+export function listConversations(organizationId: string): Conversation[] {
   try {
-    const raw = localStorage.getItem(storageKey(tenantId));
+    const raw = localStorage.getItem(storageKey(organizationId));
     if (!raw) return [];
     const parsed = JSON.parse(raw) as Conversation[];
     return Array.isArray(parsed) ? parsed : [];
@@ -36,43 +36,43 @@ export function listConversations(tenantId: string): Conversation[] {
   }
 }
 
-function persist(tenantId: string, conversations: Conversation[]) {
+function persist(organizationId: string, conversations: Conversation[]) {
   try {
-    localStorage.setItem(storageKey(tenantId), JSON.stringify(conversations));
+    localStorage.setItem(storageKey(organizationId), JSON.stringify(conversations));
   } catch {
     // storage lleno o no disponible: la conversación sigue en memoria
   }
 }
 
-export function loadConversation(tenantId: string, id: string): Conversation | null {
-  return listConversations(tenantId).find((c) => c.id === id) ?? null;
+export function loadConversation(organizationId: string, id: string): Conversation | null {
+  return listConversations(organizationId).find((c) => c.id === id) ?? null;
 }
 
-export function upsertConversation(tenantId: string, conversation: Conversation) {
-  const all = listConversations(tenantId).filter((c) => c.id !== conversation.id);
+export function upsertConversation(organizationId: string, conversation: Conversation) {
+  const all = listConversations(organizationId).filter((c) => c.id !== conversation.id);
   const next = [
     { ...conversation, updatedAt: Date.now() },
     ...all,
   ].sort((a, b) => b.updatedAt - a.updatedAt);
-  persist(tenantId, next);
+  persist(organizationId, next);
   return next;
 }
 
-export function deleteConversation(tenantId: string, id: string): Conversation[] {
-  const next = listConversations(tenantId).filter((c) => c.id !== id);
-  persist(tenantId, next);
+export function deleteConversation(organizationId: string, id: string): Conversation[] {
+  const next = listConversations(organizationId).filter((c) => c.id !== id);
+  persist(organizationId, next);
   return next;
 }
 
 export function renameConversation(
-  tenantId: string,
+  organizationId: string,
   id: string,
   title: string
 ): Conversation[] {
-  const next = listConversations(tenantId).map((c) =>
+  const next = listConversations(organizationId).map((c) =>
     c.id === id ? { ...c, title } : c
   );
-  persist(tenantId, next);
+  persist(organizationId, next);
   return next;
 }
 

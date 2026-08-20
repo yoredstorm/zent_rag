@@ -9,11 +9,15 @@ import asyncio
 import signal
 import sys
 
-from src.infrastructure.ingestion_worker import request_shutdown, run_worker
-from src.infrastructure.logging_config import configure_logging, get_logger
+from src.connectors.sql.worker import request_shutdown, run_worker
+from src.core.config import get_settings
+from src.infrastructure.observability.logging_config import configure_logging, get_logger
+from src.infrastructure.secrets.vault import apply_vault_overrides
 
 if __name__ == "__main__":
-    configure_logging(log_level="INFO")
+    settings = get_settings()
+    apply_vault_overrides(settings)
+    configure_logging(log_level=settings.LOG_LEVEL)
     logger = get_logger("ingestion-worker")
 
     logger.info("Starting ingestion worker (standalone)")

@@ -27,33 +27,42 @@ _SRC_DIR = Path(__file__).resolve().parent.parent
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
-from src.api.billing_middleware import BillingMiddleware
 from src.api.body_limit_middleware import BodySizeLimitMiddleware
 from src.api.idempotency_middleware import IdempotencyMiddleware
-from src.api.metrics import setup_metrics
 from src.api.middleware import TraceMiddleware
 from src.api.rate_limit_middleware import RateLimitMiddleware
 from src.api.routes.admin import router as admin_router
+from src.api.routes.agents import router as agents_router
+from src.api.routes.audit import router as audit_router
 from src.api.routes.auth import router as auth_router
 from src.api.routes.billing import router as billing_router
+from src.api.routes.connectors import router as connectors_router
 from src.api.routes.evaluation import router as eval_router
 from src.api.routes.health import router as health_router
 from src.api.routes.ingestion import router as ingestion_router
+from src.api.routes.knowledge_bases import router as kbs_router
+from src.api.routes.organizations import router as organizations_router
+from src.api.routes.projects import router as projects_router
 from src.api.routes.prompt import router as prompt_router
 from src.api.routes.query import router as query_router
-from src.config import Settings, get_settings
-from src.domain.models import ErrorResponse
-from src.infrastructure.cache import close_redis_connection
-from src.infrastructure.ingestion_worker import request_shutdown, run_worker
-from src.infrastructure.logging_config import configure_logging, get_logger
-from src.infrastructure.relational_db import close_db_connections
-from src.infrastructure.tracing import setup_tracing
-from src.infrastructure.vector_store import close_qdrant_connection
+from src.api.schemas import ErrorResponse
+from src.api.tenant_middleware import TenantMiddleware
+from src.connectors.sql.worker import request_shutdown, run_worker
+from src.core.config import Settings, get_settings
+from src.infrastructure.observability.logging_config import configure_logging, get_logger
+from src.infrastructure.observability.metrics import setup_metrics
+from src.infrastructure.observability.tracing import setup_tracing
+from src.infrastructure.postgres.relational_db import close_db_connections
+from src.infrastructure.qdrant.vector_store import close_qdrant_connection
+from src.infrastructure.redis.cache import close_redis_connection
 
 # -----------------------------------------------------------------------------
 # Configuración inicial
 # -----------------------------------------------------------------------------
 settings: Settings = get_settings()
+from src.infrastructure.secrets.vault import apply_vault_overrides  # noqa: E402
+
+apply_vault_overrides(settings)
 configure_logging(log_level=settings.LOG_LEVEL)
 logger = get_logger(__name__)
 
@@ -74,8 +83,8 @@ async def lifespan(app: FastAPI):
 
     if settings.ENVIRONMENT == "development":
         try:
-            from src.infrastructure.passwords import hash_password
-            from src.infrastructure.relational_db import PostgresUserRepository
+            from src.infrastructure.postgres.relational_db import PostgresUserRepository
+            from src.platform.auth.passwords import hash_password
 
             user_repo = PostgresUserRepository()
             demo = await user_repo.get_by_email(settings.PORTAL_DEV_EMAIL)
@@ -142,7 +151,7 @@ app = FastAPI(
 # -----------------------------------------------------------------------------
 # En MVP permitimos un origen de desarrollo. En producción esto debe
 # configurarse mediante una variable de entorno con la lista de orígenes
-# permitidos por tenant (whitelist).
+# permitidos por organization (whitelist).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ALLOWED_ORIGINS.split(","),  # MVP: abierto. Producción: whitelist estricta
@@ -151,21 +160,21 @@ app.add_middleware(
     allow_headers=[
         "Content-Type",
         "Authorization",
-        "X-Tenant-Id",
+        "X-Organization-Id",
         "X-User-Id",
         "X-User-Role",
         "X-Trace-Id",
         "X-API-Key",
         "X-New-Plan",
         "X-Billing-Interval",
-        "X-Tenant-Name",
+        "X-Organization-Name",
     ],
     expose_headers=["X-Trace-Id", "X-Request-Duration-Ms"],
     max_age=3600,
 )
 
 # -----------------------------------------------------------------------------
-# Middleware de seguridad (orden de ejecución: Trace -> Billing -> RateLimit
+# Middleware de seguridad (orden de ejecución: Trace -> Tenant -> RateLimit
 # -> Idempotency -> BodyLimit -> CORS -> rutas)
 # -----------------------------------------------------------------------------
 app.add_middleware(BodySizeLimitMiddleware)
@@ -173,9 +182,9 @@ app.add_middleware(IdempotencyMiddleware)
 app.add_middleware(RateLimitMiddleware)
 
 # -----------------------------------------------------------------------------
-# Middleware de Facturación (antes de Trace para inyectar tenant_id)
+# Middleware de Tenant (autenticación + TenantContext; inyecta organización)
 # -----------------------------------------------------------------------------
-app.add_middleware(BillingMiddleware)
+app.add_middleware(TenantMiddleware)
 
 # -----------------------------------------------------------------------------
 # Middleware de Trazabilidad (orden importa: se ejecuta de último a primero)
@@ -199,11 +208,17 @@ if settings.TRACING_ENABLED:
 # Routers
 # -----------------------------------------------------------------------------
 app.include_router(admin_router)
+app.include_router(agents_router)
+app.include_router(audit_router)
 app.include_router(auth_router)
 app.include_router(billing_router)
+app.include_router(connectors_router)
 app.include_router(eval_router)
 app.include_router(health_router)
 app.include_router(ingestion_router)
+app.include_router(kbs_router)
+app.include_router(organizations_router)
+app.include_router(projects_router)
 app.include_router(prompt_router)
 app.include_router(query_router)
 

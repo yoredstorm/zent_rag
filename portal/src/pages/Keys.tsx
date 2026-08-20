@@ -1,10 +1,11 @@
 import {
-  ArrowsClockwise,
   Copy,
   Eye,
   EyeSlash,
   Key as KeyIcon,
+  Plus,
   ShieldCheck,
+  Trash,
 } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
@@ -20,9 +21,12 @@ import {
 } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
 
-type TokenInfo = {
-  prefix: string;
+type ApiKeyInfo = {
+  id: string;
   name: string;
+  prefix: string;
+  scopes: string[];
+  is_active: boolean;
   last_used_at: string | null;
   created_at: string;
 };
@@ -30,23 +34,24 @@ type TokenInfo = {
 export default function KeysPage() {
   const { session } = useAuth();
   const { pushToast } = useToast();
-  const [info, setInfo] = useState<TokenInfo | null>(null);
+  const [keys, setKeys] = useState<ApiKeyInfo[]>([]);
   const [newToken, setNewToken] = useState("");
   const [revealed, setRevealed] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [rotating, setRotating] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
+  const [newKeyName, setNewKeyName] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
 
   useEffect(() => {
     if (!session) return;
     setLoading(true);
-    api<TokenInfo>("/api/v1/billing/token", {
+    api<{ keys: ApiKeyInfo[] }>("/api/v1/organizations/api-keys", {
       token: session.token,
-      tenantId: session.tenantId,
+      organizationId: session.organizationId,
     })
-      .then(setInfo)
+      .then((data) => setKeys(data.keys))
       .catch((err) => setError(err instanceof Error ? err.message : "Error"))
       .finally(() => setLoading(false));
   }, [session]);
@@ -60,30 +65,56 @@ export default function KeysPage() {
     }
   }
 
-  async function rotate() {
+  async function createKey() {
     if (!session) return;
     setError("");
     setMsg("");
-    setRotating(true);
-    setConfirming(false);
+    setCreating(true);
     try {
-      const data = await api<{ token: string }>("/api/v1/billing/token/rotate", {
+      const data = await api<{ token: string }>("/api/v1/organizations/api-keys", {
         method: "POST",
         token: session.token,
-        tenantId: session.tenantId,
+        organizationId: session.organizationId,
+        body: JSON.stringify({
+          name: newKeyName.trim() || "Default",
+          scopes: ["rag:query", "rag:ingest"],
+        }),
       });
       setNewToken(data.token);
       setRevealed(true);
-      setMsg("Clave rotada. Guárdala ahora — no se vuelve a mostrar.");
-      const refreshed = await api<TokenInfo>("/api/v1/billing/token", {
-        token: session.token,
-        tenantId: session.tenantId,
-      });
-      setInfo(refreshed);
+      setMsg("Clave creada. Guárdala ahora — no se vuelve a mostrar.");
+      setShowCreate(false);
+      setNewKeyName("");
+      const refreshed = await api<{ keys: ApiKeyInfo[] }>(
+        "/api/v1/organizations/api-keys",
+        { token: session.token, organizationId: session.organizationId }
+      );
+      setKeys(refreshed.keys);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al rotar");
+      setError(err instanceof Error ? err.message : "Error al crear");
     } finally {
-      setRotating(false);
+      setCreating(false);
+    }
+  }
+
+  async function revokeKey(keyId: string, name: string) {
+    if (!session) return;
+    setError("");
+    setMsg("");
+    try {
+      await api(`/api/v1/organizations/api-keys/${keyId}`, {
+        method: "DELETE",
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      setMsg(`Clave "${name}" revocada.`);
+      const refreshed = await api<{ keys: ApiKeyInfo[] }>(
+        "/api/v1/organizations/api-keys",
+        { token: session.token, organizationId: session.organizationId }
+      );
+      setKeys(refreshed.keys);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al revocar");
     }
   }
 
@@ -91,97 +122,112 @@ export default function KeysPage() {
     <div>
       <PageHeader
         title="Claves de integración"
-        subtitle="Usa esta clave en tus sistemas externos. El portal ya te autentica con tu cuenta — no hace falta pegarla aquí."
+        subtitle="API keys de tu organización. Cada una tiene scopes propios y puede revocarse sin afectar a las demás."
       />
       <ErrorInline message={error} />
       <SuccessInline message={msg} />
+
+      <div className="mb-4 flex justify-end">
+        <button
+          className="btn btn-primary"
+          type="button"
+          onClick={() => setShowCreate((s) => !s)}
+        >
+          <Plus size={15} aria-hidden />
+          Nueva clave
+        </button>
+      </div>
+
+      {showCreate && (
+        <div className="panel mb-4 border-accent/30">
+          <div className="border-b border-border px-5 py-4">
+            <h2 className="text-sm font-semibold text-text">Crear API key</h2>
+          </div>
+          <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center">
+            <input
+              className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
+              placeholder="Nombre (ej. backend-prod)"
+              value={newKeyName}
+              onChange={(e) => setNewKeyName(e.target.value)}
+            />
+            <button
+              className="btn btn-primary shrink-0"
+              type="button"
+              disabled={creating}
+              onClick={() => void createKey()}
+            >
+              {creating ? <Spinner size={14} /> : <Plus size={15} aria-hidden />}
+              Crear
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="panel">
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-text">
             <KeyIcon size={16} className="text-accent" aria-hidden />
-            Clave actual
+            Claves ({keys.length})
           </h2>
-          {!loading && info && (
-            <span className="badge badge-ok">
-              <ShieldCheck size={13} aria-hidden /> Activa
-            </span>
-          )}
+          <span className="mono text-xs text-faint">
+            {session?.organizationId}
+          </span>
         </div>
 
         {loading ? (
           <div className="p-5">
             <SkeletonBlock rows={4} />
           </div>
-        ) : info ? (
-          <table className="table">
-            <tbody>
-              <tr>
-                <th className="w-40">Prefijo</th>
-                <td className="mono">{info.prefix}</td>
-              </tr>
-              <tr>
-                <th>Nombre</th>
-                <td>{info.name}</td>
-              </tr>
-              <tr>
-                <th>Creado</th>
-                <td>{fmtDateTime(info.created_at)}</td>
-              </tr>
-              <tr>
-                <th>Último uso</th>
-                <td>{info.last_used_at ? fmtDateTime(info.last_used_at) : "—"}</td>
-              </tr>
-              <tr>
-                <th>Organización</th>
-                <td className="mono">{session?.tenantId}</td>
-              </tr>
-            </tbody>
-          </table>
-        ) : (
+        ) : keys.length === 0 ? (
           <EmptyState
             icon={KeyIcon}
-            title="No hay clave disponible"
-            body="Crea tu trial para generar la clave de integración."
+            title="No hay claves"
+            body="Crea una clave para integrar tus sistemas externos."
           />
-        )}
-
-        {!loading && info && (
-          <div className="flex flex-wrap items-center gap-2 border-t border-border px-5 py-4">
-            {confirming ? (
-              <>
-                <span className="text-sm text-warn">
-                  La clave actual dejará de funcionar de inmediato. ¿Rotar?
-                </span>
-                <button
-                  className="btn btn-danger"
-                  type="button"
-                  disabled={rotating}
-                  onClick={() => void rotate()}
-                >
-                  {rotating ? <Spinner size={14} /> : <ArrowsClockwise size={15} aria-hidden />}
-                  Sí, rotar
-                </button>
-                <button
-                  className="btn btn-secondary"
-                  type="button"
-                  onClick={() => setConfirming(false)}
-                >
-                  Cancelar
-                </button>
-              </>
-            ) : (
-              <button
-                className="btn btn-danger"
-                type="button"
-                disabled={rotating}
-                onClick={() => setConfirming(true)}
-              >
-                <ArrowsClockwise size={15} aria-hidden />
-                Rotar clave
-              </button>
-            )}
-          </div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Nombre</th>
+                <th>Prefijo</th>
+                <th>Scopes</th>
+                <th>Último uso</th>
+                <th>Estado</th>
+                <th className="text-right">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {keys.map((key) => (
+                <tr key={key.id}>
+                  <td className="font-medium text-text">{key.name}</td>
+                  <td className="mono">{key.prefix}</td>
+                  <td className="mono text-xs">{key.scopes.join(", ")}</td>
+                  <td>{key.last_used_at ? fmtDateTime(key.last_used_at) : "—"}</td>
+                  <td>
+                    {key.is_active ? (
+                      <span className="badge badge-ok">
+                        <ShieldCheck size={13} aria-hidden /> Activa
+                      </span>
+                    ) : (
+                      <span className="badge badge-muted">Revocada</span>
+                    )}
+                  </td>
+                  <td className="text-right">
+                    {key.is_active && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost px-2 py-1.5 text-xs"
+                        onClick={() => void revokeKey(key.id, key.name)}
+                        aria-label={`Revocar ${key.name}`}
+                      >
+                        <Trash size={14} aria-hidden />
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
 

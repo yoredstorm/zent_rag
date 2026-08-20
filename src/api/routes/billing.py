@@ -5,16 +5,22 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from src.infrastructure.billing_service import BillingService
-from src.infrastructure.logging_config import get_logger
-from src.infrastructure.relational_db import PostgresBillingRepository
+from src.infrastructure.observability.logging_config import get_logger
+from src.infrastructure.postgres.relational_db import (
+    PostgresApiKeyRepository,
+    PostgresBillingRepository,
+    PostgresMembershipRepository,
+    PostgresOrganizationRepository,
+    PostgresUserRepository,
+)
+from src.platform.billing.service import BillingService
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/billing", tags=["Billing"])
 
 
 def get_billing() -> BillingService:
-    return BillingService(PostgresBillingRepository())
+    return BillingService(PostgresBillingRepository(), PostgresApiKeyRepository())
 
 
 class CreateTrialRequest(BaseModel):
@@ -25,18 +31,11 @@ class CreateTrialRequest(BaseModel):
     ruc: str | None = Field(default=None, max_length=50)
 
 
-def _tenant_from_request(request: Request, x_tenant_id: str = "") -> UUID:
-    """Resolve tenant from billing context (Bearer) or header fallback."""
-    ctx = getattr(request.state, "billing_context", None)
-    if ctx is not None:
-        return ctx.tenant_id
-    tenant_id_str = x_tenant_id or getattr(request.state, "tenant_id", "")
-    if not tenant_id_str:
-        raise HTTPException(400, "X-Tenant-Id required or use Authorization Bearer")
-    try:
-        return UUID(tenant_id_str)
-    except ValueError:
-        raise HTTPException(400, "X-Tenant-Id must be a valid UUID")
+def _organization_from_request(request: Request, x_organization_id: str = "") -> UUID:
+    """Resuelve la organización SOLO desde la identidad autenticada."""
+    from src.api.security import resolve_organization
+
+    return resolve_organization(request, x_organization_id, require_auth=False)
 
 
 @router.get("/plans", summary="Listar planes disponibles")
@@ -52,7 +51,7 @@ async def list_plans(billing: BillingService = Depends(get_billing)):
                 "price_monthly_usd": p.price_monthly_cents / 100,
                 "price_annual_usd": p.price_annual_cents / 100,
                 "requests_per_month": p.requests_per_month,
-                "max_tenants": p.max_tenants,
+                "max_organizations": p.max_organizations,
                 "features": p.features,
                 "is_trial": p.is_trial,
                 "trial_days": p.trial_days,
@@ -65,19 +64,18 @@ async def list_plans(billing: BillingService = Depends(get_billing)):
 @router.get("/subscription", summary="Ver suscripcion actual")
 async def get_subscription(
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
     billing: BillingService = Depends(get_billing),
 ):
-    tenant_id = _tenant_from_request(request, x_tenant_id)
+    organization_id = _organization_from_request(request, x_organization_id)
 
-    sub = await billing.get_subscription(tenant_id)
+    sub = await billing.get_subscription(organization_id)
     if sub is None:
-        raise HTTPException(404, "No subscription found for this tenant")
+        raise HTTPException(404, "No subscription found for this organization")
 
     used, month = await billing.get_quota_usage(sub.id)
     plan = None
     try:
-        from src.infrastructure.relational_db import PostgresBillingRepository
         repo = PostgresBillingRepository()
         plan = await repo.get_plan_by_id(sub.plan_id)
     except Exception:
@@ -85,7 +83,7 @@ async def get_subscription(
 
     return {
         "subscription_id": str(sub.id),
-        "tenant_id": str(sub.tenant_id),
+        "organization_id": str(sub.organization_id),
         "plan_id": str(sub.plan_id),
         "plan_name": plan.name if plan else None,
         "status": sub.status.value,
@@ -104,12 +102,15 @@ async def get_subscription(
 @router.post("/subscription/cancel", summary="Cancelar suscripcion")
 async def cancel_subscription(
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
     billing: BillingService = Depends(get_billing),
 ):
-    tenant_id = _tenant_from_request(request, x_tenant_id)
+    from src.api.security import require_organization_admin
 
-    sub = await billing.get_subscription(tenant_id)
+    require_organization_admin(request)
+    organization_id = _organization_from_request(request, x_organization_id)
+
+    sub = await billing.get_subscription(organization_id)
     if sub is None:
         raise HTTPException(404, "No subscription found")
 
@@ -137,18 +138,14 @@ async def _do_create_trial(
 ):
     import hashlib
 
-    from src.infrastructure.relational_db import PostgresTenantRepository, PostgresUserRepository
+    organization_id = uuid4()
+    organization_name = body.company_name.strip()
 
-    tenant_id = uuid4()
-    tenant_name = body.company_name.strip()
-    tenant_id_str = str(tenant_id)
-
-    tenant_repo = PostgresTenantRepository()
-    api_key_hash = hashlib.sha256(f"auto-{tenant_id_str}".encode()).hexdigest()
-    await tenant_repo.create_tenant(tenant_id, tenant_name, api_key_hash)
+    organization_repo = PostgresOrganizationRepository()
+    await organization_repo.create_organization(organization_id, organization_name)
 
     profile = {
-        "company_name": tenant_name,
+        "company_name": organization_name,
         "email": body.email,
         "phone": body.phone,
         "country": body.country,
@@ -156,17 +153,23 @@ async def _do_create_trial(
     }
     profile = {k: v for k, v in profile.items() if v}
     if profile:
-        await tenant_repo.update_tenant(tenant_id, **profile)
+        await organization_repo.update_organization(organization_id, **profile)
 
-    logger.info("Created tenant for trial", tenant_id=tenant_id_str, name=tenant_name)
+    logger.info(
+        "Created organization for trial",
+        organization_id=str(organization_id),
+        name=organization_name,
+    )
 
     user_repo = PostgresUserRepository()
     email_hash = hashlib.sha256(body.email.encode()).hexdigest()
-    await user_repo.create_default_user(tenant_id, email_hash)
-    logger.info("Auto-created default user", tenant_id=tenant_id_str)
+    user = await user_repo.create_default_user(organization_id, email_hash)
+    membership_repo = PostgresMembershipRepository()
+    await membership_repo.assign_role(organization_id, user.id, "owner")
+    logger.info("Auto-created default user", organization_id=str(organization_id))
 
     try:
-        subscription, token = await billing.create_trial_subscription(tenant_id)
+        subscription, token = await billing.create_trial_subscription(organization_id)
     except ValueError as exc:
         logger.error("No trial plan configured", error=str(exc))
         raise HTTPException(500, "No trial plan configured")
@@ -176,8 +179,8 @@ async def _do_create_trial(
 
     return {
         "subscription_id": str(subscription.id),
-        "tenant_id": str(tenant_id),
-        "company_name": tenant_name,
+        "organization_id": str(organization_id),
+        "company_name": organization_name,
         "status": "trialing",
         "trial_end": subscription.trial_end.isoformat() if subscription.trial_end else None,
         "api_token": token,
@@ -185,57 +188,60 @@ async def _do_create_trial(
     }
 
 
-@router.get("/token", summary="Info del token actual")
+@router.get("/token", summary="Info de las API keys de la organización")
 async def get_token(
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
 ):
-    tenant_id = _tenant_from_request(request, x_tenant_id)
+    organization_id = _organization_from_request(request, x_organization_id)
 
     billing = get_billing()
-    subscription = await billing.get_subscription(tenant_id)
-    if subscription is None:
-        raise HTTPException(404, "No active subscription. Create a trial first.")
-
-    token_info = await billing.get_token_info(subscription.id)
-    if token_info is None:
-        raise HTTPException(404, "No token found. Regenerate with POST /token/rotate.")
-
-    return token_info
+    keys = await billing.list_api_keys(organization_id)
+    return {"keys": keys, "count": len(keys)}
 
 
-@router.post("/token/rotate", summary="Rotar token")
+@router.post("/token/rotate", summary="Rotar token (revoca los activos y crea uno nuevo)")
 async def rotate_token(
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
 ):
-    tenant_id = _tenant_from_request(request, x_tenant_id)
+    from src.api.security import require_organization_admin
+
+    ctx = require_organization_admin(request)
+    organization_id = _organization_from_request(request, x_organization_id)
 
     billing = get_billing()
-    subscription = await billing.get_subscription(tenant_id)
+    subscription = await billing.get_subscription(organization_id)
     if subscription is None:
         raise HTTPException(404, "No active subscription. Create a trial first.")
 
-    token = await billing.rotate_token(subscription.id)
+    # Revocar keys activas existentes y crear una nueva
+    for key in await billing.list_api_keys(organization_id):
+        if key["is_active"]:
+            await billing.revoke_api_key(organization_id, UUID(key["id"]))
+
+    token = await billing.create_api_key(
+        organization_id, "Default", ["rag:query", "rag:ingest"], created_by=ctx.user_id
+    )
     return {
         "token": token,
-        "message": "New token generated. Previous token is now invalid. Save this — it won't be shown again.",
+        "message": "New token generated. Previous tokens are now invalid. Save this — it won't be shown again.",
     }
 
 
-@router.get("/usage", summary="Uso del tenant (requests, tokens, historial)")
+@router.get("/usage", summary="Uso de la organización (requests, tokens, historial)")
 async def get_usage(
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
     days: int = 30,
     limit: int = 50,
 ):
     """Agregados desde usage_logs para el dashboard del portal."""
     from sqlalchemy import text
 
-    from src.infrastructure.relational_db import get_async_session
+    from src.infrastructure.postgres.relational_db import get_async_session
 
-    tenant_id = _tenant_from_request(request, x_tenant_id)
+    organization_id = _organization_from_request(request, x_organization_id)
     days = max(1, min(days, 90))
     limit = max(1, min(limit, 200))
 
@@ -249,25 +255,25 @@ async def get_usage(
                        COALESCE(SUM(total_tokens), 0)::int AS tokens,
                        COALESCE(AVG(latency_ms), 0)::float AS avg_latency_ms
                 FROM usage_logs
-                WHERE tenant_id = :tid
+                WHERE organization_id = :oid
                   AND created_at >= NOW() - (:days || ' days')::interval
                 GROUP BY 1
                 ORDER BY 1 DESC
                 """
             ),
-            {"tid": tenant_id, "days": str(days)},
+            {"oid": organization_id, "days": str(days)},
         )
         recent = await session.execute(
             text(
                 """
                 SELECT id, total_tokens, latency_ms, model, created_at
                 FROM usage_logs
-                WHERE tenant_id = :tid
+                WHERE organization_id = :oid
                 ORDER BY created_at DESC
                 LIMIT :lim
                 """
             ),
-            {"tid": tenant_id, "lim": limit},
+            {"oid": organization_id, "lim": limit},
         )
         totals = await session.execute(
             text(
@@ -276,15 +282,15 @@ async def get_usage(
                        COALESCE(SUM(total_tokens), 0)::int AS tokens,
                        COALESCE(AVG(latency_ms), 0)::float AS avg_latency_ms
                 FROM usage_logs
-                WHERE tenant_id = :tid
+                WHERE organization_id = :oid
                   AND created_at >= NOW() - (:days || ' days')::interval
                 """
             ),
-            {"tid": tenant_id, "days": str(days)},
+            {"oid": organization_id, "days": str(days)},
         )
         total_row = totals.fetchone()
         return {
-            "tenant_id": str(tenant_id),
+            "organization_id": str(organization_id),
             "days": days,
             "totals": {
                 "requests": total_row.requests if total_row else 0,
@@ -328,12 +334,13 @@ async def list_subscriptions(
 @router.post("/subscription/upgrade", summary="Cambiar de plan")
 async def upgrade_plan(
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
     new_plan_name: str = Header(default="", alias="X-New-Plan"),
     billing_interval: str = Header(default="monthly", alias="X-Billing-Interval"),
     billing: BillingService = Depends(get_billing),
 ):
-    from src.config import get_settings
+    from src.api.security import require_organization_admin
+    from src.core.config import get_settings
 
     # Anti fraude: el upgrade a planes pagos exige flujo de pago. Sin
     # proveedor de pagos verificado, el self-service queda deshabilitado.
@@ -343,11 +350,12 @@ async def upgrade_plan(
             "Plan upgrades require a verified payment flow. Contact support.",
         )
 
-    tenant_id = _tenant_from_request(request, x_tenant_id)
+    require_organization_admin(request)
+    organization_id = _organization_from_request(request, x_organization_id)
     if not new_plan_name:
         raise HTTPException(400, "X-New-Plan required (plan name: starter, pro, enterprise)")
 
-    sub = await billing.get_subscription(tenant_id)
+    sub = await billing.get_subscription(organization_id)
     if sub is None:
         raise HTTPException(404, "No subscription found. Create a trial first.")
 
@@ -357,7 +365,7 @@ async def upgrade_plan(
     result = await billing.upgrade_plan(sub.id, new_plan_name, billing_interval)
     logger.info(
         "Plan upgraded",
-        tenant_id=str(tenant_id),
+        organization_id=str(organization_id),
         plan=result["plan_name"],
         interval=billing_interval,
     )
@@ -380,63 +388,64 @@ async def delete_subscription(
     return {"status": "deleted", "subscription_id": subscription_id}
 
 
-@router.put("/tenants/{tenant_id}", summary="Actualizar datos de empresa")
-async def update_tenant(
-    tenant_id: str,
+@router.put("/organizations/{organization_id}", summary="Actualizar datos de empresa")
+async def update_organization(
+    organization_id: str,
     body: dict,
     request: Request,
 ):
-    ctx_tid = _tenant_from_request(request)
-    if str(ctx_tid) != tenant_id:
-        raise HTTPException(403, "Cannot update another tenant")
-    from src.infrastructure.relational_db import PostgresTenantRepository
-    repo = PostgresTenantRepository()
-    tenant = await repo.update_tenant(UUID(tenant_id), **body)
+    from src.api.security import require_organization_admin
+
+    ctx = require_organization_admin(request)
+    if str(ctx.organization_id) != organization_id:
+        raise HTTPException(403, "Cannot update another organization")
+
+    repo = PostgresOrganizationRepository()
+    organization = await repo.update_organization(UUID(organization_id), **body)
     return {
-        "id": str(tenant.id),
-        "name": tenant.name,
-        "company_name": tenant.company_name,
-        "ruc": tenant.ruc,
-        "phone": tenant.phone,
-        "email": tenant.email,
-        "country": tenant.country,
-        "status": tenant.status.value,
+        "id": str(organization.id),
+        "name": organization.name,
+        "company_name": organization.company_name,
+        "ruc": organization.ruc,
+        "phone": organization.phone,
+        "email": organization.email,
+        "country": organization.country,
+        "status": organization.status.value,
     }
 
 
-@router.get("/admin/tenants", summary="Listar todos los tenants (admin)")
-async def list_tenants(request: Request):
+@router.get("/admin/organizations", summary="Listar todas las organizaciones (admin)")
+async def list_organizations(request: Request):
     _require_admin_billing(request)
-    from src.infrastructure.relational_db import PostgresTenantRepository
-    repo = PostgresTenantRepository()
-    tenants = await repo.list_tenants()
+    repo = PostgresOrganizationRepository()
+    organizations = await repo.list_organizations()
     return {
-        "tenants": [
+        "organizations": [
             {
-                "id": str(t.id),
-                "name": t.name,
-                "company_name": t.company_name,
-                "ruc": t.ruc,
-                "phone": t.phone,
-                "email": t.email,
-                "country": t.country,
-                "status": t.status.value,
-                "created_at": t.created_at.isoformat(),
+                "id": str(o.id),
+                "name": o.name,
+                "company_name": o.company_name,
+                "ruc": o.ruc,
+                "phone": o.phone,
+                "email": o.email,
+                "country": o.country,
+                "status": o.status.value,
+                "created_at": o.created_at.isoformat(),
             }
-            for t in tenants
+            for o in organizations
         ],
-        "total": len(tenants),
+        "total": len(organizations),
     }
 
 
 def _require_admin_billing(request: Request) -> None:
-    from src.config import get_settings
+    from src.core.config import get_settings
 
     if not get_settings().RAG_ADMIN_ENABLED:
         raise HTTPException(403, "Admin billing endpoints disabled")
 
     # Admin de plataforma REAL: token con scope admin:*. Las sesiones del
-    # portal (dueños de tenant) NO son admin de plataforma.
+    # portal (dueños de organización) NO son admin de plataforma.
     from src.api.security import require_platform_admin
 
     require_platform_admin(request)

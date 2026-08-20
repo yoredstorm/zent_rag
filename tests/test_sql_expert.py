@@ -8,10 +8,18 @@ from uuid import UUID
 
 import pytest
 
-from src.domain.entities import LLMResponse
-from src.domain.services import ColumnMeta, DataSource
-from src.domain.sql_expert import SqlQueryResult, SqlValidationError
-from src.infrastructure.sql_expert import PostgresSqlExpert, stabilize_sql
+from src.agents.tools.sql_expert_postgres import (
+    PostgresSqlExpert,
+    load_sql_heuristics,
+    stabilize_sql,
+)
+from src.core.domain.entities import LLMResponse
+from src.core.domain.services import ColumnMeta, DataSource
+from src.core.ports.sql_expert import SqlQueryResult, SqlValidationError
+
+# El filtro "ventas completed" es una heurística del VERTICAL demo_farmacia
+# (el core es agnóstico). Registrarla explícitamente en los tests.
+load_sql_heuristics(["src.verticals.demo_farmacia.heuristics"])
 
 _LAST_SALE_SQL = """
 SELECT p.name AS producto, p.price, s.quantity, s.payment_method, s.sale_date
@@ -143,7 +151,7 @@ class _RepairExpert(PostgresSqlExpert):
         super().__init__(llm)
         self.validated: list[str] = []
 
-    async def _discover_sources(self, tenant_id: UUID) -> list[DataSource]:
+    async def _discover_sources(self, organization_id: UUID) -> list[DataSource]:
         return [
             DataSource(
                 schema_name="farmacia",
@@ -158,7 +166,7 @@ class _RepairExpert(PostgresSqlExpert):
         ]
 
     async def validate_sql(
-        self, sql: str, sources: list[DataSource], role: str, tenant_id: UUID
+        self, sql: str, sources: list[DataSource], role: str, organization_id: UUID
     ) -> str:
         self.validated.append(sql)
         if len(self.validated) == 1:
@@ -179,7 +187,7 @@ async def test_repairs_sql_after_validation_failure() -> None:
     llm = _ScriptedLLM([_BROKEN_SQL, _REPAIRED_SQL])
     expert = _RepairExpert(llm)
     result = await expert.execute(
-        tenant_id=UUID("00000000-0000-0000-0000-000000000001"),
+        organization_id=UUID("00000000-0000-0000-0000-000000000001"),
         question="cuál es el producto más vendido",
         role="admin",
     )
@@ -195,7 +203,7 @@ async def test_repair_gives_up_when_llm_cannot_fix() -> None:
     llm = _ScriptedLLM([_BROKEN_SQL, "NO_QUERY"])
     expert = _RepairExpert(llm)
     result = await expert.execute(
-        tenant_id=UUID("00000000-0000-0000-0000-000000000001"),
+        organization_id=UUID("00000000-0000-0000-0000-000000000001"),
         question="cuál es el producto más vendido",
         role="admin",
     )

@@ -53,8 +53,8 @@ const STALE_MS = 180_000;
 const POLL_MS = 1500;
 const TABLE_TOAST_THROTTLE_MS = 3000;
 
-function storageKey(tenantId: string) {
-  return `rag_sync_job_${tenantId}`;
+function storageKey(organizationId: string) {
+  return `rag_sync_job_${organizationId}`;
 }
 
 type JobApi = {
@@ -88,7 +88,7 @@ export function SyncJobProvider({ children }: { children: ReactNode }) {
 
   const clearJob = useCallback(() => {
     if (session) {
-      sessionStorage.removeItem(storageKey(session.tenantId));
+      sessionStorage.removeItem(storageKey(session.organizationId));
     }
     setState(emptyState);
     terminalToastSent.current = null;
@@ -164,7 +164,7 @@ export function SyncJobProvider({ children }: { children: ReactNode }) {
         }
         if (session) {
           window.setTimeout(() => {
-            sessionStorage.removeItem(storageKey(session.tenantId));
+            sessionStorage.removeItem(storageKey(session.organizationId));
           }, 4000);
         }
       }
@@ -178,7 +178,7 @@ export function SyncJobProvider({ children }: { children: ReactNode }) {
       try {
         const job = await api<JobApi>(`/api/v1/ingestion/jobs/${jobId}`, {
           token: session.token,
-          tenantId: session.tenantId,
+          organizationId: session.organizationId,
         });
         applyJob(jobId, job);
       } catch (err) {
@@ -202,7 +202,7 @@ export function SyncJobProvider({ children }: { children: ReactNode }) {
       setState(emptyState);
       return;
     }
-    const saved = sessionStorage.getItem(storageKey(session.tenantId));
+    const saved = sessionStorage.getItem(storageKey(session.organizationId));
     if (saved && !state.jobId) {
       setState((prev) => ({
         ...prev,
@@ -257,10 +257,10 @@ export function SyncJobProvider({ children }: { children: ReactNode }) {
           {
             method: "POST",
             token: session.token,
-            tenantId: session.tenantId,
+            organizationId: session.organizationId,
           }
         );
-        sessionStorage.setItem(storageKey(session.tenantId), job.job_id);
+        sessionStorage.setItem(storageKey(session.organizationId), job.job_id);
         setState({
           ...emptyState,
           jobId: job.job_id,

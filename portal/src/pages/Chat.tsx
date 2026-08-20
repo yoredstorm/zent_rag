@@ -88,7 +88,7 @@ export default function ChatPage() {
 
   useEffect(() => {
     if (!session) return;
-    setConversations(listConversations(session.tenantId));
+    setConversations(listConversations(session.organizationId));
   }, [session]);
 
   const scrollToBottom = useCallback((force = false) => {
@@ -104,20 +104,20 @@ export default function ChatPage() {
 
   function persist(messagesToSave: StoredMessage[], id: string) {
     if (!session) return;
-    const existing = loadConversation(session.tenantId, id);
+    const existing = loadConversation(session.organizationId, id);
     const conv: Conversation = {
       id,
       title: existing?.title || titleFrom(messagesToSave),
       updatedAt: Date.now(),
       messages: messagesToSave,
     };
-    setConversations(upsertConversation(session.tenantId, conv));
+    setConversations(upsertConversation(session.organizationId, conv));
   }
 
   function openConversation(id: string) {
     if (!session) return;
     if (abortRef.current) abortRef.current.abort();
-    const conv = loadConversation(session.tenantId, id);
+    const conv = loadConversation(session.organizationId, id);
     if (!conv) return;
     setMessages(conv.messages.map((m) => ({ ...m, id: uid() })));
     setConversationId(id);
@@ -172,7 +172,7 @@ export default function ChatPage() {
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.token}`,
-          "X-Tenant-Id": session.tenantId,
+          "X-Organization-Id": session.organizationId,
           "X-User-Role": role,
         },
         body: JSON.stringify(body),
@@ -347,7 +347,7 @@ export default function ChatPage() {
       await api("/api/v1/eval/feedback", {
         method: "POST",
         token: session.token,
-        tenantId: session.tenantId,
+        organizationId: session.organizationId,
         body: JSON.stringify({
           query: msg.userQuery || "",
           answer: msg.content,
@@ -380,7 +380,7 @@ export default function ChatPage() {
 
   function handleDelete(id: string) {
     if (!session) return;
-    setConversations(deleteConversation(session.tenantId, id));
+    setConversations(deleteConversation(session.organizationId, id));
     setConfirmDeleteId(null);
     if (conversationId === id) newConversation();
     pushToast("info", "Conversación eliminada");
@@ -391,7 +391,7 @@ export default function ChatPage() {
       setRenamingId(null);
       return;
     }
-    setConversations(renameConversation(session.tenantId, id, renameValue.trim()));
+    setConversations(renameConversation(session.organizationId, id, renameValue.trim()));
     setRenamingId(null);
   }
 

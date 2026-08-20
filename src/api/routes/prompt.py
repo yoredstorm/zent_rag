@@ -1,10 +1,10 @@
 # =============================================================================
-# Prompt Management — GET/PUT/DELETE/test del system prompt por tenant y rol
+# Prompt Management — GET/PUT/DELETE/test del system prompt por organization y rol
 # =============================================================================
-# Permite iterar el system prompt sin redeploy. Cada tenant puede tener
+# Permite iterar el system prompt sin redeploy. Cada organization puede tener
 # prompts diferentes por rol (admin vs customer). El test hace dry-run
 # conectado al pipeline RAG real (vectores + SQL expert).
-# Variables disponibles: {role}, {tenant_name}, {date}, {top_k}
+# Variables disponibles: {role}, {organization_name}, {date}, {top_k}
 # =============================================================================
 from __future__ import annotations
 
@@ -13,23 +13,23 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
+from src.agents.runtime.orchestrator import RAG_SYSTEM_PROMPT, RAGOrchestrator
 from src.api.deps import (
+    get_organization_repo,
     get_rag_orchestrator,
-    get_tenant_repo,
 )
-from src.application.orchestrator import RAG_SYSTEM_PROMPT, RAGOrchestrator
-from src.domain.ports import TenantRepository
-from src.infrastructure.logging_config import get_logger
+from src.core.ports import OrganizationRepository
+from src.infrastructure.observability.logging_config import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/admin", tags=["Prompt Management"])
 
 
-def _resolve_tenant_id(request: Request, x_tenant_id: str) -> UUID:
-    """Tenant autenticado gana; header distinto -> 403 (anti cross-tenant)."""
-    from src.api.security import resolve_tenant
+def _resolve_organization_id(request: Request, x_organization_id: str) -> UUID:
+    """Organization autenticado gana; header distinto -> 403 (anti cross-organization)."""
+    from src.api.security import resolve_organization
 
-    return resolve_tenant(request, x_tenant_id)
+    return resolve_organization(request, x_organization_id)
 
 
 # ---------------------------------------------------------------------------
@@ -59,11 +59,11 @@ class RolePromptInfo(BaseModel):
 
 
 class PromptStatus(BaseModel):
-    tenant_id: str
+    organization_id: str
     roles: dict[str, RolePromptInfo]
     default_system_prompt: str
     available_variables: list[str] = Field(
-        default_factory=lambda: ["{role}", "{tenant_name}", "{date}", "{top_k}"]
+        default_factory=lambda: ["{role}", "{organization_name}", "{date}", "{top_k}"]
     )
 
 
@@ -119,23 +119,23 @@ class PromptTestResponse(BaseModel):
 @router.get(
     "/prompt",
     response_model=PromptStatus,
-    summary="Ver system prompt del tenant por rol",
+    summary="Ver system prompt del organization por rol",
     description="Devuelve los prompts configurados para admin y customer, más el default.",
 )
 async def get_prompt(
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
-    repo: TenantRepository = Depends(get_tenant_repo),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
+    repo: OrganizationRepository = Depends(get_organization_repo),
 ) -> PromptStatus:
-    tenant_id = _resolve_tenant_id(request, x_tenant_id)
-    tenant = await repo.get_by_id(tenant_id)
-    if tenant is None:
-        raise HTTPException(404, "Tenant not found")
+    organization_id = _resolve_organization_id(request, x_organization_id)
+    organization = await repo.get_by_id(organization_id)
+    if organization is None:
+        raise HTTPException(404, "Organization not found")
 
-    cfg = tenant.config_json or {}
+    cfg = organization.config_json or {}
 
     return PromptStatus(
-        tenant_id=str(tenant_id),
+        organization_id=str(organization_id),
         roles={
             role: RolePromptInfo(**_extract_role_prompt(cfg, role))
             for role in _ROLE_KEYS
@@ -152,24 +152,24 @@ async def get_prompt(
 @router.put(
     "/prompt",
     response_model=PromptStatus,
-    summary="Actualizar system prompt del tenant",
+    summary="Actualizar system prompt del organization",
     description="Guarda un nuevo system_prompt para un rol específico (o genérico).",
 )
 async def update_prompt(
     body: PromptConfig,
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
-    repo: TenantRepository = Depends(get_tenant_repo),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
+    repo: OrganizationRepository = Depends(get_organization_repo),
 ) -> PromptStatus:
-    from src.api.security import require_tenant_admin
+    from src.api.security import require_organization_admin
 
-    require_tenant_admin(request)
-    tenant_id = _resolve_tenant_id(request, x_tenant_id)
-    tenant = await repo.get_by_id(tenant_id)
-    if tenant is None:
-        raise HTTPException(404, "Tenant not found")
+    require_organization_admin(request)
+    organization_id = _resolve_organization_id(request, x_organization_id)
+    organization = await repo.get_by_id(organization_id)
+    if organization is None:
+        raise HTTPException(404, "Organization not found")
 
-    new_config = dict(tenant.config_json or {})
+    new_config = dict(organization.config_json or {})
 
     if body.role:
         prompt_key = f"system_prompt_{body.role}"
@@ -184,18 +184,18 @@ async def update_prompt(
     elif instr_key in new_config:
         del new_config[instr_key]
 
-    updated = await repo.update_config(tenant_id, new_config)
+    updated = await repo.update_config(organization_id, new_config)
     cfg = updated.config_json or {}
 
     logger.info(
-        "System prompt updated for tenant",
-        tenant_id=str(tenant_id),
+        "System prompt updated for organization",
+        organization_id=str(organization_id),
         role=body.role or "generic",
         prompt_length=len(body.system_prompt),
     )
 
     return PromptStatus(
-        tenant_id=str(tenant_id),
+        organization_id=str(organization_id),
         roles={
             role: RolePromptInfo(**_extract_role_prompt(cfg, role))
             for role in _ROLE_KEYS
@@ -217,19 +217,19 @@ async def update_prompt(
 )
 async def reset_prompt(
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
     role: str | None = Query(default=None, pattern=r"^(admin|customer)$"),
-    repo: TenantRepository = Depends(get_tenant_repo),
+    repo: OrganizationRepository = Depends(get_organization_repo),
 ) -> PromptStatus:
-    from src.api.security import require_tenant_admin
+    from src.api.security import require_organization_admin
 
-    require_tenant_admin(request)
-    tenant_id = _resolve_tenant_id(request, x_tenant_id)
-    tenant = await repo.get_by_id(tenant_id)
-    if tenant is None:
-        raise HTTPException(404, "Tenant not found")
+    require_organization_admin(request)
+    organization_id = _resolve_organization_id(request, x_organization_id)
+    organization = await repo.get_by_id(organization_id)
+    if organization is None:
+        raise HTTPException(404, "Organization not found")
 
-    new_config = dict(tenant.config_json or {})
+    new_config = dict(organization.config_json or {})
 
     if role:
         new_config.pop(f"system_prompt_{role}", None)
@@ -241,15 +241,15 @@ async def reset_prompt(
                 del new_config[k]
         log_msg = "All system prompts reset to default"
 
-    await repo.update_config(tenant_id, new_config)
+    await repo.update_config(organization_id, new_config)
 
-    logger.info(log_msg, tenant_id=str(tenant_id))
+    logger.info(log_msg, organization_id=str(organization_id))
 
-    cfg = await repo.get_by_id(tenant_id)
+    cfg = await repo.get_by_id(organization_id)
     cfg = (cfg and cfg.config_json) or {}
 
     return PromptStatus(
-        tenant_id=str(tenant_id),
+        organization_id=str(organization_id),
         roles={
             r: RolePromptInfo(**_extract_role_prompt(cfg, r))
             for r in _ROLE_KEYS
@@ -272,18 +272,18 @@ async def reset_prompt(
 async def test_prompt(
     body: PromptTestRequest,
     request: Request,
-    x_tenant_id: str = Header(default="", alias="X-Tenant-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
     x_user_id: str = Header(default="00000000-0000-0000-0000-000000000002", alias="X-User-Id"),
     orchestrator: RAGOrchestrator = Depends(get_rag_orchestrator),
-    repo: TenantRepository = Depends(get_tenant_repo),
+    repo: OrganizationRepository = Depends(get_organization_repo),
 ) -> PromptTestResponse:
-    from src.api.security import require_tenant_admin
+    from src.api.security import require_organization_admin
 
-    require_tenant_admin(request)
-    tenant_id = _resolve_tenant_id(request, x_tenant_id)
-    tenant = await repo.get_by_id(tenant_id)
-    if tenant is None:
-        raise HTTPException(404, "Tenant not found")
+    require_organization_admin(request)
+    organization_id = _resolve_organization_id(request, x_organization_id)
+    organization = await repo.get_by_id(organization_id)
+    if organization is None:
+        raise HTTPException(404, "Organization not found")
 
     try:
         user_id = UUID(x_user_id)
@@ -295,7 +295,7 @@ async def test_prompt(
         full_prompt += "\n\n" + body.custom_instructions
 
     result = await orchestrator.execute(
-        tenant_id=tenant_id,
+        organization_id=organization_id,
         user_id=user_id,
         query=body.query,
         model=body.model,

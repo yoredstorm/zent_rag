@@ -14,60 +14,60 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
+from src.agents.runtime.orchestrator import RAGOrchestrator
 from src.api.deps import get_rag_orchestrator
-from src.api.metrics import (
+from src.api.schemas import RAGQueryRequest, RAGQueryResponse, sources_for_client
+from src.infrastructure.observability.logging_config import get_logger
+from src.infrastructure.observability.metrics import (
     rag_active_requests,
     rag_queries_total,
     rag_tokens_consumed,
 )
-from src.application.orchestrator import RAGOrchestrator
-from src.domain.models import RAGQueryRequest, RAGQueryResponse, sources_for_client
-from src.infrastructure.logging_config import get_logger
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["RAG"])
 
 
-async def _resolve_tenant_user(
-    request: Request, x_tenant_id: str, x_user_id: str
+async def _resolve_organization_user(
+    request: Request, x_organization_id: str, x_user_id: str
 ) -> tuple[UUID, UUID]:
-    """Resuelve tenant_id y user_id desde la identidad autenticada.
+    """Resuelve organization_id y user_id desde la identidad autenticada.
 
-    El Bearer autenticado SIEMPRE gana: X-Tenant-Id / X-User-Id que no
-    coincidan con la sesión reciben 403 (anti cross-tenant / impersonación).
+    El Bearer autenticado SIEMPRE gana: X-Organization-Id / X-User-Id que no
+    coincidan con la sesión reciben 403 (anti cross-organization / impersonación).
     """
-    from src.api.security import resolve_tenant, resolve_user_id
+    from src.api.security import resolve_organization, resolve_user_id
 
-    tenant_id = resolve_tenant(request, x_tenant_id)
+    organization_id = resolve_organization(request, x_organization_id)
     user_id = await resolve_user_id(request, x_user_id)
-    return tenant_id, user_id
+    return organization_id, user_id
 
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
 
-def _record_metrics(result, tenant_id: UUID) -> None:
+def _record_metrics(result, organization_id: UUID) -> None:
     """Registra métricas Prometheus para una consulta finalizada."""
     rag_queries_total.labels(
-        tenant_id=str(tenant_id),
+        organization_id=str(organization_id),
         status=result.status.value,
         method=getattr(result, "method", "rag") or "rag",
     ).inc()
 
     if result.llm_response:
         rag_tokens_consumed.labels(
-            tenant_id=str(tenant_id),
+            organization_id=str(organization_id),
             model=result.llm_response.model,
             token_type="prompt",
         ).inc(result.llm_response.prompt_tokens)
         rag_tokens_consumed.labels(
-            tenant_id=str(tenant_id),
+            organization_id=str(organization_id),
             model=result.llm_response.model,
             token_type="completion",
         ).inc(result.llm_response.completion_tokens)
         rag_tokens_consumed.labels(
-            tenant_id=str(tenant_id),
+            organization_id=str(organization_id),
             model=result.llm_response.model,
             token_type="total",
         ).inc(result.llm_response.total_tokens)
@@ -80,22 +80,22 @@ def _record_metrics(result, tenant_id: UUID) -> None:
     summary="Consulta RAG con contexto vectorial",
     description=(
         "Recibe una pregunta en lenguaje natural, recupera contexto relevante "
-        "de la base de conocimiento vectorial del tenant y genera una respuesta "
+        "de la base de conocimiento vectorial del organization y genera una respuesta "
         "fundamentada usando el LLM configurado."
     ),
     responses={
         200: {"description": "Respuesta generada exitosamente"},
         400: {"description": "Datos de entrada inválidos"},
-        401: {"description": "API Key inválida o tenant no encontrado"},
-        429: {"description": "Rate limit excedido para este tenant"},
+        401: {"description": "API Key inválida o organization no encontrado"},
+        429: {"description": "Rate limit excedido para este organization"},
         500: {"description": "Error interno del servidor"},
     },
 )
 async def rag_query(
     body: RAGQueryRequest,
     request: Request,
-    x_tenant_id: str = Header(
-        default="", alias="X-Tenant-Id", description="UUID del tenant (obligatorio si no usa Bearer token)"
+    x_organization_id: str = Header(
+        default="", alias="X-Organization-Id", description="UUID del organization (obligatorio si no usa Bearer token)"
     ),
     x_user_id: str = Header(
         default="", alias="X-User-Id", description="UUID del usuario (obligatorio si no usa Bearer token)"
@@ -108,9 +108,9 @@ async def rag_query(
     orchestrator: RAGOrchestrator = Depends(get_rag_orchestrator),
 ) -> RAGQueryResponse:
     # ---------------------------------------------------------------
-    # Resolver tenant_id: Bearer token o header
+    # Resolver organization_id: Bearer token o header
     # ---------------------------------------------------------------
-    tenant_id, user_id = await _resolve_tenant_user(request, x_tenant_id, x_user_id)
+    organization_id, user_id = await _resolve_organization_user(request, x_organization_id, x_user_id)
 
     # Rol server-side: el cliente solo puede degradar (admin -> customer),
     # nunca elevar (customer -> admin).
@@ -125,7 +125,7 @@ async def rag_query(
     if body.has_injection_warning:
         logger.warning(
             "Potential prompt injection detected in query",
-            tenant_id=str(tenant_id),
+            organization_id=str(organization_id),
             user_id=str(user_id),
             query_preview=body.query[:200],
         )
@@ -133,11 +133,11 @@ async def rag_query(
     # ---------------------------------------------------------------
     # Ejecución del flujo RAG
     # ---------------------------------------------------------------
-    rag_active_requests.labels(tenant_id=str(tenant_id)).inc()
+    rag_active_requests.labels(organization_id=str(organization_id)).inc()
 
     try:
         result = await orchestrator.execute(
-            tenant_id=tenant_id,
+            organization_id=organization_id,
             user_id=user_id,
             query=body.query,
             model=body.model,
@@ -148,7 +148,7 @@ async def rag_query(
             role=role,
         )
     except Exception as exc:
-        rag_active_requests.labels(tenant_id=str(tenant_id)).dec()
+        rag_active_requests.labels(organization_id=str(organization_id)).dec()
         logger.error(
             "Unhandled exception in RAG query",
             error=str(exc),
@@ -159,14 +159,14 @@ async def rag_query(
             detail="Internal error processing RAG query",
         )
     finally:
-        rag_active_requests.labels(tenant_id=str(tenant_id)).dec()
+        rag_active_requests.labels(organization_id=str(organization_id)).dec()
 
     # ---------------------------------------------------------------
     # Respuesta de error controlado
     # ---------------------------------------------------------------
     if result.status == "failed":
         rag_queries_total.labels(
-            tenant_id=str(tenant_id), status="failed", method=getattr(result, "method", "rag") or "rag"
+            organization_id=str(organization_id), status="failed", method=getattr(result, "method", "rag") or "rag"
         ).inc()
 
         if "rate limit" in (result.error_message or "").lower():
@@ -188,9 +188,9 @@ async def rag_query(
     # Métricas de negocio
     # ---------------------------------------------------------------
     if result.status == "failed":
-        _record_metrics(result, tenant_id)
+        _record_metrics(result, organization_id)
     else:
-        _record_metrics(result, tenant_id)
+        _record_metrics(result, organization_id)
 
     # ---------------------------------------------------------------
     # Construcción de la respuesta
@@ -237,16 +237,16 @@ async def rag_query(
     responses={
         200: {"description": "Streaming de eventos SSE"},
         400: {"description": "Datos de entrada inválidos"},
-        401: {"description": "API Key inválida o tenant no encontrado"},
-        429: {"description": "Rate limit excedido para este tenant"},
+        401: {"description": "API Key inválida o organization no encontrado"},
+        429: {"description": "Rate limit excedido para este organization"},
         500: {"description": "Error interno del servidor"},
     },
 )
 async def rag_query_stream(
     body: RAGQueryRequest,
     request: Request,
-    x_tenant_id: str = Header(
-        default="", alias="X-Tenant-Id", description="UUID del tenant (obligatorio si no usa Bearer token)"
+    x_organization_id: str = Header(
+        default="", alias="X-Organization-Id", description="UUID del organization (obligatorio si no usa Bearer token)"
     ),
     x_user_id: str = Header(
         default="", alias="X-User-Id", description="UUID del usuario (opcional)"
@@ -258,7 +258,7 @@ async def rag_query_stream(
     ),
     orchestrator: RAGOrchestrator = Depends(get_rag_orchestrator),
 ) -> StreamingResponse:
-    tenant_id, user_id = await _resolve_tenant_user(request, x_tenant_id, x_user_id)
+    organization_id, user_id = await _resolve_organization_user(request, x_organization_id, x_user_id)
 
     from src.api.security import resolve_effective_role
 
@@ -276,10 +276,10 @@ async def rag_query_stream(
 
     async def run_pipeline() -> None:
         """Ejecuta el flujo RAG completo y encola eventos finales."""
-        rag_active_requests.labels(tenant_id=str(tenant_id)).inc()
+        rag_active_requests.labels(organization_id=str(organization_id)).inc()
         try:
             result = await orchestrator.execute(
-                tenant_id=tenant_id,
+                organization_id=organization_id,
                 user_id=user_id,
                 query=body.query,
                 model=body.model,
@@ -290,7 +290,7 @@ async def rag_query_stream(
                 role=role,
                 on_delta=on_delta,
             )
-            _record_metrics(result, tenant_id)
+            _record_metrics(result, organization_id)
 
             if result.status == "failed":
                 await queue.put(
@@ -353,7 +353,7 @@ async def rag_query_stream(
             )
             await queue.put(("error", {"message": str(exc)}))
         finally:
-            rag_active_requests.labels(tenant_id=str(tenant_id)).dec()
+            rag_active_requests.labels(organization_id=str(organization_id)).dec()
             await queue.put(("__end__", {}))
 
     task = asyncio.create_task(run_pipeline())

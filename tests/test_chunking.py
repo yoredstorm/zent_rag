@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from src.infrastructure.data_ingestion import (
+from src.connectors.sql.ingestion import (
     _chunk_text,
     _column_to_template,
     _serialize_row,

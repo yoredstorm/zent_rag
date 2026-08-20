@@ -17,7 +17,7 @@ if str(_SRC_DIR) not in sys.path:
 
 class TestPortalSessionCrypto:
     def test_encrypt_decrypt_roundtrip(self) -> None:
-        from src.infrastructure.portal_session import decrypt_session, encrypt_session
+        from src.platform.auth.session import decrypt_session, encrypt_session
 
         uid = uuid4()
         tid = uuid4()
@@ -25,11 +25,11 @@ class TestPortalSessionCrypto:
         assert token.startswith("rag_sess_")
         payload = decrypt_session(token)
         assert payload.user_id == uid
-        assert payload.tenant_id == tid
+        assert payload.organization_id == tid
         assert payload.typ == "portal"
 
     def test_tampered_token_rejected(self) -> None:
-        from src.infrastructure.portal_session import (
+        from src.platform.auth.session import (
             SessionTokenError,
             decrypt_session,
             encrypt_session,
@@ -59,7 +59,7 @@ class TestAuthSignupLogin:
         data = signup.json()
         assert data["access_token"].startswith("rag_sess_")
         assert data["email"] == email
-        assert "tenant_id" in data
+        assert "organization_id" in data
 
         me = await async_client.get(
             "/api/v1/auth/me",
@@ -120,7 +120,7 @@ class TestAuthSignupLogin:
 
     @pytest.mark.asyncio
     async def test_login_rate_limit(self, async_client: AsyncClient) -> None:
-        from src.infrastructure.auth_rate_limit import reset_memory_rate_limits
+        from src.platform.auth.rate_limit import reset_memory_rate_limits
 
         reset_memory_rate_limits()
         email = f"rl_{uuid4().hex[:10]}@example.com"

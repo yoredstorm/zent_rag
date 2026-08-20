@@ -41,7 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       void api("/api/v1/auth/logout", {
         method: "POST",
         token: current.token,
-        tenantId: current.tenantId,
+        organizationId: current.organizationId,
       }).catch(() => undefined);
     }
     clearSession();
@@ -58,17 +58,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       try {
         const me = await api<{
-          tenant_id: string;
+          organization_id: string;
           company_name: string;
           email?: string | null;
+          roles?: string[];
         }>("/api/v1/auth/me", {
           token: current.token,
-          tenantId: current.tenantId,
+          organizationId: current.organizationId,
         });
         if (cancelled) return;
         const next: Session = {
           token: current.token,
-          tenantId: me.tenant_id,
+          organizationId: me.organization_id,
           companyName: me.company_name || current.companyName,
           email: me.email || current.email,
         };
@@ -92,7 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     const data = await api<{
       access_token: string;
-      tenant_id: string;
+      organization_id: string;
       company_name: string;
       email: string;
     }>("/api/v1/auth/login", {
@@ -101,7 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
     const next: Session = {
       token: data.access_token,
-      tenantId: data.tenant_id,
+      organizationId: data.organization_id,
       companyName: data.company_name,
       email: data.email,
     };
@@ -113,7 +114,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (companyName: string, email: string, password: string) => {
       const data = await api<{
         access_token: string;
-        tenant_id: string;
+        organization_id: string;
         company_name: string;
         email: string;
       }>("/api/v1/auth/signup", {
@@ -126,7 +127,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       const next: Session = {
         token: data.access_token,
-        tenantId: data.tenant_id,
+        organizationId: data.organization_id,
         companyName: data.company_name,
         email: data.email,
       };

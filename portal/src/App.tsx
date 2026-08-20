@@ -7,6 +7,7 @@ import {
   NotePencil,
   SignOut,
   SquaresFour,
+  UsersThree,
   X,
   type Icon,
 } from "@phosphor-icons/react";
@@ -25,6 +26,12 @@ const LoginPage = lazy(() => import("./pages/Login"));
 const PromptsPage = lazy(() => import("./pages/Prompts"));
 const SignupPage = lazy(() => import("./pages/Signup"));
 const UsagePage = lazy(() => import("./pages/Usage"));
+const UsersPage = lazy(() => import("./pages/Users"));
+const ProjectsPage = lazy(() => import("./pages/Projects"));
+const KnowledgeBasesPage = lazy(() => import("./pages/KnowledgeBases"));
+const AgentsPage = lazy(() => import("./pages/Agents"));
+const ConnectorsPage = lazy(() => import("./pages/Connectors"));
+const AuditLogsPage = lazy(() => import("./pages/AuditLogs"));
 
 function PageFallback() {
   return (
@@ -39,11 +46,17 @@ function PageFallback() {
 
 const NAV_ITEMS: { to: string; label: string; icon: Icon; end?: boolean }[] = [
   { to: "/", label: "Dashboard", icon: SquaresFour, end: true },
-  { to: "/usage", label: "Uso", icon: ChartBar },
-  { to: "/keys", label: "Claves", icon: Key },
-  { to: "/ingestion", label: "Ingestión", icon: Database },
-  { to: "/prompts", label: "Prompts", icon: NotePencil },
   { to: "/chat", label: "Pregúntale a tus datos", icon: ChatCircleDots },
+  { to: "/ingestion", label: "Ingestión", icon: Database },
+  { to: "/projects", label: "Proyectos", icon: SquaresFour },
+  { to: "/knowledge-bases", label: "Knowledge bases", icon: Database },
+  { to: "/agents", label: "Agentes", icon: ChatCircleDots },
+  { to: "/connectors", label: "Conectores", icon: Database },
+  { to: "/users", label: "Usuarios y roles", icon: UsersThree },
+  { to: "/keys", label: "Claves", icon: Key },
+  { to: "/usage", label: "Uso", icon: ChartBar },
+  { to: "/prompts", label: "Prompts", icon: NotePencil },
+  { to: "/audit", label: "Auditoría", icon: List },
 ];
 
 function Brand() {
@@ -77,7 +90,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { session, logout } = useAuth();
   const [confirming, setConfirming] = useState(false);
   const identity =
-    session?.email || session?.companyName || session?.tenantId.slice(0, 8) || "";
+    session?.email || session?.companyName || session?.organizationId.slice(0, 8) || "";
 
   return (
     <div className="flex h-full flex-col">
@@ -236,6 +249,12 @@ export default function App() {
         <Route path="/ingestion" element={<Suspense fallback={<PageFallback />}><IngestionPage /></Suspense>} />
         <Route path="/prompts" element={<Suspense fallback={<PageFallback />}><PromptsPage /></Suspense>} />
         <Route path="/chat" element={<Suspense fallback={<PageFallback />}><ChatPage /></Suspense>} />
+        <Route path="/users" element={<Suspense fallback={<PageFallback />}><UsersPage /></Suspense>} />
+        <Route path="/projects" element={<Suspense fallback={<PageFallback />}><ProjectsPage /></Suspense>} />
+        <Route path="/knowledge-bases" element={<Suspense fallback={<PageFallback />}><KnowledgeBasesPage /></Suspense>} />
+        <Route path="/agents" element={<Suspense fallback={<PageFallback />}><AgentsPage /></Suspense>} />
+        <Route path="/connectors" element={<Suspense fallback={<PageFallback />}><ConnectorsPage /></Suspense>} />
+        <Route path="/audit" element={<Suspense fallback={<PageFallback />}><AuditLogsPage /></Suspense>} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
