@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
-from typing import TypeVar
+from typing import Any, TypeVar, cast
 from uuid import UUID
 
 import httpx
@@ -23,8 +23,9 @@ from qdrant_client import models as qdrant_models
 
 from src.core.config import get_settings
 from src.core.domain.entities import RetrievalChunk, RetrievalContext
-from src.core.ports import VectorStore
+from src.core.ports import HybridStore, LexicalStore, VectorStore
 from src.infrastructure.observability.logging_config import get_logger
+from src.infrastructure.qdrant.bm25 import encode_sparse, to_sparse_payload
 
 logger = get_logger(__name__)
 
@@ -65,6 +66,10 @@ RAG_DOCUMENTS_COLLECTION = "rag_documents"
 # Limit concurrent upserts across tables (table_concurrency > 1 used to flood Qdrant).
 _upsert_sem: asyncio.Semaphore | None = None
 _collection_ready = False
+# True si la colección usa vectores nombrados ("dense" + "sparse").
+# Las colecciones legacy (dense anónimo) no soportan búsqueda lexical hasta
+# ejecutar el script de migración `migrate_qdrant_hybrid.py`.
+_collection_has_named_vectors: bool | None = None
 
 
 def _upsert_semaphore() -> asyncio.Semaphore:
@@ -165,48 +170,77 @@ async def _get_client() -> AsyncQdrantClient:
     return _qdrant_client
 
 
-class QdrantVectorStore(VectorStore):
-    """Implementación de VectorStore con colección única compartida."""
+def _sparse_index_params() -> qdrant_models.SparseVectorParams:
+    """Params sparse con índice en RAM + modifier IDF si el client
+    lo soporta (qdrant-client >= 1.13)."""
+    index_params = None
+    if hasattr(qdrant_models, "SparseIndexParams") and hasattr(
+        qdrant_models, "Datatype"
+    ):
+        index_params = qdrant_models.SparseIndexParams(
+            on_disk=False,
+            datatype=qdrant_models.Datatype.FLOAT32,
+        )
+    kwargs: dict[str, object] = {"index": index_params}
+    if hasattr(qdrant_models, "Modifier"):
+        kwargs["modifier"] = qdrant_models.Modifier.IDF
+    return qdrant_models.SparseVectorParams(**kwargs)  # type: ignore[arg-type]
+
+
+class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
+    """Implementación de VectorStore con colección única compartida.
+
+    Soporta búsqueda semántica (dense), lexical (sparse/BM25) e híbrida
+    (RRF server-side) cuando la colección usa vectores nombrados.
+    """
 
     async def _ensure_collection(self) -> None:
-        global _collection_ready
-        if _collection_ready:
+        global _collection_ready, _collection_has_named_vectors
+        if _collection_ready and _collection_has_named_vectors is not None:
             return
         client = await _get_client()
         settings = get_settings()
         if not await client.collection_exists(RAG_DOCUMENTS_COLLECTION):
-            await client.create_collection(
-                collection_name=RAG_DOCUMENTS_COLLECTION,
-                vectors_config=qdrant_models.VectorParams(
+            vectors_config: dict[str, object] = {
+                "dense": qdrant_models.VectorParams(
                     size=settings.VECTOR_DIMENSION,
                     distance=qdrant_models.Distance.COSINE,
                 ),
+                "sparse": _sparse_index_params(),
+            }
+            await client.create_collection(
+                collection_name=RAG_DOCUMENTS_COLLECTION,
+                vectors_config=cast(Any, vectors_config),  # named sparse OK en Qdrant 1.13+
             )
+            _collection_has_named_vectors = True
             logger.info(
-                "Created shared vector collection",
+                "Created shared vector collection (dense + sparse)",
                 collection_name=RAG_DOCUMENTS_COLLECTION,
                 vector_dimension=settings.VECTOR_DIMENSION,
             )
+        else:
+            info = await client.get_collection(RAG_DOCUMENTS_COLLECTION)
+            named = getattr(info.config.params.vectors, "size", None) is None
+            if _collection_has_named_vectors is None:
+                _collection_has_named_vectors = named
+                logger.info(
+                    "Existing collection detected",
+                    named_vectors=bool(named),
+                    supports_sparse=bool(named),
+                )
+            elif _collection_has_named_vectors != named:
+                # La colección cambió de forma (migración en vuelo): refrescar.
+                _collection_has_named_vectors = named
         _collection_ready = True
 
-    async def search(
+    def _build_qdrant_filter(
         self,
         organization_id: UUID,
-        query_embedding: list[float],
-        top_k: int = 5,
-        filters: dict[str, str] | None = None,
-        exclude_filters: dict[str, str] | None = None,
-        score_threshold: float = 0.1,
-        role: str = "admin",
-        knowledge_base_id: UUID | None = None,
-    ) -> RetrievalContext:
-        if organization_id is None:
-            raise ValueError("search() requires organization_id (tenant isolation)")
-        client = await _get_client()
-        await self._ensure_collection()
-
-        start = time.perf_counter()
-
+        filters: dict[str, str] | None,
+        exclude_filters: dict[str, str] | None,
+        role: str,
+        knowledge_base_id: UUID | None,
+    ) -> qdrant_models.Filter:
         must_conditions = [
             qdrant_models.FieldCondition(
                 key="organization_id",
@@ -249,15 +283,121 @@ class QdrantVectorStore(VectorStore):
                 for key, value in exclude_filters.items()
             ])
 
-        qdrant_filter = qdrant_models.Filter(
-            must=must_conditions,
-            must_not=must_not_conditions or None,
+        return qdrant_models.Filter(
+            must=must_conditions,  # type: ignore[arg-type]
+            must_not=must_not_conditions or None,  # type: ignore[arg-type]
         )
+
+    @staticmethod
+    def _chunks_from_points(points: list) -> list[RetrievalChunk]:
+        return [
+            RetrievalChunk(
+                document_id=UUID(point.id) if point.id else UUID(int=0),
+                content=point.payload.get("content", "") if point.payload else "",
+                score=point.score,
+                metadata=point.payload.get("metadata", {}) if point.payload else {},
+            )
+            for point in points
+        ]
+
+    def _ensure_sparse_support(self) -> None:
+        if not _collection_has_named_vectors:
+            raise RuntimeError(
+                "Collection 'rag_documents' lacks sparse vectors. "
+                "Run src/scripts/migrate_qdrant_hybrid.py first."
+            )
+
+    async def search(
+        self,
+        organization_id: UUID,
+        query_embedding: list[float],
+        top_k: int = 5,
+        filters: dict[str, str] | None = None,
+        exclude_filters: dict[str, str] | None = None,
+        score_threshold: float = 0.1,
+        role: str = "admin",
+        knowledge_base_id: UUID | None = None,
+    ) -> RetrievalContext:
+        if organization_id is None:
+            raise ValueError("search() requires organization_id (tenant isolation)")
+        client = await _get_client()
+        await self._ensure_collection()
+
+        start = time.perf_counter()
+
+        qdrant_filter = self._build_qdrant_filter(
+            organization_id, filters, exclude_filters, role, knowledge_base_id
+        )
+
+        kwargs: dict[str, object] = {
+            "collection_name": RAG_DOCUMENTS_COLLECTION,
+            "query": query_embedding,
+            "limit": top_k,
+            "query_filter": qdrant_filter,
+            "with_payload": True,
+            "score_threshold": score_threshold,
+        }
+        if _collection_has_named_vectors:
+            kwargs["using"] = "dense"
+
+        results = await _retry_on_transient_error(
+            client.query_points,
+            reset_client=True,
+            **kwargs,
+        )
+
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        chunks = self._chunks_from_points(results.points)
+
+        logger.info(
+            "Vector search completed",
+            organization_id=str(organization_id),
+            results_count=len(chunks),
+            query_latency_ms=round(latency_ms, 2),
+            top_score=round(chunks[0].score, 4) if chunks else 0.0,
+        )
+
+        return RetrievalContext(
+            chunks=chunks,
+            query_embedding=query_embedding,
+            retrieval_latency_ms=latency_ms,
+        )
+
+    async def search_sparse(
+        self,
+        organization_id: UUID,
+        query_text: str,
+        top_k: int = 5,
+        filters: dict[str, str] | None = None,
+        exclude_filters: dict[str, str] | None = None,
+        score_threshold: float = 0.1,
+        role: str = "admin",
+        knowledge_base_id: UUID | None = None,
+    ) -> RetrievalContext:
+        if organization_id is None:
+            raise ValueError("search_sparse() requires organization_id (tenant isolation)")
+        client = await _get_client()
+        await self._ensure_collection()
+        self._ensure_sparse_support()
+
+        start = time.perf_counter()
+
+        qdrant_filter = self._build_qdrant_filter(
+            organization_id, filters, exclude_filters, role, knowledge_base_id
+        )
+
+        sparse_vector = encode_sparse(query_text)
+        if not sparse_vector:
+            return RetrievalContext(chunks=[], retrieval_latency_ms=0.0)
+        indices, values = to_sparse_payload(sparse_vector)
+        query = qdrant_models.SparseVector(indices=indices, values=values)
 
         results = await _retry_on_transient_error(
             client.query_points,
             collection_name=RAG_DOCUMENTS_COLLECTION,
-            query=query_embedding,
+            query=query,
+            using="sparse",
             limit=top_k,
             query_filter=qdrant_filter,
             with_payload=True,
@@ -266,23 +406,84 @@ class QdrantVectorStore(VectorStore):
         )
 
         latency_ms = (time.perf_counter() - start) * 1000
-
-        chunks = [
-            RetrievalChunk(
-                document_id=UUID(point.id) if point.id else UUID(int=0),
-                content=point.payload.get("content", "") if point.payload else "",
-                score=point.score,
-                metadata=point.payload.get("metadata", {}) if point.payload else {},
-            )
-            for point in results.points
-        ]
+        chunks = self._chunks_from_points(results.points)
 
         logger.info(
-            "Vector search completed",
+            "Sparse search completed",
             organization_id=str(organization_id),
             results_count=len(chunks),
             query_latency_ms=round(latency_ms, 2),
-            top_score=round(chunks[0].score, 4) if chunks else 0.0,
+        )
+
+        return RetrievalContext(
+            chunks=chunks,
+            retrieval_latency_ms=latency_ms,
+        )
+
+    async def search_hybrid(
+        self,
+        organization_id: UUID,
+        query_text: str,
+        query_embedding: list[float],
+        top_k: int = 5,
+        filters: dict[str, str] | None = None,
+        exclude_filters: dict[str, str] | None = None,
+        score_threshold: float = 0.1,
+        role: str = "admin",
+        knowledge_base_id: UUID | None = None,
+        fusion_weights: dict[str, float] | None = None,
+    ) -> RetrievalContext:
+        """Fusión RRF server-side (un solo round-trip).
+
+        ADVERTENCIA: el score devuelto es el score RRF (no coseno), por lo
+        que el motor prefiere la fusión client-side cuando el gate de
+        anti-alucinación depende de scores comparables. Este método existe
+        para benchmarks y adaptadores futuros.
+        """
+        if organization_id is None:
+            raise ValueError("search_hybrid() requires organization_id (tenant isolation)")
+        client = await _get_client()
+        await self._ensure_collection()
+        self._ensure_sparse_support()
+
+        start = time.perf_counter()
+
+        qdrant_filter = self._build_qdrant_filter(
+            organization_id, filters, exclude_filters, role, knowledge_base_id
+        )
+
+        sparse_vector = encode_sparse(query_text)
+        if not sparse_vector:
+            return RetrievalContext(chunks=[], retrieval_latency_ms=0.0)
+        indices, values = to_sparse_payload(sparse_vector)
+        sparse_query = qdrant_models.SparseVector(indices=indices, values=values)
+
+        prefetch: list[qdrant_models.QueryRequest] = [
+            qdrant_models.QueryRequest(query=query_embedding, using="dense"),
+            qdrant_models.QueryRequest(query=sparse_query, using="sparse"),
+        ]
+        fusion = qdrant_models.FusionQuery(fusion=qdrant_models.Fusion.RRF)
+
+        results = await _retry_on_transient_error(
+            client.query_points,
+            collection_name=RAG_DOCUMENTS_COLLECTION,
+            prefetch=prefetch,
+            query=fusion,
+            limit=top_k,
+            query_filter=qdrant_filter,
+            with_payload=True,
+            score_threshold=score_threshold if score_threshold > 0 else 0.0,
+            reset_client=True,
+        )
+
+        latency_ms = (time.perf_counter() - start) * 1000
+        chunks = self._chunks_from_points(results.points)
+
+        logger.info(
+            "Hybrid (RRF) search completed",
+            organization_id=str(organization_id),
+            results_count=len(chunks),
+            query_latency_ms=round(latency_ms, 2),
         )
 
         return RetrievalContext(
@@ -311,33 +512,54 @@ class QdrantVectorStore(VectorStore):
         organization_id: UUID,
         points: list[tuple[UUID, list[float], str, dict[str, str] | None]],
         knowledge_base_id: UUID | None = None,
+        sparse_vectors: list[dict[str, float]] | None = None,
     ) -> None:
         if not points:
             return
         if organization_id is None:
             raise ValueError("upsert() requires organization_id (tenant isolation)")
 
+        if sparse_vectors is not None and len(sparse_vectors) != len(points):
+            raise ValueError("sparse_vectors length must match points length")
+
         async with _upsert_semaphore():
             client = await _get_client()
             await self._ensure_collection()
 
-            structs = [
-                qdrant_models.PointStruct(
-                    id=str(document_id),
-                    vector=embedding,
-                    payload={
-                        "content": content,
-                        "metadata": metadata or {},
-                        "organization_id": str(organization_id),
-                        **(
-                            {"knowledge_base_id": str(knowledge_base_id)}
-                            if knowledge_base_id is not None
-                            else {}
+            structs = []
+            for i, (document_id, embedding, content, metadata) in enumerate(points):
+                payload = {
+                    "content": content,
+                    "metadata": metadata or {},
+                    "organization_id": str(organization_id),
+                    **(
+                        {"knowledge_base_id": str(knowledge_base_id)}
+                        if knowledge_base_id is not None
+                        else {}
+                    ),
+                }
+                if _collection_has_named_vectors:
+                    tf = (
+                        sparse_vectors[i]
+                        if sparse_vectors is not None
+                        else encode_sparse(content)
+                    )
+                    indices, values = to_sparse_payload(tf)
+                    vector: object = {
+                        "dense": embedding,
+                        "sparse": qdrant_models.SparseVector(
+                            indices=indices, values=values
                         ),
-                    },
+                    }
+                else:
+                    vector = embedding
+                structs.append(
+                    qdrant_models.PointStruct(
+                        id=str(document_id),
+                        vector=vector,  # type: ignore[arg-type]
+                        payload=payload,
+                    )
                 )
-                for document_id, embedding, content, metadata in points
-            ]
 
             async def _do_upsert() -> None:
                 # Fresh client each retry after reset_client=True
@@ -382,6 +604,31 @@ class QdrantVectorStore(VectorStore):
             ),
         )
 
+    async def delete_points(self, organization_id: UUID, point_ids: list[str]) -> None:
+        """Borra puntos por ID exacto. Los IDs son uuid5 deterministas scoped
+        a la organización (generados por el Knowledge Engine desde su registry)."""
+        if not point_ids:
+            return
+        async with _upsert_semaphore():
+            client = await _get_client()
+            await self._ensure_collection()
+
+            async def _do_delete() -> None:
+                c = await _get_client()
+                await c.delete(
+                    collection_name=RAG_DOCUMENTS_COLLECTION,
+                    points_selector=qdrant_models.PointIdsList(
+                        points=point_ids,
+                    ),
+                )
+
+            await _retry_on_transient_error(_do_delete, reset_client=True)
+            logger.info(
+                "Deleted source documents from shared collection",
+                organization_id=str(organization_id),
+                points_count=len(point_ids),
+            )
+
     async def _delete_with_filter(self, *, must: list, log_message: str) -> None:
         async with _upsert_semaphore():
             client = await _get_client()
@@ -402,7 +649,7 @@ class QdrantVectorStore(VectorStore):
 
 async def close_qdrant_connection() -> None:
     """Cierra la conexión con Qdrant."""
-    global _qdrant_client, _qdrant_loop_id, _collection_ready
+    global _qdrant_client, _qdrant_loop_id, _collection_ready, _collection_has_named_vectors
     if _qdrant_client:
         try:
             await _qdrant_client.close()
@@ -411,3 +658,4 @@ async def close_qdrant_connection() -> None:
         _qdrant_client = None
         _qdrant_loop_id = None
         _collection_ready = False
+        _collection_has_named_vectors = None

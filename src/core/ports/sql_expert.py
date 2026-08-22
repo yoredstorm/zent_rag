@@ -16,6 +16,8 @@ class SqlQueryResult:
     rows: list[list[str]] = field(default_factory=list)
     row_count: int = 0
     error: str | None = None
+    truncated: bool = False  # True si se alcanzó el límite de filas
+    cost: float | None = None  # Costo estimado del plan (EXPLAIN Total Cost)
 
 
 @dataclass
@@ -42,9 +44,15 @@ class SqlExpert(ABC):
         organization_id: UUID,
         question: str,
         role: str,
+        permissions: dict | None = None,
+        user_id: UUID | None = None,
     ) -> SqlQueryResult:
-        """Genera SQL, valida, ejecuta y retorna resultados."""
-        ...
+        """Genera SQL, valida, ejecuta y retorna resultados.
+
+        `permissions`: config opcional del tenant, p. ej.
+        {"column_blocklist": {"customer": ["cost"]}, "table_blocklist": [...]}.
+        `user_id`: identidad del actor para auditoría.
+        """
 
     @abstractmethod
     async def validate_sql(
@@ -52,9 +60,9 @@ class SqlExpert(ABC):
         sql: str,
         sources: list[DataSource],
         role: str,
-    ) -> None:
+        organization_id: UUID,
+    ) -> str:
         """Valida que el SQL sea seguro y use solo el schema disponible.
 
         Lanza SqlValidationError si la query no es válida.
         """
-        ...

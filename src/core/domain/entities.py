@@ -126,8 +126,93 @@ class KnowledgeBase:
     description: str | None = None
     status: str = "active"
     embedding_model: str | None = None
+    chunking_strategy: str = "fixed"  # fixed | recursive | sentence
+    chunk_size: int = 1200
+    chunk_overlap: int = 150
+    retrieval_strategy: str = "vector"  # vector | hybrid
+    reranker: str | None = None
+    metadata_schema: dict = field(default_factory=dict)
     config_json: dict = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(kw_only=True, frozen=True)
+class KbSource:
+    """Fuente de datos de una Knowledge Base (conector configurado)."""
+
+    id: UUID
+    organization_id: UUID
+    name: str
+    type: str  # sql | file | csv | excel | web | s3 | api
+    knowledge_base_id: UUID | None = None
+    config_json: dict = field(default_factory=dict)
+    status: str = "active"
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class IngestionJobStatus(StrEnum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    DEAD = "dead"
+    CANCELED = "canceled"
+
+
+@dataclass(kw_only=True)
+class IngestionJob:
+    """Estado durable de un job de ingestion (Postgres source of truth)."""
+
+    id: UUID
+    organization_id: UUID
+    job_type: str
+    knowledge_base_id: UUID | None = None
+    source_id: UUID | None = None
+    status: IngestionJobStatus = IngestionJobStatus.PENDING
+    progress: int = 0
+    attempts: int = 0
+    max_attempts: int = 3
+    records_processed: int = 0
+    records_failed: int = 0
+    error_summary: dict = field(default_factory=dict)
+    cursor_snapshot: dict | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    retry_at: datetime | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.status in (
+            IngestionJobStatus.COMPLETED,
+            IngestionJobStatus.DEAD,
+            IngestionJobStatus.CANCELED,
+        )
+
+
+@dataclass(kw_only=True)
+class SyncState:
+    """Cursor incremental + marca de último sync exitoso por fuente."""
+
+    source_id: UUID
+    cursor: dict | None = None
+    last_success_at: datetime | None = None
+    last_error: str | None = None
+    last_processed_count: int = 0
+
+
+@dataclass(kw_only=True, frozen=True)
+class SourceDocument:
+    """Registry de documentos indexados (update/delete detection)."""
+
+    organization_id: UUID
+    source_id: UUID
+    external_id: str
+    document_id: UUID
+    content_hash: str
+    status: str = "active"
+    last_seen_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 @dataclass(kw_only=True, frozen=True)

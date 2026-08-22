@@ -208,9 +208,27 @@ async def run_worker(poll_timeout: int = 5) -> None:
     logger.info("Ingestion worker started", poll_timeout=poll_timeout)
     client: aioredis.Redis = await _get_redis()
 
+    from src.knowledge.queue import knowledge_queue_key
+
+    last_requeue_scan = 0.0
+    knowledge_key = knowledge_queue_key()
+
     while not _shutdown_flag:
+        # Escaneo periódico: re-encolar jobs retryables vencidos (retry_at <= now)
+        now_mono = asyncio.get_event_loop().time()
+        if now_mono - last_requeue_scan > 15:
+            last_requeue_scan = now_mono
+            try:
+                await _requeue_due_knowledge_jobs()
+            except Exception as exc:
+                logger.warning("Knowledge retry scan failed", error=str(exc))
+
+        result = None
         try:
-            result = await client.blpop(QUEUE_KEY, timeout=poll_timeout)
+            # Preferencia: knowledge queue (Postgres-backed jobs)
+            result = await client.blpop(
+                (knowledge_key, QUEUE_KEY), timeout=poll_timeout
+            )
         except (TimeoutError, aioredis.TimeoutError):
             # Empty queue + socket_timeout ≈ poll timeout — not an error
             continue
@@ -226,8 +244,15 @@ async def run_worker(poll_timeout: int = 5) -> None:
         if result is None:
             continue
 
-        _, job_id_raw = result
-        job_id = job_id_raw if isinstance(job_id_raw, str) else job_id_raw.decode("utf-8")
+        source_key, job_id_raw = result
+        source_key = source_key.decode("utf-8") if isinstance(source_key, bytes) else source_key
+        job_id = job_id_raw.decode("utf-8") if isinstance(job_id_raw, bytes) else job_id_raw
+
+        if source_key == knowledge_key:
+            await _process_knowledge_job(job_id)
+            continue
+
+        # Legacy job (Redis hash)
         job_key = f"rag:ingestion:job:{job_id}"
 
         try:
@@ -244,3 +269,53 @@ async def run_worker(poll_timeout: int = 5) -> None:
         await process_job(job_data)
 
     logger.info("Ingestion worker stopped")
+
+
+async def _requeue_due_knowledge_jobs() -> None:
+    """Jobs failed con retry_at vencido vuelven a encolarse (retry)."""
+    from datetime import datetime, timezone
+
+    from src.api.deps import get_job_repo
+    from src.core.domain.entities import IngestionJobStatus
+    from src.knowledge.queue import enqueue_knowledge_job
+
+    due = await get_job_repo().list_due_jobs(datetime.now(timezone.utc), limit=20)
+    requeued = 0
+    for job in due:
+        if job.status == IngestionJobStatus.FAILED:
+            await get_job_repo().update_job(job.id, status=IngestionJobStatus.PENDING.value, retry_at=None)
+        try:
+            await enqueue_knowledge_job(str(job.id))
+            requeued += 1
+        except Exception as exc:
+            logger.warning("Failed to requeue job", job_id=str(job.id), error=str(exc))
+    if requeued:
+        logger.info("Requeued due knowledge jobs", count=requeued)
+
+
+async def _process_knowledge_job(job_id: str) -> None:
+    """Procesa un job de la Knowledge Platform (estado en Postgres)."""
+    from uuid import UUID
+
+    from src.api.deps import get_knowledge_engine
+
+    try:
+        jid = UUID(job_id)
+    except ValueError:
+        logger.warning("Invalid knowledge job id, skipping", job_id=job_id)
+        return
+
+    try:
+        engine = get_knowledge_engine()
+        job = await engine.execute_job(jid)
+        logger.info(
+            "Knowledge job finished",
+            job_id=job_id,
+            status=job.status.value,
+            attempts=job.attempts,
+            records=job.records_processed,
+        )
+    except ValueError as exc:
+        logger.warning("Knowledge job missing, skipping", job_id=job_id, error=str(exc))
+    except Exception as exc:
+        logger.error("Knowledge job crashed", job_id=job_id, error=str(exc), exc_info=True)

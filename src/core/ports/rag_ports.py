@@ -52,7 +52,14 @@ class VectorStore(ABC):
         organization_id: UUID,
         points: list[tuple[UUID, list[float], str, dict[str, str] | None]],
         knowledge_base_id: UUID | None = None,
-    ) -> None: ...
+        sparse_vectors: list[dict[str, float]] | None = None,
+    ) -> None:
+        """Inserta puntos densos; opcionalmente sus vectores sparse (BM25).
+
+        `sparse_vectors` debe tener la misma longitud que `points`. Un
+        adaptador sin soporte lexical puede ignorarlos, pero el adaptador
+        por defecto (Qdrant) los persiste como vectores nombrados `sparse`.
+        """
 
     @abstractmethod
     async def delete_by_organization(self, organization_id: UUID) -> None: ...
@@ -61,6 +68,58 @@ class VectorStore(ABC):
     async def delete_by_knowledge_base(
         self, organization_id: UUID, knowledge_base_id: UUID
     ) -> None: ...
+
+    @abstractmethod
+    async def delete_points(self, organization_id: UUID, point_ids: list[str]) -> None:
+        """Borra puntos por ID exacto (IDs uuid5 scoped a la organización).
+
+        Los IDs provienen del registry source_documents (ya verificado por
+        organization_id); borrar por ID exacto es seguro por construcción.
+        """
+
+
+class LexicalStore(ABC):
+    """Puerto para búsqueda lexical (BM25 / sparse vectors) con el MISMO
+    contrato de seguridad que VectorStore: organization_id obligatorio y
+    filtrado de payload en toda búsqueda.
+    """
+
+    @abstractmethod
+    async def search_sparse(
+        self,
+        organization_id: UUID,
+        query_text: str,
+        top_k: int = 5,
+        filters: dict[str, str] | None = None,
+        exclude_filters: dict[str, str] | None = None,
+        score_threshold: float = 0.1,
+        role: str = "admin",
+        knowledge_base_id: UUID | None = None,
+    ) -> RetrievalContext: ...
+
+
+class HybridStore(ABC):
+    """Puerto para búsqueda híbrida server-side (dense + sparse fusionado).
+
+    Una sola llamada devuelve el resultado ya fusionado (por ejemplo RRF en
+    Qdrant). Si un adaptador no lo soporta, HybridRetriever cae a fusion
+    client-side con VectorStore + LexicalStore por separado.
+    """
+
+    @abstractmethod
+    async def search_hybrid(
+        self,
+        organization_id: UUID,
+        query_text: str,
+        query_embedding: list[float],
+        top_k: int = 5,
+        filters: dict[str, str] | None = None,
+        exclude_filters: dict[str, str] | None = None,
+        score_threshold: float = 0.1,
+        role: str = "admin",
+        knowledge_base_id: UUID | None = None,
+        fusion_weights: dict[str, float] | None = None,
+    ) -> RetrievalContext: ...
 
 
 class LLMProvider(ABC):
@@ -95,6 +154,20 @@ class LLMProvider(ABC):
 
     @abstractmethod
     async def embed(self, text: str | list[str], model: str | None = None) -> list[float] | list[list[float]]: ...
+
+    @abstractmethod
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        model: str | None = None,
+        top_n: int | None = None,
+    ) -> list[tuple[int, float]]:
+        """Re-score de documentos vía reranker (cross-encoder / API rerank).
+
+        Devuelve pares (índice_del_documento, score) ordenados por score
+        descendente. Un proveedor sin soporte devuelve lista vacía.
+        """
 
 
 class EmbeddingProvider(ABC):

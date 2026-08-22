@@ -146,6 +146,11 @@ async def rag_query(
             top_k=body.top_k,
             conversation_id=body.conversation_id,
             role=role,
+            metadata_filters=body.metadata_filters,
+            rerank_top_k=body.rerank_top_k,
+            score_threshold_override=body.score_threshold,
+            retrieval_strategy=body.retrieval_strategy,
+            language=body.language,
         )
     except Exception as exc:
         rag_active_requests.labels(organization_id=str(organization_id)).dec()
@@ -289,6 +294,11 @@ async def rag_query_stream(
                 conversation_id=body.conversation_id,
                 role=role,
                 on_delta=on_delta,
+                metadata_filters=body.metadata_filters,
+                rerank_top_k=body.rerank_top_k,
+                score_threshold_override=body.score_threshold,
+                retrieval_strategy=body.retrieval_strategy,
+                language=body.language,
             )
             _record_metrics(result, organization_id)
 

@@ -107,6 +107,14 @@ class Settings(BaseSettings):
     POSTGRES_DB: str = "rag_platform"
     POSTGRES_MIN_CONNECTIONS: int = Field(default=5, ge=1)
     POSTGRES_MAX_CONNECTIONS: int = Field(default=25, ge=1)
+    # Rol read-only dedicado para el SQL Expert (sin DDL/DML). El rol se
+    # crea vía db_init/09-readonly-role.sql. Vacío = fallback a POSTGRES_USER
+    # con warning (no rompe ambientes de desarrollo).
+    POSTGRES_READONLY_USER: str = Field(
+        default="",
+        description="Rol PostgreSQL read-only para ejecución SQL del motor Text-to-SQL.",
+    )
+    POSTGRES_READONLY_PASSWORD: SecretStr = SecretStr("")
 
     @property
     def POSTGRES_DSN(self) -> str:
@@ -123,6 +131,17 @@ class Settings(BaseSettings):
         return (
             f"postgresql+psycopg2://{self.POSTGRES_USER}"
             f":{self.POSTGRES_PASSWORD.get_secret_value()}"
+            f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        )
+
+    @property
+    def POSTGRES_READONLY_DSN(self) -> str | None:
+        """DSN asíncrono del rol read-only (None si no está configurado)."""
+        if not self.POSTGRES_READONLY_USER:
+            return None
+        return (
+            f"postgresql+asyncpg://{self.POSTGRES_READONLY_USER}"
+            f":{self.POSTGRES_READONLY_PASSWORD.get_secret_value()}"
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
 
@@ -172,6 +191,46 @@ class Settings(BaseSettings):
     RAG_CONVERSATION_TTL_SECONDS: int = Field(default=3600, ge=60, le=86400)
     RAG_SQL_EXPERT_ENABLED: bool = Field(default=False)
     RAG_SQL_TIMEOUT_SECONDS: int = Field(default=5, ge=1, le=30)
+    RAG_SQL_MAX_ROWS: int = Field(
+        default=100,
+        ge=1,
+        le=500,
+        description="Máximo de filas devueltas por consulta del SQL Expert.",
+    )
+    RAG_SQL_MAX_COST: float = Field(
+        default=100_000.0,
+        ge=1.0,
+        description="Costo máximo del plan (EXPLAIN Total Cost) permitido.",
+    )
+    RAG_SQL_MAX_TABLES: int = Field(
+        default=8,
+        ge=1,
+        le=50,
+        description="Máximo de tablas enviadas al LLM (schema relevance).",
+    )
+    RAG_SQL_SCHEMA_CACHE_TTL: int = Field(
+        default=300,
+        ge=10,
+        le=3600,
+        description="TTL segundos del caché de schema por organization.",
+    )
+    RAG_SQL_ROUTER_THRESHOLD: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Score mínimo del router para correr SQL Expert.",
+    )
+    RAG_SQL_ROUTER_LLM_ENABLED: bool = Field(
+        default=True,
+        description="Confirmación LLM para intent dudoso del router.",
+    )
+    RAG_SQL_SENSITIVE_COLUMNS: str = Field(
+        default="",
+        description=(
+            "Comma-separated: columnas sensibles bloqueadas globalmente "
+            "(los tenants pueden extender vía config_json)."
+        ),
+    )
     SQL_HEURISTICS_MODULES: str = Field(
         default="",
         description=(
@@ -187,6 +246,21 @@ class Settings(BaseSettings):
     RAG_RERANK_ENABLED: bool = Field(default=False)
     RAG_RERANK_TOP_N: int = Field(default=20, ge=1, le=100)
     RAG_RERANK_MODEL: str = Field(default="")
+    RAG_RETRIEVAL_STRATEGY: str = Field(
+        default="vector",
+        description="Estrategia por defecto del motor: vector|lexical|hybrid.",
+    )
+    RAG_HYBRID_FUSION: str = Field(default="rrf", description="rrf|weighted")
+    RAG_RRF_K: int = Field(default=60, ge=1, le=1000)
+    RAG_HYBRID_LEXICAL_WEIGHT: float = Field(default=0.3, ge=0.0, le=1.0)
+    RAG_RERANKER: str = Field(
+        default="",
+        description="Reranker activo: llm|cross_encoder ('' = passthrough).",
+    )
+    RAG_CROSS_ENCODER_MODEL: str = Field(
+        default="",
+        description="Modelo cross-encoder vía LiteLLM rerank API (ej: cohere/rerank-v3.5).",
+    )
     RAG_ADMIN_ENABLED: bool = Field(default=True)
     RAG_CHUNK_MAX_CHARS: int = Field(default=1200, ge=200, le=8000)
     RAG_CHUNK_OVERLAP: int = Field(default=150, ge=0, le=500)
@@ -365,6 +439,18 @@ class Settings(BaseSettings):
             "<<SYS>>",
             "you are now",
         ]
+    )
+
+    # -------------------------------------------------------------------------
+    # Knowledge Platform (fuentes, uploads, jobs de ingestion)
+    # -------------------------------------------------------------------------
+    UPLOAD_DIR: str = Field(
+        default="uploads",
+        description="Directorio raíz de archivos subidos (Knowledge Platform).",
+    )
+    KNOWLEDGE_QUEUE_KEY: str = Field(
+        default="rag:knowledge:queue",
+        description="Redis list key de wakeup para jobs de la Knowledge Platform.",
     )
 
     # -------------------------------------------------------------------------

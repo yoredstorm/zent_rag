@@ -410,6 +410,42 @@ GET/PUT/DELETE  /api/v1/connectors/{id}
 GET    /api/v1/audit-logs                 # audit:read
 ```
 
+### Knowledge Platform (fuentes + jobs de ingestion)
+
+```bash
+# Knowledge Bases con configuración de chunking/retrieval
+POST   /api/v1/knowledge-bases            # chunking_strategy: fixed|recursive|sentence,
+                                          # chunk_size, chunk_overlap, retrieval_strategy,
+                                          # reranker, metadata_schema
+
+# Fuentes (type: sql|file|csv|excel|web|s3|api)
+GET    /api/v1/sources                    # Listar (filtro ?knowledge_base_id=)
+POST   /api/v1/sources                    # Crear (name, type, config)
+GET    /api/v1/sources/{id}               # Detalle
+PUT    /api/v1/sources/{id}               # Actualizar config/status
+DELETE /api/v1/sources/{id}               # Eliminar + purga de vectores/registry
+POST   /api/v1/sources/{id}/discover      # Validar conector + listar elementos
+POST   /api/v1/sources/{id}/sync          # Encela job (background)
+POST   /api/v1/sources/files/upload       # multipart -> fuente file/csv/excel (autodetect)
+GET    /api/v1/knowledge-bases/{kb_id}/sources   # Fuentes de una KB
+
+# Jobs durables (Postgres = source of truth; Redis = wakeup)
+GET    /api/v1/jobs                       # ?status=&source_id=&knowledge_base_id=
+GET    /api/v1/jobs/{id}                  # Estado (progress, records_processed/failed, attempts)
+POST   /api/v1/jobs/{id}/retry            # Reintentar failed/dead
+POST   /api/v1/jobs/{id}/cancel           # Cancelar
+```
+
+**Flujo de ingestion** (sin acoplar al dominio):
+1. Cada fuente implementa `SourceConnector` (`connect/validate/discover/fetch/sync`).
+2. Documentos (pdf/docx/html/txt/md) se normalizan a **Markdown** (markitdown, MIT) antes de chunkear.
+3. El engine aplica la estrategia de chunking del KB (`fixed`, `recursive` markdown-aware — tablas atómicas, `sentence`), embebe en batch y escribe en Qdrant con payload `organization_id + knowledge_base_id + source_id`.
+4. `source_documents` (registry) habilita **update detection** (diff de content_hash) y **delete detection** (vectores huérfanos se borran por ID).
+5. **Retry** con backoff exponencial, **resume** vía `cursor_snapshot` y **dead letter** (`ingestion_jobs.status='dead'` + historial en `ingestion_job_errors`).
+6. El conector `sql` reutiliza el motor SQL existente (self-contained); los endpoints legacy `/api/v1/ingestion/*` siguen operativos.
+
+**Conectores:** `sql` (port del motor existente), `file`/`csv`/`excel` (uploads locales, volumen `uploads_data`), `web` (URL → HTML → MD), `s3` (boto3, extensión-config), `api` (config-driven con paginación page/offset/cursor). Credenciales en Vault (nunca en `config_json`).
+
 ## Variables de Entorno
 
 Todas las variables usan el prefijo `RAG_` (configurado en `src/config.py` con `pydantic-settings`). Variables principales:

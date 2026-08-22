@@ -1,6 +1,11 @@
 # =============================================================================
 # Knowledge Bases Routes — CRUD (organization-scoped, project opcional)
 # =============================================================================
+# Configuración completa de chunking/retrieval de la Knowledge Platform:
+# chunking_strategy (fixed|recursive|sentence), chunk_size, chunk_overlap,
+# retrieval_strategy (vector), reranker, metadata_schema (validación de
+# metadatos durante la ingestion).
+# =============================================================================
 from __future__ import annotations
 
 from uuid import UUID
@@ -25,6 +30,14 @@ class CreateKbRequest(BaseModel):
     description: str | None = Field(default=None, max_length=4000)
     project_id: UUID | None = None
     embedding_model: str | None = Field(default=None, max_length=100)
+    chunking_strategy: str = Field(
+        default="fixed", pattern=r"^(fixed|recursive|sentence)$"
+    )
+    chunk_size: int = Field(default=1200, ge=100, le=32000)
+    chunk_overlap: int = Field(default=150, ge=0, le=4000)
+    retrieval_strategy: str = Field(default="vector", pattern=r"^(vector|hybrid)$")
+    reranker: str | None = Field(default=None, max_length=50)
+    metadata_schema: dict = Field(default_factory=dict)
 
 
 class UpdateKbRequest(BaseModel):
@@ -32,6 +45,13 @@ class UpdateKbRequest(BaseModel):
     description: str | None = Field(default=None, max_length=4000)
     project_id: UUID | None = None
     status: str | None = Field(default=None, pattern=r"^(active|archived)$")
+    embedding_model: str | None = Field(default=None, max_length=100)
+    chunking_strategy: str | None = Field(default=None, pattern=r"^(fixed|recursive|sentence)$")
+    chunk_size: int | None = Field(default=None, ge=100, le=32000)
+    chunk_overlap: int | None = Field(default=None, ge=0, le=4000)
+    retrieval_strategy: str | None = Field(default=None, pattern=r"^(vector|hybrid)$")
+    reranker: str | None = Field(default=None, max_length=50)
+    metadata_schema: dict | None = None
 
 
 def _kb_response(kb) -> dict:
@@ -42,6 +62,12 @@ def _kb_response(kb) -> dict:
         "project_id": str(kb.project_id) if kb.project_id else None,
         "status": kb.status,
         "embedding_model": kb.embedding_model,
+        "chunking_strategy": kb.chunking_strategy,
+        "chunk_size": kb.chunk_size,
+        "chunk_overlap": kb.chunk_overlap,
+        "retrieval_strategy": kb.retrieval_strategy,
+        "reranker": kb.reranker,
+        "metadata_schema": kb.metadata_schema,
         "created_at": kb.created_at.isoformat(),
     }
 
@@ -75,6 +101,12 @@ async def create_kb(
         description=body.description,
         project_id=body.project_id,
         embedding_model=body.embedding_model,
+        chunking_strategy=body.chunking_strategy,
+        chunk_size=body.chunk_size,
+        chunk_overlap=body.chunk_overlap,
+        retrieval_strategy=body.retrieval_strategy,
+        reranker=body.reranker,
+        metadata_schema=body.metadata_schema,
     )
     await _audit().write(ctx, "kb.created", "knowledge_base", kb.id, metadata={"name": kb.name})
     return _kb_response(kb)

@@ -11,6 +11,8 @@ from src.core.domain.entities import (
     ApiKey,
     AuditLogEntry,
     Connector,
+    IngestionJob,
+    KbSource,
     KnowledgeBase,
     Membership,
     Organization,
@@ -19,6 +21,7 @@ from src.core.domain.entities import (
     Project,
     Role,
     Subscription,
+    SyncState,
     User,
 )
 
@@ -187,6 +190,12 @@ class KnowledgeBaseRepository(ABC):
         description: str | None = None,
         project_id: UUID | None = None,
         embedding_model: str | None = None,
+        chunking_strategy: str = "fixed",
+        chunk_size: int = 1200,
+        chunk_overlap: int = 150,
+        retrieval_strategy: str = "vector",
+        reranker: str | None = None,
+        metadata_schema: dict | None = None,
     ) -> KnowledgeBase: ...
 
     @abstractmethod
@@ -194,6 +203,111 @@ class KnowledgeBaseRepository(ABC):
 
     @abstractmethod
     async def delete_kb(self, organization_id: UUID, kb_id: UUID) -> None: ...
+
+
+class SourceRepository(ABC):
+    """Registro de fuentes (kb_sources) por organización/KB."""
+
+    @abstractmethod
+    async def list_sources(
+        self, organization_id: UUID, knowledge_base_id: UUID | None = None
+    ) -> list[KbSource]: ...
+
+    @abstractmethod
+    async def get_source(
+        self, organization_id: UUID, source_id: UUID
+    ) -> KbSource | None: ...
+
+    @abstractmethod
+    async def create_source(
+        self,
+        organization_id: UUID,
+        name: str,
+        source_type: str,
+        knowledge_base_id: UUID | None = None,
+        config_json: dict | None = None,
+    ) -> KbSource: ...
+
+    @abstractmethod
+    async def update_source(
+        self, organization_id: UUID, source_id: UUID, **fields
+    ) -> KbSource: ...
+
+    @abstractmethod
+    async def delete_source(self, organization_id: UUID, source_id: UUID) -> None: ...
+
+
+class IngestionJobRepository(ABC):
+    """Estado durable de jobs (ingestion_jobs)."""
+
+    @abstractmethod
+    async def create_job(
+        self,
+        organization_id: UUID,
+        job_type: str,
+        source_id: UUID | None = None,
+        knowledge_base_id: UUID | None = None,
+        max_attempts: int = 3,
+    ) -> IngestionJob: ...
+
+    @abstractmethod
+    async def get_job(self, organization_id: UUID, job_id: UUID) -> IngestionJob | None: ...
+
+    @abstractmethod
+    async def update_job(self, job_id: UUID, **fields) -> IngestionJob | None: ...
+
+    @abstractmethod
+    async def record_error(self, job_id: UUID, attempt: int, error: str) -> None: ...
+
+    @abstractmethod
+    async def list_jobs(
+        self,
+        organization_id: UUID,
+        *,
+        status: str | None = None,
+        source_id: UUID | None = None,
+        knowledge_base_id: UUID | None = None,
+        limit: int = 50,
+    ) -> list[IngestionJob]: ...
+
+    @abstractmethod
+    async def list_due_jobs(self, now, limit: int = 50) -> list[IngestionJob]: ...
+
+
+class SyncStateRepository(ABC):
+    @abstractmethod
+    async def get_state(self, source_id: UUID) -> SyncState | None: ...
+
+    @abstractmethod
+    async def save_state(
+        self,
+        source_id: UUID,
+        *,
+        cursor: dict | None = None,
+        error: str | None = None,
+        processed_count: int = 0,
+        success: bool = True,
+    ) -> None: ...
+
+
+class DocumentRegistryRepository(ABC):
+    @abstractmethod
+    async def upsert_document(
+        self,
+        organization_id: UUID,
+        source_id: UUID,
+        external_id: str,
+        document_id: UUID,
+        content_hash: str,
+    ) -> None: ...
+
+    @abstractmethod
+    async def mark_missing_deleted(
+        self, source_id: UUID, seen_external_ids: set[str]
+    ) -> list[str]: ...
+
+    @abstractmethod
+    async def delete_source_documents(self, source_id: UUID) -> None: ...
 
 
 class AgentRepository(ABC):

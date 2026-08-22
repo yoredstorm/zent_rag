@@ -69,7 +69,9 @@ INSERT INTO permissions (id, code, description) VALUES
     ('40000000-0000-0000-0000-000000000017', 'billing:write',  'Gestionar plan y facturación'),
     ('40000000-0000-0000-0000-000000000018', 'audit:read',     'Leer audit logs de la organización'),
     ('40000000-0000-0000-0000-000000000019', 'rag:query',      'Ejecutar consultas RAG'),
-    ('40000000-0000-0000-0000-000000000020', 'rag:ingest',     'Sincronizar datos (ingestion)')
+    ('40000000-0000-0000-0000-000000000020', 'rag:ingest',     'Sincronizar datos (ingestion)'),
+    ('40000000-0000-0000-0000-000000000021', 'sources:read',   'Ver fuentes de datos'),
+    ('40000000-0000-0000-0000-000000000022', 'sources:write',  'Crear/editar/sincronizar fuentes de datos')
 ON CONFLICT (code) DO NOTHING;
 
 -- -----------------------------------------------------------------------------
@@ -104,6 +106,7 @@ WHERE r.organization_id IS NULL AND r.name = 'member'
     'kbs:read', 'kbs:write',
     'agents:read', 'agents:write',
     'connectors:read', 'connectors:write',
+    'sources:read', 'sources:write',
     'usage:read', 'billing:read', 'audit:read', 'rag:query', 'rag:ingest')
 ON CONFLICT DO NOTHING;
 
@@ -113,6 +116,7 @@ WHERE r.organization_id IS NULL AND r.name = 'viewer'
   AND p.code IN (
     'org:read', 'users:read', 'apikeys:read',
     'projects:read', 'kbs:read', 'agents:read', 'connectors:read',
+    'sources:read',
     'usage:read', 'billing:read', 'audit:read', 'rag:query')
 ON CONFLICT DO NOTHING;
 

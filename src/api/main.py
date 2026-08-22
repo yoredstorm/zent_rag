@@ -40,11 +40,13 @@ from src.api.routes.connectors import router as connectors_router
 from src.api.routes.evaluation import router as eval_router
 from src.api.routes.health import router as health_router
 from src.api.routes.ingestion import router as ingestion_router
+from src.api.routes.jobs import router as jobs_router
 from src.api.routes.knowledge_bases import router as kbs_router
 from src.api.routes.organizations import router as organizations_router
 from src.api.routes.projects import router as projects_router
 from src.api.routes.prompt import router as prompt_router
 from src.api.routes.query import router as query_router
+from src.api.routes.sources import router as sources_router
 from src.api.schemas import ErrorResponse
 from src.api.tenant_middleware import TenantMiddleware
 from src.connectors.sql.worker import request_shutdown, run_worker
@@ -216,11 +218,13 @@ app.include_router(connectors_router)
 app.include_router(eval_router)
 app.include_router(health_router)
 app.include_router(ingestion_router)
+app.include_router(jobs_router)
 app.include_router(kbs_router)
 app.include_router(organizations_router)
 app.include_router(projects_router)
 app.include_router(prompt_router)
 app.include_router(query_router)
+app.include_router(sources_router)
 
 
 # -----------------------------------------------------------------------------

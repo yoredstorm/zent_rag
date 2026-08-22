@@ -4,6 +4,7 @@
     "query": "¿Cuáles son los analgésicos más vendidos y cuánto cuestan?",
     "role": "admin",
     "expected_keywords": ["analgésico", "paracetamol", "ibuprofeno", "precio"],
+    "relevant_chunks": ["paracetamol", "ibuprofeno", "analgésico"],
     "top_k": 20
   },
   {
@@ -11,6 +12,7 @@
     "query": "Necesito algo para el resfrío y la tos, ¿qué me recomiendan?",
     "role": "customer",
     "expected_keywords": ["antigripal", "tos", "resfrío", "propóleo"],
+    "relevant_chunks": ["antigripal", "tos", "propóleo", "resfrío"],
     "top_k": 20
   },
   {
@@ -18,6 +20,7 @@
     "query": "¿Cuántos medicamentos requieren receta médica en el catálogo?",
     "role": "admin",
     "expected_keywords": ["receta", "prescripción", "requiere"],
+    "relevant_chunks": ["receta", "prescripción"],
     "top_k": 20
   },
   {
@@ -25,6 +28,7 @@
     "query": "Resumen de ventas totales por categoría de medicamento",
     "role": "admin",
     "expected_keywords": ["venta", "categoría", "medicamento", "ingreso"],
+    "relevant_chunks": ["venta", "categoría", "medicamento"],
     "top_k": 20
   },
   {
@@ -32,6 +36,7 @@
     "query": "Hola, ¿tienen algo natural para poder dormir mejor?",
     "role": "customer",
     "expected_keywords": ["dormir", "natural", "valeriana", "melisa", "sueño"],
+    "relevant_chunks": ["dormir", "valeriana", "melisa", "sueño"],
     "top_k": 10
   },
   {
@@ -39,6 +44,7 @@
     "query": "¿Qué proveedores o laboratorios suministran productos cardiovasculares?",
     "role": "admin",
     "expected_keywords": ["proveedor", "laboratorio", "cardiovascular", "losartán"],
+    "relevant_chunks": ["proveedor", "laboratorio", "cardiovascular", "losartán"],
     "top_k": 20
   },
   {
@@ -46,6 +52,7 @@
     "query": "¿Cuánto cubre Fonasa y las isapres en los medicamentos con receta?",
     "role": "customer",
     "expected_keywords": ["fonasa", "isapre", "cobertura", "receta", "porcentaje"],
+    "relevant_chunks": ["fonasa", "isapre", "cobertura", "receta"],
     "top_k": 20
   }
 ]

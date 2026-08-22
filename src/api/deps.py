@@ -19,16 +19,26 @@ from src.core.ports import (
     AuditLogRepository,
     CacheProvider,
     ConnectorRepository,
+    DocumentRegistryRepository,
     EmbeddingProvider,
+    IngestionJobRepository,
     KnowledgeBaseRepository,
     LLMProvider,
     MembershipRepository,
     OrganizationRepository,
     ProjectRepository,
+    SourceRepository,
+    SyncStateRepository,
     UserRepository,
     VectorStore,
 )
 from src.infrastructure.llm.provider import LiteLLMProvider
+from src.infrastructure.postgres.knowledge_repos import (
+    PostgresDocumentRegistryRepository,
+    PostgresIngestionJobRepository,
+    PostgresSourceRepository,
+    PostgresSyncStateRepository,
+)
 from src.infrastructure.postgres.relational_db import (
     PostgresAgentRepository,
     PostgresApiKeyRepository,
@@ -55,11 +65,16 @@ _kb_repo: KnowledgeBaseRepository | None = None
 _agent_repo: AgentRepository | None = None
 _connector_repo: ConnectorRepository | None = None
 _audit_repo: AuditLogRepository | None = None
+_source_repo: SourceRepository | None = None
+_job_repo: IngestionJobRepository | None = None
+_sync_state_repo: SyncStateRepository | None = None
+_doc_registry_repo: DocumentRegistryRepository | None = None
 _vector_store: VectorStore | None = None
 _llm_provider: LLMProvider | None = None
 _embedding_provider: EmbeddingProvider | None = None
 _cache_provider: CacheProvider | None = None
 _orchestrator: RAGOrchestrator | None = None
+_knowledge_engine = None
 
 
 def get_organization_repo() -> OrganizationRepository:
@@ -125,6 +140,52 @@ def get_audit_repo() -> AuditLogRepository:
     return _audit_repo
 
 
+def get_source_repo() -> SourceRepository:
+    global _source_repo
+    if _source_repo is None:
+        _source_repo = PostgresSourceRepository()
+    return _source_repo
+
+
+def get_job_repo() -> IngestionJobRepository:
+    global _job_repo
+    if _job_repo is None:
+        _job_repo = PostgresIngestionJobRepository()
+    return _job_repo
+
+
+def get_sync_state_repo() -> SyncStateRepository:
+    global _sync_state_repo
+    if _sync_state_repo is None:
+        _sync_state_repo = PostgresSyncStateRepository()
+    return _sync_state_repo
+
+
+def get_doc_registry_repo() -> DocumentRegistryRepository:
+    global _doc_registry_repo
+    if _doc_registry_repo is None:
+        _doc_registry_repo = PostgresDocumentRegistryRepository()
+    return _doc_registry_repo
+
+
+def get_knowledge_engine():
+    """Inyecta el motor de ingestion de la Knowledge Platform."""
+    global _knowledge_engine
+    if _knowledge_engine is None:
+        from src.knowledge.engine.service import KnowledgeIngestionEngine
+
+        _knowledge_engine = KnowledgeIngestionEngine(
+            job_repo=get_job_repo(),
+            sync_state_repo=get_sync_state_repo(),
+            doc_registry_repo=get_doc_registry_repo(),
+            kb_repo=get_kb_repo(),
+            source_repo=get_source_repo(),
+            vector_store=get_vector_store(),
+            embedding_provider=get_embedding_provider(),
+        )
+    return _knowledge_engine
+
+
 def get_vector_store() -> VectorStore:
     global _vector_store
     if _vector_store is None:
@@ -153,14 +214,63 @@ def get_cache_provider() -> CacheProvider:
     return _cache_provider
 
 
+_retriever: object | None = None
+
+
+def get_retriever():
+    """Ensambla el motor de retrieval (HybridRetriever) con reranker por config.
+
+    El QdrantVectorStore implementa VectorStore + LexicalStore + HybridStore;
+    el motor decide la pata según la estrategia del tenant. RAG_RERANK_ENABLED
+    es el interruptor maestro del reranker; RAG_RERANKER elige implementación
+    (llm | cross_encoder; vacío = llm para preservar el comportamiento previo).
+    """
+    global _retriever
+    if _retriever is None:
+        settings = get_settings()
+        from src.rag.retrieval.builders import ContextBuilder
+        from src.rag.retrieval.hybrid import HybridRetriever
+
+        vector_store = get_vector_store()
+
+        reranker = None
+        if settings.RAG_RERANK_ENABLED:
+            from src.rag.reranking import base as rerank_base
+            from src.rag.reranking.cross_encoder import CrossEncoderReranker  # noqa: F401 (register)
+            from src.rag.reranking.reranker import LLMReranker  # noqa: F401 (register)
+
+            name = settings.RAG_RERANKER or "llm"
+            reranker = rerank_base.get_reranker(
+                name, llm_provider=get_llm_provider()
+            )
+
+        _retriever = HybridRetriever(
+            vector_store=vector_store,
+            lexical_store=vector_store,
+            hybrid_store=vector_store,
+            reranker=reranker,
+            context_builder=ContextBuilder(
+                max_context_tokens=settings.RAG_MAX_CONTEXT_TOKENS
+            ),
+        )
+    return _retriever
+
+
 def get_rag_orchestrator() -> RAGOrchestrator:
     """Inyecta el orquestador RAG con todas sus dependencias cableadas."""
     global _orchestrator
     if _orchestrator is None:
         settings = get_settings()
         sql_expert = None
+        sql_router = None
         if settings.RAG_SQL_EXPERT_ENABLED:
-            sql_expert = PostgresSqlExpert(llm_provider=get_llm_provider())
+            sql_expert = PostgresSqlExpert(
+                llm_provider=get_llm_provider(),
+                cache=get_cache_provider(),
+            )
+            from src.agents.tools.sql_router import SqlIntentRouter
+
+            sql_router = SqlIntentRouter(llm_provider=get_llm_provider())
         reranker = None
         if settings.RAG_RERANK_ENABLED:
             from src.rag.reranking.reranker import LLMReranker
@@ -186,5 +296,7 @@ def get_rag_orchestrator() -> RAGOrchestrator:
             reranker=reranker,
             rerank_top_n=settings.RAG_RERANK_TOP_N,
             lazy_ingestion=lazy_ingestion,
+            retriever=get_retriever(),
+            sql_router=sql_router,
         )
     return _orchestrator

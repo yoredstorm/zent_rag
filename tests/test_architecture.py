@@ -28,6 +28,8 @@ _AMBIENT_MODULES = {
 #   (Paso intermedio hasta inyectar sesiones por DI.)
 _DATA_ACCESS_FACTORIES = {
     "src.infrastructure.postgres.session",
+    # Pool read-only del SQL Expert (mismo rol de fábrica de sesión).
+    "src.infrastructure.postgres.readonly_session",
 }
 
 

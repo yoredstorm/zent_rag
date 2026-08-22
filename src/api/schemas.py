@@ -86,6 +86,40 @@ class RAGQueryRequest(BaseModel):
         description="Rol del usuario. Afecta visibilidad de datos y permisos SQL.",
     )
 
+    metadata_filters: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "Filtros de metadata del motor de retrieval "
+            "(ej: metadata.source, metadata.doc_type, metadata.language)."
+        ),
+    )
+
+    rerank_top_k: int | None = Field(
+        default=None,
+        ge=1,
+        le=100,
+        description="Override del top N del reranker.",
+    )
+
+    score_threshold: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Override del umbral mínimo de score del retrieval.",
+    )
+
+    retrieval_strategy: Literal["vector", "lexical", "hybrid"] | None = Field(
+        default=None,
+        description="Override de la estrategia de retrieval del tenant.",
+    )
+
+    language: str | None = Field(
+        default=None,
+        max_length=10,
+        pattern=r"^[a-z]{2,5}(-[A-Z]{2})?$",
+        description="Idioma de la consulta para filtros (ej: es, en).",
+    )
+
     @model_validator(mode="after")
     def detect_prompt_injection(self) -> "RAGQueryRequest":
         """Escanea la consulta en búsqueda de patrones de Prompt Injection.
@@ -118,6 +152,7 @@ class RetrievalChunkResponse(BaseModel):
     content: str
     score: float
     image_base64: str | None = None
+    metadata: dict[str, str] | None = None
 
 
 def sources_for_client(result: RAGQueryResult) -> list[RetrievalChunkResponse]:
@@ -130,6 +165,12 @@ def sources_for_client(result: RAGQueryResult) -> list[RetrievalChunkResponse]:
             content=chunk.content[:500],
             score=chunk.score,
             image_base64=chunk.metadata.get("image_base64") if chunk.metadata else None,
+            metadata={
+                key: str(value)
+                for key, value in (chunk.metadata or {}).items()
+                if key != "image_base64"
+            }
+            or None,
         )
         for chunk in result.retrieval_context.chunks
     ]

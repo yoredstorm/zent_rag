@@ -275,3 +275,51 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
         )
 
         return embeddings[0] if is_single else embeddings
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        model: str | None = None,
+        top_n: int | None = None,
+    ) -> list[tuple[int, float]]:
+        settings = get_settings()
+        model_name = model or settings.RAG_CROSS_ENCODER_MODEL
+        if not documents or not model_name:
+            return []
+        if not hasattr(litellm, "arerank"):
+            logger.warning("LiteLLM does not support rerank; returning empty")
+            return []
+
+        start = time.perf_counter()
+        try:
+            response = await litellm.arerank(  # type: ignore[attr-defined]
+                model=model_name,
+                query=query,
+                documents=documents,
+                top_n=top_n,
+                timeout=settings.LITELLM_TIMEOUT_SECONDS,
+                **_get_llm_kwargs(),
+            )
+        except Exception as exc:
+            latency_ms = (time.perf_counter() - start) * 1000
+            logger.error(
+                "Rerank call failed",
+                model=model_name,
+                rerank_latency_ms=round(latency_ms, 2),
+                error=str(exc),
+                exc_info=True,
+            )
+            raise
+
+        latency_ms = (time.perf_counter() - start) * 1000
+        ranked = [(int(r["index"]), float(r["relevance_score"])) for r in response.results]
+        ranked.sort(key=lambda x: x[1], reverse=True)
+        logger.info(
+            "Rerank complete",
+            model=model_name,
+            documents=len(documents),
+            ranked=len(ranked),
+            rerank_latency_ms=round(latency_ms, 2),
+        )
+        return ranked

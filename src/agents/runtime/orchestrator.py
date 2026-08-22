@@ -56,6 +56,9 @@ from src.platform.usage.lazy_activity import (
     lazy_log_cache_key,
     lazy_rows_cache_key,
 )
+from src.rag.retrieval.base import Retriever
+from src.rag.retrieval.config import resolve_retrieval_config
+from src.rag.retrieval.models import RetrievalQuery
 
 logger = get_logger(__name__)
 
@@ -143,6 +146,8 @@ class RAGOrchestrator:
         reranker: object | None = None,
         rerank_top_n: int = 20,
         lazy_ingestion: IngestionService | None = None,
+        retriever: Retriever | None = None,
+        sql_router: object | None = None,
     ) -> None:
         self._organization_repo = organization_repo
         self._vector_store = vector_store
@@ -158,6 +163,8 @@ class RAGOrchestrator:
         self._reranker = reranker
         self._rerank_top_n = rerank_top_n
         self._lazy_ingestion = lazy_ingestion
+        self._retriever = retriever
+        self._sql_router = sql_router
         # Align anti-hallucination gate with configured score threshold (min 0.1 when threshold is 0)
         self._min_meaningful_score = max(score_threshold, 0.1) if score_threshold > 0 else 0.1
 
@@ -175,6 +182,11 @@ class RAGOrchestrator:
         role: str = "admin",
         system_prompt_override: str | None = None,
         on_delta: Callable[[str], Awaitable[None]] | None = None,
+        metadata_filters: dict[str, str] | None = None,
+        rerank_top_k: int | None = None,
+        score_threshold_override: float | None = None,
+        retrieval_strategy: str | None = None,
+        language: str | None = None,
     ) -> RAGQueryResult:
         """Ejecuta el flujo RAG completo de extremo a extremo.
 
@@ -186,6 +198,9 @@ class RAGOrchestrator:
                 streaming y se invoca esta corrutina por cada fragmento
                 de texto. El resultado devuelto conserva la respuesta
                 completa y el uso de tokens.
+            metadata_filters / rerank_top_k / score_threshold_override /
+            retrieval_strategy / language: overrides opcionales del motor de
+            retrieval (aditivos, sin romper llamadores existentes).
         """
 
         query_id = uuid4()
@@ -302,9 +317,43 @@ class RAGOrchestrator:
             effective_top_k = max(top_k // 3, 20) if is_followup else top_k
 
             # -----------------------------------------------------------------
-            # Paso 4: Ejecutar vector search + SQL Expert EN PARALELO
+            # Paso 4: Ejecutar retrieval + SQL Expert EN PARALELO
             # -----------------------------------------------------------------
+            # Ruta nueva: motor de retrieval inyectado (HybridRetriever).
+            # Ruta legacy (retriever=None): vector search de dos pasadas.
+            retrieval_config = resolve_retrieval_config(
+                request_overrides={
+                    "strategy": retrieval_strategy,
+                    "rerank_top_k": rerank_top_k,
+                    "score_threshold": score_threshold_override,
+                    "language": language,
+                },
+                organization_config=organization.config_json,
+            )
+
+            async def _run_retriever_query() -> RetrievalContext:
+                rquery = RetrievalQuery(
+                    query=query,
+                    organization_id=organization_id,
+                    role=role,
+                    top_k=top_k,
+                    effective_top_k=effective_top_k,
+                    rerank_top_k=retrieval_config.rerank_top_k,
+                    score_threshold=retrieval_config.score_threshold,
+                    strategy=retrieval_config.strategy,
+                    fusion=retrieval_config.fusion,
+                    rrf_k=retrieval_config.rrf_k,
+                    lexical_weight=retrieval_config.lexical_weight,
+                    language=retrieval_config.language or language,
+                    filters=metadata_filters or {},
+                    query_embedding=list(query_embedding),  # type: ignore[arg-type]
+                )
+                return await self._retriever.retrieve(rquery)  # type: ignore[union-attr]
+
             async def _vector_search_full() -> RetrievalContext:
+                if self._retriever is not None:
+                    return await _run_retriever_query()
+
                 agg_ctx = await self._vector_store.search(
                     organization_id=organization_id,
                     query_embedding=list(query_embedding),  # type: ignore[arg-type]
@@ -351,14 +400,53 @@ class RAGOrchestrator:
                 )
 
             async with trace_span("rag.retrieval"):
+                sql_permissions = (organization.config_json or {}).get("sql")
                 if self._sql_expert:
                     try:
-                        retrieval_context, sql_result = await asyncio.gather(
-                            _vector_search_full(),
-                            self._sql_expert.execute(organization_id=organization_id, question=query, role=role),
-                        )
+                        if self._sql_router is not None:
+                            # Router en paralelo con retrieval: si no hay
+                            # intención analítica, se ahorra el LLM de SQL.
+                            retrieval_context, sql_intent = await asyncio.gather(
+                                _vector_search_full(),
+                                self._sql_router.is_sql_intent(  # type: ignore[union-attr]
+                                    organization_id=organization_id,
+                                    question=query,
+                                    role=role,
+                                ),
+                            )
+                            if sql_intent:
+                                try:
+                                    sql_result = await self._sql_expert.execute(
+                                        organization_id=organization_id,
+                                        question=query,
+                                        role=role,
+                                        permissions=sql_permissions,
+                                        user_id=user_id,
+                                    )
+                                except Exception as _sql_err:
+                                    logger.warning(
+                                        "SQL Expert failed, falling back to vector-only",
+                                        error=str(_sql_err),
+                                    )
+                                    sql_result = None
+                            else:
+                                sql_result = None
+                        else:
+                            retrieval_context, sql_result = await asyncio.gather(
+                                _vector_search_full(),
+                                self._sql_expert.execute(
+                                    organization_id=organization_id,
+                                    question=query,
+                                    role=role,
+                                    permissions=sql_permissions,
+                                    user_id=user_id,
+                                ),
+                            )
                     except Exception as _sql_err:
-                        logger.warning("SQL Expert failed in parallel, falling back to vector-only", error=str(_sql_err))
+                        logger.warning(
+                            "SQL Expert failed in parallel, falling back to vector-only",
+                            error=str(_sql_err),
+                        )
                         retrieval_context = await _vector_search_full()
                         sql_result = None
                 else:

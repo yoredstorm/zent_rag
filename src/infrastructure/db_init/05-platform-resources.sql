@@ -33,6 +33,12 @@ CREATE TABLE IF NOT EXISTS knowledge_bases (
     status VARCHAR(20) NOT NULL DEFAULT 'active'
         CHECK (status IN ('active', 'archived')),
     embedding_model VARCHAR(100),
+    chunking_strategy VARCHAR(20) NOT NULL DEFAULT 'fixed',
+    chunk_size INTEGER NOT NULL DEFAULT 1200,
+    chunk_overlap INTEGER NOT NULL DEFAULT 150,
+    retrieval_strategy VARCHAR(20) NOT NULL DEFAULT 'vector',
+    reranker VARCHAR(50),
+    metadata_schema JSONB NOT NULL DEFAULT '{}',
     config_json JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

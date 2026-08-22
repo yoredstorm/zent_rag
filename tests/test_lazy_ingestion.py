@@ -124,7 +124,14 @@ class FakeSqlExpert:
         self.result = result or SqlQueryResult(sql="", error="Cannot generate query for this question")
         self.calls = 0
 
-    async def execute(self, organization_id: UUID, question: str, role: str) -> SqlQueryResult:
+    async def execute(
+        self,
+        organization_id: UUID,
+        question: str,
+        role: str,
+        permissions: dict | None = None,
+        user_id: UUID | None = None,
+    ) -> SqlQueryResult:
         self.calls += 1
         return self.result
 

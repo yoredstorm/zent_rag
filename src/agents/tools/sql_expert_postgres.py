@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import re
+import time
 from collections.abc import Callable
 from uuid import UUID
 
@@ -9,6 +10,7 @@ import sqlglot
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.agents.tools.schema_relevance import SchemaCache, build_relevant_schema
 from src.connectors.sql.schema_discovery import (
     SYSTEM_SCHEMAS,
     SYSTEM_TABLES,
@@ -21,12 +23,15 @@ from src.connectors.sql.schema_discovery import (
 )
 from src.core.config import get_settings
 from src.core.domain.services import ColumnMeta, DataSource
-from src.core.ports import LLMProvider
+from src.core.ports import CacheProvider, LLMProvider
 from src.core.ports.sql_expert import SqlExpert, SqlQueryResult, SqlValidationError
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.session import get_async_session
 
 logger = get_logger(__name__)
+
+# Audit table ensure: una vez por proceso (idempotente, race benigna).
+_AUDIT_TABLE_ENSURED = False
 
 # Palabras prohibidas en SQL — prevención de inyección estructural
 _FORBIDDEN_KEYWORDS = re.compile(
@@ -349,15 +354,34 @@ class PostgresSqlExpert(SqlExpert):
     SYSTEM_SCHEMAS = SYSTEM_SCHEMAS
     SYSTEM_TABLES = SYSTEM_TABLES
 
-    def __init__(self, llm_provider: LLMProvider) -> None:
+    def __init__(
+        self,
+        llm_provider: LLMProvider,
+        cache: CacheProvider | None = None,
+    ) -> None:
         self._llm = llm_provider
+        self._last_cost: float | None = None
+        self._permissions: dict | None = None
+        settings = get_settings()
+        self._schema_cache = (
+            SchemaCache(cache, ttl_seconds=settings.RAG_SQL_SCHEMA_CACHE_TTL)
+            if cache is not None
+            else None
+        )
 
     async def _discover_sources(self, organization_id: UUID) -> list[DataSource]:
+        if self._schema_cache is not None:
+            cached = await self._schema_cache.get(organization_id)
+            if cached is not None:
+                return cached
         session: AsyncSession = await get_async_session()
         try:
-            return await fetch_sources(session)
+            sources = await fetch_sources(session)
         finally:
             await session.close()
+        if self._schema_cache is not None:
+            await self._schema_cache.set(organization_id, sources)
+        return sources
 
     async def _discover_columns(
         self, session: AsyncSession, schema: str, table: str
@@ -471,8 +495,73 @@ class PostgresSqlExpert(SqlExpert):
         organization_id: UUID,
         question: str,
         role: str,
+        permissions: dict | None = None,
+        user_id: UUID | None = None,
     ) -> SqlQueryResult:
-        sources = await self._discover_sources(organization_id)
+        """Wrapper con medición de tiempo + auditoría (fail-silent)."""
+        from src.agents.tools.sql_audit import ensure_sql_audit_table, write_sql_audit
+
+        start = time.perf_counter()
+        result = await self._execute_inner(
+            organization_id, question, role, permissions
+        )
+        elapsed_ms = (time.perf_counter() - start) * 1000
+
+        if not result.sql and result.error:
+            status = "no_query"
+        elif result.error:
+            status = "execution_error"
+        else:
+            status = "success"
+        tables = self._extract_tables(result.sql)
+
+        global _AUDIT_TABLE_ENSURED
+        if not _AUDIT_TABLE_ENSURED:
+            _AUDIT_TABLE_ENSURED = True
+            try:
+                await ensure_sql_audit_table()
+            except Exception:
+                _AUDIT_TABLE_ENSURED = False
+        try:
+            await write_sql_audit(
+                organization_id=organization_id,
+                user_id=user_id,
+                role=role,
+                question=question,
+                generated_sql=result.sql,
+                tables=tables,
+                execution_time_ms=elapsed_ms,
+                rows=result.row_count,
+                cost=result.cost,
+                status=status,
+                error=result.error,
+            )
+        except Exception:
+            pass
+
+        return result
+
+    async def _execute_inner(
+        self,
+        organization_id: UUID,
+        question: str,
+        role: str,
+        permissions: dict | None,
+    ) -> SqlQueryResult:
+        self._permissions = permissions
+        all_sources = await self._discover_sources(organization_id)
+
+        # Schema intelligence: solo el subconjunto relevante va al LLM.
+        settings = get_settings()
+        sources = build_relevant_schema(
+            question, all_sources, max_tables=settings.RAG_SQL_MAX_TABLES
+        )
+        if not sources:
+            return SqlQueryResult(
+                sql="",
+                error="Cannot generate query for this question",
+            )
+
         schema_ctx = self._build_schema_context(sources, role)
 
         prompt = _SQL_GENERATION_PROMPT.format(
@@ -685,6 +774,25 @@ class PostgresSqlExpert(SqlExpert):
         """(schema, table) de un nodo Table; schema '' si no calificado."""
         schema = node.catalog or node.db or ""
         return str(schema).lower(), str(node.name).lower()
+
+    @classmethod
+    def _extract_tables(cls, sql: str) -> list[str]:
+        """Tablas referenciadas por el SQL (para auditoría)."""
+        if not sql:
+            return []
+        try:
+            statements = sqlglot.parse(sql, error_level=sqlglot.ErrorLevel.RAISE)
+        except Exception:
+            return []
+        tables: list[str] = []
+        for stmt in statements:
+            if stmt is None:
+                continue
+            for node in stmt.find_all(sqlglot.exp.Table):
+                schema, table = cls._table_identity(node)
+                if table and table not in tables:
+                    tables.append(f"{schema}.{table}" if schema else table)
+        return tables
 
     def _check_table_allowlist(
         self, sql: str, sources: list[DataSource]
@@ -948,6 +1056,98 @@ class PostgresSqlExpert(SqlExpert):
                 limit_node.set("expression", sqlglot.exp.Literal.number(max_limit))
         return expr.sql()
 
+    @staticmethod
+    def _check_cartesian_joins(sql: str) -> None:
+        """Rechaza joins cartesianos: JOIN sin ON/USING o ON que no
+        referencia columnas de AMBAS tablas."""
+        try:
+            expr = sqlglot.parse_one(sql, error_level=sqlglot.ErrorLevel.RAISE)
+        except Exception:
+            return
+
+        for select in expr.find_all(sqlglot.exp.Select):
+            for join in select.args.get("joins") or []:
+                if isinstance(join.this, sqlglot.exp.Table):
+                    table_name = join.this.alias_or_name.lower()
+                    on = join.args.get("on")
+                    if on is None and not join.args.get("using"):
+                        raise SqlValidationError(
+                            f"CROSS JOIN without ON is not allowed (table '{table_name}')",
+                            sql,
+                        )
+                    if on is None:
+                        continue
+                    # El ON debe referenciar columnas de al menos 2 tablas
+                    # distintas. Referencias sin calificar (sin alias) se
+                    # permiten: no podemos verificarlas de forma determinista.
+                    tables_ref = {
+                        c.table.lower()
+                        for c in on.find_all(sqlglot.exp.Column)
+                        if c.table
+                    }
+                    if tables_ref and len(tables_ref) < 2:
+                        raise SqlValidationError(
+                            "Cartesian join detected: ON condition must "
+                            "reference columns from both sides",
+                            sql,
+                        )
+
+    @staticmethod
+    def _resolve_blocklist(
+        permissions: dict | None,
+        role: str,
+    ) -> tuple[set[str], set[str]]:
+        """(columnas bloqueadas, tablas bloqueadas) para el rol.
+
+        Precedencia: config_json del tenant sobre defaults globales.
+        """
+        settings = get_settings()
+        global_cols = {
+            c.strip().lower()
+            for c in settings.RAG_SQL_SENSITIVE_COLUMNS.split(",")
+            if c.strip()
+        }
+        global_tables: set[str] = set()
+        if permissions and isinstance(permissions, dict):
+            role_blocklist = (permissions.get("column_blocklist") or {}).get(
+                role, []
+            )
+            global_cols.update(c.lower() for c in role_blocklist)
+            global_tables.update(
+                t.lower() for t in permissions.get("table_blocklist") or []
+            )
+        return global_cols, global_tables
+
+    def _check_permissions(
+        self,
+        sql: str,
+        role: str,
+        permissions: dict | None,
+    ) -> None:
+        """Permission check determinístico: columnas y tablas bloqueadas."""
+        column_blocklist, table_blocklist = self._resolve_blocklist(
+            permissions, role
+        )
+        if not column_blocklist and not table_blocklist:
+            return
+
+        statements = sqlglot.parse(sql, error_level=sqlglot.ErrorLevel.RAISE)
+        for stmt in statements:
+            if stmt is None:
+                continue
+            for node in stmt.find_all(sqlglot.exp.Table):
+                schema, table = self._table_identity(node)
+                if table in table_blocklist:
+                    raise SqlValidationError(
+                        f"Table '{table}' is blocked for role '{role}'", sql
+                    )
+            for col in stmt.find_all(sqlglot.exp.Column):
+                if col.name.lower() in column_blocklist:
+                    raise SqlValidationError(
+                        f"Column '{col.name}' is blocked for role '{role}'",
+                        sql,
+                    )
+
     async def validate_sql(
         self,
         sql: str,
@@ -959,6 +1159,8 @@ class PostgresSqlExpert(SqlExpert):
 
         Retorna el SQL seguro a ejecutar (organization-filtered + LIMIT capped).
         """
+        settings = get_settings()
+        permissions = getattr(self, "_permissions", None)
         _validate_sql_ast(sql)
 
         if _FORBIDDEN_KEYWORDS.search(sql):
@@ -979,51 +1181,107 @@ class PostgresSqlExpert(SqlExpert):
         # Chequeo determinista de tipos en JOINs (guidance para el repair).
         self._check_join_types(sql, sources)
 
+        # Query planner: sin joins cartesianos.
+        self._check_cartesian_joins(sql)
+
+        # Permission check por rol (blocklist de columnas/tablas).
+        self._check_permissions(sql, role, permissions)
+
         # Aislamiento multi-organization: inyectar predicado organization_id.
         safe_sql = self._inject_organization_filter(sql, organization_id, sources)
 
-        # Cap de filas: LIMIT <= 500.
-        safe_sql = self._cap_limit(safe_sql)
+        # Cap de filas: LIMIT <= RAG_SQL_MAX_ROWS.
+        safe_sql = self._cap_limit(safe_sql, max_limit=settings.RAG_SQL_MAX_ROWS)
 
-        # Validate via EXPLAIN (con timeout) como verificación final.
+        # Validate via EXPLAIN (con timeout) + costo máximo del plan.
         await self._explain_validate(safe_sql)
 
         return safe_sql
 
-    async def _explain_validate(self, sql: str) -> None:
+    async def _explain_validate(self, sql: str) -> float | None:
+        """EXPLAIN (FORMAT JSON) con timeout; bloquea si el costo del plan
+        excede RAG_SQL_MAX_COST. Nunca ejecuta la query. Retorna el costo."""
         settings = get_settings()
         timeout_seconds = settings.RAG_SQL_TIMEOUT_SECONDS
-        session: AsyncSession = await get_async_session()
+        max_cost = settings.RAG_SQL_MAX_COST
+        from src.infrastructure.postgres.readonly_session import get_readonly_session
+
+        session = await get_readonly_session()
         try:
             await session.execute(
                 text(f"SET LOCAL statement_timeout = '{timeout_seconds}s'")
             )
-            await session.execute(text(f"EXPLAIN {sql}"))
+            result = await session.execute(
+                text(f"EXPLAIN (FORMAT JSON) {sql}")
+            )
+            row = result.fetchone()
+            if row is None:
+                raise SqlValidationError("EXPLAIN returned no plan", sql)
+            plan_json = row[0]
+            total_cost = self._extract_total_cost(plan_json)
+            self._last_cost = total_cost
+            if total_cost is not None and total_cost > max_cost:
+                raise SqlValidationError(
+                    "Query plan too expensive: "
+                    f"estimated cost {total_cost:.1f} exceeds "
+                    f"limit {max_cost:.1f}",
+                    sql,
+                )
+            return total_cost
+        except SqlValidationError:
+            raise
         except Exception as exc:
             raise SqlValidationError(f"Invalid SQL: {exc}", sql) from exc
         finally:
             await session.close()
 
+    @staticmethod
+    def _extract_total_cost(plan_json) -> float | None:
+        """Extrae Total Cost del plan JSON de EXPLAIN (raíz)."""
+        import json as _json
+
+        try:
+            if isinstance(plan_json, str):
+                data = _json.loads(plan_json)
+            else:
+                data = plan_json
+            plans = data if isinstance(data, list) else [data]
+            root = plans[0]
+            plan = root.get("Plan") or root
+            raw = plan.get("Total Cost")
+            if raw is None:
+                return None
+            return float(raw)
+        except Exception:
+            return None
+
     async def _run_query(self, sql: str) -> SqlQueryResult:
         settings = get_settings()
         timeout_seconds = settings.RAG_SQL_TIMEOUT_SECONDS
-        session: AsyncSession = await get_async_session()
+        max_rows = settings.RAG_SQL_MAX_ROWS
+        cost = getattr(self, "_last_cost", None)
+        from src.infrastructure.postgres.readonly_session import get_readonly_session
+
+        session = await get_readonly_session()
         try:
             await session.execute(
                 text(f"SET LOCAL statement_timeout = '{timeout_seconds}s'")
             )
             if not re.search(r"\bLIMIT\s+\d+\s*$", sql, re.IGNORECASE):
-                sql = f"{sql} LIMIT 100"
+                sql = f"{sql} LIMIT {max_rows}"
             rows_result = await session.execute(text(sql))
             rows = rows_result.fetchall()
             columns = list(rows_result.keys()) if rows else []
+            truncated = len(rows) >= max_rows
             return SqlQueryResult(
                 sql=sql,
                 columns=columns,
                 rows=[[str(v) for v in row] for row in rows],
                 row_count=len(rows),
+                truncated=truncated,
+                cost=cost,
             )
         except Exception as exc:
-            return SqlQueryResult(sql=sql, error=str(exc))
+            return SqlQueryResult(sql=sql, error=str(exc), cost=cost)
         finally:
             await session.close()

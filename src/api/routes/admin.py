@@ -129,6 +129,25 @@ class InsertRowsRequest(BaseModel):
 # -----------------------------------------------------------------------------
 # Routes
 # -----------------------------------------------------------------------------
+@router.get("/sql-audit", summary="Auditoría de ejecuciones Text-to-SQL (admin)")
+async def list_sql_audit(
+    request: Request,
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    status: str | None = Query(default=None, max_length=30),
+):
+    from src.agents.tools.sql_audit import list_sql_audit as _list_sql_audit
+    from src.api.security import resolve_organization
+
+    _require_admin(request)
+    organization_id = resolve_organization(request, x_organization_id)
+    entries = await _list_sql_audit(
+        organization_id, limit=limit, offset=offset, status=status
+    )
+    return {"entries": entries, "total": len(entries)}
+
+
 @router.get("/tables", summary="Listar todas las tablas")
 async def list_tables(
     request: Request,

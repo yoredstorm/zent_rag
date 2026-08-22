@@ -45,7 +45,11 @@ RUN pip install --no-cache-dir \
     opentelemetry-exporter-otlp>=1.30.0 \
     opentelemetry-instrumentation-fastapi>=0.51b0 \
     cryptography>=42.0.0 \
-    bcrypt>=4.1.0
+    bcrypt>=4.1.0 \
+    markitdown[pdf,docx]>=0.1.3 \
+    openpyxl>=3.1.0 \
+    boto3>=1.34.0 \
+    python-multipart>=0.0.9
 
 # =============================================================================
 # Stage final — Imagen de producción minimalista
@@ -75,7 +79,10 @@ COPY alembic.ini ./
 COPY worker_entry.py ./
 
 # Usuario no-root por seguridad (CISO requirement)
+# /app/uploads debe existir ANTES del montaje del volumen para que el
+# named volume herede el ownership del usuario rag.
 RUN groupadd -r rag && useradd -r -g rag -d /app -s /sbin/nologin rag && \
+    mkdir -p /app/uploads && \
     chown -R rag:rag /app /opt/venv
 
 USER rag

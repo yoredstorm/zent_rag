@@ -903,6 +903,12 @@ class PostgresProjectRepository(ProjectRepository):
 # -----------------------------------------------------------------------------
 class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
 
+    _KB_COLS = (
+        "id, organization_id, name, project_id, description, status, "
+        "embedding_model, chunking_strategy, chunk_size, chunk_overlap, "
+        "retrieval_strategy, reranker, metadata_schema, config_json, created_at"
+    )
+
     @staticmethod
     def _row_to_kb(row) -> KnowledgeBase:
         return KnowledgeBase(
@@ -913,6 +919,14 @@ class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
             description=row.description,
             status=row.status,
             embedding_model=row.embedding_model,
+            chunking_strategy=getattr(row, "chunking_strategy", "fixed") or "fixed",
+            chunk_size=getattr(row, "chunk_size", 1200) or 1200,
+            chunk_overlap=getattr(row, "chunk_overlap", 150) or 150,
+            retrieval_strategy=getattr(row, "retrieval_strategy", "vector") or "vector",
+            reranker=getattr(row, "reranker", None),
+            metadata_schema=row.metadata_schema
+            if isinstance(getattr(row, "metadata_schema", None), dict)
+            else {},
             config_json=row.config_json if isinstance(row.config_json, dict) else {},
             created_at=row.created_at,
         )
@@ -922,9 +936,8 @@ class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
         try:
             result = await session.execute(
                 text(
-                    "SELECT id, organization_id, name, project_id, description, status, "
-                    "embedding_model, config_json, created_at "
-                    "FROM knowledge_bases WHERE organization_id = :oid ORDER BY created_at DESC"
+                    f"SELECT {self._KB_COLS} FROM knowledge_bases "
+                    "WHERE organization_id = :oid ORDER BY created_at DESC"
                 ),
                 {"oid": organization_id},
             )
@@ -937,9 +950,8 @@ class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
         try:
             result = await session.execute(
                 text(
-                    "SELECT id, organization_id, name, project_id, description, status, "
-                    "embedding_model, config_json, created_at "
-                    "FROM knowledge_bases WHERE id = :kid AND organization_id = :oid"
+                    f"SELECT {self._KB_COLS} FROM knowledge_bases "
+                    "WHERE id = :kid AND organization_id = :oid"
                 ),
                 {"kid": kb_id, "oid": organization_id},
             )
@@ -957,16 +969,23 @@ class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
         description: str | None = None,
         project_id: UUID | None = None,
         embedding_model: str | None = None,
+        chunking_strategy: str = "fixed",
+        chunk_size: int = 1200,
+        chunk_overlap: int = 150,
+        retrieval_strategy: str = "vector",
+        reranker: str | None = None,
+        metadata_schema: dict | None = None,
     ) -> KnowledgeBase:
         session = await get_async_session()
         try:
             result = await session.execute(
                 text(
                     "INSERT INTO knowledge_bases (id, organization_id, name, description, "
-                    "project_id, embedding_model) "
-                    "VALUES (uuid_generate_v4(), :oid, :name, :description, :pid, :model) "
-                    "RETURNING id, organization_id, name, project_id, description, status, "
-                    "embedding_model, config_json, created_at"
+                    "project_id, embedding_model, chunking_strategy, chunk_size, "
+                    "chunk_overlap, retrieval_strategy, reranker, metadata_schema) "
+                    "VALUES (uuid_generate_v4(), :oid, :name, :description, :pid, :model, "
+                    ":chunking, :csize, :coverlap, :retrieval, :reranker, CAST(:mschema AS jsonb)) "
+                    f"RETURNING {self._KB_COLS}"
                 ),
                 {
                     "oid": organization_id,
@@ -974,6 +993,12 @@ class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
                     "description": description,
                     "pid": project_id,
                     "model": embedding_model,
+                    "chunking": chunking_strategy,
+                    "csize": chunk_size,
+                    "coverlap": chunk_overlap,
+                    "retrieval": retrieval_strategy,
+                    "reranker": reranker,
+                    "mschema": json.dumps(metadata_schema or {}),
                 },
             )
             row = result.fetchone()
@@ -986,15 +1011,20 @@ class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
             await session.close()
 
     async def update_kb(self, organization_id: UUID, kb_id: UUID, **fields) -> KnowledgeBase:
-        allowed = {"name", "description", "project_id", "status", "embedding_model", "config_json"}
+        allowed = {
+            "name", "description", "project_id", "status", "embedding_model",
+            "config_json", "chunking_strategy", "chunk_size", "chunk_overlap",
+            "retrieval_strategy", "reranker", "metadata_schema",
+        }
         updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
         session = await get_async_session()
         try:
             if updates:
+                for key in ("config_json", "metadata_schema"):
+                    if key in updates:
+                        updates[key] = json.dumps(updates[key] or {})
                 set_clauses = ", ".join(f"{k} = :{k}" for k in updates)
                 params = {"oid": organization_id, "kid": kb_id, **updates}
-                if "config_json" in updates:
-                    params["config_json"] = json.dumps(updates["config_json"])
                 await session.execute(
                     text(
                         f"UPDATE knowledge_bases SET {set_clauses}, updated_at = NOW() "

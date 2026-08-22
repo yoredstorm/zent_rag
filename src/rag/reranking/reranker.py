@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import re
 import time
+from dataclasses import replace
 
 from src.core.config import get_settings
 from src.core.domain.entities import RetrievalChunk
 from src.core.ports import LLMProvider
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.observability.metrics import rag_rerank_latency, rag_rerank_top_score
+from src.rag.reranking.base import Reranker, register_reranker
 
 logger = get_logger(__name__)
 
@@ -25,7 +27,7 @@ Document:
 Relevance score:"""
 
 
-class LLMReranker:
+class LLMReranker(Reranker):
     """Cheap LLM-based reranker. Uses a low-temp completion to score each chunk."""
 
     def __init__(self, llm_provider: LLMProvider, model: str | None = None) -> None:
@@ -60,19 +62,16 @@ class LLMReranker:
                     temperature=0.0,
                 )
                 score = self._parse_score(resp.content)
+                # Blend retrieval score with LLM score
+                blended = 0.4 * float(chunk.score) + 0.6 * score
             except Exception as exc:
                 logger.warning("Rerank score failed for chunk", error=str(exc))
-                score = chunk.score
+                blended = float(chunk.score)
 
-            # Blend retrieval score with LLM score
-            blended = 0.4 * float(chunk.score) + 0.6 * score
-            scored.append((blended, chunk))
+            scored.append((blended, replace(chunk, score=blended)))
 
         scored.sort(key=lambda x: x[0], reverse=True)
-        result = []
-        for blended, chunk in scored[:top_n]:
-            chunk.score = blended
-            result.append(chunk)
+        result = [chunk for _, chunk in scored[:top_n]]
 
         elapsed = time.perf_counter() - start
         if organization_id:
@@ -98,3 +97,6 @@ class LLMReranker:
             return max(0.0, min(1.0, val))
         except ValueError:
             return 0.0
+
+
+register_reranker("llm", LLMReranker)
