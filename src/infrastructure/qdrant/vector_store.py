@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any, TypeVar, cast
+from typing import TypeVar
 from uuid import UUID
 
 import httpx
@@ -201,16 +201,18 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         client = await _get_client()
         settings = get_settings()
         if not await client.collection_exists(RAG_DOCUMENTS_COLLECTION):
-            vectors_config: dict[str, object] = {
-                "dense": qdrant_models.VectorParams(
-                    size=settings.VECTOR_DIMENSION,
-                    distance=qdrant_models.Distance.COSINE,
-                ),
-                "sparse": _sparse_index_params(),
-            }
             await client.create_collection(
                 collection_name=RAG_DOCUMENTS_COLLECTION,
-                vectors_config=cast(Any, vectors_config),  # named sparse OK en Qdrant 1.13+
+                vectors_config={
+                    "dense": qdrant_models.VectorParams(
+                        size=settings.VECTOR_DIMENSION,
+                        distance=qdrant_models.Distance.COSINE,
+                    ),
+                },
+                # Los vectores sparse con nombre van en su propio campo
+                # (qdrant-client >= 1.14): mezclarlos en vectors_config
+                # rompe la validación pydantic de CreateCollection.
+                sparse_vectors_config={"sparse": _sparse_index_params()},
             )
             _collection_has_named_vectors = True
             logger.info(
@@ -458,9 +460,9 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         indices, values = to_sparse_payload(sparse_vector)
         sparse_query = qdrant_models.SparseVector(indices=indices, values=values)
 
-        prefetch: list[qdrant_models.QueryRequest] = [
-            qdrant_models.QueryRequest(query=query_embedding, using="dense"),
-            qdrant_models.QueryRequest(query=sparse_query, using="sparse"),
+        prefetch: list[qdrant_models.Prefetch] = [
+            qdrant_models.Prefetch(query=query_embedding, using="dense"),
+            qdrant_models.Prefetch(query=sparse_query, using="sparse"),
         ]
         fusion = qdrant_models.FusionQuery(fusion=qdrant_models.Fusion.RRF)
 
