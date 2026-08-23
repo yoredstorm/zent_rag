@@ -7,7 +7,10 @@
 # =============================================================================
 from __future__ import annotations
 
+import asyncio
 import hashlib
+from collections.abc import Awaitable
+from typing import Any
 
 import redis.asyncio as aioredis
 
@@ -21,25 +24,47 @@ logger = get_logger(__name__)
 # Conexión Singleton, per-event-loop
 # -----------------------------------------------------------------------------
 _redis: aioredis.Redis | None = None
-_redis_loop_id: int | None = None
+_redis_loop: asyncio.AbstractEventLoop | None = None
+
+
+async def _aclose_quietly(client: Any) -> None:
+    """Cierra el cliente sin reventar si el event loop ya murió (pytest)."""
+    if client is None:
+        return
+    close = getattr(client, "aclose", None) or getattr(client, "close", None)
+    if close is None:
+        return
+    try:
+        result = close()
+        if isinstance(result, Awaitable):
+            await result
+    except RuntimeError:
+        pass
+    except Exception:
+        pass
 
 
 async def _get_redis() -> aioredis.Redis:
     """Retorna el singleton del cliente Redis asíncrono.
 
-    Re-crea si el event loop cambia (tests con ASGITransport).
+    Re-crea si el event loop cambia o está cerrado (tests con ASGITransport).
+    No retiene el cliente si ping() falla: si no, el siguiente test hereda
+    un pool atado a un loop muerto → RuntimeError: Event loop is closed.
     """
-    global _redis, _redis_loop_id
-    import asyncio as _asyncio
-    current_loop_id = id(_asyncio.get_running_loop())
-    if _redis is None or _redis_loop_id != current_loop_id:
-        if _redis is not None:
-            try:
-                await _redis.close()
-            except Exception:
-                pass
+    global _redis, _redis_loop
+    loop = asyncio.get_running_loop()
+    stale = (
+        _redis is None
+        or _redis_loop is None
+        or _redis_loop.is_closed()
+        or _redis_loop is not loop
+    )
+    if stale:
+        await _aclose_quietly(_redis)
+        _redis = None
+        _redis_loop = None
         settings = get_settings()
-        _redis = aioredis.from_url(
+        client = aioredis.from_url(
             settings.REDIS_URL,
             encoding="utf-8",
             decode_responses=True,
@@ -48,19 +73,23 @@ async def _get_redis() -> aioredis.Redis:
             socket_connect_timeout=5.0,
             retry_on_timeout=True,
         )
-        await _redis.ping()
-        _redis_loop_id = current_loop_id
+        try:
+            await client.ping()
+        except Exception:
+            await _aclose_quietly(client)
+            raise
+        _redis = client
+        _redis_loop = loop
         logger.info("Redis connection established")
     return _redis
 
 
 async def close_redis_connection() -> None:
     """Cierra la conexión con Redis."""
-    global _redis, _redis_loop_id
-    if _redis:
-        await _redis.close()
-        _redis = None
-        _redis_loop_id = None
+    global _redis, _redis_loop
+    await _aclose_quietly(_redis)
+    _redis = None
+    _redis_loop = None
 
 
 class RedisCache(CacheProvider):

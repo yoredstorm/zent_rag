@@ -121,6 +121,9 @@ async def _reset_rate_limits() -> AsyncGenerator[None, None]:
     reset_memory_idempotency()
     await clear_auth_failures("ip:testclient", "ip:127.0.0.1")
     yield
+    from src.infrastructure.redis.cache import close_redis_connection
+
+    await close_redis_connection()
 
 
 @pytest_asyncio.fixture(autouse=True)

@@ -18,11 +18,17 @@ def knowledge_queue_key() -> str:
 
 
 async def enqueue_knowledge_job(job_id: str) -> None:
-    """Encola el job_id para que el worker lo procese (wakeup)."""
-    client = await _get_redis()
+    """Encola el job_id para que el worker lo procese (wakeup).
+
+    El job ya vive en Postgres; Redis solo despierta al worker. Si Redis no
+    está (CI/tests/outage) no fallamos el HTTP salvo en production.
+    """
     try:
+        client = await _get_redis()
         await client.lpush(knowledge_queue_key(), job_id)
     except Exception as exc:
         logger.warning("Failed to enqueue knowledge job", job_id=job_id, error=str(exc))
-        raise
+        if get_settings().ENVIRONMENT == "production":
+            raise
+        return
     logger.info("Knowledge job enqueued", job_id=job_id)
