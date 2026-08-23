@@ -211,6 +211,6 @@ class ErrorResponse(BaseModel):
 # -----------------------------------------------------------------------------
 class HealthResponse(BaseModel):
     status: str = "healthy"
-    version: str = "0.1.0"
+    version: str = "1.0.0"
     environment: str
     checks: dict[str, str] | None = None

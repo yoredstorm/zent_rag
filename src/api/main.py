@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -32,10 +32,12 @@ from src.api.idempotency_middleware import IdempotencyMiddleware
 from src.api.middleware import TraceMiddleware
 from src.api.rate_limit_middleware import RateLimitMiddleware
 from src.api.routes.admin import router as admin_router
+from src.api.routes.agent_runs import router as agent_runs_router
 from src.api.routes.agents import router as agents_router
 from src.api.routes.audit import router as audit_router
 from src.api.routes.auth import router as auth_router
 from src.api.routes.billing import router as billing_router
+from src.api.routes.billing_webhooks import router as billing_webhooks_router
 from src.api.routes.connectors import router as connectors_router
 from src.api.routes.evaluation import router as eval_router
 from src.api.routes.health import router as health_router
@@ -49,6 +51,7 @@ from src.api.routes.query import router as query_router
 from src.api.routes.sources import router as sources_router
 from src.api.schemas import ErrorResponse
 from src.api.tenant_middleware import TenantMiddleware
+from src.api.versioning import API_VERSION
 from src.connectors.sql.worker import request_shutdown, run_worker
 from src.core.config import Settings, get_settings
 from src.infrastructure.observability.logging_config import configure_logging, get_logger
@@ -70,19 +73,47 @@ logger = get_logger(__name__)
 
 
 # -----------------------------------------------------------------------------
+# MCP Server — transporte Streamable HTTP montado en /mcp
+# -----------------------------------------------------------------------------
+_worker_task: asyncio.Task | None = None
+
+
+# -----------------------------------------------------------------------------
 # Lifecycle — Startup / Shutdown
 # -----------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Maneja el ciclo de vida de la aplicación: inicialización y cierre graceful."""
+    """Maneja el ciclo de vida de la aplicación: inicialización y cierre graceful.
+
+    Anida el lifespan de la sub-app MCP: el transporte Streamable HTTP
+    requiere su task group inicializado (Starlette no propaga lifespan a
+    sub-apps montadas).
+    """
     logger.info(
         "RAG Platform starting",
         environment=settings.ENVIRONMENT,
         api_port=settings.API_PORT,
         metrics_enabled=settings.METRICS_ENABLED,
         background_ingestion=settings.RAG_BACKGROUND_INGESTION,
+        mcp_enabled=settings.RAG_MCP_ENABLED,
     )
 
+    mcp_sub_app = getattr(app.state, "mcp_http_app", None)
+    mcp_lifespan = (
+        mcp_sub_app.router.lifespan_context(mcp_sub_app)
+        if mcp_sub_app is not None
+        else nullcontext()
+    )
+    async with mcp_lifespan:
+        await _run_startup()
+        try:
+            yield
+        finally:
+            await _run_shutdown()
+
+
+async def _run_startup() -> None:
+    global _worker_task
     if settings.ENVIRONMENT == "development":
         try:
             from src.infrastructure.postgres.relational_db import PostgresUserRepository
@@ -102,18 +133,19 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logger.warning("Could not seed portal dev password", error=str(exc))
 
-    worker_task: asyncio.Task | None = None
+    _worker_task = None
     if settings.RAG_BACKGROUND_INGESTION:
-        worker_task = asyncio.create_task(run_worker())
+        _worker_task = asyncio.create_task(run_worker())
         logger.info("Background ingestion worker started")
 
-    yield
 
-    if worker_task is not None:
+async def _run_shutdown() -> None:
+    global _worker_task
+    if _worker_task is not None:
         request_shutdown()
-        worker_task.cancel()
+        _worker_task.cancel()
         try:
-            await worker_task
+            await _worker_task
         except asyncio.CancelledError:
             pass
         logger.info("Background ingestion worker stopped")
@@ -129,176 +161,210 @@ async def lifespan(app: FastAPI):
 # -----------------------------------------------------------------------------
 # FastAPI Application Factory
 # -----------------------------------------------------------------------------
-app = FastAPI(
-    title="RAG-as-a-Service Platform",
-    description=(
-        "Plataforma SaaS de Orquestación de Agentes de IA con RAG. "
-        "Enruta consultas, busca contexto en BD vectorial, ejecuta herramientas "
-        "y devuelve respuestas generadas por LLM con observabilidad completa."
-    ),
-    version="0.1.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
-    lifespan=lifespan,
-    # Swagger/OpenAPI soporta autenticación por API Key
-    swagger_ui_parameters={
-        "persistAuthorization": True,
-        "displayRequestDuration": True,
-    },
-)
+def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | None = None) -> FastAPI:
+    """Construye la app completa. MCP se monta como sub-app fresca por app
+    (su session manager solo puede arrancar una vez por instancia).
 
-# -----------------------------------------------------------------------------
-# CORS — Política restrictiva por defecto
-# -----------------------------------------------------------------------------
-# En MVP permitimos un origen de desarrollo. En producción esto debe
-# configurarse mediante una variable de entorno con la lista de orígenes
-# permitidos por organization (whitelist).
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ALLOWED_ORIGINS.split(","),  # MVP: abierto. Producción: whitelist estricta
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=[
-        "Content-Type",
-        "Authorization",
-        "X-Organization-Id",
-        "X-User-Id",
-        "X-User-Role",
-        "X-Trace-Id",
-        "X-API-Key",
-        "X-New-Plan",
-        "X-Billing-Interval",
-        "X-Organization-Name",
-    ],
-    expose_headers=["X-Trace-Id", "X-Request-Duration-Ms"],
-    max_age=3600,
-)
-
-# -----------------------------------------------------------------------------
-# Middleware de seguridad (orden de ejecución: Trace -> Tenant -> RateLimit
-# -> Idempotency -> BodyLimit -> CORS -> rutas)
-# -----------------------------------------------------------------------------
-app.add_middleware(BodySizeLimitMiddleware)
-app.add_middleware(IdempotencyMiddleware)
-app.add_middleware(RateLimitMiddleware)
-
-# -----------------------------------------------------------------------------
-# Middleware de Tenant (autenticación + TenantContext; inyecta organización)
-# -----------------------------------------------------------------------------
-app.add_middleware(TenantMiddleware)
-
-# -----------------------------------------------------------------------------
-# Middleware de Trazabilidad (orden importa: se ejecuta de último a primero)
-# -----------------------------------------------------------------------------
-app.add_middleware(TraceMiddleware)
-
-# -----------------------------------------------------------------------------
-# Métricas Prometheus — Expone /metrics y añade instrumentación HTTP
-# -----------------------------------------------------------------------------
-if settings.METRICS_ENABLED:
-    instrumentator = setup_metrics(app)
-    logger.info("Prometheus metrics enabled at /metrics")
-else:
-    instrumentator = None
-
-# OpenTelemetry distributed tracing (FastAPI auto-instrumentation)
-if settings.TRACING_ENABLED:
-    setup_tracing(app)
-
-# -----------------------------------------------------------------------------
-# Routers
-# -----------------------------------------------------------------------------
-app.include_router(admin_router)
-app.include_router(agents_router)
-app.include_router(audit_router)
-app.include_router(auth_router)
-app.include_router(billing_router)
-app.include_router(connectors_router)
-app.include_router(eval_router)
-app.include_router(health_router)
-app.include_router(ingestion_router)
-app.include_router(jobs_router)
-app.include_router(kbs_router)
-app.include_router(organizations_router)
-app.include_router(projects_router)
-app.include_router(prompt_router)
-app.include_router(query_router)
-app.include_router(sources_router)
-
-
-# -----------------------------------------------------------------------------
-# Exception Handlers — Errores con logs estructurados y trace_id
-# -----------------------------------------------------------------------------
-@app.exception_handler(StarletteHTTPException)
-async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
-    """Captura errores HTTP y los registra con trace_id en el log JSON."""
-    if isinstance(exc.detail, dict):
-        error_code = str(exc.detail.get("error_code") or f"HTTP_{exc.status_code}")
-        message = str(exc.detail.get("message") or exc.detail)
-    else:
-        error_code = f"HTTP_{exc.status_code}"
-        message = str(exc.detail)
-
-    logger.warning(
-        "HTTP exception",
-        status_code=exc.status_code,
-        detail=message,
-        path=request.url.path,
-    )
-    return JSONResponse(
-        status_code=exc.status_code,
-        content=ErrorResponse(
-            error_code=error_code,
-            message=message,
-        ).model_dump(),
+    metrics_enabled/tracing_enabled: override para tests (los registros
+    globales de Prometheus/OTel no toleran múltiples instancias).
+    """
+    metrics_on = settings.METRICS_ENABLED if metrics_enabled is None else metrics_enabled
+    tracing_on = settings.TRACING_ENABLED if tracing_enabled is None else tracing_enabled
+    new_app = FastAPI(
+        title="Zent API",
+        description=(
+            "Zent developer API (v1). Chat, RAG, agents, connectors and usage. "
+            "Authenticate with Authorization: Bearer <api_key>."
+        ),
+        version=API_VERSION,
+        docs_url="/docs",
+        redoc_url="/redoc",
+        openapi_url="/openapi.json",
+        lifespan=lifespan,
+        swagger_ui_parameters={
+            "persistAuthorization": True,
+            "displayRequestDuration": True,
+        },
     )
 
+    # -------------------------------------------------------------------------
+    # CORS — Política restrictiva por defecto
+    # -------------------------------------------------------------------------
+    # En MVP permitimos un origen de desarrollo. En producción esto debe
+    # configurarse mediante una variable de entorno con la lista de orígenes
+    # permitidos por organization (whitelist).
+    new_app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.CORS_ALLOWED_ORIGINS.split(","),
+        allow_credentials=False,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Content-Type",
+            "Authorization",
+            "X-Organization-Id",
+            "X-User-Id",
+            "X-User-Role",
+            "X-Trace-Id",
+            "X-API-Key",
+            "X-New-Plan",
+            "X-Billing-Interval",
+            "X-Organization-Name",
+            "Idempotency-Key",
+        ],
+        expose_headers=["X-Trace-Id", "X-Request-Duration-Ms", "Idempotency-Replayed"],
+        max_age=3600,
+    )
 
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(
-    request: Request, exc: RequestValidationError
-) -> JSONResponse:
-    """Captura errores de validación Pydantic (payload malformado)."""
-    errors = exc.errors()
-    detail = errors[0]["msg"] if errors else "Validation error"
-    # No loguear el valor `input` de cada error: puede contener passwords
-    # o datos sensibles del cliente.
-    safe_errors = [
-        {k: v for k, v in e.items() if k != "input"}
-        for e in errors[:20]
-    ]
-    logger.warning(
-        "Validation error",
-        errors=safe_errors,
-        path=request.url.path,
-    )
-    return JSONResponse(
-        status_code=422,
-        content=ErrorResponse(
-            error_code="VALIDATION_ERROR",
-            message=detail,
-        ).model_dump(),
-    )
+    # -------------------------------------------------------------------------
+    # Middleware de seguridad (orden de ejecución: Trace -> Tenant -> RateLimit
+    # -> Idempotency -> BodyLimit -> CORS -> rutas)
+    # -------------------------------------------------------------------------
+    new_app.add_middleware(BodySizeLimitMiddleware)
+    new_app.add_middleware(IdempotencyMiddleware)
+    new_app.add_middleware(RateLimitMiddleware)
+
+    # -------------------------------------------------------------------------
+    # Middleware de Tenant (autenticación + TenantContext; inyecta organización)
+    # -------------------------------------------------------------------------
+    new_app.add_middleware(TenantMiddleware)
+
+    # -------------------------------------------------------------------------
+    # Middleware de Trazabilidad (orden importa: se ejecuta de último a primero)
+    # -------------------------------------------------------------------------
+    new_app.add_middleware(TraceMiddleware)
+
+    # -------------------------------------------------------------------------
+    # Métricas Prometheus — Expone /metrics y añade instrumentación HTTP
+    # -------------------------------------------------------------------------
+    if metrics_on:
+        setup_metrics(new_app)
+        logger.info("Prometheus metrics enabled at /metrics")
+
+    # OpenTelemetry distributed tracing (FastAPI auto-instrumentation)
+    if tracing_on:
+        setup_tracing(new_app)
+
+    # -------------------------------------------------------------------------
+    # Routers
+    # -------------------------------------------------------------------------
+    new_app.include_router(admin_router)
+    new_app.include_router(agent_runs_router)
+    new_app.include_router(agents_router)
+    new_app.include_router(audit_router)
+    new_app.include_router(auth_router)
+    new_app.include_router(billing_router)
+    new_app.include_router(billing_webhooks_router)
+    new_app.include_router(connectors_router)
+    new_app.include_router(eval_router)
+    new_app.include_router(health_router)
+    new_app.include_router(ingestion_router)
+    new_app.include_router(jobs_router)
+    new_app.include_router(kbs_router)
+    new_app.include_router(organizations_router)
+    new_app.include_router(projects_router)
+    new_app.include_router(prompt_router)
+    new_app.include_router(query_router)
+    new_app.include_router(sources_router)
+
+    # -------------------------------------------------------------------------
+    # MCP Server — montado como sub-app: TODOS los middleware de la API
+    # (Trace, Tenant, RateLimit, Idempotency, BodyLimit) aplican antes de
+    # llegar al protocolo. Sin bypass posible.
+    # -------------------------------------------------------------------------
+    if settings.RAG_MCP_ENABLED:
+        from src.mcp_server.app import build_mcp_http_app
+
+        new_app.state.mcp_http_app = build_mcp_http_app()
+        new_app.mount("/mcp", new_app.state.mcp_http_app)
+        logger.info("MCP server enabled at /mcp (Streamable HTTP, stateless)")
+
+    @new_app.get("/api/v1", tags=["Meta"], summary="Versión del contrato público")
+    async def api_v1_root() -> dict[str, str]:
+        return {"version": API_VERSION, "docs": "/docs"}
+
+    @new_app.get("/api/v1/openapi.json", include_in_schema=False)
+    async def openapi_v1() -> JSONResponse:
+        return JSONResponse(new_app.openapi())
+
+    # -------------------------------------------------------------------------
+    # Exception Handlers — Errores con logs estructurados y trace_id
+    # -------------------------------------------------------------------------
+    @new_app.exception_handler(StarletteHTTPException)
+    async def http_exception_handler(
+        request: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
+        """Captura errores HTTP y los registra con trace_id en el log JSON."""
+        if isinstance(exc.detail, dict):
+            error_code = str(exc.detail.get("error_code") or f"HTTP_{exc.status_code}")
+            message = str(exc.detail.get("message") or exc.detail)
+        else:
+            error_code = f"HTTP_{exc.status_code}"
+            message = str(exc.detail)
+
+        logger.warning(
+            "HTTP exception",
+            status_code=exc.status_code,
+            detail=message,
+            path=request.url.path,
+        )
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=ErrorResponse(
+                error_code=error_code,
+                message=message,
+            ).model_dump(),
+        )
+
+    @new_app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        """Captura errores de validación Pydantic (payload malformado)."""
+        errors = exc.errors()
+        detail = errors[0]["msg"] if errors else "Validation error"
+        # No loguear el valor `input` de cada error: puede contener passwords
+        # o datos sensibles del cliente.
+        safe_errors = [
+            {k: v for k, v in e.items() if k != "input"}
+            for e in errors[:20]
+        ]
+        logger.warning(
+            "Validation error",
+            errors=safe_errors,
+            path=request.url.path,
+        )
+        return JSONResponse(
+            status_code=422,
+            content=ErrorResponse(
+                error_code="VALIDATION_ERROR",
+                message=detail,
+            ).model_dump(),
+        )
+
+    @new_app.exception_handler(Exception)
+    async def unhandled_exception_handler(
+        request: Request, exc: Exception
+    ) -> JSONResponse:
+        """Último recurso: captura excepciones no manejadas."""
+        logger.error(
+            "Unhandled exception",
+            error_type=type(exc).__name__,
+            error=str(exc),
+            path=request.url.path,
+            exc_info=True,
+        )
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(
+                error_code="INTERNAL_ERROR",
+                message="An unexpected error occurred. Reference the X-Trace-Id header for support.",
+            ).model_dump(),
+        )
+
+    return new_app
 
 
-@app.exception_handler(Exception)
-async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Último recurso: captura excepciones no manejadas."""
-    logger.error(
-        "Unhandled exception",
-        error_type=type(exc).__name__,
-        error=str(exc),
-        path=request.url.path,
-        exc_info=True,
-    )
-    return JSONResponse(
-        status_code=500,
-        content=ErrorResponse(
-            error_code="INTERNAL_ERROR",
-            message="An unexpected error occurred. Reference the X-Trace-Id header for support.",
-        ).model_dump(),
-    )
+app = create_app()
 
 
 # -----------------------------------------------------------------------------

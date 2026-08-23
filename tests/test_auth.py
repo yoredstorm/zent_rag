@@ -60,6 +60,7 @@ class TestAuthSignupLogin:
         assert data["access_token"].startswith("rag_sess_")
         assert data["email"] == email
         assert "organization_id" in data
+        assert data["api_key"].startswith("zent_sk_live_")
 
         me = await async_client.get(
             "/api/v1/auth/me",

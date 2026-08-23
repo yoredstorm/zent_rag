@@ -6,7 +6,7 @@
 # =============================================================================
 from __future__ import annotations
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -241,5 +241,334 @@ async def get_recent(
             }
             for row in result.fetchall()
         ]
+    finally:
+        await session.close()
+
+
+# =============================================================================
+# Evaluation Engine — persistencia de datasets, runs y resultados por caso
+# =============================================================================
+# Tablas creadas por la migración 011_evaluation_engine; ensure_* es
+# idempotente como red de seguridad en ambientes sin alembic aplicado.
+# =============================================================================
+
+_EVAL_ENGINE_DDL = """
+CREATE TABLE IF NOT EXISTS eval_datasets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    organization_id UUID NOT NULL,
+    name TEXT NOT NULL,
+    schema_version INTEGER NOT NULL DEFAULT 2,
+    cases JSONB NOT NULL DEFAULT '[]',
+    weights JSONB NOT NULL DEFAULT '{}',
+    metadata JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_eval_datasets_org
+    ON eval_datasets(organization_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS eval_runs (
+    id UUID PRIMARY KEY,
+    organization_id UUID NOT NULL,
+    dataset_id UUID,
+    dataset_name TEXT,
+    target_type VARCHAR(10) NOT NULL,
+    target_id UUID,
+    target_name TEXT,
+    version_snapshot JSONB NOT NULL DEFAULT '{}',
+    version_id TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'completed',
+    summary JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_eval_runs_org
+    ON eval_runs(organization_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_eval_runs_version
+    ON eval_runs(version_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS eval_case_results (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    run_id UUID NOT NULL REFERENCES eval_runs(id) ON DELETE CASCADE,
+    case_id TEXT NOT NULL,
+    question TEXT,
+    answer TEXT,
+    status VARCHAR(20) NOT NULL DEFAULT 'completed',
+    target JSONB NOT NULL DEFAULT '{}',
+    metrics JSONB NOT NULL DEFAULT '{}',
+    scores JSONB NOT NULL DEFAULT '{}',
+    error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_eval_cases_run
+    ON eval_case_results(run_id, created_at);
+"""
+
+
+async def ensure_eval_engine_tables() -> None:
+    """Crea tablas del eval engine si no existen (idempotente)."""
+    session: AsyncSession = await get_async_session()
+    try:
+        for statement in _EVAL_ENGINE_DDL.split(";"):
+            if statement.strip():
+                await session.execute(text(statement))
+        await session.commit()
+    except Exception as exc:
+        await session.rollback()
+        logger.warning("Failed to ensure eval engine tables", error=str(exc))
+    finally:
+        await session.close()
+
+
+async def save_dataset(
+    organization_id: UUID,
+    name: str,
+    cases: list[dict],
+    *,
+    schema_version: int = 2,
+    weights: dict | None = None,
+    metadata: dict | None = None,
+) -> UUID:
+    """Importa un dataset (nueva versión en cada import) y devuelve su id."""
+    import json as _json
+
+    dataset_id = uuid4()
+    session: AsyncSession = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "INSERT INTO eval_datasets "
+                "(id, organization_id, name, schema_version, cases, weights, metadata) "
+                "VALUES (:id, :oid, :name, :schema_version, "
+                "CAST(:cases AS jsonb), CAST(:weights AS jsonb), CAST(:metadata AS jsonb))"
+            ),
+            {
+                "id": dataset_id,
+                "oid": organization_id,
+                "name": name[:200],
+                "schema_version": schema_version,
+                "cases": _json.dumps(cases),
+                "weights": _json.dumps(weights or {}),
+                "metadata": _json.dumps(metadata or {}),
+            },
+        )
+        await session.commit()
+        logger.info("Eval dataset imported", organization_id=str(organization_id), name=name)
+    except Exception as exc:
+        await session.rollback()
+        logger.error("Failed to import eval dataset", error=str(exc))
+        raise
+    finally:
+        await session.close()
+    return dataset_id
+
+
+async def list_datasets(organization_id: UUID) -> list[dict]:
+    session: AsyncSession = await get_async_session()
+    try:
+        result = await session.execute(
+            text(
+                "SELECT id, name, schema_version, "
+                "jsonb_array_length(cases) AS case_count, created_at "
+                "FROM eval_datasets "
+                "WHERE organization_id = :oid "
+                "ORDER BY created_at DESC"
+            ),
+            {"oid": organization_id},
+        )
+        return [
+            {
+                "id": str(row.id),
+                "name": row.name,
+                "schema_version": row.schema_version,
+                "case_count": row.case_count or 0,
+                "created_at": row.created_at.isoformat(),
+            }
+            for row in result.fetchall()
+        ]
+    finally:
+        await session.close()
+
+
+async def get_dataset(organization_id: UUID, dataset_id: UUID) -> dict | None:
+    session: AsyncSession = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT id, name, schema_version, cases, weights, metadata, created_at "
+                    "FROM eval_datasets "
+                    "WHERE organization_id = :oid AND id = :did"
+                ),
+                {"oid": organization_id, "did": dataset_id},
+            )
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": str(row.id),
+            "name": row.name,
+            "schema_version": row.schema_version,
+            "cases": row.cases if isinstance(row.cases, list) else [],
+            "weights": row.weights if isinstance(row.weights, dict) else {},
+            "metadata": row.metadata if isinstance(row.metadata, dict) else {},
+            "created_at": row.created_at.isoformat(),
+        }
+    finally:
+        await session.close()
+
+
+async def save_eval_run(
+    organization_id: UUID,
+    summary: dict,
+) -> None:
+    """Persiste run + resultados por caso (transacción única, fail-silent)."""
+    import json as _json
+
+    cases = summary.get("cases") or []
+    run_id = _optional_uuid(summary.get("run_id"))
+    if run_id is None:
+        logger.warning("Eval run save skipped: missing run_id")
+        return
+    session: AsyncSession = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "INSERT INTO eval_runs "
+                "(id, organization_id, dataset_id, dataset_name, target_type, "
+                "target_id, target_name, version_snapshot, version_id, status, summary) "
+                "VALUES (:id, :oid, :dataset_id, :dataset_name, :target_type, "
+                ":target_id, :target_name, CAST(:snapshot AS jsonb), :version_id, "
+                ":status, CAST(:summary AS jsonb))"
+            ),
+            {
+                "id": run_id,
+                "oid": organization_id,
+                "dataset_id": _optional_uuid(summary.get("dataset_id")),
+                "dataset_name": summary.get("dataset_name"),
+                "target_type": summary.get("target_type") or "rag",
+                "target_id": _optional_uuid(summary.get("target_id")),
+                "target_name": summary.get("target_name"),
+                "snapshot": _json.dumps(summary.get("version_snapshot") or {}),
+                "version_id": summary.get("version_id"),
+                "status": "completed" if summary.get("failed_cases", 0) == 0 else "partial",
+                "summary": _json.dumps({k: v for k, v in summary.items() if k != "cases"}),
+            },
+        )
+        for case in cases:
+            await session.execute(
+                text(
+                    "INSERT INTO eval_case_results "
+                    "(run_id, case_id, question, answer, status, target, metrics, scores, error) "
+                    "VALUES (:run_id, :case_id, :question, :answer, :status, "
+                    "CAST(:target AS jsonb), CAST(:metrics AS jsonb), "
+                    "CAST(:scores AS jsonb), :error)"
+                ),
+                {
+                    "run_id": run_id,
+                    "case_id": str(case.get("case_id") or "")[:200],
+                    "question": str(case.get("question") or "")[:4000],
+                    "answer": str(case.get("answer") or "")[:8000],
+                    "status": case.get("status") or "completed",
+                    "target": _json.dumps(case.get("target") or {}),
+                    "metrics": _json.dumps(case.get("metrics") or {}),
+                    "scores": _json.dumps(case.get("scores") or {}),
+                    "error": str(case.get("error") or "")[:2000] or None,
+                },
+            )
+        await session.commit()
+        logger.info("Eval run saved", run_id=str(run_id))
+    except Exception as exc:
+        await session.rollback()
+        logger.warning("Eval run save failed", error=str(exc))
+    finally:
+        await session.close()
+
+
+def _optional_uuid(value) -> UUID | None:
+    if value is None:
+        return None
+    try:
+        return UUID(str(value))
+    except (ValueError, TypeError):
+        return None
+
+
+async def get_eval_run(organization_id: UUID, run_id: UUID) -> dict | None:
+    session: AsyncSession = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT id, dataset_id, dataset_name, target_type, target_id, "
+                    "target_name, version_snapshot, version_id, status, summary, created_at "
+                    "FROM eval_runs "
+                    "WHERE organization_id = :oid AND id = :rid"
+                ),
+                {"oid": organization_id, "rid": run_id},
+            )
+        ).fetchone()
+        if row is None:
+            return None
+        cases_result = await session.execute(
+            text(
+                "SELECT case_id, question, answer, status, target, metrics, scores, error "
+                "FROM eval_case_results WHERE run_id = :rid ORDER BY created_at"
+            ),
+            {"rid": run_id},
+        )
+        summary = dict(row.summary) if isinstance(row.summary, dict) else {}
+        summary["run_id"] = str(row.id)
+        summary["created_at"] = row.created_at.isoformat()
+        summary["cases"] = [
+            {
+                "case_id": c.case_id,
+                "question": c.question,
+                "answer": c.answer,
+                "status": c.status,
+                "target": c.target if isinstance(c.target, dict) else {},
+                "metrics": c.metrics if isinstance(c.metrics, dict) else {},
+                "scores": c.scores if isinstance(c.scores, dict) else {},
+                "error": c.error,
+            }
+            for c in cases_result.fetchall()
+        ]
+        return summary
+    finally:
+        await session.close()
+
+
+async def list_eval_runs(organization_id: UUID, limit: int = 20) -> list[dict]:
+    session: AsyncSession = await get_async_session()
+    try:
+        result = await session.execute(
+            text(
+                "SELECT id, dataset_name, target_type, target_name, version_id, "
+                "status, summary, created_at "
+                "FROM eval_runs "
+                "WHERE organization_id = :oid "
+                "ORDER BY created_at DESC "
+                "LIMIT :limit"
+            ),
+            {"oid": organization_id, "limit": min(limit, 100)},
+        )
+        runs = []
+        for row in result.fetchall():
+            summary = row.summary if isinstance(row.summary, dict) else {}
+            quality = summary.get("quality") or {}
+            performance = summary.get("performance") or {}
+            runs.append(
+                {
+                    "id": str(row.id),
+                    "dataset_name": row.dataset_name,
+                    "target_type": row.target_type,
+                    "target_name": row.target_name,
+                    "version_id": row.version_id,
+                    "status": row.status,
+                    "composite_score": quality.get("composite_score"),
+                    "avg_latency_ms": (performance.get("latency") or {}).get("avg_ms"),
+                    "avg_cost": performance.get("avg_cost"),
+                    "created_at": row.created_at.isoformat(),
+                }
+            )
+        return runs
     finally:
         await session.close()

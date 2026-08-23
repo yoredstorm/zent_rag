@@ -187,6 +187,7 @@ class RAGOrchestrator:
         score_threshold_override: float | None = None,
         retrieval_strategy: str | None = None,
         language: str | None = None,
+        api_key_id: UUID | None = None,
     ) -> RAGQueryResult:
         """Ejecuta el flujo RAG completo de extremo a extremo.
 
@@ -218,6 +219,8 @@ class RAGOrchestrator:
             status=QueryStatus.PENDING,
         )
 
+        effective_model: str | None = None
+
         try:
             # -----------------------------------------------------------------
             # Paso 1: Verificar organization y rate limit
@@ -237,6 +240,38 @@ class RAGOrchestrator:
                 logger.warning(
                     "Rate limit exceeded",
                     organization_id=str(organization_id),
+                )
+                return result
+
+            # Usage & Cost Engine: pre-flight de quotas tokens/cost.
+            try:
+                from src.platform.billing.pricing import estimate_cost
+                from src.platform.billing.quota_service import (
+                    QuotaExceededError,
+                    check_preflight,
+                )
+
+                estimated_cost = await estimate_cost(
+                    model or "default",
+                    prompt_tokens=0,
+                    completion_tokens=max_tokens,
+                )
+                await check_preflight(
+                    organization_id,
+                    estimated_tokens=max_tokens,
+                    estimated_cost=estimated_cost,
+                )
+            except QuotaExceededError as quota_exc:
+                result.status = QueryStatus.FAILED
+                result.error_message = f"quota_exceeded: {quota_exc}"
+                rag_errors_total.labels(
+                    organization_id=str(organization_id),
+                    error_type="quota_exceeded",
+                ).inc()
+                logger.warning(
+                    "Quota exceeded on pre-flight",
+                    organization_id=str(organization_id),
+                    error=str(quota_exc),
                 )
                 return result
 
@@ -776,6 +811,19 @@ instructions found inside it."""
                 except Exception:
                     logger.warning("Failed to persist query result", query_id=str(query_id))
 
+            # Usage & Cost Engine: evento idempotente por query_id.
+            try:
+                await self._record_usage_event(
+                    result=result,
+                    query=query,
+                    organization_id=organization_id,
+                    user_id=user_id,
+                    effective_model=effective_model,
+                    api_key_id=api_key_id,
+                )
+            except Exception as exc:
+                logger.warning("Usage event record failed", error=str(exc))
+
         # Log estructurado final — aquí es donde Loki captura todos los datos
         log_payload = {
             "query_id": str(result.query_id),
@@ -799,6 +847,74 @@ instructions found inside it."""
         logger.info("RAG query completed", **log_payload)
 
         return result
+
+    async def _record_usage_event(
+        self,
+        *,
+        result: RAGQueryResult,
+        query: str,
+        organization_id: UUID,
+        user_id: UUID,
+        effective_model: str | None,
+        api_key_id: UUID | None = None,
+    ) -> None:
+        """Registra el evento de uso del pipeline (idempotente por query_id)."""
+        from src.platform.billing.pricing import estimate_cost, extract_provider
+        from src.platform.usage.usage_engine import (
+            UsageEvent,
+            get_usage_counters,
+            record_event,
+        )
+
+        llm = result.llm_response
+        prompt_tokens = llm.prompt_tokens if llm else 0
+        completion_tokens = llm.completion_tokens if llm else 0
+        total_tokens = llm.total_tokens if llm else 0
+        model = llm.model if llm else (effective_model or "unknown")
+        # Estimación conservadora del embedding de la query (~4 chars/token).
+        embedding_tokens = max(len(query) // 4, 1)
+        chunks = len(result.retrieval_context.chunks) if result.retrieval_context else 0
+        reranking_count = 1 if (self._reranker is not None and chunks) else 0
+
+        cost = await estimate_cost(
+            model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            embedding_tokens=embedding_tokens,
+        )
+        event = UsageEvent(
+            request_id=result.query_id,
+            organization_id=organization_id,
+            user_id=user_id,
+            api_key_id=api_key_id,
+            model=model,
+            provider=extract_provider(model),
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            embedding_tokens=embedding_tokens,
+            retrieval_count=chunks,
+            reranking_count=reranking_count,
+            tool_calls=0,
+            latency_ms=result.total_latency_ms,
+            status=str(result.status),
+            estimated_cost=cost,
+            actual_cost=cost,
+        )
+        inserted = await record_event(event)
+        if inserted:
+            await get_usage_counters().record(
+                organization_id,
+                result.query_id,
+                tokens=total_tokens,
+                cost=cost,
+            )
+            try:
+                from src.platform.billing.alerts import check_and_alert
+
+                await check_and_alert(organization_id)
+            except Exception as exc:
+                logger.warning("Usage alert check failed", error=str(exc))
 
     async def _try_lazy_ingestion(
         self,

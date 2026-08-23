@@ -6,6 +6,9 @@
 venv
 portal/node_modules
 portal/dist
+sdk/node/node_modules
+sdk/node/dist
+sdk/python/.pytest_cache
 web-tester
 *.md
 .env

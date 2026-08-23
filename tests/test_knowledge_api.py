@@ -45,9 +45,11 @@ def _headers(org: dict) -> dict:
 
 @pytest.fixture
 async def async_client():
+    from tests.conftest import attach_auto_idempotency
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client
+        yield attach_auto_idempotency(client)
 
 
 @pytest.fixture
@@ -228,13 +230,21 @@ async def test_sync_creates_job_and_engine_completes(
 
 
 @pytest.mark.asyncio
-async def test_api_token_cannot_manage_sources(async_client, org_a, isolated_settings) -> None:
-    # El token de trial solo trae scopes rag:* — sin permiso sources:write
+async def test_api_token_without_rag_write_cannot_manage_sources(
+    async_client, org_a, isolated_settings
+) -> None:
+    created = await async_client.post(
+        "/api/v1/organizations/api-keys",
+        json={"name": "read-only", "scopes": ["rag:read"]},
+        headers=_headers(org_a),
+    )
+    assert created.status_code == 200, created.text
+    token = created.json()["token"]
     response = await async_client.post(
         "/api/v1/sources",
         json={"name": "x", "type": "web", "config": {"url": "https://example.com"}},
         headers={
-            "Authorization": f"Bearer {org_a['api_token']}",
+            "Authorization": f"Bearer {token}",
             "X-Organization-Id": org_a["organization_id"],
         },
     )

@@ -4,6 +4,7 @@ import hashlib
 import secrets
 from uuid import UUID
 
+from src.core.config import get_settings
 from src.core.domain.entities import (
     BillingContext,
     Plan,
@@ -16,14 +17,22 @@ from src.infrastructure.observability.logging_config import get_logger
 logger = get_logger(__name__)
 
 # /metrics NO es pública: si RAG_METRICS_TOKEN está configurado exige token.
-PUBLIC_PATHS = {"/health", "/docs", "/redoc", "/openapi.json", "/favicon.ico"}
+PUBLIC_PATHS = {
+    "/health",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/favicon.ico",
+    "/api/v1",
+    "/api/v1/openapi.json",
+}
 
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def generate_api_token(prefix: str = "rag_live") -> str:
+def generate_api_token(prefix: str = "zent_sk_live") -> str:
     return f"{prefix}_{secrets.token_hex(24)}"
 
 
@@ -61,7 +70,7 @@ class BillingService:
             return await self._context_for_organization(
                 session.organization_id,
                 token_id=None,
-                scopes=["rag:query", "rag:ingest", "portal"],
+                scopes=["rag:read", "rag:write", "portal"],
                 user_id=session.user_id,
                 auth_type="portal_session",
             )
@@ -126,6 +135,13 @@ class BillingService:
         if subscription.status == SubscriptionStatus.PAUSED:
             raise TokenValidationError(
                 "Subscription is paused.", 402, "subscription_paused"
+            )
+
+        if subscription.status == SubscriptionStatus.SUSPENDED:
+            raise TokenValidationError(
+                "Subscription is suspended due to unpaid invoices.",
+                402,
+                "payment_required",
             )
 
         if subscription.status == SubscriptionStatus.TRIALING:
@@ -213,9 +229,15 @@ class BillingService:
         scopes: list[str] | None = None,
         created_by: UUID | None = None,
     ) -> str:
-        token = generate_api_token("rag_live")
+        from src.platform.auth.scopes import (
+            DEFAULT_API_KEY_SCOPES,
+            canonicalize_scopes,
+        )
+
+        token = generate_api_token("zent_sk_live")
+        resolved = canonicalize_scopes(scopes or DEFAULT_API_KEY_SCOPES)
         await self._api_keys.create_key(
-            organization_id, token, name=name, scopes=scopes, created_by=created_by
+            organization_id, token, name=name, scopes=resolved, created_by=created_by
         )
         return token
 
@@ -247,9 +269,11 @@ class BillingService:
             interval="monthly",
             trial_days=trial_days,
         )
-        token = generate_api_token("rag_live")
+        from src.platform.auth.scopes import DEFAULT_API_KEY_SCOPES
+
+        token = generate_api_token("zent_sk_live")
         await self._api_keys.create_key(
-            subscription.organization_id, token, "Default", ["rag:query", "rag:ingest"]
+            subscription.organization_id, token, "Default", DEFAULT_API_KEY_SCOPES
         )
         return subscription, token
 
@@ -264,6 +288,65 @@ class BillingService:
 
     async def cancel_subscription(self, subscription_id: UUID) -> None:
         await self._repo.update_subscription_status(subscription_id, "canceled")
+
+    # -------------------------------------------------------------------------
+    # Máquina de estados — ÚNICO mutador de estados de suscripción
+    # -------------------------------------------------------------------------
+    # El frontend NUNCA escribe estados: solo el webhook firmado (o una
+    # operación interna del backend) transiciona la suscripción.
+    _VALID_TRANSITIONS: dict[str, set[str]] = {
+        "trialing": {"active", "past_due", "canceled", "expired", "suspended"},
+        "active": {"past_due", "canceled", "expired", "paused", "suspended"},
+        "past_due": {"active", "canceled", "expired", "suspended"},
+        "suspended": {"active", "canceled"},
+        "paused": {"active", "canceled", "expired"},
+        "canceled": set(),
+        "expired": {"active"},
+    }
+
+    async def transition_status(
+        self, subscription_id: UUID, new_status: str
+    ) -> bool:
+        """Transiciona estado con validación. Retorna False si es ilegal.
+
+        Único punto por el que un estado cambia. Los webhooks llaman acá.
+        """
+        subscription = await self._repo.get_subscription_by_id(subscription_id)
+        if subscription is None:
+            raise ValueError(f"Subscription {subscription_id} not found")
+        current = str(subscription.status)
+        allowed = self._VALID_TRANSITIONS.get(current, set())
+        if new_status not in allowed:
+            logger.warning(
+                "Illegal subscription transition rejected",
+                subscription_id=str(subscription_id),
+                current=current,
+                attempted=new_status,
+            )
+            return False
+        await self._repo.update_subscription_status(
+            subscription_id, new_status
+        )
+        return True
+
+    async def handle_payment_failed(
+        self, subscription_id: UUID, consecutive_failures: int = 1
+    ) -> None:
+        """payment_failed: past_due, o suspended tras gracia/repeticiones."""
+        settings = get_settings()
+        if consecutive_failures >= 3:
+            await self._repo.update_subscription_status(
+                subscription_id, "suspended"
+            )
+            return
+        await self._repo.update_subscription_status(
+            subscription_id, "past_due"
+        )
+        _ = settings.BILLING_PAST_DUE_GRACE_DAYS
+
+    async def handle_payment_succeeded(self, subscription_id: UUID) -> None:
+        """payment_succeeded: reactiva hacia active."""
+        await self._repo.update_subscription_status(subscription_id, "active")
 
     async def list_all_subscriptions(self) -> list[dict]:
         return await self._repo.list_subscriptions()

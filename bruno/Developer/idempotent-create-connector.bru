@@ -1,0 +1,28 @@
+meta {
+  name: Idempotent create connector
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{base_url}}/api/v1/connectors
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{idempotency_key}}
+}
+
+auth:bearer {
+  token: {{api_key}}
+}
+
+body:json {
+  {
+    "name": "demo-pg",
+    "type": "postgres",
+    "config": {"host": "localhost"}
+  }
+}

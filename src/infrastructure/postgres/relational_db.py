@@ -34,6 +34,7 @@ from src.core.domain.entities import (
     Subscription,
     SubscriptionStatus,
     User,
+    display_api_key_prefix,
 )
 from src.core.ports import (
     AgentRepository,
@@ -715,9 +716,9 @@ class PostgresApiKeyRepository(ApiKeyRepository):
         import hashlib as _hl
 
         key_hash = _hl.sha256(token.encode()).hexdigest()
-        prefix = "rag_live_" if token.startswith("rag_live_") else "rag_test_"
+        prefix = display_api_key_prefix(token)
         key_id = uuid4()
-        sc = scopes or ["rag:query", "rag:ingest"]
+        sc = scopes or ["rag:read", "rag:write"]
         session = await get_async_session()
         try:
             result = await session.execute(

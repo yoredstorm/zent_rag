@@ -11,9 +11,11 @@ import {
   X,
   type Icon,
 } from "@phosphor-icons/react";
-import { Suspense, lazy, useState } from "react";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { NavLink, Navigate, Outlet, Route, Routes } from "react-router-dom";
 import ErrorBoundary from "./components/ErrorBoundary";
+import { ApiKeyCreatedModal } from "./components/ApiKeyCreatedModal";
+import { SIGNUP_API_KEY_STORAGE } from "./api";
 import { useAuth } from "./auth";
 import { SyncBanner, SyncJobProvider } from "./syncJob";
 import { ToastProvider } from "./Toast";
@@ -164,6 +166,12 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 function ProtectedLayout() {
   const { session, ready } = useAuth();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [signupKey, setSignupKey] = useState<string | null>(null);
+
+  useEffect(() => {
+    const key = sessionStorage.getItem(SIGNUP_API_KEY_STORAGE);
+    if (key) setSignupKey(key);
+  }, []);
 
   if (!ready) {
     return (
@@ -181,6 +189,15 @@ function ProtectedLayout() {
   return (
     <ToastProvider>
       <SyncJobProvider>
+        {signupKey && (
+          <ApiKeyCreatedModal
+            apiKey={signupKey}
+            onClose={() => {
+              sessionStorage.removeItem(SIGNUP_API_KEY_STORAGE);
+              setSignupKey(null);
+            }}
+          />
+        )}
         <a href="#contenido" className="skip-link">
           Saltar al contenido
         </a>

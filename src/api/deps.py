@@ -10,8 +10,11 @@
 # =============================================================================
 from __future__ import annotations
 
+# Connector Platform: registra plugins builtin + entry points al importar.
+import src.connectors.plugin.plugins  # noqa: F401 (registro de builtins)
 from src.agents.runtime.orchestrator import RAGOrchestrator
 from src.agents.tools.sql_expert_postgres import PostgresSqlExpert
+from src.connectors.plugin.registry import load_entry_points, load_plugin_modules
 from src.core.config import get_settings
 from src.core.ports import (
     AgentRepository,
@@ -52,6 +55,9 @@ from src.infrastructure.postgres.relational_db import (
 )
 from src.infrastructure.qdrant.vector_store import QdrantVectorStore
 from src.infrastructure.redis.cache import RedisCache
+
+load_entry_points()
+load_plugin_modules()
 
 # -----------------------------------------------------------------------------
 # Singletons de infraestructura (inicialización lazy, thread-safe con FastAPI)
@@ -261,13 +267,9 @@ def get_rag_orchestrator() -> RAGOrchestrator:
     global _orchestrator
     if _orchestrator is None:
         settings = get_settings()
-        sql_expert = None
+        sql_expert = get_sql_expert()
         sql_router = None
         if settings.RAG_SQL_EXPERT_ENABLED:
-            sql_expert = PostgresSqlExpert(
-                llm_provider=get_llm_provider(),
-                cache=get_cache_provider(),
-            )
             from src.agents.tools.sql_router import SqlIntentRouter
 
             sql_router = SqlIntentRouter(llm_provider=get_llm_provider())
@@ -300,3 +302,42 @@ def get_rag_orchestrator() -> RAGOrchestrator:
             sql_router=sql_router,
         )
     return _orchestrator
+
+
+_sql_expert: object | None = None
+
+
+def get_sql_expert():
+    """Singleton del SQL Expert (compartido por RAG orchestrator y Agent Runtime)."""
+    global _sql_expert
+    if _sql_expert is None:
+        settings = get_settings()
+        _sql_expert = PostgresSqlExpert(
+            llm_provider=get_llm_provider(),
+            cache=get_cache_provider(),
+        )
+        _ = settings.RAG_SQL_EXPERT_ENABLED  # el singleton no depende del flag
+    return _sql_expert
+
+
+_agent_runtime: object | None = None
+
+
+def get_agent_runtime():
+    """Ensambla el Agent Runtime con tools builtin + verticales cargadas."""
+    global _agent_runtime
+    if _agent_runtime is None:
+        from src.agents.runtime.agent_runtime import AgentRuntime
+        from src.agents.tools.registry import load_tool_modules
+        from src.agents.tools.tools_builtin import register_builtin_tools
+
+        register_builtin_tools(
+            retriever=get_retriever(),
+            sql_expert=get_sql_expert(),
+        )
+        load_tool_modules()
+        _agent_runtime = AgentRuntime(
+            llm_provider=get_llm_provider(),
+            cache_provider=get_cache_provider(),
+        )
+    return _agent_runtime

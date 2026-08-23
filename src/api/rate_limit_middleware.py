@@ -28,7 +28,15 @@ _PUBLIC_POST_PATHS = {
     "/api/v1/auth/signup",
     "/api/v1/billing/subscription/create-trial",
 }
-_EXEMPT_PATHS = {"/health", "/metrics", "/docs", "/redoc", "/openapi.json"}
+_EXEMPT_PATHS = {
+    "/health",
+    "/metrics",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/api/v1",
+    "/api/v1/openapi.json",
+}
 _LOOPBACK_IPS = {"127.0.0.1", "::1", "testclient"}
 
 _mem_lock = threading.Lock()

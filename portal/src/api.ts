@@ -57,15 +57,21 @@ async function parseError(res: Response): Promise<string> {
   }
 }
 
+export const SIGNUP_API_KEY_STORAGE = "zent_signup_api_key";
+
 export async function api<T>(
   path: string,
   options: RequestInit & { token?: string; organizationId?: string } = {}
 ): Promise<T> {
   const { token, organizationId, headers, ...rest } = options;
   const h = new Headers(headers);
-  h.set("Content-Type", "application/json");
+  if (!h.has("Content-Type")) h.set("Content-Type", "application/json");
   if (token) h.set("Authorization", `Bearer ${token}`);
   if (organizationId) h.set("X-Organization-Id", organizationId);
+  const method = (rest.method || "GET").toUpperCase();
+  if (["POST", "PUT", "PATCH"].includes(method) && !h.has("Idempotency-Key")) {
+    h.set("Idempotency-Key", crypto.randomUUID());
+  }
 
   const res = await fetch(path, { ...rest, headers: h });
   if (!res.ok) {

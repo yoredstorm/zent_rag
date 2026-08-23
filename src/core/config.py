@@ -231,6 +231,93 @@ class Settings(BaseSettings):
             "(los tenants pueden extender vía config_json)."
         ),
     )
+    # -------------------------------------------------------------------------
+    # Agent Runtime
+    # -------------------------------------------------------------------------
+    RAG_AGENT_MODEL: str = Field(default="")
+    RAG_AGENT_MAX_STEPS: int = Field(default=5, ge=1, le=20)
+    RAG_AGENT_MAX_TOOL_CALLS: int = Field(default=8, ge=1, le=50)
+    RAG_AGENT_MAX_EXECUTION_SECONDS: int = Field(default=60, ge=5, le=300)
+    RAG_AGENT_MAX_TOKENS: int = Field(default=4000, ge=256, le=100_000)
+    RAG_AGENT_MAX_COST: float = Field(default=0.05, ge=0.001, le=100.0)
+    RAG_AGENT_COST_PER_1K_TOKENS: float = Field(
+        default=0.001, ge=0.0, le=1.0,
+        description="Precio estimado por 1000 tokens para cálculo de costo.",
+    )
+    RAG_AGENT_TOOL_TIMEOUT_SECONDS: int = Field(default=10, ge=1, le=120)
+    RAG_AGENT_TOOL_RATE_LIMIT_PER_MINUTE: int = Field(default=20, ge=1, le=600)
+    RAG_AGENT_TOOL_MODULES: str = Field(
+        default="",
+        description=(
+            "Comma-separated module paths que registran tools verticales "
+            "(patrón SQL_HEURISTICS_MODULES)."
+        ),
+    )
+    # -------------------------------------------------------------------------
+    # MCP Server (Model Context Protocol)
+    # -------------------------------------------------------------------------
+    RAG_MCP_ENABLED: bool = Field(
+        default=True,
+        description="Monta el MCP server (Streamable HTTP) en /mcp de la API.",
+    )
+    RAG_MCP_ALLOWED_HOSTS: str = Field(
+        default="localhost:*,127.0.0.1:*,testserver",
+        description=(
+            "Comma-separated Host header allowlist para el guard DNS-rebinding "
+            "del transporte MCP (entradas 'host' o 'host:*')."
+        ),
+    )
+    RAG_MCP_DEFAULT_RPM: int = Field(
+        default=60, ge=1, le=1000,
+        description="Requests/minuto por defecto por tool MCP (override por org).",
+    )
+    # -------------------------------------------------------------------------
+    # Connector Platform
+    # -------------------------------------------------------------------------
+    CONNECTOR_SECRETS_KEY: SecretStr = SecretStr(
+        "zent-connector-secrets-dev-key-change-me"
+    )
+    CONNECTOR_TEST_TIMEOUT_SECONDS: int = Field(default=10, ge=1, le=120)
+    CONNECTOR_DISCOVER_MAX_TABLES: int = Field(default=200, ge=1, le=5000)
+    CONNECTOR_PLUGIN_MODULES: str = Field(
+        default="",
+        description=(
+            "Comma-separated module paths que registran plugins de conectores "
+            "(fallback a entry points zent_connectors)."
+        ),
+    )
+    CONNECTOR_SSRF_BLOCK_PRIVATE: bool = Field(
+        default=True,
+        description="Bloquear hosts en redes privadas en plugins (SSRF guard).",
+    )
+    # -------------------------------------------------------------------------
+    # Usage & Cost Engine
+    # -------------------------------------------------------------------------
+    USAGE_ENGINE_ENABLED: bool = Field(default=True)
+    USAGE_COST_CURRENCY: str = Field(default="USD", max_length=3)
+    USAGE_QUOTA_MARGIN_TOKENS: int = Field(
+        default=1024,
+        ge=0,
+        le=100_000,
+        description="Margen conservador de tokens reservados en pre-flight.",
+    )
+    USAGE_ALERT_THRESHOLDS: str = Field(
+        default="50,80,90,100",
+        description="Umbrales de alerta de quota en porcentaje.",
+    )
+    PRICING_CACHE_TTL: int = Field(default=300, ge=10, le=3600)
+    # -------------------------------------------------------------------------
+    # Billing Platform
+    # -------------------------------------------------------------------------
+    PAYMENT_PROVIDER: str = Field(
+        default="manual",
+        description="Provider de pagos: manual | stripe (futuro).",
+    )
+    BILLING_WEBHOOK_SECRET: SecretStr = SecretStr(
+        "zent-billing-webhook-secret-change-me"
+    )
+    BILLING_PAST_DUE_GRACE_DAYS: int = Field(default=7, ge=1, le=90)
+    BILLING_INVOICE_DAY: int = Field(default=1, ge=1, le=28)
     SQL_HEURISTICS_MODULES: str = Field(
         default="",
         description=(
@@ -264,6 +351,61 @@ class Settings(BaseSettings):
     RAG_ADMIN_ENABLED: bool = Field(default=True)
     RAG_CHUNK_MAX_CHARS: int = Field(default=1200, ge=200, le=8000)
     RAG_CHUNK_OVERLAP: int = Field(default=150, ge=0, le=500)
+
+    # -------------------------------------------------------------------------
+    # Evaluation Engine — golden sets, LLM-judge, regresión de versiones
+    # -------------------------------------------------------------------------
+    EVAL_JUDGE_ENABLED: bool = Field(
+        default=True,
+        description="Habilita el LLM-judge para métricas de calidad (faithfulness, etc.).",
+    )
+    EVAL_JUDGE_MODEL: str = Field(
+        default="gpt-4o-mini",
+        description="Modelo usado por el LLM-judge (LiteLLM).",
+    )
+    EVAL_JUDGE_MAX_TOKENS: int = Field(default=256, ge=64, le=2048)
+    EVAL_DEFAULT_TOP_K: int = Field(
+        default=200,
+        ge=1,
+        le=500,
+        description="Top-k por defecto del runner de evaluación si el caso no lo fija.",
+    )
+    EVAL_REGRESSION_QUALITY_MIN_DELTA: float = Field(
+        default=-0.05,
+        ge=-1.0,
+        le=1.0,
+        description="Delta mínimo de score compuesto antes de marcar regresión de calidad.",
+    )
+    EVAL_REGRESSION_FAITHFULNESS_MIN_DELTA: float = Field(
+        default=-0.10,
+        ge=-1.0,
+        le=1.0,
+        description="Delta mínimo de faithfulness antes de marcar regresión.",
+    )
+    EVAL_REGRESSION_HALLUCINATION_MAX_DELTA: float = Field(
+        default=0.10,
+        ge=0.0,
+        le=1.0,
+        description="Aumento máximo de hallucination_rate antes de marcar regresión.",
+    )
+    EVAL_REGRESSION_COST_MAX_INCREASE_PCT: float = Field(
+        default=10.0,
+        ge=0.0,
+        le=1000.0,
+        description="Aumento porcentual máximo de costo/caso antes de marcar regresión.",
+    )
+    EVAL_REGRESSION_LATENCY_MAX_INCREASE_PCT: float = Field(
+        default=10.0,
+        ge=0.0,
+        le=1000.0,
+        description="Aumento porcentual máximo de latencia p95 antes de marcar regresión.",
+    )
+    EVAL_REGRESSION_LATENCY_MAX_INCREASE_MS: float = Field(
+        default=200.0,
+        ge=0.0,
+        le=60000.0,
+        description="Aumento absoluto máximo de latencia p95 (ms) antes de marcar regresión.",
+    )
 
     # -------------------------------------------------------------------------
     # Ingestion performance

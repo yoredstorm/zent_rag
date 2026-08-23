@@ -90,6 +90,10 @@ def _is_public(path: str, method: str) -> bool:
         return True
     if method == "POST" and path in _PUBLIC_AUTH_POST:
         return True
+    # Webhooks de billing: públicos; la ÚNICA protección es la firma
+    # criptográfica verificada dentro de la ruta.
+    if method == "POST" and path.startswith("/api/v1/billing/webhooks/"):
+        return True
     return False
 
 
@@ -120,14 +124,10 @@ async def _roles_permissions_for_user(
 
 
 def _permissions_for_scopes(scopes: list[str]) -> frozenset[str]:
-    """API keys: los scopes rag:* actúan como permisos; admin:* lo eleva todo."""
-    perms: set[str] = set()
-    for scope in scopes or []:
-        if scope == "admin:*":
-            perms.add("*")
-        elif scope.startswith("rag:"):
-            perms.add(scope)
-    return frozenset(perms)
+    """API keys: cada scope del allowlist se traduce a permisos RBAC."""
+    from src.platform.auth.scopes import scope_to_permissions
+
+    return scope_to_permissions(scopes or [])
 
 
 class TenantMiddleware(BaseHTTPMiddleware):

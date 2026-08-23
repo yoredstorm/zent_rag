@@ -1,58 +1,100 @@
 [
   {
     "id": "farmacia-001",
-    "query": "¿Cuáles son los analgésicos más vendidos y cuánto cuestan?",
-    "role": "admin",
-    "expected_keywords": ["analgésico", "paracetamol", "ibuprofeno", "precio"],
-    "relevant_chunks": ["paracetamol", "ibuprofeno", "analgésico"],
-    "top_k": 20
+    "question": "¿Cuáles son los analgésicos más vendidos y cuánto cuestan?",
+    "expected_answer": "Los analgésicos más vendidos son el paracetamol y el ibuprofeno. El paracetamol cuesta alrededor de $4.990 y el ibuprofeno $6.490.",
+    "expected_sources": ["paracetamol", "ibuprofeno", "analgésico"],
+    "metadata": {
+      "role": "admin",
+      "top_k": 20,
+      "category": "catalogo",
+      "difficulty": "easy",
+      "target": "rag",
+      "expected_keywords": ["analgésico", "paracetamol", "ibuprofeno", "precio"]
+    }
   },
   {
     "id": "farmacia-002",
-    "query": "Necesito algo para el resfrío y la tos, ¿qué me recomiendan?",
-    "role": "customer",
-    "expected_keywords": ["antigripal", "tos", "resfrío", "propóleo"],
-    "relevant_chunks": ["antigripal", "tos", "propóleo", "resfrío"],
-    "top_k": 20
+    "question": "Necesito algo para el resfrío y la tos, ¿qué me recomiendan?",
+    "expected_answer": "Para el resfrío y la tos puede tomar un antigripal y propóleo, que ayudan a aliviar los síntomas.",
+    "expected_sources": ["antigripal", "tos", "propóleo", "resfrío"],
+    "metadata": {
+      "role": "customer",
+      "top_k": 20,
+      "category": "recomendacion",
+      "difficulty": "easy",
+      "target": "rag",
+      "expected_keywords": ["antigripal", "tos", "resfrío", "propóleo"]
+    }
   },
   {
     "id": "farmacia-003",
-    "query": "¿Cuántos medicamentos requieren receta médica en el catálogo?",
-    "role": "admin",
-    "expected_keywords": ["receta", "prescripción", "requiere"],
-    "relevant_chunks": ["receta", "prescripción"],
-    "top_k": 20
+    "question": "¿Cuántos medicamentos requieren receta médica en el catálogo?",
+    "expected_answer": "La mayoría de los medicamentos que requieren receta o prescripción médica están identificados en el catálogo con su indicación.",
+    "expected_sources": ["receta", "prescripción"],
+    "metadata": {
+      "role": "admin",
+      "top_k": 20,
+      "category": "catalogo",
+      "difficulty": "medium",
+      "target": "rag",
+      "expected_keywords": ["receta", "prescripción", "requiere"]
+    }
   },
   {
     "id": "farmacia-004",
-    "query": "Resumen de ventas totales por categoría de medicamento",
-    "role": "admin",
-    "expected_keywords": ["venta", "categoría", "medicamento", "ingreso"],
-    "relevant_chunks": ["venta", "categoría", "medicamento"],
-    "top_k": 20
+    "question": "Resumen de ventas totales por categoría de medicamento",
+    "expected_answer": "El resumen de ventas por categoría muestra los ingresos de cada categoría de medicamento.",
+    "expected_sources": ["venta", "categoría", "medicamento"],
+    "metadata": {
+      "role": "admin",
+      "top_k": 20,
+      "category": "ventas",
+      "difficulty": "medium",
+      "target": "rag",
+      "expected_keywords": ["venta", "categoría", "medicamento", "ingreso"]
+    }
   },
   {
     "id": "farmacia-005",
-    "query": "Hola, ¿tienen algo natural para poder dormir mejor?",
-    "role": "customer",
-    "expected_keywords": ["dormir", "natural", "valeriana", "melisa", "sueño"],
-    "relevant_chunks": ["dormir", "valeriana", "melisa", "sueño"],
-    "top_k": 10
+    "question": "Hola, ¿tienen algo natural para poder dormir mejor?",
+    "expected_answer": "Sí, tenemos opciones naturales como valeriana o melisa, que ayudan a conciliar el sueño.",
+    "expected_sources": ["dormir", "valeriana", "melisa", "sueño"],
+    "metadata": {
+      "role": "customer",
+      "top_k": 10,
+      "category": "recomendacion",
+      "difficulty": "easy",
+      "target": "rag",
+      "expected_keywords": ["dormir", "natural", "valeriana", "melisa", "sueño"]
+    }
   },
   {
     "id": "farmacia-006",
-    "query": "¿Qué proveedores o laboratorios suministran productos cardiovasculares?",
-    "role": "admin",
-    "expected_keywords": ["proveedor", "laboratorio", "cardiovascular", "losartán"],
-    "relevant_chunks": ["proveedor", "laboratorio", "cardiovascular", "losartán"],
-    "top_k": 20
+    "question": "¿Qué proveedores o laboratorios suministran productos cardiovasculares?",
+    "expected_answer": "Los laboratorios proveedores suministran productos cardiovasculares como el losartán.",
+    "expected_sources": ["proveedor", "laboratorio", "cardiovascular", "losartán"],
+    "metadata": {
+      "role": "admin",
+      "top_k": 20,
+      "category": "proveedores",
+      "difficulty": "medium",
+      "target": "rag",
+      "expected_keywords": ["proveedor", "laboratorio", "cardiovascular", "losartán"]
+    }
   },
   {
     "id": "farmacia-007",
-    "query": "¿Cuánto cubre Fonasa y las isapres en los medicamentos con receta?",
-    "role": "customer",
-    "expected_keywords": ["fonasa", "isapre", "cobertura", "receta", "porcentaje"],
-    "relevant_chunks": ["fonasa", "isapre", "cobertura", "receta"],
-    "top_k": 20
+    "question": "¿Cuánto cubre Fonasa y las isapres en los medicamentos con receta?",
+    "expected_answer": "Fonasa y las isapres tienen distintos porcentajes de cobertura para medicamentos con receta.",
+    "expected_sources": ["fonasa", "isapre", "cobertura", "receta"],
+    "metadata": {
+      "role": "customer",
+      "top_k": 20,
+      "category": "cobertura",
+      "difficulty": "hard",
+      "target": "rag",
+      "expected_keywords": ["fonasa", "isapre", "cobertura", "receta", "porcentaje"]
+    }
   }
 ]

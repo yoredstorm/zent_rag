@@ -32,6 +32,7 @@ class SubscriptionStatus(StrEnum):
     CANCELED = "canceled"
     EXPIRED = "expired"
     PAUSED = "paused"
+    SUSPENDED = "suspended"
 
 
 class BillingInterval(StrEnum):
@@ -384,13 +385,29 @@ class ApiKey:
     organization_id: UUID
     name: str = "Default"
     key_hash: str = ""
-    key_prefix: str = "rag_live_"
-    scopes: list[str] = field(default_factory=lambda: ["rag:query", "rag:ingest"])
+    key_prefix: str = "zent_sk_live_"
+    scopes: list[str] = field(default_factory=lambda: ["rag:read", "rag:write"])
     is_active: bool = True
     created_by: UUID | None = None
     last_used_at: datetime | None = None
     expires_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+API_TOKEN_PREFIXES: tuple[str, ...] = (
+    "zent_sk_live_",
+    "zent_sk_test_",
+    "rag_live_",
+    "rag_test_",
+)
+
+
+def display_api_key_prefix(token: str) -> str:
+    """Prefijo visible de una API key. El secreto completo no se persiste."""
+    for prefix in API_TOKEN_PREFIXES:
+        if token.startswith(prefix):
+            return prefix
+    return token[:12]
 
 
 @dataclass(kw_only=True, frozen=True)

@@ -1,0 +1,26 @@
+{
+  "name": "zent-node",
+  "version": "1.0.0",
+  "description": "Zent Node SDK — client.chat() in under 5 minutes",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "typescript": "^5.6.0",
+    "vitest": "^3.0.0"
+  }
+}

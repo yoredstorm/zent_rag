@@ -2,6 +2,17 @@
 
 AI Agent Orchestration con Retrieval-Augmented Generation (RAG) multi-organization, full observability y facturación integrada.
 
+## Quickstart (developer)
+
+```python
+from zent import Zent
+
+client = Zent(api_key="zent_sk_live_...")
+print(client.chat("What is our refund policy?").answer)
+```
+
+Docs: [docs/developers/quickstart.md](docs/developers/quickstart.md). API versionada en `/api/v1`.
+
 ## Stack Tecnológico
 
 | Capa | Tecnología | Rol |
@@ -29,6 +40,7 @@ AI Agent Orchestration con Retrieval-Augmented Generation (RAG) multi-organizati
 │  ├── /api/v1/ingestion/*  Data ingestion (SQL → Vector DB)     │
 │  ├── /api/v1/admin/*  Dynamic table management (dev only)       │
 │  ├── /api/v1/billing/*  Subscription & API key management       │
+│  ├── /mcp               MCP Server (Streamable HTTP, stateless) │
 │  └── /docs            Swagger UI auto-generated                 │
 ├─────────────────────────────────────────────────────────────────┤
 │  agents/runtime — Orquestador (SQL-first vs RAG) + policies     │
@@ -110,6 +122,14 @@ zent_rag/
 │   │                           # prompt, health, organizations, projects,
 │   │                           # knowledge_bases, agents, connectors, audit
 │   │
+│   ├── mcp_server/             # MCP Server (composition root, montado en /mcp)
+│   │   ├── app.py              # MCPServer + transporte Streamable HTTP
+│   │   ├── tools.py            # search_knowledge, query_database, get_document,
+│   │   │                       # execute_agent, get_usage
+│   │   ├── policy.py           # RBAC + config_json['mcp'] + rate limits por tool
+│   │   ├── context.py          # identidad desde TenantContext (nunca arguments)
+│   │   └── audit.py            # audit_logs + usage_events por tool call
+│   │
 │   ├── core/                   # Isla agnóstica de negocio (cero frameworks)
 │   │   ├── domain/             # entities.py, services.py
 │   │   ├── ports/              # ABCs: platform_repos, rag_ports, sql_expert
@@ -127,7 +147,9 @@ zent_rag/
 │   │
 │   ├── rag/                    # Capacidad RAG genérica
 │   │   ├── reranking/          # reranker.py
-│   │   └── evaluation/         # store.py (feedback/stats)
+│   │   └── evaluation/         # store.py (feedback/stats) + eval engine
+│   │                           # (datasets, metrics, judge, targets, runner,
+│   │                           # snapshot, regression)
 │   │
 │   ├── connectors/sql/         # schema_discovery, ingestion, queue, worker
 │   │
@@ -144,7 +166,7 @@ zent_rag/
 │   ├── verticals/              # Lógica vertical como plugins (NO está en core)
 │   │   └── demo_farmacia/      # prompts.py, heuristics.py, golden/
 │   │
-│   └── scripts/eval_rag.py     # Runner de evaluación golden set
+│   └── scripts/                # eval_rag.py (legacy) + eval_engine.py (CLI engine)
 │
 ├── tests/
 │   ├── conftest.py             # Async fixtures (mock DB, Qdrant, Redis, LLM)
@@ -222,12 +244,28 @@ docker exec rag-ollama ollama pull bge-m3
 | Servicio | URL | Credenciales |
 |---|---|---|
 | **Portal B2B** | http://localhost:8080 | Signup trial / Bearer token |
-| **API Docs (Swagger)** | http://localhost:8000/docs | API Key en header |
-| **API Docs (ReDoc)** | http://localhost:8000/redoc | API Key en header |
+| **API Docs (Swagger)** | http://localhost:8000/docs o http://localhost:8080/docs | API Key en header |
+| **API Docs (ReDoc)** | http://localhost:8000/redoc o http://localhost:8080/redoc | API Key en header |
 | **Grafana Dashboards** | http://localhost:3000 | admin / admin |
 | **Prometheus** | http://localhost:9090 | Sin auth |
 | **Loki** | http://localhost:3100 | Sin auth |
 | **PostgreSQL** | localhost:5432 | rag_user / changeme_in_production |
+
+Tras el signup, `client.chat()` contra el stack Docker:
+
+```bash
+pip install -e sdk/python
+# default: http://localhost:8000/api/v1
+```
+
+```python
+from zent import Zent
+
+client = Zent(api_key="zent_sk_live_...")
+print(client.chat("What is our refund policy?").answer)
+```
+
+Docs: [docs/developers/quickstart.md](docs/developers/quickstart.md). Volúmenes Postgres ya existentes aplican `alembic upgrade head` (revisión `012`) al arrancar `api`.
 
 ### 5. Flujo de uso típico
 
@@ -446,6 +484,120 @@ POST   /api/v1/jobs/{id}/cancel           # Cancelar
 
 **Conectores:** `sql` (port del motor existente), `file`/`csv`/`excel` (uploads locales, volumen `uploads_data`), `web` (URL → HTML → MD), `s3` (boto3, extensión-config), `api` (config-driven con paginación page/offset/cursor). Credenciales en Vault (nunca en `config_json`).
 
+## ZENT Evaluation Engine
+
+Framework de evaluación de RAG y Agents con detección de regresión entre
+versiones. Responde: **"¿La versión nueva de Zent realmente es mejor que la anterior?"**
+
+### Dataset (schema v2)
+
+Cada caso soporta `question`, `expected_answer`, `expected_sources` y `metadata`.
+Los golden sets v1 (`query`, `expected_keywords`, `relevant_chunks`) se aceptan
+como fallback y se normalizan automáticamente.
+
+```json
+[
+  {
+    "id": "farmacia-001",
+    "question": "¿Cuáles son los analgésicos más vendidos y cuánto cuestan?",
+    "expected_answer": "Paracetamol e ibuprofeno, con precios desde $4.990.",
+    "expected_sources": ["paracetamol", "ibuprofeno"],
+    "metadata": {"role": "admin", "top_k": 20, "category": "catalogo",
+                 "difficulty": "easy", "target": "rag"}
+  }
+]
+```
+
+Golden sets: `src/verticals/demo_farmacia/golden/rag_farmacia.json` y
+`tests/golden/rag_retail.json`.
+
+### Métricas
+
+- **Deterministas (sin costo de LLM):** `retrieval_precision`, `retrieval_recall`,
+  `citation_accuracy` (citas `[Doc: N]` verificadas contra contexto).
+- **LLM-judge (LiteLLM, modelo configurable `RAG_EVAL_JUDGE_MODEL`):**
+  `context_relevance`, `answer_relevance`, `faithfulness`, `hallucination_rate`.
+  Desactivable con `RAG_EVAL_JUDGE_ENABLED=false` o `--no-judge`.
+- **Performance:** latencia (total/retrieval/LLM, avg/p50/p95), tokens, costo
+  (vía `platform.billing.pricing`).
+- **Score compuesto** ponderado (pesos configurables por dataset); se
+  renormaliza si una componente no está disponible.
+
+### Versiones
+
+Cada run captura un `version_snapshot` (prompt + hash, model, embedding,
+chunking, retriever, reranker, git commit) y deriva un `version_id` estable.
+Dos runs con distinto `version_id` = versiones distintas.
+
+### Flujo en Docker
+
+```bash
+# Importar el golden set (schema v2)
+docker compose exec api python src/scripts/eval_engine.py \
+  import-dataset --golden src/verticals/demo_farmacia/golden/rag_farmacia.json
+
+# Ejecutar evaluación (RAG pipeline; judge on si hay API key LLM)
+docker compose exec api python src/scripts/eval_engine.py \
+  run --dataset-id <uuid> --target rag
+
+# Ejecutar contra un agente configurado
+docker compose exec api python src/scripts/eval_engine.py \
+  run --dataset-id <uuid> --target agent --agent-id <uuid>
+
+# Listar runs / ver detalle
+docker compose exec api python src/scripts/eval_engine.py list
+docker compose exec api python src/scripts/eval_engine.py show --run-id <uuid>
+
+# Regresión: comparar versión nueva vs anterior (exit 1 si regresa)
+docker compose exec api python src/scripts/eval_engine.py \
+  compare --baseline <run-antiguo> --current <run-nuevo>
+```
+
+La comparación alerta (warn/fail) cuando la calidad baja (`composite_score`,
+`faithfulness`, `hallucination_rate`), el costo sube o la latencia p95 sube.
+Umbrales configurables vía `RAG_EVAL_REGRESSION_*` (ver `.env.example`).
+
+### API REST (admin de organización)
+
+```bash
+POST /api/v1/eval/datasets/import        # {name, cases, weights?, metadata?}
+GET  /api/v1/eval/datasets
+POST /api/v1/eval/runs                   # {dataset_id, target_type: rag|agent, target_id?, judge_enabled}
+GET  /api/v1/eval/runs
+GET  /api/v1/eval/runs/{run_id}          # detalle con casos
+POST /api/v1/eval/runs/{run_id}/compare  # {baseline_run_id} → reporte de regresión
+```
+
+Persistencia: tablas `eval_datasets`, `eval_runs` y `eval_case_results`
+(migración Alembic `011`). Los endpoints legacy `/api/v1/eval/feedback`,
+`/stats`, `/recent` y `/run` siguen operativos.
+
+## MCP Server
+
+Zent expone sus capacidades vía **Model Context Protocol** (Streamable HTTP,
+stateless) montado en la misma API bajo `/mcp` — los middlewares de
+autenticación, cuota y rate limits aplican igual que en REST (sin bypass).
+
+```bash
+# URL MCP: http://localhost:8000/mcp
+# Header en cada request: Authorization: Bearer zent_sk_live_...
+```
+
+| Tool | Permiso RBAC | Descripción |
+|---|---|---|
+| `search_knowledge` | `rag:read` | Búsqueda semántica en la KB del tenant |
+| `query_database` | `rag:read` | NL → SQL read-only validado (SQL solo visible a admin) |
+| `get_document` | `rag:read` | Chunks por `document_id` (aislamiento de tenant estricto) |
+| `execute_agent` | `agents:execute` | Ejecuta un agente (ReAct, allowlist, guardrails, quotas) |
+| `get_usage` | `usage:read` | Agregados de uso (requests, tokens, costo) |
+
+- **Política por org** en `config_json["mcp"]`: habilitar/deshabilitar MCP o
+  por tool, `min_role`, `rpm` (rate limit por tool vía Redis).
+- **Auditoría**: cada tool call escribe `audit_logs` con `mcp_client`, tool,
+  tenant, user, cost y resultado; el consumo se registra en la Usage Engine.
+- Docs: [docs/developers/mcp.md](docs/developers/mcp.md). Config:
+  `RAG_RAG_MCP_ENABLED`, `RAG_RAG_MCP_ALLOWED_HOSTS`, `RAG_RAG_MCP_DEFAULT_RPM`.
+
 ## Variables de Entorno
 
 Todas las variables usan el prefijo `RAG_` (configurado en `src/config.py` con `pydantic-settings`). Variables principales:
@@ -476,6 +628,9 @@ Todas las variables usan el prefijo `RAG_` (configurado en `src/config.py` con `
 | `RAG_RAG_LAZY_INGEST_MAX_ROWS_PER_TABLE` | `25` | Filas candidatas por tabla en lazy ingest |
 | `RAG_RAG_LAZY_INGEST_MAX_TABLES` | `5` | Tablas máximas escaneadas en lazy ingest |
 | `RAG_RAG_LAZY_INGEST_TIMEOUT_SECONDS` | `4` | Timeout del fallback lazy (segundos) |
+| `RAG_EVAL_JUDGE_ENABLED` | `true` | Activa el LLM-judge de métricas de calidad |
+| `RAG_EVAL_JUDGE_MODEL` | `gpt-4o-mini` | Modelo del juez de evaluación |
+| `RAG_EVAL_REGRESSION_QUALITY_MIN_DELTA` | `-0.05` | Delta mínimo de score compuesto antes de marcar regresión |
 
 ## Comandos Útiles
 

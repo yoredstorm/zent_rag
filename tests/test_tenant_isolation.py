@@ -81,7 +81,9 @@ async def async_client() -> AsyncClient:
     app.dependency_overrides[get_rag_orchestrator] = lambda: _MockOrchestrator()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        yield client
+        from tests.conftest import attach_auto_idempotency
+
+        yield attach_auto_idempotency(client)
     app.dependency_overrides.clear()
 
 

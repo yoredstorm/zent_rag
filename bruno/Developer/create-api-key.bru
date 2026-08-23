@@ -1,0 +1,27 @@
+meta {
+  name: Create API key
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/api/v1/organizations/api-keys
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+  Idempotency-Key: {{idempotency_key}}
+}
+
+auth:bearer {
+  token: {{portal_session}}
+}
+
+body:json {
+  {
+    "name": "sdk-backend",
+    "scopes": ["rag:read", "rag:write"]
+  }
+}

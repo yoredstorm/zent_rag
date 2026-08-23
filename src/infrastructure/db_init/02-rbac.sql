@@ -71,7 +71,10 @@ INSERT INTO permissions (id, code, description) VALUES
     ('40000000-0000-0000-0000-000000000019', 'rag:query',      'Ejecutar consultas RAG'),
     ('40000000-0000-0000-0000-000000000020', 'rag:ingest',     'Sincronizar datos (ingestion)'),
     ('40000000-0000-0000-0000-000000000021', 'sources:read',   'Ver fuentes de datos'),
-    ('40000000-0000-0000-0000-000000000022', 'sources:write',  'Crear/editar/sincronizar fuentes de datos')
+    ('40000000-0000-0000-0000-000000000022', 'sources:write',  'Crear/editar/sincronizar fuentes de datos'),
+    ('40000000-0000-0000-0000-000000000023', 'rag:read',       'Leer / consultar RAG (chat)'),
+    ('40000000-0000-0000-0000-000000000024', 'rag:write',      'Escribir en RAG (ingestion, fuentes, KBs)'),
+    ('40000000-0000-0000-0000-000000000025', 'agents:execute', 'Ejecutar agentes')
 ON CONFLICT (code) DO NOTHING;
 
 -- -----------------------------------------------------------------------------
@@ -107,7 +110,8 @@ WHERE r.organization_id IS NULL AND r.name = 'member'
     'agents:read', 'agents:write',
     'connectors:read', 'connectors:write',
     'sources:read', 'sources:write',
-    'usage:read', 'billing:read', 'audit:read', 'rag:query', 'rag:ingest')
+    'usage:read', 'billing:read', 'audit:read', 'rag:query', 'rag:ingest',
+    'rag:read', 'rag:write', 'agents:execute')
 ON CONFLICT DO NOTHING;
 
 INSERT INTO role_permissions (role_id, permission_id)
@@ -117,7 +121,7 @@ WHERE r.organization_id IS NULL AND r.name = 'viewer'
     'org:read', 'users:read', 'apikeys:read',
     'projects:read', 'kbs:read', 'agents:read', 'connectors:read',
     'sources:read',
-    'usage:read', 'billing:read', 'audit:read', 'rag:query')
+    'usage:read', 'billing:read', 'audit:read', 'rag:query', 'rag:read')
 ON CONFLICT DO NOTHING;
 
 -- -----------------------------------------------------------------------------

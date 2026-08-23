@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -221,7 +222,7 @@ async def rotate_token(
             await billing.revoke_api_key(organization_id, UUID(key["id"]))
 
     token = await billing.create_api_key(
-        organization_id, "Default", ["rag:query", "rag:ingest"], created_by=ctx.user_id
+        organization_id, "Default", ["rag:read", "rag:write"], created_by=ctx.user_id
     )
     return {
         "token": token,
@@ -237,88 +238,13 @@ async def get_usage(
     limit: int = 50,
 ):
     """Agregados desde usage_logs para el dashboard del portal."""
-    from sqlalchemy import text
+    from src.platform.rbac.policy import require_permission
+    from src.platform.usage.aggregation import get_organization_usage
 
-    from src.infrastructure.postgres.relational_db import get_async_session
+    require_permission(request, "usage:read")
 
     organization_id = _organization_from_request(request, x_organization_id)
-    days = max(1, min(days, 90))
-    limit = max(1, min(limit, 200))
-
-    session = await get_async_session()
-    try:
-        daily = await session.execute(
-            text(
-                """
-                SELECT date_trunc('day', created_at)::date AS day,
-                       COUNT(*)::int AS requests,
-                       COALESCE(SUM(total_tokens), 0)::int AS tokens,
-                       COALESCE(AVG(latency_ms), 0)::float AS avg_latency_ms
-                FROM usage_logs
-                WHERE organization_id = :oid
-                  AND created_at >= NOW() - (:days || ' days')::interval
-                GROUP BY 1
-                ORDER BY 1 DESC
-                """
-            ),
-            {"oid": organization_id, "days": str(days)},
-        )
-        recent = await session.execute(
-            text(
-                """
-                SELECT id, total_tokens, latency_ms, model, created_at
-                FROM usage_logs
-                WHERE organization_id = :oid
-                ORDER BY created_at DESC
-                LIMIT :lim
-                """
-            ),
-            {"oid": organization_id, "lim": limit},
-        )
-        totals = await session.execute(
-            text(
-                """
-                SELECT COUNT(*)::int AS requests,
-                       COALESCE(SUM(total_tokens), 0)::int AS tokens,
-                       COALESCE(AVG(latency_ms), 0)::float AS avg_latency_ms
-                FROM usage_logs
-                WHERE organization_id = :oid
-                  AND created_at >= NOW() - (:days || ' days')::interval
-                """
-            ),
-            {"oid": organization_id, "days": str(days)},
-        )
-        total_row = totals.fetchone()
-        return {
-            "organization_id": str(organization_id),
-            "days": days,
-            "totals": {
-                "requests": total_row.requests if total_row else 0,
-                "tokens": total_row.tokens if total_row else 0,
-                "avg_latency_ms": round(total_row.avg_latency_ms, 2) if total_row else 0,
-            },
-            "daily": [
-                {
-                    "day": r.day.isoformat(),
-                    "requests": r.requests,
-                    "tokens": r.tokens,
-                    "avg_latency_ms": round(r.avg_latency_ms, 2),
-                }
-                for r in daily.fetchall()
-            ],
-            "recent": [
-                {
-                    "id": r.id,
-                    "total_tokens": r.total_tokens,
-                    "latency_ms": r.latency_ms,
-                    "model": r.model,
-                    "created_at": r.created_at.isoformat(),
-                }
-                for r in recent.fetchall()
-            ],
-        }
-    finally:
-        await session.close()
+    return await get_organization_usage(organization_id, days=days, limit=limit)
 
 
 @router.get("/admin/subscriptions", summary="Listar todas las suscripciones (admin)")
@@ -436,6 +362,227 @@ async def list_organizations(request: Request):
         ],
         "total": len(organizations),
     }
+
+
+# -----------------------------------------------------------------------------
+# Usage & Cost Engine — métricas por agent/api-key/storage + pricing + alerts
+# -----------------------------------------------------------------------------
+class PricingUpdateBody(BaseModel):
+    provider: str = Field(..., min_length=1, max_length=60)
+    model: str = Field(..., min_length=1, max_length=120)
+    input_cost_per_1k: float = Field(..., ge=0.0, le=100.0)
+    output_cost_per_1k: float = Field(..., ge=0.0, le=100.0)
+    embedding_cost_per_1k: float = Field(default=0.0, ge=0.0, le=100.0)
+    currency: str = Field(default="USD", max_length=3)
+
+
+@router.get("/usage/agents", summary="Uso por agente (admin org)")
+async def usage_by_agent(
+    request: Request,
+    days: int = 30,
+):
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.relational_db import get_async_session
+    from src.platform.rbac.policy import require_permission
+
+    require_permission(request, "usage:read")
+    organization_id = _organization_from_request(request)
+    days = max(1, min(days, 90))
+    session = await get_async_session()
+    try:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT agent_id, COUNT(*)::int AS requests, "
+                    "COALESCE(SUM(total_tokens), 0)::int AS tokens, "
+                    "COALESCE(SUM(estimated_cost), 0)::float AS cost, "
+                    "COALESCE(AVG(latency_ms), 0)::float AS avg_latency_ms "
+                    "FROM usage_events "
+                    "WHERE organization_id = :oid AND agent_id IS NOT NULL "
+                    "AND created_at >= NOW() - (:days || ' days')::interval "
+                    "GROUP BY agent_id ORDER BY requests DESC"
+                ),
+                {"oid": organization_id, "days": str(days)},
+            )
+        ).fetchall()
+        return {
+            "agents": [
+                {
+                    "agent_id": str(r.agent_id),
+                    "requests": r.requests,
+                    "tokens": r.tokens,
+                    "estimated_cost": round(r.cost, 8),
+                    "avg_latency_ms": round(r.avg_latency_ms, 2),
+                }
+                for r in rows
+            ]
+        }
+    finally:
+        await session.close()
+
+
+@router.get("/usage/api-keys", summary="Uso por API key (admin org)")
+async def usage_by_api_key(
+    request: Request,
+    days: int = 30,
+):
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.relational_db import get_async_session
+    from src.platform.rbac.policy import require_permission
+
+    require_permission(request, "usage:read")
+    organization_id = _organization_from_request(request)
+    days = max(1, min(days, 90))
+    session = await get_async_session()
+    try:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT api_key_id, COUNT(*)::int AS requests, "
+                    "COALESCE(SUM(estimated_cost), 0)::float AS cost "
+                    "FROM usage_events "
+                    "WHERE organization_id = :oid AND api_key_id IS NOT NULL "
+                    "AND created_at >= NOW() - (:days || ' days')::interval "
+                    "GROUP BY api_key_id ORDER BY requests DESC"
+                ),
+                {"oid": organization_id, "days": str(days)},
+            )
+        ).fetchall()
+        return {
+            "api_keys": [
+                {
+                    "api_key_id": str(r.api_key_id),
+                    "requests": r.requests,
+                    "estimated_cost": round(r.cost, 8),
+                }
+                for r in rows
+            ]
+        }
+    finally:
+        await session.close()
+
+
+@router.get("/usage/storage", summary="Storage vectorial del tenant")
+async def usage_storage(request: Request):
+    from src.platform.rbac.policy import require_permission
+
+    require_permission(request, "usage:read")
+    organization_id = _organization_from_request(request)
+    from src.agents.tools.schema_relevance import SchemaCache  # noqa: F401
+    from src.api.deps import get_cache_provider
+
+    cache = get_cache_provider()
+    key = f"usage:storage:{organization_id.hex}"
+    cached = await cache.get(key)
+    if cached is not None:
+        return {"organization_id": str(organization_id), **json.loads(cached)}
+
+    from qdrant_client import models as qdrant_models
+
+    from src.infrastructure.qdrant.vector_store import (
+        RAG_DOCUMENTS_COLLECTION,
+        _get_client,
+    )
+
+    client = await _get_client()
+    try:
+        count = await client.count(
+            collection_name=RAG_DOCUMENTS_COLLECTION,
+            count_filter=qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(
+                        key="organization_id",
+                        match=qdrant_models.MatchValue(value=str(organization_id)),
+                    )
+                ]
+            ),
+            exact=True,
+        )
+        points = int(count.count or 0)
+    except Exception as exc:
+        points = 0
+    payload = {"vector_points": points}
+    await cache.set(key, json.dumps(payload), ttl_seconds=3600)
+    return {"organization_id": str(organization_id), **payload}
+
+
+@router.get("/pricing", summary="Precios del registry (admin org)")
+async def get_pricing(request: Request):
+    from src.platform.billing.pricing import list_prices
+    from src.platform.rbac.policy import require_organization_admin
+
+    require_organization_admin(request)
+    prices = await list_prices()
+    return {"prices": prices, "count": len(prices)}
+
+
+@router.put("/pricing", summary="Actualizar precio sin deploy (admin org)")
+async def put_pricing(body: PricingUpdateBody, request: Request):
+    from src.platform.billing.pricing import upsert_price
+    from src.platform.rbac.policy import require_organization_admin
+
+    require_organization_admin(request)
+    await upsert_price(
+        provider=body.provider,
+        model=body.model,
+        input_cost_per_1k=body.input_cost_per_1k,
+        output_cost_per_1k=body.output_cost_per_1k,
+        embedding_cost_per_1k=body.embedding_cost_per_1k,
+        currency=body.currency,
+    )
+    return {"status": "updated", "provider": body.provider, "model": body.model}
+
+
+@router.get("/usage/alerts", summary="Alertas de quota (admin org)")
+async def get_usage_alerts(request: Request, limit: int = 50):
+    from src.platform.billing.alerts import list_alerts
+    from src.platform.rbac.policy import require_permission
+
+    require_permission(request, "usage:read")
+    organization_id = _organization_from_request(request)
+    alerts = await list_alerts(organization_id, limit=min(limit, 200))
+    return {"alerts": alerts, "count": len(alerts)}
+
+
+@router.post("/usage/alerts/{alert_id}/ack", summary="Reconocer alerta")
+async def ack_usage_alert(alert_id: str, request: Request):
+    from src.platform.billing.alerts import acknowledge_alert
+    from src.platform.rbac.policy import require_organization_admin
+
+    require_organization_admin(request)
+    organization_id = _organization_from_request(request)
+    try:
+        aid = UUID(alert_id)
+    except ValueError:
+        raise HTTPException(400, "alert_id must be a valid UUID") from None
+    ok = await acknowledge_alert(organization_id, aid)
+    if not ok:
+        raise HTTPException(404, "Alert not found or already acknowledged")
+    return {"status": "acknowledged"}
+
+
+@router.get("/reconciliation", summary="Reconciliar usage vs invoices vs payments (admin)")
+async def billing_reconciliation(request: Request, days: int = 30):
+    from src.platform.billing.reconciliation import reconcile
+    from src.platform.rbac.policy import require_organization_admin
+
+    require_organization_admin(request)
+    organization_id = _organization_from_request(request)
+    report = await reconcile(organization_id, days=days)
+    return {"organization_id": str(organization_id), "report": report}
+
+
+@router.get("/invoices", summary="Facturas de la organización")
+async def list_org_invoices(request: Request, limit: int = 50):
+    from src.platform.billing.invoices import list_invoices
+    from src.platform.rbac.policy import require_organization_admin
+
+    require_organization_admin(request)
+    organization_id = _organization_from_request(request)
+    invoices = await list_invoices(organization_id, limit=min(limit, 200))
+    return {"invoices": invoices, "count": len(invoices)}
 
 
 def _require_admin_billing(request: Request) -> None:

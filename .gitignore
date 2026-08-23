@@ -29,6 +29,15 @@ docker-compose.override.yml
 portal/node_modules/
 portal/dist/
 
+# SDKs
+sdk/node/node_modules/
+sdk/node/dist/
+sdk/python/.pytest_cache/
+
+# Caches
+.pytest_cache/
+.mypy_cache/
+
 # Agent skills (local tooling)
 .agents/
 skills-lock.json

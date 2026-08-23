@@ -90,9 +90,17 @@ async def create_kb(
     request: Request,
     repo: KnowledgeBaseRepository = Depends(get_kb_repo),
 ):
+    from src.platform.billing.plan_limits import (
+        PlanLimitError,
+        check_resource_limit,
+    )
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "kbs:write")
+    try:
+        await check_resource_limit(ctx.organization_id, "knowledge_bases")
+    except PlanLimitError as exc:
+        raise HTTPException(409, str(exc)) from None
     if body.project_id is not None:
         await _require_own_project(ctx, body.project_id)
     kb = await repo.create_kb(

@@ -31,8 +31,10 @@ def get_ctx(request: Request) -> TenantContext:
 
 def require_permission(request: Request, permission: str) -> TenantContext:
     """Exige un permiso del catálogo. 403 con error_code si falta."""
+    from src.platform.auth.scopes import permission_satisfied
+
     ctx = get_ctx(request)
-    if ctx.has_permission(permission):
+    if ctx.has_permission(permission) or permission_satisfied(ctx.permissions, permission):
         return ctx
     if ctx.is_platform_admin():
         # admin:* (tokens de plataforma) pasa toda policy de recursos

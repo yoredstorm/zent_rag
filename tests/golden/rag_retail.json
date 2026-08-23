@@ -1,37 +1,72 @@
 [
   {
     "id": "retail-001",
-    "query": "¿Cuáles son los productos más vendidos?",
-    "role": "admin",
-    "expected_keywords": ["producto", "venta"],
-    "top_k": 20
+    "question": "¿Cuáles son los productos más vendidos?",
+    "expected_answer": "Los productos más vendidos incluyen los artículos con mayor volumen de venta del catálogo.",
+    "expected_sources": ["producto", "venta"],
+    "metadata": {
+      "role": "admin",
+      "top_k": 20,
+      "category": "ventas",
+      "difficulty": "easy",
+      "target": "rag",
+      "expected_keywords": ["producto", "venta"]
+    }
   },
   {
     "id": "retail-002",
-    "query": "Muéstrame zapatos disponibles",
-    "role": "customer",
-    "expected_keywords": ["zapato", "calzado", "producto"],
-    "top_k": 20
+    "question": "Muéstrame zapatos disponibles",
+    "expected_answer": "Estos son los zapatos y calzados disponibles en el catálogo.",
+    "expected_sources": ["zapato", "calzado", "producto"],
+    "metadata": {
+      "role": "customer",
+      "top_k": 20,
+      "category": "catalogo",
+      "difficulty": "easy",
+      "target": "rag",
+      "expected_keywords": ["zapato", "calzado", "producto"]
+    }
   },
   {
     "id": "retail-003",
-    "query": "¿Cuál es el precio de los productos en electrónica?",
-    "role": "customer",
-    "expected_keywords": ["precio", "electrón"],
-    "top_k": 20
+    "question": "¿Cuál es el precio de los productos en electrónica?",
+    "expected_answer": "Los precios de los productos de electrónica están listados en el catálogo.",
+    "expected_sources": ["precio", "electrón"],
+    "metadata": {
+      "role": "customer",
+      "top_k": 20,
+      "category": "catalogo",
+      "difficulty": "easy",
+      "target": "rag",
+      "expected_keywords": ["precio", "electrón"]
+    }
   },
   {
     "id": "retail-004",
-    "query": "Resumen de ingresos totales por categoría",
-    "role": "admin",
-    "expected_keywords": ["ingreso", "categoría", "venta"],
-    "top_k": 20
+    "question": "Resumen de ingresos totales por categoría",
+    "expected_answer": "El resumen de ingresos totales se agrupa por categoría y muestra las ventas de cada una.",
+    "expected_sources": ["ingreso", "categoría", "venta"],
+    "metadata": {
+      "role": "admin",
+      "top_k": 20,
+      "category": "ventas",
+      "difficulty": "medium",
+      "target": "rag",
+      "expected_keywords": ["ingreso", "categoría", "venta"]
+    }
   },
   {
     "id": "retail-005",
-    "query": "Hola, ¿me ayudas a encontrar un regalo?",
-    "role": "customer",
-    "expected_keywords": ["hola", "ayuda", "producto", "zent"],
-    "top_k": 10
+    "question": "Hola, ¿me ayudas a encontrar un regalo?",
+    "expected_answer": "Claro, con gusto te ayudo a encontrar un regalo. ¿Para quién es y qué tipo de producto buscas?",
+    "expected_sources": ["producto", "regalo"],
+    "metadata": {
+      "role": "customer",
+      "top_k": 10,
+      "category": "conversacional",
+      "difficulty": "easy",
+      "target": "rag",
+      "expected_keywords": ["hola", "ayuda", "producto", "zent"]
+    }
   }
 ]

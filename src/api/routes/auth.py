@@ -145,7 +145,7 @@ async def signup(
     await membership_repo.assign_role(organization_id, user.id, "owner")
 
     try:
-        subscription, _api_token = await billing.create_trial_subscription(organization_id)
+        subscription, api_token = await billing.create_trial_subscription(organization_id)
     except ValueError as exc:
         raise HTTPException(500, str(exc)) from exc
 
@@ -166,7 +166,8 @@ async def signup(
         "subscription_id": str(subscription.id),
         "status": "trialing",
         "trial_end": subscription.trial_end.isoformat() if subscription.trial_end else None,
-        "message": "Trial created. Use access_token as Authorization Bearer.",
+        "api_key": api_token,
+        "message": "Trial created. Save api_key now — it will not be shown again.",
     }
 
 

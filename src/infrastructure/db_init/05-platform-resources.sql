@@ -82,7 +82,7 @@ CREATE TABLE IF NOT EXISTS connectors (
     organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     project_id UUID REFERENCES projects(id) ON DELETE SET NULL,
     name VARCHAR(255) NOT NULL,
-    type VARCHAR(20) NOT NULL CHECK (type IN ('sql', 'api', 'files')),
+    type VARCHAR(30) NOT NULL,
     config_json JSONB DEFAULT '{}',
     status VARCHAR(20) NOT NULL DEFAULT 'active'
         CHECK (status IN ('active', 'disabled', 'error')),

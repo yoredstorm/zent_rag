@@ -89,6 +89,67 @@ def get_secret(key: str, fallback: str = "") -> str:
     return fallback
 
 
+def put_connector_secrets(
+    organization_id: str, connector_id: str, secrets: dict
+) -> None:
+    """Escribe secretos de un conector en Vault KV v2.
+
+    Path: {mount}/data/connectors/{organization_id}/{connector_id}
+    Lanza RuntimeError si Vault no está disponible (el caller cae al
+    fallback cifrado local).
+    """
+    client = _get_vault_client()
+    if client is None:
+        raise RuntimeError("Vault not available")
+    from src.core.config import get_settings
+
+    settings = get_settings()
+    path = f"connectors/{organization_id}/{connector_id}"
+    client.secrets.kv.v2.create_or_update_secret(
+        mount_point=settings.VAULT_MOUNT_POINT,
+        path=path,
+        secret=dict(secrets),
+    )
+    logger.info("Connector secrets stored in Vault", connector_id=connector_id)
+
+
+def get_connector_secrets(organization_id: str, connector_id: str) -> dict:
+    """Lee secretos de un conector desde Vault KV v2 ({} si no existen)."""
+    client = _get_vault_client()
+    if client is None:
+        raise RuntimeError("Vault not available")
+    from src.core.config import get_settings
+
+    settings = get_settings()
+    path = f"connectors/{organization_id}/{connector_id}"
+    try:
+        response = client.secrets.kv.v2.read_secret_version(
+            mount_point=settings.VAULT_MOUNT_POINT,
+            path=path,
+        )
+        return dict(response.get("data", {}).get("data", {}) or {})
+    except Exception:
+        return {}
+
+
+def delete_connector_secrets(organization_id: str, connector_id: str) -> None:
+    """Borra secretos de un conector en Vault KV v2 (idempotente)."""
+    client = _get_vault_client()
+    if client is None:
+        raise RuntimeError("Vault not available")
+    from src.core.config import get_settings
+
+    settings = get_settings()
+    path = f"connectors/{organization_id}/{connector_id}"
+    try:
+        client.secrets.kv.v2.delete_metadata_and_all_versions(
+            mount_point=settings.VAULT_MOUNT_POINT,
+            path=path,
+        )
+    except Exception:
+        pass
+
+
 def vault_is_available() -> bool:
     return _get_vault_client() is not None
 

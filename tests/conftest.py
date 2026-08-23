@@ -23,6 +23,30 @@ if str(_SRC_DIR) not in sys.path:
 from src.core.domain.entities import LLMResponse, QueryStatus, RAGQueryResult
 
 
+def attach_auto_idempotency(client: AsyncClient) -> AsyncClient:
+    """Añade Idempotency-Key en mutaciones required salvo X-Skip-Idempotency-Auto."""
+    from src.api.idempotency_middleware import is_idempotency_required
+
+    original = client.request
+
+    async def request(method: str, url, **kwargs):
+        headers = dict(kwargs.get("headers") or {})
+        skip = any(k.lower() == "x-skip-idempotency-auto" for k in headers)
+        if skip:
+            headers = {
+                k: v for k, v in headers.items() if k.lower() != "x-skip-idempotency-auto"
+            }
+        path = str(url).split("?", 1)[0]
+        has_key = any(k.lower() == "idempotency-key" for k in headers)
+        if not skip and not has_key and is_idempotency_required(method, path):
+            headers["Idempotency-Key"] = uuid4().hex
+        kwargs["headers"] = headers
+        return await original(method, url, **kwargs)
+
+    client.request = request  # type: ignore[method-assign]
+    return client
+
+
 class MockRAGOrchestrator:
     """Orquestador falso que retorna respuestas controladas para tests.
 
@@ -75,7 +99,7 @@ async def async_client(mock_orchestrator: MockRAGOrchestrator) -> AsyncGenerator
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as client:
-        yield client
+        yield attach_auto_idempotency(client)
 
     app.dependency_overrides.clear()
 
@@ -87,14 +111,90 @@ async def _reset_rate_limits() -> AsyncGenerator[None, None]:
     Los tests de auth registran fallos bajo ip:testclient que persisten en
     Redis local entre ejecuciones y contaminan tests posteriores.
     """
+    from src.api.idempotency_middleware import reset_memory_idempotency
     from src.platform.auth.rate_limit import (
         clear_auth_failures,
         reset_memory_rate_limits,
     )
 
     reset_memory_rate_limits()
+    reset_memory_idempotency()
     await clear_auth_failures("ip:testclient", "ip:127.0.0.1")
     yield
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _ensure_developer_scopes() -> None:
+    """Inserta rag:read / rag:write / agents:execute si la DB local es anterior."""
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                """
+                INSERT INTO permissions (id, code, description) VALUES
+                    ('40000000-0000-0000-0000-000000000023', 'rag:read',
+                     'Leer / consultar RAG (chat)'),
+                    ('40000000-0000-0000-0000-000000000024', 'rag:write',
+                     'Escribir en RAG (ingestion, fuentes, KBs)'),
+                    ('40000000-0000-0000-0000-000000000025', 'agents:execute',
+                     'Ejecutar agentes')
+                ON CONFLICT (code) DO NOTHING
+                """
+            )
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO role_permissions (role_id, permission_id)
+                SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+                WHERE r.organization_id IS NULL AND r.name = 'owner'
+                ON CONFLICT DO NOTHING
+                """
+            )
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO role_permissions (role_id, permission_id)
+                SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+                WHERE r.organization_id IS NULL AND r.name = 'admin'
+                  AND p.code <> 'billing:write'
+                ON CONFLICT DO NOTHING
+                """
+            )
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO role_permissions (role_id, permission_id)
+                SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+                WHERE r.organization_id IS NULL AND r.name = 'member'
+                  AND p.code IN ('rag:read', 'rag:write', 'agents:execute')
+                ON CONFLICT DO NOTHING
+                """
+            )
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO role_permissions (role_id, permission_id)
+                SELECT r.id, p.id FROM roles r CROSS JOIN permissions p
+                WHERE r.organization_id IS NULL AND r.name = 'viewer'
+                  AND p.code IN ('rag:read')
+                ON CONFLICT DO NOTHING
+                """
+            )
+        )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
 
 
 @pytest_asyncio.fixture

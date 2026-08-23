@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     name VARCHAR(255) NOT NULL DEFAULT 'Default',           -- Etiqueta descriptiva
     key_hash VARCHAR(64) NOT NULL UNIQUE,                   -- SHA-256 del token (nunca plaintext)
     key_prefix VARCHAR(16) NOT NULL,                        -- "rag_live_" o "rag_test_"
-    scopes JSONB NOT NULL DEFAULT '["rag:query", "rag:ingest"]'::jsonb,
+    scopes JSONB NOT NULL DEFAULT '["rag:read", "rag:write"]'::jsonb,
     is_active BOOLEAN NOT NULL DEFAULT true,
     created_by UUID REFERENCES users(id) ON DELETE SET NULL,
     last_used_at TIMESTAMPTZ,

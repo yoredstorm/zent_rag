@@ -7,6 +7,9 @@ license = { text = "Proprietary" }
 authors = [
     { name = "RAG Platform Team" }
 ]
+dependencies = [
+    "mcp>=2.0",
+]
 
 [project.optional-dependencies]
 prod = [
@@ -39,6 +42,14 @@ prod = [
     "opentelemetry-instrumentation-fastapi>=0.51b0",
 ]
 
+# Connector Platform: drivers opcionales de SQL (instalar bajo demanda)
+connectors = [
+    "pymysql>=1.1.0",
+    "pyodbc>=5.1.0",
+    "oracledb>=2.0.0",
+    "ibm-db-sa>=0.4.0",
+]
+
 dev = [
     "ruff>=0.5.0",
     "mypy>=1.10.0",
@@ -49,6 +60,20 @@ dev = [
     "httpx>=0.27.0",
     "pyright>=1.1.0",
 ]
+
+[project.entry-points.zent_connectors]
+postgres = "src.connectors.plugin.plugins.postgres:PostgresPlugin"
+mysql = "src.connectors.plugin.plugins.sql_optional:MysqlPlugin"
+mssql = "src.connectors.plugin.plugins.sql_optional:MssqlPlugin"
+oracle = "src.connectors.plugin.plugins.sql_optional:OraclePlugin"
+db2 = "src.connectors.plugin.plugins.sql_optional:Db2Plugin"
+csv = "src.connectors.plugin.plugins.files:CsvPlugin"
+excel = "src.connectors.plugin.plugins.files:ExcelPlugin"
+json_file = "src.connectors.plugin.plugins.files:JsonFilePlugin"
+pdf = "src.connectors.plugin.plugins.files:PdfPlugin"
+rest_api = "src.connectors.plugin.plugins.api_plugins:RestApiPlugin"
+graphql = "src.connectors.plugin.plugins.api_plugins:GraphqlPlugin"
+s3_compat = "src.connectors.plugin.plugins.s3_compat:S3CompatPlugin"
 
 [build-system]
 requires = ["setuptools>=68.0"]
@@ -84,14 +109,18 @@ ignore = [
 "src/agents/runtime/orchestrator.py" = ["E501"]  # prompt string constants
 "src/infrastructure/observability/metrics.py" = ["F401"]  # Info imported for registry side-effect
 "src/rag/evaluation/store.py" = ["S608"]
+"src/rag/evaluation/judge.py" = ["E501"]  # prompt strings del juez
 "src/agents/tools/sql_expert_postgres.py" = ["E501", "S608", "B007"]  # prompt strings, validated SQL, FK chains loop
 "src/api/routes/admin.py" = ["S608", "F841"]  # validated identifiers, dev-only
 "src/infrastructure/postgres/relational_db.py" = ["E402", "S608"]
 "src/connectors/sql/ingestion.py" = ["S608"]
 "src/connectors/sql/schema_discovery.py" = ["S608"]
+"src/connectors/plugin/plugins/sql_optional.py" = ["S608"]  # LIMIT numérico casteado a int
+"src/platform/billing/plan_limits.py" = ["S608"]  # columna de constante interna
 "src/infrastructure/postgres/knowledge_repos.py" = ["S608"]  # identifiers de constantes internas
 "src/infrastructure/db_init/versions/*.py" = ["S608", "E501"]  # identifiers de constantes internas
 "src/verticals/**/*.py" = ["E501"]  # prompt string constants de verticals
+"sdk/python/tests/**/*.py" = ["S101", "S105"]
 "src/scripts/**/*.py" = ["T201"]  # CLI scripts use print for stdout
 
 [tool.ruff.lint.isort]

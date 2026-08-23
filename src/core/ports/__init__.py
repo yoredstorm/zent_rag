@@ -25,6 +25,7 @@ from src.core.ports.rag_ports import (  # noqa: F401
     RAGQueryStore,
     VectorStore,
 )
+from src.core.ports.secret_store import SecretStore  # noqa: F401
 
 __all__ = [
     "AgentRepository",
@@ -44,6 +45,7 @@ __all__ = [
     "OrganizationRepository",
     "ProjectRepository",
     "RAGQueryStore",
+    "SecretStore",
     "SourceRepository",
     "SyncStateRepository",
     "UserRepository",

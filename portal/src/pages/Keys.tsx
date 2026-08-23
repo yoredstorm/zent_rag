@@ -21,6 +21,15 @@ import {
 } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
 
+const SCOPE_OPTIONS: { id: string; hint: string }[] = [
+  { id: "rag:read", hint: "Chat y consultas RAG" },
+  { id: "rag:write", hint: "Ingestión, fuentes y knowledge bases" },
+  { id: "agents:execute", hint: "Ejecutar agentes" },
+  { id: "connectors:read", hint: "Listar conectores" },
+  { id: "connectors:write", hint: "Crear y editar conectores" },
+  { id: "usage:read", hint: "Métricas de uso" },
+];
+
 type ApiKeyInfo = {
   id: string;
   name: string;
@@ -43,6 +52,10 @@ export default function KeysPage() {
   const [msg, setMsg] = useState("");
   const [newKeyName, setNewKeyName] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [selectedScopes, setSelectedScopes] = useState<string[]>([
+    "rag:read",
+    "rag:write",
+  ]);
 
   useEffect(() => {
     if (!session) return;
@@ -77,7 +90,7 @@ export default function KeysPage() {
         organizationId: session.organizationId,
         body: JSON.stringify({
           name: newKeyName.trim() || "Default",
-          scopes: ["rag:query", "rag:ingest"],
+          scopes: selectedScopes,
         }),
       });
       setNewToken(data.token);
@@ -143,17 +156,48 @@ export default function KeysPage() {
           <div className="border-b border-border px-5 py-4">
             <h2 className="text-sm font-semibold text-text">Crear API key</h2>
           </div>
-          <div className="flex flex-col gap-3 p-5 sm:flex-row sm:items-center">
+          <div className="flex flex-col gap-3 p-5">
             <input
               className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
               placeholder="Nombre (ej. backend-prod)"
               value={newKeyName}
               onChange={(e) => setNewKeyName(e.target.value)}
             />
+            <fieldset>
+              <legend className="mb-2 text-xs font-medium text-muted">Scopes</legend>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {SCOPE_OPTIONS.map((scope) => {
+                  const checked = selectedScopes.includes(scope.id);
+                  return (
+                    <label
+                      key={scope.id}
+                      className="flex min-h-11 cursor-pointer items-start gap-2 rounded-md border border-border px-3 py-2 text-sm"
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-1"
+                        checked={checked}
+                        onChange={() => {
+                          setSelectedScopes((current) =>
+                            checked
+                              ? current.filter((s) => s !== scope.id)
+                              : [...current, scope.id]
+                          );
+                        }}
+                      />
+                      <span>
+                        <span className="mono font-medium text-text">{scope.id}</span>
+                        <span className="block text-xs text-muted">{scope.hint}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </fieldset>
             <button
-              className="btn btn-primary shrink-0"
+              className="btn btn-primary shrink-0 self-start"
               type="button"
-              disabled={creating}
+              disabled={creating || selectedScopes.length === 0}
               onClick={() => void createKey()}
             >
               {creating ? <Spinner size={14} /> : <Plus size={15} aria-hidden />}

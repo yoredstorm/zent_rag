@@ -9,7 +9,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from src.api.deps import (
     get_api_key_repo,
@@ -61,7 +61,20 @@ class AssignRoleRequest(BaseModel):
 
 class CreateApiKeyRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
-    scopes: list[str] = Field(default_factory=lambda: ["rag:query", "rag:ingest"])
+    scopes: list[str] = Field(default_factory=lambda: ["rag:read", "rag:write"])
+
+    @field_validator("scopes")
+    @classmethod
+    def validate_scopes(cls, value: list[str]) -> list[str]:
+        from src.platform.auth.scopes import InvalidApiKeyScope, canonicalize_scopes
+
+        try:
+            canonical = canonicalize_scopes(value)
+        except InvalidApiKeyScope as exc:
+            raise ValueError(str(exc)) from exc
+        if not canonical:
+            raise ValueError("At least one scope is required")
+        return canonical
 
 
 @router.get("", summary="Perfil de la organización autenticada")
@@ -146,6 +159,10 @@ async def assign_role(
     repo: MembershipRepository = Depends(get_membership_repo),
     users: UserRepository = Depends(get_user_repo),
 ):
+    from src.platform.billing.plan_limits import (
+        PlanLimitError,
+        check_resource_limit,
+    )
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "users:write")
@@ -158,6 +175,30 @@ async def assign_role(
     target = await users.get_by_id(uid, ctx.organization_id)
     if target is None:
         raise HTTPException(404, "User not found in this organization")
+
+    # Límite de miembros del plan: solo aplica a miembros NUEVOS.
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    session = await get_async_session()
+    try:
+        existing = (
+            await session.execute(
+                text(
+                    "SELECT COUNT(*) FROM memberships "
+                    "WHERE organization_id = :org AND user_id = :uid"
+                ),
+                {"org": ctx.organization_id, "uid": uid},
+            )
+        ).scalar()
+    finally:
+        await session.close()
+    if not existing:
+        try:
+            await check_resource_limit(ctx.organization_id, "users")
+        except PlanLimitError as exc:
+            raise HTTPException(409, str(exc)) from None
 
     # Proteger el rol owner: solo un owner puede transferir/otorgar owner.
     if body.role == "owner" and "owner" not in ctx.roles:

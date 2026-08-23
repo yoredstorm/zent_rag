@@ -77,6 +77,21 @@ class VectorStore(ABC):
         organization_id); borrar por ID exacto es seguro por construcción.
         """
 
+    @abstractmethod
+    async def get_documents(
+        self,
+        organization_id: UUID,
+        document_ids: list[UUID],
+        role: str = "admin",
+    ) -> RetrievalContext:
+        """Recupera documentos por ID con verificación obligatoria de tenant.
+
+        Contrato de seguridad: los IDs se buscan por punto exacto, pero el
+        payload DEBE verificarse contra `organization_id` (y visibilidad por
+        `role`) antes de devolver cualquier contenido. IDs de otra
+        organización nunca deben aparecer en el resultado.
+        """
+
 
 class LexicalStore(ABC):
     """Puerto para búsqueda lexical (BM25 / sparse vectors) con el MISMO

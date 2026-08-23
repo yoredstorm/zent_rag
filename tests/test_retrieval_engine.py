@@ -235,6 +235,13 @@ class FakeVectorStore(VectorStore):
     async def delete_by_organization(self, organization_id: UUID) -> None: ...
     async def delete_by_knowledge_base(self, organization_id: UUID, knowledge_base_id: UUID) -> None: ...
     async def delete_points(self, organization_id: UUID, point_ids: list[str]) -> None: ...
+    async def get_documents(
+        self,
+        organization_id: UUID,
+        document_ids: list[UUID],
+        role: str = "admin",
+    ) -> RetrievalContext:
+        return RetrievalContext(chunks=[], retrieval_latency_ms=0.0)
 
 
 class FakeLexicalStore(LexicalStore):

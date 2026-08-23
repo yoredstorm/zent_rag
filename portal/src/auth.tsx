@@ -12,6 +12,7 @@ import {
   clearSession,
   loadSession,
   saveSession,
+  SIGNUP_API_KEY_STORAGE,
   type Session,
 } from "./api";
 
@@ -117,6 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         organization_id: string;
         company_name: string;
         email: string;
+        api_key?: string;
       }>("/api/v1/auth/signup", {
         method: "POST",
         body: JSON.stringify({
@@ -125,6 +127,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           password,
         }),
       });
+      if (data.api_key) {
+        sessionStorage.setItem(SIGNUP_API_KEY_STORAGE, data.api_key);
+      }
       const next: Session = {
         token: data.access_token,
         organizationId: data.organization_id,

@@ -47,6 +47,12 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
 
+def _token_id(request: Request) -> UUID | None:
+    """api_key_id del contexto autenticado (para atribución de uso)."""
+    ctx = getattr(request.state, "tenant_context", None)
+    return getattr(ctx, "token_id", None)
+
+
 def _record_metrics(result, organization_id: UUID) -> None:
     """Registra métricas Prometheus para una consulta finalizada."""
     rag_queries_total.labels(
@@ -112,6 +118,10 @@ async def rag_query(
     # ---------------------------------------------------------------
     organization_id, user_id = await _resolve_organization_user(request, x_organization_id, x_user_id)
 
+    from src.platform.rbac.policy import require_permission
+
+    require_permission(request, "rag:read")
+
     # Rol server-side: el cliente solo puede degradar (admin -> customer),
     # nunca elevar (customer -> admin).
     from src.api.security import resolve_effective_role
@@ -151,6 +161,7 @@ async def rag_query(
             score_threshold_override=body.score_threshold,
             retrieval_strategy=body.retrieval_strategy,
             language=body.language,
+            api_key_id=_token_id(request),
         )
     except Exception as exc:
         rag_active_requests.labels(organization_id=str(organization_id)).dec()
@@ -265,6 +276,10 @@ async def rag_query_stream(
 ) -> StreamingResponse:
     organization_id, user_id = await _resolve_organization_user(request, x_organization_id, x_user_id)
 
+    from src.platform.rbac.policy import require_permission
+
+    require_permission(request, "rag:read")
+
     from src.api.security import resolve_effective_role
 
     requested_role = body.role if body.role else x_user_role
@@ -299,6 +314,7 @@ async def rag_query_stream(
                 score_threshold_override=body.score_threshold,
                 retrieval_strategy=body.retrieval_strategy,
                 language=body.language,
+                api_key_id=_token_id(request),
             )
             _record_metrics(result, organization_id)
 

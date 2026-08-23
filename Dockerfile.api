@@ -21,6 +21,7 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 COPY pyproject.toml ./
+COPY sdk/python ./sdk/python
 
 RUN pip install --no-cache-dir \
     fastapi>=0.115.0 \
@@ -49,7 +50,9 @@ RUN pip install --no-cache-dir \
     markitdown[pdf,docx]>=0.1.3 \
     openpyxl>=3.1.0 \
     boto3>=1.34.0 \
-    python-multipart>=0.0.9
+    python-multipart>=0.0.9 \
+    mcp>=2.0 \
+    && pip install --no-cache-dir ./sdk/python
 
 # =============================================================================
 # Stage final — Imagen de producción minimalista

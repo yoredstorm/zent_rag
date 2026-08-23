@@ -1,0 +1,25 @@
+meta {
+  name: Chat query
+  type: http
+  seq: 1
+}
+
+post {
+  url: {{base_url}}/api/v1/rag/query
+  body: json
+  auth: bearer
+}
+
+headers {
+  Content-Type: application/json
+}
+
+auth:bearer {
+  token: {{api_key}}
+}
+
+body:json {
+  {
+    "query": "What is our refund policy?"
+  }
+}

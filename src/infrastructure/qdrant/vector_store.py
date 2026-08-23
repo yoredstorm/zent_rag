@@ -629,6 +629,66 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
                 points_count=len(point_ids),
             )
 
+    async def get_documents(
+        self,
+        organization_id: UUID,
+        document_ids: list[UUID],
+        role: str = "admin",
+    ) -> RetrievalContext:
+        """Fetch por ID con verificación post-hoc de tenant (Qdrant retrieve
+        no acepta filtros): cualquier punto cuyo payload no pertenezca a la
+        organización (o no sea visible para el rol) se descarta."""
+        if organization_id is None:
+            raise ValueError("get_documents() requires organization_id (tenant isolation)")
+        if not document_ids:
+            return RetrievalContext(chunks=[], retrieval_latency_ms=0.0)
+        client = await _get_client()
+        await self._ensure_collection()
+
+        start = time.perf_counter()
+        results = await _retry_on_transient_error(
+            client.retrieve,
+            collection_name=RAG_DOCUMENTS_COLLECTION,
+            ids=[str(doc_id) for doc_id in document_ids],
+            with_payload=True,
+            with_vectors=False,
+            reset_client=True,
+        )
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        chunks: list[RetrievalChunk] = []
+        for point in results:
+            payload = point.payload or {}
+            if payload.get("organization_id") != str(organization_id):
+                logger.warning(
+                    "Cross-tenant document fetch blocked",
+                    document_id=str(point.id),
+                    requested_by=str(organization_id),
+                )
+                continue
+            if role == "customer" and payload.get("metadata", {}).get("visibility") != "public":
+                continue
+            chunks.append(
+                RetrievalChunk(
+                    document_id=UUID(point.id) if point.id else UUID(int=0),
+                    content=payload.get("content", ""),
+                    score=0.0,
+                    metadata=payload.get("metadata", {}),
+                )
+            )
+
+        logger.info(
+            "Documents fetched by id",
+            organization_id=str(organization_id),
+            requested=len(document_ids),
+            returned=len(chunks),
+            latency_ms=round(latency_ms, 2),
+        )
+        return RetrievalContext(
+            chunks=chunks,
+            retrieval_latency_ms=latency_ms,
+        )
+
     async def _delete_with_filter(self, *, must: list, log_message: str) -> None:
         async with _upsert_semaphore():
             client = await _get_client()

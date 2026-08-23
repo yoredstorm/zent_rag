@@ -204,12 +204,10 @@ def require_platform_admin(request: Request) -> TenantContext:
 
 def require_scope(request: Request, scope: str) -> TenantContext:
     """Exige un scope específico en el token/sesión autenticada."""
+    from src.platform.auth.scopes import has_scope
+
     ctx = get_auth_context(request)
-    if (
-        scope not in ctx.scopes
-        and "admin:*" not in ctx.scopes
-        and "portal" not in ctx.scopes
-    ):
+    if not has_scope(ctx.scopes, scope):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Missing required scope: {scope}",
