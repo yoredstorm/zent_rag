@@ -107,8 +107,10 @@ async def cancel_subscription(
     billing: BillingService = Depends(get_billing),
 ):
     from src.api.security import require_organization_admin
+    from src.platform.rbac.policy import require_permission
 
     require_organization_admin(request)
+    require_permission(request, "billing:write")
     organization_id = _organization_from_request(request, x_organization_id)
 
     sub = await billing.get_subscription(organization_id)
@@ -207,8 +209,10 @@ async def rotate_token(
     x_organization_id: str = Header(default="", alias="X-Organization-Id"),
 ):
     from src.api.security import require_organization_admin
+    from src.platform.rbac.policy import require_permission
 
     ctx = require_organization_admin(request)
+    require_permission(request, "billing:write")
     organization_id = _organization_from_request(request, x_organization_id)
 
     billing = get_billing()
@@ -241,7 +245,7 @@ async def get_usage(
     from src.platform.rbac.policy import require_permission
     from src.platform.usage.aggregation import get_organization_usage
 
-    require_permission(request, "usage:read")
+    require_permission(request, "billing:read")
 
     organization_id = _organization_from_request(request, x_organization_id)
     return await get_organization_usage(organization_id, days=days, limit=limit)
@@ -276,7 +280,10 @@ async def upgrade_plan(
             "Plan upgrades require a verified payment flow. Contact support.",
         )
 
+    from src.platform.rbac.policy import require_permission
+
     require_organization_admin(request)
+    require_permission(request, "billing:write")
     organization_id = _organization_from_request(request, x_organization_id)
     if not new_plan_name:
         raise HTTPException(400, "X-New-Plan required (plan name: starter, pro, enterprise)")
@@ -321,8 +328,10 @@ async def update_organization(
     request: Request,
 ):
     from src.api.security import require_organization_admin
+    from src.platform.rbac.policy import require_permission
 
     ctx = require_organization_admin(request)
+    require_permission(request, "billing:write")
     if str(ctx.organization_id) != organization_id:
         raise HTTPException(403, "Cannot update another organization")
 
@@ -386,7 +395,7 @@ async def usage_by_agent(
     from src.infrastructure.postgres.relational_db import get_async_session
     from src.platform.rbac.policy import require_permission
 
-    require_permission(request, "usage:read")
+    require_permission(request, "billing:read")
     organization_id = _organization_from_request(request)
     days = max(1, min(days, 90))
     session = await get_async_session()
@@ -432,7 +441,7 @@ async def usage_by_api_key(
     from src.infrastructure.postgres.relational_db import get_async_session
     from src.platform.rbac.policy import require_permission
 
-    require_permission(request, "usage:read")
+    require_permission(request, "billing:read")
     organization_id = _organization_from_request(request)
     days = max(1, min(days, 90))
     session = await get_async_session()
@@ -468,7 +477,7 @@ async def usage_by_api_key(
 async def usage_storage(request: Request):
     from src.platform.rbac.policy import require_permission
 
-    require_permission(request, "usage:read")
+    require_permission(request, "billing:read")
     organization_id = _organization_from_request(request)
     from src.agents.tools.schema_relevance import SchemaCache  # noqa: F401
     from src.api.deps import get_cache_provider
@@ -521,9 +530,10 @@ async def get_pricing(request: Request):
 @router.put("/pricing", summary="Actualizar precio sin deploy (admin org)")
 async def put_pricing(body: PricingUpdateBody, request: Request):
     from src.platform.billing.pricing import upsert_price
-    from src.platform.rbac.policy import require_organization_admin
+    from src.platform.rbac.policy import require_organization_admin, require_permission
 
     require_organization_admin(request)
+    require_permission(request, "billing:write")
     await upsert_price(
         provider=body.provider,
         model=body.model,
@@ -540,7 +550,7 @@ async def get_usage_alerts(request: Request, limit: int = 50):
     from src.platform.billing.alerts import list_alerts
     from src.platform.rbac.policy import require_permission
 
-    require_permission(request, "usage:read")
+    require_permission(request, "billing:read")
     organization_id = _organization_from_request(request)
     alerts = await list_alerts(organization_id, limit=min(limit, 200))
     return {"alerts": alerts, "count": len(alerts)}
@@ -549,9 +559,10 @@ async def get_usage_alerts(request: Request, limit: int = 50):
 @router.post("/usage/alerts/{alert_id}/ack", summary="Reconocer alerta")
 async def ack_usage_alert(alert_id: str, request: Request):
     from src.platform.billing.alerts import acknowledge_alert
-    from src.platform.rbac.policy import require_organization_admin
+    from src.platform.rbac.policy import require_organization_admin, require_permission
 
     require_organization_admin(request)
+    require_permission(request, "billing:write")
     organization_id = _organization_from_request(request)
     try:
         aid = UUID(alert_id)

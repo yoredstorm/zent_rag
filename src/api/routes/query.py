@@ -16,6 +16,11 @@ from fastapi.responses import StreamingResponse
 
 from src.agents.runtime.orchestrator import RAGOrchestrator
 from src.api.deps import get_rag_orchestrator
+from src.api.security import (
+    ORG_HEADER_DESCRIPTION,
+    ROLE_HEADER_DESCRIPTION,
+    USER_HEADER_DESCRIPTION,
+)
 from src.api.schemas import RAGQueryRequest, RAGQueryResponse, sources_for_client
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.observability.metrics import (
@@ -101,15 +106,15 @@ async def rag_query(
     body: RAGQueryRequest,
     request: Request,
     x_organization_id: str = Header(
-        default="", alias="X-Organization-Id", description="UUID del organization (obligatorio si no usa Bearer token)"
+        default="", alias="X-Organization-Id", description=ORG_HEADER_DESCRIPTION
     ),
     x_user_id: str = Header(
-        default="", alias="X-User-Id", description="UUID del usuario (obligatorio si no usa Bearer token)"
+        default="", alias="X-User-Id", description=USER_HEADER_DESCRIPTION
     ),
     x_user_role: str = Header(
-        default="admin",
+        default="",
         alias="X-User-Role",
-        description="Rol del usuario: admin o customer",
+        description=ROLE_HEADER_DESCRIPTION,
     ),
     orchestrator: RAGOrchestrator = Depends(get_rag_orchestrator),
 ) -> RAGQueryResponse:
@@ -164,7 +169,6 @@ async def rag_query(
             api_key_id=_token_id(request),
         )
     except Exception as exc:
-        rag_active_requests.labels(organization_id=str(organization_id)).dec()
         logger.error(
             "Unhandled exception in RAG query",
             error=str(exc),
@@ -262,15 +266,15 @@ async def rag_query_stream(
     body: RAGQueryRequest,
     request: Request,
     x_organization_id: str = Header(
-        default="", alias="X-Organization-Id", description="UUID del organization (obligatorio si no usa Bearer token)"
+        default="", alias="X-Organization-Id", description=ORG_HEADER_DESCRIPTION
     ),
     x_user_id: str = Header(
-        default="", alias="X-User-Id", description="UUID del usuario (opcional)"
+        default="", alias="X-User-Id", description=USER_HEADER_DESCRIPTION
     ),
     x_user_role: str = Header(
-        default="admin",
+        default="",
         alias="X-User-Role",
-        description="Rol del usuario: admin o customer",
+        description=ROLE_HEADER_DESCRIPTION,
     ),
     orchestrator: RAGOrchestrator = Depends(get_rag_orchestrator),
 ) -> StreamingResponse:

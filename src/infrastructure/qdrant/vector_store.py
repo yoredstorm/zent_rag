@@ -23,6 +23,7 @@ from qdrant_client import models as qdrant_models
 
 from src.core.config import get_settings
 from src.core.domain.entities import RetrievalChunk, RetrievalContext
+from src.platform.tenants.context import bind_organization_id
 from src.core.ports import HybridStore, LexicalStore, VectorStore
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.qdrant.bm25 import encode_sparse, to_sparse_payload
@@ -322,6 +323,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
     ) -> RetrievalContext:
         if organization_id is None:
             raise ValueError("search() requires organization_id (tenant isolation)")
+        organization_id = bind_organization_id(organization_id)
         client = await _get_client()
         await self._ensure_collection()
 
@@ -379,6 +381,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
     ) -> RetrievalContext:
         if organization_id is None:
             raise ValueError("search_sparse() requires organization_id (tenant isolation)")
+        organization_id = bind_organization_id(organization_id)
         client = await _get_client()
         await self._ensure_collection()
         self._ensure_sparse_support()
@@ -444,6 +447,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         """
         if organization_id is None:
             raise ValueError("search_hybrid() requires organization_id (tenant isolation)")
+        organization_id = bind_organization_id(organization_id)
         client = await _get_client()
         await self._ensure_collection()
         self._ensure_sparse_support()
@@ -520,6 +524,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
             return
         if organization_id is None:
             raise ValueError("upsert() requires organization_id (tenant isolation)")
+        organization_id = bind_organization_id(organization_id)
 
         if sparse_vectors is not None and len(sparse_vectors) != len(points):
             raise ValueError("sparse_vectors length must match points length")
@@ -576,6 +581,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
 
     async def delete_by_organization(self, organization_id: UUID) -> None:
         """Elimina todos los vectores de una organización por filtro de payload."""
+        organization_id = bind_organization_id(organization_id)
         await self._delete_with_filter(
             must=[
                 qdrant_models.FieldCondition(
@@ -590,6 +596,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         self, organization_id: UUID, knowledge_base_id: UUID
     ) -> None:
         """Elimina los vectores de una KB (SIEMPRE scoped a su organización)."""
+        organization_id = bind_organization_id(organization_id)
         await self._delete_with_filter(
             must=[
                 qdrant_models.FieldCondition(
@@ -611,6 +618,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         a la organización (generados por el Knowledge Engine desde su registry)."""
         if not point_ids:
             return
+        organization_id = bind_organization_id(organization_id)
         async with _upsert_semaphore():
             client = await _get_client()
             await self._ensure_collection()
@@ -642,6 +650,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         organización (o no sea visible para el rol) se descarta."""
         if organization_id is None:
             raise ValueError("get_documents() requires organization_id (tenant isolation)")
+        organization_id = bind_organization_id(organization_id)
         if not document_ids:
             return RetrievalContext(chunks=[], retrieval_latency_ms=0.0)
         client = await _get_client()

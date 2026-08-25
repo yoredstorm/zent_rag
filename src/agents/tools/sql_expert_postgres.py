@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import re
 import time
@@ -79,6 +80,34 @@ def _validate_sql_ast(sql: str) -> None:
         _check_ctes(stmt, sql)
 
         _check_subqueries(stmt, sql)
+
+
+def rewrite_organization_id_literals(expr: sqlglot.Expression, organization_id: UUID) -> None:
+    """Reemplaza CUALQUIER `organization_id = <literal>` por el UUID autenticado.
+
+    Un predicado escrito por el LLM (otro tenant) no se respeta: se reescribe.
+    """
+    auth = sqlglot.parse_one(f"'{organization_id}'::uuid")
+
+    def _is_org_col(node: sqlglot.exp.Expression | None) -> bool:
+        return isinstance(node, sqlglot.exp.Column) and node.name.lower() == "organization_id"
+
+    for eq in list(expr.find_all(sqlglot.exp.EQ)):
+        left, right = eq.left, eq.right
+        if _is_org_col(left):
+            eq.set("expression", auth.copy())
+        elif _is_org_col(right):
+            eq.set("this", auth.copy())
+
+
+def rewrite_sql_organization_id(sql: str, organization_id: UUID) -> str:
+    """Reescribe literales organization_id en un SQL (admin console / tests)."""
+    try:
+        expr = sqlglot.parse_one(sql, error_level=sqlglot.ErrorLevel.RAISE)
+    except Exception:
+        return sql
+    rewrite_organization_id_literals(expr, organization_id)
+    return expr.sql()
 
 
 def _check_ctes(statement, sql: str) -> None:
@@ -500,6 +529,11 @@ class PostgresSqlExpert(SqlExpert):
     ) -> SqlQueryResult:
         """Wrapper con medición de tiempo + auditoría (fail-silent)."""
         from src.agents.tools.sql_audit import ensure_sql_audit_table, write_sql_audit
+        from src.platform.tenants.context import get_tenant_context
+
+        ctx = get_tenant_context()
+        if ctx is not None:
+            organization_id = ctx.tenant_id
 
         start = time.perf_counter()
         result = await self._execute_inner(
@@ -984,8 +1018,9 @@ class PostgresSqlExpert(SqlExpert):
     ) -> str:
         """Inyecta `organization_id = '<tid>'::uuid` en tablas organization-aware.
 
-        Solo aplica a tablas del inventario con columna organization_id que no
-        tengan ya un predicado de organization. Reescritura determinística por AST.
+        Reescritura determinística por AST. Si el LLM ya escribió un predicado
+        organization_id (incluido otro UUID), se SOBREESCRIBE con el tenant
+        autenticado y se inyecta el filtro calificado por tabla si falta.
         """
         organization_aware: set[str] = {
             f"{s.schema_name}.{s.table_name}".lower()
@@ -1008,21 +1043,18 @@ class PostgresSqlExpert(SqlExpert):
                     continue
                 targets.append((select, table.alias_or_name))
 
-        # Snapshot del WHERE original por select (antes de inyectar nada):
-        # si el LLM ya escribió un filtro organization_id sin calificar, lo
-        # respetamos en todo el select (no inyectamos).
-        original_where_sql: dict[int, str] = {}
-        for select, _ in targets:
-            where = select.args.get("where")
-            original_where_sql[id(select)] = where.sql() if where is not None else ""
+        rewrite_organization_id_literals(expr, organization_id)
+        auth = str(organization_id)
 
         for select, ref in targets:
-            snapshot = original_where_sql[id(select)]
-            if re.search(r"\borganization_id\s*=", snapshot, re.IGNORECASE):
-                continue
-            if re.search(rf"\b{re.escape(ref)}\.organization_id\s*=", snapshot, re.IGNORECASE):
-                continue
             where = select.args.get("where")
+            snapshot = where.sql() if where is not None else ""
+            if re.search(
+                rf"\b{re.escape(ref)}\.organization_id\s*=\s*'?{re.escape(auth)}",
+                snapshot,
+                re.IGNORECASE,
+            ):
+                continue
             pred_eq = sqlglot.parse_one(
                 f"{ref}.organization_id = '{organization_id}'::uuid"
             )
@@ -1208,11 +1240,12 @@ class PostgresSqlExpert(SqlExpert):
 
         session = await get_readonly_session()
         try:
-            await session.execute(
-                text(f"SET LOCAL statement_timeout = '{timeout_seconds}s'")
-            )
-            result = await session.execute(
-                text(f"EXPLAIN (FORMAT JSON) {sql}")
+            from src.infrastructure.postgres.readonly_session import apply_readonly_transaction
+
+            await apply_readonly_transaction(session, timeout_seconds)
+            result = await asyncio.wait_for(
+                session.execute(text(f"EXPLAIN (FORMAT JSON) {sql}")),
+                timeout=float(timeout_seconds),
             )
             row = result.fetchone()
             if row is None:
@@ -1264,12 +1297,15 @@ class PostgresSqlExpert(SqlExpert):
 
         session = await get_readonly_session()
         try:
-            await session.execute(
-                text(f"SET LOCAL statement_timeout = '{timeout_seconds}s'")
-            )
+            from src.infrastructure.postgres.readonly_session import apply_readonly_transaction
+
+            await apply_readonly_transaction(session, timeout_seconds)
             if not re.search(r"\bLIMIT\s+\d+\s*$", sql, re.IGNORECASE):
                 sql = f"{sql} LIMIT {max_rows}"
-            rows_result = await session.execute(text(sql))
+            rows_result = await asyncio.wait_for(
+                session.execute(text(sql)),
+                timeout=float(timeout_seconds),
+            )
             rows = rows_result.fetchall()
             columns = list(rows_result.keys()) if rows else []
             truncated = len(rows) >= max_rows

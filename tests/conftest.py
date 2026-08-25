@@ -144,7 +144,13 @@ async def _ensure_developer_scopes() -> None:
                     ('40000000-0000-0000-0000-000000000024', 'rag:write',
                      'Escribir en RAG (ingestion, fuentes, KBs)'),
                     ('40000000-0000-0000-0000-000000000025', 'agents:execute',
-                     'Ejecutar agentes')
+                     'Ejecutar agentes'),
+                    ('40000000-0000-0000-0000-000000000026', 'admin:sql',
+                     'Ejecutar SQL de solo lectura (consola admin)'),
+                    ('40000000-0000-0000-0000-000000000027', 'prompt:read',
+                     'Ver system prompts de la organización'),
+                    ('40000000-0000-0000-0000-000000000028', 'prompt:write',
+                     'Editar system prompts de la organización')
                 ON CONFLICT (code) DO NOTHING
                 """
             )

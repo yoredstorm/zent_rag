@@ -98,3 +98,13 @@ def test_display_api_key_prefix_known_and_fallback() -> None:
     assert display_api_key_prefix("zent_sk_live_abc") == "zent_sk_live_"
     assert display_api_key_prefix("rag_test_xyz") == "rag_test_"
     assert display_api_key_prefix("customtoken") == "customtoken"[:12]
+
+
+def test_permission_satisfied_aliases_billing_read_to_usage() -> None:
+    from src.platform.auth.scopes import canonicalize_scopes, has_scope, permission_satisfied
+
+    assert canonicalize_scopes(["billing:read"]) == ["usage:read"]
+    assert permission_satisfied(frozenset({"usage:read"}), "billing:read")
+    assert permission_satisfied(frozenset({"billing:read"}), "usage:read")
+    assert has_scope(["usage:read"], "billing:read")
+    assert has_scope(["billing:read"], "usage:read")

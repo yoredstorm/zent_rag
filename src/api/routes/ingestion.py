@@ -14,6 +14,8 @@ import json
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+
+from src.api.security import ORG_HEADER_DESCRIPTION
 from fastapi.responses import StreamingResponse
 
 from src.api.deps import get_cache_provider, get_embedding_provider, get_vector_store
@@ -56,7 +58,7 @@ def get_ingestion_service(
 )
 async def list_sources(
     request: Request,
-    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id", description=ORG_HEADER_DESCRIPTION),
     ingestion: PostgresIngestionService = Depends(get_ingestion_service),
 ):
     from src.api.security import resolve_organization
@@ -106,7 +108,7 @@ async def lazy_activity(
     request: Request,
     days: int = Query(default=30, ge=1, le=365),
     limit: int = Query(default=20, ge=1, le=100),
-    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id", description=ORG_HEADER_DESCRIPTION),
     cache: CacheProvider = Depends(get_cache_provider),
 ):
     from src.api.security import resolve_organization
@@ -155,7 +157,7 @@ async def sync_all(
     request: Request,
     full_refresh: bool = False,
     background: bool = Query(default=True, description="Siempre en background para streaming de progreso"),
-    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id", description=ORG_HEADER_DESCRIPTION),
     ingestion: PostgresIngestionService = Depends(get_ingestion_service),
 ):
     from src.api.security import require_scope, resolve_organization
@@ -285,7 +287,7 @@ async def sync_table(
     table_name: str,
     full_refresh: bool = False,
     background: bool = Query(default=False, description="Ejecutar en background (cola Redis)"),
-    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id", description=ORG_HEADER_DESCRIPTION),
     ingestion: PostgresIngestionService = Depends(get_ingestion_service),
 ):
     from src.api.security import require_scope, resolve_organization
@@ -331,7 +333,7 @@ async def sync_table(
 async def get_job(
     request: Request,
     job_id: str,
-    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id", description=ORG_HEADER_DESCRIPTION),
 ):
     from src.api.security import resolve_organization
 
@@ -352,7 +354,7 @@ async def get_job(
 async def list_jobs(
     request: Request,
     limit: int = Query(default=50, ge=1, le=100),
-    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id", description=ORG_HEADER_DESCRIPTION),
 ):
     from src.api.security import resolve_organization
 
@@ -371,7 +373,7 @@ async def stream_job_progress(
     request: Request,
     job_id: str,
     interval_ms: int = Query(default=1000, ge=500, le=5000, description="Intervalo entre actualizaciones"),
-    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
+    x_organization_id: str = Header(default="", alias="X-Organization-Id", description=ORG_HEADER_DESCRIPTION),
 ):
     from src.api.security import resolve_organization
 

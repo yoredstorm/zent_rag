@@ -18,7 +18,7 @@ from __future__ import annotations
 import contextvars
 from uuid import UUID
 
-from src.core.domain.entities import TenantContext
+from src.core.domain.entities import AuthenticatedContext, TenantContext
 
 _current_tenant_context: contextvars.ContextVar[TenantContext | None] = (
     contextvars.ContextVar("zent_tenant_context", default=None)
@@ -33,6 +33,23 @@ def set_tenant_context(ctx: TenantContext) -> None:
 def get_tenant_context() -> TenantContext | None:
     """Lee el TenantContext del ContextVar (None si no hay identidad)."""
     return _current_tenant_context.get()
+
+
+def get_authenticated_context() -> AuthenticatedContext | None:
+    """Alias del spec: misma identidad que get_tenant_context()."""
+    return get_tenant_context()
+
+
+def bind_organization_id(organization_id: UUID) -> UUID:
+    """Si hay contexto autenticado, el organization_id DEBE coincidir con él."""
+    ctx = get_tenant_context()
+    if ctx is None:
+        return organization_id
+    if organization_id != ctx.tenant_id:
+        raise ValueError(
+            "organization_id does not match the authenticated tenant"
+        )
+    return ctx.tenant_id
 
 
 def clear_tenant_context() -> None:

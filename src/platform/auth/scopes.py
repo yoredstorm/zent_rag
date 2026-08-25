@@ -23,6 +23,7 @@ DEFAULT_API_KEY_SCOPES: list[str] = ["rag:read", "rag:write"]
 LEGACY_SCOPE_ALIASES: dict[str, str] = {
     "rag:query": "rag:read",
     "rag:ingest": "rag:write",
+    "billing:read": "usage:read",
 }
 
 _SCOPE_EQUIVALENTS: dict[str, frozenset[str]] = {
@@ -30,6 +31,8 @@ _SCOPE_EQUIVALENTS: dict[str, frozenset[str]] = {
     "rag:query": frozenset({"rag:read", "rag:query"}),
     "rag:write": frozenset({"rag:write", "rag:ingest"}),
     "rag:ingest": frozenset({"rag:write", "rag:ingest"}),
+    "usage:read": frozenset({"usage:read", "billing:read"}),
+    "billing:read": frozenset({"usage:read", "billing:read"}),
 }
 
 _SCOPE_TO_PERMISSIONS: dict[str, frozenset[str]] = {
@@ -40,7 +43,8 @@ _SCOPE_TO_PERMISSIONS: dict[str, frozenset[str]] = {
     "agents:execute": frozenset({"agents:execute"}),
     "connectors:read": frozenset({"connectors:read"}),
     "connectors:write": frozenset({"connectors:read", "connectors:write"}),
-    "usage:read": frozenset({"usage:read"}),
+    "usage:read": frozenset({"usage:read", "billing:read"}),
+    "billing:read": frozenset({"usage:read", "billing:read"}),
 }
 
 DEFAULT_API_TOKEN_PREFIX = "zent_sk_live"  # noqa: S105 — prefix, not a secret

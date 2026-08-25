@@ -127,6 +127,9 @@ async def get_prompt(
     x_organization_id: str = Header(default="", alias="X-Organization-Id"),
     repo: OrganizationRepository = Depends(get_organization_repo),
 ) -> PromptStatus:
+    from src.platform.rbac.policy import require_permission
+
+    require_permission(request, "prompt:read")
     organization_id = _resolve_organization_id(request, x_organization_id)
     organization = await repo.get_by_id(organization_id)
     if organization is None:
@@ -162,8 +165,10 @@ async def update_prompt(
     repo: OrganizationRepository = Depends(get_organization_repo),
 ) -> PromptStatus:
     from src.api.security import require_organization_admin
+    from src.platform.rbac.policy import require_permission
 
     require_organization_admin(request)
+    require_permission(request, "prompt:write")
     organization_id = _resolve_organization_id(request, x_organization_id)
     organization = await repo.get_by_id(organization_id)
     if organization is None:
@@ -222,8 +227,10 @@ async def reset_prompt(
     repo: OrganizationRepository = Depends(get_organization_repo),
 ) -> PromptStatus:
     from src.api.security import require_organization_admin
+    from src.platform.rbac.policy import require_permission
 
     require_organization_admin(request)
+    require_permission(request, "prompt:write")
     organization_id = _resolve_organization_id(request, x_organization_id)
     organization = await repo.get_by_id(organization_id)
     if organization is None:
@@ -273,22 +280,21 @@ async def test_prompt(
     body: PromptTestRequest,
     request: Request,
     x_organization_id: str = Header(default="", alias="X-Organization-Id"),
-    x_user_id: str = Header(default="00000000-0000-0000-0000-000000000002", alias="X-User-Id"),
+    x_user_id: str = Header(default="", alias="X-User-Id"),
     orchestrator: RAGOrchestrator = Depends(get_rag_orchestrator),
     repo: OrganizationRepository = Depends(get_organization_repo),
 ) -> PromptTestResponse:
-    from src.api.security import require_organization_admin
+    from src.api.security import require_organization_admin, resolve_user_id
+    from src.platform.rbac.policy import require_permission
 
     require_organization_admin(request)
+    require_permission(request, "prompt:write")
     organization_id = _resolve_organization_id(request, x_organization_id)
     organization = await repo.get_by_id(organization_id)
     if organization is None:
         raise HTTPException(404, "Organization not found")
 
-    try:
-        user_id = UUID(x_user_id)
-    except ValueError:
-        raise HTTPException(400, "X-User-Id must be a valid UUID")
+    user_id = await resolve_user_id(request, x_user_id)
 
     full_prompt = body.system_prompt
     if body.custom_instructions:

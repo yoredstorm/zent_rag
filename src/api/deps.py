@@ -35,7 +35,6 @@ from src.core.ports import (
     UserRepository,
     VectorStore,
 )
-from src.infrastructure.llm.provider import LiteLLMProvider
 from src.infrastructure.postgres.knowledge_repos import (
     PostgresDocumentRegistryRepository,
     PostgresIngestionJobRepository,
@@ -202,6 +201,8 @@ def get_vector_store() -> VectorStore:
 def get_llm_provider() -> LLMProvider:
     global _llm_provider
     if _llm_provider is None:
+        from src.infrastructure.llm.provider import LiteLLMProvider
+
         _llm_provider = LiteLLMProvider()
     return _llm_provider
 
@@ -209,6 +210,8 @@ def get_llm_provider() -> LLMProvider:
 def get_embedding_provider() -> EmbeddingProvider:
     global _embedding_provider
     if _embedding_provider is None:
+        from src.infrastructure.llm.provider import LiteLLMProvider
+
         _embedding_provider = LiteLLMProvider()
     return _embedding_provider
 

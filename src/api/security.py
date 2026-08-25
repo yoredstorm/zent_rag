@@ -16,7 +16,7 @@ from uuid import UUID
 from fastapi import HTTPException, Request
 from starlette import status
 
-from src.core.domain.entities import TenantContext
+from src.core.domain.entities import AuthenticatedContext, TenantContext
 from src.infrastructure.observability.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -24,7 +24,7 @@ logger = get_logger(__name__)
 _ROLE_VALUES = {"admin", "customer"}
 
 
-def get_auth_context(request: Request) -> TenantContext:
+def get_auth_context(request: Request) -> AuthenticatedContext:
     """Retorna el TenantContext autenticado establecido por TenantMiddleware."""
     ctx = getattr(request.state, "tenant_context", None)
     if ctx is None:
@@ -36,6 +36,20 @@ def get_auth_context(request: Request) -> TenantContext:
             },
         )
     return ctx
+
+
+get_authenticated_context = get_auth_context
+
+
+ORG_HEADER_DESCRIPTION = (
+    "Opcional. Si se envía y no coincide con la organización del Bearer, la API responde 403."
+)
+USER_HEADER_DESCRIPTION = (
+    "Opcional. Si se envía y no coincide con el usuario autenticado del Bearer, la API responde 403."
+)
+ROLE_HEADER_DESCRIPTION = (
+    "Ignorado para autorización. Solo puede degradar el rol RAG (admin→customer); nunca eleva."
+)
 
 
 def get_billing_context(request: Request):
@@ -127,7 +141,13 @@ async def resolve_user_id(request: Request, x_user_id: str) -> UUID:
         return ctx.user_id
 
     if x_user_id:
-        return _parse_uuid(x_user_id, "X-User-Id")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error_code": "user_mismatch",
+                "message": "X-User-Id is not an identity authority and does not match the authenticated user",
+            },
+        )
 
     from src.infrastructure.postgres.relational_db import PostgresUserRepository
 

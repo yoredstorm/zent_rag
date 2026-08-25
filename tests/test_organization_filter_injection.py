@@ -72,7 +72,7 @@ def test_organization_filter_combines_with_existing_where() -> None:
     assert "p.organization_id = CAST" in out, out
 
 
-def test_organization_filter_respects_llm_written_organization_predicate() -> None:
+def test_organization_filter_overwrites_llm_written_organization_predicate() -> None:
     sql = (
         "SELECT p.name FROM farmacia.sales AS s "
         "JOIN farmacia.products AS p ON s.product_id = p.id "
@@ -80,10 +80,8 @@ def test_organization_filter_respects_llm_written_organization_predicate() -> No
         "ORDER BY s.sale_date DESC LIMIT 1"
     )
     out = _expert()._inject_organization_filter(sql, _OID, _SOURCES)
-    # No debe duplicar el filtro que ya escribió el LLM: solo el suyo queda.
-    assert out.count("organization_id = CAST") == 1, out
-    assert "11111111-1111-1111-1111-111111111111" in out
-    assert str(_OID) not in out
+    assert str(_OID) in out
+    assert "11111111-1111-1111-1111-111111111111" not in out
 
 
 def test_organization_filter_skips_tables_without_organization_column() -> None:

@@ -7,6 +7,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import asyncio
 import re
 from uuid import UUID
 
@@ -14,7 +15,11 @@ from fastapi import APIRouter, Header, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import text
 
-from src.agents.tools.sql_expert_postgres import _FORBIDDEN_KEYWORDS, _validate_sql_ast
+from src.agents.tools.sql_expert_postgres import (
+    _FORBIDDEN_KEYWORDS,
+    _validate_sql_ast,
+    rewrite_sql_organization_id,
+)
 from src.core.config import get_settings
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.relational_db import get_async_session
@@ -507,6 +512,10 @@ async def execute_sql(request: Request, x_organization_id: str = Header(default=
             "Se requiere rol admin para ejecutar SQL directo",
         )
 
+    from src.platform.rbac.policy import require_permission
+
+    require_permission(request, "admin:sql")
+
     if x_organization_id:
         try:
             header_organization = UUID(x_organization_id)
@@ -571,14 +580,22 @@ async def execute_sql(request: Request, x_organization_id: str = Header(default=
         query_preview=query[:500],
     )
 
+    query = rewrite_sql_organization_id(query, ctx.organization_id)
+
     settings = get_settings()
     timeout_seconds = settings.RAG_SQL_TIMEOUT_SECONDS
-    session = await get_async_session()
+    from src.infrastructure.postgres.readonly_session import (
+        apply_readonly_transaction,
+        get_readonly_session,
+    )
+
+    session = await get_readonly_session()
     try:
-        await session.execute(
-            text(f"SET LOCAL statement_timeout = '{timeout_seconds}s'")
+        await apply_readonly_transaction(session, timeout_seconds)
+        result = await asyncio.wait_for(
+            session.execute(text(query)),
+            timeout=float(timeout_seconds),
         )
-        result = await session.execute(text(query))
         if result.returns_rows:
             cols = list(result.keys())
             rows = []

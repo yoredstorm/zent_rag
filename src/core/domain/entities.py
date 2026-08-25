@@ -466,3 +466,7 @@ class TenantContext:
     def is_platform_admin(self) -> bool:
         """Admin de plataforma: SOLO el scope admin:* (nunca sesiones portal)."""
         return "admin:*" in self.scopes
+
+
+# Nombre canónico del spec de identidad. TenantContext es la implementación.
+AuthenticatedContext = TenantContext
