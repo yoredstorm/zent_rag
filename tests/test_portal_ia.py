@@ -75,6 +75,12 @@ def test_portal_control_center_routes_are_separate_from_customer_nav() -> None:
     usage = (PORTAL / "pages" / "admin" / "Usage.tsx").read_text(encoding="utf-8")
     assert "/api/v1/platform/finops/summary" in usage
     assert "Economía AI" in usage
+    assert "help=" in usage
+    customers = (PORTAL / "pages" / "admin" / "Customers.tsx").read_text(encoding="utf-8")
+    assert "trialing" in customers
+    assert "amount_due_cents" in customers
+    layout = (PORTAL / "pages" / "admin" / "AdminLayout.tsx").read_text(encoding="utf-8")
+    assert "/api/v1/platform/notifications" in layout
     assert "rag_platform_token" in (PORTAL / "platformAuth.tsx").read_text(encoding="utf-8")
 
 

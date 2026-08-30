@@ -158,7 +158,16 @@ async def upsert_invoice(
         await session.commit()
         if row is None:
             raise RuntimeError("Invoice upsert failed")
-        return UUID(str(row.id))
+        invoice_id = UUID(str(row.id))
+        from src.platform.notifications import notify_invoice_open
+
+        await notify_invoice_open(
+            organization_id,
+            invoice_id=invoice_id,
+            total_cents=subtotal_cents + overage_cents,
+            status=status,
+        )
+        return invoice_id
     finally:
         await session.close()
 
@@ -210,7 +219,16 @@ async def record_payment(
                 )
             ).fetchone()
             return UUID(str(existing.id)) if existing else uuid4()
-        return UUID(str(row.id))
+        payment_id = UUID(str(row.id))
+        from src.platform.notifications import notify_manual_payment
+
+        await notify_manual_payment(
+            organization_id,
+            provider=provider,
+            amount_cents=amount_cents,
+            payment_id=payment_id,
+        )
+        return payment_id
     finally:
         await session.close()
 

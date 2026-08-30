@@ -1,12 +1,15 @@
 import { SignIn } from "@phosphor-icons/react";
 import { FormEvent, useState } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { usePlatformAuth } from "../platformAuth";
 import { Spinner } from "../components/ui";
 
 export default function LoginPage() {
   const { session, ready, login } = useAuth();
+  const { login: platformLogin } = usePlatformAuth();
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -23,7 +26,22 @@ export default function LoginPage() {
     try {
       await login(email.trim(), password);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al iniciar sesión");
+      const msg = err instanceof Error ? err.message : "";
+      if (msg.includes("platform_login_required") || msg.includes("/admin/login")) {
+        try {
+          await platformLogin(email.trim(), password);
+          navigate("/admin", { replace: true });
+          return;
+        } catch (platformErr) {
+          setError(
+            platformErr instanceof Error
+              ? platformErr.message
+              : "Entra en /admin/login (Control Center)"
+          );
+          return;
+        }
+      }
+      setError(msg || "Error al iniciar sesión");
     } finally {
       setLoading(false);
     }
@@ -139,6 +157,10 @@ export default function LoginPage() {
             ¿Nuevo?{" "}
             <Link className="font-medium text-accent hover:underline" to="/signup">
               Crear trial
+            </Link>
+            {" · "}
+            <Link className="font-medium text-accent hover:underline" to="/admin/login">
+              Control Center
             </Link>
           </p>
         </form>

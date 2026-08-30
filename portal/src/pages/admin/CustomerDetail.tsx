@@ -27,6 +27,8 @@ type Detail = {
   ai_cost_30d: number;
   margin: number | null;
   payment_provider: string | null;
+  amount_due_cents: number;
+  next_renewal_at: string | null;
 };
 
 export default function AdminCustomerDetailPage() {
@@ -130,6 +132,19 @@ export default function AdminCustomerDetailPage() {
           <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label="Plan" value={data.plan || "—"} hint={data.subscription_status || ""} />
             <StatCard label="Pago" value={data.payment_provider || "manual"} />
+            <StatCard
+              label="Por pagar"
+              value={`$${((data.amount_due_cents || 0) / 100).toFixed(0)}`}
+              hint="Facturas draft u open"
+            />
+            <StatCard
+              label="Próxima renovación"
+              value={
+                data.next_renewal_at
+                  ? new Date(data.next_renewal_at).toLocaleDateString("es-CL")
+                  : "—"
+              }
+            />
             <StatCard label="MRR" value={`$${(data.mrr_cents / 100).toFixed(0)}`} />
             <StatCard label="Usuarios" value={data.users} />
             <StatCard label="Agentes" value={data.agents} />

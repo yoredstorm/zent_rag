@@ -29,12 +29,14 @@ export function StatCard({
   label,
   value,
   hint,
+  help,
   icon: IconEl,
   tone = "default",
 }: {
   label: string;
   value: ReactNode;
   hint?: ReactNode;
+  help?: string;
   icon?: Icon;
   tone?: "default" | "ok" | "warn" | "danger";
 }) {
@@ -50,9 +52,21 @@ export function StatCard({
     <div className="stat">
       <div className="flex items-center justify-between gap-2">
         <span className="stat-label">{label}</span>
-        {IconEl && (
-          <IconEl size={16} weight="regular" className={toneClass} aria-hidden />
-        )}
+        <span className="flex items-center gap-1">
+          {help && (
+            <button
+              type="button"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-border text-xs text-muted hover:text-text"
+              aria-label={`Qué significa ${label}`}
+              title={help}
+            >
+              ?
+            </button>
+          )}
+          {IconEl && (
+            <IconEl size={16} weight="regular" className={toneClass} aria-hidden />
+          )}
+        </span>
       </div>
       <div className="stat-value">{value}</div>
       {hint && <div className="mt-1 text-xs text-muted">{hint}</div>}

@@ -25,7 +25,9 @@ os.environ.setdefault(
     "RAG_REDIS_URL",
     "redis://:dev-redis-password-change-me@localhost:6379/0",
 )
-os.environ.setdefault("RAG_QDRANT_API_KEY", "dev-qdrant-key-change-me")
+# Prefixed RAG_QDRANT_API_KEY is extra=forbid when QDRANT_API_KEY uses AliasChoices.
+os.environ.pop("RAG_QDRANT_API_KEY", None)
+os.environ.setdefault("QDRANT_API_KEY", "dev-qdrant-key-change-me")
 
 import pytest
 import pytest_asyncio

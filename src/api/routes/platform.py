@@ -25,6 +25,95 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/platform", tags=["Platform"])
 
 
+def _iso(value) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+_ORG_LIST_SQL = """
+SELECT
+    o.id,
+    o.name,
+    o.company_name,
+    o.email,
+    o.status,
+    o.created_at,
+    s.status AS subscription_status,
+    s.payment_provider,
+    s.current_period_end,
+    p.name AS plan,
+    COALESCE(p.is_trial, false) AS is_trial,
+    COALESCE((
+        SELECT SUM(i.total_cents)::bigint
+        FROM invoices i
+        WHERE i.organization_id = o.id
+          AND i.status IN ('draft', 'open')
+    ), 0) AS amount_due_cents
+FROM organizations o
+LEFT JOIN LATERAL (
+    SELECT status, payment_provider, current_period_end, plan_id
+    FROM subscriptions
+    WHERE organization_id = o.id
+    ORDER BY created_at DESC
+    LIMIT 1
+) s ON true
+LEFT JOIN plans p ON p.id = s.plan_id
+WHERE o.status <> 'deleted'
+ORDER BY o.created_at DESC
+"""
+
+# Same list without invoices (fresh DBs / ensure_billing_tables failed).
+_ORG_LIST_SQL_FALLBACK = """
+SELECT
+    o.id,
+    o.name,
+    o.company_name,
+    o.email,
+    o.status,
+    o.created_at,
+    s.status AS subscription_status,
+    s.payment_provider,
+    s.current_period_end,
+    p.name AS plan,
+    COALESCE(p.is_trial, false) AS is_trial,
+    0::bigint AS amount_due_cents
+FROM organizations o
+LEFT JOIN LATERAL (
+    SELECT status, payment_provider, current_period_end, plan_id
+    FROM subscriptions
+    WHERE organization_id = o.id
+    ORDER BY created_at DESC
+    LIMIT 1
+) s ON true
+LEFT JOIN plans p ON p.id = s.plan_id
+WHERE o.status <> 'deleted'
+ORDER BY o.created_at DESC
+"""
+
+
+def _org_list_item(row) -> dict:
+    provider = row.payment_provider
+    if provider is None and row.subscription_status is not None:
+        provider = "manual"
+    return {
+        "id": str(row.id),
+        "name": row.name,
+        "company_name": row.company_name,
+        "email": row.email,
+        "status": row.status,
+        "created_at": _iso(row.created_at),
+        "subscription_status": row.subscription_status,
+        "plan": row.plan,
+        "is_trial": bool(row.is_trial),
+        "payment_provider": provider,
+        "amount_due_cents": int(row.amount_due_cents or 0),
+        "next_renewal_at": _iso(row.current_period_end),
+    }
+
+
 def _audit() -> AuditLogService:
     return AuditLogService(PostgresAuditLogRepository())
 
@@ -277,20 +366,21 @@ async def put_plan_entitlements(plan_id: str, body: PutEntitlementsBody, request
 @router.get("/organizations", summary="Listar organizaciones (Control Center)")
 async def list_platform_organizations(request: Request):
     require_platform_admin(request)
-    repo = PostgresOrganizationRepository()
-    organizations = await repo.list_organizations()
+    from src.platform.billing.invoices import ensure_billing_tables
+
+    await ensure_billing_tables()
+    session = await get_async_session()
+    try:
+        try:
+            rows = (await session.execute(text(_ORG_LIST_SQL))).fetchall()
+        except Exception:
+            await session.rollback()
+            rows = (await session.execute(text(_ORG_LIST_SQL_FALLBACK))).fetchall()
+    finally:
+        await session.close()
+    organizations = [_org_list_item(row) for row in rows]
     return {
-        "organizations": [
-            {
-                "id": str(o.id),
-                "name": o.name,
-                "company_name": o.company_name,
-                "email": o.email,
-                "status": o.status.value,
-                "created_at": o.created_at.isoformat(),
-            }
-            for o in organizations
-        ],
+        "organizations": organizations,
         "total": len(organizations),
     }
 
@@ -308,6 +398,9 @@ async def get_platform_organization(org_id: str, request: Request):
         raise HTTPException(404, "Organization not found")
     billing = PostgresBillingRepository()
     sub = await billing.get_subscription_by_organization(oid)
+    from src.platform.billing.invoices import ensure_billing_tables
+
+    await ensure_billing_tables()
     session = await get_async_session()
     try:
         users_n = (
@@ -339,6 +432,23 @@ async def get_platform_organization(org_id: str, request: Request):
                 {"oid": oid},
             )
         ).fetchone()
+        try:
+            due_row = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT COALESCE(SUM(total_cents), 0)::bigint AS amount_due_cents
+                        FROM invoices
+                        WHERE organization_id = :oid
+                          AND status IN ('draft', 'open')
+                        """
+                    ),
+                    {"oid": oid},
+                )
+            ).fetchone()
+        except Exception:
+            await session.rollback()
+            due_row = None
         plan_row = None
         provider_row = None
         if sub is not None:
@@ -397,6 +507,8 @@ async def get_platform_organization(org_id: str, request: Request):
             if provider_row and provider_row.payment_provider
             else ("manual" if sub else None)
         ),
+        "amount_due_cents": int(due_row.amount_due_cents) if due_row else 0,
+        "next_renewal_at": _iso(sub.current_period_end) if sub else None,
     }
 
 
@@ -543,6 +655,28 @@ async def impersonate(org_id: str, body: ImpersonateBody, request: Request):
         "expires_seconds": body.expires_seconds,
         "organization_id": str(oid),
     }
+
+
+@router.get("/notifications", summary="Inbox del Control Center")
+async def list_platform_notifications(request: Request):
+    require_platform_admin(request)
+    from src.platform.notifications import list_notifications
+
+    items, unread = await list_notifications(limit=50)
+    return {"notifications": items, "unread_count": unread}
+
+
+@router.post("/notifications/{notification_id}/read")
+async def read_platform_notification(notification_id: str, request: Request):
+    require_platform_admin(request)
+    try:
+        nid = UUID(notification_id)
+    except ValueError:
+        raise HTTPException(404, "Notification not found") from None
+    from src.platform.notifications import mark_notification_read
+
+    await mark_notification_read(nid)
+    return {"status": "read", "id": str(nid)}
 
 
 def _parse_org(org_id: str) -> UUID:

@@ -146,6 +146,23 @@ async def test_platform_session_can_list_organizations(
 
 
 @pytest.mark.asyncio
+async def test_platform_admin_tenant_login_points_to_control_center(
+    async_client: AsyncClient,
+) -> None:
+    email = f"padmin-{uuid4().hex[:8]}@zent.example"
+    password = "platform-admin-pass-1"
+    await _seed_platform_admin(email, password)
+    wrong_form = await async_client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": password},
+    )
+    assert wrong_form.status_code == 403, wrong_form.text
+    body = wrong_form.json()
+    detail = body.get("detail") or body
+    assert detail.get("error_code") == "platform_login_required"
+
+
+@pytest.mark.asyncio
 async def test_platform_session_spoof_org_header_does_not_elevate(
     async_client: AsyncClient,
 ) -> None:
@@ -174,6 +191,148 @@ async def test_platform_session_spoof_org_header_does_not_elevate(
         headers={"Authorization": f"Bearer {token}"},
     )
     assert listed.status_code == 200, listed.text
+
+
+async def _platform_login_headers(client: AsyncClient) -> dict[str, str]:
+    email = f"padmin-{uuid4().hex[:8]}@zent.example"
+    password = "platform-admin-pass-1"
+    await _seed_platform_admin(email, password)
+    login = await client.post(
+        "/api/v1/auth/platform/login",
+        json={"email": email, "password": password},
+    )
+    assert login.status_code == 200, login.text
+    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+
+@pytest.mark.asyncio
+async def test_platform_org_list_exposes_trial_and_amount_due(
+    async_client: AsyncClient,
+) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+    from src.platform.billing.invoices import upsert_invoice
+
+    org = await _trial(async_client)
+    oid = UUID(org["organization_id"])
+    now = datetime.now(timezone.utc)
+    await upsert_invoice(
+        organization_id=oid,
+        period_start=now,
+        period_end=now + timedelta(days=30),
+        subtotal_cents=4500,
+        overage_cents=0,
+        status="open",
+    )
+    headers = await _platform_login_headers(async_client)
+    resp = await async_client.get("/api/v1/platform/organizations", headers=headers)
+    assert resp.status_code == 200, resp.text
+    rows = resp.json()["organizations"]
+    match = next(r for r in rows if r["id"] == str(oid))
+    assert match["subscription_status"] == "trialing"
+    assert match["is_trial"] is True
+    assert match["amount_due_cents"] == 4500
+    assert match["payment_provider"] in ("manual", "stripe")
+    assert "next_renewal_at" in match
+
+    detail = await async_client.get(
+        f"/api/v1/platform/organizations/{oid}", headers=headers
+    )
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["amount_due_cents"] == 4500
+    assert body["subscription_status"] == "trialing"
+
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text("DELETE FROM invoices WHERE organization_id = :oid"), {"oid": oid}
+        )
+        await session.commit()
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_trial_creates_org_notification_and_mark_read(
+    async_client: AsyncClient,
+) -> None:
+    org = await _trial(async_client)
+    headers = await _platform_login_headers(async_client)
+    before = await async_client.get(
+        f"/api/v1/platform/organizations/{org['organization_id']}", headers=headers
+    )
+    assert before.status_code == 200, before.text
+    listed = await async_client.get("/api/v1/platform/notifications", headers=headers)
+    assert listed.status_code == 200, listed.text
+    payload = listed.json()
+    assert payload["unread_count"] >= 1
+    created = [
+        n
+        for n in payload["notifications"]
+        if n["type"] == "org.created" and n["organization_id"] == org["organization_id"]
+    ]
+    assert created, payload
+    nid = created[0]["id"]
+    assert created[0]["read_at"] is None
+    marked = await async_client.post(
+        f"/api/v1/platform/notifications/{nid}/read", headers=headers
+    )
+    assert marked.status_code == 200, marked.text
+    again = await async_client.get("/api/v1/platform/notifications", headers=headers)
+    row = next(n for n in again.json()["notifications"] if n["id"] == nid)
+    assert row["read_at"] is not None
+    after = await async_client.get(
+        f"/api/v1/platform/organizations/{org['organization_id']}", headers=headers
+    )
+    assert after.status_code == 200, after.text
+    assert after.json()["status"] == before.json()["status"]
+    assert after.json()["subscription_status"] == before.json()["subscription_status"]
+
+
+@pytest.mark.asyncio
+async def test_manual_payment_creates_review_notification(
+    async_client: AsyncClient,
+) -> None:
+    from src.platform.billing.invoices import record_payment
+
+    org = await _trial(async_client)
+    oid = UUID(org["organization_id"])
+    await record_payment(
+        organization_id=oid,
+        provider="manual",
+        provider_payment_id=f"pay-{uuid4().hex[:12]}",
+        amount_cents=29900,
+    )
+    headers = await _platform_login_headers(async_client)
+    listed = await async_client.get("/api/v1/platform/notifications", headers=headers)
+    assert listed.status_code == 200, listed.text
+    kinds = [
+        n["type"]
+        for n in listed.json()["notifications"]
+        if n["organization_id"] == str(oid)
+    ]
+    assert "payment.manual_review" in kinds
+    assert "org.created" in kinds
+
+
+@pytest.mark.asyncio
+async def test_tenant_cannot_list_platform_notifications(
+    async_client: AsyncClient,
+) -> None:
+    org = await _trial(async_client)
+    session = await _owner_session(org["organization_id"])
+    resp = await async_client.get(
+        "/api/v1/platform/notifications",
+        headers={
+            "Authorization": f"Bearer {session}",
+            "X-Organization-Id": org["organization_id"],
+        },
+    )
+    assert resp.status_code == 403, resp.text
 
 
 async def _platform_headers(client: AsyncClient) -> dict[str, str]:

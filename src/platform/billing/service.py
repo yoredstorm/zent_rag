@@ -304,6 +304,9 @@ class BillingService:
             event_type="created",
             to_plan_id=subscription.plan_id,
         )
+        from src.platform.notifications import notify_org_created
+
+        await notify_org_created(organization_id)
         return subscription, token
 
     async def get_plans(self) -> list[Plan]:

@@ -1,5 +1,5 @@
 import { FormEvent, useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import { usePlatformAuth } from "../../platformAuth";
 import { Spinner } from "../../components/ui";
 
@@ -33,7 +33,7 @@ export default function AdminLoginPage() {
             Control Center
           </h1>
           <p className="mt-1 text-sm text-muted">
-            Acceso de platform admin. Un dueño de organización no entra aquí.
+            Acceso de platform admin. URL: /admin/login. Un dueño de organización no entra aquí.
           </p>
         </div>
         {error && (
@@ -66,6 +66,11 @@ export default function AdminLoginPage() {
         <button type="submit" className="btn btn-primary w-full min-h-11" disabled={loading}>
           {loading ? <Spinner /> : "Entrar"}
         </button>
+        <p className="text-center text-[13px] text-muted">
+          <Link className="font-medium text-accent hover:underline" to="/login">
+            Portal de clientes
+          </Link>
+        </p>
       </form>
     </div>
   );

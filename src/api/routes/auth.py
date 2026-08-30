@@ -237,11 +237,22 @@ async def login(body: LoginRequest, request: Request):
 
     user_repo = PostgresUserRepository()
     user = await user_repo.get_by_email(body.email)
+    password_ok = user is not None and verify_password(
+        body.password, user.password_hash
+    )
+    if user is not None and user.is_platform_admin and password_ok:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error_code": "platform_login_required",
+                "message": "Este usuario es de Control Center. Entra en /admin/login",
+            },
+        )
     if (
         user is None
         or user.is_platform_admin
         or user.organization_id is None
-        or not verify_password(body.password, user.password_hash)
+        or not password_ok
     ):
         await record_auth_failure(email_key, ip_key)
         raise HTTPException(

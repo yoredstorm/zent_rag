@@ -75,7 +75,9 @@ async function parseError(res: Response): Promise<string> {
     if (typeof data.message === "string") return data.message;
     if (typeof data.detail === "string") return data.detail;
     if (data.detail && typeof data.detail === "object") {
-      return data.detail.message || data.detail.error_code || res.statusText;
+      const code = typeof data.detail.error_code === "string" ? data.detail.error_code : "";
+      const msg = typeof data.detail.message === "string" ? data.detail.message : "";
+      return [code, msg].filter(Boolean).join(" ") || res.statusText;
     }
     if (typeof data.error_code === "string") return data.error_code;
     return res.statusText;
