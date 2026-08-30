@@ -24,21 +24,32 @@ import { fmtDateTime } from "../lib/format";
 const SCOPE_OPTIONS: { id: string; hint: string }[] = [
   { id: "rag:read", hint: "Chat y consultas RAG" },
   { id: "rag:write", hint: "Ingestión, fuentes y knowledge bases" },
+  { id: "knowledge:read", hint: "Listar fuentes y knowledge bases" },
+  { id: "agents:read", hint: "Listar agentes" },
   { id: "agents:execute", hint: "Ejecutar agentes" },
   { id: "connectors:read", hint: "Listar conectores" },
   { id: "connectors:write", hint: "Crear y editar conectores" },
   { id: "usage:read", hint: "Métricas de uso" },
+  { id: "analytics:read", hint: "Alias de usage:read" },
 ];
 
 type ApiKeyInfo = {
   id: string;
   name: string;
   prefix: string;
+  environment?: "live" | "test";
   scopes: string[];
   is_active: boolean;
   last_used_at: string | null;
   created_at: string;
 };
+
+function keyEnvironment(key: ApiKeyInfo): "live" | "test" {
+  if (key.environment === "test" || key.prefix.startsWith("zent_sk_test")) {
+    return "test";
+  }
+  return "live";
+}
 
 export default function KeysPage() {
   const { session } = useAuth();
@@ -56,6 +67,7 @@ export default function KeysPage() {
     "rag:read",
     "rag:write",
   ]);
+  const [environment, setEnvironment] = useState<"live" | "test">("live");
 
   useEffect(() => {
     if (!session) return;
@@ -91,6 +103,7 @@ export default function KeysPage() {
         body: JSON.stringify({
           name: newKeyName.trim() || "Default",
           scopes: selectedScopes,
+          environment,
         }),
       });
       setNewToken(data.token);
@@ -135,7 +148,7 @@ export default function KeysPage() {
     <div>
       <PageHeader
         title="Claves de integración"
-        subtitle="API keys de tu organización. Cada una tiene scopes propios y puede revocarse sin afectar a las demás."
+        subtitle="Production (zent_sk_live_) y Development (zent_sk_test_). Mismos datos; test tiene cuota más baja y marca X-Zent-Environment. Revocar no rota la clave de billing."
       />
       <ErrorInline message={error} />
       <SuccessInline message={msg} />
@@ -157,12 +170,42 @@ export default function KeysPage() {
             <h2 className="text-sm font-semibold text-text">Crear API key</h2>
           </div>
           <div className="flex flex-col gap-3 p-5">
-            <input
-              className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
-              placeholder="Nombre (ej. backend-prod)"
-              value={newKeyName}
-              onChange={(e) => setNewKeyName(e.target.value)}
-            />
+            <label className="block text-sm text-text">
+              Nombre
+              <input
+                className="mt-1 w-full min-h-11 rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
+                placeholder="Nombre (ej. backend-prod)"
+                value={newKeyName}
+                onChange={(e) => setNewKeyName(e.target.value)}
+                autoComplete="off"
+              />
+            </label>
+            <fieldset>
+              <legend className="mb-2 text-xs font-medium text-muted">Entorno</legend>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm">
+                  <input
+                    type="radio"
+                    name="key-environment"
+                    checked={environment === "live"}
+                    onChange={() => setEnvironment("live")}
+                  />
+                  Production (zent_sk_live_)
+                </label>
+                <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md border border-border px-3 py-2 text-sm">
+                  <input
+                    type="radio"
+                    name="key-environment"
+                    checked={environment === "test"}
+                    onChange={() => setEnvironment("test")}
+                  />
+                  Development (zent_sk_test_)
+                </label>
+              </div>
+              <p className="mt-2 text-[13px] text-muted">
+                Live: 100 req/min y 10.000/día. Test: 30 req/min y 1.000/día. Misma organización.
+              </p>
+            </fieldset>
             <fieldset>
               <legend className="mb-2 text-xs font-medium text-muted">Scopes</legend>
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -226,52 +269,83 @@ export default function KeysPage() {
           <EmptyState
             icon={KeyIcon}
             title="No hay claves"
-            body="Crea una clave para integrar tus sistemas externos."
+            body="Crea una clave de Production o Development para integrar tus sistemas."
           />
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Nombre</th>
-                <th>Prefijo</th>
-                <th>Scopes</th>
-                <th>Último uso</th>
-                <th>Estado</th>
-                <th className="text-right">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {keys.map((key) => (
-                <tr key={key.id}>
-                  <td className="font-medium text-text">{key.name}</td>
-                  <td className="mono">{key.prefix}</td>
-                  <td className="mono text-xs">{key.scopes.join(", ")}</td>
-                  <td>{key.last_used_at ? fmtDateTime(key.last_used_at) : "—"}</td>
-                  <td>
-                    {key.is_active ? (
-                      <span className="badge badge-ok">
-                        <ShieldCheck size={13} aria-hidden /> Activa
-                      </span>
-                    ) : (
-                      <span className="badge badge-muted">Revocada</span>
-                    )}
-                  </td>
-                  <td className="text-right">
-                    {key.is_active && (
-                      <button
-                        type="button"
-                        className="btn btn-ghost px-2 py-1.5 text-xs"
-                        onClick={() => void revokeKey(key.id, key.name)}
-                        aria-label={`Revocar ${key.name}`}
-                      >
-                        <Trash size={14} aria-hidden />
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="flex flex-col gap-6 p-5">
+            {(["live", "test"] as const).map((env) => {
+              const rows = keys.filter((k) => keyEnvironment(k) === env);
+              return (
+                <section key={env}>
+                  <h3 className="mb-2 text-sm font-semibold text-text">
+                    {env === "live" ? "Production" : "Development"}
+                    <span className="ml-2 font-normal text-muted">
+                      {env === "live"
+                        ? "zent_sk_live_ · 100/min · 10k/día"
+                        : "zent_sk_test_ · 30/min · 1k/día"}
+                    </span>
+                  </h3>
+                  {rows.length === 0 ? (
+                    <p className="text-sm text-muted">
+                      No hay claves de {env === "live" ? "Production" : "Development"}.
+                    </p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="table min-w-[640px]">
+                        <thead>
+                          <tr>
+                            <th>Nombre</th>
+                            <th>Prefijo</th>
+                            <th>Scopes</th>
+                            <th>Límites</th>
+                            <th>Último uso</th>
+                            <th>Estado</th>
+                            <th className="text-right">Acciones</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {rows.map((key) => (
+                            <tr key={key.id}>
+                              <td className="font-medium text-text">{key.name}</td>
+                              <td className="mono">{key.prefix}</td>
+                              <td className="mono text-xs">{key.scopes.join(", ")}</td>
+                              <td className="text-xs text-muted">
+                                {env === "live" ? "100/min · 10k/día" : "30/min · 1k/día"}
+                              </td>
+                              <td>
+                                {key.last_used_at ? fmtDateTime(key.last_used_at) : "—"}
+                              </td>
+                              <td>
+                                {key.is_active ? (
+                                  <span className="badge badge-ok">
+                                    <ShieldCheck size={13} aria-hidden /> Activa
+                                  </span>
+                                ) : (
+                                  <span className="badge badge-muted">Revocada</span>
+                                )}
+                              </td>
+                              <td className="text-right">
+                                {key.is_active && (
+                                  <button
+                                    type="button"
+                                    className="btn btn-ghost min-h-11 px-2 py-1.5 text-xs"
+                                    onClick={() => void revokeKey(key.id, key.name)}
+                                    aria-label={`Revocar ${key.name}`}
+                                  >
+                                    <Trash size={14} aria-hidden />
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+              );
+            })}
+          </div>
         )}
       </div>
 

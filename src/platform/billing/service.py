@@ -67,6 +67,14 @@ class BillingService:
                     401,
                     "session_revoked",
                 )
+            if session.typ == "platform":
+                raise TokenValidationError(
+                    "Platform session cannot authenticate tenant routes",
+                    403,
+                    "platform_session_not_tenant",
+                )
+            if session.organization_id is None:
+                raise TokenValidationError("Invalid session claims", 401, "invalid_session")
             return await self._context_for_organization(
                 session.organization_id,
                 token_id=None,
@@ -179,6 +187,17 @@ class BillingService:
                 "Plan not found", 500, "plan_not_found"
             )
 
+        requests_limit = plan.requests_per_month
+        try:
+            from src.platform.billing.entitlements import get_plan_entitlements
+
+            ents = await get_plan_entitlements(plan.id)
+            if "monthly_requests" in ents:
+                monthly = ents["monthly_requests"]
+                requests_limit = 2_147_483_647 if monthly is None else int(monthly)
+        except Exception:
+            logger.warning("Entitlements lookup failed; using plans.requests_per_month")
+
         return BillingContext(
             organization_id=subscription.organization_id,
             subscription_id=subscription.id,
@@ -186,7 +205,7 @@ class BillingService:
             plan_name=plan.name,
             token_id=token_id,
             scopes=scopes,
-            requests_limit=plan.requests_per_month,
+            requests_limit=requests_limit,
             status=subscription.status,
             user_id=user_id,
             auth_type=auth_type,
@@ -228,13 +247,15 @@ class BillingService:
         name: str = "Default",
         scopes: list[str] | None = None,
         created_by: UUID | None = None,
+        environment: str = "live",
     ) -> str:
         from src.platform.auth.scopes import (
             DEFAULT_API_KEY_SCOPES,
             canonicalize_scopes,
         )
 
-        token = generate_api_token("zent_sk_live")
+        prefix = "zent_sk_test" if environment == "test" else "zent_sk_live"
+        token = generate_api_token(prefix)
         resolved = canonicalize_scopes(scopes or DEFAULT_API_KEY_SCOPES)
         await self._api_keys.create_key(
             organization_id, token, name=name, scopes=resolved, created_by=created_by
@@ -275,6 +296,14 @@ class BillingService:
         await self._api_keys.create_key(
             subscription.organization_id, token, "Default", DEFAULT_API_KEY_SCOPES
         )
+        from src.platform.billing.entitlements import record_subscription_event
+
+        await record_subscription_event(
+            subscription_id=subscription.id,
+            organization_id=subscription.organization_id,
+            event_type="created",
+            to_plan_id=subscription.plan_id,
+        )
         return subscription, token
 
     async def get_plans(self) -> list[Plan]:
@@ -287,7 +316,17 @@ class BillingService:
         return await self._repo.get_quota_usage(subscription_id)
 
     async def cancel_subscription(self, subscription_id: UUID) -> None:
+        subscription = await self._repo.get_subscription_by_id(subscription_id)
         await self._repo.update_subscription_status(subscription_id, "canceled")
+        if subscription is not None:
+            from src.platform.billing.entitlements import record_subscription_event
+
+            await record_subscription_event(
+                subscription_id=subscription.id,
+                organization_id=subscription.organization_id,
+                event_type="canceled",
+                from_plan_id=subscription.plan_id,
+            )
 
     # -------------------------------------------------------------------------
     # Máquina de estados — ÚNICO mutador de estados de suscripción
@@ -359,7 +398,18 @@ class BillingService:
         if target is None:
             raise ValueError(f"Plan '{plan_name}' not found")
 
+        current = await self._repo.get_subscription_by_id(subscription_id)
+        from_plan_id = current.plan_id if current is not None else None
         updated = await self._repo.change_plan(subscription_id, target.id)
+        from src.platform.billing.entitlements import record_subscription_event
+
+        await record_subscription_event(
+            subscription_id=updated.id,
+            organization_id=updated.organization_id,
+            event_type="plan_changed",
+            from_plan_id=from_plan_id,
+            to_plan_id=target.id,
+        )
         return {
             "subscription_id": subscription_id,
             "plan_name": target.name,

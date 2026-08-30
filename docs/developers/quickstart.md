@@ -31,7 +31,7 @@ cd sdk/node && npm install
 ```python
 from zent import Zent
 
-client = Zent(api_key="zent_sk_live_...")
+client = Zent(api_key="zent_sk_live_...")  # o zent_sk_test_... en desarrollo
 print(client.chat("What is our refund policy?").answer)
 ```
 

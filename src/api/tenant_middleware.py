@@ -39,7 +39,15 @@ _user_repo = None
 # Exact public paths beyond PUBLIC_PATHS
 _PUBLIC_BILLING_GET = {"/api/v1/billing/plans"}
 _PUBLIC_BILLING_POST = {"/api/v1/billing/subscription/create-trial"}
-_PUBLIC_AUTH_POST = {"/api/v1/auth/login", "/api/v1/auth/signup"}
+_PUBLIC_AUTH_POST = {
+    "/api/v1/auth/login",
+    "/api/v1/auth/signup",
+    "/api/v1/auth/platform/login",
+    "/api/v1/auth/forgot-password",
+    "/api/v1/auth/reset-password",
+}
+# Google redirect: identidad sale del state HMAC, no del Bearer.
+_PUBLIC_OAUTH_GET = {"/api/v1/connectors/oauth/drive/callback"}
 
 # Dev-only SQL admin (not prompt management)
 _ADMIN_SQL_PREFIXES = (
@@ -90,9 +98,15 @@ def _is_public(path: str, method: str) -> bool:
         return True
     if method == "POST" and path in _PUBLIC_AUTH_POST:
         return True
+    if method == "GET" and path in _PUBLIC_OAUTH_GET:
+        return True
     # Webhooks de billing: públicos; la ÚNICA protección es la firma
     # criptográfica verificada dentro de la ruta.
     if method == "POST" and path.startswith("/api/v1/billing/webhooks/"):
+        return True
+    if path.startswith("/api/v1/embed/"):
+        return True
+    if path == "/embed.js" or path.startswith("/embed/"):
         return True
     return False
 
@@ -191,6 +205,84 @@ class TenantMiddleware(BaseHTTPMiddleware):
             )
 
         token = auth_header[7:]
+        from src.platform.auth.session import (
+            SessionTokenError,
+            decrypt_session,
+            is_portal_session_token,
+            session_is_active,
+        )
+
+        if is_portal_session_token(token):
+            try:
+                session = decrypt_session(token)
+            except SessionTokenError as exc:
+                return JSONResponse(
+                    status_code=401,
+                    content={"error_code": "invalid_session", "message": str(exc)},
+                )
+            if session.typ == "platform":
+                if not await session_is_active(session.sid):
+                    return JSONResponse(
+                        status_code=401,
+                        content={
+                            "error_code": "session_revoked",
+                            "message": "Session has been revoked. Log in again.",
+                        },
+                    )
+                header_org = request.headers.get("X-Organization-Id", "")
+                if header_org:
+                    return JSONResponse(
+                        status_code=403,
+                        content={
+                            "error_code": "organization_mismatch",
+                            "message": "Platform admin cannot assume a tenant via X-Organization-Id",
+                        },
+                    )
+                header_user = request.headers.get("X-User-Id", "")
+                if header_user and session.user_id is not None:
+                    try:
+                        from uuid import UUID as _UUID
+
+                        if _UUID(header_user) != session.user_id:
+                            return JSONResponse(
+                                status_code=403,
+                                content={
+                                    "error_code": "user_mismatch",
+                                    "message": "X-User-Id does not match the authenticated user",
+                                },
+                            )
+                    except ValueError:
+                        return JSONResponse(
+                            status_code=400,
+                            content={
+                                "error_code": "invalid_user_header",
+                                "message": "X-User-Id must be a valid UUID",
+                            },
+                        )
+                tenant_ctx = TenantContext(
+                    tenant_id=None,
+                    user_id=session.user_id,
+                    roles=frozenset({"platform"}),
+                    permissions=frozenset(),
+                    scopes=frozenset({"admin:*"}),
+                    auth_type="platform_session",
+                )
+                request.state.tenant_context = tenant_ctx
+                request.state.billing_context = None
+                request.state.organization_id = "platform"
+                set_tenant_context(tenant_ctx)
+                set_trace_context(
+                    organization_id="platform",
+                    user_id=str(session.user_id),
+                )
+                try:
+                    response = await call_next(request)
+                finally:
+                    from src.platform.tenants.context import clear_tenant_context
+
+                    clear_tenant_context()
+                return response
+
         billing = get_billing_service()
 
         try:
@@ -300,9 +392,17 @@ class TenantMiddleware(BaseHTTPMiddleware):
                         },
                     )
 
+            from src.platform.auth.scopes import api_key_environment
+
+            key_env = (
+                api_key_environment(token)
+                if billing_ctx.auth_type == "api_token"
+                else "live"
+            )
             request.state.tenant_context = tenant_ctx
             request.state.billing_context = billing_ctx  # compat billing/quota
             request.state.organization_id = str(tenant_ctx.tenant_id)
+            request.state.api_key_environment = key_env
             set_tenant_context(tenant_ctx)
 
             # Mantener el trace_id del request; solo fijar identidad real.
@@ -341,5 +441,9 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
         response.headers["X-Plan"] = billing_ctx.plan_name
         response.headers["X-Subscription-Status"] = billing_ctx.status.value
+        if billing_ctx.auth_type == "api_token":
+            response.headers["X-Zent-Environment"] = getattr(
+                request.state, "api_key_environment", "live"
+            )
 
         return response

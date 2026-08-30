@@ -126,6 +126,106 @@ async def test_usage_read_scope_reads_usage(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_test_key_uses_zent_sk_test_prefix(
+    async_client: AsyncClient,
+) -> None:
+    org = await _trial(async_client)
+    session = await _owner_session(org["organization_id"])
+    headers = {
+        "Authorization": f"Bearer {session}",
+        "X-Organization-Id": org["organization_id"],
+    }
+    test_resp = await async_client.post(
+        "/api/v1/organizations/api-keys",
+        json={"name": "dev", "scopes": ["rag:read"], "environment": "test"},
+        headers=headers,
+    )
+    assert test_resp.status_code == 200, test_resp.text
+    assert test_resp.json()["token"].startswith("zent_sk_test_")
+    assert test_resp.json()["environment"] == "test"
+
+    live_resp = await async_client.post(
+        "/api/v1/organizations/api-keys",
+        json={"name": "prod", "scopes": ["rag:read"], "environment": "live"},
+        headers=headers,
+    )
+    assert live_resp.status_code == 200, live_resp.text
+    assert live_resp.json()["token"].startswith("zent_sk_live_")
+    assert live_resp.json()["environment"] == "live"
+
+    listed = await async_client.get(
+        "/api/v1/organizations/api-keys", headers=headers
+    )
+    assert listed.status_code == 200, listed.text
+    envs = {row["name"]: row["environment"] for row in listed.json()["keys"]}
+    assert envs["dev"] == "test"
+    assert envs["prod"] == "live"
+    assert envs["Default"] == "live"
+
+
+@pytest.mark.asyncio
+async def test_knowledge_and_analytics_aliases_work(
+    async_client: AsyncClient,
+) -> None:
+    org = await _trial(async_client)
+    token = await _create_key(
+        async_client, org, ["knowledge:read", "analytics:read"], name="aliases"
+    )
+    sources = await async_client.get(
+        "/api/v1/sources",
+        headers=_bearer(token, org["organization_id"]),
+    )
+    assert sources.status_code == 200, sources.text
+    usage = await async_client.get(
+        "/api/v1/billing/usage",
+        headers=_bearer(token, org["organization_id"]),
+        params={"days": 7},
+    )
+    assert usage.status_code == 200, usage.text
+
+
+@pytest.mark.asyncio
+async def test_test_key_is_rate_limited_per_token_and_watermarked(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "API_KEY_TEST_RPM", 2)
+    monkeypatch.setattr(settings, "API_KEY_TEST_RPD", 100)
+    org = await _trial(async_client)
+    session = await _owner_session(org["organization_id"])
+    created = await async_client.post(
+        "/api/v1/organizations/api-keys",
+        json={"name": "rl-test", "scopes": ["usage:read"], "environment": "test"},
+        headers={
+            "Authorization": f"Bearer {session}",
+            "X-Organization-Id": org["organization_id"],
+        },
+    )
+    token = created.json()["token"]
+    headers = _bearer(token, org["organization_id"])
+    first = await async_client.get(
+        "/api/v1/billing/usage", headers=headers, params={"days": 7}
+    )
+    assert first.status_code == 200, first.text
+    assert first.headers.get("x-zent-environment") == "test"
+    second = await async_client.get(
+        "/api/v1/billing/usage", headers=headers, params={"days": 7}
+    )
+    assert second.status_code == 200, second.text
+    third = await async_client.get(
+        "/api/v1/billing/usage", headers=headers, params={"days": 7}
+    )
+    assert third.status_code == 429, third.text
+    assert third.json()["error_code"] in {
+        "api_key_rate_limited",
+        "organization_rate_limited",
+        "rate_limited",
+    }
+
+
+@pytest.mark.asyncio
 async def test_admin_star_rejected_on_create(async_client: AsyncClient) -> None:
     org = await _trial(async_client)
     session = await _owner_session(org["organization_id"])

@@ -29,6 +29,19 @@ jobs:
       - run: pip install ruff
       - run: ruff check src/ tests/ sdk/python
 
+  pip-audit:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Audit prod extras (HIGH+)
+        run: |
+          pip install -e ".[prod]" pip-audit
+          pip-audit --severity high
+
   test:
     runs-on: ubuntu-latest
     services:
@@ -124,6 +137,18 @@ jobs:
           cache-dependency-path: sdk/node/package-lock.json
       - run: npm ci && npm test && npm run build
         working-directory: sdk/node
+
+  kustomize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install kustomize
+        run: |
+          curl -sL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.4.3/kustomize_v5.4.3_linux_amd64.tar.gz" | tar xz
+          sudo mv kustomize /usr/local/bin/
+          kustomize version
+      - name: Render manifests (no cluster)
+        run: kustomize build deploy/k8s
 
   build:
     runs-on: ubuntu-latest

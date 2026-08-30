@@ -26,8 +26,12 @@ logger = get_logger(__name__)
 _PUBLIC_POST_PATHS = {
     "/api/v1/auth/login",
     "/api/v1/auth/signup",
+    "/api/v1/auth/platform/login",
+    "/api/v1/auth/forgot-password",
+    "/api/v1/auth/reset-password",
     "/api/v1/billing/subscription/create-trial",
 }
+_PUBLIC_GET_PATHS = {"/api/v1/connectors/oauth/drive/callback"}
 _EXEMPT_PATHS = {
     "/health",
     "/metrics",
@@ -96,7 +100,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # -----------------------------------------------------------------
         # Endpoints públicos sensibles (signup/trial/login): limitar por IP.
         # -----------------------------------------------------------------
-        if method == "POST" and path in _PUBLIC_POST_PATHS:
+        if (
+            method == "POST"
+            and (path in _PUBLIC_POST_PATHS or path.startswith("/api/v1/embed/"))
+        ) or (method == "GET" and path in _PUBLIC_GET_PATHS):
             if client_ip in _LOOPBACK_IPS:
                 return await call_next(request)
             key = f"rl:pub:{client_ip}"
@@ -112,6 +119,31 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     },
                 )
             return await call_next(request)
+
+        # -----------------------------------------------------------------
+        # API key: cuota por token (live 100/min 10k/día; test más estricto).
+        # -----------------------------------------------------------------
+        tenant_ctx = getattr(request.state, "tenant_context", None)
+        token_id = getattr(tenant_ctx, "token_id", None) if tenant_ctx else None
+        auth_type = getattr(tenant_ctx, "auth_type", None) if tenant_ctx else None
+        if token_id and auth_type == "api_token":
+            environment = getattr(request.state, "api_key_environment", "live")
+            if environment == "test":
+                rpm, rpd = settings.API_KEY_TEST_RPM, settings.API_KEY_TEST_RPD
+            else:
+                rpm, rpd = settings.API_KEY_LIVE_RPM, settings.API_KEY_LIVE_RPD
+            minute_key = f"rag:rl:key:{token_id}"
+            day_key = f"rag:rl:key:{token_id}:day"
+            minute_ok = await self._check(minute_key, rpm, 60)
+            day_ok = await self._check(day_key, rpd, 86_400)
+            if not minute_ok or not day_ok:
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "error_code": "api_key_rate_limited",
+                        "message": "Rate limit exceeded for this API key. Try again shortly.",
+                    },
+                )
 
         # -----------------------------------------------------------------
         # Organization autenticado: limitar por organization (rutas costosas).

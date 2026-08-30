@@ -17,6 +17,14 @@ import { useAuth } from "../auth";
 import { EmptyState, ErrorInline, PageHeader, SkeletonBlock, StatCard } from "../components/ui";
 import { fmtDateTime, fmtLatency, fmtNum, timeAgo } from "../lib/format";
 
+function dayGreeting(company?: string): string {
+  const hour = new Date().getHours();
+  const hello =
+    hour < 12 ? "Buenos días" : hour < 19 ? "Buenas tardes" : "Buenas noches";
+  if (company) return `${hello}, ${company}.`;
+  return `${hello}.`;
+}
+
 const UsageChart = lazy(() => import("../components/UsageChart"));
 
 type Subscription = {
@@ -28,7 +36,13 @@ type Subscription = {
 };
 
 type Usage = {
-  totals: { requests: number; tokens: number; avg_latency_ms: number };
+  totals: {
+    requests: number;
+    tokens: number;
+    avg_latency_ms: number;
+    errors?: number;
+    estimated_cost?: number;
+  };
   daily: { day: string; requests: number; tokens: number; avg_latency_ms: number }[];
   recent: {
     id: number;
@@ -106,12 +120,8 @@ export default function DashboardPage() {
   return (
     <div>
       <PageHeader
-        title="Dashboard"
-        subtitle={
-          session?.companyName
-            ? `Bienvenido, ${session.companyName}. Estado general de tu asistente RAG.`
-            : "Estado general de tu asistente RAG."
-        }
+        title={dayGreeting(session?.companyName)}
+        subtitle="Estado de tu plan, cuota y salud del asistente."
       />
 
       <ErrorInline message={error} />
@@ -167,27 +177,14 @@ export default function DashboardPage() {
               icon={CalendarBlank}
             />
             <StatCard
-              label="Indexados al vuelo (30d)"
-              value={fmtNum(lazyActivity?.trigger_count ?? 0)}
+              label="Consultas IA"
+              value={fmtNum(usage?.totals.requests ?? 0)}
               icon={Lightning}
-              hint={
-                lazyActivity?.total_rows_indexed !== undefined &&
-                lazyActivity.total_rows_indexed > 0 ? (
-                  <span>
-                    <span className="mono">
-                      {fmtNum(lazyActivity.total_rows_indexed)}
-                    </span>{" "}
-                    filas indexadas
-                    {lazyActivity?.rate_limited && (
-                      <span className="ml-1.5 inline-flex items-center gap-1 rounded-xs bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn">
-                        límite por hora alcanzado
-                      </span>
-                    )}
-                  </span>
-                ) : (
-                  "Consultas que auto-indexaron datos"
-                )
-              }
+            />
+            <StatCard
+              label="Tokens"
+              value={fmtNum(usage?.totals.tokens ?? 0)}
+              icon={ChartLineUp}
             />
           </div>
 
@@ -313,7 +310,7 @@ export default function DashboardPage() {
               </div>
               <div className="flex flex-col gap-2 p-4">
                 <Link
-                  to="/ingestion"
+                  to="/knowledge/sql"
                   className="group flex items-center justify-between rounded-md border border-border bg-soft px-4 py-3 text-sm text-text transition-all duration-200 hover:border-accent/40 hover:bg-raised"
                 >
                   Sincronizar datos

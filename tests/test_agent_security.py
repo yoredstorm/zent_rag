@@ -364,6 +364,100 @@ class TestInputValidation:
         assert clean == {"query": "x"}
 
 
+class TestAgentBuilderConfig:
+    @pytest.mark.asyncio
+    async def test_temperature_passed_to_llm_provider(self) -> None:
+        class _RecordingLLM(_FakeLLM):
+            def __init__(self) -> None:
+                super().__init__(['{"answer": "ok"}'])
+                self.kwargs: list[dict] = []
+
+            async def generate(self, prompt: str, **kwargs):
+                self.kwargs.append(kwargs)
+                return await super().generate(prompt, **kwargs)
+
+        llm = _RecordingLLM()
+        agent = _agent(
+            tools=[],
+            config_json={"temperature": 0.2, "tone": "professional"},
+        )
+        runtime = AgentRuntime(llm_provider=llm)
+        await runtime.run(_request(agent, "hola"))
+        assert llm.kwargs
+        assert llm.kwargs[0]["temperature"] == 0.2
+
+    @pytest.mark.asyncio
+    async def test_nested_limits_cut_steps(self) -> None:
+        register_tool(_RecordingTool())
+        llm = _FakeLLM(['{"tool": "recorder", "arguments": {}}'] * 20)
+        agent = _agent(
+            tools=["recorder"],
+            config_json={"limits": {"max_steps": 2, "max_tokens": 8000, "max_cost_usd": 1.0}},
+        )
+        runtime = AgentRuntime(llm_provider=llm)
+        result = await runtime.run(_request(agent, "loop"))
+        assert result.status == "limit_reached"
+        llm_steps = [s for s in result.steps if s["type"] == "llm"]
+        assert len(llm_steps) <= 2
+
+    @pytest.mark.asyncio
+    async def test_sql_disabled_in_security_blocks_query_database(self) -> None:
+        class _SqlTool(Tool):
+            name: ClassVar[str] = "query_database"
+            description: ClassVar[str] = "SQL"
+            input_schema: ClassVar[dict] = {"type": "object", "properties": {}}
+
+            def __init__(self) -> None:
+                self.executions = 0
+
+            async def execute(self, ctx: ToolContext, arguments: dict) -> ToolResult:
+                self.executions += 1
+                return ToolResult(output="SQL RAN")
+
+        sql = _SqlTool()
+        register_tool(sql)
+        llm = _FakeLLM(
+            ['{"tool": "query_database", "arguments": {}}', '{"answer": "ok"}']
+        )
+        agent = _agent(
+            tools=["query_database"],
+            config_json={"security": {"sql_enabled": False, "api_calls_enabled": False}},
+        )
+        runtime = AgentRuntime(llm_provider=llm)
+        result = await runtime.run(_request(agent, "corre sql"))
+        assert sql.executions == 0
+        blocked = [s for s in result.steps if s.get("type") == "tool_call"]
+        assert blocked
+        assert "not in agent allowlist" in (blocked[0].get("error") or "")
+
+    @pytest.mark.asyncio
+    async def test_search_knowledge_filters_to_configured_kbs(self) -> None:
+        from src.agents.tools.tools_builtin import SearchKnowledgeTool
+        from src.rag.retrieval.models import RetrievalQuery
+
+        captured: list[RetrievalQuery] = []
+
+        class _FakeRetriever:
+            async def retrieve(self, query: RetrievalQuery):
+                captured.append(query)
+                from src.core.domain.entities import RetrievalContext
+
+                return RetrievalContext(chunks=[])
+
+        kb_id = uuid4()
+        tool = SearchKnowledgeTool(_FakeRetriever())
+        ctx = ToolContext(
+            tenant_id=uuid4(),
+            org_config={"knowledge_base_ids": [str(kb_id)]},
+        )
+        result = await tool.execute(ctx, {"query": "ibuprofeno"})
+        assert result.error is None
+        assert captured
+        assert captured[0].knowledge_base_id == kb_id or (
+            getattr(captured[0], "knowledge_base_ids", None) == [kb_id]
+        )
+
+
 class TestCallApiTool:
     def test_private_ip_blocked(self) -> None:
         from src.agents.tools.tools_builtin import CallApiTool

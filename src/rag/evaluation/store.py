@@ -454,6 +454,10 @@ async def save_eval_run(
             },
         )
         for case in cases:
+            metrics = dict(case.get("metrics") or {})
+            for key in ("expected_answer", "expected_sources", "retrieved"):
+                if key in case and key not in metrics:
+                    metrics[key] = case[key]
             await session.execute(
                 text(
                     "INSERT INTO eval_case_results "
@@ -469,7 +473,7 @@ async def save_eval_run(
                     "answer": str(case.get("answer") or "")[:8000],
                     "status": case.get("status") or "completed",
                     "target": _json.dumps(case.get("target") or {}),
-                    "metrics": _json.dumps(case.get("metrics") or {}),
+                    "metrics": _json.dumps(metrics),
                     "scores": _json.dumps(case.get("scores") or {}),
                     "error": str(case.get("error") or "")[:2000] or None,
                 },
@@ -481,6 +485,32 @@ async def save_eval_run(
         logger.warning("Eval run save failed", error=str(exc))
     finally:
         await session.close()
+
+
+def _case_row_to_payload(c) -> dict:
+    metrics = c.metrics if isinstance(c.metrics, dict) else {}
+    expected_sources = metrics.get("expected_sources") or []
+    if not isinstance(expected_sources, list):
+        expected_sources = []
+    retrieved = metrics.get("retrieved") or []
+    if not isinstance(retrieved, list):
+        retrieved = []
+    return {
+        "case_id": c.case_id,
+        "question": c.question,
+        "answer": c.answer,
+        "actual": c.answer,
+        "expected_answer": metrics.get("expected_answer"),
+        "expected_sources": expected_sources,
+        "retrieved": retrieved,
+        "status": c.status,
+        "target": c.target if isinstance(c.target, dict) else {},
+        "metrics": metrics,
+        "scores": c.scores if isinstance(c.scores, dict) else {},
+        "latency_ms": metrics.get("latency_ms"),
+        "cost": metrics.get("cost"),
+        "error": c.error,
+    }
 
 
 def _optional_uuid(value) -> UUID | None:
@@ -519,17 +549,7 @@ async def get_eval_run(organization_id: UUID, run_id: UUID) -> dict | None:
         summary["run_id"] = str(row.id)
         summary["created_at"] = row.created_at.isoformat()
         summary["cases"] = [
-            {
-                "case_id": c.case_id,
-                "question": c.question,
-                "answer": c.answer,
-                "status": c.status,
-                "target": c.target if isinstance(c.target, dict) else {},
-                "metrics": c.metrics if isinstance(c.metrics, dict) else {},
-                "scores": c.scores if isinstance(c.scores, dict) else {},
-                "error": c.error,
-            }
-            for c in cases_result.fetchall()
+            _case_row_to_payload(c) for c in cases_result.fetchall()
         ]
         return summary
     finally:

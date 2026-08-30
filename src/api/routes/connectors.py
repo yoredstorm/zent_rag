@@ -10,7 +10,8 @@ from __future__ import annotations
 import asyncio
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from src.api.deps import get_connector_repo
@@ -33,6 +34,12 @@ class CreateConnectorRequest(BaseModel):
     config: dict = Field(default_factory=dict)
     # Credenciales cifradas: van al SecretStore, NUNCA a config_json.
     secrets: dict | None = None
+
+
+class DriveOAuthStartRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    folder_id: str = Field(..., min_length=1, max_length=256)
+    connector_id: UUID | None = None
 
 
 class UpdateConnectorRequest(BaseModel):
@@ -99,6 +106,7 @@ async def create_connector(
     from src.platform.billing.plan_limits import (
         PlanLimitError,
         check_resource_limit,
+        plan_limit_detail,
     )
     from src.platform.rbac.policy import require_permission
 
@@ -106,7 +114,7 @@ async def create_connector(
     try:
         await check_resource_limit(ctx.organization_id, "connectors")
     except PlanLimitError as exc:
-        raise HTTPException(409, str(exc)) from None
+        raise HTTPException(status_code=409, detail=plan_limit_detail(exc)) from None
     _require_known_type(body.type)
     if body.project_id is not None:
         await _require_own_project(ctx, body.project_id)
@@ -148,6 +156,118 @@ async def connector_types(request: Request):
         ],
         "count": len(types),
     }
+
+
+@router.post("/oauth/drive/start", summary="Iniciar OAuth de Google Drive")
+async def start_drive_oauth(
+    body: DriveOAuthStartRequest,
+    request: Request,
+    repo: ConnectorRepository = Depends(get_connector_repo),
+):
+    from src.connectors.gdrive.oauth import (
+        DriveOAuthError,
+        build_drive_authorization_url,
+        sign_drive_oauth_state,
+    )
+    from src.core.config import get_settings
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "connectors:write")
+    settings = get_settings()
+    if not (settings.GOOGLE_OAUTH_CLIENT_ID or "").strip():
+        raise HTTPException(503, "Google Drive OAuth is not configured")
+    _require_known_type("gdrive")
+    if body.connector_id is not None:
+        connector = await repo.get_connector(ctx.organization_id, body.connector_id)
+        if connector is None or connector.type != "gdrive":
+            raise HTTPException(404, "Connector not found")
+        merged = {**(connector.config_json or {}), "folder_id": body.folder_id}
+        connector = await repo.update_connector(
+            ctx.organization_id, connector.id, name=body.name, config_json=merged
+        )
+    else:
+        from src.platform.billing.plan_limits import (
+            PlanLimitError,
+            check_resource_limit,
+            plan_limit_detail,
+        )
+
+        try:
+            await check_resource_limit(ctx.organization_id, "connectors")
+        except PlanLimitError as exc:
+            raise HTTPException(status_code=409, detail=plan_limit_detail(exc)) from None
+        connector = await repo.create_connector(
+            ctx.organization_id,
+            body.name,
+            "gdrive",
+            config_json={"folder_id": body.folder_id},
+        )
+    try:
+        state = sign_drive_oauth_state(
+            organization_id=ctx.organization_id, connector_id=connector.id
+        )
+        authorization_url = build_drive_authorization_url(state)
+    except DriveOAuthError as exc:
+        raise HTTPException(503, str(exc)) from None
+    await _audit().write(
+        ctx, "connector.oauth.drive.start", "connector", connector.id,
+        metadata={"folder_id": body.folder_id},
+    )
+    return {
+        "authorization_url": authorization_url,
+        "connector_id": str(connector.id),
+    }
+
+
+@router.get("/oauth/drive/callback", summary="Callback OAuth de Google Drive")
+async def drive_oauth_callback(
+    code: str | None = Query(default=None),
+    state: str | None = Query(default=None),
+    error: str | None = Query(default=None),
+):
+    from src.api.deps import get_connector_repo as _repo
+    from src.connectors.gdrive.client import exchange_authorization_code
+    from src.connectors.gdrive.oauth import DriveOAuthError, verify_drive_oauth_state
+    from src.core.config import get_settings
+    from src.infrastructure.secrets.secret_store_resolver import get_secret_store
+
+    settings = get_settings()
+    return_base = (settings.GOOGLE_OAUTH_PORTAL_RETURN_URL or "").rstrip("/")
+    if error:
+        raise HTTPException(400, "Google Drive OAuth was denied")
+    if not code or not state:
+        raise HTTPException(400, "Missing OAuth code or state")
+    try:
+        payload = verify_drive_oauth_state(state)
+    except DriveOAuthError:
+        raise HTTPException(400, "Invalid OAuth state") from None
+    try:
+        organization_id = UUID(str(payload["organization_id"]))
+        connector_id = UUID(str(payload["connector_id"]))
+    except (KeyError, ValueError):
+        raise HTTPException(400, "Invalid OAuth state") from None
+    connector = await _repo().get_connector(organization_id, connector_id)
+    if connector is None or connector.type != "gdrive":
+        raise HTTPException(400, "Invalid OAuth state")
+    try:
+        tokens = await exchange_authorization_code(code)
+    except Exception:
+        raise HTTPException(400, "Google token exchange failed") from None
+    refresh_token = str(tokens.get("refresh_token") or "").strip()
+    if not refresh_token:
+        raise HTTPException(
+            400, "Google did not return a refresh token; revoke access and retry"
+        )
+    await get_secret_store().put(
+        organization_id, connector_id, {"refresh_token": refresh_token}
+    )
+    if return_base:
+        sep = "&" if "?" in return_base else "?"
+        return RedirectResponse(
+            url=f"{return_base}{sep}gdrive=ok&connector_id={connector_id}",
+            status_code=302,
+        )
+    return {"ok": True, "connector_id": str(connector_id), "has_secrets": True}
 
 
 @router.get("/{connector_id}", summary="Obtener conector")

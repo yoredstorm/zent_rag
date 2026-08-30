@@ -50,6 +50,11 @@ connectors = [
     "ibm-db-sa>=0.4.0",
 ]
 
+billing-stripe = [
+    "stripe>=11.0.0",
+    "httpx>=0.27.0",
+]
+
 dev = [
     "ruff>=0.5.0",
     "mypy>=1.10.0",
@@ -103,7 +108,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["S101", "E402", "E501", "S105"]
+"tests/**/*.py" = ["S101", "E402", "E501", "S105", "S608"]
 "src/api/main.py" = ["E402"]  # sys.path.insert before imports
 "src/api/routes/prompt.py" = ["E501"]  # long description strings
 "src/agents/runtime/orchestrator.py" = ["E501"]  # prompt string constants

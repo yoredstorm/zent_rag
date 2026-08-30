@@ -12,13 +12,16 @@ PUBLIC_API_KEY_SCOPES: frozenset[str] = frozenset(
         "rag:read",
         "rag:write",
         "agents:execute",
+        "agents:read",
         "connectors:read",
         "connectors:write",
         "usage:read",
+        "knowledge:read",
+        "analytics:read",
     }
 )
 
-DEFAULT_API_KEY_SCOPES: list[str] = ["rag:read", "rag:write"]
+DEFAULT_API_KEY_SCOPES: list[str] = ["rag:read", "rag:write", "usage:read"]
 
 LEGACY_SCOPE_ALIASES: dict[str, str] = {
     "rag:query": "rag:read",
@@ -27,12 +30,14 @@ LEGACY_SCOPE_ALIASES: dict[str, str] = {
 }
 
 _SCOPE_EQUIVALENTS: dict[str, frozenset[str]] = {
-    "rag:read": frozenset({"rag:read", "rag:query"}),
-    "rag:query": frozenset({"rag:read", "rag:query"}),
+    "rag:read": frozenset({"rag:read", "rag:query", "knowledge:read"}),
+    "rag:query": frozenset({"rag:read", "rag:query", "knowledge:read"}),
+    "knowledge:read": frozenset({"rag:read", "rag:query", "knowledge:read"}),
     "rag:write": frozenset({"rag:write", "rag:ingest"}),
     "rag:ingest": frozenset({"rag:write", "rag:ingest"}),
-    "usage:read": frozenset({"usage:read", "billing:read"}),
-    "billing:read": frozenset({"usage:read", "billing:read"}),
+    "usage:read": frozenset({"usage:read", "billing:read", "analytics:read"}),
+    "billing:read": frozenset({"usage:read", "billing:read", "analytics:read"}),
+    "analytics:read": frozenset({"usage:read", "billing:read", "analytics:read"}),
 }
 
 _SCOPE_TO_PERMISSIONS: dict[str, frozenset[str]] = {
@@ -41,10 +46,15 @@ _SCOPE_TO_PERMISSIONS: dict[str, frozenset[str]] = {
     "rag:write": frozenset({"rag:write", "rag:ingest", "kbs:write", "sources:write"}),
     "rag:ingest": frozenset({"rag:write", "rag:ingest", "kbs:write", "sources:write"}),
     "agents:execute": frozenset({"agents:execute"}),
+    "agents:read": frozenset({"agents:read"}),
+    "knowledge:read": frozenset(
+        {"rag:read", "rag:query", "sources:read", "kbs:read", "knowledge:read"}
+    ),
     "connectors:read": frozenset({"connectors:read"}),
     "connectors:write": frozenset({"connectors:read", "connectors:write"}),
-    "usage:read": frozenset({"usage:read", "billing:read"}),
-    "billing:read": frozenset({"usage:read", "billing:read"}),
+    "usage:read": frozenset({"usage:read", "billing:read", "analytics:read"}),
+    "billing:read": frozenset({"usage:read", "billing:read", "analytics:read"}),
+    "analytics:read": frozenset({"usage:read", "billing:read", "analytics:read"}),
 }
 
 DEFAULT_API_TOKEN_PREFIX = "zent_sk_live"  # noqa: S105 — prefix, not a secret
@@ -105,3 +115,11 @@ def has_scope(scopes: Iterable[str], needed: str) -> bool:
 
 def display_key_prefix(token: str) -> str:
     return display_api_key_prefix(token)
+
+
+def api_key_environment(prefix_or_token: str) -> str:
+    """live | test from token/prefix. Same org data; test is watermark + cuota."""
+    value = prefix_or_token or ""
+    if value.startswith("zent_sk_test_") or value.startswith("rag_test_"):
+        return "test"
+    return "live"

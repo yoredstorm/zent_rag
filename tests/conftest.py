@@ -7,10 +7,25 @@
 # =============================================================================
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from typing import AsyncGenerator
 from uuid import uuid4
+
+# Allow running pytest from a worktree without a local .env. Same documented
+# development default as .env.example / CI (production still refuses it).
+os.environ.setdefault(
+    "RAG_PORTAL_SESSION_KEY",
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+)
+os.environ.setdefault("RAG_ENVIRONMENT", "development")
+# Match docker-compose defaults so local pytest can talk to rag-redis / rag-qdrant.
+os.environ.setdefault(
+    "RAG_REDIS_URL",
+    "redis://:dev-redis-password-change-me@localhost:6379/0",
+)
+os.environ.setdefault("RAG_QDRANT_API_KEY", "dev-qdrant-key-change-me")
 
 import pytest
 import pytest_asyncio

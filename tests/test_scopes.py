@@ -100,6 +100,20 @@ def test_display_api_key_prefix_known_and_fallback() -> None:
     assert display_api_key_prefix("customtoken") == "customtoken"[:12]
 
 
+def test_canonicalize_marketplace_scope_aliases() -> None:
+    from src.platform.auth.scopes import canonicalize_scopes, scope_to_permissions
+
+    assert canonicalize_scopes(["knowledge:read"]) == ["knowledge:read"]
+    assert canonicalize_scopes(["analytics:read"]) == ["analytics:read"]
+    assert canonicalize_scopes(["agents:read"]) == ["agents:read"]
+    knowledge = scope_to_permissions(["knowledge:read"])
+    assert "sources:read" in knowledge
+    assert "kbs:read" in knowledge
+    assert "rag:read" in knowledge
+    assert "usage:read" in scope_to_permissions(["analytics:read"])
+    assert "agents:read" in scope_to_permissions(["agents:read"])
+
+
 def test_permission_satisfied_aliases_billing_read_to_usage() -> None:
     from src.platform.auth.scopes import canonicalize_scopes, has_scope, permission_satisfied
 

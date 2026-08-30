@@ -442,6 +442,17 @@ class TestEvalEngineApi:
         )
         assert detail.status_code == 200, detail.text
         assert len(detail.json()["cases"]) == 2
+        case0 = detail.json()["cases"][0]
+        assert case0["question"]
+        assert "expected_sources" in case0
+        assert "retrieved" in case0
+        assert case0.get("actual") or case0.get("answer")
+        assert "scores" in case0
+        assert "latency_ms" in case0 or "latency_ms" in (case0.get("metrics") or {})
+        assert "cost" in case0 or "cost" in (case0.get("metrics") or {})
+        quality = detail.json().get("quality") or {}
+        for key in ("faithfulness", "hallucination_rate", "retrieval_precision"):
+            assert key in quality
 
         report = await async_client.post(
             f"/api/v1/eval/runs/{run2_id}/compare",
@@ -463,3 +474,74 @@ class TestEvalEngineApi:
             headers=portal_admin_auth,
         )
         assert response.status_code == 404, response.text
+
+    @pytest.mark.asyncio
+    async def test_platform_eval_summary_counts_without_case_text(
+        self, async_client: AsyncClient, portal_admin_auth: dict[str, str]
+    ) -> None:
+        imported = await async_client.post(
+            "/api/v1/eval/datasets/import",
+            json={"name": f"plat-{uuid4().hex[:6]}", "cases": _DATASET_CASES},
+            headers=portal_admin_auth,
+        )
+        dataset_id = imported.json()["dataset_id"]
+        await async_client.post(
+            "/api/v1/eval/runs",
+            json={
+                "dataset_id": dataset_id,
+                "target_type": "rag",
+                "judge_enabled": False,
+            },
+            headers=portal_admin_auth,
+        )
+        from src.platform.auth.passwords import hash_password
+
+        email = f"padmin-{uuid4().hex[:8]}@zent.example"
+        password = "platform-admin-pass-1"
+        from sqlalchemy import text
+
+        from src.infrastructure.postgres.relational_db import ensure_platform_admin_schema
+        from src.infrastructure.postgres.session import get_async_session
+
+        await ensure_platform_admin_schema()
+        session = await get_async_session()
+        try:
+            await session.execute(
+                text(
+                    "INSERT INTO users (id, organization_id, external_id, email_hash, "
+                    "role, email, password_hash, is_platform_admin) "
+                    "VALUES (gen_random_uuid(), NULL, :ext, :eh, 'platform', "
+                    ":email, :ph, true)"
+                ),
+                {
+                    "ext": f"platform-{uuid4().hex[:12]}",
+                    "eh": __import__("hashlib").sha256(email.encode()).hexdigest(),
+                    "email": email,
+                    "ph": hash_password(password),
+                },
+            )
+            await session.commit()
+        finally:
+            await session.close()
+        login = await async_client.post(
+            "/api/v1/auth/platform/login",
+            json={"email": email, "password": password},
+        )
+        assert login.status_code == 200, login.text
+        token = login.json()["access_token"]
+        resp = await async_client.get(
+            "/api/v1/platform/eval/summary",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()
+        assert payload["run_count"] >= 1
+        assert "organizations" in payload
+        blob = resp.text.lower()
+        assert "cuánto cuesta el paracetamol" not in blob
+        assert "paracetamol" not in blob
+        tenant = await async_client.get(
+            "/api/v1/platform/eval/summary",
+            headers=portal_admin_auth,
+        )
+        assert tenant.status_code == 403, tenant.text

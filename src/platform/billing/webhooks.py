@@ -43,6 +43,10 @@ class WebhookSignatureError(Exception):
     """Firma inválida o ausente."""
 
 
+class WebhookPayloadError(Exception):
+    """Payload verificado pero inválido (p. ej. org mismatch)."""
+
+
 class UnknownProviderError(Exception):
     """Provider de webhook desconocido."""
 
@@ -173,6 +177,8 @@ async def process_webhook(
         await _dispatch(
             billing, event_type, payload, organization_id, subscription_id
         )
+    except WebhookPayloadError:
+        raise
     except Exception as exc:
         await _record_event(
             provider_name, event_id, event_type, organization_id, payload,
@@ -199,6 +205,10 @@ async def _dispatch(
     organization_id: UUID | None,
     subscription_id: UUID | None,
 ) -> None:
+    if "." in event_type:
+        await _dispatch_stripe(billing, event_type, payload)
+        return
+
     data = payload.get("data") or {}
     provider = get_payment_provider().name
 
@@ -277,3 +287,192 @@ async def _dispatch(
             "Unhandled billing webhook event (recorded only)",
             event_type=event_type,
         )
+
+
+def _parse_uuid(raw: object) -> UUID | None:
+    if raw is None:
+        return None
+    try:
+        return UUID(str(raw))
+    except ValueError:
+        return None
+
+
+def _stripe_object(payload: dict) -> dict:
+    data = payload.get("data") or {}
+    obj = data.get("object") if isinstance(data, dict) else None
+    return obj if isinstance(obj, dict) else {}
+
+
+def _org_from_metadata(meta: object) -> UUID | None:
+    if not isinstance(meta, dict):
+        return None
+    return _parse_uuid(meta.get("organization_id"))
+
+
+def _require_stripe_org(obj: dict) -> UUID:
+    meta_org = _org_from_metadata(obj.get("metadata"))
+    ref_org = _parse_uuid(obj.get("client_reference_id"))
+    parent = obj.get("parent") if isinstance(obj.get("parent"), dict) else {}
+    details = parent.get("subscription_details") if isinstance(parent, dict) else {}
+    parent_org = _org_from_metadata(
+        details.get("metadata") if isinstance(details, dict) else None
+    )
+    candidates = [value for value in (meta_org, ref_org, parent_org) if value is not None]
+    if not candidates:
+        raise WebhookPayloadError("Webhook missing organization_id metadata")
+    if len(set(candidates)) > 1:
+        raise WebhookPayloadError("organization_mismatch")
+    return candidates[0]
+
+
+_STRIPE_STATUS = {
+    "active": "active",
+    "trialing": "trialing",
+    "past_due": "past_due",
+    "canceled": "canceled",
+    "unpaid": "past_due",
+    "paused": "paused",
+    "incomplete_expired": "expired",
+}
+
+
+async def _dispatch_stripe(
+    billing: BillingService,
+    event_type: str,
+    payload: dict,
+) -> None:
+    obj = _stripe_object(payload)
+    if event_type == "checkout.session.completed":
+        org_id = _require_stripe_org(obj)
+        meta = obj.get("metadata") if isinstance(obj.get("metadata"), dict) else {}
+        plan_name = str(meta.get("plan_name") or "")
+        if not plan_name:
+            raise WebhookPayloadError("checkout session missing plan_name")
+        sub = await billing.get_subscription(org_id)
+        if sub is None:
+            raise WebhookPayloadError("Subscription not found for organization")
+        await billing.upgrade_plan(sub.id, plan_name)
+        interval = str(meta.get("interval") or "monthly")
+        if interval in ("monthly", "annual"):
+            from sqlalchemy import text as sql_text
+
+            from src.infrastructure.postgres.session import get_async_session
+
+            session = await get_async_session()
+            try:
+                await session.execute(
+                    sql_text(
+                        "UPDATE subscriptions SET billing_interval = :interval, "
+                        "updated_at = NOW() WHERE id = :sid"
+                    ),
+                    {"interval": interval, "sid": sub.id},
+                )
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
+        await _attach_stripe_ids(
+            org_id,
+            customer_id=str(obj.get("customer") or "") or None,
+            provider_subscription_id=str(obj.get("subscription") or "") or None,
+        )
+        refreshed = await billing.get_subscription(org_id)
+        if refreshed is not None:
+            await billing.transition_status(refreshed.id, "active")
+        return
+
+    if event_type == "customer.subscription.updated":
+        org_id = _require_stripe_org(obj)
+        sub = await billing.get_subscription(org_id)
+        if sub is None:
+            raise WebhookPayloadError("Subscription not found for organization")
+        mapped = _STRIPE_STATUS.get(str(obj.get("status") or ""))
+        if mapped:
+            await billing.transition_status(sub.id, mapped)
+        return
+
+    if event_type == "customer.subscription.deleted":
+        org_id = _require_stripe_org(obj)
+        sub = await billing.get_subscription(org_id)
+        if sub is None:
+            raise WebhookPayloadError("Subscription not found for organization")
+        ok = await billing.transition_status(sub.id, "canceled")
+        if not ok:
+            await billing.cancel_subscription(sub.id)
+        return
+
+    if event_type == "invoice.paid":
+        org_id = _require_stripe_org(obj)
+        sub = await billing.get_subscription(org_id)
+        if sub is not None:
+            await billing.handle_payment_succeeded(sub.id)
+        await invoice_store.record_payment(
+            organization_id=org_id,
+            provider="stripe",
+            provider_payment_id=str(obj.get("id") or payload.get("id") or ""),
+            amount_cents=int(obj.get("amount_paid") or 0),
+            currency=str(obj.get("currency") or "usd").upper(),
+            status="succeeded",
+        )
+        return
+
+    if event_type == "invoice.payment_failed":
+        org_id = _require_stripe_org(obj)
+        sub = await billing.get_subscription(org_id)
+        if sub is not None:
+            await billing.handle_payment_failed(sub.id, 1)
+        await invoice_store.record_payment(
+            organization_id=org_id,
+            provider="stripe",
+            provider_payment_id=str(obj.get("id") or payload.get("id") or ""),
+            amount_cents=int(obj.get("amount_due") or 0),
+            currency=str(obj.get("currency") or "usd").upper(),
+            status="failed",
+        )
+        return
+
+    logger.info(
+        "Unhandled Stripe billing webhook event (recorded only)",
+        event_type=event_type,
+    )
+
+
+async def _attach_stripe_ids(
+    organization_id: UUID,
+    *,
+    customer_id: str | None,
+    provider_subscription_id: str | None,
+) -> None:
+    from sqlalchemy import text as sql_text
+
+    from src.infrastructure.postgres.session import get_async_session
+    from src.platform.billing.invoices import ensure_billing_tables
+
+    await ensure_billing_tables()
+    session = await get_async_session()
+    try:
+        await session.execute(
+            sql_text(
+                "UPDATE subscriptions SET payment_provider = 'stripe', "
+                "provider_customer_id = COALESCE(:cust, provider_customer_id), "
+                "provider_subscription_id = COALESCE(:psid, provider_subscription_id), "
+                "updated_at = NOW() "
+                "WHERE organization_id = :oid "
+                "AND status IN ('trialing','active','past_due','paused')"
+            ),
+            {
+                "cust": customer_id,
+                "psid": provider_subscription_id,
+                "oid": organization_id,
+            },
+        )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+

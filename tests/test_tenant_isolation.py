@@ -445,3 +445,22 @@ async def test_cannot_revoke_other_org_api_key(async_client, orgs) -> None:
         f"/api/v1/organizations/api-keys/{key_b_id}", headers=_headers(orgs["A"])
     )
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_cannot_read_other_org_embed_or_agent(async_client, orgs) -> None:
+    create = await async_client.post(
+        "/api/v1/agents",
+        json={"name": f"iso-agent-{uuid4().hex[:6]}", "tools": ["search_knowledge"]},
+        headers=_headers(orgs["B"]),
+    )
+    assert create.status_code == 201, create.text
+    agent_b = create.json()["id"]
+    embed = await async_client.get(
+        f"/api/v1/agents/{agent_b}/embed", headers=_headers(orgs["A"])
+    )
+    assert embed.status_code == 404, embed.text
+    agent = await async_client.get(
+        f"/api/v1/agents/{agent_b}", headers=_headers(orgs["A"])
+    )
+    assert agent.status_code == 404, agent.text

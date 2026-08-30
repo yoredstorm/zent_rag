@@ -1,6 +1,7 @@
 import { SignIn } from "@phosphor-icons/react";
 import { FormEvent, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
+import { api } from "../api";
 import { useAuth } from "../auth";
 import { Spinner } from "../components/ui";
 
@@ -10,6 +11,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotMsg, setForgotMsg] = useState("");
 
   if (ready && session) return <Navigate to="/" replace />;
 
@@ -94,6 +97,44 @@ export default function LoginPage() {
               </>
             )}
           </button>
+          <p className="text-center text-[13px] text-muted">
+            <button
+              type="button"
+              className="font-medium text-accent hover:underline"
+              onClick={() => {
+                setForgotOpen((v) => !v);
+                setForgotMsg("");
+              }}
+            >
+              Olvidé mi contraseña
+            </button>
+          </p>
+          {forgotOpen && (
+            <div className="space-y-2">
+              <button
+                type="button"
+                className="btn btn-secondary w-full min-h-11"
+                onClick={() => {
+                  setForgotMsg("");
+                  api("/api/v1/auth/forgot-password", {
+                    method: "POST",
+                    body: JSON.stringify({ email: email.trim() }),
+                  })
+                    .then(() =>
+                      setForgotMsg(
+                        "Si el email existe, generamos un enlace de reset. En desarrollo el token va en logs/respuesta."
+                      )
+                    )
+                    .catch((err) =>
+                      setError(err instanceof Error ? err.message : "Error")
+                    );
+                }}
+              >
+                Enviar reset
+              </button>
+              {forgotMsg && <p className="text-center text-xs text-muted">{forgotMsg}</p>}
+            </div>
+          )}
           <p className="text-center text-[13px] text-muted">
             ¿Nuevo?{" "}
             <Link className="font-medium text-accent hover:underline" to="/signup">

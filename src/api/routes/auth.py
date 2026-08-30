@@ -63,6 +63,27 @@ class SignupRequest(BaseModel):
         return v
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: str = Field(..., min_length=5, max_length=320)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, v: str) -> str:
+        return v.strip().lower()
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str = Field(..., min_length=8, max_length=200)
+    password: str = Field(..., min_length=8, max_length=72)
+
+    @field_validator("password")
+    @classmethod
+    def check_password_bytes(cls, v: str) -> str:
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError("Password must be at most 72 bytes")
+        return v
+
+
 class LoginRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=320)
     password: str = Field(..., min_length=1, max_length=128)
@@ -171,6 +192,34 @@ async def signup(
     }
 
 
+@router.post("/forgot-password", summary="Solicitar reset de contraseña")
+async def forgot_password(body: ForgotPasswordRequest):
+    from src.core.config import get_settings
+    from src.platform.auth.password_reset import issue_reset_token
+
+    payload = {"status": "accepted"}
+    user_repo = PostgresUserRepository()
+    user = await user_repo.get_by_email(body.email)
+    if user is not None and not user.is_platform_admin and user.organization_id:
+        token = await issue_reset_token(user.id)
+        if get_settings().ENVIRONMENT == "development":
+            payload["dev_reset_token"] = token
+    return payload
+
+
+@router.post("/reset-password", summary="Aplicar reset de contraseña")
+async def reset_password(body: ResetPasswordRequest):
+    from src.platform.auth.password_reset import consume_reset_token
+
+    try:
+        user_id = await consume_reset_token(body.token)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    user_repo = PostgresUserRepository()
+    await user_repo.set_password(user_id, hash_password(body.password))
+    return {"status": "reset"}
+
+
 @router.post("/login", summary="Login con email y contraseña")
 async def login(body: LoginRequest, request: Request):
     ip = _client_ip(request)
@@ -188,7 +237,12 @@ async def login(body: LoginRequest, request: Request):
 
     user_repo = PostgresUserRepository()
     user = await user_repo.get_by_email(body.email)
-    if user is None or not verify_password(body.password, user.password_hash):
+    if (
+        user is None
+        or user.is_platform_admin
+        or user.organization_id is None
+        or not verify_password(body.password, user.password_hash)
+    ):
         await record_auth_failure(email_key, ip_key)
         raise HTTPException(
             status_code=401,
@@ -214,6 +268,51 @@ async def login(body: LoginRequest, request: Request):
     }
 
 
+@router.post("/platform/login", summary="Login de platform admin (Control Center)")
+async def platform_login(body: LoginRequest, request: Request):
+    ip = _client_ip(request)
+    email_key = f"email:{body.email}"
+    ip_key = f"ip:{ip}"
+
+    if await is_auth_blocked(email_key, ip_key):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error_code": "auth_rate_limited",
+                "message": "Too many login attempts. Try again later.",
+            },
+        )
+
+    from src.infrastructure.postgres.relational_db import ensure_platform_admin_schema
+
+    await ensure_platform_admin_schema()
+    user_repo = PostgresUserRepository()
+    user = await user_repo.get_by_email(body.email)
+    if (
+        user is None
+        or not user.is_platform_admin
+        or not verify_password(body.password, user.password_hash)
+    ):
+        await record_auth_failure(email_key, ip_key)
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "error_code": "invalid_credentials",
+                "message": "Invalid email or password.",
+            },
+        )
+
+    access_token = encrypt_session(user.id, None, typ="platform")
+    await clear_auth_failures(email_key, ip_key)
+    logger.info("Platform admin login", user_id=str(user.id), email=body.email)
+    return {
+        "access_token": access_token,
+        "token_type": "Bearer",
+        "typ": "platform",
+        "email": user.email or body.email,
+    }
+
+
 @router.post("/logout", summary="Revocar la sesión portal actual")
 async def logout(request: Request):
     """Invalida la sesión en el registro server-side (revocación real)."""
@@ -230,6 +329,20 @@ async def me(request: Request):
     ctx = getattr(request.state, "tenant_context", None)
     if ctx is None:
         raise HTTPException(401, "Not authenticated")
+    if ctx.auth_type == "platform_session":
+        return {
+            "organization_id": None,
+            "company_name": "Zent plataforma",
+            "email": None,
+            "user_id": str(ctx.user_id) if ctx.user_id else None,
+            "role": "platform",
+            "roles": sorted(ctx.roles),
+            "permissions": sorted(ctx.permissions),
+            "plan_name": None,
+            "status": None,
+            "auth_type": ctx.auth_type,
+            "typ": "platform",
+        }
     billing_ctx = getattr(request.state, "billing_context", None)
 
     organization_repo = PostgresOrganizationRepository()

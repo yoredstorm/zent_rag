@@ -32,8 +32,8 @@ def _audit() -> AuditLogService:
 class CreateSourceRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     type: str = Field(
-        ..., pattern=r"^(sql|file|csv|excel|web|s3|api)$",
-        description="Tipo de fuente: sql, file, csv, excel, web, s3, api",
+        ..., pattern=r"^(sql|file|csv|excel|web|s3|api|gdrive)$",
+        description="Tipo de fuente: sql, file, csv, excel, web, s3, api, gdrive",
     )
     knowledge_base_id: UUID | None = None
     config: dict = Field(default_factory=dict)
@@ -46,8 +46,8 @@ class UpdateSourceRequest(BaseModel):
     status: str | None = Field(default=None, pattern=r"^(active|disabled|error)$")
 
 
-def _source_response(source) -> dict:
-    return {
+def _source_response(source, extra: dict | None = None) -> dict:
+    payload = {
         "id": str(source.id),
         "name": source.name,
         "type": source.type,
@@ -55,7 +55,75 @@ def _source_response(source) -> dict:
         "config": source.config_json,
         "status": source.status,
         "created_at": source.created_at.isoformat(),
+        "last_sync": None,
+        "last_error": None,
+        "document_count": 0,
+        "error_count": 0,
+        "last_processed_count": 0,
     }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+async def _source_stats(organization_id: UUID, source_ids: list[UUID]) -> dict[UUID, dict]:
+    if not source_ids:
+        return {}
+    from sqlalchemy import bindparam
+    from sqlalchemy import text as sql_text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    session = await get_async_session()
+    try:
+        stmt = sql_text(
+            """
+            SELECT s.id AS source_id,
+                   st.last_success_at,
+                   st.last_error,
+                   COALESCE(st.last_processed_count, 0)::int AS last_processed_count,
+                   COALESCE(docs.document_count, 0)::int AS document_count,
+                   COALESCE(jobs.error_count, 0)::int AS error_count
+            FROM kb_sources s
+            LEFT JOIN source_sync_state st ON st.source_id = s.id
+            LEFT JOIN (
+                SELECT source_id, COUNT(*)::int AS document_count
+                FROM source_documents
+                WHERE organization_id = :oid AND status = 'active'
+                GROUP BY source_id
+            ) docs ON docs.source_id = s.id
+            LEFT JOIN (
+                SELECT source_id, COUNT(*)::int AS error_count
+                FROM ingestion_jobs
+                WHERE organization_id = :oid2 AND status IN ('failed', 'dead')
+                GROUP BY source_id
+            ) jobs ON jobs.source_id = s.id
+            WHERE s.organization_id = :oid3 AND s.id IN :ids
+            """
+        ).bindparams(bindparam("ids", expanding=True))
+        rows = (
+            await session.execute(
+                stmt,
+                {
+                    "oid": organization_id,
+                    "oid2": organization_id,
+                    "oid3": organization_id,
+                    "ids": source_ids,
+                },
+            )
+        ).fetchall()
+        stats: dict[UUID, dict] = {}
+        for row in rows:
+            stats[row.source_id] = {
+                "last_sync": row.last_success_at.isoformat() if row.last_success_at else None,
+                "last_error": row.last_error,
+                "last_processed_count": row.last_processed_count,
+                "document_count": row.document_count,
+                "error_count": row.error_count,
+            }
+        return stats
+    finally:
+        await session.close()
 
 
 async def _assert_own_kb(ctx, kb_id: UUID | None) -> None:
@@ -83,7 +151,11 @@ async def list_sources(
 
     ctx = require_permission(request, "sources:read")
     sources = await repo.list_sources(ctx.organization_id, knowledge_base_id)
-    return {"sources": [_source_response(s) for s in sources], "count": len(sources)}
+    stats = await _source_stats(ctx.organization_id, [s.id for s in sources])
+    return {
+        "sources": [_source_response(s, stats.get(s.id)) for s in sources],
+        "count": len(sources),
+    }
 
 
 @router.get("/knowledge-bases/{kb_id}/sources", summary="Fuentes de una KB")
@@ -101,7 +173,11 @@ async def list_kb_sources(
         raise HTTPException(400, "kb_id must be a valid UUID")
     await _assert_own_kb(ctx, kid)
     sources = await repo.list_sources(ctx.organization_id, kid)
-    return {"sources": [_source_response(s) for s in sources], "count": len(sources)}
+    stats = await _source_stats(ctx.organization_id, [s.id for s in sources])
+    return {
+        "sources": [_source_response(s, stats.get(s.id)) for s in sources],
+        "count": len(sources),
+    }
 
 
 @router.post("/sources", status_code=201, summary="Crear fuente de datos")
@@ -182,8 +258,53 @@ async def get_source(
     request: Request,
     repo: SourceRepository = Depends(get_source_repo),
 ):
-    _ctx, _sid, source = await _own_source(request, source_id, repo)
-    return _source_response(source)
+    ctx, sid, source = await _own_source(request, source_id, repo)
+    stats = await _source_stats(ctx.organization_id, [sid])
+    return _source_response(source, stats.get(sid))
+
+
+@router.get("/sources/{source_id}/documents", summary="Documentos indexados de una fuente")
+async def list_source_documents(
+    source_id: str,
+    request: Request,
+    repo: SourceRepository = Depends(get_source_repo),
+    limit: int = Query(default=100, ge=1, le=200),
+):
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    ctx, sid, _source = await _own_source(request, source_id, repo)
+    session = await get_async_session()
+    try:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT id, external_id, document_id, status, last_seen_at "
+                    "FROM source_documents "
+                    "WHERE organization_id = :oid AND source_id = :sid "
+                    "ORDER BY last_seen_at DESC "
+                    "LIMIT :lim"
+                ),
+                {"oid": ctx.organization_id, "sid": sid, "lim": limit},
+            )
+        ).fetchall()
+    finally:
+        await session.close()
+    return {
+        "source_id": str(sid),
+        "documents": [
+            {
+                "id": r.id,
+                "external_id": r.external_id,
+                "document_id": str(r.document_id),
+                "status": r.status,
+                "last_seen_at": r.last_seen_at.isoformat() if r.last_seen_at else None,
+            }
+            for r in rows
+        ],
+        "count": len(rows),
+    }
 
 
 @router.put("/sources/{source_id}", summary="Actualizar fuente")

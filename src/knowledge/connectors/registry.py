@@ -11,6 +11,7 @@ from src.knowledge.connectors.base import SourceConnector
 from src.knowledge.connectors.csv_source import CSVSourceConnector
 from src.knowledge.connectors.excel_source import ExcelSourceConnector
 from src.knowledge.connectors.file_source import FileSourceConnector
+from src.knowledge.connectors.gdrive_source import GDriveSourceConnector
 from src.knowledge.connectors.s3_source import S3SourceConnector
 from src.knowledge.connectors.sql_source import SQLSourceConnector
 from src.knowledge.connectors.web_source import WebSourceConnector
@@ -25,6 +26,7 @@ _REGISTRY: dict[str, type[SourceConnector]] = {
         WebSourceConnector,
         S3SourceConnector,
         ApiSourceConnector,
+        GDriveSourceConnector,
     )
 }
 

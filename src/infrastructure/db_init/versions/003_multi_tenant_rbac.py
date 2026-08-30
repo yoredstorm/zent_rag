@@ -384,6 +384,7 @@ def upgrade() -> None:
         FROM users u
         JOIN roles r ON r.organization_id IS NULL AND r.name = 'owner'
         WHERE u.external_id = 'default-admin'
+          AND u.organization_id IS NOT NULL
         ON CONFLICT (organization_id, user_id) DO NOTHING
         """
     )
@@ -397,7 +398,8 @@ def upgrade() -> None:
                  (SELECT id FROM roles WHERE organization_id IS NULL AND name = 'member')
                END
         FROM users u
-        WHERE NOT EXISTS (
+        WHERE u.organization_id IS NOT NULL
+          AND NOT EXISTS (
             SELECT 1 FROM memberships m
             WHERE m.user_id = u.id AND m.organization_id = u.organization_id
         )

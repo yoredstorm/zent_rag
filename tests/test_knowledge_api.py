@@ -377,3 +377,30 @@ async def test_spoofed_header_on_sources_rejected(
         | {"X-Organization-Id": org_b["organization_id"]},
     )
     assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_list_sources_includes_sync_stats(
+    async_client, org_a, isolated_settings
+) -> None:
+    created = await async_client.post(
+        "/api/v1/sources",
+        json={
+            "name": "Stats source",
+            "type": "web",
+            "config": {"url": "https://example.com"},
+        },
+        headers=_headers(org_a),
+    )
+    assert created.status_code == 201, created.text
+    listing = await async_client.get("/api/v1/sources", headers=_headers(org_a))
+    assert listing.status_code == 200, listing.text
+    match = next(s for s in listing.json()["sources"] if s["name"] == "Stats source")
+    assert "last_sync" in match
+    assert "error_count" in match
+    assert "document_count" in match
+    docs = await async_client.get(
+        f"/api/v1/sources/{match['id']}/documents", headers=_headers(org_a)
+    )
+    assert docs.status_code == 200, docs.text
+    assert "documents" in docs.json()

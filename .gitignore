@@ -42,5 +42,9 @@ sdk/python/.pytest_cache/
 .agents/
 skills-lock.json
 
+# Isolated git worktrees + SDD scratch
+.worktrees/
+.superpowers/
+
 # Observability data
 *.log

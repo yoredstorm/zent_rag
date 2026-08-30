@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request
 from src.infrastructure.observability.logging_config import get_logger
 from src.platform.billing.webhooks import (
     UnknownProviderError,
+    WebhookPayloadError,
     WebhookSignatureError,
     process_webhook,
 )
@@ -43,6 +44,9 @@ async def billing_webhook(provider: str, request: Request):
         )
     except WebhookSignatureError as exc:
         logger.warning("Billing webhook rejected", provider=provider)
+        raise HTTPException(400, str(exc)) from None
+    except WebhookPayloadError as exc:
+        logger.warning("Billing webhook payload rejected", provider=provider)
         raise HTTPException(400, str(exc)) from None
     except UnknownProviderError as exc:
         raise HTTPException(404, str(exc)) from None

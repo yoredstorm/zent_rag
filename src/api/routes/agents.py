@@ -6,7 +6,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from src.api.deps import get_agent_repo
 from src.core.ports import AgentRepository
@@ -20,13 +20,34 @@ def _audit() -> AuditLogService:
     return AuditLogService(PostgresAuditLogRepository())
 
 
+class AgentLimits(BaseModel):
+    max_steps: int | None = Field(default=None, ge=1, le=100)
+    max_tokens: int | None = Field(default=None, ge=1, le=2_000_000)
+    max_cost_usd: float | None = Field(default=None, ge=0, le=1000)
+
+
+class AgentSecurity(BaseModel):
+    sql_enabled: bool = False
+    api_calls_enabled: bool = False
+
+
+class AgentConfig(BaseModel):
+    purpose: str | None = Field(default=None, max_length=2000)
+    temperature: float = Field(default=0.2, ge=0, le=1)
+    tone: str = Field(default="professional", pattern="^(professional|friendly|concise)$")
+    knowledge_base_ids: list[UUID] = Field(default_factory=list, max_length=50)
+    limits: AgentLimits | None = None
+    security: AgentSecurity | None = None
+
+
 class CreateAgentRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=4000)
     project_id: UUID | None = None
     system_prompt: str | None = Field(default=None, max_length=16000)
-    tools: list[str] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list, max_length=20)
     model: str | None = Field(default=None, max_length=100)
+    config: AgentConfig | None = None
 
 
 class UpdateAgentRequest(BaseModel):
@@ -34,9 +55,17 @@ class UpdateAgentRequest(BaseModel):
     description: str | None = Field(default=None, max_length=4000)
     project_id: UUID | None = None
     system_prompt: str | None = Field(default=None, max_length=16000)
-    tools: list[str] | None = None
+    tools: list[str] | None = Field(default=None, max_length=20)
     model: str | None = Field(default=None, max_length=100)
     is_active: bool | None = None
+    config: AgentConfig | None = None
+
+
+def parse_agent_config(raw: dict | None) -> dict:
+    try:
+        return AgentConfig.model_validate(raw or {}).model_dump(mode="json")
+    except ValidationError:
+        return AgentConfig().model_dump(mode="json")
 
 
 def _agent_response(agent) -> dict:
@@ -50,6 +79,7 @@ def _agent_response(agent) -> dict:
         "model": agent.model,
         "is_active": agent.is_active,
         "created_at": agent.created_at.isoformat(),
+        "config": parse_agent_config(agent.config_json),
     }
 
 
@@ -74,6 +104,7 @@ async def create_agent(
     from src.platform.billing.plan_limits import (
         PlanLimitError,
         check_resource_limit,
+        plan_limit_detail,
     )
     from src.platform.rbac.policy import require_permission
 
@@ -81,9 +112,13 @@ async def create_agent(
     try:
         await check_resource_limit(ctx.organization_id, "agents")
     except PlanLimitError as exc:
-        raise HTTPException(409, str(exc)) from None
+        raise HTTPException(status_code=409, detail=plan_limit_detail(exc)) from None
     if body.project_id is not None:
         await _require_own_project(ctx, body.project_id)
+    config_payload = None
+    if body.config is not None:
+        await _require_own_kbs(ctx, body.config.knowledge_base_ids)
+        config_payload = body.config.model_dump(mode="json")
     agent = await repo.create_agent(
         ctx.organization_id,
         body.name,
@@ -92,6 +127,7 @@ async def create_agent(
         system_prompt=body.system_prompt,
         tools=body.tools,
         model=body.model,
+        config_json=config_payload,
     )
     await _audit().write(ctx, "agent.created", "agent", agent.id, metadata={"name": agent.name})
     return _agent_response(agent)
@@ -132,8 +168,16 @@ async def update_agent(
         raise HTTPException(400, "agent_id must be a valid UUID")
     if body.project_id is not None:
         await _require_own_project(ctx, body.project_id)
+    fields = body.model_dump(exclude_none=True)
+    if "config" in fields:
+        if body.config is not None:
+            await _require_own_kbs(ctx, body.config.knowledge_base_ids)
+        fields["config_json"] = (
+            body.config.model_dump(mode="json") if body.config is not None else {}
+        )
+        del fields["config"]
     try:
-        agent = await repo.update_agent(ctx.organization_id, aid, **body.model_dump(exclude_none=True))
+        agent = await repo.update_agent(ctx.organization_id, aid, **fields)
     except ValueError:
         raise HTTPException(404, "Agent not found")
     await _audit().write(ctx, "agent.updated", "agent", aid, metadata={"name": agent.name})
@@ -166,3 +210,15 @@ async def _require_own_project(ctx, project_id: UUID) -> None:
     project = await get_project_repo().get_project(ctx.organization_id, project_id)
     if project is None:
         raise HTTPException(404, "Project not found in this organization")
+
+
+async def _require_own_kbs(ctx, knowledge_base_ids: list[UUID]) -> None:
+    from src.api.deps import get_kb_repo
+
+    repo = get_kb_repo()
+    for kb_id in knowledge_base_ids:
+        kb = await repo.get_kb(ctx.organization_id, kb_id)
+        if kb is None:
+            raise HTTPException(
+                404, "Knowledge base not found in this organization"
+            )

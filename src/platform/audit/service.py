@@ -48,6 +48,31 @@ class AuditLogService:
             # pero deja rastro en logs (el observability team lo correlaciona).
             logger.warning("Audit write failed", action=action, error=str(exc))
 
+    async def write_or_raise(
+        self,
+        ctx: TenantContext,
+        action: str,
+        resource_type: str,
+        resource_id: UUID | str | None = None,
+        *,
+        organization_id: UUID | None = None,
+        ip_address: str | None = None,
+        metadata: dict | None = None,
+    ) -> None:
+        """Igual que write() pero no traga errores (impersonate / Control Center)."""
+        write_fn = getattr(self._repo, "write_strict", None) or self._repo.write
+        await write_fn(
+            AuditLogEntry(
+                organization_id=organization_id if organization_id is not None else ctx.tenant_id,
+                actor_user_id=ctx.user_id,
+                action=action,
+                resource_type=resource_type,
+                resource_id=str(resource_id) if resource_id else None,
+                ip_address=ip_address,
+                metadata=metadata or {},
+            )
+        )
+
     async def list_entries(
         self,
         ctx: TenantContext,

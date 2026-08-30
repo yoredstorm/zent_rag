@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.relational_db import (
@@ -32,6 +33,12 @@ class CreateTrialRequest(BaseModel):
     ruc: str | None = Field(default=None, max_length=50)
 
 
+class CheckoutRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    plan_name: str = Field(..., min_length=1, max_length=100)
+    interval: Literal["monthly", "annual"] = "monthly"
+
+
 def _organization_from_request(request: Request, x_organization_id: str = "") -> UUID:
     """Resuelve la organización SOLO desde la identidad autenticada."""
     from src.api.security import resolve_organization
@@ -42,6 +49,9 @@ def _organization_from_request(request: Request, x_organization_id: str = "") ->
 @router.get("/plans", summary="Listar planes disponibles")
 async def list_plans(billing: BillingService = Depends(get_billing)):
     plans = await billing.get_plans()
+    from src.platform.billing.entitlements import get_entitlements_for_plans
+
+    ents = await get_entitlements_for_plans([p.id for p in plans])
     return {
         "plans": [
             {
@@ -54,12 +64,26 @@ async def list_plans(billing: BillingService = Depends(get_billing)):
                 "requests_per_month": p.requests_per_month,
                 "max_organizations": p.max_organizations,
                 "features": p.features,
+                "entitlements": ents.get(p.id, {}),
                 "is_trial": p.is_trial,
                 "trial_days": p.trial_days,
             }
             for p in plans
         ]
     }
+
+
+@router.get("/entitlements", summary="Entitlements del plan de la organización")
+async def get_entitlements(
+    request: Request,
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
+):
+    from src.platform.billing.entitlements import get_org_entitlements
+    from src.platform.rbac.policy import require_permission
+
+    require_permission(request, "billing:read")
+    organization_id = _organization_from_request(request, x_organization_id)
+    return await get_org_entitlements(organization_id)
 
 
 @router.get("/subscription", summary="Ver suscripcion actual")
@@ -82,6 +106,38 @@ async def get_subscription(
     except Exception:
         pass
 
+    from sqlalchemy import text
+
+    from src.core.config import get_settings
+    from src.infrastructure.postgres.session import get_async_session
+    from src.platform.billing.invoices import ensure_billing_tables
+
+    await ensure_billing_tables()
+    payment_provider = "manual"
+    provider_subscription_id = None
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT payment_provider, provider_subscription_id "
+                    "FROM subscriptions WHERE id = :sid"
+                ),
+                {"sid": sub.id},
+            )
+        ).fetchone()
+        if row is not None:
+            payment_provider = str(row.payment_provider or "manual")
+            provider_subscription_id = row.provider_subscription_id
+    finally:
+        await session.close()
+
+    settings = get_settings()
+    checkout_available = (
+        settings.SELF_SERVICE_UPGRADE_ENABLED
+        and settings.PAYMENT_PROVIDER.strip().lower() == "stripe"
+    )
+
     return {
         "subscription_id": str(sub.id),
         "organization_id": str(sub.organization_id),
@@ -97,6 +153,10 @@ async def get_subscription(
         "requests_used": used,
         "quota_month": month,
         "requests_limit": plan.requests_per_month if plan else None,
+        "payment_provider": payment_provider,
+        "provider_subscription_id": provider_subscription_id,
+        "self_service_upgrade_enabled": settings.SELF_SERVICE_UPGRADE_ENABLED,
+        "checkout_available": checkout_available,
     }
 
 
@@ -116,6 +176,33 @@ async def cancel_subscription(
     sub = await billing.get_subscription(organization_id)
     if sub is None:
         raise HTTPException(404, "No subscription found")
+
+    from sqlalchemy import text
+
+    from src.infrastructure.billing.provider import get_payment_provider
+    from src.infrastructure.postgres.session import get_async_session
+    from src.platform.billing.invoices import ensure_billing_tables
+
+    await ensure_billing_tables()
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT provider_subscription_id FROM subscriptions WHERE id = :sid"
+                ),
+                {"sid": sub.id},
+            )
+        ).fetchone()
+        provider_sub_id = row.provider_subscription_id if row else None
+    finally:
+        await session.close()
+    try:
+        await get_payment_provider().cancel_subscription(
+            organization_id, provider_sub_id
+        )
+    except Exception:
+        logger.warning("Provider cancel failed; continuing with local cancel")
 
     await billing.cancel_subscription(sub.id)
     return {"status": "canceled", "subscription_id": str(sub.id)}
@@ -261,6 +348,68 @@ async def list_subscriptions(
     return {"subscriptions": subs, "total": len(subs)}
 
 
+@router.post("/checkout", status_code=201, summary="Crear sesión de Stripe Checkout")
+async def create_checkout(
+    body: CheckoutRequest,
+    request: Request,
+    x_organization_id: str = Header(default="", alias="X-Organization-Id"),
+):
+    from src.api.security import require_organization_admin
+    from src.core.config import get_settings
+    from src.infrastructure.billing.provider import get_payment_provider
+    from src.platform.rbac.policy import require_permission
+
+    require_organization_admin(request)
+    require_permission(request, "billing:write")
+    settings = get_settings()
+    if not settings.SELF_SERVICE_UPGRADE_ENABLED:
+        raise HTTPException(
+            403,
+            "Plan upgrades require a verified payment flow. Contact support.",
+        )
+    if settings.PAYMENT_PROVIDER.strip().lower() != "stripe":
+        raise HTTPException(
+            409,
+            "Stripe checkout requires PAYMENT_PROVIDER=stripe",
+        )
+    organization_id = _organization_from_request(request, x_organization_id)
+    plan_name = body.plan_name.strip().lower()
+    if plan_name in {"enterprise", "trial"}:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": "plan_not_self_service",
+                "message": "Enterprise and trial plans are not available via Checkout",
+            },
+        )
+    plans = await get_billing().get_plans()
+    target = next((p for p in plans if p.name == plan_name), None)
+    if target is None or not target.is_public:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": "plan_not_self_service",
+                "message": "Plan is not available for self-service checkout",
+            },
+        )
+    provider = get_payment_provider()
+    try:
+        session = await provider.create_checkout_session(
+            organization_id, plan_name, body.interval
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    logger.info(
+        "Stripe checkout session created",
+        organization_id=str(organization_id),
+        plan=plan_name,
+    )
+    return {
+        "checkout_url": session.checkout_url,
+        "session_id": session.session_id,
+    }
+
+
 @router.post("/subscription/upgrade", summary="Cambiar de plan")
 async def upgrade_plan(
     request: Request,
@@ -274,11 +423,45 @@ async def upgrade_plan(
 
     # Anti fraude: el upgrade a planes pagos exige flujo de pago. Sin
     # proveedor de pagos verificado, el self-service queda deshabilitado.
-    if not get_settings().SELF_SERVICE_UPGRADE_ENABLED:
+    settings = get_settings()
+    if not settings.SELF_SERVICE_UPGRADE_ENABLED:
         raise HTTPException(
             403,
             "Plan upgrades require a verified payment flow. Contact support.",
         )
+
+    from src.platform.rbac.policy import require_permission
+
+    require_organization_admin(request)
+    require_permission(request, "billing:write")
+    organization_id = _organization_from_request(request, x_organization_id)
+    if not new_plan_name:
+        raise HTTPException(400, "X-New-Plan required (plan name: starter, pro, enterprise)")
+
+    if settings.PAYMENT_PROVIDER.strip().lower() == "stripe":
+        from src.infrastructure.billing.provider import get_payment_provider
+
+        interval = billing_interval if billing_interval in ("monthly", "annual") else "monthly"
+        if new_plan_name.strip().lower() in {"enterprise", "trial"}:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error_code": "plan_not_self_service",
+                    "message": "Enterprise and trial plans are not available via Checkout",
+                },
+            )
+        provider = get_payment_provider()
+        try:
+            session = await provider.create_checkout_session(
+                organization_id, new_plan_name.strip().lower(), interval
+            )
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {
+            "checkout_url": session.checkout_url,
+            "session_id": session.session_id,
+            "message": "Complete payment in Stripe Checkout. The plan changes after the webhook.",
+        }
 
     from src.platform.rbac.policy import require_permission
 

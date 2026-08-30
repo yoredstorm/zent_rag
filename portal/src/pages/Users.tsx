@@ -2,7 +2,6 @@ import { ShieldCheck, UserPlus, UsersThree } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import { useToast } from "../Toast";
 import {
   EmptyState,
   ErrorInline,
@@ -24,13 +23,15 @@ const ROLES = ["viewer", "member", "admin", "owner"];
 
 export default function UsersPage() {
   const { session } = useAuth();
-  const { pushToast } = useToast();
   const [members, setMembers] = useState<Member[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [pending, setPending] = useState<string | null>(null);
-  const [removing, setRemoving] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteRole, setInviteRole] = useState("member");
+  const [inviting, setInviting] = useState(false);
+  const [inviteToken, setInviteToken] = useState("");
 
   function load() {
     if (!session) return;
@@ -68,6 +69,29 @@ export default function UsersPage() {
     }
   }
 
+  async function invite() {
+    if (!session || !inviteEmail.trim()) return;
+    setError("");
+    setMsg("");
+    setInviteToken("");
+    setInviting(true);
+    try {
+      const created = await api<{ token: string }>("/api/v1/organizations/invites", {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
+      });
+      setInviteToken(created.token);
+      setMsg("Invitación creada. Copia el enlace/token ahora; no se volverá a mostrar.");
+      setInviteEmail("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al invitar");
+    } finally {
+      setInviting(false);
+    }
+  }
+
   async function removeMember(userId: string) {
     if (!session) return;
     setError("");
@@ -96,6 +120,54 @@ export default function UsersPage() {
       />
       <ErrorInline message={error} />
       <SuccessInline message={msg} />
+
+      <form
+        className="panel mb-4 p-5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          void invite();
+        }}
+      >
+        <h2 className="mb-3 flex items-center gap-2 text-sm font-semibold text-text">
+          <UserPlus size={16} className="text-accent" aria-hidden />
+          Invitar usuario
+        </h2>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <label className="block flex-1 text-sm">
+            <span className="mb-1 block text-muted">Email</span>
+            <input
+              type="email"
+              required
+              autoComplete="email"
+              className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block text-muted">Rol</span>
+            <select
+              className="min-h-11 rounded-md border border-border bg-soft px-2 py-2.5 text-sm text-text outline-none focus:border-accent"
+              value={inviteRole}
+              onChange={(e) => setInviteRole(e.target.value)}
+            >
+              {ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="submit" className="btn btn-primary min-h-11" disabled={inviting}>
+            {inviting ? <Spinner size={14} /> : "Enviar invitación"}
+          </button>
+        </div>
+        {inviteToken && (
+          <p className="mt-3 break-all rounded-md border border-border bg-soft px-3 py-2 font-mono text-xs text-muted">
+            Token (una vez): {inviteToken}
+          </p>
+        )}
+      </form>
 
       <div className="panel">
         <div className="flex items-center justify-between border-b border-border px-5 py-4">

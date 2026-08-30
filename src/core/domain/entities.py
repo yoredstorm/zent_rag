@@ -62,15 +62,16 @@ class Organization:
 
 @dataclass(kw_only=True, frozen=True)
 class User:
-    """Usuario dentro de una Organización."""
+    """Usuario dentro de una Organización (o platform admin sin tenant)."""
 
     id: UUID
-    organization_id: UUID
+    organization_id: UUID | None
     external_id: str  # ID del sistema cliente (nunca exponer ID interno)
     email_hash: str  # SHA-256 del email
     role: str = "user"  # Legado informativo; la fuente de verdad es memberships
     email: str | None = None  # Portal login (normalized)
     password_hash: str | None = None  # bcrypt hash; never return to clients
+    is_platform_admin: bool = False
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -144,7 +145,7 @@ class KbSource:
     id: UUID
     organization_id: UUID
     name: str
-    type: str  # sql | file | csv | excel | web | s3 | api
+    type: str  # sql | file | csv | excel | web | s3 | api | gdrive
     knowledge_base_id: UUID | None = None
     config_json: dict = field(default_factory=dict)
     status: str = "active"
@@ -442,18 +443,20 @@ class TenantContext:
     """Contexto de tenant propagado a API, Aplicación, RAG, Vector Store,
     SQL, Connectors, Usage, Billing y Audit."""
 
-    tenant_id: UUID  # Identidad canónica del tenant (= organization_id)
+    tenant_id: UUID | None = None  # None solo para auth_type=platform_session
     user_id: UUID | None = None
     roles: frozenset[str] = field(default_factory=frozenset)  # ej. {'owner'}
     permissions: frozenset[str] = field(default_factory=frozenset)  # ej. {'projects:write'}
     scopes: frozenset[str] = field(default_factory=frozenset)  # scopes del token/sesión
-    auth_type: str = "api_token"  # api_token | portal_session
+    auth_type: str = "api_token"  # api_token | portal_session | platform_session
     subscription_id: UUID | None = None
     token_id: UUID | None = None
 
     @property
     def organization_id(self) -> UUID:
-        """Alias explícito: el tenant ES la organización."""
+        """Alias explícito: el tenant ES la organización. Prohibido en sesión platform."""
+        if self.tenant_id is None:
+            raise RuntimeError("Platform admin context has no tenant organization")
         return self.tenant_id
 
     def has_permission(self, code: str) -> bool:
@@ -464,8 +467,8 @@ class TenantContext:
         return bool(self.roles & {"owner", "admin"}) or "admin:*" in self.scopes
 
     def is_platform_admin(self) -> bool:
-        """Admin de plataforma: SOLO el scope admin:* (nunca sesiones portal)."""
-        return "admin:*" in self.scopes
+        """Admin de plataforma: sesión typ=platform o API key admin:*."""
+        return self.auth_type == "platform_session" or "admin:*" in self.scopes
 
 
 # Nombre canónico del spec de identidad. TenantContext es la implementación.

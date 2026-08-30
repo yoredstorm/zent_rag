@@ -3,7 +3,7 @@
 # =============================================================================
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
@@ -207,3 +207,62 @@ async def test_signup_rejects_overlong_password_bytes(
         },
     )
     assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
+async def test_api_sets_security_headers(async_client: AsyncClient) -> None:
+    response = await async_client.get("/api/v1")
+    assert response.status_code == 200
+    assert response.headers.get("x-content-type-options") == "nosniff"
+    assert response.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
+
+
+@pytest.mark.asyncio
+async def test_org_cors_allowlist_rejects_unknown_origin(
+    async_client: AsyncClient,
+) -> None:
+    created = await async_client.post(
+        "/api/v1/billing/subscription/create-trial",
+        json={
+            "company_name": f"CORS {uuid4().hex[:6]}",
+            "email": f"cors-{uuid4().hex[:8]}@example.com",
+            "country": "CL",
+        },
+    )
+    assert created.status_code == 200, created.text
+    org_id = created.json()["organization_id"]
+    from src.infrastructure.postgres.relational_db import (
+        PostgresOrganizationRepository,
+        PostgresUserRepository,
+    )
+    from src.platform.auth.session import encrypt_session
+
+    org_repo = PostgresOrganizationRepository()
+    organization = await org_repo.get_by_id(UUID(org_id))
+    assert organization is not None
+    config = dict(organization.config_json or {})
+    config["cors_origins"] = ["https://app.example"]
+    await org_repo.update_config(UUID(org_id), config)
+    user = await PostgresUserRepository().get_by_external_id(
+        UUID(org_id), "default-admin"
+    )
+    assert user is not None
+    token = encrypt_session(user.id, UUID(org_id))
+    denied = await async_client.get(
+        "/api/v1/agents",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Organization-Id": org_id,
+            "Origin": "https://evil.example",
+        },
+    )
+    assert denied.status_code == 403, denied.text
+    allowed = await async_client.get(
+        "/api/v1/agents",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Organization-Id": org_id,
+            "Origin": "https://app.example",
+        },
+    )
+    assert allowed.status_code == 200, allowed.text

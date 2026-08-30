@@ -9,7 +9,8 @@ pip install -e sdk/python
 ```python
 from zent import Zent
 
-client = Zent(api_key="zent_sk_live_...")
+client = Zent(api_key="zent_sk_live_...")  # production
+# client = Zent(api_key="zent_sk_test_...")  # development (same org data, lower quota)
 print(client.chat("What is our refund policy?").answer)
 ```
 

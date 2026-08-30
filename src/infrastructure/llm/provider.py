@@ -75,6 +75,26 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
         temperature: float = 0.3,
         system_prompt: str | None = None,
     ) -> LLMResponse:
+        from src.infrastructure.llm.router import generate_routed, resolve_route
+
+        route = resolve_route(requested=model)
+        return await generate_routed(
+            self._generate_once,
+            prompt=prompt,
+            route=route,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system_prompt=system_prompt,
+        )
+
+    async def _generate_once(
+        self,
+        prompt: str,
+        model: str | None = None,
+        max_tokens: int = 2048,
+        temperature: float = 0.3,
+        system_prompt: str | None = None,
+    ) -> LLMResponse:
         settings = get_settings()
         model_name = model or settings.LITELLM_DEFAULT_MODEL
         llm_kwargs = _get_llm_kwargs()
@@ -148,8 +168,10 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
         temperature: float = 0.3,
         system_prompt: str | None = None,
     ):
+        from src.infrastructure.llm.router import resolve_route
+
         settings = get_settings()
-        model_name = model or settings.LITELLM_DEFAULT_MODEL
+        model_name = resolve_route(requested=model).primary
         llm_kwargs = _get_llm_kwargs()
 
         messages: list[dict[str, str]] = []

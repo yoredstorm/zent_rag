@@ -63,6 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           company_name: string;
           email?: string | null;
           roles?: string[];
+          permissions?: string[];
         }>("/api/v1/auth/me", {
           token: current.token,
           organizationId: current.organizationId,
@@ -73,6 +74,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           organizationId: me.organization_id,
           companyName: me.company_name || current.companyName,
           email: me.email || current.email,
+          roles: me.roles || [],
+          permissions: me.permissions || [],
         };
         saveSession(next);
         setSession(next);
@@ -101,11 +104,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
+    const me = await api<{ roles?: string[]; permissions?: string[] }>(
+      "/api/v1/auth/me",
+      {
+        token: data.access_token,
+        organizationId: data.organization_id,
+      }
+    ).catch(() => ({ roles: [] as string[], permissions: [] as string[] }));
     const next: Session = {
       token: data.access_token,
       organizationId: data.organization_id,
       companyName: data.company_name,
       email: data.email,
+      roles: me.roles || [],
+      permissions: me.permissions || [],
     };
     saveSession(next);
     setSession(next);
@@ -135,6 +147,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         organizationId: data.organization_id,
         companyName: data.company_name,
         email: data.email,
+        roles: ["owner"],
+        permissions: [],
       };
       saveSession(next);
       setSession(next);

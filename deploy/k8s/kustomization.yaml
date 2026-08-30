@@ -1,0 +1,21 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: zent
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - deployment-api.yaml
+  - deployment-worker.yaml
+  - deployment-portal.yaml
+  - service-api.yaml
+  - service-portal.yaml
+  - ingress.yaml
+  - networkpolicy.yaml
+images:
+  - name: zent-api
+    newName: zent-api
+    newTag: latest
+  - name: zent-portal
+    newName: zent-portal
+    newTag: latest

@@ -8,6 +8,7 @@ import socket
 import time
 from typing import ClassVar
 from urllib.parse import urlparse
+from uuid import UUID
 
 import httpx
 
@@ -56,24 +57,43 @@ class SearchKnowledgeTool(Tool):
             from src.rag.retrieval.models import RetrievalQuery
 
             top_k = int(arguments.get("top_k") or 5)
-            rquery = RetrievalQuery(
-                query=str(arguments["query"]),
-                organization_id=ctx.tenant_id,
-                role=ctx.role,
-                top_k=top_k,
-                effective_top_k=top_k,
-                score_threshold=0.0,
-                strategy="vector",
-            )
-            context: RetrievalContext = await self._retriever.retrieve(rquery)
-            if not context.chunks:
+            kb_ids = self._knowledge_base_ids(ctx)
+            chunks = []
+            if kb_ids:
+                for kb_id in kb_ids:
+                    rquery = RetrievalQuery(
+                        query=str(arguments["query"]),
+                        organization_id=ctx.tenant_id,
+                        role=ctx.role,
+                        knowledge_base_id=kb_id,
+                        top_k=top_k,
+                        effective_top_k=top_k,
+                        score_threshold=0.0,
+                        strategy="vector",
+                    )
+                    part: RetrievalContext = await self._retriever.retrieve(rquery)
+                    chunks.extend(part.chunks)
+            else:
+                rquery = RetrievalQuery(
+                    query=str(arguments["query"]),
+                    organization_id=ctx.tenant_id,
+                    role=ctx.role,
+                    top_k=top_k,
+                    effective_top_k=top_k,
+                    score_threshold=0.0,
+                    strategy="vector",
+                )
+                context: RetrievalContext = await self._retriever.retrieve(rquery)
+                chunks = list(context.chunks)
+            chunks = chunks[:top_k]
+            if not chunks:
                 return ToolResult(
                     output="(no results)",
                     latency_ms=(time.perf_counter() - start) * 1000,
                 )
             snippet = "\n\n".join(
                 f"[Doc {i + 1}] {c.content[:1200]}"
-                for i, c in enumerate(context.chunks)
+                for i, c in enumerate(chunks)
             )
             return ToolResult(
                 output=snippet[:6000],
@@ -84,6 +104,17 @@ class SearchKnowledgeTool(Tool):
             return ToolResult(
                 error=str(exc), latency_ms=(time.perf_counter() - start) * 1000
             )
+
+    @staticmethod
+    def _knowledge_base_ids(ctx: ToolContext) -> list[UUID]:
+        raw = (ctx.org_config or {}).get("knowledge_base_ids") or []
+        ids: list[UUID] = []
+        for item in raw:
+            try:
+                ids.append(UUID(str(item)))
+            except ValueError:
+                continue
+        return ids
 
 
 class QueryDatabaseTool(Tool):

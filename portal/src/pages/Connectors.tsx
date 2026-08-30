@@ -22,25 +22,27 @@ import { fmtDateTime } from "../lib/format";
 type Connector = {
   id: string;
   name: string;
-  type: "sql" | "api" | "files";
+  type: string;
   config: Record<string, unknown>;
   status: string;
   created_at: string;
 };
 
-const TYPE_ICONS: Record<Connector["type"], Icon> = {
+const TYPE_ICONS: Record<string, Icon> = {
   sql: CloudArrowDown,
   api: Link,
   files: File,
+  gdrive: CloudArrowDown,
 };
 
-const TYPES: Connector["type"][] = ["sql", "api", "files"];
+const TYPES = ["sql", "api", "files", "gdrive"] as const;
 
 export default function ConnectorsPage() {
   const { session } = useAuth();
   const [connectors, setConnectors] = useState<Connector[]>([]);
   const [name, setName] = useState("");
-  const [type, setType] = useState<Connector["type"]>("sql");
+  const [type, setType] = useState<(typeof TYPES)[number]>("sql");
+  const [folderId, setFolderId] = useState("");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
@@ -67,6 +69,27 @@ export default function ConnectorsPage() {
     setMsg("");
     setCreating(true);
     try {
+      if (type === "gdrive") {
+        if (!folderId.trim()) {
+          setError("Indica el ID de la carpeta de Google Drive.");
+          setCreating(false);
+          return;
+        }
+        const started = await api<{ authorization_url: string }>(
+          "/api/v1/connectors/oauth/drive/start",
+          {
+            method: "POST",
+            token: session.token,
+            organizationId: session.organizationId,
+            body: JSON.stringify({
+              name: name.trim(),
+              folder_id: folderId.trim(),
+            }),
+          },
+        );
+        window.location.assign(started.authorization_url);
+        return;
+      }
       await api("/api/v1/connectors", {
         method: "POST",
         token: session.token,
@@ -105,7 +128,7 @@ export default function ConnectorsPage() {
     <div>
       <PageHeader
         title="Conectores"
-        subtitle="Fuentes de datos registradas (sql / api / files). Las credenciales viven en Vault, nunca en la base de datos."
+        subtitle="Fuentes de datos (sql / api / files / Google Drive). Las credenciales viven en Vault, nunca en la base de datos."
       />
       <ErrorInline message={error} />
       <SuccessInline message={msg} />
@@ -136,15 +159,27 @@ export default function ConnectorsPage() {
             <select
               className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
               value={type}
-              onChange={(e) => setType(e.target.value as Connector["type"])}
+              onChange={(e) => setType(e.target.value as (typeof TYPES)[number])}
               aria-label="Tipo de conector"
             >
               {TYPES.map((t) => (
                 <option key={t} value={t}>
-                  {t}
+                  {t === "gdrive" ? "Google Drive" : t}
                 </option>
               ))}
             </select>
+            {type === "gdrive" && (
+              <label className="block text-sm text-text">
+                ID de carpeta
+                <input
+                  className="mt-1 w-full min-h-11 rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
+                  placeholder="ID de la carpeta de Google Drive"
+                  value={folderId}
+                  onChange={(e) => setFolderId(e.target.value)}
+                  autoComplete="off"
+                />
+              </label>
+            )}
             <div>
               <button
                 className="btn btn-primary"
@@ -153,7 +188,7 @@ export default function ConnectorsPage() {
                 onClick={() => void create()}
               >
                 {creating ? <Spinner size={14} /> : <Plus size={15} aria-hidden />}
-                Crear
+                {type === "gdrive" ? "Conectar Google Drive" : "Crear"}
               </button>
             </div>
           </div>

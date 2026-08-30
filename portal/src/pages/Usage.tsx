@@ -1,5 +1,5 @@
-import { ChartLineUp, Lightning, Timer, ListBullets } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { ChartLineUp, Lightning, Timer, ListBullets, Warning } from "@phosphor-icons/react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import {
@@ -11,8 +11,16 @@ import {
 } from "../components/ui";
 import { fmtDateTime, fmtLatency, fmtNum } from "../lib/format";
 
+const UsageChart = lazy(() => import("../components/UsageChart"));
+
 type Usage = {
-  totals: { requests: number; tokens: number; avg_latency_ms: number };
+  totals: {
+    requests: number;
+    tokens: number;
+    avg_latency_ms: number;
+    errors?: number;
+    estimated_cost?: number;
+  };
   daily: { day: string; requests: number; tokens: number; avg_latency_ms: number }[];
   recent: {
     id: number;
@@ -21,6 +29,7 @@ type Usage = {
     model: string | null;
     created_at: string;
   }[];
+  top_users?: { user_id: string; requests: number }[];
 };
 
 export default function UsagePage() {
@@ -60,7 +69,7 @@ export default function UsagePage() {
       ) : (
         usage && (
           <>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <StatCard
                 label="Consultas"
                 value={fmtNum(usage.totals.requests)}
@@ -76,6 +85,39 @@ export default function UsagePage() {
                 value={fmtLatency(usage.totals.avg_latency_ms)}
                 icon={Timer}
               />
+              <StatCard
+                label="Errores"
+                value={fmtNum(usage.totals.errors ?? 0)}
+                icon={Warning}
+              />
+            </div>
+
+            <div className="panel mt-4">
+              <div className="flex items-center justify-between border-b border-border px-5 py-4">
+                <h2 className="text-sm font-semibold text-text">Consultas por día</h2>
+              </div>
+              <div className="p-4">
+                {usage.daily.length === 0 ? (
+                  <EmptyState
+                    icon={ChartLineUp}
+                    title="Sin actividad aún"
+                    body="Todavía no hay consultas registradas en los últimos 30 días."
+                  />
+                ) : (
+                  <Suspense
+                    fallback={
+                      <div className="flex h-[240px] items-center justify-center">
+                        <span
+                          className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-border-strong border-t-accent"
+                          aria-label="Cargando gráfico"
+                        />
+                      </div>
+                    }
+                  >
+                    <UsageChart daily={usage.daily} />
+                  </Suspense>
+                )}
+              </div>
             </div>
 
             <div className="panel mt-4">

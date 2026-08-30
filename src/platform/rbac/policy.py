@@ -63,7 +63,7 @@ def require_organization_admin(request: Request) -> TenantContext:
 
 
 def require_platform_admin(request: Request) -> TenantContext:
-    """Admin de plataforma: SOLO scope admin:* (nunca sesiones portal)."""
+    """Admin de plataforma: sesión typ=platform o API key con scope admin:*."""
     ctx = get_ctx(request)
     if ctx.is_platform_admin():
         return ctx

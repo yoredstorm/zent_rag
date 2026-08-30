@@ -23,10 +23,10 @@ from qdrant_client import models as qdrant_models
 
 from src.core.config import get_settings
 from src.core.domain.entities import RetrievalChunk, RetrievalContext
-from src.platform.tenants.context import bind_organization_id
 from src.core.ports import HybridStore, LexicalStore, VectorStore
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.qdrant.bm25 import encode_sparse, to_sparse_payload
+from src.platform.tenants.context import bind_organization_id
 
 logger = get_logger(__name__)
 

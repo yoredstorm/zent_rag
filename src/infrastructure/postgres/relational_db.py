@@ -241,11 +241,52 @@ class PostgresOrganizationRepository(OrganizationRepository):
 # -----------------------------------------------------------------------------
 # Usuarios
 # -----------------------------------------------------------------------------
+_platform_admin_schema_ready = False
+
+
+async def ensure_platform_admin_schema() -> None:
+    """Additive users.is_platform_admin + nullable organization_id for Control Center."""
+    global _platform_admin_schema_ready
+    if _platform_admin_schema_ready:
+        return
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "is_platform_admin BOOLEAN NOT NULL DEFAULT false"
+            )
+        )
+        await session.execute(text("ALTER TABLE users ALTER COLUMN organization_id DROP NOT NULL"))
+        await session.execute(
+            text("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_platform_admin_org_chk")
+        )
+        await session.execute(
+            text(
+                """
+                ALTER TABLE users ADD CONSTRAINT users_platform_admin_org_chk
+                    CHECK (
+                        (is_platform_admin = true AND organization_id IS NULL)
+                        OR (is_platform_admin = false AND organization_id IS NOT NULL)
+                    )
+                """
+            )
+        )
+        await session.commit()
+        _platform_admin_schema_ready = True
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
 class PostgresUserRepository(UserRepository):
     """Repositorio de Usuarios sobre PostgreSQL."""
 
     _USER_COLS = (
-        "id, organization_id, external_id, email_hash, role, email, password_hash, created_at"
+        "id, organization_id, external_id, email_hash, role, email, password_hash, "
+        "COALESCE(is_platform_admin, false) AS is_platform_admin, created_at"
     )
 
     @staticmethod
@@ -258,10 +299,12 @@ class PostgresUserRepository(UserRepository):
             role=row.role,
             email=getattr(row, "email", None),
             password_hash=getattr(row, "password_hash", None),
+            is_platform_admin=bool(getattr(row, "is_platform_admin", False)),
             created_at=row.created_at,
         )
 
     async def get_by_id(self, user_id: UUID, organization_id: UUID) -> User | None:
+        await ensure_platform_admin_schema()
         session = await get_async_session()
         try:
             result = await session.execute(
@@ -281,6 +324,7 @@ class PostgresUserRepository(UserRepository):
     async def get_by_external_id(
         self, organization_id: UUID, external_id: str
     ) -> User | None:
+        await ensure_platform_admin_schema()
         session = await get_async_session()
         try:
             result = await session.execute(
@@ -298,6 +342,7 @@ class PostgresUserRepository(UserRepository):
             await session.close()
 
     async def get_any_user(self, organization_id: UUID) -> User | None:
+        await ensure_platform_admin_schema()
         session = await get_async_session()
         try:
             result = await session.execute(
@@ -315,6 +360,7 @@ class PostgresUserRepository(UserRepository):
             await session.close()
 
     async def get_by_email(self, email: str) -> User | None:
+        await ensure_platform_admin_schema()
         session = await get_async_session()
         try:
             result = await session.execute(
@@ -353,6 +399,7 @@ class PostgresUserRepository(UserRepository):
         email: str | None = None,
         password_hash: str | None = None,
     ) -> User:
+        await ensure_platform_admin_schema()
         session = await get_async_session()
         user_id = uuid4()
         try:
@@ -1124,15 +1171,16 @@ class PostgresAgentRepository(AgentRepository):
         system_prompt: str | None = None,
         tools: list[str] | None = None,
         model: str | None = None,
+        config_json: dict | None = None,
     ) -> Agent:
         session = await get_async_session()
         try:
             result = await session.execute(
                 text(
                     "INSERT INTO agents (id, organization_id, name, description, project_id, "
-                    "system_prompt, tools, model) "
+                    "system_prompt, tools, model, config_json) "
                     "VALUES (uuid_generate_v4(), :oid, :name, :description, :pid, "
-                    ":prompt, :tools, :model) "
+                    ":prompt, :tools, :model, CAST(:config AS jsonb)) "
                     "RETURNING id, organization_id, name, project_id, description, system_prompt, "
                     "tools, model, config_json, is_active, created_at"
                 ),
@@ -1144,6 +1192,7 @@ class PostgresAgentRepository(AgentRepository):
                     "prompt": system_prompt,
                     "tools": json.dumps(tools or []),
                     "model": model,
+                    "config": json.dumps(config_json or {}),
                 },
             )
             row = result.fetchone()
@@ -1156,13 +1205,24 @@ class PostgresAgentRepository(AgentRepository):
             await session.close()
 
     async def update_agent(self, organization_id: UUID, agent_id: UUID, **fields) -> Agent:
-        allowed = {"name", "description", "project_id", "system_prompt", "tools", "model", "is_active"}
+        allowed = {
+            "name",
+            "description",
+            "project_id",
+            "system_prompt",
+            "tools",
+            "model",
+            "is_active",
+            "config_json",
+        }
         updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
         session = await get_async_session()
         try:
             if updates:
                 if "tools" in updates:
                     updates["tools"] = json.dumps(updates["tools"])
+                if "config_json" in updates:
+                    updates["config_json"] = json.dumps(updates["config_json"])
                 set_clauses = ", ".join(f"{k} = :{k}" for k in updates)
                 params = {"oid": organization_id, "aid": agent_id, **updates}
                 await session.execute(
@@ -1361,6 +1421,34 @@ class PostgresAuditLogRepository(AuditLogRepository):
             logger.warning("Failed to write audit log", action=entry.action)
         finally:
             await session.close()
+
+    async def write_strict(self, entry: AuditLogEntry) -> None:
+        """Inserta auditoría y propaga errores (impersonate / acciones de plataforma)."""
+        session = await get_async_session()
+        try:
+            await session.execute(
+                text(
+                    "INSERT INTO audit_logs (organization_id, actor_user_id, action, "
+                    "resource_type, resource_id, ip_address, metadata) "
+                    "VALUES (:oid, :uid, :action, :rtype, :rid, :ip, CAST(:meta AS jsonb))"
+                ),
+                {
+                    "oid": entry.organization_id,
+                    "uid": entry.actor_user_id,
+                    "action": entry.action,
+                    "rtype": entry.resource_type,
+                    "rid": entry.resource_id,
+                    "ip": entry.ip_address,
+                    "meta": json.dumps(entry.metadata or {}),
+                },
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
 
     async def list_entries(
         self,

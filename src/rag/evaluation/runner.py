@@ -49,6 +49,8 @@ class CaseEval:
     metrics: dict = field(default_factory=dict)
     scores: dict = field(default_factory=dict)
     retrieved: list[dict] = field(default_factory=list)
+    expected_answer: str | None = None
+    expected_sources: list[str] = field(default_factory=list)
     error: str | None = None
 
 
@@ -150,6 +152,8 @@ class EvalRunner:
             metrics=metrics,
             scores=scores,
             retrieved=retrieved,
+            expected_answer=case.expected_answer,
+            expected_sources=list(case.expected_sources or []),
             error=target_result.error,
         )
 
@@ -280,15 +284,35 @@ class EvalRunner:
         return summary
 
 
+def _compact_retrieved(chunks: list[dict], *, limit: int = 8) -> list[dict]:
+    compact: list[dict] = []
+    for chunk in chunks[:limit]:
+        content = str(chunk.get("content") or "")[:400]
+        compact.append(
+            {
+                "content": content,
+                "score": chunk.get("score"),
+                "metadata": chunk.get("metadata") or {},
+            }
+        )
+    return compact
+
+
 def _case_payload(case_eval: CaseEval) -> dict:
     return {
         "case_id": case_eval.case_id,
         "question": case_eval.question,
         "answer": case_eval.answer[:4000],
+        "actual": case_eval.answer[:4000],
+        "expected_answer": case_eval.expected_answer,
+        "expected_sources": list(case_eval.expected_sources or []),
+        "retrieved": _compact_retrieved(case_eval.retrieved),
         "status": case_eval.status,
         "target": case_eval.target,
         "metrics": case_eval.metrics,
         "scores": case_eval.scores,
+        "latency_ms": case_eval.metrics.get("latency_ms"),
+        "cost": case_eval.metrics.get("cost"),
         "error": case_eval.error,
     }
 

@@ -327,6 +327,7 @@ class AgentRepository(ABC):
         system_prompt: str | None = None,
         tools: list[str] | None = None,
         model: str | None = None,
+        config_json: dict | None = None,
     ) -> Agent: ...
 
     @abstractmethod

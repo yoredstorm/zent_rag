@@ -9,7 +9,7 @@ cd sdk/node && npm install
 ```ts
 import { Zent } from "zent-node";
 
-const client = new Zent({ apiKey: process.env.ZENT_API_KEY! });
+const client = new Zent({ apiKey: process.env.ZENT_API_KEY! }); // zent_sk_live_... or zent_sk_test_...
 const res = await client.chat("What is our refund policy?");
 console.log(res.answer);
 ```

@@ -180,6 +180,18 @@ class Settings(BaseSettings):
     LITELLM_DEFAULT_MODEL: str = "gpt-4o-mini"
     LITELLM_TIMEOUT_SECONDS: int = Field(default=120, ge=1, le=300)
     LITELLM_MAX_RETRIES: int = Field(default=2, ge=0, le=5)
+    GATEWAY_FALLBACK_MODEL: str = Field(
+        default="",
+        description="Modelo real si el primary falla. Vacío = sin fallback.",
+    )
+    GATEWAY_CHEAP_MODEL: str = Field(
+        default="",
+        description="Primary para alias zent-cheap. Vacío = LITELLM_DEFAULT_MODEL.",
+    )
+    GATEWAY_QUALITY_MODEL: str = Field(
+        default="",
+        description="Primary para alias zent-quality. Vacío = LITELLM_DEFAULT_MODEL.",
+    )
 
     # -------------------------------------------------------------------------
     # RAG / Embeddings
@@ -290,6 +302,24 @@ class Settings(BaseSettings):
         default=True,
         description="Bloquear hosts en redes privadas en plugins (SSRF guard).",
     )
+    GOOGLE_OAUTH_CLIENT_ID: str = Field(
+        default="",
+        description="OAuth client ID de Google Drive (vacío = Drive deshabilitado).",
+    )
+    GOOGLE_OAUTH_CLIENT_SECRET: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "GOOGLE_OAUTH_CLIENT_SECRET", "RAG_GOOGLE_OAUTH_CLIENT_SECRET"
+        ),
+    )
+    GOOGLE_OAUTH_REDIRECT_URI: str = Field(
+        default="http://localhost:8000/api/v1/connectors/oauth/drive/callback",
+        description="Debe coincidir con el redirect URI registrado en Google Cloud.",
+    )
+    GOOGLE_OAUTH_PORTAL_RETURN_URL: str = Field(
+        default="http://localhost:8080/knowledge/sources",
+        description="Redirect post-callback al Knowledge Center.",
+    )
     # -------------------------------------------------------------------------
     # Usage & Cost Engine
     # -------------------------------------------------------------------------
@@ -306,15 +336,42 @@ class Settings(BaseSettings):
         description="Umbrales de alerta de quota en porcentaje.",
     )
     PRICING_CACHE_TTL: int = Field(default=300, ge=10, le=3600)
+    FINOPS_INFRA_COST_PER_ORG_MONTH_CENTS: int = Field(
+        default=0,
+        ge=0,
+        le=10_000_000,
+        description=(
+            "Coste de infra (Postgres/Redis) asignado por org y mes, en céntimos. "
+            "Rate configurable — no es telemetría inventada. 0 = no imputar."
+        ),
+    )
     # -------------------------------------------------------------------------
     # Billing Platform
     # -------------------------------------------------------------------------
     PAYMENT_PROVIDER: str = Field(
         default="manual",
-        description="Provider de pagos: manual | stripe (futuro).",
+        description="Provider de pagos: manual | stripe.",
     )
     BILLING_WEBHOOK_SECRET: SecretStr = SecretStr(
         "zent-billing-webhook-secret-change-me"
+    )
+    BILLING_STRIPE_SECRET_KEY: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "BILLING_STRIPE_SECRET_KEY", "RAG_BILLING_STRIPE_SECRET_KEY"
+        ),
+    )
+    BILLING_STRIPE_WEBHOOK_SECRET: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "BILLING_STRIPE_WEBHOOK_SECRET", "RAG_BILLING_STRIPE_WEBHOOK_SECRET"
+        ),
+    )
+    BILLING_CHECKOUT_SUCCESS_URL: str = Field(
+        default="http://localhost:8080/billing?checkout=success",
+    )
+    BILLING_CHECKOUT_CANCEL_URL: str = Field(
+        default="http://localhost:8080/billing?checkout=cancel",
     )
     BILLING_PAST_DUE_GRACE_DAYS: int = Field(default=7, ge=1, le=90)
     BILLING_INVOICE_DAY: int = Field(default=1, ge=1, le=28)
@@ -517,6 +574,11 @@ class Settings(BaseSettings):
     AUTH_LOGIN_WINDOW_SECONDS: int = Field(default=900, ge=60, le=86400)
     PORTAL_DEV_PASSWORD: SecretStr | None = None
     PORTAL_DEV_EMAIL: str = Field(default="demo@zenttech.com")
+    PLATFORM_ADMIN_EMAIL: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("PLATFORM_ADMIN_EMAIL", "RAG_PLATFORM_ADMIN_EMAIL"),
+        description="Email of the seeded platform admin (password is never stored in env).",
+    )
 
     # -------------------------------------------------------------------------
     # Vault (HashiCorp Vault)
@@ -537,6 +599,22 @@ class Settings(BaseSettings):
     RATE_LIMIT_PER_MINUTE: int = Field(default=60, ge=1)
     RATE_LIMIT_PER_ORGANIZATION_MINUTE: int = Field(default=600, ge=1)
     RATE_LIMIT_ENABLED: bool = Field(default=True)
+    API_KEY_LIVE_RPM: int = Field(
+        default=100, ge=1, le=10_000,
+        description="Requests/minuto por API key live.",
+    )
+    API_KEY_LIVE_RPD: int = Field(
+        default=10_000, ge=1, le=1_000_000,
+        description="Requests/día por API key live.",
+    )
+    API_KEY_TEST_RPM: int = Field(
+        default=30, ge=1, le=10_000,
+        description="Requests/minuto por API key test (más estricto).",
+    )
+    API_KEY_TEST_RPD: int = Field(
+        default=1_000, ge=1, le=1_000_000,
+        description="Requests/día por API key test.",
+    )
     RATE_LIMIT_PUBLIC_PER_MINUTE: int = Field(
         default=10,
         ge=1,

@@ -220,3 +220,157 @@ async def test_trace_store_real_db() -> None:
 
     blob = str(run)
     assert "password" not in blob.lower()
+
+
+@pytest.mark.asyncio
+async def test_create_returns_parsed_config(async_client: AsyncClient) -> None:
+    org = await _create_org(async_client, "Agent Config Org")
+    org["session"] = await _owner_session(org["organization_id"])
+    headers = _headers(org)
+
+    create = await async_client.post(
+        "/api/v1/agents",
+        json={
+            "name": f"pharmacy-{uuid4().hex[:8]}",
+            "tools": ["search_knowledge"],
+            "model": "gpt-4o-mini",
+            "system_prompt": "Eres un asistente de farmacia.",
+            "config": {
+                "purpose": "Consultar stock y productos",
+                "temperature": 0.2,
+                "tone": "professional",
+                "knowledge_base_ids": [],
+                "limits": {"max_steps": 6, "max_tokens": 4000, "max_cost_usd": 0.5},
+                "security": {"sql_enabled": False, "api_calls_enabled": False},
+            },
+        },
+        headers=headers,
+    )
+    assert create.status_code == 201, create.text
+    body = create.json()
+    assert "config" in body
+    assert body["config"]["purpose"] == "Consultar stock y productos"
+    assert body["config"]["temperature"] == 0.2
+    assert body["config"]["tone"] == "professional"
+    assert body["config"]["limits"]["max_steps"] == 6
+    assert body["config"]["security"]["sql_enabled"] is False
+
+    fetched = await async_client.get(f"/api/v1/agents/{body['id']}", headers=headers)
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["config"]["temperature"] == 0.2
+    assert fetched.json()["tools"] == ["search_knowledge"]
+
+
+@pytest.mark.asyncio
+async def test_update_tools_without_sql_run_does_not_execute_sql(
+    async_client: AsyncClient,
+) -> None:
+    from src.api.deps import get_agent_runtime
+    from src.api.main import app
+
+    org = await _create_org(async_client, "Agent No SQL Org")
+    org["session"] = await _owner_session(org["organization_id"])
+    headers = _headers(org)
+
+    create = await async_client.post(
+        "/api/v1/agents",
+        json={"name": f"rag-only-{uuid4().hex[:8]}", "tools": ["search_knowledge", "query_database"]},
+        headers=headers,
+    )
+    assert create.status_code == 201, create.text
+    agent_id = create.json()["id"]
+
+    update = await async_client.put(
+        f"/api/v1/agents/{agent_id}",
+        json={"tools": ["search_knowledge"]},
+        headers=headers,
+    )
+    assert update.status_code == 200, update.text
+    assert update.json()["tools"] == ["search_knowledge"]
+    assert "query_database" not in update.json()["tools"]
+
+    fake = _FakeRuntime()
+    app.dependency_overrides[get_agent_runtime] = lambda: fake
+    try:
+        resp = await async_client.post(
+            f"/api/v1/agents/{agent_id}/run",
+            json={"message": "lista stock"},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert fake.last_request is not None
+        assert fake.last_request.agent.tools == ["search_knowledge"]
+        assert "query_database" not in fake.last_request.agent.tools
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_update_rejects_foreign_knowledge_base_ids(
+    async_client: AsyncClient,
+) -> None:
+    org_a = await _create_org(async_client, "Agent KB Org A")
+    org_a["session"] = await _owner_session(org_a["organization_id"])
+    org_b = await _create_org(async_client, "Agent KB Org B")
+    org_b["session"] = await _owner_session(org_b["organization_id"])
+
+    kb = await async_client.post(
+        "/api/v1/knowledge-bases",
+        json={"name": f"foreign-kb-{uuid4().hex[:8]}"},
+        headers=_headers(org_a),
+    )
+    assert kb.status_code == 201, kb.text
+    foreign_kb = kb.json()["id"]
+
+    create = await async_client.post(
+        "/api/v1/agents",
+        json={"name": f"agent-b-{uuid4().hex[:8]}", "tools": ["search_knowledge"]},
+        headers=_headers(org_b),
+    )
+    assert create.status_code == 201, create.text
+    agent_id = create.json()["id"]
+
+    update = await async_client.put(
+        f"/api/v1/agents/{agent_id}",
+        json={"config": {"knowledge_base_ids": [foreign_kb]}},
+        headers=_headers(org_b),
+    )
+    assert update.status_code in (400, 404), update.text
+
+
+@pytest.mark.asyncio
+async def test_temperature_from_config_passed_to_llm(
+    async_client: AsyncClient,
+) -> None:
+    from src.api.deps import get_agent_runtime
+    from src.api.main import app
+
+    org = await _create_org(async_client, "Agent Temp Org")
+    org["session"] = await _owner_session(org["organization_id"])
+    headers = _headers(org)
+
+    create = await async_client.post(
+        "/api/v1/agents",
+        json={
+            "name": f"temp-{uuid4().hex[:8]}",
+            "tools": ["search_knowledge"],
+            "config": {"temperature": 0.2},
+        },
+        headers=headers,
+    )
+    assert create.status_code == 201, create.text
+    agent_id = create.json()["id"]
+    assert create.json()["config"]["temperature"] == 0.2
+
+    fake = _FakeRuntime()
+    app.dependency_overrides[get_agent_runtime] = lambda: fake
+    try:
+        resp = await async_client.post(
+            f"/api/v1/agents/{agent_id}/run",
+            json={"message": "hola"},
+            headers=headers,
+        )
+        assert resp.status_code == 200, resp.text
+        assert fake.last_request.agent.config_json["temperature"] == 0.2
+    finally:
+        app.dependency_overrides.clear()

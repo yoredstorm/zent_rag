@@ -1,5 +1,6 @@
-import { Robot, Plus, Trash } from "@phosphor-icons/react";
+import { Plus, Robot, Trash } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import {
@@ -7,7 +8,6 @@ import {
   ErrorInline,
   PageHeader,
   SkeletonBlock,
-  Spinner,
   SuccessInline,
 } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
@@ -16,71 +16,51 @@ type Agent = {
   id: string;
   name: string;
   description: string | null;
-  system_prompt: string | null;
   tools: string[];
   model: string | null;
   is_active: boolean;
   created_at: string;
 };
 
+type Entitlements = { max_agents?: number | null };
+
 export default function AgentsPage() {
   const { session } = useAuth();
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [model, setModel] = useState("");
+  const [maxAgents, setMaxAgents] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
-  const [showCreate, setShowCreate] = useState(false);
 
   function load() {
     if (!session) return;
     setLoading(true);
-    api<{ agents: Agent[] }>("/api/v1/agents", {
-      token: session.token,
-      organizationId: session.organizationId,
-    })
-      .then((data) => setAgents(data.agents))
+    Promise.all([
+      api<{ agents: Agent[] }>("/api/v1/agents", {
+        token: session.token,
+        organizationId: session.organizationId,
+      }),
+      api<{ entitlements: Entitlements }>("/api/v1/billing/entitlements", {
+        token: session.token,
+        organizationId: session.organizationId,
+      }).catch(() => ({ entitlements: {} as Entitlements })),
+    ])
+      .then(([data, ents]) => {
+        setAgents(data.agents);
+        const limit = ents.entitlements?.max_agents;
+        setMaxAgents(typeof limit === "number" ? limit : null);
+      })
       .catch((err) => setError(err instanceof Error ? err.message : "Error"))
       .finally(() => setLoading(false));
   }
 
   useEffect(load, [session]);
 
-  async function create() {
-    if (!session) return;
-    setError("");
-    setMsg("");
-    setCreating(true);
-    try {
-      await api("/api/v1/agents", {
-        method: "POST",
-        token: session.token,
-        organizationId: session.organizationId,
-        body: JSON.stringify({
-          name: name.trim(),
-          description: description.trim() || null,
-          model: model.trim() || null,
-          tools: ["rag"],
-        }),
-      });
-      setMsg("Agente creado.");
-      setName("");
-      setDescription("");
-      setModel("");
-      setShowCreate(false);
-      load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al crear");
-    } finally {
-      setCreating(false);
-    }
-  }
+  const atLimit = maxAgents !== null && agents.length >= maxAgents;
 
   async function remove(agentId: string, agentName: string) {
     if (!session) return;
+    if (!window.confirm(`¿Eliminar el agente "${agentName}"?`)) return;
     setError("");
     setMsg("");
     try {
@@ -100,58 +80,27 @@ export default function AgentsPage() {
     <div>
       <PageHeader
         title="Agentes"
-        subtitle="Agentes conversacionales de tu organización con prompt y modelo propios."
+        subtitle="Crea asistentes con instrucciones, conocimiento, tools y playground."
+        actions={
+          atLimit ? undefined : (
+            <Link to="/agents/new" className="btn btn-primary min-h-11">
+              <Plus size={15} aria-hidden />
+              Crear agente
+            </Link>
+          )
+        }
       />
       <ErrorInline message={error} />
       <SuccessInline message={msg} />
 
-      <div className="mb-4 flex justify-end">
-        <button
-          className="btn btn-primary"
-          type="button"
-          onClick={() => setShowCreate((s) => !s)}
+      {atLimit && (
+        <div
+          className="mb-4 rounded-md border border-warn/30 bg-warn-soft px-4 py-3 text-sm text-text"
+          role="status"
         >
-          <Plus size={15} aria-hidden />
-          Nuevo agente
-        </button>
-      </div>
-
-      {showCreate && (
-        <div className="panel mb-4 border-accent/30">
-          <div className="border-b border-border px-5 py-4">
-            <h2 className="text-sm font-semibold text-text">Crear agente</h2>
-          </div>
-          <div className="flex flex-col gap-3 p-5">
-            <input
-              className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
-              placeholder="Nombre"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-            <input
-              className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
-              placeholder="Descripción (opcional)"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-            <input
-              className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
-              placeholder="Modelo (opcional, ej. gpt-4o-mini)"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-            />
-            <div>
-              <button
-                className="btn btn-primary"
-                type="button"
-                disabled={creating || !name.trim()}
-                onClick={() => void create()}
-              >
-                {creating ? <Spinner size={14} /> : <Plus size={15} aria-hidden />}
-                Crear
-              </button>
-            </div>
-          </div>
+          Alcanzaste el límite de agentes de tu plan
+          {maxAgents !== null ? ` (${maxAgents})` : ""}. Mejora el plan en Facturación
+          para crear más.
         </div>
       )}
 
@@ -164,7 +113,15 @@ export default function AgentsPage() {
           <EmptyState
             icon={Robot}
             title="Sin agentes"
-            body="Crea tu primer agente para personalizar la experiencia RAG."
+            body="Crea tu primer agente con instrucciones, knowledge bases y tools."
+            action={
+              atLimit ? undefined : (
+                <Link to="/agents/new" className="btn btn-primary min-h-11">
+                  <Plus size={15} aria-hidden />
+                  Crear agente
+                </Link>
+              )
+            }
           />
         </div>
       ) : (
@@ -172,13 +129,16 @@ export default function AgentsPage() {
           {agents.map((a) => (
             <div key={a.id} className="panel p-5">
               <div className="mb-2 flex items-start justify-between gap-2">
-                <h3 className="flex items-center gap-2 font-semibold text-text">
+                <Link
+                  to={`/agents/${a.id}`}
+                  className="flex items-center gap-2 font-semibold text-text hover:text-accent"
+                >
                   <Robot size={16} className="text-accent" aria-hidden />
                   {a.name}
-                </h3>
+                </Link>
                 <button
                   type="button"
-                  className="btn btn-ghost px-2 py-1.5 text-xs text-danger"
+                  className="btn btn-ghost min-h-11 px-2 py-1.5 text-xs text-danger"
                   aria-label={`Eliminar ${a.name}`}
                   onClick={() => void remove(a.id, a.name)}
                 >

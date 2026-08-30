@@ -14,11 +14,10 @@ import json
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-
-from src.api.security import ORG_HEADER_DESCRIPTION
 from fastapi.responses import StreamingResponse
 
 from src.api.deps import get_cache_provider, get_embedding_provider, get_vector_store
+from src.api.security import ORG_HEADER_DESCRIPTION
 from src.connectors.sql.ingestion import PostgresIngestionService
 from src.connectors.sql.queue import enqueue_sync, get_job_status, list_recent_jobs
 from src.core.domain.services import IngestionResult

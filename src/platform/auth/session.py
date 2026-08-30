@@ -52,7 +52,7 @@ class SessionTokenError(Exception):
 @dataclass(frozen=True)
 class SessionPayload:
     user_id: UUID
-    organization_id: UUID
+    organization_id: UUID | None
     exp: int
     typ: str = "portal"
     sid: str | None = None  # session id for server-side revocation
@@ -79,19 +79,26 @@ def _aesgcm() -> AESGCM:
 
 def encrypt_session(
     user_id: UUID,
-    organization_id: UUID,
+    organization_id: UUID | None = None,
     *,
+    typ: str = "portal",
     ttl_hours: int | None = None,
 ) -> str:
+    if typ not in ("portal", "platform"):
+        raise ValueError("session typ must be portal or platform")
+    if typ == "portal" and organization_id is None:
+        raise ValueError("portal session requires organization_id")
+    if typ == "platform":
+        organization_id = None
     settings = get_settings()
     hours = ttl_hours if ttl_hours is not None else settings.PORTAL_SESSION_TTL_HOURS
     sid = secrets.token_hex(16)
     payload = {
         "uid": str(user_id),
-        "tid": str(organization_id),
+        "tid": str(organization_id) if organization_id is not None else None,
         "sid": sid,
         "exp": int(time.time()) + int(hours * 3600),
-        "typ": "portal",
+        "typ": typ,
     }
     plaintext = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     nonce = os.urandom(_NONCE_LEN)
@@ -161,20 +168,26 @@ def decrypt_session(token: str) -> SessionPayload:
         data = json.loads(plaintext.decode("utf-8"))
     except Exception as exc:
         raise SessionTokenError("Corrupt session payload") from exc
-    if data.get("typ") != "portal":
+    if data.get("typ") not in ("portal", "platform"):
         raise SessionTokenError("Invalid session type")
     exp = int(data.get("exp", 0))
     if exp <= int(time.time()):
         raise SessionTokenError("Session expired")
     try:
+        typ = data["typ"]
+        tid_raw = data.get("tid")
+        if typ == "platform":
+            organization_id = None
+        else:
+            organization_id = UUID(tid_raw)
         return SessionPayload(
             user_id=UUID(data["uid"]),
-            organization_id=UUID(data["tid"]),
+            organization_id=organization_id,
             exp=exp,
-            typ="portal",
+            typ=typ,
             sid=data.get("sid"),
         )
-    except (KeyError, ValueError) as exc:
+    except (KeyError, ValueError, TypeError) as exc:
         raise SessionTokenError("Invalid session claims") from exc
 
 

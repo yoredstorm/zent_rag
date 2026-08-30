@@ -784,12 +784,16 @@ Detalle de amenazas y scopes: [docs/developers/authentication.md](docs/developer
 
 Prioridades derivadas del estado actual del código y de las necesidades de un RAG-as-a-Service en producción. Sin fechas comprometidas: `0.1.0` en desarrollo activo.
 
+El plan SaaS por fases (Customer Portal, Control Center, entitlements, Stripe, agents, embed, etc.) está en [`docs/platform/ZENT_PLATFORM_ROADMAP.md`](docs/platform/ZENT_PLATFORM_ROADMAP.md). No reimplementar el core: cada fase evoluciona lo existente.
+
+**Kubernetes no es requisito de venta.** El camino de prod es Compose + servicios managed ([`docs/platform/PRODUCTION.md`](docs/platform/PRODUCTION.md)). Manifests Kustomize en `deploy/k8s/` solo si hay carga real: [`docs/platform/KUBERNETES.md`](docs/platform/KUBERNETES.md).
+
 ### Corto plazo
 
 | Ítem | Origen / detalle |
 |---|---|
-| **Stripe como payment provider** | Hoy `manual`; provider abstracto listo en [`src/infrastructure/billing/provider.py`](src/infrastructure/billing/provider.py) y verificación de firma `Stripe-Signature` prevista en webhooks |
-| **Self-service upgrade** | Gated por `RAG_SELF_SERVICE_UPGRADE_ENABLED` (default `false`) — habilitar junto con Stripe |
+| **Stripe como payment provider** | ~~Hoy `manual`; adapter pendiente~~ **Hecho (Fase 04):** `StripePaymentProvider`, `POST /billing/checkout`, webhooks `Stripe-Signature`. Default sigue `RAG_PAYMENT_PROVIDER=manual`. Opt-in: extra `[billing-stripe]`, `RAG_BILLING_STRIPE_SECRET_KEY` / `RAG_BILLING_STRIPE_WEBHOOK_SECRET` |
+| **Self-service upgrade** | Gated por `RAG_SELF_SERVICE_UPGRADE_ENABLED` (default `false`) — con Stripe + flag, el portal abre Checkout |
 | **Alertmanager + alerting** | Reglas ya definidas en [`config/prometheus/alert-rules.yml`](config/prometheus/alert-rules.yml); falta el servicio y el wiring |
 | **Publicación de SDKs en PyPI / npm** | Python `zent` y Node `zent-node` en `1.0.0` local; empaquetado y release |
 | **CORS whitelist por organización** | Hoy origen de desarrollo único en MVP (`src/api/main.py`); config por org en `config_json` |
@@ -825,6 +829,8 @@ Prioridades derivadas del estado actual del código y de las necesidades de un R
 | Documento | Contenido |
 |---|---|
 | [docs/developers/README.md](docs/developers/README.md) | Índice developer |
+| [docs/platform/ZENT_PLATFORM_ROADMAP.md](docs/platform/ZENT_PLATFORM_ROADMAP.md) | Roadmap SaaS (estado, gaps, 15 fases) |
+| [docs/platform/PRODUCT.md](docs/platform/PRODUCT.md) | Freeze de producto (posicionamiento, glosario) |
 | [docs/developers/quickstart.md](docs/developers/quickstart.md) | `client.chat()` en minutos |
 | [docs/developers/authentication.md](docs/developers/authentication.md) | Auth, scopes, threat model |
 | [docs/developers/chat.md](docs/developers/chat.md) | Chat API |

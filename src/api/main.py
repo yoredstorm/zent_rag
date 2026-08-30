@@ -39,17 +39,26 @@ from src.api.routes.auth import router as auth_router
 from src.api.routes.billing import router as billing_router
 from src.api.routes.billing_webhooks import router as billing_webhooks_router
 from src.api.routes.connectors import router as connectors_router
+from src.api.routes.embed import admin_router as embed_admin_router
+from src.api.routes.embed import public_router as embed_public_router
+from src.api.routes.embed import widget_router as embed_widget_router
 from src.api.routes.evaluation import router as eval_router
+from src.api.routes.gateway import router as gateway_router
 from src.api.routes.health import router as health_router
 from src.api.routes.ingestion import router as ingestion_router
 from src.api.routes.jobs import router as jobs_router
 from src.api.routes.knowledge_bases import router as kbs_router
 from src.api.routes.organizations import router as organizations_router
+from src.api.routes.platform import router as platform_router
 from src.api.routes.projects import router as projects_router
 from src.api.routes.prompt import router as prompt_router
 from src.api.routes.query import router as query_router
 from src.api.routes.sources import router as sources_router
 from src.api.schemas import ErrorResponse
+from src.api.security_headers_middleware import (
+    OrgCorsMiddleware,
+    SecurityHeadersMiddleware,
+)
 from src.api.tenant_middleware import TenantMiddleware
 from src.api.versioning import API_VERSION
 from src.connectors.sql.worker import request_shutdown, run_worker
@@ -211,7 +220,12 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
             "X-Organization-Name",
             "Idempotency-Key",
         ],
-        expose_headers=["X-Trace-Id", "X-Request-Duration-Ms", "Idempotency-Replayed"],
+        expose_headers=[
+            "X-Trace-Id",
+            "X-Request-Duration-Ms",
+            "Idempotency-Replayed",
+            "X-Zent-Environment",
+        ],
         max_age=3600,
     )
 
@@ -222,11 +236,13 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.add_middleware(BodySizeLimitMiddleware)
     new_app.add_middleware(IdempotencyMiddleware)
     new_app.add_middleware(RateLimitMiddleware)
+    new_app.add_middleware(OrgCorsMiddleware)
 
     # -------------------------------------------------------------------------
     # Middleware de Tenant (autenticación + TenantContext; inyecta organización)
     # -------------------------------------------------------------------------
     new_app.add_middleware(TenantMiddleware)
+    new_app.add_middleware(SecurityHeadersMiddleware)
 
     # -------------------------------------------------------------------------
     # Middleware de Trazabilidad (orden importa: se ejecuta de último a primero)
@@ -250,17 +266,22 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(admin_router)
     new_app.include_router(agent_runs_router)
     new_app.include_router(agents_router)
+    new_app.include_router(embed_admin_router)
+    new_app.include_router(embed_public_router)
+    new_app.include_router(embed_widget_router)
     new_app.include_router(audit_router)
     new_app.include_router(auth_router)
     new_app.include_router(billing_router)
     new_app.include_router(billing_webhooks_router)
     new_app.include_router(connectors_router)
     new_app.include_router(eval_router)
+    new_app.include_router(gateway_router)
     new_app.include_router(health_router)
     new_app.include_router(ingestion_router)
     new_app.include_router(jobs_router)
     new_app.include_router(kbs_router)
     new_app.include_router(organizations_router)
+    new_app.include_router(platform_router)
     new_app.include_router(projects_router)
     new_app.include_router(prompt_router)
     new_app.include_router(query_router)

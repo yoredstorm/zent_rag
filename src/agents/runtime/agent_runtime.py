@@ -96,6 +96,18 @@ def _parse_action(content: str) -> dict:
     return {"answer": text}
 
 
+def _effective_tools(agent: Agent) -> list[str]:
+    tools = list(agent.tools or [])
+    security = (agent.config_json or {}).get("security")
+    if not isinstance(security, dict):
+        return tools
+    if security.get("sql_enabled") is False:
+        tools = [name for name in tools if name != "query_database"]
+    if security.get("api_calls_enabled") is False:
+        tools = [name for name in tools if name != "call_api"]
+    return tools
+
+
 class AgentRuntime:
     """Motor de agentes: ReAct loop con guardrails. Depende de puertos."""
 
@@ -110,9 +122,19 @@ class AgentRuntime:
     def _agent_config(self, agent: Agent) -> dict:
         settings = get_settings()
         raw = dict(agent.config_json or {})
+        limits = raw.get("limits") if isinstance(raw.get("limits"), dict) else {}
         temperature = raw.get("temperature")
+        max_steps = limits.get("max_steps")
+        if max_steps is None:
+            max_steps = raw.get("max_steps")
+        max_tokens = limits.get("max_tokens")
+        if max_tokens is None:
+            max_tokens = raw.get("max_tokens")
+        max_cost = limits.get("max_cost_usd")
+        if max_cost is None:
+            max_cost = raw.get("max_cost")
         return {
-            "max_steps": int(raw.get("max_steps") or settings.RAG_AGENT_MAX_STEPS),
+            "max_steps": int(max_steps or settings.RAG_AGENT_MAX_STEPS),
             "max_tool_calls": int(
                 raw.get("max_tool_calls") or settings.RAG_AGENT_MAX_TOOL_CALLS
             ),
@@ -120,8 +142,8 @@ class AgentRuntime:
                 raw.get("max_execution_seconds")
                 or settings.RAG_AGENT_MAX_EXECUTION_SECONDS
             ),
-            "max_tokens": int(raw.get("max_tokens") or settings.RAG_AGENT_MAX_TOKENS),
-            "max_cost": float(raw.get("max_cost") or settings.RAG_AGENT_MAX_COST),
+            "max_tokens": int(max_tokens or settings.RAG_AGENT_MAX_TOKENS),
+            "max_cost": float(max_cost or settings.RAG_AGENT_MAX_COST),
             "temperature": float(temperature) if temperature is not None else 0.3,
             "model": agent.model
             or settings.RAG_AGENT_MODEL
@@ -132,13 +154,17 @@ class AgentRuntime:
         start = time.perf_counter()
         agent = request.agent
         config = self._agent_config(agent)
+        org_config = dict(request.org_config or {})
+        kb_ids = (agent.config_json or {}).get("knowledge_base_ids") or []
+        if kb_ids:
+            org_config["knowledge_base_ids"] = [str(item) for item in kb_ids]
         ctx = ToolContext(
             tenant_id=agent.organization_id,
             user_id=request.user_id,
             role=request.role,
             permissions=request.permissions,
             conversation_id=request.conversation_id,
-            org_config=request.org_config,
+            org_config=org_config,
         )
 
         result = AgentRunResult(
@@ -269,7 +295,8 @@ class AgentRuntime:
         config: dict,
         result: AgentRunResult,
     ) -> None:
-        allowed_tools = resolve_allowed_tools(request.agent.tools, ctx)
+        effective_tools = _effective_tools(request.agent)
+        allowed_tools = resolve_allowed_tools(effective_tools, ctx)
         tool_descriptions = "\n".join(
             f"- {t.name}: {t.description}" for t in allowed_tools
         ) or "(no tools available)"
@@ -369,7 +396,7 @@ class AgentRuntime:
                 )
                 continue
 
-            if tool_name not in request.agent.tools:
+            if tool_name not in effective_tools:
                 history.append(
                     f"OBSERVATION: error: tool '{tool_name}' is not allowed "
                     f"for this agent."

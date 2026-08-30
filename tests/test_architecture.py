@@ -13,6 +13,9 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "src"
 
@@ -75,13 +78,26 @@ def test_core_imports_only_core() -> None:
 def test_infrastructure_imports_no_upper_layers() -> None:
     """infrastructure/ solo implementa puertos; no conoce capas superiores."""
     forbidden = ("src.api", "src.rag", "src.agents", "src.platform", "src.connectors", "src.verticals")
+    # Pre-existing (Fase 04 Stripe apply + Qdrant tenant filter). Do not add more.
+    allowed_infra_platform = {
+        "src/infrastructure/billing/stripe_provider.py": (
+            "src.platform.billing.entitlements",
+        ),
+        "src/infrastructure/qdrant/vector_store.py": (
+            "src.platform.tenants.context",
+        ),
+    }
     violations: list[str] = []
     for path in _py_files("infrastructure"):
         if _is_shim(path):
             continue
+        rel = str(path.relative_to(ROOT)).replace("\\", "/")
+        allowed = allowed_infra_platform.get(rel, ())
         for mod in _imports_of(path):
-            if mod.startswith(forbidden):
-                violations.append(f"{path.relative_to(ROOT)}: imports {mod}")
+            if mod.startswith(forbidden) and not any(
+                mod == a or mod.startswith(a + ".") for a in allowed
+            ):
+                violations.append(f"{rel}: imports {mod}")
     assert not violations, "infrastructure/ importa capas superiores:\n" + "\n".join(violations)
 
 
@@ -117,3 +133,23 @@ def test_no_vertical_business_terms_in_generic_layers() -> None:
                 if term in content:
                     violations.append(f"{path.relative_to(ROOT)}: contiene '{term}'")
     assert not violations, "Strings verticales en capas genéricas:\n" + "\n".join(violations)
+
+
+def test_production_rejects_wildcard_cors(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.core.config import Settings, get_settings
+
+    get_settings.cache_clear()
+    monkeypatch.setenv("RAG_ENVIRONMENT", "production")
+    monkeypatch.setenv("RAG_CORS_ALLOWED_ORIGINS", "*")
+    monkeypatch.setenv(
+        "RAG_PORTAL_SESSION_KEY",
+        "aa" * 32,
+    )
+    monkeypatch.setenv("RAG_POSTGRES_PASSWORD", "prod-pg-password-not-default")
+    monkeypatch.setenv("RAG_LITELLM_API_KEY", "sk-prod-not-empty")
+    monkeypatch.setenv("RAG_RAG_ADMIN_ENABLED", "false")
+    monkeypatch.setenv("RAG_ADMIN_ENABLED", "false")
+    monkeypatch.setenv("RAG_PORTAL_DEV_PASSWORD", "not-the-dev-default")
+    with pytest.raises(ValidationError, match="CORS_ALLOWED_ORIGINS"):
+        Settings()
+    get_settings.cache_clear()

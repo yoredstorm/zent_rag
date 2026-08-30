@@ -16,12 +16,12 @@ from fastapi.responses import StreamingResponse
 
 from src.agents.runtime.orchestrator import RAGOrchestrator
 from src.api.deps import get_rag_orchestrator
+from src.api.schemas import RAGQueryRequest, RAGQueryResponse, sources_for_client
 from src.api.security import (
     ORG_HEADER_DESCRIPTION,
     ROLE_HEADER_DESCRIPTION,
     USER_HEADER_DESCRIPTION,
 )
-from src.api.schemas import RAGQueryRequest, RAGQueryResponse, sources_for_client
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.observability.metrics import (
     rag_active_requests,

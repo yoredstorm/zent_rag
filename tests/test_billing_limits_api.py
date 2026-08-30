@@ -47,25 +47,17 @@ async def test_agent_limit_enforced_on_create(async_client: AsyncClient) -> None
     if get_settings().ENVIRONMENT != "development":
         pytest.skip("Requiere Postgres real (stack docker)")
 
-    from sqlalchemy import text
-
-    from src.infrastructure.postgres.session import get_async_session
-
     org = await _create_org(async_client, "Limits Org")
     org["session"] = await _owner_session(org["organization_id"])
     headers = _headers(org)
 
-    session = await get_async_session()
-    try:
-        await session.execute(
-            text(
-                "UPDATE plans SET max_agents = 1 "
-                "WHERE is_trial = true"
-            )
-        )
-        await session.commit()
-    finally:
-        await session.close()
+    from src.platform.billing.entitlements import upsert_plan_entitlements
+
+    trial_plan = UUID("10000000-0000-0000-0000-000000000001")
+    await upsert_plan_entitlements(
+        trial_plan,
+        [{"key": "max_agents", "value_type": "int", "value_int": 1}],
+    )
 
     try:
         first = await async_client.post(
@@ -83,14 +75,10 @@ async def test_agent_limit_enforced_on_create(async_client: AsyncClient) -> None
         assert second.status_code == 409, second.text
         assert "limit" in second.text.lower()
     finally:
-        session = await get_async_session()
-        try:
-            await session.execute(
-                text("UPDATE plans SET max_agents = NULL WHERE is_trial = true")
-            )
-            await session.commit()
-        finally:
-            await session.close()
+        await upsert_plan_entitlements(
+            trial_plan,
+            [{"key": "max_agents", "value_type": "int", "value_int": None}],
+        )
 
 
 @pytest.mark.asyncio
@@ -102,22 +90,17 @@ async def test_connector_limit_enforced_on_create(
     if get_settings().ENVIRONMENT != "development":
         pytest.skip("Requiere Postgres real (stack docker)")
 
-    from sqlalchemy import text
-
-    from src.infrastructure.postgres.session import get_async_session
-
     org = await _create_org(async_client, "Limits Org 2")
     org["session"] = await _owner_session(org["organization_id"])
     headers = _headers(org)
 
-    session = await get_async_session()
-    try:
-        await session.execute(
-            text("UPDATE plans SET max_connectors = 0 WHERE is_trial = true")
-        )
-        await session.commit()
-    finally:
-        await session.close()
+    from src.platform.billing.entitlements import upsert_plan_entitlements
+
+    trial_plan = UUID("10000000-0000-0000-0000-000000000001")
+    await upsert_plan_entitlements(
+        trial_plan,
+        [{"key": "max_connectors", "value_type": "int", "value_int": 0}],
+    )
 
     try:
         resp = await async_client.post(
@@ -127,17 +110,10 @@ async def test_connector_limit_enforced_on_create(
         )
         assert resp.status_code == 409, resp.text
     finally:
-        session = await get_async_session()
-        try:
-            await session.execute(
-                text(
-                    "UPDATE plans SET max_connectors = NULL "
-                    "WHERE is_trial = true"
-                )
-            )
-            await session.commit()
-        finally:
-            await session.close()
+        await upsert_plan_entitlements(
+            trial_plan,
+            [{"key": "max_connectors", "value_type": "int", "value_int": None}],
+        )
 
 
 class TestReconciliation:

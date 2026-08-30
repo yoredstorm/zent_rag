@@ -23,6 +23,30 @@ from src.core.ports import CacheProvider
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
+# Sinónimos ES→EN del vocabulario retail: "ventas" debe puntuar contra la
+# tabla `sales`, "proveedores" contra `suppliers`, etc. Sin esto, las tablas
+# de negocio empatan en score con ruido (row_count + FK) y las necesarias
+# quedan fuera del subconjunto que recibe el LLM.
+_RETAIL_SYNONYMS: dict[str, str] = {
+    "venta": "sales", "ventas": "sales", "vendido": "sales", "vendida": "sales",
+    "vendidos": "sales", "vendidas": "sales", "compra": "purchases", "compras": "purchases",
+    "pedido": "orders", "pedidos": "orders", "orden": "orders", "ordenes": "orders",
+    "producto": "products", "productos": "products",
+    "medicamento": "products", "medicamentos": "products",
+    "proveedor": "suppliers", "proveedores": "suppliers",
+    "laboratorio": "suppliers", "laboratorios": "suppliers",
+    "categoria": "categories", "categorias": "categories",
+    "cliente": "customers", "clientes": "customers",
+    "inventario": "inventory", "stock": "inventory",
+    "empleado": "employees", "empleados": "employees",
+    "receta": "prescriptions", "recetas": "prescriptions",
+    "transaccion": "transactions", "transacciones": "transactions",
+    "factura": "invoices", "facturas": "invoices",
+    "fonasa": "health_insurance", "isapre": "health_insurance",
+    "isapres": "health_insurance", "seguro": "health_insurance",
+    "resena": "reviews", "resenas": "reviews", "opiniones": "reviews",
+}
+
 # Columnas técnicas que no aportan contexto al LLM salvo excepción.
 _TECHNICAL_COLUMN_PATTERNS = (
     re.compile(r"^id$"),
@@ -136,8 +160,14 @@ def score_table(question_tokens: set[str], source: DataSource) -> float:
     column_hits = sum(
         _token_match(question_tokens, c.name) for c in source.columns
     )
+    syn_hits = sum(
+        1
+        for token in question_tokens
+        if (target := _RETAIL_SYNONYMS.get(token))
+        and target in source.table_name
+    )
 
-    score = hits * 3.0 + column_hits * 1.0
+    score = hits * 3.0 + syn_hits * 3.0 + column_hits * 1.0
     if source.row_count and source.row_count > 1000:
         score += 0.5
     if any(c.is_foreign_key for c in source.columns):
@@ -193,6 +223,77 @@ def select_columns(
     return selected
 
 
+def _source_key(source: DataSource) -> tuple[str, str]:
+    return (source.schema_name.lower(), source.table_name.lower())
+
+
+def _fk_expand(
+    core: list[DataSource],
+    all_sources: list[DataSource],
+    max_tables: int,
+) -> list[DataSource]:
+    """Expande el núcleo con tablas conectadas por FK (necesarias para JOINs).
+
+    BFS sobre las aristas FK: tablas referenciadas por columnas FK del núcleo
+    y tablas que referencian al núcleo. Sin esto, el LLM genera JOINs a tablas
+    que no están en el inventario y la validación las rechaza (allowlist).
+    """
+    by_key: dict[tuple[str, str], DataSource] = {}
+    by_bare_name: dict[str, list[DataSource]] = {}
+    referencers: dict[str, list[DataSource]] = {}
+    for s in all_sources:
+        by_key[_source_key(s)] = s
+        by_bare_name.setdefault(s.table_name.lower(), []).append(s)
+        for c in s.columns:
+            if c.is_foreign_key and c.fk_table:
+                referencers.setdefault(c.fk_table.lower(), []).append(s)
+
+    selected: dict[tuple[str, str], DataSource] = {}
+    for s in core:
+        selected[_source_key(s)] = s
+
+    queue: list[tuple[str, str]] = list(selected)
+    while queue and len(selected) < max_tables:
+        key = queue.pop(0)
+        src = by_key.get(key)
+        if src is None:
+            continue
+        for c in src.columns:
+            if not (c.is_foreign_key and c.fk_table):
+                continue
+            for target in by_bare_name.get(c.fk_table.lower(), []):
+                tkey = _source_key(target)
+                if tkey not in selected:
+                    selected[tkey] = target
+                    queue.append(tkey)
+                    if len(selected) >= max_tables:
+                        break
+            if len(selected) >= max_tables:
+                break
+        if len(selected) >= max_tables:
+            break
+        for ref in referencers.get(src.table_name.lower(), []):
+            rkey = _source_key(ref)
+            if rkey not in selected:
+                selected[rkey] = ref
+                queue.append(rkey)
+                if len(selected) >= max_tables:
+                    break
+
+    ordered: list[DataSource] = []
+    seen: set[tuple[str, str]] = set()
+    for s in core:
+        k = _source_key(s)
+        seen.add(k)
+        ordered.append(s)
+    for s in all_sources:
+        k = _source_key(s)
+        if k in selected and k not in seen:
+            seen.add(k)
+            ordered.append(s)
+    return ordered[:max_tables]
+
+
 def build_relevant_schema(
     question: str,
     sources: list[DataSource],
@@ -200,8 +301,9 @@ def build_relevant_schema(
 ) -> list[DataSource]:
     """Subconjunto de tablas + columnas relevantes listo para el prompt."""
     relevant_tables = rank_tables(question, sources, max_tables)
+    expanded = _fk_expand(relevant_tables, sources, max_tables)
     result: list[DataSource] = []
-    for source in relevant_tables:
+    for source in expanded:
         result.append(
             DataSource(
                 schema_name=source.schema_name,

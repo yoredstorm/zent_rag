@@ -9,8 +9,14 @@ from src.core.ports.payment_provider import PaymentProvider
 _provider: PaymentProvider | None = None
 
 
+def reset_payment_provider() -> None:
+    """Tests: drop cached provider after mutating PAYMENT_PROVIDER."""
+    global _provider
+    _provider = None
+
+
 def get_payment_provider() -> PaymentProvider:
-    """Instancia única del provider configurado (manual hoy, stripe futuro)."""
+    """Instancia única del provider configurado (manual | stripe)."""
     global _provider
     if _provider is None:
         settings = get_settings()
@@ -22,10 +28,11 @@ def get_payment_provider() -> PaymentProvider:
 
             _provider = ManualPaymentProvider()
         elif name == "stripe":
-            raise RuntimeError(
-                "Stripe provider requires the extra: pip install .[billing-stripe] "
-                "and PAYMENT_PROVIDER=stripe with BILLING_STRIPE_SECRET_KEY"
+            from src.infrastructure.billing.stripe_provider import (
+                StripePaymentProvider,
             )
+
+            _provider = StripePaymentProvider()
         else:
             raise RuntimeError(f"Unknown PAYMENT_PROVIDER: {name}")
     return _provider

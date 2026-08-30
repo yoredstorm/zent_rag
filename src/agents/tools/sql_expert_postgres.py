@@ -49,6 +49,23 @@ _FORBIDDEN_KEYWORDS = re.compile(
 
 _READ_ONLY_STATEMENTS = {"select", "describe"}
 
+# Pistas de fallo de conexión del pool read-only. Se detectan ANTES de
+# etiquetarlos como "Invalid SQL" para no enmascarar problemas de
+# provisionamiento del rol (POSTGRES_READONLY_USER / 09-readonly-role.sh).
+_CONNECTION_ERROR_HINTS = (
+    "password authentication failed",
+    "role ",
+    "does not exist",
+    "connection refused",
+    "could not connect",
+    "connection is closed",
+    "connection reset",
+    "ssl error",
+    "server does not support ssl",
+    "timeout expired",
+    "connection timed out",
+)
+
 
 def _validate_sql_ast(sql: str) -> None:
     """Valida que el SQL sea solo SELECT/EXPLAIN/SHOW usando sqlglot AST.
@@ -406,11 +423,23 @@ class PostgresSqlExpert(SqlExpert):
         session: AsyncSession = await get_async_session()
         try:
             sources = await fetch_sources(session)
+            sources = self._filter_platform_sources(sources)
         finally:
             await session.close()
         if self._schema_cache is not None:
             await self._schema_cache.set(organization_id, sources)
         return sources
+
+    @staticmethod
+    def _filter_platform_sources(sources: list[DataSource]) -> list[DataSource]:
+        """Excluye el schema de plataforma (public) del inventario del SQL Expert.
+
+        public.* contiene tablas de la plataforma (organizations, api_keys,
+        plans, usage_events, ...). El motor Text-to-SQL solo opera sobre
+        schemas de negocio del tenant (ej. farmacia): las tablas de plataforma
+        no deben llegar al prompt del LLM ni ser consultables.
+        """
+        return [s for s in sources if s.schema_name.lower() != "public"]
 
     async def _discover_columns(
         self, session: AsyncSession, schema: str, table: str
@@ -1264,6 +1293,16 @@ class PostgresSqlExpert(SqlExpert):
         except SqlValidationError:
             raise
         except Exception as exc:
+            if any(hint in str(exc).lower() for hint in _CONNECTION_ERROR_HINTS):
+                logger.error(
+                    "SQL Expert: read-only database connection failed. "
+                    "Verify POSTGRES_READONLY_USER / POSTGRES_READONLY_PASSWORD "
+                    "and run db_init/09-readonly-role.sh on existing volumes.",
+                    error=str(exc),
+                    sql=sql[:300],
+                )
+            else:
+                logger.warning("SQL Expert: EXPLAIN validation failed", error=str(exc))
             raise SqlValidationError(f"Invalid SQL: {exc}", sql) from exc
         finally:
             await session.close()

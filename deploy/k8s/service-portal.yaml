@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: portal
+  labels:
+    app.kubernetes.io/name: zent
+    app.kubernetes.io/component: portal
+spec:
+  selector:
+    app.kubernetes.io/component: portal
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

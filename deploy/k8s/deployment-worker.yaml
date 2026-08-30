@@ -1,0 +1,92 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingestion-worker
+  annotations:
+    zent.io/dockerfile: Dockerfile.api
+  labels:
+    app.kubernetes.io/name: zent
+    app.kubernetes.io/component: ingestion-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: ingestion-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: zent
+        app.kubernetes.io/component: ingestion-worker
+        app.kubernetes.io/image-from: Dockerfile.api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: worker
+          image: zent-api:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "worker_entry.py"]
+          envFrom:
+            - configMapRef:
+                name: zent-config
+          env:
+            - name: RAG_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: zent-secrets
+                  key: RAG_POSTGRES_PASSWORD
+            - name: RAG_PORTAL_SESSION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: zent-secrets
+                  key: RAG_PORTAL_SESSION_KEY
+            - name: RAG_LITELLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: zent-secrets
+                  key: RAG_LITELLM_API_KEY
+            - name: RAG_QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: zent-secrets
+                  key: RAG_QDRANT_API_KEY
+            - name: RAG_METRICS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: zent-secrets
+                  key: RAG_METRICS_TOKEN
+            - name: RAG_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: zent-secrets
+                  key: RAG_REDIS_URL
+            - name: RAG_CONNECTOR_SECRETS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: zent-secrets
+                  key: RAG_CONNECTOR_SECRETS_KEY
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: uploads
+              mountPath: /app/uploads
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: uploads
+          emptyDir: {}
