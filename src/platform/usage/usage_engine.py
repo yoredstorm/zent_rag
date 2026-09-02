@@ -8,6 +8,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import UUID
@@ -67,6 +68,7 @@ class UsageEvent:
     user_id: UUID | None = None
     project_id: UUID | None = None
     agent_id: UUID | None = None
+    deployment_id: UUID | None = None
     api_key_id: UUID | None = None
     model: str | None = None
     provider: str | None = None
@@ -85,6 +87,8 @@ class UsageEvent:
     created_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
+    cost_tags: dict = field(default_factory=dict)
+    trace_id: str | None = None
 
 
 async def ensure_usage_table() -> None:
@@ -118,14 +122,14 @@ async def record_event(event: UsageEvent) -> bool:
                 text(
                     "INSERT INTO usage_events "
                     "(request_id, event_type, organization_id, user_id, "
-                    "project_id, agent_id, api_key_id, model, provider, "
+                    "project_id, agent_id, deployment_id, api_key_id, model, provider, "
                     "prompt_tokens, completion_tokens, total_tokens, "
                     "embedding_tokens, retrieval_count, reranking_count, "
                     "tool_calls, latency_ms, status, estimated_cost, "
-                    "actual_cost, currency, created_at) "
-                    "VALUES (:rid, :etype, :org, :uid, :pid, :aid, :kid, "
+                    "actual_cost, currency, created_at, cost_tags, trace_id) "
+                    "VALUES (:rid, :etype, :org, :uid, :pid, :aid, :did, :kid, "
                     ":model, :provider, :ptok, :ctok, :ttok, :etok, :rc, "
-                    ":rrc, :tc, :lat, :status, :cost, :acost, :cur, :created) "
+                    ":rrc, :tc, :lat, :status, :cost, :acost, :cur, :created, :ctags, :tid) "
                     "ON CONFLICT (request_id, event_type) DO NOTHING "
                     "RETURNING id"
                 ),
@@ -136,6 +140,7 @@ async def record_event(event: UsageEvent) -> bool:
                     "uid": event.user_id,
                     "pid": event.project_id,
                     "aid": event.agent_id,
+                    "did": event.deployment_id,
                     "kid": event.api_key_id,
                     "model": (event.model or "")[:120],
                     "provider": (event.provider or "")[:60],
@@ -156,6 +161,8 @@ async def record_event(event: UsageEvent) -> bool:
                     ),
                     "cur": event.currency[:3],
                     "created": event.created_at,
+                    "ctags": json.dumps(event.cost_tags or {}),
+                    "tid": (event.trace_id or "")[:64] or None,
                 },
             )
             await session.commit()

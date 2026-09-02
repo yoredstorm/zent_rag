@@ -138,7 +138,7 @@ export default function AdminCustomersPage() {
               {visible.map((o) => (
                 <tr key={o.id} className="border-t border-border">
                   <td className="px-4 py-3">
-                    <Link className="text-accent hover:underline" to={`/admin/customers/${o.id}`}>
+                    <Link className="text-accent hover:underline" to={`/control-center/tenants/${o.id}`}>
                       {o.company_name || o.name}
                     </Link>
                   </td>

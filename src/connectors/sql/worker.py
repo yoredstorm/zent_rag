@@ -214,6 +214,26 @@ async def run_worker(poll_timeout: int = 5) -> None:
     knowledge_key = knowledge_queue_key()
 
     while not _shutdown_flag:
+        # Heartbeat de observabilidad (fail-soft)
+        try:
+            from sqlalchemy import text
+
+            from src.infrastructure.postgres.session import get_async_session
+
+            _hb = await get_async_session()
+            try:
+                await _hb.execute(
+                    text(
+                        "INSERT INTO worker_heartbeats (worker_name, last_seen_at, metadata) "
+                        "VALUES ('ingestion', NOW(), '{}'::jsonb) "
+                        "ON CONFLICT (worker_name) DO UPDATE SET last_seen_at = NOW()"
+                    )
+                )
+                await _hb.commit()
+            finally:
+                await _hb.close()
+        except Exception as exc:
+            logger.warning("Heartbeat write failed", error=str(exc)[:200])
         # Escaneo periódico: re-encolar jobs retryables vencidos (retry_at <= now)
         now_mono = asyncio.get_event_loop().time()
         if now_mono - last_requeue_scan > 15:

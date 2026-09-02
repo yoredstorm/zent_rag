@@ -51,12 +51,29 @@ class SearchKnowledgeTool(Tool):
     def __init__(self, retriever) -> None:
         self._retriever = retriever
 
+    @staticmethod
+    def _retrieval_overrides(ctx: ToolContext) -> dict:
+        """Overrides de retrieval del agente (tab Retrieval del builder).
+
+        `agents.config_json.retrieval` → {strategy, top_k, score_threshold,
+        reranker}. Solo se aplican los valores definidos; el resto conserva
+        el comportamiento por defecto de la tool.
+        """
+        raw = (ctx.agent_config or {}).get("retrieval")
+        return raw if isinstance(raw, dict) else {}
+
     async def execute(self, ctx: ToolContext, arguments: dict) -> ToolResult:
         start = time.perf_counter()
         try:
             from src.rag.retrieval.models import RetrievalQuery
 
+            overrides = self._retrieval_overrides(ctx)
             top_k = int(arguments.get("top_k") or 5)
+            agent_top_k = overrides.get("top_k")
+            if agent_top_k is not None:
+                top_k = min(top_k, int(agent_top_k))
+            strategy = str(overrides.get("strategy") or "vector")
+            score_threshold = float(overrides.get("score_threshold") or 0.0)
             kb_ids = self._knowledge_base_ids(ctx)
             chunks = []
             if kb_ids:
@@ -68,8 +85,8 @@ class SearchKnowledgeTool(Tool):
                         knowledge_base_id=kb_id,
                         top_k=top_k,
                         effective_top_k=top_k,
-                        score_threshold=0.0,
-                        strategy="vector",
+                        score_threshold=score_threshold,
+                        strategy=strategy,
                     )
                     part: RetrievalContext = await self._retriever.retrieve(rquery)
                     chunks.extend(part.chunks)
@@ -80,8 +97,8 @@ class SearchKnowledgeTool(Tool):
                     role=ctx.role,
                     top_k=top_k,
                     effective_top_k=top_k,
-                    score_threshold=0.0,
-                    strategy="vector",
+                    score_threshold=score_threshold,
+                    strategy=strategy,
                 )
                 context: RetrievalContext = await self._retriever.retrieve(rquery)
                 chunks = list(context.chunks)

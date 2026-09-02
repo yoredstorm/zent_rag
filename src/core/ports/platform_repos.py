@@ -4,13 +4,17 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from uuid import UUID
 
 from src.core.domain.entities import (
     Agent,
+    AgentVersion,
     ApiKey,
     AuditLogEntry,
     Connector,
+    Deployment,
+    Environment,
     IngestionJob,
     KbSource,
     KnowledgeBase,
@@ -23,6 +27,7 @@ from src.core.domain.entities import (
     Subscription,
     SyncState,
     User,
+    Workspace,
 )
 
 
@@ -152,6 +157,11 @@ class ApiKeyRepository(ABC):
     @abstractmethod
     async def get_key(self, key_id: UUID) -> ApiKey | None: ...
 
+    @abstractmethod
+    async def update_key(
+        self, organization_id: UUID, key_id: UUID, **fields
+    ) -> ApiKey | None: ...
+
 
 class ProjectRepository(ABC):
     @abstractmethod
@@ -248,6 +258,7 @@ class IngestionJobRepository(ABC):
         source_id: UUID | None = None,
         knowledge_base_id: UUID | None = None,
         max_attempts: int = 3,
+        training_run_id: UUID | None = None,
     ) -> IngestionJob: ...
 
     @abstractmethod
@@ -337,7 +348,151 @@ class AgentRepository(ABC):
     async def delete_agent(self, organization_id: UUID, agent_id: UUID) -> None: ...
 
 
+
+class AgentVersionRepository(ABC):
+    """Snapshot inmutables de configuración de agentes."""
+
+    @abstractmethod
+    async def list_versions(
+        self, organization_id: UUID, agent_id: UUID
+    ) -> list[AgentVersion]: ...
+
+    @abstractmethod
+    async def get_version(
+        self, organization_id: UUID, agent_id: UUID, version_id: UUID
+    ) -> AgentVersion | None: ...
+
+    @abstractmethod
+    async def create_version(
+        self,
+        organization_id: UUID,
+        agent_id: UUID,
+        config_snapshot: dict,
+        notes: str | None = None,
+        created_by: UUID | None = None,
+    ) -> AgentVersion: ...
+
+    @abstractmethod
+    async def promote_version(
+        self,
+        organization_id: UUID,
+        agent_id: UUID,
+        version_id: UUID,
+        status: str,
+    ) -> AgentVersion | None: ...
+
+
+class WorkspaceRepository(ABC):
+    """Espacios de trabajo de la organización."""
+
+    @abstractmethod
+    async def list_workspaces(self, organization_id: UUID) -> list[Workspace]: ...
+
+    @abstractmethod
+    async def get_workspace(
+        self, organization_id: UUID, workspace_id: UUID
+    ) -> Workspace | None: ...
+
+    @abstractmethod
+    async def get_workspace_by_slug(
+        self, organization_id: UUID, slug: str
+    ) -> Workspace | None: ...
+
+    @abstractmethod
+    async def create_workspace(
+        self,
+        organization_id: UUID,
+        name: str,
+        slug: str,
+        description: str | None = None,
+        created_by: UUID | None = None,
+    ) -> Workspace: ...
+
+    @abstractmethod
+    async def update_workspace(
+        self,
+        organization_id: UUID,
+        workspace_id: UUID,
+        **fields,
+    ) -> Workspace | None: ...
+
+    @abstractmethod
+    async def workspace_counts(
+        self, organization_id: UUID
+    ) -> dict[UUID, dict[str, int]]:
+        """Conteos (agents/kbs/connectors) por workspace."""
+
+
+
+class DeploymentRepository(ABC):
+    """Entornos y deployments de agentes."""
+
+    @abstractmethod
+    async def list_environments(self, organization_id: UUID) -> list[Environment]: ...
+
+    @abstractmethod
+    async def get_environment(
+        self, organization_id: UUID, environment_id: UUID
+    ) -> Environment | None: ...
+
+    @abstractmethod
+    async def get_environment_by_slug(
+        self, organization_id: UUID, slug: str
+    ) -> Environment | None: ...
+
+    @abstractmethod
+    async def create_environment(
+        self, organization_id: UUID, name: str, slug: str, is_default: bool = False
+    ) -> Environment: ...
+
+    @abstractmethod
+    async def list_deployments(self, organization_id: UUID) -> list[Deployment]: ...
+
+    @abstractmethod
+    async def get_deployment(
+        self, organization_id: UUID, deployment_id: UUID
+    ) -> Deployment | None: ...
+
+    @abstractmethod
+    async def get_deployment_by_slug(
+        self, organization_id: UUID, slug: str
+    ) -> Deployment | None: ...
+
+    @abstractmethod
+    async def get_last_deployment(
+        self,
+        organization_id: UUID,
+        environment_id: UUID,
+        agent_id: UUID,
+        exclude_version_id: UUID | None = None,
+    ) -> Deployment | None:
+        """Último deployment bueno (healthy/degraded) de un agente en un entorno."""
+
+    @abstractmethod
+    async def create_deployment(
+        self,
+        organization_id: UUID,
+        environment_id: UUID,
+        agent_id: UUID,
+        agent_version_id: UUID,
+        slug: str,
+        endpoint: str | None = None,
+        deployed_by: UUID | None = None,
+        rollback_from_id: UUID | None = None,
+    ) -> Deployment: ...
+
+    @abstractmethod
+    async def update_deployment_status(
+        self,
+        organization_id: UUID,
+        deployment_id: UUID,
+        status: str,
+        deployed_at: datetime | None = None,
+    ) -> Deployment | None: ...
+
+
 class ConnectorRepository(ABC):
+
     @abstractmethod
     async def list_connectors(self, organization_id: UUID) -> list[Connector]: ...
 

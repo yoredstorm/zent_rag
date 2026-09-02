@@ -463,6 +463,52 @@ class Settings(BaseSettings):
         le=60000.0,
         description="Aumento absoluto máximo de latencia p95 (ms) antes de marcar regresión.",
     )
+    # Promotion gate: bloquea promover una versión a production si su último
+    # run de evaluación no alcanza los thresholds. 0 / 1.0 = gate desactivado.
+    EVAL_PROMOTION_MIN_SCORE: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=100.0,
+        description="Score mínimo compuesto del último run para permitir promotion.",
+    )
+    EVAL_PROMOTION_MAX_HALLUCINATION: float = Field(
+        default=1.0,
+        ge=0.0,
+        le=1.0,
+        description="Hallucination m\u00e1xima del \u00faltimo run para permitir promotion.",
+    )
+
+    # ------------------------------------------------------------------ PROMPT 08
+    # Observability & incident thresholds
+    OBS_ERROR_RATE_THRESHOLD_PCT: float = Field(
+        default=5.0, ge=0.0, le=100.0, description="Error rate m\u00e1ximo para SLO."
+    )
+    OBS_P95_LATENCY_MS: float = Field(
+        default=15000.0, ge=1.0, description="Latencia p95 m\u00e1xima (ms) para SLO."
+    )
+    OBS_AVAILABILITY_THRESHOLD_PCT: float = Field(
+        default=99.0, ge=0.0, le=100.0, description="Disponibilidad m\u00ednima (%) para SLO."
+    )
+    OBS_WORKER_STALE_MINUTES: int = Field(
+        default=5, ge=1, description="Minutos sin heartbeat del worker para alertar."
+    )
+
+    # ------------------------------------------------------------------ PROMPT 10
+    # Disaster Recovery
+    DR_BACKUP_DIR: str = "data/backups"
+    DR_SCHEDULER_INTERVAL_SECONDS: int = Field(default=60, ge=10, le=3600)
+    DR_POSTGRES_CONTAINER: str = Field(
+        default="rag-postgres", description="Contenedor docker con el PostgreSQL."
+    )
+
+    # ------------------------------------------------------------------ PROMPT 12
+    # Customer Success (SMTP)
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = Field(default=587, ge=1, le=65535)
+    SMTP_TLS: bool = True
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""
 
     # -------------------------------------------------------------------------
     # Ingestion performance
@@ -570,6 +616,7 @@ class Settings(BaseSettings):
     # REQUIRED via env (RAG_PORTAL_SESSION_KEY). No insecure hardcoded default.
     PORTAL_SESSION_KEY: SecretStr
     PORTAL_SESSION_TTL_HOURS: int = Field(default=24, ge=1, le=168)
+    PORTAL_BASE_URL: str = "http://localhost:5173"
     AUTH_LOGIN_MAX_ATTEMPTS: int = Field(default=5, ge=1, le=50)
     AUTH_LOGIN_WINDOW_SECONDS: int = Field(default=900, ge=60, le=86400)
     PORTAL_DEV_PASSWORD: SecretStr | None = None

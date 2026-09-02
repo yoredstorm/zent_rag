@@ -520,6 +520,16 @@ class TestEvalEngineApi:
                     "ph": hash_password(password),
                 },
             )
+            # RBAC granular (migración 023): el admin legacy es super_admin.
+            await session.execute(
+                text(
+                    "INSERT INTO user_platform_roles (user_id, role_id) "
+                    "SELECT u.id, pr.id FROM users u CROSS JOIN platform_roles pr "
+                    "WHERE lower(u.email) = lower(:email) AND pr.name = 'super_admin' "
+                    "ON CONFLICT DO NOTHING"
+                ),
+                {"email": email},
+            )
             await session.commit()
         finally:
             await session.close()

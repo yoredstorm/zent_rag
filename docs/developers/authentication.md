@@ -116,3 +116,30 @@ El Bearer es la **unica** autoridad de identidad. `X-Organization-Id` y `X-User-
 | Coleccion Qdrant compartida | Filtro `organization_id` + assert vs `AuthenticatedContext` | Sin RLS de Qdrant nativo |
 | Scope `portal` en sesion | Sigue siendo bypass de `has_scope`; el RBAC de membership aplica | Intencional para el portal |
 | Consola admin SQL | `admin:sql` + org-admin + timeout/max rows | Sin RLS de Postgres |
+
+## RBAC de plataforma (Control Center) — PROMPT 01
+
+El Control Center usa roles granulares (tablas `platform_roles`, `platform_role_permissions`,
+`user_platform_roles`), independientes del RBAC de tenant. `users.is_platform_admin` es un
+flag legacy que se backfilleó a `super_admin`.
+
+Roles: `super_admin` · `platform_admin` · `operations` · `support` · `finance` ·
+`security_auditor` · `read_only`.
+
+Permisos: `tenant.read/write/suspend` · `billing.read/manage` · `models.read/manage` ·
+`operations.read/write` · `support.impersonate` · `audit.read` ·
+`platform.settings.manage` · `platform.users.manage` · `analytics.read`.
+
+Reglas:
+
+- La autorización se decide contra la identidad (Bearer), nunca contra headers/body.
+- `super_admin`/`platform_admin` llevan `admin:*` en scopes → pasan toda ruta de plataforma.
+- Los demás roles deben tener el permiso exacto (`require_platform_permission`).
+- Las sesiones de plataforma NO bypassan el RBAC de tenant.
+- `RAGQueryRequest.role` y `X-User-Role` están DEPRECATED (solo degradan; autorización = Bearer).
+
+## Roles de tenant nuevos
+
+Además de owner/admin/member/viewer: `ai_engineer`, `data_engineer`, `developer`,
+`analyst`, `billing`. La asignación valida contra BD (`roles` sistema u org), no con regex;
+`organization_invites` ya no tiene CHECK de roles (migración 023).

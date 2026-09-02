@@ -29,6 +29,42 @@ from src.platform.billing.service import BillingService
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/auth", tags=["Auth"])
 
+
+async def _audit_login(
+    *,
+    organization_id,
+    user_id,
+    ip: str,
+    action: str,
+    email: str,
+) -> None:
+    """Registra LOGIN en el audit log (tenant y plataforma)."""
+    from uuid import UUID
+
+    from src.core.domain.entities import TenantContext
+    from src.infrastructure.postgres.relational_db import (
+        PostgresAuditLogRepository,
+    )
+    from src.platform.audit.service import AuditLogService
+
+    uid = UUID(str(user_id)) if user_id is not None else None
+    ctx = TenantContext(
+        tenant_id=UUID(str(organization_id)) if organization_id is not None else None,
+        user_id=uid,
+        roles=frozenset(),
+        permissions=frozenset(),
+        scopes=frozenset(),
+        auth_type="portal_session" if organization_id is not None else "platform_session",
+    )
+    await AuditLogService(PostgresAuditLogRepository()).write_or_raise(
+        ctx,
+        action,
+        "auth",
+        uid,
+        ip_address=ip,
+        metadata={"email": email},
+    )
+
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -266,6 +302,14 @@ async def login(body: LoginRequest, request: Request):
     access_token = encrypt_session(user.id, user.organization_id)
     await clear_auth_failures(email_key, ip_key)
 
+    await _audit_login(
+        organization_id=user.organization_id,
+        user_id=user.id,
+        ip=ip,
+        action="auth.login",
+        email=user.email or body.email,
+    )
+
     organization_repo = PostgresOrganizationRepository()
     organization = await organization_repo.get_by_id(user.organization_id)
     company = (organization.company_name or organization.name) if organization else ""
@@ -316,6 +360,13 @@ async def platform_login(body: LoginRequest, request: Request):
     access_token = encrypt_session(user.id, None, typ="platform")
     await clear_auth_failures(email_key, ip_key)
     logger.info("Platform admin login", user_id=str(user.id), email=body.email)
+    await _audit_login(
+        organization_id=None,
+        user_id=user.id,
+        ip=ip,
+        action="auth.platform_login",
+        email=user.email or body.email,
+    )
     return {
         "access_token": access_token,
         "token_type": "Bearer",

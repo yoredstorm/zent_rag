@@ -90,6 +90,7 @@ async def run_agent(
             conversation_id=body.conversation_id,
             permissions=ctx.permissions,
             org_config=org_config,
+            trace_id=request.headers.get("X-Trace-Id"),
         )
     )
     try:
@@ -97,6 +98,12 @@ async def run_agent(
     except Exception:
         pass
     await save_run(result)
+    try:
+        from src.platform.onboardingv2.onboarding import sync_progress
+
+        await sync_progress(request.agent.organization_id)
+    except Exception:  # noqa: BLE001
+        pass
 
     return {
         "run_id": str(result.run_id),

@@ -45,3 +45,20 @@ Rutas del Customer Portal (Fase 01): `/`, `/chat`, `/knowledge/*` (sources, coll
 Control Center (Fase 02–03): `/admin/login`, `/admin`, `/admin/customers`, `/admin/customers/:orgId`, `/admin/plans`.
 
 OpenAPI: `/docs`, `/redoc`, `/openapi.json` y `/api/v1/openapi.json`. Contrato: `GET /api/v1` → `{ "version": "1.0.0" }`.
+
+## Evaluation Engine (PROMPT 04)
+
+- **eval_examples first-class**: `POST/GET/DELETE /api/v1/eval/datasets/{id}/examples`
+  (manual o bulk). `materialize_cases()` regenera `eval_datasets.cases` (JSONB v2)
+  para que el runner existente no cambie; self-healing migra cases legacy.
+- **CSV import**: `POST /eval/datasets/{id}/import-csv` (columnas question,
+  expected_answer, expected_behavior, expected_sources separadas por `|`/`;`, must_cite).
+- **Synthetic**: `POST /eval/datasets/{id}/synthetic` genera ejemplos con LLM
+  (topics + grounding opcional por KB).
+- **Failures**: `GET /eval/runs/{id}/failures?min_score=&max_hallucination=` lista
+  casos bajo thresholds.
+- **Clasificación de compare**: `compare_runs` devuelve
+  `classification: regression | improvement | no_material_change` junto a overall.
+- **Promotion gate** (opcional): `EVAL_PROMOTION_MIN_SCORE` (0=off) y
+  `EVAL_PROMOTION_MAX_HALLUCINATION` (1.0=off). Promover a production sin run
+  evaluado (o bajo umbral) → 409.

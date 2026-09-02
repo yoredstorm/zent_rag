@@ -31,6 +31,7 @@ class CreateConnectorRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     type: str = Field(..., pattern=r"^[a-zA-Z0-9_\-]{1,30}$")
     project_id: UUID | None = None
+    workspace_id: UUID | None = None
     config: dict = Field(default_factory=dict)
     # Credenciales cifradas: van al SecretStore, NUNCA a config_json.
     secrets: dict | None = None
@@ -45,6 +46,7 @@ class DriveOAuthStartRequest(BaseModel):
 class UpdateConnectorRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     project_id: UUID | None = None
+    workspace_id: UUID | None = None
     config: dict | None = None
     status: str | None = Field(default=None, pattern=r"^(active|disabled|error)$")
     # Merge sobre secretos existentes; null = borrar todos.
@@ -117,12 +119,15 @@ async def create_connector(
         raise HTTPException(status_code=409, detail=plan_limit_detail(exc)) from None
     _require_known_type(body.type)
     if body.project_id is not None:
+        if body.workspace_id is not None:
+            await _require_own_workspace(ctx, body.workspace_id)
         await _require_own_project(ctx, body.project_id)
     connector = await repo.create_connector(
         ctx.organization_id,
         body.name,
         body.type,
         project_id=body.project_id,
+        workspace_id=body.workspace_id,
         config_json=body.config,
     )
     if body.secrets:
@@ -307,6 +312,8 @@ async def update_connector(
     except ValueError:
         raise HTTPException(400, "connector_id must be a valid UUID")
     if body.project_id is not None:
+        if body.workspace_id is not None:
+            await _require_own_workspace(ctx, body.workspace_id)
         await _require_own_project(ctx, body.project_id)
     fields = {k: v for k, v in body.model_dump(exclude_none=True).items()}
     secrets_payload = fields.pop("secrets", None)
@@ -447,3 +454,12 @@ async def _require_own_project(ctx, project_id: UUID) -> None:
     project = await get_project_repo().get_project(ctx.organization_id, project_id)
     if project is None:
         raise HTTPException(404, "Project not found in this organization")
+
+async def _require_own_workspace(ctx, workspace_id) -> None:
+    from src.api.deps import get_workspace_repo
+    from src.platform.workspaces.service import require_own_workspace
+
+    try:
+        await require_own_workspace(get_workspace_repo(), ctx.organization_id, workspace_id)
+    except ValueError:
+        raise HTTPException(404, "Workspace not found in this organization") from None

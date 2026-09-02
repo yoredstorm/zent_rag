@@ -15,6 +15,7 @@ type Dimension = {
 };
 type Report = {
   overall: string;
+  classification: string;
   dimensions: Dimension[];
 };
 
@@ -125,6 +126,18 @@ export default function EvaluationComparePage() {
         <>
           <div className="mb-4">
             <StatCard label="Overall" value={report.overall} />
+            <StatCard
+              label="Clasificación"
+              value={
+                report.classification === "regression" ? (
+                  <span className="badge badge-danger">Regression</span>
+                ) : report.classification === "improvement" ? (
+                  <span className="badge badge-ok">Improvement</span>
+                ) : (
+                  <span className="badge badge-muted">No material change</span>
+                )
+              }
+            />
           </div>
           <ul className="divide-y divide-border rounded-md border border-border">
             {report.dimensions.map((dim) => (

@@ -36,7 +36,8 @@ async def _owner_session(organization_id: str) -> str:
 
 
 async def _seed_platform_admin(email: str, password: str) -> None:
-    """Insert a platform admin row (is_platform_admin). Used by login tests."""
+    """Insert a platform admin row (is_platform_admin + rol super_admin).
+    Used by login tests."""
     from sqlalchemy import text
 
     from src.infrastructure.postgres.relational_db import ensure_platform_admin_schema
@@ -53,20 +54,21 @@ async def _seed_platform_admin(email: str, password: str) -> None:
             )
         ).fetchone()
         if existing:
+            user_id = existing.id
             await session.execute(
                 text(
                     "UPDATE users SET is_platform_admin = true, "
                     "password_hash = :ph WHERE id = :id"
                 ),
-                {"ph": hash_password(password), "id": existing.id},
+                {"ph": hash_password(password), "id": user_id},
             )
         else:
-            await session.execute(
+            result = await session.execute(
                 text(
                     "INSERT INTO users (id, organization_id, external_id, email_hash, "
                     "role, email, password_hash, is_platform_admin) "
                     "VALUES (gen_random_uuid(), NULL, :ext, :eh, 'platform', "
-                    ":email, :ph, true)"
+                    ":email, :ph, true) RETURNING id"
                 ),
                 {
                     "ext": f"platform-{uuid4().hex[:12]}",
@@ -75,6 +77,16 @@ async def _seed_platform_admin(email: str, password: str) -> None:
                     "ph": hash_password(password),
                 },
             )
+            user_id = result.fetchone().id
+        # RBAC granular: el admin legacy equivale a super_admin (backfill 023).
+        await session.execute(
+            text(
+                "INSERT INTO user_platform_roles (user_id, role_id) "
+                "SELECT :uid, id FROM platform_roles WHERE name = 'super_admin' "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"uid": user_id},
+        )
         await session.commit()
     except Exception:
         await session.rollback()

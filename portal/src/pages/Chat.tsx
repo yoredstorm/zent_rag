@@ -359,7 +359,7 @@ export default function ChatPage() {
           lazy_ingested: msg.lazyIngested ?? false,
         }),
       });
-      const next = messages.map((m, i) => (i === index ? { ...m, rated: rating } : m));
+      const next = messages.map((m, i) => (i === index ? { ...m, rated: rating, reasonPrompt: rating === "down" } : m));
       setMessages(next);
       if (conversationId) {
         persist(next.map(({ id: _id, ...rest }) => rest), conversationId);
@@ -375,6 +375,26 @@ export default function ChatPage() {
         "No se pudo enviar el feedback",
         err instanceof Error ? err.message : undefined
       );
+    }
+  }
+
+  async function sendFeedbackReason(index: number, reason: string) {
+    if (!session) return;
+    const msg = messages[index];
+    if (!msg || msg.role !== "assistant") return;
+    try {
+      await api("/api/v1/feedback", {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify({ rating: "down", reason, trace_id: msg.queryId || undefined }),
+      });
+      const next = messages.map((m, i) => (i === index ? { ...m, reasonPrompt: false } : m));
+      setMessages(next);
+      if (conversationId) persist(next.map(({ id: _id, ...rest }) => rest), conversationId);
+      pushToast("success", "Motivo registrado", "Gracias por ayudarnos a mejorar.");
+    } catch (err) {
+      pushToast("error", "No se pudo registrar el motivo", err instanceof Error ? err.message : undefined);
     }
   }
 
@@ -564,6 +584,7 @@ export default function ChatPage() {
                 key={m.id}
                 message={m}
                 onFeedback={(rating) => void sendFeedback(i, rating)}
+                    onFeedbackReason={(reason) => void sendFeedbackReason(i, reason)}
               />
             ))}
 
@@ -667,9 +688,11 @@ function Avatar({ isUser }: { isUser: boolean }) {
 function MessageBubble({
   message,
   onFeedback,
+  onFeedbackReason,
 }: {
   message: Message;
   onFeedback: (rating: "up" | "down") => void;
+  onFeedbackReason: (reason: string) => void;
 }) {
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [sqlOpen, setSqlOpen] = useState(false);
@@ -859,6 +882,21 @@ function MessageBubble({
               >
                 <ThumbsDown size={13} aria-hidden />
               </button>
+            </span>
+          ) : message.rated === "down" && message.reasonPrompt ? (
+            <span className="ml-auto flex items-center gap-1">
+              <select
+                className="rounded-md border border-border bg-soft px-2 py-1 text-[11px]"
+                value=""
+                onChange={(e) => onFeedbackReason(e.target.value)}
+              >
+                <option value="" disabled>¿Por qué no fue útil?</option>
+                <option value="wrong_answer">Respuesta incorrecta</option>
+                <option value="too_long">Demasiado larga</option>
+                <option value="too_slow">Demasiado lenta</option>
+                <option value="confusing">Confusa</option>
+                <option value="other">Otro</option>
+              </select>
             </span>
           ) : (
             <span className="ml-auto text-[11px] text-faint">

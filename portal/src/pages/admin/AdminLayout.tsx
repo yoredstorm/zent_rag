@@ -1,4 +1,36 @@
-import { Bell, Buildings, Cards, ChartLineUp, Coins, SignOut } from "@phosphor-icons/react";
+import {
+  Bell,
+  Broadcast,
+  Buildings,
+  Cards,
+  ChartBar,
+  ChartLineUp,
+  Coins,
+  Cpu,
+  Flask,
+  Globe,
+  PiggyBank,
+  Pulse,
+  Package,
+  ShieldCheck,
+  BellSimple,
+  GitBranch,
+  ShieldCheck,
+  ShieldWarning,
+  TrendUp,
+  Gauge,
+  Handshake,
+  Lifebuoy,
+  Play,
+  Pulse,
+  Rocket,
+  ShieldCheck,
+  ShieldWarning,
+  Scroll,
+  SignOut,
+  Storefront,
+  UsersThree,
+} from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, NavLink, Navigate, Outlet } from "react-router-dom";
 import { platformApi } from "../../api";
@@ -14,6 +46,52 @@ type Notice = {
   created_at: string | null;
   read_at: string | null;
 };
+
+const BASE = "/control-center";
+
+const NAV = [
+  { to: `${BASE}`, label: "Overview", icon: Gauge, end: true },
+  { to: `${BASE}/tenants`, label: "Tenants", icon: Buildings },
+  { to: `${BASE}/subscriptions`, label: "Subscriptions", icon: Cards },
+  { to: `${BASE}/usage`, label: "Usage", icon: ChartLineUp },
+  { to: `${BASE}/costs`, label: "AI Costs", icon: Coins },
+  { to: `${BASE}/operations`, label: "Operations", icon: Gauge },
+  { to: `${BASE}/status`, label: "System Status", icon: Pulse },
+  { to: `${BASE}/dr`, label: "Disaster Recovery", icon: Lifebuoy },
+  { to: `${BASE}/governance`, label: "Governance", icon: ShieldCheck },
+  { to: `${BASE}/customers`, label: "Customers", icon: UsersThree },
+  { to: `${BASE}/audit-intel`, label: "Audit Intelligence", icon: ShieldWarning },
+  { to: `${BASE}/optimizer`, label: "Optimizer", icon: ChartLineUp },
+  { to: `${BASE}/analytics`, label: "Analytics", icon: ChartBar },
+  { to: `${BASE}/marketplace`, label: "Marketplace", icon: Storefront },
+  { to: `${BASE}/workflows`, label: "Workflows", icon: Play },
+  { to: `${BASE}/model-gateway`, label: "Model Gateway", icon: Coins },
+  { to: `${BASE}/realtime`, label: "Real-Time", icon: Broadcast },
+  { to: `${BASE}/security-center`, label: "Security Center", icon: ShieldWarning },
+  { to: `${BASE}/onboarding`, label: "Onboarding", icon: Rocket },
+  { to: `${BASE}/capacity`, label: "Capacity", icon: Gauge },
+  { to: `${BASE}/partners`, label: "Partners", icon: Handshake },
+  { to: `${BASE}/evals`, label: "Evals Lab", icon: Flask },
+  { to: `${BASE}/metering`, label: "Metering", icon: Gauge },
+  { to: `${BASE}/inference-proxy`, label: "Inference Proxy", icon: Cpu },
+  { to: `${BASE}/regions`, label: "Regions", icon: Globe },
+  { to: `${BASE}/cost-governance`, label: "Cost Governance", icon: PiggyBank },
+  { to: `${BASE}/ops-center`, label: "Ops Center", icon: ShieldCheck },
+  { to: `${BASE}/model-health`, label: "Model Health", icon: Pulse },
+  { to: `${BASE}/revenue`, label: "Revenue", icon: TrendUp },
+  { to: `${BASE}/data-export`, label: "Data Export", icon: Package },
+  { to: `${BASE}/trust-safety`, label: "Trust & Safety", icon: ShieldWarning },
+  { to: `${BASE}/traces`, label: "Traces", icon: GitBranch },
+  { to: `${BASE}/notifications`, label: "Webhooks & Notif", icon: BellSimple },
+  { to: `${BASE}/compliance`, label: "Compliance", icon: ShieldCheck },
+  { to: `${BASE}/onboarding`, label: "Onboarding", icon: RocketLaunch },
+  { to: `${BASE}/feedback`, label: "Feedback", icon: Smiley },
+  { to: `${BASE}/migrations`, label: "Migrations", icon: ArrowsLeftRight },
+  { to: `${BASE}/releases`, label: "Releases", icon: GitBranch },
+  { to: `${BASE}/security`, label: "Security", icon: ShieldCheck },
+  { to: `${BASE}/audit`, label: "Audit", icon: Scroll },
+  { to: `${BASE}/settings`, label: "Settings", icon: UsersThree },
+];
 
 export default function AdminLayout() {
   const { session, logout } = usePlatformAuth();
@@ -42,7 +120,7 @@ export default function AdminLayout() {
     return () => window.clearInterval(id);
   }, [session, loadNotices]);
 
-  if (!session) return <Navigate to="/admin/login" replace />;
+  if (!session) return <Navigate to="/control-center/login" replace />;
 
   async function markRead(id: string) {
     if (!session) return;
@@ -67,52 +145,24 @@ export default function AdminLayout() {
           </p>
           <p className="mt-1 text-sm font-semibold text-text">Zent plataforma</p>
         </div>
-        <nav className="flex flex-1 flex-col gap-1 p-3" aria-label="Administración">
-          <NavLink
-            to="/admin"
-            end
-            className={({ isActive }) =>
-              `flex min-h-11 items-center gap-2 rounded-md px-3 text-sm ${
-                isActive ? "bg-accent-soft text-text" : "text-muted hover:bg-soft hover:text-text"
-              }`
-            }
-          >
-            <ChartLineUp size={18} aria-hidden />
-            Dashboard
-          </NavLink>
-          <NavLink
-            to="/admin/customers"
-            className={({ isActive }) =>
-              `flex min-h-11 items-center gap-2 rounded-md px-3 text-sm ${
-                isActive ? "bg-accent-soft text-text" : "text-muted hover:bg-soft hover:text-text"
-              }`
-            }
-          >
-            <Buildings size={18} aria-hidden />
-            Clientes
-          </NavLink>
-          <NavLink
-            to="/admin/plans"
-            className={({ isActive }) =>
-              `flex min-h-11 items-center gap-2 rounded-md px-3 text-sm ${
-                isActive ? "bg-accent-soft text-text" : "text-muted hover:bg-soft hover:text-text"
-              }`
-            }
-          >
-            <Cards size={18} aria-hidden />
-            Planes
-          </NavLink>
-          <NavLink
-            to="/admin/usage"
-            className={({ isActive }) =>
-              `flex min-h-11 items-center gap-2 rounded-md px-3 text-sm ${
-                isActive ? "bg-accent-soft text-text" : "text-muted hover:bg-soft hover:text-text"
-              }`
-            }
-          >
-            <Coins size={18} aria-hidden />
-            FinOps
-          </NavLink>
+        <nav className="flex flex-1 flex-col gap-1 p-3" aria-label="Control Center">
+          {NAV.map(({ to, label, icon: Icon, end }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={end}
+              className={({ isActive }) =>
+                `flex min-h-11 items-center gap-2 rounded-md px-3 text-sm ${
+                  isActive
+                    ? "bg-accent-soft text-text"
+                    : "text-muted hover:bg-soft hover:text-text"
+                }`
+              }
+            >
+              <Icon size={18} aria-hidden />
+              {label}
+            </NavLink>
+          ))}
         </nav>
         <div className="border-t border-border p-4">
           <p className="mb-2 truncate text-xs text-faint" title={session.email}>
@@ -169,27 +219,27 @@ export default function AdminLayout() {
                           {n.organization_id && (
                             <Link
                               className="text-accent hover:underline"
-                              to={`/admin/customers/${n.organization_id}`}
+                              to={`${BASE}/tenants/${n.organization_id}`}
                               onClick={() => setOpen(false)}
                             >
-                              {n.organization_name || "Ver cliente"}
+                              {n.organization_name || "Ver tenant"}
                             </Link>
                           )}
                           <span className="text-faint">
                             {n.created_at
-                              ? new Date(n.created_at).toLocaleString("es-CL")
+                              ? new Date(n.created_at).toLocaleString("es-PE")
                               : ""}
                           </span>
-                          {!n.read_at && (
-                            <button
-                              type="button"
-                              className="text-accent hover:underline"
-                              onClick={() => void markRead(n.id)}
-                            >
-                              Marcar leída
-                            </button>
-                          )}
                         </div>
+                        {!n.read_at && (
+                          <button
+                            type="button"
+                            className="mt-1 text-xs text-accent hover:underline"
+                            onClick={() => void markRead(n.id)}
+                          >
+                            Marcar leído
+                          </button>
+                        )}
                       </div>
                     </li>
                   ))}
@@ -198,7 +248,7 @@ export default function AdminLayout() {
             )}
           </div>
         </header>
-        <main className="mx-auto max-w-[1280px] px-4 py-6 sm:px-6">
+        <main className="p-4 lg:p-6">
           <Outlet />
         </main>
       </div>

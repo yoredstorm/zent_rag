@@ -7,6 +7,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import json
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
@@ -43,7 +44,11 @@ class UpdateSourceRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     knowledge_base_id: UUID | None = None
     config: dict | None = None
-    status: str | None = Field(default=None, pattern=r"^(active|disabled|error)$")
+    status: str | None = Field(
+        default=None,
+        pattern=r"^(created|connected|discovering|profiled|ready|ingesting|indexed|error)$",
+    )
+    # Ciclo de vida: created|connected|discovering|profiled|ready|ingesting|indexed|error
 
 
 def _source_response(source, extra: dict | None = None) -> dict:
@@ -498,3 +503,126 @@ async def upload_file_source(
         metadata={"name": source.name, "type": source.type, "object_key": object_key},
     )
     return _source_response(source)
+
+@router.post("/sources/{source_id}/profile", summary="Perfilizar fuente (SQL: null rates, cardinalidad, PII)")
+async def profile_source(
+    source_id: str,
+    request: Request,
+    repo: SourceRepository = Depends(get_source_repo),
+):
+    from sqlalchemy import text as _text
+
+    from src.connectors.sql.profiling import profile_table
+    from src.infrastructure.postgres.session import get_async_session
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "sources:write")
+    try:
+        sid = UUID(source_id)
+    except ValueError:
+        raise HTTPException(400, "source_id must be a valid UUID")
+    source = await repo.get_source(ctx.organization_id, sid)
+    if source is None:
+        raise HTTPException(404, "Source not found")
+    if source.type not in ("sql", "postgres"):
+        raise HTTPException(400, "Profiling solo disponible para fuentes SQL")
+
+    config = source.config_json or {}
+    default_schema = config.get("schema") or "public"
+    tables = config.get("tables") or [config.get("table")]
+    table_refs: list[tuple[str, str]] = []
+    for entry in tables:
+        if not entry or not isinstance(entry, str):
+            continue
+        schema, _, table = str(entry).partition(".")
+        if not table:
+            schema, table = default_schema, schema
+        table_refs.append((schema, table))
+
+    session = await get_async_session()
+    try:
+        await session.execute(
+            _text(
+                "UPDATE kb_sources SET status = 'discovering', updated_at = NOW() "
+                "WHERE id = :sid AND organization_id = :oid"
+            ),
+            {"sid": sid, "oid": ctx.organization_id},
+        )
+        await session.commit()
+        profiled_tables = []
+        profiled_columns = []
+        for schema_name, table_name in table_refs:
+            if not table_name or not isinstance(table_name, str):
+                continue
+            try:
+                profile = await profile_table(session, schema_name, table_name)
+            except Exception as exc:
+                logger.warning(
+                    "Profile failed for table", table=table_name, error=str(exc)
+                )
+                continue
+            profiled_tables.append({"name": profile["name"], "columns": profile["columns"]})
+            profiled_columns.extend(profile["columns"])
+        await session.execute(
+            _text(
+                "INSERT INTO source_profiles (id, organization_id, source_id, columns, tables) "
+                "VALUES (uuid_generate_v4(), :oid, :sid, CAST(:cols AS jsonb), CAST(:tabs AS jsonb))"
+            ),
+            {
+                "oid": ctx.organization_id,
+                "sid": sid,
+                "cols": json.dumps(profiled_columns),
+                "tabs": json.dumps(profiled_tables),
+            },
+        )
+        await session.execute(
+            _text(
+                "UPDATE kb_sources SET status = 'profiled', updated_at = NOW() "
+                "WHERE id = :sid AND organization_id = :oid"
+            ),
+            {"sid": sid, "oid": ctx.organization_id},
+        )
+        await session.commit()
+    finally:
+        await session.close()
+    await _audit().write(
+        ctx, "source.profiled", "source", sid,
+        metadata={"tables": len(profiled_tables), "columns": len(profiled_columns)},
+    )
+    return {"source_id": str(sid), "status": "profiled", "tables": profiled_tables}
+
+
+@router.get("/sources/{source_id}/profile", summary="Perfil de la fuente (último profiling)")
+async def get_source_profile(source_id: str, request: Request):
+    from sqlalchemy import text as _text
+
+    from src.infrastructure.postgres.session import get_async_session
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "sources:read")
+    try:
+        sid = UUID(source_id)
+    except ValueError:
+        raise HTTPException(400, "source_id must be a valid UUID")
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                _text(
+                    "SELECT id, columns, tables, detected_at FROM source_profiles "
+                    "WHERE organization_id = :oid AND source_id = :sid "
+                    "ORDER BY detected_at DESC LIMIT 1"
+                ),
+                {"oid": ctx.organization_id, "sid": sid},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+    if row is None:
+        raise HTTPException(404, "No profile yet. Ejecuta POST /profile primero.")
+    return {
+        "profile_id": str(row.id),
+        "detected_at": row.detected_at.isoformat(),
+        "columns": row.columns if isinstance(row.columns, list) else [],
+        "tables": row.tables if isinstance(row.tables, list) else [],
+    }

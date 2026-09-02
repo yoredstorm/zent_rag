@@ -48,6 +48,15 @@ _PUBLIC_AUTH_POST = {
 }
 # Google redirect: identidad sale del state HMAC, no del Bearer.
 _PUBLIC_OAUTH_GET = {"/api/v1/connectors/oauth/drive/callback"}
+# SSO: la identidad sale del state HMAC, no del Bearer.
+# Share links públicos: el token es la autorización.
+_PUBLIC_SHARE_GET = {"/api/v1/share/agents"}
+_PUBLIC_SSO_GET = {
+    "/api/v1/auth/sso/start",
+    "/api/v1/auth/sso/callback",
+}
+# Webhook de pagos (stripe-like): la firma es la autorización.
+_PUBLIC_PAYMENTS_POST = {"/api/v1/payments/webhook"}
 
 # Dev-only SQL admin (not prompt management)
 _ADMIN_SQL_PREFIXES = (
@@ -100,9 +109,25 @@ def _is_public(path: str, method: str) -> bool:
         return True
     if method == "GET" and path in _PUBLIC_OAUTH_GET:
         return True
+    if method == "GET" and path.startswith("/api/v1/share/agents/"):
+        return True
+    # Dev portal público: status y changelog sin auth.
+    if method == "GET" and path.startswith("/api/v1/dev/"):
+        return True
+    if method == "GET" and (
+        path in _PUBLIC_SSO_GET
+        or path == "/api/v1/auth/sso/callback"
+        or (path.startswith("/api/v1/auth/sso/") and path.endswith("/start"))
+    ):
+        return True
+    # SCIM: el bearer es el token SCIM de la org (validado en la ruta).
+    if path.startswith("/api/v1/scim/v2/"):
+        return True
     # Webhooks de billing: públicos; la ÚNICA protección es la firma
     # criptográfica verificada dentro de la ruta.
     if method == "POST" and path.startswith("/api/v1/billing/webhooks/"):
+        return True
+    if method == "POST" and path.startswith("/api/v1/payments/webhook"):
         return True
     if path.startswith("/api/v1/embed/"):
         return True
@@ -259,12 +284,23 @@ class TenantMiddleware(BaseHTTPMiddleware):
                                 "message": "X-User-Id must be a valid UUID",
                             },
                         )
+                from src.platform.rbac.repo import get_platform_roles_for_user
+
+                platform_roles, platform_permissions = (
+                    await get_platform_roles_for_user(session.user_id)
+                    if session.user_id is not None
+                    else (["read_only"], set())
+                )
+                elevated = bool(
+                    set(platform_roles)
+                    & {"super_admin", "platform_admin"}
+                )
                 tenant_ctx = TenantContext(
                     tenant_id=None,
                     user_id=session.user_id,
-                    roles=frozenset({"platform"}),
-                    permissions=frozenset(),
-                    scopes=frozenset({"admin:*"}),
+                    roles=frozenset(platform_roles or {"read_only"}),
+                    permissions=frozenset(platform_permissions),
+                    scopes=frozenset({"admin:*"}) if elevated else frozenset(),
                     auth_type="platform_session",
                 )
                 request.state.tenant_context = tenant_ctx
@@ -284,6 +320,38 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 return response
 
         billing = get_billing_service()
+
+        # Dev-only: token de administración local (admin/sql en desarrollo).
+        if (
+            settings.ENVIRONMENT in ("development", "test")
+            and token == "rag_test_dev_token_for_local_testing_123"  # noqa: S105
+        ):
+            from uuid import UUID as _DevUUID
+
+            from src.core.domain.entities import TenantContext as _TenantContext
+
+            dev_org = _DevUUID("00000000-0000-0000-0000-000000000001")
+            tenant_ctx = _TenantContext(
+                tenant_id=dev_org,
+                roles=frozenset({"super_admin"}),
+                permissions=frozenset({"*"}),
+                scopes=frozenset({"admin:*"}),
+                auth_type="platform_session",
+            )
+            request.state.tenant_context = tenant_ctx
+            request.state.organization_id = "00000000-0000-0000-0000-000000000001"
+            set_tenant_context(tenant_ctx)
+            set_trace_context(
+                organization_id="00000000-0000-0000-0000-000000000001",
+                user_id="dev",
+            )
+            try:
+                response = await call_next(request)
+            finally:
+                from src.platform.tenants.context import clear_tenant_context
+
+                clear_tenant_context()
+            return response
 
         try:
             billing_ctx = await billing.validate_token(token)
@@ -343,6 +411,31 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 subscription_id=billing_ctx.subscription_id,
                 token_id=billing_ctx.token_id,
             )
+            # Partner ecosystem: si la key es de un partner, propaga partner_id.
+            if billing_ctx.token_id and "partner:*" in billing_ctx.scopes:
+                try:
+                    from sqlalchemy import text
+
+                    from src.infrastructure.postgres.session import get_async_session
+
+                    _s = await get_async_session()
+                    try:
+                        _pid = (
+                            await _s.execute(
+                                text(
+                                    "SELECT partner_id FROM api_keys WHERE id = :kid"
+                                ),
+                                {"kid": billing_ctx.token_id},
+                            )
+                        ).scalar()
+                    finally:
+                        await _s.close()
+                    if _pid:
+                        object.__setattr__(tenant_ctx, "partner_id", _pid)
+                    else:
+                        logger.info("Partner key sin partner_id", key_id=str(billing_ctx.token_id))
+                except Exception as exc:  # noqa: BLE001, S112
+                    logger.warning("Partner ctx resolve failed", error=str(exc)[:150])
 
             # -----------------------------------------------------------------
             # ANTI-SPOOFING centralizado: si el cliente envía X-Organization-Id
@@ -399,11 +492,36 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 if billing_ctx.auth_type == "api_token"
                 else "live"
             )
+            # Hardening de API keys (PROMPT 06): IP allowlist + rate limit por key.
+            if billing_ctx.auth_type == "api_token" and tenant_ctx.token_id is not None:
+                enforcement = await _enforce_key_limits(
+                    tenant_ctx.token_id, request.client.host if request.client else ""
+                )
+                if enforcement is not None:
+                    return enforcement
             request.state.tenant_context = tenant_ctx
             request.state.billing_context = billing_ctx  # compat billing/quota
             request.state.organization_id = str(tenant_ctx.tenant_id)
             request.state.api_key_environment = key_env
             set_tenant_context(tenant_ctx)
+
+            # Metering v2: rate limit por plan con burst (API tenant autenticada).
+            if tenant_ctx.auth_type in ("api_token", "portal_session"):
+                try:
+                    from src.platform.metering.metering import enforce_plan_rate_limit
+
+                    if not await enforce_plan_rate_limit(
+                        tenant_ctx.organization_id, request.url.path
+                    ):
+                        return JSONResponse(
+                            status_code=429,
+                            content={
+                                "error_code": "rate_limit_plan_exceeded",
+                                "message": "Límite del plan excedido. Intenta de nuevo en un minuto.",
+                            },
+                        )
+                except Exception:  # noqa: BLE001, S112
+                    pass
 
             # Mantener el trace_id del request; solo fijar identidad real.
             set_trace_context(
@@ -447,3 +565,40 @@ class TenantMiddleware(BaseHTTPMiddleware):
             )
 
         return response
+async def _enforce_key_limits(key_id: UUID, client_ip: str):  # noqa: F821 (UUID importado arriba)
+    """IP allowlist + rate limit por API key (fail-open ante errores internos)."""
+
+    from src.platform.auth.key_limits import (
+        check_key_ip_allowed,
+        check_key_rate_limit,
+        get_key_limits,
+    )
+
+    try:
+        ip_allowlist, rate_limit = await get_key_limits(key_id)
+        if ip_allowlist:
+            from fastapi.responses import JSONResponse
+
+            if not check_key_ip_allowed(ip_allowlist, client_ip):
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "error_code": "ip_not_allowed",
+                        "message": f"IP {client_ip or 'desconocida'} no está en la allowlist de la API key",
+                    },
+                )
+        if rate_limit:
+            from fastapi.responses import JSONResponse
+
+            allowed = await check_key_rate_limit(key_id, rate_limit)
+            if not allowed:
+                return JSONResponse(
+                    status_code=429,
+                    content={
+                        "error_code": "key_rate_limited",
+                        "message": f"Rate limit de la API key excedido ({rate_limit}/min)",
+                    },
+                )
+    except Exception:
+        pass
+    return None

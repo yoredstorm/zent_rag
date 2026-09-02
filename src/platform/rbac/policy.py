@@ -30,14 +30,19 @@ def get_ctx(request: Request) -> TenantContext:
 
 
 def require_permission(request: Request, permission: str) -> TenantContext:
-    """Exige un permiso del catálogo. 403 con error_code si falta."""
+    """Exige un permiso del catálogo. 403 con error_code si falta.
+
+    `admin:*` en scopes (API key con scope admin) pasa toda policy de
+    recursos tenant. Las sesiones de plataforma NO bypassan el RBAC de
+    tenant: sus permisos granulares se evalúan con require_platform_permission.
+    """
     from src.platform.auth.scopes import permission_satisfied
 
     ctx = get_ctx(request)
     if ctx.has_permission(permission) or permission_satisfied(ctx.permissions, permission):
         return ctx
-    if ctx.is_platform_admin():
-        # admin:* (tokens de plataforma) pasa toda policy de recursos
+    if "admin:*" in ctx.scopes:
+        # API key tenant-scoped con scope admin (dueño).
         return ctx
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,

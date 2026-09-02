@@ -105,8 +105,9 @@ class PostgresSourceRepository(SourceRepository):
             result = await session.execute(
                 text(
                     "INSERT INTO kb_sources (id, organization_id, knowledge_base_id, "
-                    "name, type, config_json) "
-                    "VALUES (uuid_generate_v4(), :oid, :kid, :name, :type, CAST(:config AS jsonb)) "
+                    "name, type, config_json, status) "
+                    "VALUES (uuid_generate_v4(), :oid, :kid, :name, :type, "
+                    "CAST(:config AS jsonb), 'created') "
                     f"RETURNING {self._COLS}"
                 ),
                 {
@@ -215,6 +216,7 @@ class PostgresIngestionJobRepository(IngestionJobRepository):
         source_id: UUID | None = None,
         knowledge_base_id: UUID | None = None,
         max_attempts: int = 3,
+        training_run_id: UUID | None = None,
     ) -> IngestionJob:
         session = await get_async_session()
         try:
@@ -222,8 +224,8 @@ class PostgresIngestionJobRepository(IngestionJobRepository):
             result = await session.execute(
                 text(
                     "INSERT INTO ingestion_jobs (id, organization_id, knowledge_base_id, "
-                    "source_id, job_type, max_attempts) "
-                    "VALUES (:id, :oid, :kid, :sid, :jtype, :max_attempts) "
+                    "source_id, job_type, max_attempts, training_run_id) "
+                    "VALUES (:id, :oid, :kid, :sid, :jtype, :max_attempts, :trun) "
                     f"RETURNING {self._COLS}"
                 ),
                 {
@@ -233,6 +235,7 @@ class PostgresIngestionJobRepository(IngestionJobRepository):
                     "sid": source_id,
                     "jtype": job_type,
                     "max_attempts": max_attempts,
+                    "trun": training_run_id,
                 },
             )
             row = result.fetchone()

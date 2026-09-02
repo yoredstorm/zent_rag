@@ -18,10 +18,12 @@ from src.connectors.plugin.registry import load_entry_points, load_plugin_module
 from src.core.config import get_settings
 from src.core.ports import (
     AgentRepository,
+    AgentVersionRepository,
     ApiKeyRepository,
     AuditLogRepository,
     CacheProvider,
     ConnectorRepository,
+    DeploymentRepository,
     DocumentRegistryRepository,
     EmbeddingProvider,
     IngestionJobRepository,
@@ -34,6 +36,7 @@ from src.core.ports import (
     SyncStateRepository,
     UserRepository,
     VectorStore,
+    WorkspaceRepository,
 )
 from src.infrastructure.postgres.knowledge_repos import (
     PostgresDocumentRegistryRepository,
@@ -43,14 +46,17 @@ from src.infrastructure.postgres.knowledge_repos import (
 )
 from src.infrastructure.postgres.relational_db import (
     PostgresAgentRepository,
+    PostgresAgentVersionRepository,
     PostgresApiKeyRepository,
     PostgresAuditLogRepository,
     PostgresConnectorRepository,
+    PostgresDeploymentRepository,
     PostgresKnowledgeBaseRepository,
     PostgresMembershipRepository,
     PostgresOrganizationRepository,
     PostgresProjectRepository,
     PostgresUserRepository,
+    PostgresWorkspaceRepository,
 )
 from src.infrastructure.qdrant.vector_store import QdrantVectorStore
 from src.infrastructure.redis.cache import RedisCache
@@ -68,12 +74,15 @@ _api_key_repo: ApiKeyRepository | None = None
 _project_repo: ProjectRepository | None = None
 _kb_repo: KnowledgeBaseRepository | None = None
 _agent_repo: AgentRepository | None = None
+_agent_version_repo: AgentVersionRepository | None = None
+_deployment_repo: DeploymentRepository | None = None
 _connector_repo: ConnectorRepository | None = None
 _audit_repo: AuditLogRepository | None = None
 _source_repo: SourceRepository | None = None
 _job_repo: IngestionJobRepository | None = None
 _sync_state_repo: SyncStateRepository | None = None
 _doc_registry_repo: DocumentRegistryRepository | None = None
+_workspace_repo: WorkspaceRepository | None = None
 _vector_store: VectorStore | None = None
 _llm_provider: LLMProvider | None = None
 _embedding_provider: EmbeddingProvider | None = None
@@ -129,6 +138,27 @@ def get_agent_repo() -> AgentRepository:
     if _agent_repo is None:
         _agent_repo = PostgresAgentRepository()
     return _agent_repo
+
+
+def get_agent_version_repo() -> AgentVersionRepository:
+    global _agent_version_repo
+    if _agent_version_repo is None:
+        _agent_version_repo = PostgresAgentVersionRepository()
+    return _agent_version_repo
+
+
+def get_workspace_repo() -> WorkspaceRepository:
+    global _workspace_repo
+    if _workspace_repo is None:
+        _workspace_repo = PostgresWorkspaceRepository()
+    return _workspace_repo
+
+
+def get_deployment_repo() -> DeploymentRepository:
+    global _deployment_repo
+    if _deployment_repo is None:
+        _deployment_repo = PostgresDeploymentRepository()
+    return _deployment_repo
 
 
 def get_connector_repo() -> ConnectorRepository:

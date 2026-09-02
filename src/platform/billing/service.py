@@ -304,6 +304,19 @@ class BillingService:
             event_type="created",
             to_plan_id=subscription.plan_id,
         )
+        try:
+            from src.platform.revenue.revenue import record_sub_event
+
+            await record_sub_event(
+                subscription_id=subscription.id,
+                organization_id=subscription.organization_id,
+                event_type="created",
+                plan_name="trial",
+                mrr_cents=0,
+                to_plan_id=subscription.plan_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Revenue event record failed", error=str(exc)[:150])
         from src.platform.notifications import notify_org_created
 
         await notify_org_created(organization_id)
@@ -330,6 +343,21 @@ class BillingService:
                 event_type="canceled",
                 from_plan_id=subscription.plan_id,
             )
+            try:
+                from src.platform.revenue.revenue import record_sub_event
+
+                plans = await self._repo.get_plans(public_only=False)
+                plan = next((p for p in plans if p.id == subscription.plan_id), None)
+                await record_sub_event(
+                    subscription_id=subscription.id,
+                    organization_id=subscription.organization_id,
+                    event_type="canceled",
+                    plan_name=plan.name if plan else None,
+                    mrr_cents=plan.price_monthly_cents if plan and not plan.is_trial else 0,
+                    from_plan_id=subscription.plan_id,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Revenue event record failed", error=str(exc)[:150])
 
     # -------------------------------------------------------------------------
     # Máquina de estados — ÚNICO mutador de estados de suscripción
@@ -413,6 +441,23 @@ class BillingService:
             from_plan_id=from_plan_id,
             to_plan_id=target.id,
         )
+        try:
+            from src.platform.revenue.revenue import record_sub_event
+
+            old_plan = next((p for p in plans if p.id == from_plan_id), None)
+            old_mrr = old_plan.price_monthly_cents if old_plan and not old_plan.is_trial else 0
+            is_upgrade = target.price_monthly_cents >= old_mrr
+            await record_sub_event(
+                subscription_id=updated.id,
+                organization_id=updated.organization_id,
+                event_type="upgraded" if is_upgrade else "downgraded",
+                plan_name=target.name,
+                mrr_cents=target.price_monthly_cents,
+                from_plan_id=from_plan_id,
+                to_plan_id=target.id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Revenue event record failed", error=str(exc)[:150])
         return {
             "subscription_id": subscription_id,
             "plan_name": target.name,

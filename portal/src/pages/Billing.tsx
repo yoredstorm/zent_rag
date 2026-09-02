@@ -56,7 +56,17 @@ type Invoice = {
   currency?: string;
   period_start?: string;
   period_end?: string;
+  invoice_number?: string;
   created_at?: string;
+};
+
+type BillingProfile = {
+  legal_name?: string | null;
+  tax_id?: string | null;
+  address_line1?: string | null;
+  city?: string | null;
+  default_payment_method?: string | null;
+  card_last4?: string | null;
 };
 
 export default function BillingPage() {
@@ -64,6 +74,7 @@ export default function BillingPage() {
   const [sub, setSub] = useState<Subscription | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [profile, setProfile] = useState<BillingProfile>({ default_payment_method: "card" });
   const [entitlements, setEntitlements] = useState<Entitlements>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -93,11 +104,16 @@ export default function BillingPage() {
             token: session.token,
             organizationId: session.organizationId,
           }).catch(() => ({ entitlements: {} as Entitlements })),
+          api<{ profile: BillingProfile | null }>("/api/v1/billing/billing-profile", {
+            token: session.token,
+            organizationId: session.organizationId,
+          }).catch(() => ({ profile: null })),
         ]);
         setSub(subData);
         setPlans(planData.plans || []);
         setInvoices(invoiceData.invoices || []);
         setEntitlements(entData.entitlements || {});
+        if (profileData.profile) setProfile(profileData.profile);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Error cargando facturación");
       } finally {
@@ -125,6 +141,96 @@ export default function BillingPage() {
       window.location.assign(out.checkout_url);
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo iniciar el pago");
+      setBusy("");
+    }
+  }
+
+  async function upgradePlan(planName: string) {
+    if (!session) return;
+    setBusy(planName);
+    setError("");
+    try {
+      const out = await api<{ status: string }>("/api/v1/billing/subscription/upgrade", {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+        headers: { "X-New-Plan": planName },
+      });
+      setBusy("");
+      const [subData] = await Promise.all([
+        api<Subscription>("/api/v1/billing/subscription", {
+          token: session.token,
+          organizationId: session.organizationId,
+        }),
+      ]);
+      setSub(subData);
+      setError(`Plan actualizado: ${out.status}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo cambiar el plan");
+      setBusy("");
+    }
+  }
+
+  async function generateInvoice() {
+    if (!session) return;
+    setBusy("gen");
+    setError("");
+    try {
+      await api("/api/v1/billing/invoices/generate", {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      const invoiceData = await api<{ invoices: Invoice[] }>("/api/v1/billing/invoices", {
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      setInvoices(invoiceData.invoices || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo generar la factura");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function payInvoice(invoiceId: string) {
+    if (!session) return;
+    setBusy(`pay-${invoiceId.slice(0, 6)}`);
+    setError("");
+    try {
+      await api(`/api/v1/billing/invoices/${invoiceId}/pay`, {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      const invoiceData = await api<{ invoices: Invoice[] }>("/api/v1/billing/invoices", {
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      setInvoices(invoiceData.invoices || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo procesar el pago");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function saveProfile() {
+    if (!session) return;
+    setBusy("profile");
+    setError("");
+    try {
+      const out = await api<{ profile: BillingProfile }>("/api/v1/billing/billing-profile", {
+        method: "PUT",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify(profile),
+      });
+      setProfile(out.profile);
+      setError("Perfil de facturación guardado.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo guardar el perfil");
+    } finally {
       setBusy("");
     }
   }
@@ -239,6 +345,16 @@ export default function BillingPage() {
                         {busy === p.name ? "Abriendo…" : "Contratar"}
                       </button>
                     )}
+                    {!canCheckout && sub?.self_service_upgrade_enabled && (
+                      <button
+                        type="button"
+                        className="btn btn-secondary min-h-11"
+                        disabled={!!busy}
+                        onClick={() => void upgradePlan(p.name)}
+                      >
+                        {busy === p.name ? "Actualizando…" : "Upgrade"}
+                      </button>
+                    )}
                   </span>
                 </li>
               ))}
@@ -271,36 +387,68 @@ export default function BillingPage() {
             )}
           </div>
           <div className="panel mt-4">
-            <div className="border-b border-border px-5 py-4">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
               <h2 className="text-sm font-semibold text-text">Facturas</h2>
+              <button
+                type="button"
+                className="btn btn-secondary min-h-8 px-3 text-xs"
+                onClick={() => void generateInvoice()}
+                disabled={!!busy}
+              >
+                Generar del mes anterior
+              </button>
             </div>
             {invoices.length === 0 ? (
               <EmptyState
                 icon={CreditCard}
                 title="Sin facturas"
-                body="Cuando se emitan facturas (manual o Stripe), aparecerán aquí."
+                body="Genera la factura del mes anterior o espera la emisión automática."
               />
             ) : (
               <div className="overflow-x-auto">
-                <table className="table min-w-[560px]">
+                <table className="table min-w-[640px]">
                   <thead>
                     <tr>
+                      <th>Nº</th>
                       <th>Estado</th>
                       <th className="text-right">Total</th>
                       <th>Periodo</th>
+                      <th className="text-right">Acciones</th>
                     </tr>
                   </thead>
                   <tbody>
                     {invoices.map((inv) => (
                       <tr key={inv.id}>
-                        <td>{inv.status}</td>
+                        <td className="mono text-xs">{inv.invoice_number}</td>
+                        <td><span className={`badge ${inv.status === "paid" ? "badge-ok" : inv.status === "void" ? "badge-muted" : "badge-warning"}`}>{inv.status}</span></td>
                         <td className="mono text-right">
                           {inv.total_cents != null
                             ? `${(inv.total_cents / 100).toFixed(2)} ${inv.currency || "USD"}`
                             : "—"}
                         </td>
                         <td className="text-muted">
-                          {inv.period_start ? fmtDateTime(inv.period_start) : "—"}
+                          {inv.period_start ? `${inv.period_start} → ${inv.period_end}` : "—"}
+                        </td>
+                        <td className="text-right">
+                          {inv.status !== "paid" && inv.status !== "void" && (
+                            <button type="button" className="btn btn-ghost min-h-8 px-2 text-xs" disabled={!!busy} onClick={() => void payInvoice(inv.id)}>
+                              Pagar
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="btn btn-ghost min-h-8 px-2 text-xs"
+                            onClick={() => session && window.open(`/api/v1/billing/invoices/${inv.id}/csv?token=${encodeURIComponent(session.token)}&organizationId=${encodeURIComponent(session.organizationId)}`, "_blank")}
+                          >
+                            CSV
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost min-h-8 px-2 text-xs"
+                            onClick={() => session && window.open(`/api/v1/billing/invoices/${inv.id}/pdf?token=${encodeURIComponent(session.token)}&organizationId=${encodeURIComponent(session.organizationId)}`, "_blank")}
+                          >
+                            PDF
+                          </button>
                         </td>
                       </tr>
                     ))}
@@ -308,6 +456,24 @@ export default function BillingPage() {
                 </table>
               </div>
             )}
+          </div>
+          <div className="panel mt-4">
+            <div className="border-b border-border px-5 py-4">
+              <h2 className="text-sm font-semibold text-text">Perfil de facturación</h2>
+            </div>
+            <div className="grid grid-cols-1 gap-2 p-5 md:grid-cols-2">
+              <input className="rounded-md border border-border bg-soft px-3 py-2 text-sm" placeholder="Razón social" value={profile.legal_name ?? ""} onChange={(e) => setProfile((p) => ({ ...p, legal_name: e.target.value }))} />
+              <input className="rounded-md border border-border bg-soft px-3 py-2 text-sm" placeholder="RUT/Tax ID" value={profile.tax_id ?? ""} onChange={(e) => setProfile((p) => ({ ...p, tax_id: e.target.value }))} />
+              <input className="rounded-md border border-border bg-soft px-3 py-2 text-sm" placeholder="Dirección" value={profile.address_line1 ?? ""} onChange={(e) => setProfile((p) => ({ ...p, address_line1: e.target.value }))} />
+              <input className="rounded-md border border-border bg-soft px-3 py-2 text-sm" placeholder="Ciudad" value={profile.city ?? ""} onChange={(e) => setProfile((p) => ({ ...p, city: e.target.value }))} />
+              <select className="rounded-md border border-border bg-soft px-2 py-2 text-sm" value={profile.default_payment_method ?? "card"} onChange={(e) => setProfile((p) => ({ ...p, default_payment_method: e.target.value }))}>
+                {["card", "sepa", "wire", "manual"].map((m) => (<option key={m} value={m}>{m}</option>))}
+              </select>
+              <input className="rounded-md border border-border bg-soft px-3 py-2 text-sm" placeholder="Últimos 4 dígitos" maxLength={4} value={profile.card_last4 ?? ""} onChange={(e) => setProfile((p) => ({ ...p, card_last4: e.target.value }))} />
+              <button type="button" className="btn btn-primary min-h-9 text-xs md:col-span-2" disabled={!!busy} onClick={() => void saveProfile()}>
+                Guardar perfil
+              </button>
+            </div>
           </div>
         </>
       )}

@@ -33,27 +33,45 @@ from src.api.middleware import TraceMiddleware
 from src.api.rate_limit_middleware import RateLimitMiddleware
 from src.api.routes.admin import router as admin_router
 from src.api.routes.agent_runs import router as agent_runs_router
+from src.api.routes.agent_versions import router as agent_versions_router
 from src.api.routes.agents import router as agents_router
 from src.api.routes.audit import router as audit_router
+from src.api.routes.audit_reports import router as audit_reports_router
 from src.api.routes.auth import router as auth_router
 from src.api.routes.billing import router as billing_router
 from src.api.routes.billing_webhooks import router as billing_webhooks_router
 from src.api.routes.connectors import router as connectors_router
+from src.api.routes.deployments import router as deployments_router
+from src.api.routes.devportal import router as devportal_router
 from src.api.routes.embed import admin_router as embed_admin_router
 from src.api.routes.embed import public_router as embed_public_router
 from src.api.routes.embed import widget_router as embed_widget_router
 from src.api.routes.evaluation import router as eval_router
+from src.api.routes.federated import router as federated_router
+from src.api.routes.feedback import router as feedback_router
 from src.api.routes.gateway import router as gateway_router
 from src.api.routes.health import router as health_router
 from src.api.routes.ingestion import router as ingestion_router
 from src.api.routes.jobs import router as jobs_router
 from src.api.routes.knowledge_bases import router as kbs_router
+from src.api.routes.migrations import router as migrations_router
+from src.api.routes.notifications import router as notifications_router
+from src.api.routes.onboarding import router as onboarding_router
 from src.api.routes.organizations import router as organizations_router
+from src.api.routes.payments_webhook import router as payments_webhook_router
 from src.api.routes.platform import router as platform_router
 from src.api.routes.projects import router as projects_router
 from src.api.routes.prompt import router as prompt_router
+from src.api.routes.public_query import router as public_query_router
 from src.api.routes.query import router as query_router
+from src.api.routes.releases import router as releases_router
+from src.api.routes.scim import router as scim_router
+from src.api.routes.share import router as share_router
 from src.api.routes.sources import router as sources_router
+from src.api.routes.sso import router as sso_router
+from src.api.routes.training import router as training_router
+from src.api.routes.workflows import router as workflows_router
+from src.api.routes.workspaces import router as workspaces_router
 from src.api.schemas import ErrorResponse
 from src.api.security_headers_middleware import (
     OrgCorsMiddleware,
@@ -116,9 +134,94 @@ async def lifespan(app: FastAPI):
     async with mcp_lifespan:
         await _run_startup()
         try:
+            _region_health_task = asyncio.create_task(_region_health_loop())
+            _cost_alerts_task = asyncio.create_task(_cost_alerts_loop())
+            _escalation_task = asyncio.create_task(_escalation_loop())
+            _retention_task = asyncio.create_task(_retention_loop())
+            _webhook_deliveries_task = asyncio.create_task(_webhook_deliveries_loop())
             yield
         finally:
+            _region_health_task.cancel()
+            _cost_alerts_task.cancel()
+            _escalation_task.cancel()
+            _retention_task.cancel()
+            _webhook_deliveries_task.cancel()
             await _run_shutdown()
+
+
+async def _webhook_deliveries_loop() -> None:
+    """Procesa la cola de webhook deliveries con backoff (fail-soft)."""
+    try:
+        while True:
+            try:
+                from src.platform.notifyv2.notifications import process_deliveries
+
+                await process_deliveries()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Webhook deliveries loop error", error=str(exc)[:150])
+            await asyncio.sleep(30)
+    except asyncio.CancelledError:
+        pass
+
+
+async def _retention_loop() -> None:
+    """Purga de retención diaria (fail-soft)."""
+    try:
+        while True:
+            try:
+                from src.platform.datacompliance.data_export import run_retention_purges
+
+                await run_retention_purges()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Retention loop error", error=str(exc)[:150])
+            await asyncio.sleep(86400)
+    except asyncio.CancelledError:
+        pass
+
+
+async def _escalation_loop() -> None:
+    """Dispara escalamientos pendientes de incidentes (fail-soft)."""
+    try:
+        while True:
+            try:
+                from src.platform.opscenter.runbooks import check_escalations
+
+                await check_escalations()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Escalation loop error", error=str(exc)[:150])
+            await asyncio.sleep(60)
+    except asyncio.CancelledError:
+        pass
+
+
+async def _cost_alerts_loop() -> None:
+    """Evaluación periódica de alertas de costo (umbrales adaptativos)."""
+    try:
+        while True:
+            try:
+                from src.platform.costgov.cost_governance import run_cost_alerts
+
+                await run_cost_alerts()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Cost alerts loop error", error=str(exc)[:150])
+            await asyncio.sleep(300)
+    except asyncio.CancelledError:
+        pass
+
+
+async def _region_health_loop() -> None:
+    """Healthcheck periódico de réplicas regionales (fail-soft)."""
+    try:
+        while True:
+            try:
+                from src.platform.edge.multiregion import run_healthcheck
+
+                await run_healthcheck()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Region healthcheck loop error", error=str(exc)[:150])
+            await asyncio.sleep(60)
+    except asyncio.CancelledError:
+        pass
 
 
 async def _run_startup() -> None:
@@ -264,7 +367,9 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     # Routers
     # -------------------------------------------------------------------------
     new_app.include_router(admin_router)
+    new_app.include_router(audit_reports_router)
     new_app.include_router(agent_runs_router)
+    new_app.include_router(agent_versions_router)
     new_app.include_router(agents_router)
     new_app.include_router(embed_admin_router)
     new_app.include_router(embed_public_router)
@@ -274,6 +379,22 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(billing_router)
     new_app.include_router(billing_webhooks_router)
     new_app.include_router(connectors_router)
+    new_app.include_router(releases_router)
+    new_app.include_router(migrations_router)
+    new_app.include_router(feedback_router)
+    new_app.include_router(onboarding_router)
+    new_app.include_router(notifications_router)
+    new_app.include_router(payments_webhook_router)
+    new_app.include_router(public_query_router)
+    new_app.include_router(scim_router)
+    new_app.include_router(sso_router)
+    new_app.include_router(federated_router)
+    new_app.include_router(share_router)
+    new_app.include_router(workflows_router)
+    new_app.include_router(devportal_router)
+    new_app.include_router(deployments_router)
+    new_app.include_router(workspaces_router)
+    new_app.include_router(training_router)
     new_app.include_router(eval_router)
     new_app.include_router(gateway_router)
     new_app.include_router(health_router)

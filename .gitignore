@@ -24,6 +24,9 @@ Thumbs.db
 
 # Docker
 docker-compose.override.yml
+data/backups/
+data/dsr/
+data/migrations/
 
 # Portal
 portal/node_modules/
@@ -48,3 +51,8 @@ skills-lock.json
 
 # Observability data
 *.log
+*.md
+*.sql
+*.zip
+*.csv
+*.pdf

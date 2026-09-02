@@ -110,7 +110,7 @@ class UpdateOrganizationRequest(BaseModel):
 
 class InviteUserRequest(BaseModel):
     email: str = Field(..., min_length=5, max_length=320)
-    role: str = Field(default="member", pattern=r"^(owner|admin|member|viewer)$")
+    role: str = Field(default="member", min_length=2, max_length=100)
 
     @field_validator("email")
     @classmethod
@@ -126,7 +126,7 @@ class AcceptInviteRequest(BaseModel):
 
 
 class AssignRoleRequest(BaseModel):
-    role: str = Field(..., pattern=r"^(owner|admin|member|viewer)$")
+    role: str = Field(..., min_length=2, max_length=100)
 
 
 class CreateApiKeyRequest(BaseModel):
@@ -275,6 +275,12 @@ async def assign_role(
     if body.role == "owner" and "owner" not in ctx.roles:
         raise HTTPException(403, "Only an owner can assign the owner role")
 
+    # El rol debe existir (sistema o custom de la organización).
+    from src.platform.rbac.repo import role_name_exists
+
+    if not await role_name_exists(body.role, ctx.organization_id):
+        raise HTTPException(400, f"Unknown role: {body.role}")
+
     membership = await repo.assign_role(ctx.organization_id, uid, body.role)
     await _audit().write(
         ctx,
@@ -333,6 +339,10 @@ async def create_invite(body: InviteUserRequest, request: Request):
     ctx = require_permission(request, "users:write")
     if body.role == "owner" and "owner" not in ctx.roles:
         raise HTTPException(403, "Only an owner can invite another owner")
+    from src.platform.rbac.repo import role_name_exists
+
+    if not await role_name_exists(body.role, ctx.organization_id):
+        raise HTTPException(400, f"Unknown role: {body.role}")
     try:
         await check_resource_limit(ctx.organization_id, "users")
     except PlanLimitError as exc:
@@ -398,6 +408,34 @@ async def create_invite(body: InviteUserRequest, request: Request):
             },
         )
         await session.commit()
+        # Email real de la invitación (fail-soft si SMTP no está configurado).
+        from src.platform.customer_success.customer_success import send_invite_email
+
+        org_row = (
+            await session.execute(
+                text("SELECT COALESCE(company_name, name) FROM organizations WHERE id = :oid"),
+                {"oid": ctx.organization_id},
+            )
+        ).scalar()
+        email_sent = await send_invite_email(
+            ctx.organization_id,
+            body.email,
+            raw_token,
+            org_row or "tu organización",
+            body.role,
+        )
+        await session.execute(
+            text(
+                "UPDATE organization_invites SET email_sent = :sent, "
+                "delivery_status = :status WHERE id = :invite_id"
+            ),
+            {
+                "sent": email_sent,
+                "status": "delivered" if email_sent else "skipped_no_smtp",
+                "invite_id": invite_id,
+            },
+        )
+        await session.commit()
     except HTTPException:
         await session.rollback()
         raise
@@ -422,6 +460,7 @@ async def create_invite(body: InviteUserRequest, request: Request):
         "status": "pending",
         "expires_at": expires_at.isoformat(),
         "token": raw_token,
+        "email_sent": email_sent,
     }
 
 
@@ -686,8 +725,12 @@ async def create_api_key(
             "environment": body.environment,
         },
     )
+    key_row = await PostgresApiKeyRepository().get_by_hash(
+        __import__("hashlib").sha256(token.encode()).hexdigest()
+    )
     return {
         "token": token,
+        "key_id": str(key_row.id) if key_row else None,
         "name": body.name,
         "scopes": body.scopes,
         "environment": body.environment,
@@ -724,3 +767,245 @@ async def revoke_api_key(
         metadata={"name": key.name},
     )
     return {"status": "revoked", "key_id": str(kid)}
+
+
+class UpdateApiKeyRequest(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    ip_allowlist: list[str] | None = Field(
+        default=None,
+        description="IPs o CIDRs permitidas (vacío = sin restricción).",
+    )
+    rate_limit_per_minute: int | None = Field(
+        default=None, ge=1, le=10000, description="Rate limit por key (null = sin límite)."
+    )
+    expires_at: datetime | None = None
+
+
+@router.put("/api-keys/{key_id}", summary="Actualizar API key (allowlist/rate limit/expiry)")
+async def update_api_key(
+    key_id: str,
+    body: UpdateApiKeyRequest,
+    request: Request,
+    repo: ApiKeyRepository = Depends(get_api_key_repo),
+):
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "apikeys:write")
+    try:
+        kid = UUID(key_id)
+    except ValueError:
+        raise HTTPException(400, "key_id must be a valid UUID")
+
+    key = await repo.get_key(kid)
+    if key is None or key.organization_id != ctx.organization_id:
+        raise HTTPException(404, "API key not found")
+
+    fields = body.model_dump(exclude_none=True)
+    await repo.update_key(ctx.organization_id, kid, **fields)
+    await _audit().write(
+        ctx,
+        "apikey.updated",
+        "api_key",
+        kid,
+        ip_address=_client_ip(request),
+        metadata={"fields": list(fields.keys()), "name": key.name},
+    )
+    updated = await repo.get_key(kid)
+    return {
+        "key_id": str(kid),
+        "name": updated.name if updated else key.name,
+        "ip_allowlist": updated.ip_allowlist if updated else key.ip_allowlist,
+        "rate_limit_per_minute": (
+            updated.rate_limit_per_minute if updated else key.rate_limit_per_minute
+        ),
+        "expires_at": updated.expires_at if updated else key.expires_at,
+    }
+
+
+@router.post(
+    "/api-keys/{key_id}/rotate",
+    summary="Rotar API key (revoca la actual y emite una nueva)",
+)
+async def rotate_api_key(
+    key_id: str,
+    request: Request,
+    repo: ApiKeyRepository = Depends(get_api_key_repo),
+):
+    from src.infrastructure.postgres.relational_db import PostgresApiKeyRepository
+    from src.platform.billing.service import BillingService
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "apikeys:write")
+    try:
+        kid = UUID(key_id)
+    except ValueError:
+        raise HTTPException(400, "key_id must be a valid UUID")
+
+    key = await repo.get_key(kid)
+    if key is None or key.organization_id != ctx.organization_id:
+        raise HTTPException(404, "API key not found")
+
+    billing = BillingService(repo, PostgresApiKeyRepository())
+    from src.platform.billing.service import generate_api_token
+
+    new_token = generate_api_token("zent_sk_live")
+    await repo.deactivate_key(kid)
+    await repo.create_key(
+        ctx.organization_id,
+        new_token,
+        name=key.name,
+        scopes=list(key.scopes),
+        created_by=ctx.user_id,
+        expires_at=key.expires_at,
+        ip_allowlist=key.ip_allowlist or None,
+        rate_limit_per_minute=key.rate_limit_per_minute,
+    )
+    await _audit().write(
+        ctx,
+        "apikey.rotated",
+        "api_key",
+        kid,
+        ip_address=_client_ip(request),
+        metadata={"name": key.name, "scopes": list(key.scopes)},
+    )
+    return {
+        "status": "rotated",
+        "revoked_key_id": str(kid),
+        "token": new_token,
+        "name": key.name,
+        "scopes": list(key.scopes),
+    }
+
+
+@router.get(
+    "/api-keys/{key_id}/usage",
+    summary="Uso de una API key (30d): requests, errores, tokens, costo",
+)
+async def api_key_usage(
+    key_id: str,
+    request: Request,
+    days: int = 30,
+    repo: ApiKeyRepository = Depends(get_api_key_repo),
+):
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "apikeys:read")
+    try:
+        kid = UUID(key_id)
+    except ValueError:
+        raise HTTPException(400, "key_id must be a valid UUID")
+
+    key = await repo.get_key(kid)
+    if key is None or key.organization_id != ctx.organization_id:
+        raise HTTPException(404, "API key not found")
+
+    days = max(1, min(days, 365))
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT COUNT(*)::int AS requests, "
+                    "COUNT(*) FILTER (WHERE status >= 400)::int AS errors, "
+                    "COALESCE(SUM(tokens), 0)::bigint AS tokens, "
+                    "COALESCE(SUM(cost), 0)::float AS cost, "
+                    "COALESCE(percentile_cont(0.95) WITHIN GROUP "
+                    "(ORDER BY latency_ms), 0)::float AS p95, "
+                    "MAX(created_at) AS last_request_at "
+                    "FROM api_logs "
+                    "WHERE api_key_id = :kid AND created_at > NOW() - "
+                    "MAKE_INTERVAL(days => :days)"
+                ),
+                {"kid": kid, "days": days},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+    return {
+        "key_id": str(kid),
+        "name": key.name,
+        "days": days,
+        "requests": int(row.requests or 0),
+        "errors": int(row.errors or 0),
+        "tokens": int(row.tokens or 0),
+        "cost": round(float(row.cost or 0.0), 6),
+        "p95_ms": round(float(row.p95 or 0.0), 1),
+        "last_request_at": (
+            row.last_request_at.isoformat() if row.last_request_at else None
+        ),
+        "last_used_at": key.last_used_at.isoformat() if key.last_used_at else None,
+    }
+    return {"status": "updated", "key_id": str(kid)}
+
+# ---------------------------------------------------------------------------
+# Customer Success (tenant): onboarding, branding, reportes de uso
+# ---------------------------------------------------------------------------
+@router.get("/onboarding", summary="Checklist de onboarding de la organización")
+async def tenant_onboarding(request: Request):
+    from src.platform.customer_success.customer_success import onboarding_checklist
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "org:read")
+    return await onboarding_checklist(ctx.organization_id)
+
+
+class BrandingIn(BaseModel):
+    branding: dict = Field(default_factory=dict)
+
+
+@router.get("/branding", summary="Branding de la organización")
+async def tenant_branding_get(request: Request):
+    from src.platform.customer_success.customer_success import get_branding
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "org:read")
+    return await get_branding(ctx.organization_id)
+
+
+@router.put("/branding", summary="Guardar branding de la organización")
+async def tenant_branding_put(body: BrandingIn, request: Request):
+    from src.platform.customer_success.customer_success import set_branding
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "org:write")
+    await set_branding(ctx.organization_id, body.branding)
+    return {"status": "saved"}
+
+
+class ReportSubscribeIn(BaseModel):
+    email: str = Field(..., min_length=5, max_length=320)
+    frequency: str = Field(default="monthly", pattern="^(weekly|monthly)$")
+
+
+@router.get("/reports", summary="Suscripciones a reportes de uso (tenant)")
+async def tenant_reports_get(request: Request):
+    from src.platform.customer_success.customer_success import list_report_subscriptions
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "usage:read")
+    subs = await list_report_subscriptions(ctx.organization_id)
+    return {"subscriptions": subs, "count": len(subs)}
+
+
+@router.post("/reports", status_code=201, summary="Suscribir reporte de uso (tenant)")
+async def tenant_reports_post(body: ReportSubscribeIn, request: Request):
+    from src.platform.customer_success.customer_success import subscribe_report
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "usage:read")
+    return await subscribe_report(ctx.organization_id, body.email, body.frequency)
+
+
+@router.delete("/reports/{sub_id}", summary="Cancelar suscripción de reporte (tenant)")
+async def tenant_reports_delete(sub_id: str, request: Request):
+    from src.platform.customer_success.customer_success import unsubscribe_report
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "usage:read")
+    ok = await unsubscribe_report(UUID(sub_id))
+    if not ok:
+        raise HTTPException(404, "Subscription not found")
+    return {"status": "deleted"}

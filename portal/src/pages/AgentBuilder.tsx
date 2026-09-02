@@ -13,21 +13,29 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import {
   EmptyState,
+  EnvironmentBadge,
   ErrorInline,
   PageHeader,
+  ReadinessScore,
   SkeletonBlock,
   Spinner,
   StatCard,
+  StatusBadge,
   SuccessInline,
+  VersionBadge,
 } from "../components/ui";
 
 const TABS = [
   "instructions",
+  "retrieval",
+  "output",
   "knowledge",
   "tools",
   "model",
   "security",
   "limits",
+  "versions",
+  "deployments",
   "analytics",
   "playground",
   "embed",
@@ -37,11 +45,15 @@ type Tab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<Tab, string> = {
   instructions: "Instructions",
+  retrieval: "Retrieval",
+  output: "Output",
   knowledge: "Knowledge",
   tools: "Tools",
   model: "Model",
   security: "Security",
   limits: "Limits",
+  versions: "Versions",
+  deployments: "Deployments",
   analytics: "Analytics",
   playground: "Playground",
   embed: "Embed",
@@ -81,6 +93,16 @@ type UsageRow = {
   estimated_cost: number;
   avg_latency_ms: number;
 };
+
+function parseSchema(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 function defaultConfig(): AgentConfig {
   return {
@@ -140,9 +162,54 @@ export default function AgentBuilderPage() {
   const [embedToken, setEmbedToken] = useState("");
   const [embedBusy, setEmbedBusy] = useState(false);
 
+  type AgentVersion = {
+    id: string;
+    version_number: number;
+    status: string;
+    notes: string | null;
+    created_at: string;
+  };
+  type Environment = { id: string; name: string; slug: string; is_default: boolean };
+  type Deployment = {
+    id: string;
+    environment_id: string;
+    agent_version_id: string;
+    slug: string;
+    status: string;
+    endpoint: string | null;
+    deployed_at: string | null;
+    rollback_from_id: string | null;
+  };
+
+  const [versions, setVersions] = useState<AgentVersion[]>([]);
+  const [environments, setEnvironments] = useState<Environment[]>([]);
+  const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [deployError, setDeployError] = useState("");
+  const [deployMsg, setDeployMsg] = useState("");
+  const [deployVersionId, setDeployVersionId] = useState("");
+  const [deployEnvId, setDeployEnvId] = useState("");
+  const [deployBusy, setDeployBusy] = useState(false);
+  const [eventsFor, setEventsFor] = useState<{ deploymentId: string; events: { event: string; created_at: string | null; metadata: Record<string, unknown> }[] } | null>(null);
+  const [retrieval, setRetrieval] = useState({ strategy: "vector", top_k: 8, score_threshold: 0.0 });
+  const [outputSchema, setOutputSchema] = useState("");
+  const [readiness, setReadiness] = useState<{ score: number; items: { key: string; label: string; met: boolean; weight: number; detail: string }[] } | null>(null);
+  const [workspaces, setWorkspaces] = useState<{ id: string; name: string }[]>([]);
+  const [workspaceId, setWorkspaceId] = useState("");
+
   function setTab(next: Tab) {
     setSearchParams({ tab: next }, { replace: true });
   }
+
+  useEffect(() => {
+    if (!session) return;
+    api<{ workspaces: { id: string; name: string }[] }>("/api/v1/workspaces", {
+      token: session.token,
+      organizationId: session.organizationId,
+    })
+      .then((data) => setWorkspaces(data.workspaces || []))
+      .catch(() => setWorkspaces([]));
+  }, [session]);
 
   useEffect(() => {
     if (!session) return;
@@ -172,6 +239,15 @@ export default function AgentBuilderPage() {
         setSql(data.tools.includes("query_database"));
         setApiCalls(data.tools.includes("call_api"));
         setIsActive(data.is_active);
+        if (data.config.retrieval) setRetrieval({ ...retrieval, ...data.config.retrieval });
+        if (data.config.output_schema) setOutputSchema(JSON.stringify(data.config.output_schema, null, 2));
+        if (data.workspace_id) setWorkspaceId(data.workspace_id);
+        api<{ score: number; items: { key: string; label: string; met: boolean; weight: number; detail: string }[] }>(
+          `/api/v1/agents/${id}/readiness`,
+          { token: session.token, organizationId: session.organizationId }
+        )
+          .then(setReadiness)
+          .catch(() => setReadiness(null));
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Error"))
       .finally(() => setLoading(false));
@@ -206,6 +282,179 @@ export default function AgentBuilderPage() {
       .catch(() => setUsage(null));
   }, [session, id, isNew, tab]);
 
+  async function refreshVersions() {
+    if (!session || isNew || !id) return;
+    setVersionsLoading(true);
+    try {
+      const data = await api<{ versions: AgentVersion[] }>(
+        `/api/v1/agents/${id}/versions`,
+        { token: session.token, organizationId: session.organizationId }
+      );
+      setVersions(data.versions || []);
+      if (!deployVersionId && data.versions?.length) {
+        setDeployVersionId(data.versions[0].id);
+      }
+    } catch {
+      setVersions([]);
+    } finally {
+      setVersionsLoading(false);
+    }
+  }
+
+  async function refreshDeployments() {
+    if (!session || isNew || !id) return;
+    try {
+      const [d, e] = await Promise.all([
+        api<{ deployments: Deployment[] }>("/api/v1/deployments", {
+          token: session.token,
+          organizationId: session.organizationId,
+        }),
+        api<{ environments: Environment[] }>("/api/v1/environments", {
+          token: session.token,
+          organizationId: session.organizationId,
+        }),
+      ]);
+      setDeployments((d.deployments || []).filter((x) => x.agent_id === id));
+      setEnvironments(e.environments || []);
+      if (!deployEnvId && e.environments?.length) {
+        setDeployEnvId(e.environments[0].id);
+      }
+    } catch {
+      setDeployments([]);
+      setEnvironments([]);
+    }
+  }
+
+  useEffect(() => {
+    if (!session || isNew || !id) return;
+    if (tab === "versions") void refreshVersions();
+    if (tab === "deployments") void refreshDeployments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, id, isNew, tab]);
+
+  async function createSnapshot() {
+    if (!session || !id) return;
+    setDeployBusy(true);
+    setDeployError("");
+    setDeployMsg("");
+    try {
+      await api(`/api/v1/agents/${id}/versions`, {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify({}),
+      });
+      setDeployMsg("Snapshot creado (draft). Promuévelo a ready para desplegar.");
+      await refreshVersions();
+    } catch (err) {
+      setDeployError(err instanceof Error ? err.message : "Error al crear snapshot");
+    } finally {
+      setDeployBusy(false);
+    }
+  }
+
+  async function promoteVersion(versionId: string, status: string) {
+    if (!session || !id) return;
+    setDeployBusy(true);
+    setDeployError("");
+    setDeployMsg("");
+    try {
+      await api(`/api/v1/agents/${id}/versions/${versionId}/promote`, {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify({ status }),
+      });
+      setDeployMsg("Versión promovida.");
+      await refreshVersions();
+    } catch (err) {
+      setDeployError(err instanceof Error ? err.message : "Error al promover");
+    } finally {
+      setDeployBusy(false);
+    }
+  }
+
+  async function deploy() {
+    if (!session || !id || !deployVersionId || !deployEnvId) return;
+    setDeployBusy(true);
+    setDeployError("");
+    setDeployMsg("");
+    try {
+      await api(`/api/v1/deployments`, {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify({ agent_id: id, agent_version_id: deployVersionId, environment_id: deployEnvId }),
+      });
+      setDeployMsg("Deployment creado (healthy).");
+      await refreshDeployments();
+    } catch (err) {
+      setDeployError(err instanceof Error ? err.message : "Error al desplegar");
+    } finally {
+      setDeployBusy(false);
+    }
+  }
+
+  async function loadEvents(deploymentId: string) {
+    if (!session) return;
+    try {
+      const data = await api<{ events: { event: string; created_at: string | null; metadata: Record<string, unknown> }[] }>(
+        `/api/v1/deployments/${deploymentId}/events`,
+        { token: session.token, organizationId: session.organizationId }
+      );
+      setEventsFor({ deploymentId, events: data.events || [] });
+    } catch {
+      setEventsFor(null);
+    }
+  }
+
+  async function goLive() {
+    if (!session || !id) return;
+    const prodEnv = environments.find((e) => e.slug === "production");
+    const candidate = versions.find((v) => v.status === "ready" || v.status === "staging" || v.status === "production");
+    if (!prodEnv || !candidate) {
+      setDeployError("Necesitas un entorno production y una versión lista.");
+      return;
+    }
+    setDeployBusy(true);
+    setDeployError("");
+    setDeployMsg("");
+    try {
+      await api("/api/v1/deployments", {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify({ agent_id: id, agent_version_id: candidate.id, environment_id: prodEnv.id }),
+      });
+      setDeployMsg(`v${candidate.version_number} desplegada en production.`);
+      await refreshDeployments();
+    } catch (err) {
+      setDeployError(err instanceof Error ? err.message : "Error al desplegar");
+    } finally {
+      setDeployBusy(false);
+    }
+  }
+
+  async function rollback(deploymentId: string) {
+    if (!session || !id) return;
+    setDeployBusy(true);
+    setDeployError("");
+    setDeployMsg("");
+    try {
+      await api(`/api/v1/deployments/${deploymentId}/rollback`, {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      setDeployMsg("Rollback ejecutado.");
+      await refreshDeployments();
+    } catch (err) {
+      setDeployError(err instanceof Error ? err.message : "Error en rollback");
+    } finally {
+      setDeployBusy(false);
+    }
+  }
+
   const payload = useMemo(
     () => ({
       name: name.trim(),
@@ -224,9 +473,12 @@ export default function AgentBuilderPage() {
           sql_enabled: sql,
           api_calls_enabled: apiCalls,
         },
+        retrieval: retrieval.strategy ? retrieval : undefined,
+        output_schema: outputSchema.trim() ? parseSchema(outputSchema) : undefined,
       },
+      workspace_id: workspaceId || undefined,
     }),
-    [name, description, systemPrompt, model, semantic, sql, apiCalls, isActive, config]
+    [name, description, systemPrompt, model, semantic, sql, apiCalls, isActive, config, retrieval, outputSchema, workspaceId]
   );
 
   async function save() {
@@ -625,6 +877,298 @@ export default function AgentBuilderPage() {
         </section>
       )}
 
+      {tab === "versions" && (
+        <section>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-semibold text-text">Versiones del agente</h3>
+              <p className="mt-1 text-xs text-muted">
+                Cada snapshot congela prompt, modelo, tools y configuración. Promueve
+                draft → ready → staging → production antes de desplegar.
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary min-h-10"
+              disabled={deployBusy || !id}
+              onClick={() => void createSnapshot()}
+            >
+              {deployBusy ? <Spinner size={14} /> : <FloppyDisk size={15} aria-hidden />}
+              Crear snapshot
+            </button>
+          </div>
+          {deployMsg && <SuccessInline>{deployMsg}</SuccessInline>}
+          {deployError && <ErrorInline>{deployError}</ErrorInline>}
+          {versionsLoading ? (
+            <SkeletonBlock className="h-24" />
+          ) : versions.length === 0 ? (
+            <div className="panel">
+              <EmptyState
+                icon={Robot}
+                title="Sin versiones"
+                body="Guarda el agente y crea un snapshot para iniciar el ciclo de versionado."
+              />
+            </div>
+          ) : (
+            <div className="panel overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Versión</th>
+                    <th>Estado</th>
+                    <th>Notas</th>
+                    <th>Creada</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {versions.map((v) => (
+                    <tr key={v.id}>
+                      <td>
+                        <VersionBadge versionNumber={v.version_number} status={v.status} />
+                      </td>
+                      <td>
+                        <StatusBadge status={v.status} />
+                      </td>
+                      <td className="text-sm text-muted">{v.notes || "—"}</td>
+                      <td className="text-sm text-muted">
+                        {new Date(v.created_at).toLocaleString("es-PE")}
+                      </td>
+                      <td>
+                        {v.status === "draft" && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost min-h-8 text-xs"
+                            disabled={deployBusy}
+                            onClick={() => void promoteVersion(v.id, "ready")}
+                          >
+                            Promover a ready
+                          </button>
+                        )}
+                        {v.status === "ready" && (
+                          <span className="inline-flex gap-2">
+                            <button
+                              type="button"
+                              className="btn btn-ghost min-h-8 text-xs"
+                              disabled={deployBusy}
+                              onClick={() => void promoteVersion(v.id, "staging")}
+                            >
+                              Staging
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost min-h-8 text-xs"
+                              disabled={deployBusy}
+                              onClick={() => void promoteVersion(v.id, "production")}
+                            >
+                              Production
+                            </button>
+                          </span>
+                        )}
+                        {(v.status === "staging" || v.status === "production") && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost min-h-8 text-xs"
+                            disabled={deployBusy}
+                            onClick={() => void promoteVersion(v.id, "archived")}
+                          >
+                            Archivar
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {tab === "deployments" && (
+        <section>
+          <div className="mb-4 flex flex-wrap items-end gap-3">
+            <label className="flex flex-col gap-1 text-xs text-muted">
+              Versión
+              <select
+                className="input min-w-44"
+                value={deployVersionId}
+                onChange={(e) => setDeployVersionId(e.target.value)}
+              >
+                {versions.length === 0 && <option value="">Sin versiones</option>}
+                {versions.map((v) => (
+                  <option key={v.id} value={v.id} disabled={v.status === "draft" || v.status === "archived"}>
+                    v{v.version_number} · {v.status}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-muted">
+              Entorno
+              <select
+                className="input min-w-44"
+                value={deployEnvId}
+                onChange={(e) => setDeployEnvId(e.target.value)}
+              >
+                {environments.length === 0 && <option value="">Sin entornos</option>}
+                {environments.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="btn btn-primary min-h-10"
+              disabled={deployBusy || !id}
+              onClick={() => void goLive()}
+            >
+              Go live (production)
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary min-h-10"
+              disabled={deployBusy || !deployVersionId || !deployEnvId || !id}
+              onClick={() => void deploy()}
+            >
+              {deployBusy ? <Spinner size={14} /> : <PaperPlaneRight size={15} aria-hidden />}
+              Desplegar
+            </button>
+          </div>
+          {deployMsg && <SuccessInline>{deployMsg}</SuccessInline>}
+          {deployError && <ErrorInline>{deployError}</ErrorInline>}
+          {deployments.length === 0 ? (
+            <div className="panel">
+              <EmptyState
+                icon={ChartLineUp}
+                title="Sin deployments"
+                body="Despliega una versión ready/staging/production a un entorno."
+              />
+            </div>
+          ) : (
+            <div className="panel overflow-x-auto">
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Deployment</th>
+                    <th>Entorno</th>
+                    <th>Estado</th>
+                    <th>Endpoint</th>
+                    <th>Desplegado</th>
+                    <th>Historial</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deployments.map((d) => (
+                    <tr key={d.id}>
+                      <td className="font-mono text-xs">{d.slug}</td>
+                      <td>
+                        <EnvironmentBadge
+                          name={environments.find((e) => e.id === d.environment_id)?.name || d.environment_id}
+                        />
+                      </td>
+                      <td>
+                        <StatusBadge status={d.status} />
+                      </td>
+                      <td className="font-mono text-xs text-muted">{d.endpoint || "—"}</td>
+                      <td className="text-sm text-muted">
+                        {d.deployed_at ? new Date(d.deployed_at).toLocaleString("es-PE") : "—"}
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn btn-ghost min-h-8 text-xs"
+                          onClick={() => void loadEvents(d.id)}
+                        >
+                          {eventsFor?.deploymentId === d.id ? "Ocultar" : "Eventos"}
+                        </button>
+                      </td>
+                      <td>
+                        {(d.status === "healthy" || d.status === "degraded") && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost min-h-8 text-xs"
+                            disabled={deployBusy}
+                            onClick={() => void rollback(d.id)}
+                          >
+                            Rollback
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
+
+      {tab === "retrieval" && (
+        <section>
+          <h3 className="mb-2 text-sm font-semibold text-text">Retrieval</h3>
+          <p className="mb-4 text-xs text-muted">
+            Overrides de recuperación del agente (se aplican en runtime sobre el retrieval global).
+          </p>
+          <div className="panel grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <label className="flex flex-col gap-1 text-xs text-muted">
+              Estrategia
+              <select className="input" value={retrieval.strategy} onChange={(e) => setRetrieval({ ...retrieval, strategy: e.target.value })}>
+                <option value="vector">vector</option>
+                <option value="lexical">lexical</option>
+                <option value="hybrid">hybrid</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-muted">
+              Top-K
+              <input
+                type="number"
+                className="input"
+                min={1}
+                max={50}
+                value={retrieval.top_k}
+                onChange={(e) => setRetrieval({ ...retrieval, top_k: Number(e.target.value) || 8 })}
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-xs text-muted">
+              Score threshold
+              <input
+                type="number"
+                className="input"
+                step={0.05}
+                min={0}
+                max={1}
+                value={retrieval.score_threshold}
+                onChange={(e) => setRetrieval({ ...retrieval, score_threshold: Number(e.target.value) || 0 })}
+              />
+            </label>
+          </div>
+        </section>
+      )}
+
+      {tab === "output" && (
+        <section>
+          <h3 className="mb-2 text-sm font-semibold text-text">Output (JSON Schema)</h3>
+          <p className="mb-4 text-xs text-muted">
+            Define un JSON Schema para respuestas estructuradas (ERP/CRM/WMS). Si está vacío,
+            la respuesta es libre.
+          </p>
+          <div className="panel">
+            <textarea
+              className="input min-h-52 w-full font-mono text-xs"
+              value={outputSchema}
+              onChange={(e) => setOutputSchema(e.target.value)}
+              placeholder={'{"product": "string", "warehouse": "string", "stock": "integer"}'}
+              spellCheck={false}
+            />
+            {outputSchema.trim() && !parseSchema(outputSchema) && (
+              <p className="mt-2 text-xs text-danger">JSON inválido. Revisa la sintaxis.</p>
+            )}
+          </div>
+        </section>
+      )}
       {tab === "analytics" && (
         <section>
           {!usage ? (

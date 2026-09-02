@@ -46,6 +46,7 @@ export default function KnowledgeSourcesPage() {
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [profile, setProfile] = useState<{ sourceId: string; tables: { name: string; columns: ProfileCol[] }[] } | null>(null);
   const [name, setName] = useState("");
   const [type, setType] = useState<SourceType>("file");
   const [folderId, setFolderId] = useState("");
@@ -160,6 +161,39 @@ export default function KnowledgeSourcesPage() {
       setError(err instanceof Error ? err.message : "Error al crear");
     } finally {
       setCreating(false);
+    }
+  }
+
+  type ProfileCol = {
+  name: string;
+  data_type: string;
+  nullable: boolean;
+  is_pk: boolean;
+  is_fk: boolean;
+  null_rate: number | null;
+  cardinality: number | null;
+  pii_flags: string[];
+  sensitive: boolean;
+};
+
+  async function profileSource(sourceId: string) {
+    if (!session) return;
+    setError("");
+    setMsg("");
+    try {
+      await api(`/api/v1/sources/${sourceId}/profile`, {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      const data = await api<{ tables: { name: string; columns: ProfileCol[] }[] }>(
+        `/api/v1/sources/${sourceId}/profile`,
+        { token: session.token, organizationId: session.organizationId }
+      );
+      setProfile({ sourceId, tables: data.tables || [] });
+      setMsg("Fuente perfilizada.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al perfilizar");
     }
   }
 
@@ -314,7 +348,7 @@ export default function KnowledgeSourcesPage() {
                     </td>
                     <td>
                       <span
-                        className={`badge ${s.status === "error" ? "badge-danger" : "badge-ok"}`}
+                        className={`badge ${s.status === "error" ? "badge-danger" : s.status === "ready" || s.status === "indexed" ? "badge-ok" : s.status === "ingesting" || s.status === "discovering" ? "badge-pending" : "badge-muted"}`}
                       >
                         {s.status || "—"}
                       </span>
@@ -339,7 +373,14 @@ export default function KnowledgeSourcesPage() {
                       <button
                         type="button"
                         className="btn btn-ghost min-h-11 px-3 text-xs"
-                        aria-label={`Sincronizar ${s.name}`}
+                        aria-label={`Perfilizar ${s.name}`} onClick={() => void profileSource(s.id)}
+                          >
+                            Perfilizar
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-ghost min-h-11 px-3 text-xs"
+                            aria-label={`Sincronizar ${s.name}`}
                         disabled={syncingId === s.id}
                         onClick={() => void syncSource(s.id)}
                       >
@@ -361,3 +402,53 @@ export default function KnowledgeSourcesPage() {
     </div>
   );
 }
+
+      {profile && (
+        <div className="panel mt-6">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-text">Data Profile</h3>
+            <button type="button" className="btn btn-ghost min-h-8 text-xs" onClick={() => setProfile(null)}>
+              Cerrar
+            </button>
+          </div>
+          {profile.tables.map((table) => (
+            <div key={table.name} className="mb-4 overflow-x-auto">
+              <p className="mb-1 font-mono text-xs text-muted">{table.name}</p>
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th>Columna</th>
+                    <th>Tipo</th>
+                    <th>Null %</th>
+                    <th>Cardinalidad</th>
+                    <th>PK/FK</th>
+                    <th>PII</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {table.columns.map((col) => (
+                    <tr key={col.name}>
+                      <td className="font-mono text-xs text-text">{col.name}</td>
+                      <td className="text-xs text-muted">{col.data_type}</td>
+                      <td className="text-xs text-muted">{col.null_rate ?? "—"}</td>
+                      <td className="text-xs text-muted">{col.cardinality ?? "—"}</td>
+                      <td className="text-xs text-muted">
+                        {col.is_pk ? "PK" : col.is_fk ? "FK" : ""}
+                      </td>
+                      <td className="text-xs">
+                        {col.pii_flags.length > 0 ? (
+                          <span className="badge badge-danger">{col.pii_flags.join(", ")}</span>
+                        ) : col.sensitive ? (
+                          <span className="badge badge-pending">sensitive</span>
+                        ) : (
+                          <span className="text-faint">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </div>
+      )}

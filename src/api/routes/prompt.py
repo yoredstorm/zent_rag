@@ -192,6 +192,15 @@ async def update_prompt(
     updated = await repo.update_config(organization_id, new_config)
     cfg = updated.config_json or {}
 
+    # Revisión de prompts: registro versionado de cada cambio.
+    from src.platform.ai_governance.ai_governance import save_prompt_revision
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "prompt:write")
+    await save_prompt_revision(
+        prompt_key, organization_id, body.system_prompt, created_by=ctx.user_id
+    )
+
     logger.info(
         "System prompt updated for organization",
         organization_id=str(organization_id),

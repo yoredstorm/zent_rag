@@ -2,10 +2,12 @@
 # la infraestructura define CÓMO se implementa.
 from src.core.ports.platform_repos import (  # noqa: F401
     AgentRepository,
+    AgentVersionRepository,
     ApiKeyRepository,
     AuditLogRepository,
     BillingRepository,
     ConnectorRepository,
+    DeploymentRepository,
     DocumentRegistryRepository,
     IngestionJobRepository,
     KnowledgeBaseRepository,
@@ -15,6 +17,7 @@ from src.core.ports.platform_repos import (  # noqa: F401
     SourceRepository,
     SyncStateRepository,
     UserRepository,
+    WorkspaceRepository,
 )
 from src.core.ports.rag_ports import (  # noqa: F401
     CacheProvider,
@@ -29,11 +32,13 @@ from src.core.ports.secret_store import SecretStore  # noqa: F401
 
 __all__ = [
     "AgentRepository",
+    "AgentVersionRepository",
     "ApiKeyRepository",
     "AuditLogRepository",
     "BillingRepository",
     "CacheProvider",
     "ConnectorRepository",
+    "DeploymentRepository",
     "DocumentRegistryRepository",
     "EmbeddingProvider",
     "HybridStore",
@@ -49,5 +54,6 @@ __all__ = [
     "SourceRepository",
     "SyncStateRepository",
     "UserRepository",
+    "WorkspaceRepository",
     "VectorStore",
 ]

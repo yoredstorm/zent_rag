@@ -383,3 +383,285 @@ async def eval_run_compare(
     if baseline is None:
         raise HTTPException(404, "Baseline run not found")
     return compare_runs(current, baseline)
+
+# ---------------------------------------------------------------------------
+# Evaluation Examples — gestión first-class (manual / CSV / synthetic)
+# ---------------------------------------------------------------------------
+
+
+async def _require_own_dataset(request: Request, dataset_id: UUID) -> UUID:
+    from sqlalchemy import text as _text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    org = _resolve_organization_id(request, "")
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                _text(
+                    "SELECT id FROM eval_datasets WHERE id = :did AND organization_id = :oid"
+                ),
+                {"did": dataset_id, "oid": org},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+    if row is None:
+        raise HTTPException(404, "Dataset not found")
+    return org
+
+
+class ExampleIn(BaseModel):
+    question: str = Field(..., min_length=1, max_length=4000)
+    expected_answer: str | None = Field(default=None, max_length=8000)
+    expected_behavior: str | None = Field(default=None, max_length=80)
+    expected_sources: list[str] = Field(default_factory=list, max_length=50)
+    must_cite: bool = False
+
+
+class BulkExamplesIn(BaseModel):
+    examples: list[ExampleIn] = Field(..., min_length=1, max_length=500)
+
+
+@router.get("/datasets/{dataset_id}/examples", summary="Ejemplos de un dataset")
+async def list_examples(dataset_id: str, request: Request):
+    from src.rag.evaluation.examples import (
+        _backfill_legacy_cases,
+    )
+    from src.rag.evaluation.examples import (
+        list_examples as _list,
+    )
+
+    try:
+        did = UUID(dataset_id)
+    except ValueError:
+        raise HTTPException(400, "dataset_id must be a valid UUID")
+    org = await _require_own_dataset(request, did)
+    # Self-healing en lectura: incorpora cases JSONB legacy una sola vez.
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    session = await get_async_session()
+    try:
+        await _backfill_legacy_cases(session, org, did)
+        await session.commit()
+    finally:
+        await session.close()
+    examples = await _list(org, did)
+    return {"examples": examples, "count": len(examples)}
+
+
+@router.post("/datasets/{dataset_id}/examples", status_code=201, summary="Crear ejemplos")
+async def create_examples(dataset_id: str, body: BulkExamplesIn, request: Request):
+    from src.rag.evaluation.examples import add_examples
+
+    try:
+        did = UUID(dataset_id)
+    except ValueError:
+        raise HTTPException(400, "dataset_id must be a valid UUID")
+    org = await _require_own_dataset(request, did)
+    inserted = await add_examples(org, did, [e.model_dump() for e in body.examples])
+    return {"inserted": inserted, "count": len(inserted)}
+
+
+@router.post(
+    "/datasets/{dataset_id}/import-csv",
+    status_code=201,
+    summary="Importar ejemplos desde CSV",
+)
+async def import_csv(dataset_id: str, body: CsvImportIn, request: Request):
+    from src.rag.evaluation.examples import add_examples, parse_csv
+
+    try:
+        did = UUID(dataset_id)
+    except ValueError:
+        raise HTTPException(400, "dataset_id must be a valid UUID")
+    org = await _require_own_dataset(request, did)
+    rows = parse_csv(body.csv)
+    if not rows:
+        raise HTTPException(400, "CSV vacío o sin columna 'question'")
+    inserted = await add_examples(org, did, rows)
+    return {"inserted": inserted, "count": len(inserted)}
+
+
+class CsvImportIn(BaseModel):
+    csv: str = Field(..., min_length=1, max_length=200_000)
+
+
+@router.post(
+    "/datasets/{dataset_id}/synthetic",
+    status_code=201,
+    summary="Generar ejemplos sintéticos (LLM)",
+)
+async def generate_synthetic(dataset_id: str, body: SyntheticIn, request: Request):
+    from src.rag.evaluation.examples import add_examples
+
+    try:
+        did = UUID(dataset_id)
+    except ValueError:
+        raise HTTPException(400, "dataset_id must be a valid UUID")
+    org = await _require_own_dataset(request, did)
+    llm = get_llm_provider()
+    try:
+        examples = await _generate_synthetic_examples(llm, body, did, org)
+    except Exception as exc:
+        logger.warning("Synthetic generation failed", error=str(exc))
+        raise HTTPException(502, f"Synthetic generation failed: {exc}") from None
+    if not examples:
+        raise HTTPException(400, "El LLM no generó ejemplos válidos")
+    inserted = await add_examples(org, did, examples)
+    return {"inserted": inserted, "count": len(inserted), "generated": len(examples)}
+
+
+class SyntheticIn(BaseModel):
+    count: int = Field(default=10, ge=1, le=50)
+    topics: list[str] = Field(default_factory=list, max_length=20)
+    knowledge_base_id: UUID | None = None
+
+
+async def _generate_synthetic_examples(llm, body: SyntheticIn, dataset_id: UUID, org: UUID) -> list[dict]:
+    """Pide al LLM preguntas de dominio (con grounding opcional de la KB)."""
+    import json as _json
+
+    grounding = ""
+    if body.knowledge_base_id is not None:
+        try:
+            from src.api.deps import get_retriever
+            from src.rag.retrieval.models import RetrievalQuery
+
+            query = " ".join(body.topics) if body.topics else "productos servicios"
+            rquery = RetrievalQuery(
+                query=query,
+                organization_id=org,
+                role="admin",
+                knowledge_base_id=body.knowledge_base_id,
+                top_k=6,
+                effective_top_k=6,
+                score_threshold=0.0,
+                strategy="vector",
+            )
+            ctx = await get_retriever().retrieve(rquery)
+            grounding = "\n".join(c.content[:800] for c in ctx.chunks[:6])
+        except Exception as exc:
+            logger.warning("Synthetic grounding unavailable", error=str(exc))
+            grounding = ""
+
+    prompt = (
+        "Genera un JSON array de preguntas de evaluación de un asistente RAG empresarial.\n"
+        f"Temas: {', '.join(body.topics) or 'general'}\n"
+        f"Cantidad: {body.count}\n"
+        + ("Contexto de la KB (úsa solo estos datos para las preguntas):\n" + grounding if grounding else "")
+        + (
+            "\nFormato (JSON array): "
+            '[{"question": "...", "expected_behavior": "inventory_query|product_query|policy_query|general", '
+            '"must_cite": true}]'
+        )
+    )
+    resp = await llm.generate(prompt=prompt, max_tokens=2048, temperature=0.7)
+    content = resp.content.strip()
+    if content.startswith("```"):
+        content = content.strip("`")
+        if content.startswith("json"):
+            content = content[4:]
+    content = content[content.index("["):] if "[" in content else content
+    content = content[: content.rindex("]") + 1] if "]" in content else content
+    data = _json.loads(content)
+    if not isinstance(data, list):
+        raise ValueError("LLM no devolvió un array")
+    return [{"question": str(x["question"]).strip()} | {
+        "expected_behavior": x.get("expected_behavior"),
+        "must_cite": bool(x.get("must_cite", True)),
+    } for x in data if str(x.get("question", "")).strip()][: body.count]
+
+
+@router.delete(
+    "/datasets/{dataset_id}/examples/{example_id}",
+    summary="Eliminar ejemplo",
+)
+async def delete_example(dataset_id: str, example_id: str, request: Request):
+    from src.rag.evaluation.examples import delete_example as _delete
+
+    try:
+        did, eid = UUID(dataset_id), UUID(example_id)
+    except ValueError:
+        raise HTTPException(400, "IDs inválidos")
+    org = await _require_own_dataset(request, did)
+    if not await _delete(org, did, eid):
+        raise HTTPException(404, "Example not found")
+    return {"status": "deleted", "example_id": str(eid)}
+
+
+# ---------------------------------------------------------------------------
+# Failures — casos que no pasan los thresholds
+# ---------------------------------------------------------------------------
+
+
+class RunThresholds(BaseModel):
+    min_score: float = Field(default=60.0, ge=0, le=100)
+    max_hallucination: float = Field(default=0.3, ge=0, le=1)
+
+
+@router.get("/runs/{run_id}/failures", summary="Casos fallidos de un run")
+async def run_failures(run_id: str, request: Request, min_score: float = 60.0, max_hallucination: float = 0.3):
+    from sqlalchemy import text as _text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    org = _resolve_organization_id(request, "")
+    try:
+        rid = UUID(run_id)
+    except ValueError:
+        raise HTTPException(400, "run_id must be a valid UUID")
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                _text(
+                    "SELECT id FROM eval_runs WHERE id = :rid AND organization_id = :oid"
+                ),
+                {"rid": rid, "oid": org},
+            )
+        ).fetchone()
+        if row is None:
+            raise HTTPException(404, "Run not found")
+        cases = (
+            await session.execute(
+                _text(
+                    "SELECT case_id, question, answer, status, metrics, scores, error "
+                    "FROM eval_case_results WHERE run_id = :rid "
+                    "ORDER BY created_at ASC"
+                ),
+                {"rid": rid},
+            )
+        ).fetchall()
+    finally:
+        await session.close()
+
+    failures = []
+    for case in cases:
+        scores = case.scores if isinstance(case.scores, dict) else {}
+        quality = scores.get("quality") or {}
+        composite = quality.get("composite_score")
+        hallucination = quality.get("hallucination_rate")
+        reasons = []
+        if composite is not None and composite < min_score:
+            reasons.append(f"score {composite:.1f} < {min_score}")
+        if hallucination is not None and hallucination > max_hallucination:
+            reasons.append(f"hallucination {hallucination:.2f} > {max_hallucination}")
+        if case.status == "error":
+            reasons.append(case.error or "error")
+        if not reasons:
+            continue
+        failures.append(
+            {
+                "case_id": case.case_id,
+                "question": case.question,
+                "answer": case.answer,
+                "status": case.status,
+                "score": composite,
+                "hallucination_rate": hallucination,
+                "reasons": reasons,
+            }
+        )
+    return {"failures": failures, "count": len(failures)}

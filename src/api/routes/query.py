@@ -19,7 +19,6 @@ from src.api.deps import get_rag_orchestrator
 from src.api.schemas import RAGQueryRequest, RAGQueryResponse, sources_for_client
 from src.api.security import (
     ORG_HEADER_DESCRIPTION,
-    ROLE_HEADER_DESCRIPTION,
     USER_HEADER_DESCRIPTION,
 )
 from src.infrastructure.observability.logging_config import get_logger
@@ -114,7 +113,11 @@ async def rag_query(
     x_user_role: str = Header(
         default="",
         alias="X-User-Role",
-        description=ROLE_HEADER_DESCRIPTION,
+        deprecated=True,
+        description=(
+          "DEPRECATED. Nunca es autoridad: solo puede degradar el rol RAG "
+          "(admin→customer). La autorización se deriva del Bearer."
+        ),
     ),
     orchestrator: RAGOrchestrator = Depends(get_rag_orchestrator),
 ) -> RAGQueryResponse:
@@ -274,7 +277,11 @@ async def rag_query_stream(
     x_user_role: str = Header(
         default="",
         alias="X-User-Role",
-        description=ROLE_HEADER_DESCRIPTION,
+        deprecated=True,
+        description=(
+          "DEPRECATED. Nunca es autoridad: solo puede degradar el rol RAG "
+          "(admin→customer). La autorización se deriva del Bearer."
+        ),
     ),
     orchestrator: RAGOrchestrator = Depends(get_rag_orchestrator),
 ) -> StreamingResponse:

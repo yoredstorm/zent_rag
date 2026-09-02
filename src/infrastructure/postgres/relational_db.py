@@ -19,10 +19,16 @@ from sqlalchemy import text
 
 from src.core.domain.entities import (
     Agent,
+    AgentStatus,
+    AgentVersion,
+    AgentVersionStatus,
     ApiKey,
     AuditLogEntry,
     BillingInterval,
     Connector,
+    Deployment,
+    DeploymentStatus,
+    Environment,
     KnowledgeBase,
     Membership,
     Organization,
@@ -34,19 +40,24 @@ from src.core.domain.entities import (
     Subscription,
     SubscriptionStatus,
     User,
+    Workspace,
+    WorkspaceStatus,
     display_api_key_prefix,
 )
 from src.core.ports import (
     AgentRepository,
+    AgentVersionRepository,
     ApiKeyRepository,
     AuditLogRepository,
     BillingRepository,
     ConnectorRepository,
+    DeploymentRepository,
     KnowledgeBaseRepository,
     MembershipRepository,
     OrganizationRepository,
     ProjectRepository,
     UserRepository,
+    WorkspaceRepository,
 )
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.session import (  # noqa: F401  (re-export para compat)
@@ -160,8 +171,10 @@ class PostgresOrganizationRepository(OrganizationRepository):
         try:
             result = await session.execute(
                 text(
-                    "INSERT INTO organizations (id, name, status, rate_limit_per_minute) "
-                    "VALUES (:id, :name, 'active', 600) "
+                    "INSERT INTO organizations (id, name, status, rate_limit_per_minute, "
+                    "primary_region_id) "
+                    "VALUES (:id, :name, 'active', 600, "
+                    "(SELECT id FROM regions WHERE code = 'us-east-1')) "
                     "ON CONFLICT (id) DO UPDATE SET name = :name2 "
                     f"RETURNING {_ORG_COLS}"
                 ),
@@ -390,6 +403,37 @@ class PostgresUserRepository(UserRepository):
             raise
         finally:
             await session.close()
+
+    async def create_sso_user(
+        self, organization_id: UUID, email: str, external_id: str
+    ) -> UUID:
+        """JIT provisioning (SSO/SCIM): crea usuario sin password."""
+        import hashlib as _hl
+
+        session = await get_async_session()
+        user_id = uuid4()
+        try:
+            await session.execute(
+                text(
+                    "INSERT INTO users (id, organization_id, external_id, email_hash, "
+                    "role, email) VALUES (:id, :oid, :ext, :eh, 'member', :email) "
+                    "ON CONFLICT (organization_id, external_id) DO NOTHING"
+                ),
+                {
+                    "id": user_id,
+                    "oid": organization_id,
+                    "ext": external_id[:255],
+                    "eh": _hl.sha256(email.strip().lower().encode()).hexdigest(),
+                    "email": email.strip(),
+                },
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+        return user_id
 
     async def create_default_user(
         self,
@@ -686,7 +730,8 @@ class PostgresApiKeyRepository(ApiKeyRepository):
 
     _KEY_COLS = (
         "id, organization_id, name, key_hash, key_prefix, scopes, is_active, "
-        "created_by, last_used_at, expires_at, created_at"
+        "created_by, last_used_at, expires_at, ip_allowlist, rate_limit_per_minute, "
+        "created_at"
     )
 
     @staticmethod
@@ -703,6 +748,8 @@ class PostgresApiKeyRepository(ApiKeyRepository):
             last_used_at=row.last_used_at,
             expires_at=row.expires_at,
             created_at=row.created_at,
+            ip_allowlist=list(row.ip_allowlist) if row.ip_allowlist else [],
+            rate_limit_per_minute=row.rate_limit_per_minute,
         )
 
     async def get_by_hash(self, key_hash: str) -> ApiKey | None:
@@ -720,6 +767,22 @@ class PostgresApiKeyRepository(ApiKeyRepository):
                 return None
             if row.expires_at and row.expires_at < datetime.now(timezone.utc):
                 return None
+            # Política de expiración forzada por organización (key_max_age_days).
+            policy = (
+                await session.execute(
+                    text(
+                        "SELECT key_max_age_days FROM organizations WHERE id = :oid"
+                    ),
+                    {"oid": row.organization_id},
+                )
+            ).scalar()
+            if (
+                policy
+                and row.created_at
+                and datetime.now(timezone.utc) - row.created_at
+                > timedelta(days=int(policy))
+            ):
+                return None
             return self._row_to_key(row)
         finally:
             await session.close()
@@ -735,6 +798,33 @@ class PostgresApiKeyRepository(ApiKeyRepository):
             if row is None:
                 return None
             return self._row_to_key(row)
+        finally:
+            await session.close()
+
+    async def update_key(
+        self, organization_id: UUID, key_id: UUID, **fields
+    ) -> ApiKey | None:
+        allowed = {"name", "ip_allowlist", "rate_limit_per_minute", "expires_at"}
+        updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+        session = await get_async_session()
+        try:
+            if updates:
+                if "ip_allowlist" in updates:
+                    updates["ip_allowlist"] = json.dumps(updates["ip_allowlist"])
+                set_clauses = ", ".join(f"{k} = :{k}" for k in updates)
+                params = {"oid": organization_id, "kid": key_id, **updates}
+                await session.execute(
+                    text(
+                        f"UPDATE api_keys SET {set_clauses} "
+                        "WHERE id = :kid AND organization_id = :oid"
+                    ),
+                    params,
+                )
+                await session.commit()
+            return await self.get_key(key_id)
+        except Exception:
+            await session.rollback()
+            raise
         finally:
             await session.close()
 
@@ -759,6 +849,9 @@ class PostgresApiKeyRepository(ApiKeyRepository):
         name: str = "Default",
         scopes: list[str] | None = None,
         created_by: UUID | None = None,
+        expires_at: datetime | None = None,
+        ip_allowlist: list[str] | None = None,
+        rate_limit_per_minute: int | None = None,
     ) -> ApiKey:
         import hashlib as _hl
 
@@ -771,8 +864,10 @@ class PostgresApiKeyRepository(ApiKeyRepository):
             result = await session.execute(
                 text(
                     "INSERT INTO api_keys (id, organization_id, name, key_hash, "
-                    "key_prefix, scopes, created_by) "
-                    "VALUES (:id, :oid, :name, :hash, :prefix, :scopes, :created_by) "
+                    "key_prefix, scopes, created_by, expires_at, ip_allowlist, "
+                    "rate_limit_per_minute) "
+                    "VALUES (:id, :oid, :name, :hash, :prefix, :scopes, :created_by, "
+                    ":expires_at, :ip_allowlist, :rate_limit_per_minute) "
                     f"RETURNING {self._KEY_COLS}"
                 ),
                 {
@@ -783,6 +878,11 @@ class PostgresApiKeyRepository(ApiKeyRepository):
                     "prefix": prefix,
                     "scopes": json.dumps(sc),
                     "created_by": created_by,
+                    "expires_at": expires_at,
+                    "ip_allowlist": (
+                        json.dumps(ip_allowlist) if ip_allowlist else "[]"
+                    ),
+                    "rate_limit_per_minute": rate_limit_per_minute,
                 },
             )
             row = result.fetchone()
@@ -954,7 +1054,7 @@ class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
     _KB_COLS = (
         "id, organization_id, name, project_id, description, status, "
         "embedding_model, chunking_strategy, chunk_size, chunk_overlap, "
-        "retrieval_strategy, reranker, metadata_schema, config_json, created_at"
+        "retrieval_strategy, reranker, metadata_schema, config_json, workspace_id, created_at"
     )
 
     @staticmethod
@@ -964,6 +1064,7 @@ class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
             organization_id=row.organization_id,
             name=row.name,
             project_id=row.project_id,
+            workspace_id=row.workspace_id,
             description=row.description,
             status=row.status,
             embedding_model=row.embedding_model,
@@ -1016,6 +1117,7 @@ class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
         name: str,
         description: str | None = None,
         project_id: UUID | None = None,
+        workspace_id: UUID | None = None,
         embedding_model: str | None = None,
         chunking_strategy: str = "fixed",
         chunk_size: int = 1200,
@@ -1029,9 +1131,9 @@ class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
             result = await session.execute(
                 text(
                     "INSERT INTO knowledge_bases (id, organization_id, name, description, "
-                    "project_id, embedding_model, chunking_strategy, chunk_size, "
+                    "project_id, workspace_id, embedding_model, chunking_strategy, chunk_size, "
                     "chunk_overlap, retrieval_strategy, reranker, metadata_schema) "
-                    "VALUES (uuid_generate_v4(), :oid, :name, :description, :pid, :model, "
+                    "VALUES (uuid_generate_v4(), :oid, :name, :description, :pid, :wid, :model, "
                     ":chunking, :csize, :coverlap, :retrieval, :reranker, CAST(:mschema AS jsonb)) "
                     f"RETURNING {self._KB_COLS}"
                 ),
@@ -1040,6 +1142,7 @@ class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
                     "name": name,
                     "description": description,
                     "pid": project_id,
+                    "wid": workspace_id,
                     "model": embedding_model,
                     "chunking": chunking_strategy,
                     "csize": chunk_size,
@@ -1062,7 +1165,7 @@ class PostgresKnowledgeBaseRepository(KnowledgeBaseRepository):
         allowed = {
             "name", "description", "project_id", "status", "embedding_model",
             "config_json", "chunking_strategy", "chunk_size", "chunk_overlap",
-            "retrieval_strategy", "reranker", "metadata_schema",
+            "retrieval_strategy", "reranker", "metadata_schema", "workspace_id",
         }
         updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
         session = await get_async_session()
@@ -1120,12 +1223,14 @@ class PostgresAgentRepository(AgentRepository):
             organization_id=row.organization_id,
             name=row.name,
             project_id=row.project_id,
+            workspace_id=row.workspace_id,
             description=row.description,
             system_prompt=row.system_prompt,
             tools=list(row.tools) if row.tools else [],
             model=row.model,
             config_json=row.config_json if isinstance(row.config_json, dict) else {},
             is_active=row.is_active,
+            status=AgentStatus(row.status) if row.status else AgentStatus.DRAFT,
             created_at=row.created_at,
         )
 
@@ -1135,7 +1240,7 @@ class PostgresAgentRepository(AgentRepository):
             result = await session.execute(
                 text(
                     "SELECT id, organization_id, name, project_id, description, system_prompt, "
-                    "tools, model, config_json, is_active, created_at "
+                    "tools, model, config_json, is_active, status, workspace_id, created_at "
                     "FROM agents WHERE organization_id = :oid ORDER BY created_at DESC"
                 ),
                 {"oid": organization_id},
@@ -1150,7 +1255,7 @@ class PostgresAgentRepository(AgentRepository):
             result = await session.execute(
                 text(
                     "SELECT id, organization_id, name, project_id, description, system_prompt, "
-                    "tools, model, config_json, is_active, created_at "
+                    "tools, model, config_json, is_active, status, workspace_id, created_at "
                     "FROM agents WHERE id = :aid AND organization_id = :oid"
                 ),
                 {"aid": agent_id, "oid": organization_id},
@@ -1168,6 +1273,7 @@ class PostgresAgentRepository(AgentRepository):
         name: str,
         description: str | None = None,
         project_id: UUID | None = None,
+        workspace_id: UUID | None = None,
         system_prompt: str | None = None,
         tools: list[str] | None = None,
         model: str | None = None,
@@ -1178,17 +1284,18 @@ class PostgresAgentRepository(AgentRepository):
             result = await session.execute(
                 text(
                     "INSERT INTO agents (id, organization_id, name, description, project_id, "
-                    "system_prompt, tools, model, config_json) "
+                    "workspace_id, system_prompt, tools, model, config_json) "
                     "VALUES (uuid_generate_v4(), :oid, :name, :description, :pid, "
-                    ":prompt, :tools, :model, CAST(:config AS jsonb)) "
+                    ":wid, :prompt, :tools, :model, CAST(:config AS jsonb)) "
                     "RETURNING id, organization_id, name, project_id, description, system_prompt, "
-                    "tools, model, config_json, is_active, created_at"
+                    "tools, model, config_json, is_active, status, workspace_id, created_at"
                 ),
                 {
                     "oid": organization_id,
                     "name": name,
                     "description": description,
                     "pid": project_id,
+                    "wid": workspace_id,
                     "prompt": system_prompt,
                     "tools": json.dumps(tools or []),
                     "model": model,
@@ -1213,6 +1320,8 @@ class PostgresAgentRepository(AgentRepository):
             "tools",
             "model",
             "is_active",
+            "workspace_id",
+            "status",
             "config_json",
         }
         updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
@@ -1271,6 +1380,7 @@ class PostgresConnectorRepository(ConnectorRepository):
             name=row.name,
             type=row.type,
             project_id=row.project_id,
+            workspace_id=row.workspace_id,
             config_json=row.config_json if isinstance(row.config_json, dict) else {},
             status=row.status,
             created_at=row.created_at,
@@ -1317,21 +1427,26 @@ class PostgresConnectorRepository(ConnectorRepository):
         name: str,
         connector_type: str,
         project_id: UUID | None = None,
+        workspace_id: UUID | None = None,
         config_json: dict | None = None,
     ) -> Connector:
         session = await get_async_session()
         try:
             result = await session.execute(
                 text(
-                    "INSERT INTO connectors (id, organization_id, name, type, project_id, config_json) "
-                    "VALUES (uuid_generate_v4(), :oid, :name, :type, :pid, CAST(:config AS jsonb)) "
-                    "RETURNING id, organization_id, name, type, project_id, config_json, status, created_at"
+                    "INSERT INTO connectors (id, organization_id, name, type, project_id, "
+                    "workspace_id, config_json) "
+                    "VALUES (uuid_generate_v4(), :oid, :name, :type, :pid, :wid, "
+                    "CAST(:config AS jsonb)) "
+                    "RETURNING id, organization_id, name, type, project_id, "
+                    "workspace_id, config_json, status, created_at"
                 ),
                 {
                     "oid": organization_id,
                     "name": name,
                     "type": connector_type,
                     "pid": project_id,
+                    "wid": workspace_id,
                     "config": json.dumps(config_json or {}),
                 },
             )
@@ -1348,6 +1463,8 @@ class PostgresConnectorRepository(ConnectorRepository):
         self, organization_id: UUID, connector_id: UUID, **fields
     ) -> Connector:
         allowed = {"name", "project_id", "config_json", "status"}
+        allowed.add("workspace_id")
+        allowed.add("status")
         updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
         session = await get_async_session()
         try:
@@ -1450,6 +1567,47 @@ class PostgresAuditLogRepository(AuditLogRepository):
             await session.close()
 
 
+
+    async def list_all_entries(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        organization_id: UUID | None = None,
+        action: str | None = None,
+    ) -> list[AuditLogEntry]:
+        """Viewer global de auditoría (Control Center, permiso audit.read)."""
+        session = await get_async_session()
+        try:
+            query = (
+                "SELECT organization_id, actor_user_id, action, resource_type, "
+                "resource_id, ip_address, metadata, created_at FROM audit_logs WHERE true "
+            )
+            params: dict = {"limit": limit, "offset": offset}
+            if organization_id is not None:
+                query += "AND organization_id = :oid "
+                params["oid"] = organization_id
+            if action:
+                query += "AND action = :action "
+                params["action"] = action
+            query += "ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
+            result = await session.execute(text(query), params)
+            rows = result.fetchall()
+        finally:
+            await session.close()
+        return [
+            AuditLogEntry(
+                organization_id=row.organization_id,
+                actor_user_id=row.actor_user_id,
+                action=row.action,
+                resource_type=row.resource_type,
+                resource_id=row.resource_id,
+                ip_address=row.ip_address,
+                metadata=row.metadata if isinstance(row.metadata, dict) else {},
+                created_at=row.created_at,
+            )
+            for row in rows
+        ]
     async def list_entries(
         self,
         organization_id: UUID,
@@ -1837,3 +1995,538 @@ class PostgresBillingRepository(BillingRepository):
             raise
         finally:
             await session.close()
+
+
+class PostgresAgentVersionRepository(AgentVersionRepository):
+    """Snapshot inmutables de configuracion de agentes (scoped por org)."""
+
+    @staticmethod
+    def _row_to_version(row) -> AgentVersion:
+        return AgentVersion(
+            id=row.id,
+            organization_id=row.organization_id,
+            agent_id=row.agent_id,
+            version_number=row.version_number,
+            status=AgentVersionStatus(row.status),
+            config_snapshot=(
+                row.config_snapshot if isinstance(row.config_snapshot, dict) else {}
+            ),
+            notes=row.notes,
+            created_by=row.created_by,
+            created_at=row.created_at,
+        )
+
+    async def list_versions(
+        self, organization_id: UUID, agent_id: UUID
+    ) -> list[AgentVersion]:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "SELECT id, organization_id, agent_id, version_number, status, "
+                    "config_snapshot, notes, created_by, created_at "
+                    "FROM agent_versions WHERE organization_id = :oid AND agent_id = :aid "
+                    "ORDER BY version_number DESC"
+                ),
+                {"oid": organization_id, "aid": agent_id},
+            )
+            return [self._row_to_version(row) for row in result.fetchall()]
+        finally:
+            await session.close()
+
+    async def get_version(
+        self, organization_id: UUID, agent_id: UUID, version_id: UUID
+    ) -> AgentVersion | None:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "SELECT id, organization_id, agent_id, version_number, status, "
+                    "config_snapshot, notes, created_by, created_at "
+                    "FROM agent_versions "
+                    "WHERE id = :vid AND organization_id = :oid AND agent_id = :aid"
+                ),
+                {"vid": version_id, "oid": organization_id, "aid": agent_id},
+            )
+            row = result.fetchone()
+            return self._row_to_version(row) if row is not None else None
+        finally:
+            await session.close()
+
+    async def create_version(
+        self,
+        organization_id: UUID,
+        agent_id: UUID,
+        config_snapshot: dict,
+        notes: str | None = None,
+        created_by: UUID | None = None,
+    ) -> AgentVersion:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "INSERT INTO agent_versions "
+                    "(id, organization_id, agent_id, version_number, status, "
+                    " config_snapshot, notes, created_by) "
+                    "SELECT uuid_generate_v4(), :oid, :aid, "
+                    "       COALESCE(MAX(version_number), 0) + 1, 'draft', "
+                    "       CAST(:snapshot AS jsonb), :notes, :by "
+                    "FROM agent_versions WHERE agent_id = :aid "
+                    "RETURNING id, organization_id, agent_id, version_number, status, "
+                    "config_snapshot, notes, created_by, created_at"
+                ),
+                {
+                    "oid": organization_id,
+                    "aid": agent_id,
+                    "snapshot": json.dumps(config_snapshot or {}),
+                    "notes": notes,
+                    "by": created_by,
+                },
+            )
+            row = result.fetchone()
+            await session.commit()
+            return self._row_to_version(row)
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    async def promote_version(
+        self,
+        organization_id: UUID,
+        agent_id: UUID,
+        version_id: UUID,
+        status: str,
+    ) -> AgentVersion | None:
+        session = await get_async_session()
+        try:
+            await session.execute(
+                text(
+                    "UPDATE agent_versions SET status = :status "
+                    "WHERE id = :vid AND organization_id = :oid AND agent_id = :aid"
+                ),
+                {"status": status, "vid": version_id, "oid": organization_id, "aid": agent_id},
+            )
+            await session.commit()
+            version = await self.get_version(organization_id, agent_id, version_id)
+            if version is None:
+                raise ValueError(f"Version {version_id} not found")
+            return version
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+
+class PostgresDeploymentRepository(DeploymentRepository):
+    """Entornos y deployments de agentes (scoped por org)."""
+
+    @staticmethod
+    def _row_to_environment(row) -> Environment:
+        return Environment(
+            id=row.id,
+            organization_id=row.organization_id,
+            name=row.name,
+            slug=row.slug,
+            is_default=row.is_default,
+            created_at=row.created_at,
+        )
+
+    @staticmethod
+    def _row_to_deployment(row) -> Deployment:
+        return Deployment(
+            id=row.id,
+            organization_id=row.organization_id,
+            environment_id=row.environment_id,
+            agent_id=row.agent_id,
+            agent_version_id=row.agent_version_id,
+            slug=row.slug,
+            status=DeploymentStatus(row.status),
+            endpoint=row.endpoint,
+            deployed_by=row.deployed_by,
+            deployed_at=row.deployed_at,
+            rollback_from_id=row.rollback_from_id,
+            created_at=row.created_at,
+        )
+
+    async def list_environments(self, organization_id: UUID) -> list[Environment]:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "SELECT id, organization_id, name, slug, is_default, created_at "
+                    "FROM environments WHERE organization_id = :oid "
+                    "ORDER BY is_default DESC, created_at ASC"
+                ),
+                {"oid": organization_id},
+            )
+            return [self._row_to_environment(row) for row in result.fetchall()]
+        finally:
+            await session.close()
+
+    async def get_environment(
+        self, organization_id: UUID, environment_id: UUID
+    ) -> Environment | None:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "SELECT id, organization_id, name, slug, is_default, created_at "
+                    "FROM environments WHERE id = :eid AND organization_id = :oid"
+                ),
+                {"eid": environment_id, "oid": organization_id},
+            )
+            row = result.fetchone()
+            return self._row_to_environment(row) if row is not None else None
+        finally:
+            await session.close()
+
+    async def get_environment_by_slug(
+        self, organization_id: UUID, slug: str
+    ) -> Environment | None:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "SELECT id, organization_id, name, slug, is_default, created_at "
+                    "FROM environments WHERE organization_id = :oid AND slug = :slug"
+                ),
+                {"oid": organization_id, "slug": slug},
+            )
+            row = result.fetchone()
+            return self._row_to_environment(row) if row is not None else None
+        finally:
+            await session.close()
+
+    async def create_environment(
+        self, organization_id: UUID, name: str, slug: str, is_default: bool = False
+    ) -> Environment:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "INSERT INTO environments (id, organization_id, name, slug, is_default) "
+                    "VALUES (uuid_generate_v4(), :oid, :name, :slug, :default) "
+                    "RETURNING id, organization_id, name, slug, is_default, created_at"
+                ),
+                {"oid": organization_id, "name": name, "slug": slug, "default": is_default},
+            )
+            row = result.fetchone()
+            await session.commit()
+            return self._row_to_environment(row)
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    async def list_deployments(self, organization_id: UUID) -> list[Deployment]:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "SELECT id, organization_id, environment_id, agent_id, "
+                    "agent_version_id, slug, status, endpoint, deployed_by, "
+                    "deployed_at, rollback_from_id, created_at "
+                    "FROM deployments WHERE organization_id = :oid "
+                    "ORDER BY created_at DESC"
+                ),
+                {"oid": organization_id},
+            )
+            return [self._row_to_deployment(row) for row in result.fetchall()]
+        finally:
+            await session.close()
+
+    async def get_deployment(
+        self, organization_id: UUID, deployment_id: UUID
+    ) -> Deployment | None:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "SELECT id, organization_id, environment_id, agent_id, "
+                    "agent_version_id, slug, status, endpoint, deployed_by, "
+                    "deployed_at, rollback_from_id, created_at "
+                    "FROM deployments WHERE id = :did AND organization_id = :oid"
+                ),
+{"did": deployment_id, "oid": organization_id},
+            )
+            row = result.fetchone()
+            return self._row_to_deployment(row) if row is not None else None
+        finally:
+            await session.close()
+
+    async def get_deployment_by_slug(
+        self, organization_id: UUID, slug: str
+    ) -> Deployment | None:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "SELECT id, organization_id, environment_id, agent_id, "
+                    "agent_version_id, slug, status, endpoint, deployed_by, "
+                    "deployed_at, rollback_from_id, created_at "
+                    "FROM deployments WHERE organization_id = :oid AND slug = :slug"
+                ),
+                {"oid": organization_id, "slug": slug},
+            )
+            row = result.fetchone()
+            return self._row_to_deployment(row) if row is not None else None
+        finally:
+            await session.close()
+
+    async def get_last_deployment(
+        self,
+        organization_id: UUID,
+        environment_id: UUID,
+        agent_id: UUID,
+        exclude_version_id: UUID | None = None,
+    ) -> Deployment | None:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "SELECT id, organization_id, environment_id, agent_id, "
+                    "agent_version_id, slug, status, endpoint, deployed_by, "
+                    "deployed_at, rollback_from_id, created_at "
+                    "FROM deployments "
+                    "WHERE organization_id = :oid AND environment_id = :eid "
+                    "AND agent_id = :aid AND status IN ('healthy', 'degraded') "
+                    "AND (CAST(:xvid AS uuid) IS NULL OR agent_version_id <> CAST(:xvid AS uuid)) "
+                    "ORDER BY created_at DESC LIMIT 1"
+                ),
+                {
+                    "oid": organization_id,
+                    "eid": environment_id,
+                    "aid": agent_id,
+                    "xvid": exclude_version_id,
+                },
+            )
+            row = result.fetchone()
+            return self._row_to_deployment(row) if row is not None else None
+        finally:
+            await session.close()
+
+    async def create_deployment(
+        self,
+        organization_id: UUID,
+        environment_id: UUID,
+        agent_id: UUID,
+        agent_version_id: UUID,
+        slug: str,
+        endpoint: str | None = None,
+        deployed_by: UUID | None = None,
+        rollback_from_id: UUID | None = None,
+    ) -> Deployment:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "INSERT INTO deployments (id, organization_id, environment_id, "
+                    "agent_id, agent_version_id, slug, status, endpoint, deployed_by, "
+                    "deployed_at, rollback_from_id) "
+                    "VALUES (uuid_generate_v4(), :oid, :eid, :aid, :vid, :slug, "
+                    "'pending', :endpoint, :by, NOW(), :rb) "
+                    "RETURNING id, organization_id, environment_id, agent_id, "
+                    "agent_version_id, slug, status, endpoint, deployed_by, "
+                    "deployed_at, rollback_from_id, created_at"
+                ),
+                {
+                    "oid": organization_id,
+                    "eid": environment_id,
+                    "aid": agent_id,
+                    "vid": agent_version_id,
+                    "slug": slug,
+                    "endpoint": endpoint,
+                    "by": deployed_by,
+                    "rb": rollback_from_id,
+                },
+            )
+            row = result.fetchone()
+            await session.commit()
+            return self._row_to_deployment(row)
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    async def update_deployment_status(
+        self,
+        organization_id: UUID,
+        deployment_id: UUID,
+        status: str,
+        deployed_at: datetime | None = None,
+    ) -> Deployment | None:
+        session = await get_async_session()
+        try:
+            await session.execute(
+                text(
+                    "UPDATE deployments SET status = :status, "
+                    "deployed_at = COALESCE(:deployed_at, deployed_at) "
+                    "WHERE id = :did AND organization_id = :oid"
+                ),
+                {
+                    "status": status,
+                    "deployed_at": deployed_at,
+                    "did": deployment_id,
+                    "oid": organization_id,
+                },
+            )
+            await session.commit()
+            return await self.get_deployment(organization_id, deployment_id)
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+class PostgresWorkspaceRepository(WorkspaceRepository):
+    """Espacios de trabajo (scoped por org)."""
+
+    @staticmethod
+    def _row_to_workspace(row) -> Workspace:
+        return Workspace(
+            id=row.id,
+            organization_id=row.organization_id,
+            name=row.name,
+            slug=row.slug,
+            description=row.description,
+            status=WorkspaceStatus(row.status),
+            created_by=row.created_by,
+            created_at=row.created_at,
+        )
+
+    async def list_workspaces(self, organization_id: UUID) -> list[Workspace]:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "SELECT id, organization_id, name, slug, description, status, "
+                    "created_by, created_at FROM workspaces "
+                    "WHERE organization_id = :oid ORDER BY created_at ASC"
+                ),
+                {"oid": organization_id},
+            )
+            return [self._row_to_workspace(row) for row in result.fetchall()]
+        finally:
+            await session.close()
+
+    async def get_workspace(
+        self, organization_id: UUID, workspace_id: UUID
+    ) -> Workspace | None:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "SELECT id, organization_id, name, slug, description, status, "
+                    "created_by, created_at FROM workspaces "
+                    "WHERE id = :wid AND organization_id = :oid"
+                ),
+                {"wid": workspace_id, "oid": organization_id},
+            )
+            row = result.fetchone()
+            return self._row_to_workspace(row) if row is not None else None
+        finally:
+            await session.close()
+
+    async def get_workspace_by_slug(
+        self, organization_id: UUID, slug: str
+    ) -> Workspace | None:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "SELECT id, organization_id, name, slug, description, status, "
+                    "created_by, created_at FROM workspaces "
+                    "WHERE organization_id = :oid AND slug = :slug"
+                ),
+                {"oid": organization_id, "slug": slug},
+            )
+            row = result.fetchone()
+            return self._row_to_workspace(row) if row is not None else None
+        finally:
+            await session.close()
+
+    async def create_workspace(
+        self,
+        organization_id: UUID,
+        name: str,
+        slug: str,
+        description: str | None = None,
+        created_by: UUID | None = None,
+    ) -> Workspace:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "INSERT INTO workspaces (id, organization_id, name, slug, "
+                    "description, created_by) "
+                    "VALUES (uuid_generate_v4(), :oid, :name, :slug, :desc, :by) "
+                    "RETURNING id, organization_id, name, slug, description, status, "
+                    "created_by, created_at"
+                ),
+                {"oid": organization_id, "name": name, "slug": slug, "desc": description, "by": created_by},
+            )
+            row = result.fetchone()
+            await session.commit()
+            return self._row_to_workspace(row)
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    async def update_workspace(
+        self,
+        organization_id: UUID,
+        workspace_id: UUID,
+        **fields,
+    ) -> Workspace | None:
+        allowed = {"name", "slug", "description", "status"}
+        updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
+        session = await get_async_session()
+        try:
+            if updates:
+                set_clauses = ", ".join(f"{k} = :{k}" for k in updates)
+                params = {"oid": organization_id, "wid": workspace_id, **updates}
+                await session.execute(
+                    text(
+                        f"UPDATE workspaces SET {set_clauses}, updated_at = NOW() "
+                        "WHERE id = :wid AND organization_id = :oid"
+                    ),
+                    params,
+                )
+                await session.commit()
+            return await self.get_workspace(organization_id, workspace_id)
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    async def workspace_counts(
+        self, organization_id: UUID
+    ) -> dict[UUID, dict[str, int]]:
+        session = await get_async_session()
+        try:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT w.id AS wid, "
+                        "(SELECT COUNT(*) FROM agents a WHERE a.workspace_id = w.id) AS agents, "
+                        "(SELECT COUNT(*) FROM knowledge_bases k WHERE k.workspace_id = w.id) AS kbs, "
+                        "(SELECT COUNT(*) FROM connectors c WHERE c.workspace_id = w.id) AS connectors "
+                        "FROM workspaces w WHERE w.organization_id = :oid"
+                    ),
+                    {"oid": organization_id},
+                )
+            ).fetchall()
+        finally:
+            await session.close()
+        return {
+            row.wid: {"agents": int(row.agents), "kbs": int(row.kbs), "connectors": int(row.connectors)}
+            for row in rows
+        }

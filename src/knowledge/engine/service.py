@@ -330,3 +330,29 @@ class KnowledgeIngestionEngine:
             records_failed=records_failed,
             progress=100,
         )
+
+
+async def _set_source_status(organization_id: UUID, source_id: UUID, status: str) -> None:
+    """Actualiza el estado del ciclo de vida de la fuente (fail-silent)."""
+    from sqlalchemy import text as _text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    try:
+        session = await get_async_session()
+        try:
+            await session.execute(
+                _text(
+                    "UPDATE kb_sources SET status = :status, updated_at = NOW() "
+                    "WHERE id = :sid AND organization_id = :oid"
+                ),
+                {"status": status, "sid": source_id, "oid": organization_id},
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+    except Exception:
+        logger.warning("Failed to update source status", source_id=str(source_id))

@@ -196,11 +196,23 @@ def compare_runs(current: dict, baseline: dict, thresholds: dict | None = None) 
         _latency_dimension(current, baseline, t),
     ]
     worst = max((d["status"] for d in dimensions), key=lambda s: _STATUS_RANK.get(s, 0))
+    quality = next((d for d in dimensions if d["dimension"] == "quality"), None)
+    if quality is None or quality.get("status") == "unknown":
+        classification = "no_material_change"
+    elif worst == "fail":
+        classification = "regression"
+    elif worst == "pass" and quality.get("current") is not None and (
+        quality.get("delta", 0) > 0
+    ):
+        classification = "improvement"
+    else:
+        classification = "no_material_change"
     return {
         "baseline_run_id": baseline.get("run_id"),
         "current_run_id": current.get("run_id"),
         "baseline_version_id": baseline.get("version_id"),
         "current_version_id": current.get("version_id"),
         "overall": worst,
+        "classification": classification,
         "dimensions": dimensions,
     }

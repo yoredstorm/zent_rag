@@ -1,4 +1,5 @@
 import {
+  ArrowClockwise,
   Copy,
   Eye,
   EyeSlash,
@@ -141,6 +142,33 @@ export default function KeysPage() {
       setKeys(refreshed.keys);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al revocar");
+    }
+  }
+
+  async function rotateKey(keyId: string, name: string) {
+    if (!session) return;
+    setError("");
+    setMsg("");
+    try {
+      const data = await api<{ token: string }>(
+        `/api/v1/organizations/api-keys/${keyId}/rotate`,
+        {
+          method: "POST",
+          token: session.token,
+          organizationId: session.organizationId,
+          body: "{}",
+        }
+      );
+      setNewToken(data.token);
+      setRevealed(true);
+      setMsg(`Clave "${name}" rotada. La anterior quedó revocada.`);
+      const refreshed = await api<{ keys: ApiKeyInfo[] }>(
+        "/api/v1/organizations/api-keys",
+        { token: session.token, organizationId: session.organizationId }
+      );
+      setKeys(refreshed.keys);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al rotar");
     }
   }
 
@@ -326,14 +354,25 @@ export default function KeysPage() {
                               </td>
                               <td className="text-right">
                                 {key.is_active && (
-                                  <button
-                                    type="button"
-                                    className="btn btn-ghost min-h-11 px-2 py-1.5 text-xs"
-                                    onClick={() => void revokeKey(key.id, key.name)}
-                                    aria-label={`Revocar ${key.name}`}
-                                  >
-                                    <Trash size={14} aria-hidden />
-                                  </button>
+                                  <div className="flex justify-end gap-1">
+                                    <button
+                                      type="button"
+                                      className="btn btn-ghost min-h-11 px-2 py-1.5 text-xs"
+                                      onClick={() => void rotateKey(key.id, key.name)}
+                                      aria-label={`Rotar ${key.name}`}
+                                      title="Rotar: revoca y emite una nueva"
+                                    >
+                                      <ArrowClockwise size={14} aria-hidden />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="btn btn-ghost min-h-11 px-2 py-1.5 text-xs"
+                                      onClick={() => void revokeKey(key.id, key.name)}
+                                      aria-label={`Revocar ${key.name}`}
+                                    >
+                                      <Trash size={14} aria-hidden />
+                                    </button>
+                                  </div>
                                 )}
                               </td>
                             </tr>

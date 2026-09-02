@@ -29,6 +29,7 @@ class CreateKbRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=4000)
     project_id: UUID | None = None
+    workspace_id: UUID | None = None
     embedding_model: str | None = Field(default=None, max_length=100)
     chunking_strategy: str = Field(
         default="fixed", pattern=r"^(fixed|recursive|sentence)$"
@@ -44,6 +45,7 @@ class UpdateKbRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=4000)
     project_id: UUID | None = None
+    workspace_id: UUID | None = None
     status: str | None = Field(default=None, pattern=r"^(active|archived)$")
     embedding_model: str | None = Field(default=None, max_length=100)
     chunking_strategy: str | None = Field(default=None, pattern=r"^(fixed|recursive|sentence)$")
@@ -103,12 +105,15 @@ async def create_kb(
     except PlanLimitError as exc:
         raise HTTPException(status_code=409, detail=plan_limit_detail(exc)) from None
     if body.project_id is not None:
+        if body.workspace_id is not None:
+            await _require_own_workspace(ctx, body.workspace_id)
         await _require_own_project(ctx, body.project_id)
     kb = await repo.create_kb(
         ctx.organization_id,
         body.name,
         description=body.description,
         project_id=body.project_id,
+        workspace_id=body.workspace_id,
         embedding_model=body.embedding_model,
         chunking_strategy=body.chunking_strategy,
         chunk_size=body.chunk_size,
@@ -118,6 +123,12 @@ async def create_kb(
         metadata_schema=body.metadata_schema,
     )
     await _audit().write(ctx, "kb.created", "knowledge_base", kb.id, metadata={"name": kb.name})
+    try:
+        from src.platform.onboardingv2.onboarding import sync_progress
+
+        await sync_progress(ctx.organization_id)
+    except Exception:  # noqa: BLE001
+        pass
     return _kb_response(kb)
 
 
@@ -155,6 +166,8 @@ async def update_kb(
     except ValueError:
         raise HTTPException(400, "kb_id must be a valid UUID")
     if body.project_id is not None:
+        if body.workspace_id is not None:
+            await _require_own_workspace(ctx, body.workspace_id)
         await _require_own_project(ctx, body.project_id)
     try:
         kb = await repo.update_kb(ctx.organization_id, kid, **body.model_dump(exclude_none=True))
@@ -201,3 +214,30 @@ async def _require_own_project(ctx, project_id: UUID) -> None:
     project = await get_project_repo().get_project(ctx.organization_id, project_id)
     if project is None:
         raise HTTPException(404, "Project not found in this organization")
+
+async def _require_own_workspace(ctx, workspace_id) -> None:
+    from src.api.deps import get_workspace_repo
+    from src.platform.workspaces.service import require_own_workspace
+
+    try:
+        await require_own_workspace(get_workspace_repo(), ctx.organization_id, workspace_id)
+    except ValueError:
+        raise HTTPException(404, "Workspace not found in this organization") from None
+@router.get("/{kb_id}/index-versions", summary="Versiones del índice de la KB")
+async def kb_index_versions(
+    kb_id: str,
+    request: Request,
+    repo: KnowledgeBaseRepository = Depends(get_kb_repo),
+):
+    from src.platform.knowledge.index_versions import list_index_versions
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "kbs:read")
+    try:
+        kid = UUID(kb_id)
+    except ValueError:
+        raise HTTPException(400, "kb_id must be a valid UUID")
+    if await repo.get_kb(ctx.organization_id, kid) is None:
+        raise HTTPException(404, "Knowledge base not found")
+    versions = await list_index_versions(ctx.organization_id, kid)
+    return {"index_versions": versions, "count": len(versions)}

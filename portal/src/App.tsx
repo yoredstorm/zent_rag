@@ -48,6 +48,9 @@ const KnowledgeDocumentsPage = lazy(() => import("./pages/knowledge/Documents"))
 const KnowledgeSqlPage = lazy(() => import("./pages/knowledge/SqlSources"));
 const KnowledgeJobsPage = lazy(() => import("./pages/knowledge/Jobs"));
 const KnowledgePlaygroundPage = lazy(() => import("./pages/knowledge/Playground"));
+const WorkspacesPage = lazy(() => import("./pages/Workspaces"));
+const TrainingPage = lazy(() => import("./pages/Training"));
+const DeveloperCenterPage = lazy(() => import("./pages/DeveloperCenter"));
 const AdminLayout = lazy(() => import("./pages/admin/AdminLayout"));
 const AdminLoginPage = lazy(() => import("./pages/admin/Login"));
 const AdminDashboardPage = lazy(() => import("./pages/admin/Dashboard"));
@@ -55,7 +58,55 @@ const AdminCustomersPage = lazy(() => import("./pages/admin/Customers"));
 const AdminCustomerDetailPage = lazy(() => import("./pages/admin/CustomerDetail"));
 const AdminPlansPage = lazy(() => import("./pages/admin/Plans"));
 const AdminUsagePage = lazy(() => import("./pages/admin/Usage"));
+const AdminSubscriptionsPage = lazy(() => import("./pages/admin/Subscriptions"));
+const AdminOperationsPage = lazy(() => import("./pages/admin/Operations"));
+const AdminSecurityPage = lazy(() => import("./pages/admin/Security"));
+const AdminAuditPage = lazy(() => import("./pages/admin/Audit"));
+const AdminSettingsPage = lazy(() => import("./pages/admin/Settings"));
+const AdminFinOpsPage = lazy(() => import("./pages/admin/FinOps"));
+const AdminSystemStatusPage = lazy(() => import("./pages/admin/SystemStatus"));
+const SsoCallbackPage = lazy(() => import("./pages/SsoCallback"));
+const AdminDisasterRecoveryPage = lazy(() => import("./pages/admin/DisasterRecovery"));
+const AdminGovernancePage = lazy(() => import("./pages/admin/Governance"));
+const AdminCustomerSuccessPage = lazy(() => import("./pages/admin/CustomerSuccess"));
+const AdminAuditIntelligencePage = lazy(() => import("./pages/admin/AuditIntelligence"));
+const AdminOptimizerPage = lazy(() => import("./pages/admin/Optimizer"));
+const AdminFederatedAnalyticsPage = lazy(() => import("./pages/admin/FederatedAnalytics"));
+const AdminMarketplacePage = lazy(() => import("./pages/admin/Marketplace"));
+const SharedAgentPage = lazy(() => import("./pages/SharedAgent"));
+const AdminWorkflowsPage = lazy(() => import("./pages/admin/Workflows"));
+const AdminModelGatewayPage = lazy(() => import("./pages/admin/ModelGateway"));
+const AdminRealtimePage = lazy(() => import("./pages/admin/Realtime"));
+const AdminSecurityCenterPage = lazy(() => import("./pages/admin/SecurityCenter"));
+const AdminOnboardingPage = lazy(() => import("./pages/admin/Onboarding"));
+const AdminCapacityPage = lazy(() => import("./pages/admin/Capacity"));
+const DeveloperToolsPage = lazy(() => import("./pages/DeveloperTools"));
+const PlaygroundPage = lazy(() => import("./pages/Playground"));
+const AdminPartnersPage = lazy(() => import("./pages/admin/Partners"));
+const AdminEvalsLabPage = lazy(() => import("./pages/admin/EvalsLab"));
+const AdminMeteringPage = lazy(() => import("./pages/admin/Metering"));
+const AdminInferenceProxyPage = lazy(() => import("./pages/admin/InferenceProxy"));
+const AdminRegionsPage = lazy(() => import("./pages/admin/Regions"));
+const AdminCostGovernancePage = lazy(() => import("./pages/admin/CostGovernance"));
+const AdminOpsCenterPage = lazy(() => import("./pages/admin/OpsCenter"));
+const AdminModelHealthPage = lazy(() => import("./pages/admin/ModelHealth"));
+const AdminRevenuePage = lazy(() => import("./pages/admin/Revenue"));
+const AdminDataExportPage = lazy(() => import("./pages/admin/DataExport"));
+const AdminTrustSafetyPage = lazy(() => import("./pages/admin/TrustSafety"));
+const AdminTracesPage = lazy(() => import("./pages/admin/Traces"));
+const AdminNotificationsPage = lazy(() => import("./pages/admin/Notifications"));
+const NotificationsPage = lazy(() => import("./pages/Notifications"));
+const AuditCompliancePage = lazy(() => import("./pages/AuditCompliance"));
+const AdminCompliancePage = lazy(() => import("./pages/admin/Compliance"));
+const AdminOnboardingMetricsPage = lazy(() => import("./pages/admin/Onboarding"));
+const AdminFeedbackPage = lazy(() => import("./pages/admin/Feedback"));
+const AdminMigrationsPage = lazy(() => import("./pages/admin/Migrations"));
+const AdminReleasesPage = lazy(() => import("./pages/admin/Releases"));
+const ReleasesPage = lazy(() => import("./pages/Releases"));
+const MigrationsPage = lazy(() => import("./pages/Migrations"));
+const OnboardingPage = lazy(() => import("./pages/Onboarding"));
 const EvaluationDatasetsPage = lazy(() => import("./pages/evaluation/Datasets"));
+const EvaluationOverviewPage = lazy(() => import("./pages/evaluation/Overview"));
 const EvaluationRunsPage = lazy(() => import("./pages/evaluation/Runs"));
 const EvaluationRunDetailPage = lazy(() => import("./pages/evaluation/RunDetail"));
 const EvaluationComparePage = lazy(() => import("./pages/evaluation/Compare"));
@@ -393,9 +444,18 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Suspense fallback={<PageFallback />}><LoginPage /></Suspense>} />
       <Route path="/signup" element={<Suspense fallback={<PageFallback />}><SignupPage /></Suspense>} />
+        <Route path="/sso/callback" element={<Suspense fallback={<PageFallback />}><SsoCallbackPage /></Suspense>} />
+        <Route path="/share/agent/:token" element={<Suspense fallback={<PageFallback />}><SharedAgentPage /></Suspense>} />
       <Route path="/admin/login" element={<Suspense fallback={<PageFallback />}><AdminLoginPage /></Suspense>} />
+      <Route path="/control-center/login" element={<Suspense fallback={<PageFallback />}><AdminLoginPage /></Suspense>} />
+      {/* Redirects legacy /admin → /control-center (backward compat) */}
+      <Route path="/admin" element={<Navigate to="/control-center" replace />} />
+      <Route path="/admin/customers" element={<Navigate to="/control-center/tenants" replace />} />
+      <Route path="/admin/customers/:orgId" element={<Navigate to="/control-center/tenants/:orgId" replace />} />
+      <Route path="/admin/plans" element={<Navigate to="/control-center/settings/plans" replace />} />
+      <Route path="/admin/usage" element={<Navigate to="/control-center/costs" replace />} />
       <Route
-        path="/admin"
+        path="/control-center"
         element={
           <Suspense fallback={<PageFallback />}>
             <AdminLayout />
@@ -403,10 +463,45 @@ export default function App() {
         }
       >
         <Route index element={<Suspense fallback={<PageFallback />}><AdminDashboardPage /></Suspense>} />
-        <Route path="customers" element={<Suspense fallback={<PageFallback />}><AdminCustomersPage /></Suspense>} />
-        <Route path="customers/:orgId" element={<Suspense fallback={<PageFallback />}><AdminCustomerDetailPage /></Suspense>} />
-        <Route path="plans" element={<Suspense fallback={<PageFallback />}><AdminPlansPage /></Suspense>} />
+        <Route path="tenants" element={<Suspense fallback={<PageFallback />}><AdminCustomersPage /></Suspense>} />
+        <Route path="tenants/:orgId" element={<Suspense fallback={<PageFallback />}><AdminCustomerDetailPage /></Suspense>} />
+        <Route path="subscriptions" element={<Suspense fallback={<PageFallback />}><AdminSubscriptionsPage /></Suspense>} />
         <Route path="usage" element={<Suspense fallback={<PageFallback />}><AdminUsagePage /></Suspense>} />
+        <Route path="costs" element={<Suspense fallback={<PageFallback />}><AdminFinOpsPage /></Suspense>} />
+        <Route path="status" element={<Suspense fallback={<PageFallback />}><AdminSystemStatusPage /></Suspense>} />
+        <Route path="dr" element={<Suspense fallback={<PageFallback />}><AdminDisasterRecoveryPage /></Suspense>} />
+        <Route path="governance" element={<Suspense fallback={<PageFallback />}><AdminGovernancePage /></Suspense>} />
+        <Route path="customers" element={<Suspense fallback={<PageFallback />}><AdminCustomerSuccessPage /></Suspense>} />
+        <Route path="audit-intel" element={<Suspense fallback={<PageFallback />}><AdminAuditIntelligencePage /></Suspense>} />
+        <Route path="optimizer" element={<Suspense fallback={<PageFallback />}><AdminOptimizerPage /></Suspense>} />
+        <Route path="analytics" element={<Suspense fallback={<PageFallback />}><AdminFederatedAnalyticsPage /></Suspense>} />
+        <Route path="marketplace" element={<Suspense fallback={<PageFallback />}><AdminMarketplacePage /></Suspense>} />
+        <Route path="workflows" element={<Suspense fallback={<PageFallback />}><AdminWorkflowsPage /></Suspense>} />
+        <Route path="model-gateway" element={<Suspense fallback={<PageFallback />}><AdminModelGatewayPage /></Suspense>} />
+        <Route path="realtime" element={<Suspense fallback={<PageFallback />}><AdminRealtimePage /></Suspense>} />
+        <Route path="security-center" element={<Suspense fallback={<PageFallback />}><AdminSecurityCenterPage /></Suspense>} />
+        <Route path="onboarding" element={<Suspense fallback={<PageFallback />}><AdminOnboardingPage /></Suspense>} />
+        <Route path="capacity" element={<Suspense fallback={<PageFallback />}><AdminCapacityPage /></Suspense>} />
+        <Route path="partners" element={<Suspense fallback={<PageFallback />}><AdminPartnersPage /></Suspense>} />
+        <Route path="evals" element={<Suspense fallback={<PageFallback />}><AdminEvalsLabPage /></Suspense>} />
+        <Route path="metering" element={<Suspense fallback={<PageFallback />}><AdminMeteringPage /></Suspense>} />
+        <Route path="inference-proxy" element={<Suspense fallback={<PageFallback />}><AdminInferenceProxyPage /></Suspense>} />
+        <Route path="regions" element={<Suspense fallback={<PageFallback />}><AdminRegionsPage /></Suspense>} />
+        <Route path="cost-governance" element={<Suspense fallback={<PageFallback />}><AdminCostGovernancePage /></Suspense>} />
+        <Route path="ops-center" element={<Suspense fallback={<PageFallback />}><AdminOpsCenterPage /></Suspense>} />
+        <Route path="model-health" element={<Suspense fallback={<PageFallback />}><AdminModelHealthPage /></Suspense>} />
+        <Route path="revenue" element={<Suspense fallback={<PageFallback />}><AdminRevenuePage /></Suspense>} />
+        <Route path="data-export" element={<Suspense fallback={<PageFallback />}><AdminDataExportPage /></Suspense>} />
+        <Route path="trust-safety" element={<Suspense fallback={<PageFallback />}><AdminTrustSafetyPage /></Suspense>} />
+        <Route path="traces" element={<Suspense fallback={<PageFallback />}><AdminTracesPage /></Suspense>} />
+        <Route path="notifications" element={<Suspense fallback={<PageFallback />}><AdminNotificationsPage /></Suspense>} />
+        <Route path="compliance" element={<Suspense fallback={<PageFallback />}><AdminCompliancePage /></Suspense>} />
+        <Route path="onboarding" element={<Suspense fallback={<PageFallback />}><AdminOnboardingPage /></Suspense>} />
+        <Route path="operations" element={<Suspense fallback={<PageFallback />}><AdminOperationsPage /></Suspense>} />
+        <Route path="security" element={<Suspense fallback={<PageFallback />}><AdminSecurityPage /></Suspense>} />
+        <Route path="audit" element={<Suspense fallback={<PageFallback />}><AdminAuditPage /></Suspense>} />
+        <Route path="settings" element={<Suspense fallback={<PageFallback />}><AdminSettingsPage /></Suspense>} />
+        <Route path="settings/plans" element={<Suspense fallback={<PageFallback />}><AdminPlansPage /></Suspense>} />
       </Route>
       <Route element={<ProtectedLayout />}>
         <Route path="/" element={<Suspense fallback={<PageFallback />}><DashboardPage /></Suspense>} />
@@ -424,14 +519,24 @@ export default function App() {
         <Route path="/chat" element={<Suspense fallback={<PageFallback />}><ChatPage /></Suspense>} />
         <Route path="/users" element={<Suspense fallback={<PageFallback />}><UsersPage /></Suspense>} />
         <Route path="/projects" element={<Suspense fallback={<PageFallback />}><ProjectsPage /></Suspense>} />
+        <Route path="/workspaces" element={<Suspense fallback={<PageFallback />}><WorkspacesPage /></Suspense>} />
+        <Route path="/training" element={<Suspense fallback={<PageFallback />}><TrainingPage /></Suspense>} />
+        <Route path="/developers" element={<Suspense fallback={<PageFallback />}><DeveloperCenterPage /></Suspense>} />
+        <Route path="/developers/tools" element={<Suspense fallback={<PageFallback />}><DeveloperToolsPage /></Suspense>} />
+        <Route path="/developers/playground" element={<Suspense fallback={<PageFallback />}><PlaygroundPage /></Suspense>} />
         <Route path="/agents" element={<Suspense fallback={<PageFallback />}><AgentsPage /></Suspense>} />
         <Route path="/agents/new" element={<Suspense fallback={<PageFallback />}><AgentBuilderPage /></Suspense>} />
         <Route path="/agents/:id" element={<Suspense fallback={<PageFallback />}><AgentBuilderPage /></Suspense>} />
         <Route path="/connectors" element={<Suspense fallback={<PageFallback />}><ConnectorsPage /></Suspense>} />
         <Route path="/audit" element={<Suspense fallback={<PageFallback />}><AuditLogsPage /></Suspense>} />
         <Route path="/billing" element={<Suspense fallback={<PageFallback />}><BillingPage /></Suspense>} />
+      <Route path="/notifications" element={<Suspense fallback={<PageFallback />}><NotificationsPage /></Suspense>} />
+      <Route path="/audit" element={<Suspense fallback={<PageFallback />}><AuditCompliancePage /></Suspense>} />
+      <Route path="/onboarding" element={<Suspense fallback={<PageFallback />}><OnboardingPage /></Suspense>} />
+      <Route path="/migrations" element={<Suspense fallback={<PageFallback />}><MigrationsPage /></Suspense>} />
+      <Route path="/releases" element={<Suspense fallback={<PageFallback />}><ReleasesPage /></Suspense>} />
         <Route path="/settings" element={<Suspense fallback={<PageFallback />}><SettingsPage /></Suspense>} />
-        <Route path="/evaluation" element={<Navigate to="/evaluation/datasets" replace />} />
+        <Route path="/evaluation" element={<Suspense fallback={<PageFallback />}><EvaluationOverviewPage /></Suspense>} />
         <Route path="/evaluation/datasets" element={<Suspense fallback={<PageFallback />}><EvaluationDatasetsPage /></Suspense>} />
         <Route path="/evaluation/runs" element={<Suspense fallback={<PageFallback />}><EvaluationRunsPage /></Suspense>} />
         <Route path="/evaluation/runs/:runId" element={<Suspense fallback={<PageFallback />}><EvaluationRunDetailPage /></Suspense>} />

@@ -83,7 +83,13 @@ class RAGQueryRequest(BaseModel):
 
     role: Literal["admin", "customer"] = Field(
         default="admin",
-        description="Rol del usuario. Afecta visibilidad de datos y permisos SQL.",
+        deprecated=True,
+        description=(
+            "DEPRECATED. La autorización se deriva exclusivamente de la "
+            "identidad autenticada (Bearer). Este campo solo puede DEGRADAR "
+            "el rol efectivo (admin→customer); nunca elevarlo. Será eliminado "
+            "en una futura versión del contrato."
+        ),
     )
 
     metadata_filters: dict[str, str] | None = Field(

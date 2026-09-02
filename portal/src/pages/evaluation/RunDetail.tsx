@@ -39,6 +39,8 @@ export default function EvaluationRunDetailPage() {
   const { runId } = useParams();
   const { session } = useAuth();
   const [data, setData] = useState<RunDetail | null>(null);
+  const [failures, setFailures] = useState<{ case_id: string; question: string; answer: string | null; score: number | null; hallucination_rate: number | null; reasons: string[] }[]>([]);
+  const [showFailures, setShowFailures] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -51,6 +53,11 @@ export default function EvaluationRunDetailPage() {
             organizationId: session.organizationId,
           })
         );
+        const f = await api<{ failures: { case_id: string; question: string; answer: string | null; score: number | null; hallucination_rate: number | null; reasons: string[] }[] }>(
+          `/api/v1/eval/runs/${runId}/failures`,
+          { token: session.token, organizationId: session.organizationId }
+        );
+        setFailures(f.failures || []);
         setError("");
       } catch (err) {
         setError(err instanceof Error ? err.message : "Error cargando el run");
@@ -89,7 +96,39 @@ export default function EvaluationRunDetailPage() {
       <ErrorInline message={error} />
       {!data && !error && <SkeletonBlock rows={6} />}
       {data && (
-        <>
+        <>          <div className="panel mb-6">
+            <button
+              type="button"
+              className="btn btn-ghost min-h-9 text-xs"
+              onClick={() => setShowFailures((v) => !v)}
+            >
+              {showFailures ? "Ocultar" : "Ver"} fallos ({failures.length})
+            </button>
+            {showFailures && (
+              <div className="mt-3">
+                {failures.length === 0 ? (
+                  <p className="text-sm text-muted">Sin casos bajo los thresholds (score &lt; 60, hallucination &gt; 0.3).</p>
+                ) : (
+                  <ul className="space-y-3">
+                    {failures.map((f, i) => (
+                      <li key={f.case_id || i} className="rounded-md border border-border bg-soft p-3">
+                        <p className="text-sm font-medium text-text">{f.question}</p>
+                        {f.reasons.map((r, j) => (
+                          <p key={j} className="mt-1 text-xs text-danger">{r}</p>
+                        ))}
+                        {f.answer && (
+                          <details className="mt-2">
+                            <summary className="cursor-pointer text-xs text-accent">Respuesta del run</summary>
+                            <p className="mt-1 whitespace-pre-wrap text-xs text-muted">{f.answer}</p>
+                          </details>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
           <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {metricCards.map((card) => (
               <StatCard key={card.key} label={card.label} value={num(q[card.key])} />

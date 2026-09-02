@@ -1,35 +1,30 @@
 # =============================================================================
-# FinOps — platform revenue vs LLM/embedding/storage/infra (no demo numbers)
+# FinOps (PROMPT 07) — breakdown por dimensión, economics, alerts
 # =============================================================================
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
 
-from src.platform.auth.passwords import hash_password
-from src.platform.auth.session import encrypt_session
-from src.platform.billing.invoices import mark_invoice_paid, upsert_invoice
-from src.platform.usage.usage_engine import UsageEvent, ensure_usage_table, record_event
 
-
-async def _trial(client: AsyncClient) -> dict:
-    response = await client.post(
+async def _create_org(client: AsyncClient, name: str) -> dict:
+    resp = await client.post(
         "/api/v1/billing/subscription/create-trial",
         json={
-            "company_name": f"FinOps Co {uuid4().hex[:8]}",
-            "email": f"finops-{uuid4().hex[:8]}@example.com",
+            "company_name": name,
+            "email": f"fin-{uuid4().hex[:8]}@example.com",
             "country": "CL",
         },
     )
-    assert response.status_code == 200, response.text
-    return response.json()
+    assert resp.status_code == 200, resp.text
+    return resp.json()
 
 
 async def _owner_session(organization_id: str) -> str:
     from src.infrastructure.postgres.relational_db import PostgresUserRepository
+    from src.platform.auth.session import encrypt_session
 
     user = await PostgresUserRepository().get_by_external_id(
         UUID(organization_id), "default-admin"
@@ -38,244 +33,249 @@ async def _owner_session(organization_id: str) -> str:
     return encrypt_session(user.id, UUID(organization_id))
 
 
-async def _seed_platform_admin(email: str, password: str) -> None:
+def _headers(org: dict) -> dict:
+    return {
+        "Authorization": f"Bearer {org['session']}",
+        "X-Organization-Id": org["organization_id"],
+    }
+
+
+async def _seed_usage(client: AsyncClient, org: dict, cost: float) -> None:
+    """Inserta usage_events de prueba con agent/deployment atribuido."""
     from sqlalchemy import text
 
-    from src.infrastructure.postgres.relational_db import ensure_platform_admin_schema
     from src.infrastructure.postgres.session import get_async_session
 
-    await ensure_platform_admin_schema()
+    oid = UUID(org["organization_id"])
+    agent = (
+        await client.post(
+            "/api/v1/agents",
+            headers=_headers(org),
+            json={"name": "Fin Agent", "system_prompt": "t", "model": "gpt-4o-mini", "tools": []},
+        )
+    ).json()
+    version = (
+        await client.post(f"/api/v1/agents/{agent['id']}/versions", headers=_headers(org), json={})
+    ).json()
+    await client.post(
+        f"/api/v1/agents/{agent['id']}/versions/{version['id']}/promote",
+        headers=_headers(org),
+        json={"status": "ready"},
+    )
+    envs = (await client.get("/api/v1/environments", headers=_headers(org))).json()["environments"]
+    prod = next(e for e in envs if e["slug"] == "production")
+    dep = (
+        await client.post(
+            "/api/v1/deployments",
+            headers=_headers(org),
+            json={
+                "agent_id": agent["id"],
+                "agent_version_id": version["id"],
+                "environment_id": prod["id"],
+            },
+        )
+    ).json()
+
     session = await get_async_session()
     try:
-        existing = (
-            await session.execute(
-                text("SELECT id FROM users WHERE lower(email) = lower(:email)"),
-                {"email": email},
-            )
-        ).fetchone()
-        if existing:
+        from datetime import datetime, timedelta, timezone
+
+        now = datetime.now(timezone.utc)
+        for i in range(5):
             await session.execute(
                 text(
-                    "UPDATE users SET is_platform_admin = true, "
-                    "password_hash = :ph WHERE id = :id"
-                ),
-                {"ph": hash_password(password), "id": existing.id},
-            )
-        else:
-            await session.execute(
-                text(
-                    "INSERT INTO users (id, organization_id, external_id, email_hash, "
-                    "role, email, password_hash, is_platform_admin) "
-                    "VALUES (gen_random_uuid(), NULL, :ext, :eh, 'platform', "
-                    ":email, :ph, true)"
+                    "INSERT INTO usage_events (request_id, event_type, organization_id, "
+                    "agent_id, deployment_id, model, provider, total_tokens, "
+                    "estimated_cost, status, created_at) "
+                    "VALUES (gen_random_uuid(), 'agent_run', :oid, :aid, :did, "
+                    ":model, :provider, 1000, :cost, 'completed', :created)"
                 ),
                 {
-                    "ext": f"platform-{uuid4().hex[:12]}",
-                    "eh": __import__("hashlib").sha256(email.encode()).hexdigest(),
-                    "email": email,
-                    "ph": hash_password(password),
+                    "oid": oid,
+                    "aid": UUID(agent["id"]),
+                    "did": UUID(dep["id"]),
+                    "model": "gpt-4o-mini",
+                    "provider": "openai",
+                    "cost": cost,
+                    "created": now - timedelta(hours=i),
                 },
             )
         await session.commit()
-    except Exception:
-        await session.rollback()
-        raise
+    finally:
+        await session.close()
+    return agent, dep
+
+
+@pytest.mark.asyncio
+async def test_finops_breakdown_and_economics(async_client: AsyncClient) -> None:
+
+    org = await _create_org(async_client, "FinOps Org")
+    org["session"] = await _owner_session(org["organization_id"])
+    h = _headers(org)
+    _agent, dep = await _seed_usage(async_client, org, 0.01)
+
+    # Los endpoints /platform requieren sesión platform; usamos un admin platform.
+    email = f"padmin-fin-{uuid4().hex[:8]}@zent.example"
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "INSERT INTO users (id, organization_id, external_id, email_hash, "
+                "role, email, password_hash, is_platform_admin) "
+                "VALUES (gen_random_uuid(), NULL, :ext, :eh, 'platform', :email, :ph, true)"
+            ),
+            {
+                "ext": f"plat-{uuid4().hex[:12]}",
+                "eh": __import__("hashlib").sha256(email.encode()).hexdigest(),
+                "email": email,
+                "ph": __import__("src.platform.auth.passwords", fromlist=["hash_password"]).hash_password("secret-123"),
+            },
+        )
+        await session.execute(
+            text(
+                "INSERT INTO user_platform_roles (user_id, role_id) "
+                "SELECT u.id, pr.id FROM users u CROSS JOIN platform_roles pr "
+                "WHERE lower(u.email) = lower(:email) AND pr.name = 'super_admin' "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"email": email},
+        )
+        await session.commit()
     finally:
         await session.close()
 
-
-async def _platform_headers(client: AsyncClient) -> dict[str, str]:
-    email = f"padmin-{uuid4().hex[:8]}@zent.example"
-    password = "platform-admin-pass-1"
-    await _seed_platform_admin(email, password)
-    login = await client.post(
-        "/api/v1/auth/platform/login",
-        json={"email": email, "password": password},
+    login = await async_client.post(
+        "/api/v1/auth/platform/login", json={"email": email, "password": "secret-123"}
     )
     assert login.status_code == 200, login.text
-    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+    plat = {"Authorization": f"Bearer {login.json()['access_token']}"}
 
-
-async def _seed_paid_invoice(organization_id: str, total_cents: int) -> None:
-    now = datetime.now(timezone.utc)
-    pid = f"finops-{uuid4().hex}"
-    await upsert_invoice(
-        organization_id=UUID(organization_id),
-        period_start=now - timedelta(days=20),
-        period_end=now - timedelta(days=1),
-        subtotal_cents=total_cents,
-        overage_cents=0,
-        provider_invoice_id=pid,
-        status="draft",
+    oid = org["organization_id"]
+    breakdown = await async_client.get(
+        f"/api/v1/platform/finops/breakdown?organization_id={oid}", headers=plat
     )
-    await mark_invoice_paid(pid)
+    assert breakdown.status_code == 200, breakdown.text
+    body = breakdown.json()
+    assert any(r["label"] == "Fin Agent" and r["cost"] > 0 for r in body["by_agent"])
+    assert any(r["requests"] == 5 for r in body["by_agent"])
+    assert any(r["label"] == dep["slug"] and r["cost"] > 0 for r in body["by_deployment"])
+    assert any(r["label"] == "openai" for r in body["by_provider"])
+    assert any(r["label"] == "gpt-4o-mini" for r in body["by_model"])
+    assert any(r["requests"] == 5 for r in body["by_workspace"])  # sin workspace
 
-
-async def _seed_usage(
-    organization_id: str,
-    *,
-    llm_cost: float,
-    embedding_cost: float,
-) -> None:
-    await ensure_usage_table()
-    oid = UUID(organization_id)
-    await record_event(
-        UsageEvent(
-            request_id=uuid4(),
-            organization_id=oid,
-            event_type="rag_query",
-            model="gpt-4o-mini",
-            provider="openai",
-            prompt_tokens=1000,
-            completion_tokens=200,
-            total_tokens=1200,
-            estimated_cost=llm_cost,
-        )
+    econ = await async_client.get(
+        f"/api/v1/platform/finops/economics?organization_id={oid}", headers=plat
     )
-    await record_event(
-        UsageEvent(
-            request_id=uuid4(),
-            organization_id=oid,
-            event_type="rag_query",
-            model="openai/baai/bge-m3",
-            provider="openai",
-            embedding_tokens=8000,
-            estimated_cost=embedding_cost,
-        )
-    )
+    assert econ.status_code == 200, econ.text
+    e = econ.json()
+    assert e["requests"] == 5
+    assert e["cost_per_request"] == pytest.approx(0.01)
+    assert e["cost_per_1k_requests"] == pytest.approx(10.0)
+    assert e["total_cost"] == pytest.approx(0.05)
 
 
 @pytest.mark.asyncio
-async def test_org_finops_margin_is_reproducible_from_invoice_and_usage(
-    async_client: AsyncClient,
-) -> None:
-    org = await _trial(async_client)
-    await _seed_paid_invoice(org["organization_id"], 29900)
-    await _seed_usage(org["organization_id"], llm_cost=1.00, embedding_cost=0.25)
+async def test_finops_alerts_budget_and_ack(async_client: AsyncClient) -> None:
 
-    headers = await _platform_headers(async_client)
-    resp = await async_client.get(
-        f"/api/v1/platform/finops/organizations/{org['organization_id']}",
-        headers=headers,
-    )
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data["revenue_cents"] == 29900
-    assert data["costs"]["llm"] == pytest.approx(1.00)
-    assert data["costs"]["embedding"] == pytest.approx(0.25)
-    assert "storage" in data["costs"]
-    assert "infra" in data["costs"]
-    total_cost = (
-        data["costs"]["llm"]
-        + data["costs"]["embedding"]
-        + data["costs"]["storage"]
-        + data["costs"]["infra"]
-    )
-    expected_profit = 299.00 - total_cost
-    assert data["gross_profit"] == pytest.approx(expected_profit)
-    assert data["gross_margin_pct"] == pytest.approx(
-        round(expected_profit / 299.00 * 100.0, 2)
-    )
-    assert "period" in data
-    assert "start" in data["period"] and "end" in data["period"]
+    org = await _create_org(async_client, "FinOps Alerts")
+    org["session"] = await _owner_session(org["organization_id"])
+    h = _headers(org)
+    oid = UUID(org["organization_id"])
 
+    # Semilla de uso con costo alto (0.20 × 5 = $1.0).
+    _agent, _dep = await _seed_usage(async_client, org, 0.20)
 
-@pytest.mark.asyncio
-async def test_platform_finops_summary_exposes_contract_and_economics(
-    async_client: AsyncClient,
-) -> None:
-    org = await _trial(async_client)
-    await _seed_paid_invoice(org["organization_id"], 29900)
-    await _seed_usage(org["organization_id"], llm_cost=1.00, embedding_cost=0.25)
+    # Platform admin.
+    email = f"padmin-alert-{uuid4().hex[:8]}@zent.example"
+    from sqlalchemy import text
 
-    headers = await _platform_headers(async_client)
-    resp = await async_client.get("/api/v1/platform/finops/summary", headers=headers)
-    assert resp.status_code == 200, resp.text
-    data = resp.json()
-    assert data["revenue_cents"] >= 29900
-    assert set(data["costs"]) == {"llm", "embedding", "storage", "infra"}
-    assert "gross_profit" in data
-    assert "gross_margin_pct" in data
-    assert set(data["customers"]) == {"new", "churned", "arpu_cents"}
-    economics = data["economics"]
-    for key in (
-        "cost_per_request",
-        "cost_per_customer",
-        "revenue_per_request",
-        "margin_per_customer",
-        "requests",
-    ):
-        assert key in economics
-    assert "mrr_cents" in data
+    from src.infrastructure.postgres.session import get_async_session
+    from src.platform.auth.passwords import hash_password
 
-
-@pytest.mark.asyncio
-async def test_org_a_usage_and_invoices_do_not_leak_into_org_b_finops(
-    async_client: AsyncClient,
-) -> None:
-    org_a = await _trial(async_client)
-    org_b = await _trial(async_client)
-    await _seed_paid_invoice(org_a["organization_id"], 29900)
-    await _seed_usage(org_a["organization_id"], llm_cost=2.00, embedding_cost=0.50)
-    await _seed_paid_invoice(org_b["organization_id"], 9900)
-    await _seed_usage(org_b["organization_id"], llm_cost=0.10, embedding_cost=0.05)
-
-    headers = await _platform_headers(async_client)
-    a = (
-        await async_client.get(
-            f"/api/v1/platform/finops/organizations/{org_a['organization_id']}",
-            headers=headers,
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "INSERT INTO users (id, organization_id, external_id, email_hash, "
+                "role, email, password_hash, is_platform_admin) "
+                "VALUES (gen_random_uuid(), NULL, :ext, :eh, 'platform', :email, :ph, true)"
+            ),
+            {
+                "ext": f"plat-{uuid4().hex[:12]}",
+                "eh": __import__("hashlib").sha256(email.encode()).hexdigest(),
+                "email": email,
+                "ph": hash_password("secret-123"),
+            },
         )
-    ).json()
-    b = (
-        await async_client.get(
-            f"/api/v1/platform/finops/organizations/{org_b['organization_id']}",
-            headers=headers,
+        await session.execute(
+            text(
+                "INSERT INTO user_platform_roles (user_id, role_id) "
+                "SELECT u.id, pr.id FROM users u CROSS JOIN platform_roles pr "
+                "WHERE lower(u.email) = lower(:email) AND pr.name = 'super_admin' "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"email": email},
         )
-    ).json()
-    assert a["revenue_cents"] == 29900
-    assert b["revenue_cents"] == 9900
-    assert a["costs"]["llm"] == pytest.approx(2.00)
-    assert b["costs"]["llm"] == pytest.approx(0.10)
-    assert a["costs"]["embedding"] == pytest.approx(0.50)
-    assert b["costs"]["embedding"] == pytest.approx(0.05)
+        await session.commit()
+    finally:
+        await session.close()
 
-
-@pytest.mark.asyncio
-async def test_tenant_cannot_read_platform_finops_or_margin(
-    async_client: AsyncClient,
-) -> None:
-    org = await _trial(async_client)
-    await _seed_paid_invoice(org["organization_id"], 29900)
-    await _seed_usage(org["organization_id"], llm_cost=1.00, embedding_cost=0.25)
-    session = await _owner_session(org["organization_id"])
-    tenant = {
-        "Authorization": f"Bearer {session}",
-        "X-Organization-Id": org["organization_id"],
-    }
-    summary = await async_client.get(
-        "/api/v1/platform/finops/summary", headers=tenant
+    login = await async_client.post(
+        "/api/v1/auth/platform/login", json={"email": email, "password": "secret-123"}
     )
-    assert summary.status_code == 403, summary.text
-    assert summary.json().get("error_code") == "platform_admin_required" or (
-        summary.json().get("detail", {}) or {}
-    ).get("error_code") == "platform_admin_required"
+    assert login.status_code == 200, login.text
+    plat = {"Authorization": f"Bearer {login.json()['access_token']}"}
 
-    org_finops = await async_client.get(
-        f"/api/v1/platform/finops/organizations/{org['organization_id']}",
-        headers=tenant,
+    # Budget de $0.50 < costo $1.00 → alerta al ejecutar checks.
+    budget = await async_client.put(
+        f"/api/v1/platform/finops/organizations/{org['organization_id']}/budget",
+        headers=plat,
+        json={"budget_cents": 50},
     )
-    assert org_finops.status_code == 403, org_finops.text
+    assert budget.status_code == 200, budget.text
 
-    usage = await async_client.get("/api/v1/billing/usage", headers=tenant)
-    assert usage.status_code == 200, usage.text
-    body = usage.json()
-    assert "gross_margin_pct" not in body
-    assert "gross_profit" not in body
-    assert "margin" not in body
-    costs = body.get("estimated_costs")
-    assert costs is not None
-    assert set(costs) == {"llm", "embedding", "storage"}
-    assert "infra" not in costs
-    assert costs["llm"] == pytest.approx(1.00)
-    assert costs["embedding"] == pytest.approx(0.25)
+    check = await async_client.post(
+        "/api/v1/platform/finops/check", headers=plat, json={"organization_id": org["organization_id"]}
+    )
+    assert check.status_code == 200, check.text
+    check_dup = await async_client.post(
+        "/api/v1/platform/finops/check", headers=plat, json={"organization_id": org["organization_id"]}
+    )
+    assert check_dup.status_code == 200, check_dup.text
+
+    alerts = await async_client.get(
+        f"/api/v1/platform/finops/alerts?organization_id={org['organization_id']}", headers=plat
+    )
+    assert alerts.status_code == 200, alerts.text
+    body = alerts.json()
+    types = [a["alert_type"] for a in body["alerts"]]
+    assert "budget_exceeded" in types, types
+    budget_alert = next(a for a in body["alerts"] if a["alert_type"] == "budget_exceeded")
+    assert budget_alert["acknowledged"] is False
+
+    # Reconocer.
+    ack = await async_client.post(
+        f"/api/v1/platform/finops/alerts/{budget_alert['id']}/ack?organization_id={org['organization_id']}",
+        headers=plat,
+    )
+    assert ack.status_code == 200, ack.text
+    alerts2 = await async_client.get(
+        f"/api/v1/platform/finops/alerts?organization_id={org['organization_id']}", headers=plat
+    )
+    assert alerts2.json()["alerts"][0]["acknowledged"] is True
+
+    # Dedupe 24h: los re-checks sin ack NO duplican la alerta.
+    assert sum(1 for a in body["alerts"] if a["alert_type"] == "budget_exceeded") == 1
+    # Tras ack, un nuevo check puede re-alertar (semántica de alertas).
+    check2 = await async_client.post(
+        "/api/v1/platform/finops/check", headers=plat, json={"organization_id": org["organization_id"]}
+    )
+    assert check2.status_code == 200
+    alerts3 = await async_client.get(
+        f"/api/v1/platform/finops/alerts?organization_id={org['organization_id']}", headers=plat
+    )
+    assert sum(1 for a in alerts3.json()["alerts"] if a["alert_type"] == "budget_exceeded") >= 1

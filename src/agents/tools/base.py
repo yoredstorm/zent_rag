@@ -24,6 +24,7 @@ class ToolContext:
     permissions: frozenset[str] = frozenset()
     conversation_id: UUID | None = None
     org_config: dict = field(default_factory=dict)
+    agent_config: dict = field(default_factory=dict)
 
 
 @dataclass(kw_only=True)

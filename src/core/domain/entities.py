@@ -119,12 +119,13 @@ class Project:
 
 @dataclass(kw_only=True, frozen=True)
 class KnowledgeBase:
-    """Base de conocimiento — fuentes vectorizadas en Qdrant."""
+    """Base de conocimiento - fuentes vectorizadas en Qdrant."""
 
     id: UUID
     organization_id: UUID
     name: str
     project_id: UUID | None = None
+    workspace_id: UUID | None = None
     description: str | None = None
     status: str = "active"
     embedding_model: str | None = None
@@ -217,6 +218,17 @@ class SourceDocument:
     last_seen_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class AgentStatus(StrEnum):
+    """Ciclo de vida del agente (computado por el servicio)."""
+
+    DRAFT = "draft"
+    CONFIGURED = "configured"
+    EVALUATING = "evaluating"
+    READY = "ready"
+    DEPLOYED = "deployed"
+    ARCHIVED = "archived"
+
+
 @dataclass(kw_only=True, frozen=True)
 class Agent:
     """Agente conversacional configurado por la organización."""
@@ -225,12 +237,104 @@ class Agent:
     organization_id: UUID
     name: str
     project_id: UUID | None = None
+    workspace_id: UUID | None = None
     description: str | None = None
     system_prompt: str | None = None
     tools: list[str] = field(default_factory=list)
     model: str | None = None
     config_json: dict = field(default_factory=dict)
+    status: AgentStatus = AgentStatus.DRAFT
     is_active: bool = True
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class WorkspaceStatus(StrEnum):
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+@dataclass(kw_only=True, frozen=True)
+class Workspace:
+    """Espacio de trabajo de la organización (agrupador de agentes/KBs/connectors)."""
+
+    id: UUID
+    organization_id: UUID
+    name: str
+    slug: str
+    description: str | None = None
+    status: WorkspaceStatus = WorkspaceStatus.ACTIVE
+    created_by: UUID | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class AgentVersionStatus(StrEnum):
+    """Estados del ciclo de vida de una versión de agente."""
+
+    DRAFT = "draft"
+    READY = "ready"
+    STAGING = "staging"
+    PRODUCTION = "production"
+    ARCHIVED = "archived"
+
+
+@dataclass(kw_only=True, frozen=True)
+class AgentVersion:
+    """Snapshot inmutable de la configuración de un agente.
+
+    Congela prompt, modelo, tools y config_json al momento de crearse.
+    La ejecución resuelve la configuración desde aquí (nunca de la fila
+    mutable `agents` cuando existe una versión explícita).
+    """
+
+    id: UUID
+    organization_id: UUID
+    agent_id: UUID
+    version_number: int
+    status: AgentVersionStatus = AgentVersionStatus.DRAFT
+    config_snapshot: dict = field(default_factory=dict)
+    notes: str | None = None
+    created_by: UUID | None = None
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class DeploymentStatus(StrEnum):
+    """Estados de un deployment de agente a un entorno."""
+
+    PENDING = "pending"
+    DEPLOYING = "deploying"
+    HEALTHY = "healthy"
+    DEGRADED = "degraded"
+    FAILED = "failed"
+    ROLLED_BACK = "rolled_back"
+
+
+@dataclass(kw_only=True, frozen=True)
+class Environment:
+    """Entorno de despliegue (development | staging | production)."""
+
+    id: UUID
+    organization_id: UUID
+    name: str
+    slug: str
+    is_default: bool = False
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(kw_only=True, frozen=True)
+class Deployment:
+    """Deployment: versión concreta de un agente en un entorno."""
+
+    id: UUID
+    organization_id: UUID
+    environment_id: UUID
+    agent_id: UUID
+    agent_version_id: UUID
+    slug: str
+    status: DeploymentStatus = DeploymentStatus.PENDING
+    endpoint: str | None = None
+    deployed_by: UUID | None = None
+    deployed_at: datetime | None = None
+    rollback_from_id: UUID | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -243,6 +347,7 @@ class Connector:
     name: str
     type: str  # 'sql' | 'api' | 'files'
     project_id: UUID | None = None
+    workspace_id: UUID | None = None
     config_json: dict = field(default_factory=dict)
     status: str = "active"
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -393,6 +498,8 @@ class ApiKey:
     last_used_at: datetime | None = None
     expires_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    ip_allowlist: list[str] = field(default_factory=list)
+    rate_limit_per_minute: int | None = None
 
 
 API_TOKEN_PREFIXES: tuple[str, ...] = (
@@ -451,6 +558,7 @@ class TenantContext:
     auth_type: str = "api_token"  # api_token | portal_session | platform_session
     subscription_id: UUID | None = None
     token_id: UUID | None = None
+    partner_id: UUID | None = None  # si la key pertenece a un partner (rev-share)
 
     @property
     def organization_id(self) -> UUID:

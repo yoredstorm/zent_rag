@@ -4,7 +4,7 @@ import json
 from typing import Literal
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.infrastructure.observability.logging_config import get_logger
@@ -790,3 +790,121 @@ def _require_admin_billing(request: Request) -> None:
     from src.api.security import require_platform_admin
 
     require_platform_admin(request)
+
+# ------------------------------------------------------------------ PROMPT 35
+# Self-Service Billing & Invoices v2
+
+@router.get("/invoices", summary="Facturas del tenant")
+async def tenant_list_invoices(request: Request, limit: int = 50):
+    from src.platform.billing.invoices import list_invoices
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "billing:read")
+    return await list_invoices(ctx.organization_id, limit)
+
+
+@router.post("/invoices/generate", summary="Generar factura del mes anterior")
+async def tenant_generate_invoice(request: Request):
+    from src.platform.billing.invoices import generate_invoice
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "billing:read")
+    return await generate_invoice(ctx.organization_id, 1)
+
+
+@router.get("/invoices/{invoice_id}", summary="Detalle de factura con items")
+async def tenant_invoice_detail(invoice_id: str, request: Request):
+    from src.platform.billing.invoices import get_invoice
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "billing:read")
+    invoice = await get_invoice(UUID(invoice_id))
+    if invoice is None or UUID(invoice["organization_id"]) != ctx.organization_id:
+        raise HTTPException(404, "Invoice not found")
+    return invoice
+
+
+@router.get("/invoices/{invoice_id}/csv", summary="Descargar CSV")
+async def tenant_invoice_csv(invoice_id: str, request: Request):
+    from src.platform.billing.invoices import invoice_csv
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "billing:read")
+    content = await invoice_csv(UUID(invoice_id))
+    if content is None:
+        raise HTTPException(404, "Invoice not found")
+    return Response(content=content, media_type="text/csv", headers={
+        "Content-Disposition": f'attachment; filename="invoice-{invoice_id[:8]}.csv"'
+    })
+
+
+@router.get("/invoices/{invoice_id}/pdf", summary="Descargar PDF")
+async def tenant_invoice_pdf(invoice_id: str, request: Request):
+    from src.platform.billing.invoices import invoice_pdf
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "billing:read")
+    content = await invoice_pdf(UUID(invoice_id))
+    if content is None:
+        raise HTTPException(404, "Invoice not found")
+    return Response(content=content, media_type="application/pdf", headers={
+        "Content-Disposition": f'attachment; filename="invoice-{invoice_id[:8]}.pdf"'
+    })
+
+
+@router.post("/invoices/{invoice_id}/pay", summary="Simular pago (webhook interno)")
+async def tenant_invoice_pay(invoice_id: str, request: Request):
+    from src.platform.billing.invoices import get_invoice, handle_payment_webhook
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "billing:write")
+    invoice = await get_invoice(UUID(invoice_id))
+    if invoice is None or UUID(invoice["organization_id"]) != ctx.organization_id:
+        raise HTTPException(404, "Invoice not found")
+    result = await handle_payment_webhook({
+        "type": "payment_intent.succeeded",
+        "data": {
+            "object": {
+                "id": f"pi_sim_{uuid4().hex[:12]}",
+                "amount": invoice["total_cents"],
+                "currency": "usd",
+                "metadata": {"invoice_id": str(invoice["id"])},
+            }
+        },
+    })
+    return {"status": "paid", "webhook": result["status"]}
+
+
+@router.get("/billing-profile", summary="Perfil de facturación")
+async def tenant_billing_profile_get(request: Request):
+    from src.platform.billing.invoices import get_billing_profile
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "billing:read")
+    profile = await get_billing_profile(ctx.organization_id)
+    if profile is None:
+        return {"profile": None}
+    return {"profile": profile}
+
+
+@router.put("/billing-profile", summary="Actualizar perfil de facturación")
+async def tenant_billing_profile_put(body: BillingProfileIn, request: Request):
+    from src.platform.billing.invoices import upsert_billing_profile
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "billing:write")
+    profile = await upsert_billing_profile(ctx.organization_id, body.model_dump())
+    return {"profile": profile}
+
+
+class BillingProfileIn(BaseModel):
+    legal_name: str | None = Field(default=None, max_length=200)
+    tax_id: str | None = Field(default=None, max_length=60)
+    address_line1: str | None = Field(default=None, max_length=200)
+    address_line2: str | None = Field(default=None, max_length=200)
+    city: str | None = Field(default=None, max_length=100)
+    region: str | None = Field(default=None, max_length=100)
+    postal_code: str | None = Field(default=None, max_length=30)
+    country: str | None = Field(default=None, max_length=60)
+    default_payment_method: str | None = Field(default=None, max_length=20)
+    card_last4: str | None = Field(default=None, max_length=4)

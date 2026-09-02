@@ -55,11 +55,13 @@ class AgentRunRequest:
     agent: Agent
     message: str
     user_id: UUID | None = None
+    deployment_id: UUID | None = None
     role: str = "admin"
     conversation_id: UUID | None = None
     permissions: frozenset[str] = frozenset()
     org_config: dict = field(default_factory=dict)
     on_step: object | None = None  # callback opcional (streaming)
+    trace_id: str | None = None  # correlación con observabilidad
 
 
 @dataclass(kw_only=True)
@@ -71,8 +73,10 @@ class AgentRunResult:
     answer: str
     message: str = ""
     user_id: UUID | None = None
+    deployment_id: UUID | None = None
     role: str = "admin"
     steps: list[dict] = field(default_factory=list)
+    spans: list[dict] = field(default_factory=list)
     total_latency_ms: float = 0.0
     total_tokens: int = 0
     cost: float = 0.0
@@ -106,6 +110,28 @@ def _effective_tools(agent: Agent) -> list[str]:
     if security.get("api_calls_enabled") is False:
         tools = [name for name in tools if name != "call_api"]
     return tools
+
+
+async def _circuit_check(config: dict, organization_id: UUID) -> None:
+    """Circuit breaker: si el modelo está OPEN (cooldown activo), salta al
+    siguiente candidato del router; si no hay, marca _circuit_open."""
+    try:
+        from src.platform.modelhealth.guardrails import check_circuit
+
+        circuit = await check_circuit(str(config["model"]))
+        if circuit["state"] == "open":
+            candidates = config.get("_router_candidates") or [config["model"]]
+            fallback = next(
+                (c for c in candidates if c != config["model"]),
+                None,
+            )
+            if fallback is not None:
+                config["model"] = fallback
+                config["_circuit_fallback"] = str(circuit["model"])
+            else:
+                config["_circuit_open"] = True
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Circuit check failed", error=str(exc)[:150])
 
 
 class AgentRuntime:
@@ -154,10 +180,132 @@ class AgentRuntime:
         start = time.perf_counter()
         agent = request.agent
         config = self._agent_config(agent)
+        # Model Health: circuit breaker por modelo (auto-fallback a candidatos).
+        if config.get("model") == "zent-routed":
+            try:
+                from src.platform.model_gateway.gateway import resolve_models
+
+                candidates = await resolve_models(agent.organization_id)
+                if candidates:
+                    config["model"] = candidates[0]
+                    config["_router_candidates"] = candidates
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Model routing resolution failed", error=str(exc)[:150])
+                config["_router_candidates"] = [config["model"]]
+        await _circuit_check(config, agent.organization_id)
+        budget_status = {"allowed": True, "throttle_factor": 1.0}
+        try:
+            from src.platform.modelhealth.guardrails import model_budget_status
+
+            budget_status = await model_budget_status(
+                agent.organization_id, str(config["model"])
+            )
+            if not budget_status["allowed"]:
+                result = AgentRunResult(
+                    run_id=uuid4(),
+                    agent_id=agent.id,
+                    organization_id=agent.organization_id,
+                    status="error",
+                    answer="",
+                    message=request.message,
+                    user_id=request.user_id,
+                    role=request.role,
+                    steps=[
+                        {
+                            "type": "guardrail",
+                            "detail": "model_budget_exceeded: "
+                            f"{budget_status.get('usage_pct', 0)}% del budget",
+                        }
+                    ],
+                )
+                result.total_latency_ms = (time.perf_counter() - start) * 1000
+                return result
+            factor = float(budget_status.get("throttle_factor", 1.0))
+            if factor < 1.0:
+                config["max_tokens"] = max(
+                    int(config["max_tokens"] * factor), 128
+                )
+                config["_budget_throttle"] = factor
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Model budget check failed", error=str(exc)[:150])
+
+        # Circuit abierto y sin candidato de respaldo → run bloqueado.
+        if config.get("_circuit_open"):
+            result = AgentRunResult(
+                run_id=uuid4(),
+                agent_id=agent.id,
+                organization_id=agent.organization_id,
+                status="error",
+                answer="",
+                message=request.message,
+                user_id=request.user_id,
+                role=request.role,
+                steps=[
+                    {
+                        "type": "guardrail",
+                        "detail": f"model_circuit_open: {config['model']}",
+                    }
+                ],
+            )
+            result.total_latency_ms = (time.perf_counter() - start) * 1000
+            return result
+
         org_config = dict(request.org_config or {})
         kb_ids = (agent.config_json or {}).get("knowledge_base_ids") or []
         if kb_ids:
             org_config["knowledge_base_ids"] = [str(item) for item in kb_ids]
+
+        # Inference Proxy: admisión con slot de capacidad y cola por plan.
+        proxy_wait_ms = 0.0
+        _proxy_acquired = False
+        _proxy_model = str(config["model"])
+        try:
+            from src.platform.proxy.inference_proxy import (
+                acquire_slot,
+                admit,
+                dequeue,
+                release_slot,
+            )
+
+            plan = "trial"
+            try:
+                from sqlalchemy import text as _sql_text
+
+                from src.infrastructure.postgres.session import (
+                    get_async_session,
+                )
+
+                session = await get_async_session()
+                try:
+                    plan = (
+                        await session.execute(
+                            _sql_text(
+                                "SELECT p.name FROM subscriptions s "
+                                "JOIN plans p ON p.id = s.plan_id "
+                                "WHERE s.organization_id = :oid "
+                                "AND s.status IN ('trialing', 'active') "
+                                "ORDER BY s.created_at DESC LIMIT 1"
+                            ),
+                            {"oid": agent.organization_id},
+                        )
+                    ).scalar() or "trial"
+                finally:
+                    await session.close()
+            except Exception:  # noqa: BLE001
+                plan = "trial"
+            admission = await admit(plan, _proxy_model)
+            if not admission["admitted"]:
+                wait = min(float(admission["wait_ms"]), 2000.0)
+                if wait > 0:
+                    await asyncio.sleep(wait / 1000)
+                proxy_wait_ms = wait
+                if await acquire_slot(_proxy_model):
+                    admission["admitted"] = True
+                else:
+                    await dequeue(plan, _proxy_model)
+            _proxy_acquired = bool(admission["admitted"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Proxy admission failed", error=str(exc)[:150])
         ctx = ToolContext(
             tenant_id=agent.organization_id,
             user_id=request.user_id,
@@ -165,6 +313,7 @@ class AgentRuntime:
             permissions=request.permissions,
             conversation_id=request.conversation_id,
             org_config=org_config,
+            agent_config=dict(agent.config_json or {}),
         )
 
         result = AgentRunResult(
@@ -178,6 +327,31 @@ class AgentRuntime:
             role=request.role,
             injection_detected=has_injection_indicators(request.message),
         )
+
+        # Inference Proxy: rate limit por deployment.
+        if request.deployment_id is not None:
+            try:
+                from src.platform.proxy.inference_proxy import (
+                    enforce_deployment_rate_limit,
+                )
+
+                if not await enforce_deployment_rate_limit(
+                    request.deployment_id, "/agents/execute", None
+                ):
+                    result.status = "error"
+                    result.answer = ""
+                    result.steps.append(
+                        {
+                            "type": "guardrail",
+                            "detail": "deployment_rate_exceeded: límite del deployment",
+                        }
+                    )
+                    result.total_latency_ms = (time.perf_counter() - start) * 1000
+                    return result
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Deployment rate limit check failed", error=str(exc)[:150]
+                )
 
         # Usage & Cost Engine: pre-flight de quotas tokens/cost.
         try:
@@ -204,6 +378,18 @@ class AgentRuntime:
                 {"type": "guardrail", "detail": f"quota_exceeded: {quota_exc}"}
             )
             result.total_latency_ms = (time.perf_counter() - start) * 1000
+            try:
+                from src.platform.notifyv2.notifications import notify
+
+                await notify(
+                    agent.organization_id,
+                    "quota.exceeded",
+                    "Cuota mensual agotada",
+                    f"Se bloqueó un run: {quota_exc}",
+                    {"agent_id": str(agent.id)},
+                )
+            except Exception:  # noqa: BLE001
+                pass
             return result
 
         try:
@@ -226,19 +412,119 @@ class AgentRuntime:
             logger.warning(
                 "Agent run hit execution time limit", agent_id=str(agent.id)
             )
+            try:
+                from src.platform.modelhealth.guardrails import record_failure
+
+                await record_failure(str(config["model"]))
+            except Exception:  # noqa: BLE001
+                pass
         except Exception as exc:
             result.status = "error"
             result.answer = ""
             result.steps.append({"type": "error", "detail": str(exc)})
             logger.error("Agent run failed", agent_id=str(agent.id), error=str(exc))
+            try:
+                from src.platform.modelhealth.guardrails import record_failure
+
+                await record_failure(str(config["model"]))
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            try:
+                if result.status == "completed":
+                    from src.platform.modelhealth.guardrails import record_success
+
+                    await record_success(str(config["model"]))
+            except Exception:  # noqa: BLE001
+                pass
 
         result.total_latency_ms = (time.perf_counter() - start) * 1000
+
+        # Observabilidad: registrar trace + spans (fail-soft).
+        try:
+            from src.platform.tracing.traces import record_trace
+
+            trace_id = request.trace_id or str(result.run_id)
+            result.spans.append(
+                {
+                    "stage": "total",
+                    "name": "agent_run",
+                    "duration_ms": round(result.total_latency_ms, 2),
+                    "tokens": result.total_tokens,
+                    "started_ms": 0,
+                }
+            )
+            await record_trace(
+                organization_id=agent.organization_id,
+                trace_id=trace_id,
+                status=result.status,
+                model=str(config["model"]),
+                input_text=request.message,
+                output_text=result.answer,
+                error=(
+                    next(
+                        (s.get("detail") for s in result.steps if s.get("type") in ("error", "guardrail")),
+                        None,
+                    )
+                    if result.status != "completed"
+                    else None
+                ),
+                total_latency_ms=result.total_latency_ms,
+                total_tokens=result.total_tokens,
+                cost=result.cost,
+                spans=result.spans,
+                agent_id=agent.id,
+                deployment_id=request.deployment_id,
+                run_id=result.run_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Trace record failed", error=str(exc)[:150])
+
+        # Inference Proxy: liberar slot de concurrencia.
+        try:
+            if _proxy_acquired:
+                from src.platform.proxy.inference_proxy import release_slot
+
+                await release_slot(_proxy_model)
+        except Exception:  # noqa: BLE001
+            pass
 
         # Usage & Cost Engine: evento idempotente por run_id.
         try:
             await self._record_usage_event(request, config, result)
         except Exception as exc:
             logger.warning("Agent usage event record failed", error=str(exc))
+
+        # Inference Proxy: log de inferencia (fail-soft).
+        try:
+            from src.platform.billing.pricing import extract_provider
+            from src.platform.proxy.inference_proxy import log_inference
+
+            region = "unknown"
+            try:
+                from src.platform.edge.multiregion import resolve_region
+
+                region = (await resolve_region(agent.organization_id))["region"]
+            except Exception:  # noqa: BLE001
+                pass
+            await log_inference(
+                organization_id=agent.organization_id,
+                deployment_id=request.deployment_id,
+                agent_id=agent.id,
+                model=str(config["model"]),
+                backend=extract_provider(str(config["model"]))
+                if str(config["model"]) != "zent-routed"
+                else "proxy",
+                status=result.status,
+                prompt_tokens=result.total_tokens,
+                completion_tokens=result.total_tokens // 2,
+                latency_ms=result.total_latency_ms,
+                queue_wait_ms=proxy_wait_ms,
+                cost=result.cost,
+                region=region,
+            )
+        except Exception as exc:
+            logger.warning("Inference log failed", error=str(exc)[:150])
 
         return result
 
@@ -263,6 +549,7 @@ class AgentRuntime:
             organization_id=request.agent.organization_id,
             user_id=request.user_id,
             agent_id=request.agent.id,
+              deployment_id=request.deployment_id,
             event_type="agent_run",
             model=config["model"],
             provider=extract_provider(str(config["model"])),
@@ -272,6 +559,8 @@ class AgentRuntime:
             status=result.status,
             estimated_cost=result.cost,
             actual_cost=result.cost,
+            cost_tags=dict((request.agent.config_json or {}).get("cost_tags") or {}),
+            trace_id=request.trace_id or str(result.run_id),
         )
         inserted = await record_event(event)
         if inserted:
@@ -324,18 +613,54 @@ class AgentRuntime:
                 + _NEXT_STEP_TEMPLATE.format(history="\n".join(history[-10:]))
             )
             llm_start = time.perf_counter()
-            resp = await self._llm.generate(
-                prompt=prompt,
-                model=config["model"],
-                max_tokens=1024,
-                temperature=config["temperature"],
-            )
+            candidates = config.get("_router_candidates") or [config["model"]]
+            used_model = config["model"]
+            router_attempts: list[str] = []
+            resp = None
+            for candidate in candidates:
+                router_attempts.append(str(candidate))
+                try:
+                    resp = await self._llm.generate(
+                        prompt=prompt,
+                        model=candidate,
+                        max_tokens=1024,
+                        temperature=config["temperature"],
+                    )
+                    used_model = candidate
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "LLM model failed, trying fallback",
+                        model=candidate,
+                        error=str(exc)[:200],
+                    )
+                    continue
+            if resp is None:
+                raise RuntimeError("Todos los modelos del router fallaron")
+            if len(router_attempts) > 1:
+                result.steps.append(
+                    {
+                        "type": "router_fallback",
+                        "attempts": router_attempts,
+                        "final_model": used_model,
+                    }
+                )
+                config["model"] = used_model
             llm_latency = (time.perf_counter() - llm_start) * 1000
             result.total_tokens += resp.total_tokens
             result.cost += await estimate_cost(
                 str(config["model"]),
                 prompt_tokens=resp.prompt_tokens,
                 completion_tokens=resp.completion_tokens,
+            )
+            result.spans.append(
+                {
+                    "stage": "llm",
+                    "name": f"llm:{used_model}",
+                    "duration_ms": round(llm_latency, 2),
+                    "tokens": resp.total_tokens,
+                    "started_ms": round(llm_start * 1000, 1),
+                }
             )
 
             action = _parse_action(resp.content)
@@ -420,6 +745,22 @@ class AgentRuntime:
                 self._rate_limiter,
             )
             tool_latency = (time.perf_counter() - tool_start) * 1000
+            stage = "tool"
+            if any(k in tool_name.lower() for k in ("kb", "search", "retrieve", "rag")):
+                stage = "retrieval"
+            elif "rerank" in tool_name.lower():
+                stage = "rerank"
+            result.spans.append(
+                {
+                    "stage": stage,
+                    "name": f"tool:{tool_name}",
+                    "duration_ms": round(tool_latency, 2),
+                    "tokens": 0,
+                    "started_ms": round(tool_start * 1000, 1),
+                    "status": "ok" if not tool_result.error else "error",
+                    "metadata": {"tool": tool_name},
+                }
+            )
             step_record: dict = {
                 "type": "tool_call",
                 "tool": tool_name,
