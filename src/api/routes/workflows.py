@@ -1,5 +1,5 @@
 # =============================================================================
-# Workflows (tenant) — definiciones, triggers, runs, aprobaciones
+# AI Workflow Automation Studio v2 — CRUD, ejecución y trazabilidad.
 # =============================================================================
 from __future__ import annotations
 
@@ -8,148 +8,175 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-router = APIRouter(prefix="/api/v1/workflows", tags=["workflows"])
+from src.infrastructure.observability.logging_config import get_logger
+
+logger = get_logger(__name__)
+router = APIRouter(prefix="/api/v1/workflows", tags=["Workflows"])
 
 
-class WorkflowStepIn(BaseModel):
-    type: str = Field(..., pattern="^(ingest|evaluate|deploy|notify|webhook|approval)$")
-    params: dict = Field(default_factory=dict)
-
-
-class WorkflowIn(BaseModel):
-    name: str = Field(..., min_length=1, max_length=200)
-    description: str | None = None
-    trigger_type: str = Field(default="manual", pattern="^(manual|schedule|event)$")
-    cron_expr: str | None = None
-    steps: list[WorkflowStepIn] = Field(default_factory=list, min_length=1)
-
-
-@router.post("", status_code=201, summary="Crear workflow")
-async def create_workflow(body: WorkflowIn, request: Request):
+@router.get("", summary="Workflows del tenant")
+async def tenant_workflows_list(request: Request):
     from src.platform.rbac.policy import require_permission
-    from src.platform.workflows.workflows import create_definition
+    from src.platform.workflows.engine import list_workflows
 
-    ctx = require_permission(request, "agents:write")
+    ctx = require_permission(request, "billing:read")
+    return await list_workflows(ctx.organization_id)
+
+
+@router.post("", summary="Crear workflow")
+async def tenant_workflows_create(body: WorkflowIn, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.engine import create_workflow
+
+    ctx = require_permission(request, "billing:write")
     try:
-        result = await create_definition(
+        return await create_workflow(
             ctx.organization_id,
             body.name,
-            body.description,
             body.trigger_type,
-            body.cron_expr,
-            [s.model_dump() for s in body.steps],
-            created_by=ctx.user_id,
+            body.trigger_config,
+            body.steps,
+            body.description,
+            ctx.user_id,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
-    return result
 
 
-@router.get("", summary="Listar workflows")
-async def list_workflows(request: Request):
+@router.get("/templates", summary="Plantillas de workflows")
+async def tenant_workflow_templates(request: Request):
     from src.platform.rbac.policy import require_permission
-    from src.platform.workflows.workflows import list_definitions
+    from src.platform.workflows.engine import list_templates
 
-    ctx = require_permission(request, "agents:read")
-    return {"workflows": await list_definitions(ctx.organization_id)}
+    ctx = require_permission(request, "billing:read")
+    return await list_templates()
 
 
-@router.get("/runs", summary="Runs del tenant")
-async def list_runs(request: Request, status: str | None = None, limit: int = 50):
+@router.post("/templates/{slug}/install", summary="Crear desde plantilla")
+async def tenant_workflow_template_install(slug: str, request: Request):
     from src.platform.rbac.policy import require_permission
-    from src.platform.workflows.workflows import list_runs as _list_runs
+    from src.platform.workflows.engine import create_from_template
 
-    ctx = require_permission(request, "agents:read")
-    runs = await _list_runs(ctx.organization_id, status=status, limit=min(limit, 200))
-    return {"runs": runs, "count": len(runs)}
+    ctx = require_permission(request, "billing:write")
+    try:
+        return await create_from_template(ctx.organization_id, slug)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
-@router.get("/runs/{run_id}", summary="Pasos de un run")
-async def get_run(run_id: str, request: Request):
+@router.get("/{workflow_id}", summary="Detalle del workflow")
+async def tenant_workflow_detail(workflow_id: str, request: Request):
     from src.platform.rbac.policy import require_permission
-    from src.platform.workflows.workflows import get_run_steps
+    from src.platform.workflows.engine import get_workflow
 
-    ctx = require_permission(request, "agents:read")
-    return {"steps": await get_run_steps(UUID(run_id))}
-
-
-@router.post("/runs/{run_id}/approve", summary="Aprobar paso pendiente")
-async def approve_run(run_id: str, request: Request):
-    from src.platform.rbac.policy import require_permission
-    from src.platform.workflows.workflows import approve_run as _approve
-
-    ctx = require_permission(request, "agents:write")
-    result = await _approve(ctx.organization_id, UUID(run_id), approve=True)
-    if result["status"] == "not_found":
-        raise HTTPException(404, "Run not found")
-    return result
-
-
-@router.post("/runs/{run_id}/reject", summary="Rechazar paso pendiente")
-async def reject_run(run_id: str, request: Request):
-    from src.platform.rbac.policy import require_permission
-    from src.platform.workflows.workflows import approve_run as _approve
-
-    ctx = require_permission(request, "agents:write")
-    result = await _approve(ctx.organization_id, UUID(run_id), approve=False)
-    if result["status"] == "not_found":
-        raise HTTPException(404, "Run not found")
-    return result
-
-
-@router.get("/{workflow_id}", summary="Detalle de workflow")
-async def get_workflow(workflow_id: str, request: Request):
-    from src.platform.rbac.policy import require_permission
-    from src.platform.workflows.workflows import get_definition
-
-    ctx = require_permission(request, "agents:read")
-    definition = await get_definition(ctx.organization_id, UUID(workflow_id))
-    if definition is None:
+    ctx = require_permission(request, "billing:read")
+    result = await get_workflow(ctx.organization_id, UUID(workflow_id))
+    if result is None:
         raise HTTPException(404, "Workflow not found")
-    return definition
+    return result
 
 
-@router.put("/{workflow_id}", summary="Actualizar workflow")
-async def update_workflow(workflow_id: str, body: WorkflowIn, request: Request):
+@router.patch("/{workflow_id}", summary="Actualizar workflow")
+async def tenant_workflow_update(workflow_id: str, body: WorkflowUpdateIn, request: Request):
     from src.platform.rbac.policy import require_permission
-    from src.platform.workflows.workflows import update_definition
+    from src.platform.workflows.engine import update_workflow
 
-    ctx = require_permission(request, "agents:write")
-    ok = await update_definition(
+    ctx = require_permission(request, "billing:write")
+    result = await update_workflow(
         ctx.organization_id,
         UUID(workflow_id),
-        name=body.name,
-        description=body.description,
-        trigger_type=body.trigger_type,
-        cron_expr=body.cron_expr,
-        steps=[s.model_dump() for s in body.steps],
+        body.name,
+        body.description,
+        body.trigger_config,
+        body.steps,
     )
-    if not ok:
+    if result is None:
         raise HTTPException(404, "Workflow not found")
-    return {"status": "updated"}
+    return result
 
 
 @router.delete("/{workflow_id}", summary="Eliminar workflow")
-async def delete_workflow(workflow_id: str, request: Request):
+async def tenant_workflow_delete(workflow_id: str, request: Request):
     from src.platform.rbac.policy import require_permission
-    from src.platform.workflows.workflows import delete_definition
+    from src.platform.workflows.engine import delete_workflow
 
-    ctx = require_permission(request, "agents:write")
-    ok = await delete_definition(ctx.organization_id, UUID(workflow_id))
-    if not ok:
+    ctx = require_permission(request, "billing:write")
+    if not await delete_workflow(ctx.organization_id, UUID(workflow_id)):
         raise HTTPException(404, "Workflow not found")
-    return {"status": "deleted"}
+    return {"deleted": True}
 
 
-@router.post("/{workflow_id}/trigger", summary="Ejecutar workflow manualmente")
-async def trigger_workflow(workflow_id: str, request: Request):
+@router.post("/{workflow_id}/activate", summary="Activar workflow")
+async def tenant_workflow_activate(workflow_id: str, request: Request):
     from src.platform.rbac.policy import require_permission
-    from src.platform.workflows.workflows import trigger_workflow as _trigger
+    from src.platform.workflows.engine import set_workflow_status
 
-    ctx = require_permission(request, "agents:write")
-    result = await _trigger(ctx.organization_id, UUID(workflow_id), trigger="manual", created_by=ctx.user_id)
-    if result["status"] == "not_found":
+    ctx = require_permission(request, "billing:write")
+    result = await set_workflow_status(ctx.organization_id, UUID(workflow_id), "active")
+    if result is None:
         raise HTTPException(404, "Workflow not found")
     return result
 
 
+@router.post("/{workflow_id}/pause", summary="Pausar workflow")
+async def tenant_workflow_pause(workflow_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.engine import set_workflow_status
+
+    ctx = require_permission(request, "billing:write")
+    result = await set_workflow_status(ctx.organization_id, UUID(workflow_id), "paused")
+    if result is None:
+        raise HTTPException(404, "Workflow not found")
+    return result
+
+
+@router.post("/{workflow_id}/run", summary="Ejecutar workflow")
+async def tenant_workflow_run(workflow_id: str, body: RunIn, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.engine import run_workflow
+
+    ctx = require_permission(request, "billing:write")
+    result = await run_workflow(UUID(workflow_id), body.payload)
+    if result is None:
+        raise HTTPException(404, "Workflow not found")
+    return result
+
+
+@router.get("/{workflow_id}/runs", summary="Runs del workflow")
+async def tenant_workflow_runs(workflow_id: str, request: Request, limit: int = 50):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.engine import list_runs
+
+    ctx = require_permission(request, "billing:read")
+    return await list_runs(ctx.organization_id, UUID(workflow_id), limit)
+
+
+@router.get("/runs/{run_id}", summary="Detalle del run con pasos")
+async def tenant_workflow_run_detail(run_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.engine import run_detail
+
+    ctx = require_permission(request, "billing:read")
+    result = await run_detail(ctx.organization_id, UUID(run_id))
+    if result is None:
+        raise HTTPException(404, "Run not found")
+    return result
+
+
+class WorkflowIn(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    description: str | None = None
+    trigger_type: str = Field(default="webhook", pattern="^(webhook|schedule|event)$")
+    trigger_config: dict | None = None
+    steps: list[dict] = Field(default_factory=list)
+
+
+class WorkflowUpdateIn(BaseModel):
+    name: str | None = Field(default=None, max_length=150)
+    description: str | None = None
+    trigger_config: dict | None = None
+    steps: list[dict] | None = None
+
+
+class RunIn(BaseModel):
+    payload: dict | None = None

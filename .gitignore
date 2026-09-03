@@ -22,11 +22,15 @@ venv/
 Thumbs.db
 .DS_Store
 
-# Docker
+# Docker / local overrides
 docker-compose.override.yml
-data/backups/
-data/dsr/
-data/migrations/
+
+# Runtime tenant data (exports, reports, backups, DSR, agent migrations)
+data/
+uploads/
+
+# Construction / internal docs (producto: solo README.md raíz)
+docs/
 
 # Portal
 portal/node_modules/
@@ -37,9 +41,14 @@ sdk/node/node_modules/
 sdk/node/dist/
 sdk/python/.pytest_cache/
 
-# Caches
+# Caches / coverage
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+coverage.json
 
 # Agent skills (local tooling)
 .agents/
@@ -49,10 +58,5 @@ skills-lock.json
 .worktrees/
 .superpowers/
 
-# Observability data
+# Logs
 *.log
-*.md
-*.sql
-*.zip
-*.csv
-*.pdf

@@ -40,9 +40,12 @@ from src.api.routes.audit_reports import router as audit_reports_router
 from src.api.routes.auth import router as auth_router
 from src.api.routes.billing import router as billing_router
 from src.api.routes.billing_webhooks import router as billing_webhooks_router
+from src.api.routes.chat_insights import router as chat_insights_router
 from src.api.routes.connectors import router as connectors_router
+from src.api.routes.copilot import router as copilot_router
 from src.api.routes.deployments import router as deployments_router
 from src.api.routes.devportal import router as devportal_router
+from src.api.routes.ecosystem import router as ecosystem_router
 from src.api.routes.embed import admin_router as embed_admin_router
 from src.api.routes.embed import public_router as embed_public_router
 from src.api.routes.embed import widget_router as embed_widget_router
@@ -54,6 +57,7 @@ from src.api.routes.health import router as health_router
 from src.api.routes.ingestion import router as ingestion_router
 from src.api.routes.jobs import router as jobs_router
 from src.api.routes.knowledge_bases import router as kbs_router
+from src.api.routes.knowledge_hub import router as knowledge_hub_router
 from src.api.routes.migrations import router as migrations_router
 from src.api.routes.notifications import router as notifications_router
 from src.api.routes.onboarding import router as onboarding_router
@@ -65,6 +69,7 @@ from src.api.routes.prompt import router as prompt_router
 from src.api.routes.public_query import router as public_query_router
 from src.api.routes.query import router as query_router
 from src.api.routes.releases import router as releases_router
+from src.api.routes.risk_center import router as risk_center_router
 from src.api.routes.scim import router as scim_router
 from src.api.routes.share import router as share_router
 from src.api.routes.sources import router as sources_router
@@ -139,6 +144,7 @@ async def lifespan(app: FastAPI):
             _escalation_task = asyncio.create_task(_escalation_loop())
             _retention_task = asyncio.create_task(_retention_loop())
             _webhook_deliveries_task = asyncio.create_task(_webhook_deliveries_loop())
+            _knowledge_refresh_task = asyncio.create_task(_knowledge_refresh_loop())
             yield
         finally:
             _region_health_task.cancel()
@@ -146,6 +152,7 @@ async def lifespan(app: FastAPI):
             _escalation_task.cancel()
             _retention_task.cancel()
             _webhook_deliveries_task.cancel()
+            _knowledge_refresh_task.cancel()
             await _run_shutdown()
 
 
@@ -162,6 +169,22 @@ async def _webhook_deliveries_loop() -> None:
             await asyncio.sleep(30)
     except asyncio.CancelledError:
         pass
+
+
+async def _knowledge_refresh_loop() -> None:
+    """Scheduler del Knowledge Hub: refresca fuentes vencidas cada 300s."""
+    import asyncio as _asyncio
+
+    while True:
+        try:
+            from src.platform.knowledgehub.hub import run_refresh_loop
+
+            result = await run_refresh_loop()
+            if result["refreshed"]:
+                logger.info("knowledge refresh loop", refreshed=result["refreshed"])
+        except Exception:  # noqa: BLE001
+            logger.exception("knowledge refresh loop failed")
+        await _asyncio.sleep(300)
 
 
 async def _retention_loop() -> None:
@@ -379,6 +402,12 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(billing_router)
     new_app.include_router(billing_webhooks_router)
     new_app.include_router(connectors_router)
+    new_app.include_router(ecosystem_router)
+    new_app.include_router(risk_center_router)
+    new_app.include_router(knowledge_hub_router)
+    new_app.include_router(chat_insights_router)
+    new_app.include_router(workflows_router)
+    new_app.include_router(copilot_router)
     new_app.include_router(releases_router)
     new_app.include_router(migrations_router)
     new_app.include_router(feedback_router)
@@ -390,6 +419,10 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(sso_router)
     new_app.include_router(federated_router)
     new_app.include_router(share_router)
+    new_app.include_router(ecosystem_router)
+    new_app.include_router(risk_center_router)
+    new_app.include_router(knowledge_hub_router)
+    new_app.include_router(chat_insights_router)
     new_app.include_router(workflows_router)
     new_app.include_router(devportal_router)
     new_app.include_router(deployments_router)

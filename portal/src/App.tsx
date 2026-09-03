@@ -75,6 +75,14 @@ const AdminFederatedAnalyticsPage = lazy(() => import("./pages/admin/FederatedAn
 const AdminMarketplacePage = lazy(() => import("./pages/admin/Marketplace"));
 const SharedAgentPage = lazy(() => import("./pages/SharedAgent"));
 const AdminWorkflowsPage = lazy(() => import("./pages/admin/Workflows"));
+const ChatInsightsPage = lazy(() => import("./pages/ChatInsights"));
+const AdminChatInsightsPage = lazy(() => import("./pages/admin/ChatInsights"));
+const KnowledgeHubPage = lazy(() => import("./pages/KnowledgeHub"));
+const AdminKnowledgeHubPage = lazy(() => import("./pages/admin/KnowledgeHub"));
+const RiskCenterPage = lazy(() => import("./pages/RiskCenter"));
+const AdminRiskCenterPage = lazy(() => import("./pages/admin/RiskCenter"));
+const EcosystemMarketplacePage = lazy(() => import("./pages/EcosystemMarketplace"));
+const AdminEcosystemPage = lazy(() => import("./pages/admin/Ecosystem"));
 const AdminModelGatewayPage = lazy(() => import("./pages/admin/ModelGateway"));
 const AdminRealtimePage = lazy(() => import("./pages/admin/Realtime"));
 const AdminSecurityCenterPage = lazy(() => import("./pages/admin/SecurityCenter"));
@@ -103,6 +111,9 @@ const AdminFeedbackPage = lazy(() => import("./pages/admin/Feedback"));
 const AdminMigrationsPage = lazy(() => import("./pages/admin/Migrations"));
 const AdminReleasesPage = lazy(() => import("./pages/admin/Releases"));
 const ReleasesPage = lazy(() => import("./pages/Releases"));
+const CopilotPage = lazy(() => import("./pages/Copilot"));
+const AdminCopilotPage = lazy(() => import("./pages/admin/Copilot"));
+const WorkflowsPage = lazy(() => import("./pages/Workflows"));
 const MigrationsPage = lazy(() => import("./pages/Migrations"));
 const OnboardingPage = lazy(() => import("./pages/Onboarding"));
 const EvaluationDatasetsPage = lazy(() => import("./pages/evaluation/Datasets"));
@@ -477,6 +488,10 @@ export default function App() {
         <Route path="analytics" element={<Suspense fallback={<PageFallback />}><AdminFederatedAnalyticsPage /></Suspense>} />
         <Route path="marketplace" element={<Suspense fallback={<PageFallback />}><AdminMarketplacePage /></Suspense>} />
         <Route path="workflows" element={<Suspense fallback={<PageFallback />}><AdminWorkflowsPage /></Suspense>} />
+        <Route path="chat-insights" element={<Suspense fallback={<PageFallback />}><AdminChatInsightsPage /></Suspense>} />
+        <Route path="knowledge-hub" element={<Suspense fallback={<PageFallback />}><AdminKnowledgeHubPage /></Suspense>} />
+        <Route path="risk-center" element={<Suspense fallback={<PageFallback />}><AdminRiskCenterPage /></Suspense>} />
+        <Route path="ecosystem" element={<Suspense fallback={<PageFallback />}><AdminEcosystemPage /></Suspense>} />
         <Route path="model-gateway" element={<Suspense fallback={<PageFallback />}><AdminModelGatewayPage /></Suspense>} />
         <Route path="realtime" element={<Suspense fallback={<PageFallback />}><AdminRealtimePage /></Suspense>} />
         <Route path="security-center" element={<Suspense fallback={<PageFallback />}><AdminSecurityCenterPage /></Suspense>} />
@@ -535,6 +550,12 @@ export default function App() {
       <Route path="/onboarding" element={<Suspense fallback={<PageFallback />}><OnboardingPage /></Suspense>} />
       <Route path="/migrations" element={<Suspense fallback={<PageFallback />}><MigrationsPage /></Suspense>} />
       <Route path="/releases" element={<Suspense fallback={<PageFallback />}><ReleasesPage /></Suspense>} />
+      <Route path="/copilot" element={<Suspense fallback={<PageFallback />}><CopilotPage /></Suspense>} />
+      <Route path="/workflows" element={<Suspense fallback={<PageFallback />}><WorkflowsPage /></Suspense>} />
+      <Route path="/chat-insights" element={<Suspense fallback={<PageFallback />}><ChatInsightsPage /></Suspense>} />
+      <Route path="/knowledge-hub" element={<Suspense fallback={<PageFallback />}><KnowledgeHubPage /></Suspense>} />
+      <Route path="/risk-center" element={<Suspense fallback={<PageFallback />}><RiskCenterPage /></Suspense>} />
+      <Route path="/marketplace" element={<Suspense fallback={<PageFallback />}><EcosystemMarketplacePage /></Suspense>} />
         <Route path="/settings" element={<Suspense fallback={<PageFallback />}><SettingsPage /></Suspense>} />
         <Route path="/evaluation" element={<Suspense fallback={<PageFallback />}><EvaluationOverviewPage /></Suspense>} />
         <Route path="/evaluation/datasets" element={<Suspense fallback={<PageFallback />}><EvaluationDatasetsPage /></Suspense>} />

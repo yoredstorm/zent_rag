@@ -212,7 +212,7 @@ async def test_compliance_status_and_update(async_client: AsyncClient) -> None:
     controls = await async_client.get("/api/v1/platform/compliance/controls?framework=gdpr", headers=plat)
     assert controls.json()["controls"]  # 8 GDPR
     controls_all = await async_client.get("/api/v1/platform/compliance/controls", headers=plat)
-    assert len(controls_all.json()["controls"]) == 24
+    assert len(controls_all.json()["controls"]) == 32  # 24 + 8 eu_ai_act
 
 
 @pytest.mark.asyncio

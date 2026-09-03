@@ -1,0 +1,6 @@
+-- =============================================================================
+-- PROMPT 15 — Federated Search & Analytics (sin cambios de esquema)
+-- Búsqueda federada usa la colección compartida de Qdrant con filtro por
+-- knowledge_base_id; analytics multi-tenant se computa sobre usage_events.
+-- =============================================================================
+-- (no-op: la fase no requiere migración)

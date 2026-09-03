@@ -20,7 +20,7 @@ client = Zent(api_key="zent_sk_live_...")
 print(client.chat("What is our refund policy?").answer)
 ```
 
-Docs desarrollador: [docs/developers/quickstart.md](docs/developers/quickstart.md) · OpenAPI: `/docs` · `/redoc`
+OpenAPI: `/docs` · `/redoc` · `/api/v1/openapi.json`
 
 ---
 
@@ -209,7 +209,7 @@ Node:
 cd sdk/node && npm install && npm run build
 ```
 
-Guía detallada: [docs/developers/quickstart.md](docs/developers/quickstart.md) · [sdk/python/README.md](sdk/python/README.md) · [sdk/node/README.md](sdk/node/README.md)
+Guía detallada: [sdk/python/README.md](sdk/python/README.md) · [sdk/node/README.md](sdk/node/README.md) · OpenAPI `/docs`
 
 ### Flujo típico en portal
 
@@ -395,7 +395,6 @@ zent_RAG/
 ├── sdk/
 │   ├── python/              # paquete zent (client.chat)
 │   └── node/                # paquete zent-node
-├── docs/developers/         # quickstart, auth, rag, agents, mcp, connectors, …
 ├── tests/                   # architecture, security, RAG, billing, MCP, tenants
 ├── config/                  # prometheus (reglas de alerta), loki, promtail, grafana
 ├── bruno/                   # colección API (Admin, Billing, RAG, Ingestion, …)
@@ -434,7 +433,6 @@ zent_RAG/
 - Anti brute-force en login (máx. intentos por ventana) y rate limits por user/org/endpoints públicos
 - Detección de prompt-injection en inputs de chat y de agentes
 - Fail-fast en producción: secrets inseguros, CORS `*` y endpoints de admin rechazados al arrancar
-- Docs: [docs/developers/authentication.md](docs/developers/authentication.md)
 
 ### RAG
 
@@ -495,8 +493,6 @@ Jobs con retry, resume (`cursor_snapshot`) y dead letter. Guard SSRF en fuentes 
 
 - Política por org en `config_json['mcp']`: habilitar/deshabilitar tools, rol mínimo y RPM por tool
 - DNS-rebinding protection (`RAG_RAG_MCP_ALLOWED_HOSTS`)
-
-Docs: [docs/developers/mcp.md](docs/developers/mcp.md)
 
 ### Evaluation Engine
 
@@ -768,7 +764,7 @@ En producción: secretos en Vault (o secret manager), nunca commit de `.env`.
 9. **Rate limits** — por user, por org y endpoints públicos (signup/login).
 10. **Tests** — `tests/test_tenant_isolation.py`, `tests/test_identity_hardening.py`, `tests/test_security_hardening.py`.
 
-Detalle de amenazas y scopes: [docs/developers/authentication.md](docs/developers/authentication.md).
+Detalle de amenazas y scopes: OpenAPI `/docs` y `/redoc`.
 
 ### Patrones de diseño destacados
 
@@ -784,9 +780,9 @@ Detalle de amenazas y scopes: [docs/developers/authentication.md](docs/developer
 
 Prioridades derivadas del estado actual del código y de las necesidades de un RAG-as-a-Service en producción. Sin fechas comprometidas: `0.1.0` en desarrollo activo.
 
-El plan SaaS por fases (Customer Portal, Control Center, entitlements, Stripe, agents, embed, etc.) está en [`docs/platform/ZENT_PLATFORM_ROADMAP.md`](docs/platform/ZENT_PLATFORM_ROADMAP.md). No reimplementar el core: cada fase evoluciona lo existente.
+El plan SaaS evoluciona el core existente (Customer Portal, Control Center, entitlements, Stripe, agents, embed, etc.). No reimplementar el core: cada fase evoluciona lo existente.
 
-**Kubernetes no es requisito de venta.** El camino de prod es Compose + servicios managed ([`docs/platform/PRODUCTION.md`](docs/platform/PRODUCTION.md)). Manifests Kustomize en `deploy/k8s/` solo si hay carga real: [`docs/platform/KUBERNETES.md`](docs/platform/KUBERNETES.md).
+**Kubernetes no es requisito de venta.** El camino de prod es Compose + servicios managed. Manifests Kustomize en [`deploy/k8s/`](deploy/k8s/) solo si hay carga real.
 
 ### Corto plazo
 
@@ -803,7 +799,7 @@ El plan SaaS por fases (Customer Portal, Control Center, entitlements, Stripe, a
 
 | Ítem | Detalle |
 |---|---|
-| **Webhooks outbound de cliente** | Hoy solo inbound firmados ([`docs/developers/webhooks.md`](docs/developers/webhooks.md)); webhooks a clientes por eventos (uso, invoice, sync) |
+| **Webhooks outbound de cliente** | Hoy solo inbound firmados (billing webhooks); webhooks a clientes por eventos (uso, invoice, sync) |
 | **Más conectores** | Fuentes por contribución vía plugin registry: SharePoint, Google Drive, Notion, Snowflake, BigQuery, Kafka |
 | **Más verticals** | Paquetes de dominio estilo `demo_farmacia` (legal, retail, fintech): prompts, SQL heuristics, tools y golden sets |
 | **Cache semántica de respuestas** | Reducción de coste/latencia para queries repetidas (embeddings similares → respuesta cacheada con TTL) |
@@ -828,19 +824,6 @@ El plan SaaS por fases (Customer Portal, Control Center, entitlements, Stripe, a
 
 | Documento | Contenido |
 |---|---|
-| [docs/developers/README.md](docs/developers/README.md) | Índice developer |
-| [docs/platform/ZENT_PLATFORM_ROADMAP.md](docs/platform/ZENT_PLATFORM_ROADMAP.md) | Roadmap SaaS (estado, gaps, 15 fases) |
-| [docs/platform/PRODUCT.md](docs/platform/PRODUCT.md) | Freeze de producto (posicionamiento, glosario) |
-| [docs/developers/quickstart.md](docs/developers/quickstart.md) | `client.chat()` en minutos |
-| [docs/developers/authentication.md](docs/developers/authentication.md) | Auth, scopes, threat model |
-| [docs/developers/chat.md](docs/developers/chat.md) | Chat API |
-| [docs/developers/rag.md](docs/developers/rag.md) | Comportamiento RAG |
-| [docs/developers/agents.md](docs/developers/agents.md) | Agents |
-| [docs/developers/tools.md](docs/developers/tools.md) | Tools |
-| [docs/developers/connectors.md](docs/developers/connectors.md) | Connectors |
-| [docs/developers/mcp.md](docs/developers/mcp.md) | MCP Server |
-| [docs/developers/usage.md](docs/developers/usage.md) | Usage / cuotas |
-| [docs/developers/webhooks.md](docs/developers/webhooks.md) | Billing webhooks |
 | [sdk/python/README.md](sdk/python/README.md) | SDK Python |
 | [sdk/node/README.md](sdk/node/README.md) | SDK Node |
 | [`.env.example`](.env.example) | Catálogo de variables |

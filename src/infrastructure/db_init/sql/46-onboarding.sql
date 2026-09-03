@@ -1,0 +1,5 @@
+-- =============================================================================
+-- PROMPT 21 — Onboarding & Tenancy Self-Serve (sin cambios de esquema)
+-- Reutiliza organizations/subscriptions/agentes/KBs existentes.
+-- =============================================================================
+-- (no-op: la fase no requiere migración)

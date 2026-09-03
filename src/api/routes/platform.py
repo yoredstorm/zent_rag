@@ -4192,3 +4192,63 @@ async def platform_releases_list(request: Request):
     from src.platform.releases.releases import list_releases
 
     return await list_releases()
+
+# ------------------------------------------------------------------ PROMPT 43
+# AI Copilot & Assistant Platform v2
+
+@router.get("/copilot/dashboard", summary="Dashboard del copilot")
+async def platform_copilot_dashboard(request: Request):
+    ctx = require_platform_permission(request, "operations.read")
+    from src.platform.copilot.copilot import copilot_dashboard
+
+    return await copilot_dashboard()
+
+# ------------------------------------------------------------------ PROMPT 44
+# AI Workflow Automation Studio v2
+
+@router.get("/workflows/dashboard", summary="Dashboard de workflows")
+async def platform_workflows_dashboard(request: Request):
+    ctx = require_platform_permission(request, "operations.read")
+    from src.platform.workflows.engine import workflows_dashboard
+
+    return await workflows_dashboard()
+
+# ------------------------------------------------------------------ PROMPT 45
+# AI Chat Analytics & Conversational Insights v2
+
+@router.get("/chat-insights/dashboard", summary="Dashboard de insights conversacionales")
+async def platform_chat_insights_dashboard(request: Request):
+    ctx = require_platform_permission(request, "operations.read")
+    from src.platform.chatinsights.insights import insights_dashboard
+
+    return await insights_dashboard()
+
+# ------------------------------------------------------------------ PROMPT 46
+# AI Knowledge Hub v2
+
+@router.get("/knowledge-hub/dashboard", summary="Dashboard del Knowledge Hub")
+async def platform_knowledge_hub_dashboard(request: Request):
+    ctx = require_platform_permission(request, "operations.read")
+    from src.platform.knowledgehub.hub import knowledge_hub_dashboard
+
+    return await knowledge_hub_dashboard()
+
+# ------------------------------------------------------------------ PROMPT 47
+# AI Risk & Compliance Center v2
+
+@router.get("/risk-center/dashboard", summary="Dashboard de riesgos y cumplimiento")
+async def platform_risk_center_dashboard(request: Request):
+    ctx = require_platform_permission(request, "operations.read")
+    from src.platform.riskcenter.risk_center import risk_compliance_dashboard
+
+    return await risk_compliance_dashboard()
+
+# ------------------------------------------------------------------ PROMPT 48
+# AI Agent Marketplace & Ecosystem v2
+
+@router.get("/ecosystem/dashboard", summary="Dashboard del ecosistema")
+async def platform_ecosystem_dashboard(request: Request):
+    ctx = require_platform_permission(request, "operations.read")
+    from src.platform.marketplacev2.ecosystem import ecosystem_dashboard
+
+    return await ecosystem_dashboard()

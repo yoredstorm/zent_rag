@@ -1,0 +1,6 @@
+-- =============================================================================
+-- PROMPT 19 — Real-Time Analytics (sin cambios de esquema)
+-- Streaming vía canal Redis rag:events (pub/sub) + SSE; detección en vivo
+-- reutiliza incident_alerts (PROMPT 08).
+-- =============================================================================
+-- (no-op: la fase no requiere migración)
