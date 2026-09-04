@@ -166,22 +166,23 @@ async def test_dr_drill_restores_standby(async_client: AsyncClient) -> None:
     assert out["tables"] >= 10  # tablas del platform restauradas en standby
 
     # La standby fue eliminada tras el drill.
-    import subprocess
+    from sqlalchemy import text as sa_text
 
-    from src.core.config import get_settings
+    from src.infrastructure.postgres.session import get_async_session
 
-    settings = get_settings()
-    check = subprocess.run(  # noqa: S603, S607
-        [
-            "docker", "exec", settings.DR_POSTGRES_CONTAINER, "psql", "-U", settings.POSTGRES_USER,
-            "-d", "postgres", "-t", "-c",
-            f"SELECT 1 FROM pg_database WHERE datname = '{out['standby_db']}'",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    assert check.stdout.strip() == ""
+    session = await get_async_session()
+    try:
+        exists = (
+            await session.execute(
+                sa_text(
+                    "SELECT 1 FROM pg_database WHERE datname = :name"
+                ),
+                {"name": out["standby_db"]},
+            )
+        ).scalar()
+    finally:
+        await session.close()
+    assert exists is None
 
 
 @pytest.mark.asyncio

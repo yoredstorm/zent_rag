@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -32,6 +33,45 @@ def _backup_dir(organization_id: UUID) -> Path:
 
 def _run(cmd: list[str], timeout: int = 600) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)  # noqa: S603 (cmds fijas del platform)
+
+
+def _run_pg_command(
+    args: list[str],
+    *,
+    stdin: bytes | None = None,
+    text: bool = False,
+    timeout: int = 600,
+) -> subprocess.CompletedProcess:
+    """Ejecuta una utilidad postgres (pg_dump/createdb/psql/…) dentro del
+    contenedor DR; si Docker no está disponible (CI, host sin docker socket),
+    ejecuta la utilidad local contra POSTGRES_HOST/PORT (env PGPASSWORD)."""
+    settings = get_settings()
+    docker_cmd = ["docker", "exec"]
+    if stdin is not None:
+        docker_cmd.append("-i")
+    docker_cmd += [settings.DR_POSTGRES_CONTAINER, *args]
+    result = subprocess.run(
+        docker_cmd, input=stdin, capture_output=True, text=text, timeout=timeout
+    )
+    stderr = result.stderr.decode(errors="replace") if isinstance(result.stderr, bytes) else (result.stderr or "")
+    if result.returncode != 0 and (
+        "No such container" in stderr
+        or "Cannot connect to the Docker daemon" in stderr
+        or "is not running" in stderr
+    ):
+        env = {**os.environ, "PGPASSWORD": settings.POSTGRES_PASSWORD.get_secret_value()}
+        local_cmd = [
+            args[0],
+            "-h",
+            settings.POSTGRES_HOST,
+            "-p",
+            str(settings.POSTGRES_PORT),
+            *args[1:],
+        ]
+        result = subprocess.run(
+            local_cmd, input=stdin, capture_output=True, text=text, env=env, timeout=timeout
+        )
+    return result
 
 
 async def _update_backup(backup_id: UUID, **fields) -> None:
@@ -76,14 +116,10 @@ async def create_backup(organization_id: UUID, trigger: str = "manual") -> dict:
     checksum: str | None = None
 
     try:
-        # 1) PostgreSQL: pg_dump custom format vía docker exec (salida binaria).
+        # 1) PostgreSQL: pg_dump custom format (docker exec con fallback local).
         dump_path = _backup_dir(organization_id) / f"pg_{backup_id}.dump"
-        result = subprocess.run(  # noqa: S603, S607 (cmds docker fijas)
-            [
-                "docker", "exec", settings.DR_POSTGRES_CONTAINER,
-                "pg_dump", "-U", settings.POSTGRES_USER, "-Fc", "-d", settings.POSTGRES_DB,
-            ],
-            capture_output=True,
+        result = _run_pg_command(
+            ["pg_dump", "-U", settings.POSTGRES_USER, "-Fc", "-d", settings.POSTGRES_DB],
             timeout=900,
         )
         if result.returncode != 0:
@@ -239,28 +275,26 @@ async def dr_drill(backup_id: UUID) -> dict:
     standby = f"rag_dr_{str(backup_id)[:8]}"
     try:
         # 1) Crear standby DB.
-        created = _run(
-            ["docker", "exec", settings.DR_POSTGRES_CONTAINER, "createdb", "-U", settings.POSTGRES_USER, standby],
+        created = _run_pg_command(
+            ["createdb", "-U", settings.POSTGRES_USER, standby],
+            text=True,
             timeout=60,
         )
         if created.returncode != 0 and "already exists" not in created.stderr:
             return {"status": "failed", "error": f"createdb: {created.stderr[-300:]}"}
         # 2) Restaurar el dump (sin owner, sin datos inválidos).
-        with open(row.file_path, "rb") as fh:
-            restore = subprocess.run(  # noqa: S603, S607
-                ["docker", "exec", "-i", settings.DR_POSTGRES_CONTAINER, "pg_restore", "-U",
-                 settings.POSTGRES_USER, "-d", standby, "-Fc", "--no-owner", "--clean"],
-                stdin=fh,
-                capture_output=True,
-                timeout=900,
-            )
+        restore = _run_pg_command(
+            ["pg_restore", "-U", settings.POSTGRES_USER, "-d", standby, "-Fc",
+             "--no-owner", "--clean"],
+            stdin=Path(row.file_path).read_bytes(),
+            timeout=900,
+        )
         # pg_restore devuelve 0 o avisos; validamos por contenido, no por exit code.
-        check = _run(
-            [
-                "docker", "exec", settings.DR_POSTGRES_CONTAINER, "psql", "-U", settings.POSTGRES_USER,
-                "-d", standby, "-t", "-c", "SELECT count(*) FROM information_schema.tables "
-                "WHERE table_schema = 'public'",
-            ],
+        check = _run_pg_command(
+            ["psql", "-U", settings.POSTGRES_USER, "-d", standby, "-t", "-c",
+             "SELECT count(*) FROM information_schema.tables "
+             "WHERE table_schema = 'public'"],
+            text=True,
             timeout=60,
         )
         table_count = int(check.stdout.strip() or 0) if check.returncode == 0 else 0
@@ -270,8 +304,9 @@ async def dr_drill(backup_id: UUID) -> dict:
         return {"status": "failed", "error": str(exc)[:400]}
     finally:
         try:
-            _run(  # noqa: S603, S607
-                ["docker", "exec", settings.DR_POSTGRES_CONTAINER, "dropdb", "-U", settings.POSTGRES_USER, standby],
+            _run_pg_command(
+                ["dropdb", "-U", settings.POSTGRES_USER, standby],
+                text=True,
                 timeout=60,
             )
         except Exception:  # noqa: BLE001
