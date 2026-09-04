@@ -40,7 +40,8 @@ jobs:
       - name: Audit prod extras (HIGH+)
         run: |
           pip install -e ".[prod]" pip-audit
-          pip-audit
+          # --skip-editable: el proyecto editable (rag-as-a-service) no está en PyPI.
+          pip-audit --skip-editable
 
   test:
     runs-on: ubuntu-latest

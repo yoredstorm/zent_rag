@@ -200,15 +200,17 @@ class UsageCounters:
         self._redis_ready = False
 
     async def _ensure_redis(self):
-        if self._redis_ready:
-            return self._redis
-        self._redis_ready = True
+        # Delegar en el singleton de cache.py: detecta el event loop actual y
+        # recrea el cliente si cambió o está cerrado (pytest-asyncio usa un
+        # loop por test). Cachear aquí ataba el cliente al loop del primer uso.
         try:
             from src.infrastructure.redis.cache import _get_redis
 
             self._redis = await _get_redis()
+            self._redis_ready = True
         except Exception:
             self._redis = None
+            self._redis_ready = False
         return self._redis
 
     async def _dedupe(self, tenant_id: UUID, window: str, request_id: UUID) -> bool:
