@@ -40,7 +40,7 @@ jobs:
       - name: Audit prod extras (HIGH+)
         run: |
           pip install -e ".[prod]" pip-audit
-          pip-audit --severity high
+          pip-audit
 
   test:
     runs-on: ubuntu-latest
@@ -55,6 +55,9 @@ jobs:
       RAG_QDRANT_PORT: "6333"
       RAG_BILLING_ENABLED: "false"
       RAG_ENVIRONMENT: development
+      # Default de gateway distinto de gpt-4o-mini: test_model_budgets_blocking
+      # exige que el fallback default no sea el modelo bloqueado por presupuesto.
+      RAG_LITELLM_DEFAULT_MODEL: gpt-4o
       # Required — no insecure default allowed in Settings
       RAG_PORTAL_SESSION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
       # Same as Dockerfile.api (PYTHONPATH=/app). Alembic imports src.core.config.

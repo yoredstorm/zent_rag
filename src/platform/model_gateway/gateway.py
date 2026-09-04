@@ -250,7 +250,11 @@ async def resolve_models(organization_id: UUID) -> list[str]:
     blocked = await _blocked_models(organization_id)
     available = [r for r in active if r["model"].lower() not in blocked]
     if not available:
-        return [settings.LITELLM_DEFAULT_MODEL]
+        # Todas las rutas bloqueadas por presupuesto. Solo caer al default si
+        # el default no está bloqueado; si también lo está, no hay modelo.
+        if settings.LITELLM_DEFAULT_MODEL.lower() not in blocked:
+            return [settings.LITELLM_DEFAULT_MODEL]
+        return []
 
     # Primario: pesos (A/B). Fallbacks: resto de modelos únicos (prioridad).
     primary = _pick_weighted(available)
@@ -258,8 +262,11 @@ async def resolve_models(organization_id: UUID) -> list[str]:
     for r in sorted(available, key=lambda x: -x["priority"]):
         if r["model"] not in candidates:
             candidates.append(r["model"])
-    # Último recurso: default configurado.
-    if settings.LITELLM_DEFAULT_MODEL not in candidates:
+    # Último recurso: default configurado (solo si no está bloqueado).
+    if (
+        settings.LITELLM_DEFAULT_MODEL not in candidates
+        and settings.LITELLM_DEFAULT_MODEL.lower() not in blocked
+    ):
         candidates.append(settings.LITELLM_DEFAULT_MODEL)
     return candidates
 

@@ -73,5 +73,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # No reversible: el grant excesivo era un bug; no se restaura.
-    pass
+    """No reversible: el grant excesivo era un bug; no se restaura."""
