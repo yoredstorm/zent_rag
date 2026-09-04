@@ -157,30 +157,22 @@ class TestPlanLimits:
         )
         await billing.create_trial_subscription(org)
 
-        session = await get_async_session()
-        try:
-            await session.execute(
-                text("UPDATE plans SET max_agents = 0 WHERE is_trial = true")
-            )
-            await session.commit()
-        finally:
-            await session.close()
+        from src.platform.billing.entitlements import upsert_plan_entitlements
+
+        trial_plan = UUID("10000000-0000-0000-0000-000000000001")
+        await upsert_plan_entitlements(
+            trial_plan,
+            [{"key": "max_agents", "value_type": "int", "value_int": 0}],
+        )
 
         try:
             with pytest.raises(PlanLimitError):
                 await check_resource_limit(org, "agents")
         finally:
-            session = await get_async_session()
-            try:
-                await session.execute(
-                    text(
-                        "UPDATE plans SET max_agents = NULL "
-                        "WHERE is_trial = true"
-                    )
-                )
-                await session.commit()
-            finally:
-                await session.close()
+            await upsert_plan_entitlements(
+                trial_plan,
+                [{"key": "max_agents", "value_type": "int", "value_int": None}],
+            )
 
     @pytest.mark.asyncio
     async def test_no_subscription_no_limit(self) -> None:
