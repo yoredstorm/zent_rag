@@ -513,7 +513,7 @@ export default function ChatPage() {
       <div className="min-w-0 flex-1">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-xl font-semibold tracking-tight text-text">
-            Pregúntale a tus datos
+            Playground
           </h1>
           <div className="flex items-center gap-2">
             <label className="text-xs text-faint" htmlFor="role">

@@ -1,5 +1,15 @@
-import { ArrowsClockwise, Database, Plus } from "@phosphor-icons/react";
+import {
+  ArrowsClockwise,
+  Database,
+  Files,
+  FolderSimple,
+  List,
+  MagnifyingGlass,
+  Plus,
+  type Icon,
+} from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
+import { NavLink } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import {
@@ -11,6 +21,35 @@ import {
   SuccessInline,
 } from "../../components/ui";
 import { fmtDateTime, fmtNum } from "../../lib/format";
+
+const KNOWLEDGE_TABS: { to: string; label: string; icon: Icon }[] = [
+  { to: "/knowledge/sources", label: "Fuentes", icon: Database },
+  { to: "/knowledge/collections", label: "Colecciones", icon: FolderSimple },
+  { to: "/knowledge/documents", label: "Documentos", icon: Files },
+  { to: "/knowledge/sql", label: "SQL", icon: Database },
+  { to: "/knowledge/jobs", label: "Sincronización", icon: List },
+  { to: "/knowledge/playground", label: "Búsqueda", icon: MagnifyingGlass },
+];
+
+function KnowledgeTabs() {
+  return (
+    <nav className="tabs" aria-label="Secciones de conocimiento">
+      {KNOWLEDGE_TABS.map((tab) => (
+        <NavLink
+          key={tab.to}
+          to={tab.to}
+          end={tab.to === "/knowledge/sources"}
+          className={({ isActive }) =>
+            `tab ${isActive ? "" : "opacity-70 hover:opacity-100"}`
+          }
+        >
+          <tab.icon size={15} aria-hidden />
+          {tab.label}
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
 
 const SOURCE_TYPES = [
   "sql",
@@ -220,8 +259,8 @@ export default function KnowledgeSourcesPage() {
   return (
     <div>
       <PageHeader
-        title="Fuentes"
-        subtitle="Conectores de conocimiento (SQL, archivos, web, S3, API y Google Drive)."
+        title="Conocimiento"
+        subtitle="Administra la información que tu IA puede usar para responder: fuentes, colecciones, documentos y sincronización."
         actions={
           <button
             className="btn btn-primary min-h-11"
@@ -233,8 +272,11 @@ export default function KnowledgeSourcesPage() {
           </button>
         }
       />
-      <ErrorInline message={error} />
-      <SuccessInline message={msg} />
+      <KnowledgeTabs />
+      <div className="mt-4">
+        <ErrorInline message={error} />
+        <SuccessInline message={msg} />
+      </div>
 
       {showCreate && (
         <div className="panel mb-4 border-accent/30">
@@ -303,7 +345,7 @@ export default function KnowledgeSourcesPage() {
 
       <div className="panel">
         <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 className="text-sm font-semibold text-text">Fuentes</h2>
+          <h2 className="text-sm font-semibold text-text">Fuentes de conocimiento</h2>
           <span className="mono text-[11px] text-faint">{sources.length}</span>
         </div>
         {loading ? (
@@ -399,9 +441,6 @@ export default function KnowledgeSourcesPage() {
           </div>
         )}
       </div>
-    </div>
-  );
-}
 
       {profile && (
         <div className="panel mt-6">
@@ -452,3 +491,6 @@ export default function KnowledgeSourcesPage() {
           ))}
         </div>
       )}
+    </div>
+  );
+}

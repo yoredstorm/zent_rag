@@ -140,8 +140,8 @@ export default function PromptsPage() {
   return (
     <div>
       <PageHeader
-        title="Prompts"
-        subtitle="Instrucciones del asistente según la vista. El test usa el pipeline RAG real con tus datos, sin guardar cambios."
+        title="Instrucciones del agente"
+        subtitle="Define el comportamiento del asistente por vista. El test usa el pipeline RAG real con tus datos, sin guardar cambios."
       />
       <ErrorInline message={error} />
 

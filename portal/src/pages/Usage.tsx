@@ -1,4 +1,4 @@
-import { ChartLineUp, Lightning, Timer, ListBullets, Warning } from "@phosphor-icons/react";
+import { ChartLineUp, Coins, Lightning, Timer, ListBullets, Warning } from "@phosphor-icons/react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
@@ -53,8 +53,8 @@ export default function UsagePage() {
   return (
     <div>
       <PageHeader
-        title="Uso"
-        subtitle="Actividad de consultas en los últimos 30 días."
+        title="Analítica"
+        subtitle="Entiende cómo tu workspace usa la IA: consultas, tokens y latencia de los últimos 30 días."
       />
       <ErrorInline message={error} />
 
@@ -69,7 +69,7 @@ export default function UsagePage() {
       ) : (
         usage && (
           <>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
               <StatCard
                 label="Consultas"
                 value={fmtNum(usage.totals.requests)}
@@ -89,6 +89,15 @@ export default function UsagePage() {
                 label="Errores"
                 value={fmtNum(usage.totals.errors ?? 0)}
                 icon={Warning}
+              />
+              <StatCard
+                label="Costo estimado"
+                value={
+                  usage.totals.estimated_cost != null
+                    ? `$${usage.totals.estimated_cost.toFixed(2)}`
+                    : "—"
+                }
+                icon={Coins}
               />
             </div>
 

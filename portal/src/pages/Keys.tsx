@@ -1,5 +1,6 @@
 import {
   ArrowClockwise,
+  BookOpenText,
   Copy,
   Eye,
   EyeSlash,
@@ -9,9 +10,12 @@ import {
   Trash,
 } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { useToast } from "../Toast";
+import { PageTabs } from "../components/PageTabs";
+import WebhooksPage from "./Webhooks";
 import {
   EmptyState,
   ErrorInline,
@@ -55,6 +59,7 @@ function keyEnvironment(key: ApiKeyInfo): "live" | "test" {
 export default function KeysPage() {
   const { session } = useAuth();
   const { pushToast } = useToast();
+  const [tab, setTab] = useState<"keys" | "webhooks" | "docs">("keys");
   const [keys, setKeys] = useState<ApiKeyInfo[]>([]);
   const [newToken, setNewToken] = useState("");
   const [revealed, setRevealed] = useState(false);
@@ -175,12 +180,68 @@ export default function KeysPage() {
   return (
     <div>
       <PageHeader
-        title="Claves de integración"
-        subtitle="Production (zent_sk_live_) y Development (zent_sk_test_). Mismos datos; test tiene cuota más baja y marca X-Zent-Environment. Revocar no rota la clave de billing."
+        title="API y Claves"
+        subtitle="Administra las credenciales para acceder a Zent programáticamente desde tus sistemas."
       />
-      <ErrorInline message={error} />
-      <SuccessInline message={msg} />
+      <PageTabs
+        tabs={[
+          { id: "keys", label: "API Keys", icon: KeyIcon },
+          { id: "webhooks", label: "Webhooks" },
+          { id: "docs", label: "Documentación", icon: BookOpenText },
+        ]}
+        active={tab}
+        onChange={(id) => setTab(id as "keys" | "webhooks" | "docs")}
+        idPrefix="api"
+      />
+      <div className="mt-4">
+        <ErrorInline message={error} />
+        <SuccessInline message={msg} />
+      </div>
 
+      {tab === "webhooks" && <WebhooksPage />}
+
+      {tab === "docs" && (
+        <div className="panel mt-4">
+          <div className="border-b border-border px-5 py-4">
+            <h2 className="text-sm font-semibold text-text">Documentación de API</h2>
+          </div>
+          <div className="flex flex-col gap-2 p-5">
+            <p className="text-[13px] leading-relaxed text-muted">
+              Referencia interactiva y ejemplos de código para integrar Zent en tus aplicaciones.
+            </p>
+            <pre className="overflow-x-auto rounded-md bg-soft p-3 font-mono text-xs leading-relaxed text-text">
+{`curl -X POST https://api.zent.example/api/v1/rag/query \\
+  -H "Authorization: Bearer zent_sk_live_..." \\
+  -H "Content-Type: application/json" \\
+  -d '{"query": "¿Cuánto stock queda del producto ABC?"}'`}
+            </pre>
+            <div className="flex flex-wrap gap-2">
+              <a
+                href="/docs"
+                target="_blank"
+                rel="noreferrer"
+                className="btn btn-secondary"
+              >
+                Swagger UI
+              </a>
+              <Link to="/developers" className="btn btn-secondary">
+                Centro de desarrolladores
+              </Link>
+              <a
+                href="/redoc"
+                target="_blank"
+                rel="noreferrer"
+                className="btn btn-ghost"
+              >
+                Redoc
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {tab === "keys" && (
+      <>
       <div className="mb-4 flex justify-end">
         <button
           className="btn btn-primary"
@@ -284,8 +345,8 @@ export default function KeysPage() {
             <KeyIcon size={16} className="text-accent" aria-hidden />
             Claves ({keys.length})
           </h2>
-          <span className="mono text-xs text-faint">
-            {session?.organizationId}
+          <span className="text-[11px] text-faint">
+            Production y Development comparten los mismos datos; test tiene cuota más baja.
           </span>
         </div>
 
@@ -421,6 +482,8 @@ export default function KeysPage() {
             </div>
           </div>
         </div>
+      )}
+      </>
       )}
     </div>
   );

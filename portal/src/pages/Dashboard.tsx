@@ -6,9 +6,12 @@ import {
   Heartbeat,
   Lightning,
   ListBullets,
+  Robot,
   Stack,
+  Star,
   TrendDown,
   TrendUp,
+  WarningCircle,
 } from "@phosphor-icons/react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
@@ -16,14 +19,6 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { EmptyState, ErrorInline, PageHeader, SkeletonBlock, StatCard } from "../components/ui";
 import { fmtDateTime, fmtLatency, fmtNum, timeAgo } from "../lib/format";
-
-function dayGreeting(company?: string): string {
-  const hour = new Date().getHours();
-  const hello =
-    hour < 12 ? "Buenos días" : hour < 19 ? "Buenas tardes" : "Buenas noches";
-  if (company) return `${hello}, ${company}.`;
-  return `${hello}.`;
-}
 
 const UsageChart = lazy(() => import("../components/UsageChart"));
 
@@ -67,12 +62,30 @@ type LazyActivity = {
   recent: LazyEvent[];
 };
 
+type EvalStats = {
+  total_evaluations: number;
+  approval_rate: number;
+};
+
+type HealthChecks = Record<string, string>;
+
+const SERVICE_LABELS: Record<string, string> = {
+  api: "API",
+  postgres: "Base de datos",
+  qdrant: "Vector DB",
+  redis: "Redis",
+};
+
 export default function DashboardPage() {
   const { session } = useAuth();
   const [sub, setSub] = useState<Subscription | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
   const [health, setHealth] = useState<"ok" | "down">("ok");
+  const [checks, setChecks] = useState<HealthChecks>({});
+  const [agentCount, setAgentCount] = useState<number | null>(null);
+  const [quality, setQuality] = useState<EvalStats | null>(null);
   const [lazyActivity, setLazyActivity] = useState<LazyActivity | null>(null);
+  const [issues, setIssues] = useState<{ id: string; label: string; to: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -83,26 +96,56 @@ export default function DashboardPage() {
       setError("");
       try {
         const h = await fetch("/health");
-        setHealth(h.ok ? "ok" : "down");
-        const [subData, usageData, lazyData] = await Promise.all([
-          api<Subscription>("/api/v1/billing/subscription", {
-            token: session.token,
-            organizationId: session.organizationId,
-          }),
-          api<Usage>("/api/v1/billing/usage?days=30", {
-            token: session.token,
-            organizationId: session.organizationId,
-          }),
-          api<LazyActivity>("/api/v1/ingestion/lazy-activity?days=30", {
-            token: session.token,
-            organizationId: session.organizationId,
-          }).catch(() => ({ trigger_count: 0, recent: [] as LazyEvent[] })),
-        ]);
+        const healthData = await h.json().catch(() => ({ checks: {} as HealthChecks }));
+        setHealth(h.ok && healthData.status === "healthy" ? "ok" : "down");
+        setChecks(healthData.checks || {});
+        const [subData, usageData, lazyData, agentData, qualityData, sourceData] =
+          await Promise.all([
+            api<Subscription>("/api/v1/billing/subscription", {
+              token: session.token,
+              organizationId: session.organizationId,
+            }),
+            api<Usage>("/api/v1/billing/usage?days=30", {
+              token: session.token,
+              organizationId: session.organizationId,
+            }),
+            api<LazyActivity>("/api/v1/ingestion/lazy-activity?days=30", {
+              token: session.token,
+              organizationId: session.organizationId,
+            }).catch(() => ({ trigger_count: 0, recent: [] as LazyEvent[] })),
+            api<{ agents: unknown[] }>("/api/v1/agents", {
+              token: session.token,
+              organizationId: session.organizationId,
+            }).catch(() => ({ agents: [] as unknown[] })),
+            api<EvalStats>("/api/v1/eval/stats?days=30", {
+              token: session.token,
+              organizationId: session.organizationId,
+            }).catch(() => null),
+            api<{ sources: { id: string; name: string; status: string }[] }>(
+              "/api/v1/sources",
+              {
+                token: session.token,
+                organizationId: session.organizationId,
+              }
+            ).catch(() => ({ sources: [] as { id: string; name: string; status: string }[] })),
+          ]);
         setSub(subData);
         setUsage(usageData);
         setLazyActivity(lazyData);
+        setAgentCount((agentData.agents || []).length);
+        setQuality(qualityData);
+        const bad = (sourceData.sources || []).filter(
+          (s) => s.status === "error" || s.status === "failed"
+        );
+        setIssues(
+          bad.slice(0, 5).map((s) => ({
+            id: s.id,
+            label: `La fuente «${s.name}» no se sincronizó correctamente.`,
+            to: "/knowledge/sources",
+          }))
+        );
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error cargando dashboard");
+        setError(err instanceof Error ? err.message : "Error cargando panel");
       } finally {
         setLoading(false);
       }
@@ -116,19 +159,20 @@ export default function DashboardPage() {
   const daily = usage?.daily ?? [];
   const recentQueries = usage?.recent ?? [];
   const lazyEvents = (lazyActivity?.recent ?? []).slice(0, 5);
+  const services = ["api", "postgres", "qdrant", "redis"] as const;
 
   return (
     <div>
       <PageHeader
-        title={dayGreeting(session?.companyName)}
-        subtitle="Estado de tu plan, cuota y salud del asistente."
+        title="Panel general"
+        subtitle="Monitorea tu workspace de IA, el uso y la salud de la plataforma."
       />
 
       <ErrorInline message={error} />
 
       {loading ? (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
-          {Array.from({ length: 5 }).map((_, i) => (
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+          {Array.from({ length: 6 }).map((_, i) => (
             <div key={i} className="stat space-y-2">
               <SkeletonBlock rows={1} />
             </div>
@@ -136,14 +180,14 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             <StatCard
-              label="Plan"
-              value={sub?.plan_name || sub?.status || "—"}
-              icon={Stack}
+              label="Solicitudes"
+              value={fmtNum(usage?.totals.requests ?? 0)}
+              icon={Lightning}
             />
             <StatCard
-              label="Cuota del mes"
+              label="Uso del período"
               value={limit ? `${fmtNum(used)} / ${fmtNum(limit)}` : fmtNum(used)}
               icon={Gauge}
               hint={
@@ -163,28 +207,29 @@ export default function DashboardPage() {
               }
             />
             <StatCard
-              label="Estado del servicio"
+              label="Plan"
+              value={sub?.plan_name || sub?.status || "—"}
+              icon={Stack}
+            />
+            <StatCard
+              label="Estado del sistema"
               value={health === "ok" ? "Operativo" : "Degradado"}
               icon={Heartbeat}
               tone={health === "ok" ? "ok" : "danger"}
-              hint="API, base de datos y buscador"
             />
             <StatCard
-              label="Trial hasta"
-              value={
-                sub?.trial_end ? new Date(sub.trial_end).toLocaleDateString() : "—"
+              label="Agentes activos"
+              value={agentCount != null ? fmtNum(agentCount) : "—"}
+              icon={Robot}
+            />
+            <StatCard
+              label="Calidad de IA"
+              value={quality?.total_evaluations ? `${quality.approval_rate}%` : "—"}
+              icon={Star}
+              tone={
+                quality && quality.approval_rate >= 70 ? "ok" : "default"
               }
-              icon={CalendarBlank}
-            />
-            <StatCard
-              label="Consultas IA"
-              value={fmtNum(usage?.totals.requests ?? 0)}
-              icon={Lightning}
-            />
-            <StatCard
-              label="Tokens"
-              value={fmtNum(usage?.totals.tokens ?? 0)}
-              icon={ChartLineUp}
+              hint={quality?.total_evaluations ? `${fmtNum(quality.total_evaluations)} evaluaciones` : "sin feedback aún"}
             />
           </div>
 
@@ -199,10 +244,10 @@ export default function DashboardPage() {
                   <EmptyState
                     icon={ChartLineUp}
                     title="Aún no hay consultas"
-                    body="Cuando hagas preguntas al asistente, verás aquí la actividad diaria."
+                    body="Cuando hagas preguntas en el Playground, verás aquí la actividad diaria."
                     action={
                       <Link to="/chat" className="btn btn-secondary">
-                        Hacer una pregunta <ArrowRight size={15} aria-hidden />
+                        Probar el Playground <ArrowRight size={15} aria-hidden />
                       </Link>
                     }
                   />
@@ -225,12 +270,82 @@ export default function DashboardPage() {
 
             <div className="panel">
               <div className="flex items-center justify-between border-b border-border px-5 py-4">
+                <h2 className="text-sm font-semibold text-text">Estado de la plataforma</h2>
+                <Link
+                  to="/deployments"
+                  className="flex items-center gap-1 text-xs text-accent hover:underline"
+                >
+                  Despliegues <ArrowRight size={12} aria-hidden />
+                </Link>
+              </div>
+              <ul className="divide-y divide-border/60 px-2">
+                {services.map((service) => {
+                  const value = checks[service];
+                  const healthy = value === "ok";
+                  return (
+                    <li
+                      key={service}
+                      className="flex items-center justify-between gap-2 px-3 py-2.5"
+                    >
+                      <span className="text-[13px] text-text">{SERVICE_LABELS[service]}</span>
+                      {value ? (
+                        <span
+                          className={`badge ${healthy ? "badge-ok" : "badge-danger"}`}
+                        >
+                          <span className="status-dot mr-1 bg-current" aria-hidden />
+                          {healthy ? "Saludable" : "Degradado"}
+                        </span>
+                      ) : (
+                        <span className="badge badge-muted">No verificado</span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          </div>
+
+          <div className="mt-4 grid gap-4 xl:grid-cols-3">
+            <div className="panel xl:col-span-2">
+              <div className="flex items-center justify-between border-b border-border px-5 py-4">
+                <h2 className="text-sm font-semibold text-text">Necesita atención</h2>
+                <span className="mono text-[11px] text-faint">eventos reales</span>
+              </div>
+              {issues.length === 0 ? (
+                <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-md border border-border bg-soft text-ok">
+                    <Heartbeat size={22} aria-hidden />
+                  </span>
+                  <p className="mt-1 text-sm font-medium text-text">Todo en orden</p>
+                  <p className="max-w-sm text-[13px] leading-relaxed text-muted">
+                    No se detectaron problemas en tu workspace.
+                  </p>
+                </div>
+              ) : (
+                <ul className="divide-y divide-border/60 px-2">
+                  {issues.map((issue) => (
+                    <li key={issue.id} className="flex items-center justify-between gap-3 px-3 py-3">
+                      <span className="flex items-center gap-2 text-[13px] text-text">
+                        <WarningCircle size={15} className="shrink-0 text-warn" aria-hidden />
+                        {issue.label}
+                      </span>
+                      <Link to={issue.to} className="shrink-0 text-xs text-accent hover:underline">
+                        Revisar
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            <div className="panel">
+              <div className="flex items-center justify-between border-b border-border px-5 py-4">
                 <h2 className="text-sm font-semibold text-text">Consultas recientes</h2>
                 <Link
                   to="/usage"
                   className="flex items-center gap-1 text-xs text-accent hover:underline"
                 >
-                  Ver uso <ArrowRight size={12} aria-hidden />
+                  Analítica <ArrowRight size={12} aria-hidden />
                 </Link>
               </div>
               {recentQueries.length === 0 ? (
@@ -286,9 +401,7 @@ export default function DashboardPage() {
                         </span>
                         <span className="flex items-center gap-2 text-[11px] text-faint">
                           {ev.rows_indexed > 0 && (
-                            <span className="mono">
-                              {ev.rows_indexed} filas
-                            </span>
+                            <span className="mono">{ev.rows_indexed} filas</span>
                           )}
                           · {timeAgo(ev.at)}
                         </span>
@@ -306,35 +419,35 @@ export default function DashboardPage() {
 
             <div className="panel">
               <div className="border-b border-border px-5 py-4">
-                <h2 className="text-sm font-semibold text-text">Siguiente paso</h2>
+                <h2 className="text-sm font-semibold text-text">Próximos pasos</h2>
               </div>
               <div className="flex flex-col gap-2 p-4">
                 <Link
                   to="/knowledge/sql"
                   className="group flex items-center justify-between rounded-md border border-border bg-soft px-4 py-3 text-sm text-text transition-all duration-200 hover:border-accent/40 hover:bg-raised"
                 >
-                  Sincronizar datos
+                  Conectar conocimiento
                   <ArrowRight size={15} className="text-faint transition-transform group-hover:translate-x-0.5" aria-hidden />
                 </Link>
                 <Link
                   to="/chat"
                   className="group flex items-center justify-between rounded-md border border-border bg-soft px-4 py-3 text-sm text-text transition-all duration-200 hover:border-accent/40 hover:bg-raised"
                 >
-                  Hacer una pregunta
+                  Probar el Playground
+                  <ArrowRight size={15} className="text-faint transition-transform group-hover:translate-x-0.5" aria-hidden />
+                </Link>
+                <Link
+                  to="/agents"
+                  className="group flex items-center justify-between rounded-md border border-border bg-soft px-4 py-3 text-sm text-text transition-all duration-200 hover:border-accent/40 hover:bg-raised"
+                >
+                  Crear un agente
                   <ArrowRight size={15} className="text-faint transition-transform group-hover:translate-x-0.5" aria-hidden />
                 </Link>
                 <Link
                   to="/keys"
                   className="group flex items-center justify-between rounded-md border border-border bg-soft px-4 py-3 text-sm text-text transition-all duration-200 hover:border-accent/40 hover:bg-raised"
                 >
-                  Ver clave de integración
-                  <ArrowRight size={15} className="text-faint transition-transform group-hover:translate-x-0.5" aria-hidden />
-                </Link>
-                <Link
-                  to="/prompts"
-                  className="group flex items-center justify-between rounded-md border border-border bg-soft px-4 py-3 text-sm text-text transition-all duration-200 hover:border-accent/40 hover:bg-raised"
-                >
-                  Ajustar prompts
+                  Ver credenciales de API
                   <ArrowRight size={15} className="text-faint transition-transform group-hover:translate-x-0.5" aria-hidden />
                 </Link>
               </div>
@@ -352,6 +465,13 @@ export default function DashboardPage() {
               <span className="mono">{fmtNum(usage!.totals.tokens)}</span> tokens,{" "}
               <span className="mono">{fmtLatency(usage!.totals.avg_latency_ms)}</span> de latencia
               media en los últimos 30 días.
+            </p>
+          )}
+
+          {sub?.trial_end && (
+            <p className="mt-2 flex items-center gap-1.5 text-xs text-faint">
+              <CalendarBlank size={14} aria-hidden />
+              Trial hasta {new Date(sub.trial_end).toLocaleDateString()}
             </p>
           )}
         </>

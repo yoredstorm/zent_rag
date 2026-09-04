@@ -9,7 +9,7 @@ import {
   SkeletonBlock,
   StatCard,
 } from "../components/ui";
-import { fmtDateTime, fmtNum } from "../lib/format";
+import { fmtNum } from "../lib/format";
 
 type Subscription = {
   plan_name: string | null;
@@ -87,7 +87,7 @@ export default function BillingPage() {
       setLoading(true);
       setError("");
       try {
-        const [subData, planData, invoiceData, entData] = await Promise.all([
+        const [subData, planData, invoiceData, entData, profileData] = await Promise.all([
           api<Subscription>("/api/v1/billing/subscription", {
             token: session.token,
             organizationId: session.organizationId,
@@ -262,11 +262,7 @@ export default function BillingPage() {
     <div>
       <PageHeader
         title="Facturación"
-        subtitle={
-          canCheckout
-            ? "Plan, cuota y facturas. El upgrade abre Stripe Checkout."
-            : "Plan, cuota y facturas. Para cambiar de plan, contacta a Zent."
-        }
+        subtitle="Plan, uso del período y límites de tu workspace. Administra tus facturas y perfil de pago."
       />
       <ErrorInline message={error} />
       {loading ? (
@@ -280,10 +276,10 @@ export default function BillingPage() {
       ) : (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <StatCard label="Plan" value={sub?.plan_name || "—"} icon={CreditCard} />
+            <StatCard label="Plan actual" value={sub?.plan_name || "—"} icon={CreditCard} />
             <StatCard label="Estado" value={sub?.status || "—"} />
             <StatCard
-              label="Cuota"
+              label="Uso del período"
               value={limit ? `${fmtNum(used)} / ${fmtNum(limit)}` : fmtNum(used)}
             />
           </div>
@@ -420,7 +416,7 @@ export default function BillingPage() {
                     {invoices.map((inv) => (
                       <tr key={inv.id}>
                         <td className="mono text-xs">{inv.invoice_number}</td>
-                        <td><span className={`badge ${inv.status === "paid" ? "badge-ok" : inv.status === "void" ? "badge-muted" : "badge-warning"}`}>{inv.status}</span></td>
+                        <td><span className={`badge ${inv.status === "paid" ? "badge-ok" : inv.status === "void" ? "badge-muted" : "badge-pending"}`}>{inv.status}</span></td>
                         <td className="mono text-right">
                           {inv.total_cents != null
                             ? `${(inv.total_cents / 100).toFixed(2)} ${inv.currency || "USD"}`
@@ -456,6 +452,16 @@ export default function BillingPage() {
                 </table>
               </div>
             )}
+          </div>
+          <div className="panel mt-4">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
+              <h2 className="text-sm font-semibold text-text">Créditos de IA</h2>
+              <span className="badge badge-pending">Próximamente</span>
+            </div>
+            <p className="px-5 py-4 text-[13px] leading-relaxed text-muted">
+              Compra y consumo de créditos para modelos personalizados. Esta funcionalidad
+              estará disponible en una próxima fase.
+            </p>
           </div>
           <div className="panel mt-4">
             <div className="border-b border-border px-5 py-4">

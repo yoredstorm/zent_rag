@@ -20,6 +20,8 @@
   --color-warn-soft: rgb(230 192 123 / 0.12);
   --color-ok: #4fc98f;
   --color-ok-soft: rgb(79 201 143 / 0.12);
+  --color-info: #6ea8fe;
+  --color-info-soft: rgb(110 168 254 / 0.12);
 
   --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
@@ -278,7 +280,7 @@
     @apply max-w-[85%] rounded-lg px-4 py-2.5 text-[14.5px] leading-relaxed;
   }
   .bubble-user {
-    @apply rounded-br-xs border border-accent/20 bg-[#14372e];
+    @apply rounded-br-xs border border-accent/20 bg-accent-soft/40;
   }
   .bubble-assistant {
     @apply rounded-bl-xs border border-border bg-raised;
@@ -290,6 +292,46 @@
 
   .help-icon {
     @apply inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm text-muted transition-colors duration-200 hover:bg-soft hover:text-text;
+  }
+
+  /* Typography scale */
+  .text-display {
+    @apply text-3xl font-semibold tracking-tight text-text;
+  }
+  .text-h1 {
+    @apply text-2xl font-semibold tracking-tight text-text;
+  }
+  .text-h2 {
+    @apply text-lg font-semibold tracking-tight text-text;
+  }
+  .text-h3 {
+    @apply text-sm font-semibold text-text;
+  }
+  .text-caption {
+    @apply text-[11px] font-medium uppercase tracking-[0.08em] text-faint;
+  }
+
+  /* Status dot (sin depender solo del color) */
+  .status-dot {
+    @apply relative inline-block h-2 w-2 shrink-0 rounded-full;
+    box-shadow: 0 0 0 2px rgb(0 0 0 / 0.35);
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-sm bg-soft px-2 py-1 text-xs text-muted;
+  }
+
+  .tabs {
+    @apply flex flex-wrap items-center gap-1 border-b border-border;
+  }
+  .tab {
+    @apply -mb-px inline-flex min-h-10 cursor-pointer items-center gap-1.5 rounded-t-sm border-b-2 border-transparent px-3 text-[13.5px] font-medium text-muted transition-colors duration-150 hover:text-text;
+  }
+  .tab[aria-selected="true"] {
+    @apply border-accent text-text;
+  }
+  .tab:focus-visible {
+    outline-offset: -2px;
   }
 
   .toast {

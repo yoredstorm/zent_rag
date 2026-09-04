@@ -302,7 +302,7 @@ export function SyncBanner() {
       className={`mb-5 rounded-md border px-4 py-3 shadow-pop ${
         state.stale
           ? "border-warn/40 bg-warn-soft"
-          : "border-accent/25 bg-[#122c26]"
+          : "border-accent/25 bg-accent-soft/40"
       }`}
       role="status"
     >

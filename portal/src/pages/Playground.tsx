@@ -128,7 +128,7 @@ export default function PlaygroundPage() {
 
   return (
     <div>
-      <PageHeader title="Playground" subtitle="Ejecuta las APIs en vivo con tu sesión y tus deployments." />
+      <PageHeader title="API Console" subtitle="Ejecuta las APIs en vivo con tu sesión y tus deployments." />
       <ErrorInline message={error} />
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <div className="space-y-3">

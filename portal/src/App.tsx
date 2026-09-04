@@ -1,19 +1,40 @@
 import {
+  Bell,
+  Books,
+  Buildings,
   ChartBar,
+  ChartLineUp,
   ChatCircleDots,
+  ChatsCircle,
+  ClipboardText,
+  Code,
+  Compass,
   CreditCard,
   Database,
-  Files,
   FolderSimple,
+  FlowArrow,
   Gear,
+  GraduationCap,
   Key,
+  Lifebuoy,
   List,
-  MagnifyingGlass,
   NotePencil,
   Plugs,
+  Robot,
+  Rocket,
+  RocketLaunch,
+  Scales,
+  ShieldCheck,
+  ShieldStar,
   SignOut,
+  Sparkle,
   SquaresFour,
+  Storefront,
+  Swap,
+  Target,
+  WarningOctagon,
   UsersThree,
+  WebhooksLogo,
   X,
   type Icon,
 } from "@phosphor-icons/react";
@@ -21,6 +42,8 @@ import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { NavLink, Navigate, Outlet, Route, Routes } from "react-router-dom";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ApiKeyCreatedModal } from "./components/ApiKeyCreatedModal";
+import { Topbar } from "./components/Topbar";
+import { WorkspaceSelector } from "./components/WorkspaceSelector";
 import { api, SIGNUP_API_KEY_STORAGE, type Session } from "./api";
 import { useAuth } from "./auth";
 import { IMPERSONATING_KEY } from "./platformAuth";
@@ -34,12 +57,10 @@ const LoginPage = lazy(() => import("./pages/Login"));
 const PromptsPage = lazy(() => import("./pages/Prompts"));
 const SignupPage = lazy(() => import("./pages/Signup"));
 const UsagePage = lazy(() => import("./pages/Usage"));
-const UsersPage = lazy(() => import("./pages/Users"));
 const ProjectsPage = lazy(() => import("./pages/Projects"));
 const AgentsPage = lazy(() => import("./pages/Agents"));
 const AgentBuilderPage = lazy(() => import("./pages/AgentBuilder"));
 const ConnectorsPage = lazy(() => import("./pages/Connectors"));
-const AuditLogsPage = lazy(() => import("./pages/AuditLogs"));
 const BillingPage = lazy(() => import("./pages/Billing"));
 const SettingsPage = lazy(() => import("./pages/Settings"));
 const KnowledgeSourcesPage = lazy(() => import("./pages/knowledge/Sources"));
@@ -109,7 +130,6 @@ const AdminNotificationsPage = lazy(() => import("./pages/admin/Notifications"))
 const NotificationsPage = lazy(() => import("./pages/Notifications"));
 const AuditCompliancePage = lazy(() => import("./pages/AuditCompliance"));
 const AdminCompliancePage = lazy(() => import("./pages/admin/Compliance"));
-const AdminOnboardingMetricsPage = lazy(() => import("./pages/admin/Onboarding"));
 const AdminFeedbackPage = lazy(() => import("./pages/admin/Feedback"));
 const AdminMigrationsPage = lazy(() => import("./pages/admin/Migrations"));
 const AdminReleasesPage = lazy(() => import("./pages/admin/Releases"));
@@ -124,6 +144,12 @@ const EvaluationOverviewPage = lazy(() => import("./pages/evaluation/Overview"))
 const EvaluationRunsPage = lazy(() => import("./pages/evaluation/Runs"));
 const EvaluationRunDetailPage = lazy(() => import("./pages/evaluation/RunDetail"));
 const EvaluationComparePage = lazy(() => import("./pages/evaluation/Compare"));
+const AiQualityPage = lazy(() => import("./pages/AiQuality"));
+const DeploymentsPage = lazy(() => import("./pages/Deployments"));
+const DataSourcesPage = lazy(() => import("./pages/DataSources"));
+const WebhooksPage = lazy(() => import("./pages/Webhooks"));
+const TeamAccessPage = lazy(() => import("./pages/TeamAccess"));
+const SecurityAuditPage = lazy(() => import("./pages/SecurityAudit"));
 
 function PageFallback() {
   return (
@@ -139,46 +165,73 @@ function PageFallback() {
 type Entitlements = Record<string, boolean | number | null>;
 
 type NavLeaf = { to: string; label: string; icon: Icon; end?: boolean; key?: string };
-type NavGroup = { label: string | null; items: NavLeaf[] };
+type NavGroup = { label: string | null; items: NavLeaf[]; collapsible?: boolean };
 
 const NAV_GROUPS: NavGroup[] = [
   {
-    label: null,
+    label: "Panel general",
     items: [
-      { to: "/", label: "Dashboard", icon: SquaresFour, end: true },
-      { to: "/chat", label: "Chat", icon: ChatCircleDots },
+      { to: "/", label: "Panel general", icon: SquaresFour, end: true },
+      { to: "/chat", label: "Playground", icon: ChatCircleDots },
     ],
   },
   {
-    label: "Conocimiento",
+    label: "Construir",
     items: [
-      { to: "/knowledge/sources", label: "Fuentes", icon: Database },
-      { to: "/knowledge/collections", label: "Colecciones", icon: FolderSimple },
-      { to: "/knowledge/documents", label: "Documentos", icon: Files },
-      { to: "/knowledge/sql", label: "Fuentes SQL", icon: Database },
-      { to: "/knowledge/jobs", label: "Trabajos de sync", icon: List },
-      { to: "/knowledge/playground", label: "Playground de búsqueda", icon: MagnifyingGlass },
+      { to: "/agents", label: "Agentes", icon: Robot },
+      { to: "/knowledge/sources", label: "Conocimiento", icon: Database },
+      { to: "/data-sources", label: "Fuentes de datos", icon: Plugs },
+      { to: "/prompts", label: "Instrucciones", icon: NotePencil, key: "prompts" },
     ],
   },
   {
-    label: "Espacio de trabajo",
+    label: "Operar",
     items: [
-      { to: "/projects", label: "Proyectos", icon: SquaresFour },
-      { to: "/agents", label: "Agentes", icon: ChatCircleDots },
+      { to: "/usage", label: "Analítica", icon: ChartLineUp },
+      { to: "/ai-quality", label: "Calidad de IA", icon: Target },
+      { to: "/deployments", label: "Despliegues", icon: RocketLaunch },
+    ],
+  },
+  {
+    label: "Desarrolladores",
+    items: [
+      { to: "/keys", label: "API y Claves", icon: Key, key: "keys" },
+      { to: "/webhooks", label: "Webhooks", icon: WebhooksLogo, key: "keys" },
+      { to: "/developers", label: "Centro de desarrolladores", icon: Code },
+    ],
+  },
+  {
+    label: "Organización",
+    items: [
+      { to: "/team", label: "Equipo y Acceso", icon: UsersThree, key: "users" },
+      { to: "/billing", label: "Facturación", icon: CreditCard, key: "billing" },
+      { to: "/security", label: "Seguridad y Auditoría", icon: ShieldCheck, key: "audit" },
+      { to: "/settings", label: "Configuración", icon: Gear, key: "settings" },
+    ],
+  },
+  {
+    label: "Avanzado",
+    collapsible: true,
+    items: [
+      { to: "/projects", label: "Proyectos", icon: FolderSimple },
       { to: "/evaluation", label: "Evaluación", icon: ChartBar, key: "eval_ui" },
       { to: "/connectors", label: "Conectores", icon: Plugs, key: "connectors" },
-      { to: "/prompts", label: "Prompts", icon: NotePencil, key: "prompts" },
-    ],
-  },
-  {
-    label: "Cuenta",
-    items: [
-      { to: "/users", label: "Usuarios", icon: UsersThree, key: "users" },
-      { to: "/keys", label: "Claves", icon: Key, key: "keys" },
-      { to: "/usage", label: "Uso", icon: ChartBar },
-      { to: "/billing", label: "Facturación", icon: CreditCard, key: "billing" },
-      { to: "/audit", label: "Auditoría", icon: List, key: "audit" },
-      { to: "/settings", label: "Ajustes", icon: Gear, key: "settings" },
+      { to: "/workspaces", label: "Workspaces", icon: Buildings },
+      { to: "/security-center", label: "Security Center", icon: ShieldStar },
+      { to: "/governance", label: "Gobernanza", icon: Scales },
+      { to: "/risk-center", label: "Risk Center", icon: WarningOctagon },
+      { to: "/knowledge-hub", label: "Knowledge Hub", icon: Books },
+      { to: "/workflows", label: "Workflows", icon: FlowArrow },
+      { to: "/chat-insights", label: "Chat Insights", icon: ChatsCircle },
+      { to: "/copilot", label: "Copilot", icon: Sparkle },
+      { to: "/marketplace", label: "Marketplace", icon: Storefront },
+      { to: "/migrations", label: "Migraciones", icon: Swap },
+      { to: "/releases", label: "Releases", icon: Rocket },
+      { to: "/training", label: "Training", icon: GraduationCap },
+      { to: "/onboarding", label: "Onboarding", icon: Compass },
+      { to: "/disaster-recovery", label: "Disaster Recovery", icon: Lifebuoy },
+      { to: "/audit/compliance", label: "Audit Compliance", icon: ClipboardText },
+      { to: "/notifications", label: "Notificaciones", icon: Bell },
     ],
   },
 ];
@@ -229,7 +282,7 @@ function Brand() {
         </svg>
       </div>
       <span className="text-[15px] font-semibold tracking-tight text-text">
-        Zent<span className="text-accent">RAG</span>
+        Zent
       </span>
     </div>
   );
@@ -238,6 +291,7 @@ function Brand() {
 function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   const { session, logout } = useAuth();
   const [confirming, setConfirming] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [entitlements, setEntitlements] = useState<Entitlements>({});
   const identity =
     session?.email || session?.companyName || session?.organizationId.slice(0, 8) || "";
@@ -263,47 +317,100 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="px-5 pt-5 pb-4">
+      <div className="flex flex-col gap-3 px-5 pt-5 pb-4">
         <Brand />
+        <WorkspaceSelector />
       </div>
       <nav className="flex flex-1 flex-col gap-3 overflow-y-auto px-3 pb-3" aria-label="Principal">
-        {groups.map((group) => (
-          <div key={group.label || "root"}>
-            {group.label && (
-              <p className="mb-1 px-2.5 text-[10px] font-semibold uppercase tracking-wider text-faint">
-                {group.label}
-              </p>
-            )}
-            <div className="flex flex-col gap-0.5">
-              {group.items.map(({ to, label, icon: IconEl, end }) => (
-                <NavLink
-                  key={to}
-                  to={to}
-                  end={end}
-                  onClick={onNavigate}
-                  className={({ isActive }) =>
-                    `group flex min-h-11 items-center gap-2.5 rounded-md px-2.5 py-2 text-[13.5px] transition-colors duration-150 ${
-                      isActive
-                        ? "bg-accent-soft font-medium text-accent"
-                        : "text-muted hover:bg-soft hover:text-text"
-                    }`
-                  }
+        {groups.map((group) => {
+          if (group.collapsible) {
+            return (
+              <div key={group.label || "root"}>
+                <button
+                  type="button"
+                  className="mb-1 flex w-full items-center justify-between rounded-xs px-2.5 py-1 text-[10px] font-semibold tracking-wider text-faint uppercase transition-colors duration-150 hover:text-muted"
+                  aria-expanded={advancedOpen}
+                  onClick={() => setAdvancedOpen((v) => !v)}
                 >
-                  {({ isActive }) => (
-                    <>
-                      <IconEl
-                        size={18}
-                        weight={isActive ? "fill" : "regular"}
-                        aria-hidden
-                      />
-                      <span className="truncate">{label}</span>
-                    </>
-                  )}
-                </NavLink>
-              ))}
+                  {group.label}
+                  <span
+                    className={`transition-transform duration-150 ${advancedOpen ? "rotate-90" : ""}`}
+                    aria-hidden
+                  >
+                    ▸
+                  </span>
+                </button>
+                {advancedOpen && (
+                  <div className="flex flex-col gap-0.5">
+                    {group.items.map(({ to, label, icon: IconEl, end }) => (
+                      <NavLink
+                        key={to}
+                        to={to}
+                        end={end}
+                        onClick={onNavigate}
+                        className={({ isActive }) =>
+                          `group flex min-h-9 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors duration-150 ${
+                            isActive
+                              ? "bg-accent-soft font-medium text-accent"
+                              : "text-muted hover:bg-soft hover:text-text"
+                          }`
+                        }
+                      >
+                        {({ isActive }) => (
+                          <>
+                            <IconEl
+                              size={16}
+                              weight={isActive ? "fill" : "regular"}
+                              aria-hidden
+                            />
+                            <span className="truncate">{label}</span>
+                          </>
+                        )}
+                      </NavLink>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          }
+          return (
+            <div key={group.label || "root"}>
+              {group.label && (
+                <p className="mb-1 px-2.5 text-[10px] font-semibold tracking-wider text-faint uppercase">
+                  {group.label}
+                </p>
+              )}
+              <div className="flex flex-col gap-0.5">
+                {group.items.map(({ to, label, icon: IconEl, end }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    end={end}
+                    onClick={onNavigate}
+                    className={({ isActive }) =>
+                      `group flex min-h-9 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors duration-150 ${
+                        isActive
+                          ? "bg-accent-soft font-medium text-accent"
+                          : "text-muted hover:bg-soft hover:text-text"
+                      }`
+                    }
+                  >
+                    {({ isActive }) => (
+                      <>
+                        <IconEl
+                          size={16}
+                          weight={isActive ? "fill" : "regular"}
+                          aria-hidden
+                        />
+                        <span className="truncate">{label}</span>
+                      </>
+                    )}
+                  </NavLink>
+                ))}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </nav>
       <div className="border-t border-border p-4">
         <p className="mb-3 truncate text-xs text-faint" title={identity}>
@@ -386,67 +493,71 @@ function ProtectedLayout() {
             <SidebarContent />
           </aside>
 
-          <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-border bg-bg/85 px-4 py-3 backdrop-blur-md lg:hidden">
-            <button
-              type="button"
-              className="btn btn-secondary min-h-11 px-2.5"
-              aria-label="Abrir menú"
-              aria-expanded={drawerOpen}
-              onClick={() => setDrawerOpen(true)}
-            >
-              <List size={18} aria-hidden />
-            </button>
-            <Brand />
-          </header>
+          <div className="flex min-h-[100dvh] flex-col">
+            <Topbar />
 
-          {drawerOpen && (
-            <div className="fixed inset-0 z-40 lg:hidden">
-              <div
-                className="absolute inset-0 animate-fade-in bg-black/60"
-                onClick={() => setDrawerOpen(false)}
-                aria-hidden
-              />
-              <div className="absolute inset-y-0 left-0 w-[280px] animate-page-in border-r border-border bg-surface shadow-pop">
-                <button
-                  type="button"
-                  className="absolute top-4 right-4 min-h-11 min-w-11 cursor-pointer rounded-xs p-1 text-faint hover:bg-soft hover:text-text"
-                  aria-label="Cerrar menú"
-                  onClick={() => setDrawerOpen(false)}
-                >
-                  <X size={18} aria-hidden />
-                </button>
-                <SidebarContent onNavigate={() => setDrawerOpen(false)} />
-              </div>
-            </div>
-          )}
-
-          <main id="contenido" className="mx-auto max-w-[1280px] px-4 py-6 sm:px-6 lg:px-10">
-            {impersonating && (
-              <div
-                className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-warn/30 bg-warn-soft px-4 py-3 text-sm text-text"
-                role="status"
+            <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-border bg-bg/85 px-4 py-3 backdrop-blur-md lg:hidden">
+              <button
+                type="button"
+                className="btn btn-secondary min-h-11 px-2.5"
+                aria-label="Abrir menú"
+                aria-expanded={drawerOpen}
+                onClick={() => setDrawerOpen(true)}
               >
-                <span>Estás impersonando {impersonating}.</span>
-                <button
-                  type="button"
-                  className="btn btn-secondary min-h-11"
-                  onClick={() => {
-                    localStorage.removeItem(IMPERSONATING_KEY);
-                    logout();
-                    window.location.assign("/admin/customers");
-                  }}
-                >
-                  Volver al Control Center
-                </button>
+                <List size={18} aria-hidden />
+              </button>
+              <Brand />
+            </header>
+
+            {drawerOpen && (
+              <div className="fixed inset-0 z-40 lg:hidden">
+                <div
+                  className="absolute inset-0 animate-fade-in bg-black/60"
+                  onClick={() => setDrawerOpen(false)}
+                  aria-hidden
+                />
+                <div className="absolute inset-y-0 left-0 w-[280px] animate-page-in border-r border-border bg-surface shadow-pop">
+                  <button
+                    type="button"
+                    className="absolute top-4 right-4 min-h-11 min-w-11 cursor-pointer rounded-xs p-1 text-faint hover:bg-soft hover:text-text"
+                    aria-label="Cerrar menú"
+                    onClick={() => setDrawerOpen(false)}
+                  >
+                    <X size={18} aria-hidden />
+                  </button>
+                  <SidebarContent onNavigate={() => setDrawerOpen(false)} />
+                </div>
               </div>
             )}
-            <SyncBanner />
-            <div className="animate-page-in">
-              <ErrorBoundary>
-                <Outlet />
-              </ErrorBoundary>
-            </div>
-          </main>
+
+            <main id="contenido" className="mx-auto w-full max-w-[1280px] flex-1 px-4 py-6 sm:px-6 lg:px-10">
+              {impersonating && (
+                <div
+                  className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-warn/30 bg-warn-soft px-4 py-3 text-sm text-text"
+                  role="status"
+                >
+                  <span>Estás impersonando {impersonating}.</span>
+                  <button
+                    type="button"
+                    className="btn btn-secondary min-h-11"
+                    onClick={() => {
+                      localStorage.removeItem(IMPERSONATING_KEY);
+                      logout();
+                      window.location.assign("/admin/customers");
+                    }}
+                  >
+                    Volver al Control Center
+                  </button>
+                </div>
+              )}
+              <SyncBanner />
+              <div className="animate-page-in">
+                <ErrorBoundary>
+                  <Outlet />
+                </ErrorBoundary>
+              </div>
+            </main>
+          </div>
         </div>
       </SyncJobProvider>
     </ToastProvider>
@@ -485,7 +596,6 @@ export default function App() {
         <Route path="status" element={<Suspense fallback={<PageFallback />}><AdminSystemStatusPage /></Suspense>} />
         <Route path="dr" element={<Suspense fallback={<PageFallback />}><AdminDisasterRecoveryPage /></Suspense>} />
         <Route path="governance" element={<Suspense fallback={<PageFallback />}><AdminGovernancePage /></Suspense>} />
-        <Route path="dr" element={<Suspense fallback={<PageFallback />}><AdminDisasterRecoveryPage /></Suspense>} />
         <Route path="customers" element={<Suspense fallback={<PageFallback />}><AdminCustomerSuccessPage /></Suspense>} />
         <Route path="audit-intel" element={<Suspense fallback={<PageFallback />}><AdminAuditIntelligencePage /></Suspense>} />
         <Route path="optimizer" element={<Suspense fallback={<PageFallback />}><AdminOptimizerPage /></Suspense>} />
@@ -497,11 +607,9 @@ export default function App() {
         <Route path="risk-center" element={<Suspense fallback={<PageFallback />}><AdminRiskCenterPage /></Suspense>} />
         <Route path="ecosystem" element={<Suspense fallback={<PageFallback />}><AdminEcosystemPage /></Suspense>} />
         <Route path="soc" element={<Suspense fallback={<PageFallback />}><AdminSecurityCenterPage /></Suspense>} />
-        <Route path="governance" element={<Suspense fallback={<PageFallback />}><AdminGovernancePage /></Suspense>} />
-        <Route path="dr" element={<Suspense fallback={<PageFallback />}><AdminDisasterRecoveryPage /></Suspense>} />
+        <Route path="security-center" element={<Suspense fallback={<PageFallback />}><AdminSecurityCenterPage /></Suspense>} />
         <Route path="model-gateway" element={<Suspense fallback={<PageFallback />}><AdminModelGatewayPage /></Suspense>} />
         <Route path="realtime" element={<Suspense fallback={<PageFallback />}><AdminRealtimePage /></Suspense>} />
-        <Route path="security-center" element={<Suspense fallback={<PageFallback />}><AdminSecurityCenterPage /></Suspense>} />
         <Route path="onboarding" element={<Suspense fallback={<PageFallback />}><AdminOnboardingPage /></Suspense>} />
         <Route path="capacity" element={<Suspense fallback={<PageFallback />}><AdminCapacityPage /></Suspense>} />
         <Route path="partners" element={<Suspense fallback={<PageFallback />}><AdminPartnersPage /></Suspense>} />
@@ -518,7 +626,6 @@ export default function App() {
         <Route path="traces" element={<Suspense fallback={<PageFallback />}><AdminTracesPage /></Suspense>} />
         <Route path="notifications" element={<Suspense fallback={<PageFallback />}><AdminNotificationsPage /></Suspense>} />
         <Route path="compliance" element={<Suspense fallback={<PageFallback />}><AdminCompliancePage /></Suspense>} />
-        <Route path="onboarding" element={<Suspense fallback={<PageFallback />}><AdminOnboardingPage /></Suspense>} />
         <Route path="operations" element={<Suspense fallback={<PageFallback />}><AdminOperationsPage /></Suspense>} />
         <Route path="security" element={<Suspense fallback={<PageFallback />}><AdminSecurityPage /></Suspense>} />
         <Route path="audit" element={<Suspense fallback={<PageFallback />}><AdminAuditPage /></Suspense>} />
@@ -531,11 +638,19 @@ export default function App() {
         <Route path="*" element={<Navigate to="/control-center" replace />} />
       </Route>
       <Route element={<ProtectedLayout />}>
+        {/* Aliases de producto */}
+        <Route path="/overview" element={<Navigate to="/" replace />} />
+        <Route path="/api-keys" element={<Navigate to="/keys" replace />} />
+        <Route path="/analytics" element={<Navigate to="/usage" replace />} />
+        <Route path="/agent-instructions" element={<Navigate to="/prompts" replace />} />
+        <Route path="/users" element={<Navigate to="/team" replace />} />
+        <Route path="/audit" element={<Navigate to="/security" replace />} />
+        <Route path="/ingestion" element={<Navigate to="/knowledge/sql" replace />} />
+        <Route path="/knowledge-bases" element={<Navigate to="/knowledge/collections" replace />} />
         <Route path="/" element={<Suspense fallback={<PageFallback />}><DashboardPage /></Suspense>} />
         <Route path="/usage" element={<Suspense fallback={<PageFallback />}><UsagePage /></Suspense>} />
         <Route path="/keys" element={<Suspense fallback={<PageFallback />}><KeysPage /></Suspense>} />
-        <Route path="/ingestion" element={<Navigate to="/knowledge/sql" replace />} />
-        <Route path="/knowledge-bases" element={<Navigate to="/knowledge/collections" replace />} />
+        <Route path="/webhooks" element={<Suspense fallback={<PageFallback />}><WebhooksPage /></Suspense>} />
         <Route path="/knowledge/sources" element={<Suspense fallback={<PageFallback />}><KnowledgeSourcesPage /></Suspense>} />
         <Route path="/knowledge/collections" element={<Suspense fallback={<PageFallback />}><KnowledgeCollectionsPage /></Suspense>} />
         <Route path="/knowledge/documents" element={<Suspense fallback={<PageFallback />}><KnowledgeDocumentsPage /></Suspense>} />
@@ -544,7 +659,7 @@ export default function App() {
         <Route path="/knowledge/playground" element={<Suspense fallback={<PageFallback />}><KnowledgePlaygroundPage /></Suspense>} />
         <Route path="/prompts" element={<Suspense fallback={<PageFallback />}><PromptsPage /></Suspense>} />
         <Route path="/chat" element={<Suspense fallback={<PageFallback />}><ChatPage /></Suspense>} />
-        <Route path="/users" element={<Suspense fallback={<PageFallback />}><UsersPage /></Suspense>} />
+        <Route path="/team" element={<Suspense fallback={<PageFallback />}><TeamAccessPage /></Suspense>} />
         <Route path="/projects" element={<Suspense fallback={<PageFallback />}><ProjectsPage /></Suspense>} />
         <Route path="/workspaces" element={<Suspense fallback={<PageFallback />}><WorkspacesPage /></Suspense>} />
         <Route path="/training" element={<Suspense fallback={<PageFallback />}><TrainingPage /></Suspense>} />
@@ -555,22 +670,25 @@ export default function App() {
         <Route path="/agents/new" element={<Suspense fallback={<PageFallback />}><AgentBuilderPage /></Suspense>} />
         <Route path="/agents/:id" element={<Suspense fallback={<PageFallback />}><AgentBuilderPage /></Suspense>} />
         <Route path="/connectors" element={<Suspense fallback={<PageFallback />}><ConnectorsPage /></Suspense>} />
-        <Route path="/audit" element={<Suspense fallback={<PageFallback />}><AuditLogsPage /></Suspense>} />
         <Route path="/billing" element={<Suspense fallback={<PageFallback />}><BillingPage /></Suspense>} />
-      <Route path="/notifications" element={<Suspense fallback={<PageFallback />}><NotificationsPage /></Suspense>} />
-      <Route path="/audit" element={<Suspense fallback={<PageFallback />}><AuditCompliancePage /></Suspense>} />
-      <Route path="/onboarding" element={<Suspense fallback={<PageFallback />}><OnboardingPage /></Suspense>} />
-      <Route path="/migrations" element={<Suspense fallback={<PageFallback />}><MigrationsPage /></Suspense>} />
-      <Route path="/releases" element={<Suspense fallback={<PageFallback />}><ReleasesPage /></Suspense>} />
-      <Route path="/copilot" element={<Suspense fallback={<PageFallback />}><CopilotPage /></Suspense>} />
-      <Route path="/workflows" element={<Suspense fallback={<PageFallback />}><WorkflowsPage /></Suspense>} />
-      <Route path="/chat-insights" element={<Suspense fallback={<PageFallback />}><ChatInsightsPage /></Suspense>} />
-      <Route path="/knowledge-hub" element={<Suspense fallback={<PageFallback />}><KnowledgeHubPage /></Suspense>} />
-      <Route path="/risk-center" element={<Suspense fallback={<PageFallback />}><RiskCenterPage /></Suspense>} />
-      <Route path="/marketplace" element={<Suspense fallback={<PageFallback />}><EcosystemMarketplacePage /></Suspense>} />
-      <Route path="/security-center" element={<Suspense fallback={<PageFallback />}><SecurityCenterPage /></Suspense>} />
-      <Route path="/governance" element={<Suspense fallback={<PageFallback />}><GovernancePage /></Suspense>} />
-      <Route path="/disaster-recovery" element={<Suspense fallback={<PageFallback />}><DisasterRecoveryPage /></Suspense>} />
+        <Route path="/ai-quality" element={<Suspense fallback={<PageFallback />}><AiQualityPage /></Suspense>} />
+        <Route path="/deployments" element={<Suspense fallback={<PageFallback />}><DeploymentsPage /></Suspense>} />
+        <Route path="/data-sources" element={<Suspense fallback={<PageFallback />}><DataSourcesPage /></Suspense>} />
+        <Route path="/security" element={<Suspense fallback={<PageFallback />}><SecurityAuditPage /></Suspense>} />
+        <Route path="/audit/compliance" element={<Suspense fallback={<PageFallback />}><AuditCompliancePage /></Suspense>} />
+        <Route path="/notifications" element={<Suspense fallback={<PageFallback />}><NotificationsPage /></Suspense>} />
+        <Route path="/onboarding" element={<Suspense fallback={<PageFallback />}><OnboardingPage /></Suspense>} />
+        <Route path="/migrations" element={<Suspense fallback={<PageFallback />}><MigrationsPage /></Suspense>} />
+        <Route path="/releases" element={<Suspense fallback={<PageFallback />}><ReleasesPage /></Suspense>} />
+        <Route path="/copilot" element={<Suspense fallback={<PageFallback />}><CopilotPage /></Suspense>} />
+        <Route path="/workflows" element={<Suspense fallback={<PageFallback />}><WorkflowsPage /></Suspense>} />
+        <Route path="/chat-insights" element={<Suspense fallback={<PageFallback />}><ChatInsightsPage /></Suspense>} />
+        <Route path="/knowledge-hub" element={<Suspense fallback={<PageFallback />}><KnowledgeHubPage /></Suspense>} />
+        <Route path="/risk-center" element={<Suspense fallback={<PageFallback />}><RiskCenterPage /></Suspense>} />
+        <Route path="/marketplace" element={<Suspense fallback={<PageFallback />}><EcosystemMarketplacePage /></Suspense>} />
+        <Route path="/security-center" element={<Suspense fallback={<PageFallback />}><SecurityCenterPage /></Suspense>} />
+        <Route path="/governance" element={<Suspense fallback={<PageFallback />}><GovernancePage /></Suspense>} />
+        <Route path="/disaster-recovery" element={<Suspense fallback={<PageFallback />}><DisasterRecoveryPage /></Suspense>} />
         <Route path="/settings" element={<Suspense fallback={<PageFallback />}><SettingsPage /></Suspense>} />
         <Route path="/evaluation" element={<Suspense fallback={<PageFallback />}><EvaluationOverviewPage /></Suspense>} />
         <Route path="/evaluation/datasets" element={<Suspense fallback={<PageFallback />}><EvaluationDatasetsPage /></Suspense>} />
