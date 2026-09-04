@@ -143,6 +143,45 @@ def test_demo_and_prod_compose_remain() -> None:
     assert "ingestion-worker" in prod
 
 
+def test_db_init_baseline_sql_foreign_keys_are_ordered() -> None:
+    """Postgres init / CI apply db_init/NN-*.sql in name order with ON_ERROR_STOP.
+    A REFERENCES target must already exist (this is how 29-eval-examples.sql
+    failed on eval_datasets before 28-evaluation-engine.sql existed).
+    """
+    import re
+
+    db_init = ROOT / "src" / "infrastructure" / "db_init"
+    files = sorted(
+        p for p in db_init.glob("[0-9][0-9]-*.sql") if p.parent == db_init
+    )
+    assert files, "expected numbered baseline SQL in db_init/"
+    create_re = re.compile(
+        r"CREATE TABLE(?:\s+IF NOT EXISTS)?\s+([a-zA-Z_][\w.]*)",
+        re.IGNORECASE,
+    )
+    ref_re = re.compile(
+        r"REFERENCES\s+([a-zA-Z_][\w.]*)",
+        re.IGNORECASE,
+    )
+    known: set[str] = set()
+    missing: list[str] = []
+    for path in files:
+        sql = path.read_text(encoding="utf-8")
+        sql = re.sub(r"--[^\n]*", "", sql)
+        sql = re.sub(r"/\*.*?\*/", "", sql, flags=re.DOTALL)
+        # CREATE TABLE must register before REFERENCES in the same file.
+        for stmt in re.split(r";\s*", sql):
+            for name in create_re.findall(stmt):
+                known.add(name.split(".")[-1].lower())
+            for name in ref_re.findall(stmt):
+                target = name.split(".")[-1].lower()
+                if target not in known:
+                    missing.append(
+                        f"{path.name}: REFERENCES {name} (not created yet)"
+                    )
+    assert not missing, "baseline SQL FK order:\n" + "\n".join(missing)
+
+
 def test_ci_runs_alembic_upgrade_like_api_container() -> None:
     """CI used to apply only db_init/01–31 SQL. App code INSERTs
     organizations.primary_region_id (Alembic 047). Docker API runs

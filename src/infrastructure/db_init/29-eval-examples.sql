@@ -1,6 +1,7 @@
 -- =============================================================================
 -- Evaluation Engine — eval_examples como entidad de primer nivel
 -- Espejo SQL de la migración alembic 026_eval_examples (bases nuevas).
+-- Requiere eval_datasets de 28-evaluation-engine.sql (alembic 011).
 -- =============================================================================
 
 CREATE TABLE IF NOT EXISTS eval_examples (
