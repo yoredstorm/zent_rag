@@ -393,7 +393,7 @@ async def list_invoices(organization_id: UUID, limit: int = 50) -> dict:
                 "subtotal_cents": int(r.subtotal_cents),
                 "tax_cents": int(r.tax_cents),
                 "total_cents": int(r.total_cents),
-                "issued_at": r.issued_at.isoformat(),
+                "issued_at": r.issued_at.isoformat() if r.issued_at else None,
                 "paid_at": r.paid_at.isoformat() if r.paid_at else None,
             }
             for r in rows

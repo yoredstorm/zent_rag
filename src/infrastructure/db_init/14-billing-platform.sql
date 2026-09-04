@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS invoices (
     total_cents BIGINT NOT NULL DEFAULT 0,
     currency VARCHAR(3) NOT NULL DEFAULT 'USD',
     status VARCHAR(20) NOT NULL DEFAULT 'draft',
-    issued_at TIMESTAMPTZ,
+    issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     paid_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (organization_id, period_start, period_end)

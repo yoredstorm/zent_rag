@@ -58,6 +58,12 @@ def upgrade() -> None:
     op.execute(
         "ALTER TABLE invoices ADD COLUMN IF NOT EXISTS billing_address JSONB NOT NULL DEFAULT '{}'"
     )
+    # El baseline SQL 14 creaba invoices con issued_at nullable sin default;
+    # el CREATE TABLE IF NOT EXISTS de arriba no altera esa tabla. Asegurar
+    # que toda factura emitida tenga issued_at (idempotente).
+    op.execute("ALTER TABLE invoices ALTER COLUMN issued_at SET DEFAULT NOW()")
+    op.execute("UPDATE invoices SET issued_at = NOW() WHERE issued_at IS NULL")
+    op.execute("ALTER TABLE invoices ALTER COLUMN issued_at SET NOT NULL")
     op.execute(
         "UPDATE invoices SET invoice_number = 'INV-' || substr(replace(id::text, '-', ''), 1, 8) "
         "WHERE invoice_number IS NULL"
