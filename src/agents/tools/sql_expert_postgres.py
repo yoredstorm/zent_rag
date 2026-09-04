@@ -436,7 +436,7 @@ class PostgresSqlExpert(SqlExpert):
 
         public.* contiene tablas de la plataforma (organizations, api_keys,
         plans, usage_events, ...). El motor Text-to-SQL solo opera sobre
-        schemas de negocio del tenant (ej. farmacia): las tablas de plataforma
+        schemas de negocio del tenant (no-public): las tablas de plataforma
         no deben llegar al prompt del LLM ni ser consultables.
         """
         return [s for s in sources if s.schema_name.lower() != "public"]
