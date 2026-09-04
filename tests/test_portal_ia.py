@@ -70,7 +70,7 @@ def test_portal_control_center_routes_are_separate_from_customer_nav() -> None:
     assert 'path="/admin"' in app or 'path="/admin/login"' in app
     assert "/admin/login" in app
     assert 'path="customers"' in app
-    assert 'path="plans"' in app
+    assert 'path="settings/plans"' in app
     assert 'path="usage"' in app
     usage = (PORTAL / "pages" / "admin" / "Usage.tsx").read_text(encoding="utf-8")
     assert "/api/v1/platform/finops/summary" in usage
