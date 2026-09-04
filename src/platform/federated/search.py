@@ -121,7 +121,10 @@ async def federated_search(
             else:
                 merged[key] = item
 
-    ranked = sorted(merged.values(), key=lambda x: -x["score"])[:top_k]
+    ranked = sorted(
+        merged.values(),
+        key=lambda x: (-x["score"], -(x["chunk"].score or 0.0), x["kb_name"]),
+    )[:top_k]
     return {
         "query": query,
         "kb_count": len(kbs),
