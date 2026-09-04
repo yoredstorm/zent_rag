@@ -40,6 +40,8 @@ jobs:
       - name: Audit prod extras (HIGH+)
         run: |
           pip install -e ".[prod]" pip-audit
+          # setuptools del runner tenía PYSEC-2026-3447 (fix 83.0.0).
+          pip install -q -U setuptools
           # --skip-editable: el proyecto editable (rag-as-a-service) no está en PyPI.
           pip-audit --skip-editable
 

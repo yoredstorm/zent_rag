@@ -156,17 +156,25 @@ async def test_invite_respects_plan_user_limit(async_client: AsyncClient) -> Non
     org = await _create_org(async_client, "Limit Invite Org")
     org["session"] = await _owner_session(org["organization_id"])
 
-    session = None
+    # El enforcement de límites lee de plan_entitlements (source of truth),
+    # no de la columna plans.max_*. Ajustar el entitlement del plan trial.
     from src.infrastructure.postgres.session import get_async_session
+    from src.platform.billing.entitlements import upsert_plan_entitlements
 
     session = await get_async_session()
     try:
-        await session.execute(
-            text("UPDATE plans SET max_users_per_organization = 1 WHERE is_trial = true")
-        )
-        await session.commit()
+        trial_plan_id = (
+            await session.execute(
+                text("SELECT id FROM plans WHERE is_trial = true LIMIT 1")
+            )
+        ).scalar()
     finally:
         await session.close()
+    assert trial_plan_id is not None
+    await upsert_plan_entitlements(
+        UUID(str(trial_plan_id)),
+        [{"key": "max_users", "value_type": "int", "value_int": 1}],
+    )
 
     try:
         created = await async_client.post(
@@ -177,14 +185,7 @@ async def test_invite_respects_plan_user_limit(async_client: AsyncClient) -> Non
         assert created.status_code == 409, created.text
         assert _error_code(created) == "plan_limit_reached"
     finally:
-        session = await get_async_session()
-        try:
-            await session.execute(
-                text(
-                    "UPDATE plans SET max_users_per_organization = 10 "
-                    "WHERE is_trial = true"
-                )
-            )
-            await session.commit()
-        finally:
-            await session.close()
+        await upsert_plan_entitlements(
+            UUID(str(trial_plan_id)),
+            [{"key": "max_users", "value_type": "int", "value_int": 10}],
+        )
