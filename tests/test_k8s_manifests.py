@@ -189,8 +189,15 @@ def test_ci_runs_alembic_upgrade_like_api_container() -> None:
     """
     ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     dockerfile = DOCKERFILE_API.read_text(encoding="utf-8")
+    env_py = (ROOT / "src" / "infrastructure" / "db_init" / "env.py").read_text(
+        encoding="utf-8"
+    )
     assert "alembic upgrade head" in dockerfile
+    assert "PYTHONPATH" in dockerfile
     assert "alembic upgrade head" in ci
+    assert "PYTHONPATH" in ci
+    assert "sys.path" in env_py
+    assert "src.core.config" in env_py
     assert "primary_region_id" in (
         ROOT / "src" / "infrastructure" / "postgres" / "relational_db.py"
     ).read_text(encoding="utf-8")

@@ -110,6 +110,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = ["S101", "E402", "E501", "S105", "S608"]
 "src/api/main.py" = ["E402"]  # sys.path.insert before imports
+"src/infrastructure/db_init/env.py" = ["E402"]  # sys.path.insert before Settings
   "src/platform/proxy/inference_proxy.py" = ["S608"]  # WHERE dinámico con lista estática de cláusulas
   "src/platform/costgov/cost_governance.py" = ["S608"]  # idem: WHERE dinámico controlado
   "src/platform/modelhealth/guardrails.py" = ["S608"]  # idem

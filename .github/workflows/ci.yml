@@ -57,6 +57,8 @@ jobs:
       RAG_ENVIRONMENT: development
       # Required — no insecure default allowed in Settings
       RAG_PORTAL_SESSION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      # Same as Dockerfile.api (PYTHONPATH=/app). Alembic imports src.core.config.
+      PYTHONPATH: ${{ github.workspace }}
     services:
       postgres:
         image: pgvector/pgvector:pg16
