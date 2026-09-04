@@ -360,6 +360,20 @@ async def platform_login(body: LoginRequest, request: Request):
     access_token = encrypt_session(user.id, None, typ="platform")
     await clear_auth_failures(email_key, ip_key)
     logger.info("Platform admin login", user_id=str(user.id), email=body.email)
+
+    # Compatibilidad legacy: admin con is_platform_admin pero sin roles de
+    # plataforma (creados antes del RBAC 023, o vía SQL directo) → super_admin.
+    # El baseline SQL 26 y la migración 023 hacen lo mismo para admins
+    # preexistentes; el login lo aplica en runtime.
+    from src.platform.rbac.repo import (
+        assign_platform_role,
+        get_platform_roles_for_user,
+    )
+
+    platform_roles, _ = await get_platform_roles_for_user(user.id)
+    if not platform_roles:
+        await assign_platform_role(user.id, "super_admin")
+
     await _audit_login(
         organization_id=None,
         user_id=user.id,
