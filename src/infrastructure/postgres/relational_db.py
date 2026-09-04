@@ -1391,8 +1391,9 @@ class PostgresConnectorRepository(ConnectorRepository):
         try:
             result = await session.execute(
                 text(
-                    "SELECT id, organization_id, name, type, project_id, config_json, status, "
-                    "created_at FROM connectors WHERE organization_id = :oid "
+                    "SELECT id, organization_id, name, type, project_id, workspace_id, "
+                    "config_json, status, created_at FROM connectors "
+                    "WHERE organization_id = :oid "
                     "ORDER BY created_at DESC"
                 ),
                 {"oid": organization_id},
@@ -1408,8 +1409,8 @@ class PostgresConnectorRepository(ConnectorRepository):
         try:
             result = await session.execute(
                 text(
-                    "SELECT id, organization_id, name, type, project_id, config_json, status, "
-                    "created_at FROM connectors "
+                    "SELECT id, organization_id, name, type, project_id, workspace_id, "
+                    "config_json, status, created_at FROM connectors "
                     "WHERE id = :cid AND organization_id = :oid"
                 ),
                 {"cid": connector_id, "oid": organization_id},
