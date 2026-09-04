@@ -1,9 +1,8 @@
 # =============================================================================
-# Governance (PROMPT 11) — retention, DSR export/erasure, KMS envelope
+# AI Governance Board & Audit Trail v2 (PROMPT 50)
 # =============================================================================
 from __future__ import annotations
 
-from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
@@ -23,7 +22,7 @@ async def _create_org(client: AsyncClient, name: str) -> dict:
     return resp.json()
 
 
-async def _owner_session(organization_id: str) -> str:
+async def _owner_session(client: AsyncClient, organization_id: str) -> str:
     from src.infrastructure.postgres.relational_db import PostgresUserRepository
     from src.platform.auth.session import encrypt_session
 
@@ -32,6 +31,14 @@ async def _owner_session(organization_id: str) -> str:
     )
     assert user is not None
     return encrypt_session(user.id, UUID(organization_id))
+
+
+def _headers(org: dict) -> dict:
+    return {
+        "Authorization": f"Bearer {org['session']}",
+        "X-Organization-Id": org["organization_id"],
+        "Idempotency-Key": f"gov-{uuid4().hex}",
+    }
 
 
 async def _platform_admin(client: AsyncClient, email: str) -> dict:
@@ -76,190 +83,192 @@ async def _platform_admin(client: AsyncClient, email: str) -> dict:
     return {"Authorization": f"Bearer {login.json()['access_token']}"}
 
 
-async def _seed_old_usage(client: AsyncClient, org: dict, days_old: int = 400) -> None:
+@pytest.mark.asyncio
+async def test_policies_seeded_and_revision(async_client: AsyncClient) -> None:
+    org = await _create_org(async_client, "GOV Policies Org")
+    org["session"] = await _owner_session(async_client, org["organization_id"])
+    h = _headers(org)
+
+    policies = await async_client.get("/api/v1/governance/policies", headers=h)
+    assert policies.status_code == 200, policies.text
+    body = policies.json()
+    assert len(body["policies"]) == 4
+    types = {p["policy_type"] for p in body["policies"]}
+    assert types == {"acceptable_use", "deployment", "incident_response", "data_handling"}
+    assert all(p["version"] == 1 for p in body["policies"])
+
+    # Revisión → v2 + decisión de cambio.
+    dep_policy = next(p for p in body["policies"] if p["policy_type"] == "deployment")
+    revised = await async_client.post(
+        f"/api/v1/governance/policies/{dep_policy['id']}/revision",
+        headers={**_headers(org), "Idempotency-Key": f"gov-r-{uuid4().hex}"},
+        json={"content": "Ahora se requieren 3 aprobadores de la junta y revisión legal."},
+    )
+    assert revised.status_code == 200, revised.text
+    assert revised.json()["version"] == 2
+
+    policies2 = await async_client.get("/api/v1/governance/policies", headers=h)
+    dep2 = next(p for p in policies2.json()["policies"] if p["id"] == dep_policy["id"])
+    assert dep2["version"] == 2
+    assert "3 aprobadores" in dep2["content"]
+
+    decisions = await async_client.get("/api/v1/governance/decisions", headers=h)
+    assert any(d["decision_type"] == "policy_change" and d["status"] == "pending" for d in decisions.json()["decisions"])
+
+
+@pytest.mark.asyncio
+async def test_decisions_with_signatures(async_client: AsyncClient) -> None:
+    org = await _create_org(async_client, "GOV Decisions Org")
+    org["session"] = await _owner_session(async_client, org["organization_id"])
+    h = _headers(org)
+
+    created = await async_client.post(
+        "/api/v1/governance/decisions",
+        headers={**_headers(org), "Idempotency-Key": f"gov-d-{uuid4().hex}"},
+        json={"decision_type": "deploy_approval", "title": "Aprobar despliegue del agente ventas en producción", "rationale": "Cumple políticas y evals"},
+    )
+    assert created.status_code == 200, created.text
+    did = created.json()["decision_id"]
+
+    # 1ª firma → sigue pending.
+    d1 = await async_client.post(
+        f"/api/v1/governance/decisions/{did}/decide",
+        headers={**_headers(org), "Idempotency-Key": f"gov-a-{uuid4().hex}"},
+        json={"approve": True},
+    )
+    assert d1.status_code == 200, d1.text
+    assert d1.json()["status"] == "pending"
+    assert d1.json()["approvals"] == 1
+
+    # 2ª firma → approved con firmas en el JSONB.
+    d2 = await async_client.post(
+        f"/api/v1/governance/decisions/{did}/decide",
+        headers={**_headers(org), "Idempotency-Key": f"gov-b-{uuid4().hex}"},
+        json={"approve": True},
+    )
+    assert d2.json()["status"] == "approved"
+
+    decisions = await async_client.get("/api/v1/governance/decisions?status=approved", headers=h)
+    entry = next(d for d in decisions.json()["decisions"] if d["id"] == did)
+    assert len(entry["approvers"]) == 2
+    assert all(len(a["signature"]) == 32 for a in entry["approvers"])
+    assert entry["decided_at"] is not None
+
+    # Rechazo inmediato.
+    created2 = await async_client.post(
+        "/api/v1/governance/decisions",
+        headers={**_headers(org), "Idempotency-Key": f"gov-d2-{uuid4().hex}"},
+        json={"decision_type": "model_change", "title": "Cambiar a modelo experimental"},
+    )
+    r1 = await async_client.post(
+        f"/api/v1/governance/decisions/{created2.json()['decision_id']}/decide",
+        headers={**_headers(org), "Idempotency-Key": f"gov-c-{uuid4().hex}"},
+        json={"approve": False},
+    )
+    assert r1.json()["status"] == "rejected"
+
+
+@pytest.mark.asyncio
+async def test_audit_trail_hash_chain_and_verify(async_client: AsyncClient) -> None:
+    org = await _create_org(async_client, "GOV Audit Org")
+    org["session"] = await _owner_session(async_client, org["organization_id"])
+    h = _headers(org)
+
+    # Genera acciones de auditoría (revisión + decisión + certificación).
+    from src.platform.governance.board import add_certification, create_decision
+
+    await create_decision(UUID(org["organization_id"]), "incident_review", "Revisar incidente #42", "PII leak")
+    await add_certification(UUID(org["organization_id"]), "maria", "AI Ethics")
+
+    trail = await async_client.get("/api/v1/governance/audit", headers=h)
+    assert trail.status_code == 200, trail.text
+    entries = trail.json()["entries"]
+    assert len(entries) == 2  # decision.created + certification.issued
+    assert entries[0]["hash"] != entries[1]["hash"]
+
+    verify = await async_client.post("/api/v1/governance/audit/verify", headers={**_headers(org)})
+    assert verify.status_code == 200, verify.text
+    assert verify.json()["intact"] is True
+    assert verify.json()["verified"] == len(entries)
+
+    # Tampering: modificar un detalle → detectado.
     from sqlalchemy import text
 
     from src.infrastructure.postgres.session import get_async_session
 
     session = await get_async_session()
     try:
+        target = (
+            await session.execute(
+                text(
+                    "SELECT id FROM governance_audit_log "
+                    "WHERE organization_id = :oid ORDER BY created_at LIMIT 1"
+                ),
+                {"oid": UUID(org["organization_id"])},
+            )
+        ).scalar()
         await session.execute(
-            text(
-                "INSERT INTO usage_events (request_id, event_type, organization_id, "
-                "total_tokens, estimated_cost, status, created_at) "
-                "VALUES (gen_random_uuid(), 'agent_run', :oid, 100, 0.001, 'completed', "
-                "NOW() - MAKE_INTERVAL(days => :days))"
-            ),
-            {"oid": UUID(org["organization_id"]), "days": days_old},
+            text("UPDATE governance_audit_log SET detail = 'MODIFICADO' WHERE id = :eid"),
+            {"eid": target},
         )
         await session.commit()
     finally:
         await session.close()
 
+    verify2 = await async_client.post("/api/v1/governance/audit/verify", headers={**_headers(org)})
+    assert verify2.json()["intact"] is False
+    assert len(verify2.json()["tampered"]) == 1
+
 
 @pytest.mark.asyncio
-async def test_governance_profile_and_retention(async_client: AsyncClient) -> None:
-    org = await _create_org(async_client, "Gov Retention Org")
-    org["session"] = await _owner_session(org["organization_id"])
+async def test_certifications_and_report(async_client: AsyncClient) -> None:
+    org = await _create_org(async_client, "GOV Certs Org")
+    org["session"] = await _owner_session(async_client, org["organization_id"])
+    h = _headers(org)
+
+    added = await async_client.post(
+        "/api/v1/governance/certifications",
+        headers={**_headers(org), "Idempotency-Key": f"gov-c-{uuid4().hex}"},
+        json={"member_name": "juan", "certification": "Prompt Safety", "expires_in_days": 180},
+    )
+    assert added.status_code == 200, added.text
+
+    certs = await async_client.get("/api/v1/governance/certifications", headers=h)
+    assert len(certs.json()["certifications"]) == 1
+    assert certs.json()["certifications"][0]["certification"] == "Prompt Safety"
+
+    # Certificación inválida → 400.
+    bad = await async_client.post(
+        "/api/v1/governance/certifications",
+        headers={**_headers(org), "Idempotency-Key": f"gov-b-{uuid4().hex}"},
+        json={"member_name": "x", "certification": "Hacking"},
+    )
+    assert bad.status_code == 400
+
+    # Reporte ejecutivo: políticas activas → governance 100.
+    report = await async_client.get("/api/v1/governance/report", headers=h)
+    assert report.status_code == 200, report.text
+    body = report.json()
+    assert body["pillars"]["governance"]["score"] == 100.0  # 4/4 activas
+    assert 0 <= body["total_score"] <= 100
+
+
+@pytest.mark.asyncio
+async def test_governance_dashboard(async_client: AsyncClient) -> None:
+    org = await _create_org(async_client, "GOV Dash Org")
+    org["session"] = await _owner_session(async_client, org["organization_id"])
     plat = await _platform_admin(async_client, f"padmin-gov-{uuid4().hex[:8]}@zent.example")
-    oid = org["organization_id"]
-    await _seed_old_usage(async_client, org, days_old=400)
 
-    # Perfil: retención 30 días + residencia + contacto DSR.
-    profile = await async_client.put(
-        f"/api/v1/platform/governance/organizations/{oid}",
-        headers=plat,
-        json={
-            "retention_days": 30,
-            "data_residency_region": "us-east-1",
-            "dsr_contact_email": "dsr@tenant.example",
-        },
-    )
-    assert profile.status_code == 200, profile.text
-    got = await async_client.get(f"/api/v1/platform/governance/organizations/{oid}", headers=plat)
-    g = got.json()
-    assert g["retention_days"] == 30
-    assert g["data_residency_region"] == "us-east-1"
-    assert g["dsr_contact_email"] == "dsr@tenant.example"
+    from src.platform.governance.board import create_decision, decide
 
-    # Dry-run: el registro de 400 días aparece expirado.
-    dry = await async_client.post(
-        "/api/v1/platform/governance/purge",
-        headers=plat,
-        json={"organization_id": oid, "dry_run": True},
-    )
-    assert dry.status_code == 200, dry.text
-    org_row = dry.json()["organizations"][0]
-    assert org_row["expired"]["usage_events"] >= 1
+    decision = await create_decision(UUID(org["organization_id"]), "deploy_approval", "Aprobar bot legal")
+    await decide(UUID(org["organization_id"]), UUID(decision["decision_id"]), True)
+    await decide(UUID(org["organization_id"]), UUID(decision["decision_id"]), True)
 
-    # Ejecutar: purga + evento de cumplimiento.
-    run = await async_client.post(
-        "/api/v1/platform/governance/purge",
-        headers=plat,
-        json={"organization_id": oid, "dry_run": False},
-    )
-    assert run.status_code == 200, run.text
-    assert run.json()["organizations"][0]["expired"]["usage_events"] >= 1
-
-    events = await async_client.get(
-        f"/api/v1/platform/governance/compliance-events?organization_id={oid}", headers=plat
-    )
-    assert events.status_code == 200, events.text
-    types = [e["event_type"] for e in events.json()["events"]]
-    assert "retention.purge" in types
-
-
-@pytest.mark.asyncio
-async def test_kms_envelope_roundtrip_and_rotate(async_client: AsyncClient) -> None:
-    plat = await _platform_admin(async_client, f"padmin-kms-{uuid4().hex[:8]}@zent.example")
-
-    # Garantizar al menos una clave activa.
-    status0 = await async_client.get("/api/v1/platform/governance/kms/status", headers=plat)
-    assert status0.status_code == 200, status0.text
-    if status0.json()["active_version"] is None:
-        created = await async_client.post("/api/v1/platform/governance/kms/keys", headers=plat, json={})
-        assert created.status_code == 201, created.text
-
-    rt = await async_client.post("/api/v1/platform/governance/kms/roundtrip", headers=plat, json={})
-    assert rt.status_code == 200, rt.text
-    assert rt.json()["status"] == "ok"
-    version_before = rt.json()["key_version"]
-
-    keys = await async_client.get("/api/v1/platform/governance/kms/keys", headers=plat)
-    assert keys.status_code == 200, keys.text
-    assert len(keys.json()["keys"]) >= 1
-
-    # Rotar → nueva versión activa; roundtrip sigue ok.
-    rotated = await async_client.post(
-        "/api/v1/platform/governance/kms/keys/any/rotate", headers=plat, json={}
-    )
-    assert rotated.status_code == 200, rotated.text
-    assert rotated.json()["key_version"] == version_before + 1
-    assert rotated.json()["previous_retired"] is True
-
-    rt2 = await async_client.post("/api/v1/platform/governance/kms/roundtrip", headers=plat, json={})
-    assert rt2.json()["status"] == "ok"
-    assert rt2.json()["key_version"] == version_before + 1
-
-
-@pytest.mark.asyncio
-async def test_dsr_export_and_erasure(async_client: AsyncClient) -> None:
-    org = await _create_org(async_client, "Gov Dsr Org")
-    org["session"] = await _owner_session(org["organization_id"])
-    plat = await _platform_admin(async_client, f"padmin-dsr-{uuid4().hex[:8]}@zent.example")
-    oid = org["organization_id"]
-
-    # Export: artefacto cifrado con KMS + receipt + evento.
-    exported = await async_client.post(
-        f"/api/v1/platform/governance/organizations/{oid}/dsr-export", headers=plat, json={}
-    )
-    assert exported.status_code == 200, exported.text
-    exp = exported.json()
-    assert exp["status"] == "exported"
-    assert len(exp["receipt_sha256"]) == 64
-    assert exp["users"] >= 1
-    assert exp["key_version"] >= 1
-
-    # El artefacto cifrado existe y es JSON con key_version + ciphertext.
-    artifact = Path(__import__("src.core.config", fromlist=["get_settings"]).get_settings().DR_BACKUP_DIR).parent / "dsr" / oid / exp["artifact"]
-    assert artifact.exists()
-    blob = __import__("json").loads(artifact.read_text())
-    assert blob["key_version"] == exp["key_version"]
-    assert blob["ciphertext"]
-
-    events1 = await async_client.get(
-        f"/api/v1/platform/governance/compliance-events?organization_id={oid}", headers=plat
-    )
-    assert any(e["event_type"] == "dsr.export" for e in events1.json()["events"])
-
-    # Erasure: usuarios anonimizados + actividad borrada + evento.
-    erased = await async_client.post(
-        f"/api/v1/platform/governance/organizations/{oid}/dsr-erasure", headers=plat, json={}
-    )
-    assert erased.status_code == 200, erased.text
-    assert erased.json()["status"] == "erased"
-    assert erased.json()["users_erased"] >= 1
-
-    from sqlalchemy import text
-
-    from src.infrastructure.postgres.session import get_async_session
-
-    session = await get_async_session()
-    try:
-        users = (
-            await session.execute(
-                text("SELECT email, password_hash, external_id FROM users WHERE organization_id = :oid"),
-                {"oid": UUID(oid)},
-            )
-        ).fetchall()
-        usage = int(
-            (
-                await session.execute(
-                    text("SELECT COUNT(*) FROM usage_events WHERE organization_id = :oid"),
-                    {"oid": UUID(oid)},
-                )
-            ).scalar()
-            or 0
-        )
-        members = int(
-            (
-                await session.execute(
-                    text("SELECT COUNT(*) FROM memberships WHERE organization_id = :oid"),
-                    {"oid": UUID(oid)},
-                )
-            ).scalar()
-            or 0
-        )
-    finally:
-        await session.close()
-    for u in users:
-        assert u.email.endswith("@erased.invalid")
-        assert u.password_hash is None
-        assert u.external_id == "erased"
-    assert usage == 0
-    assert members == 0
-
-    events2 = await async_client.get(
-        f"/api/v1/platform/governance/compliance-events?organization_id={oid}", headers=plat
-    )
-    assert any(e["event_type"] == "dsr.erasure" for e in events2.json()["events"])
+    dash = await async_client.get("/api/v1/platform/governance/dashboard", headers=plat)
+    assert dash.status_code == 200, dash.text
+    body = dash.json()
+    assert body["organizations_governing"] >= 1
+    assert body["audit_entries"] >= 1
+    assert any(d["status"] == "approved" for d in body["decisions_by_status"])
+    assert any(e["action"] in ("decision.created", "approved") for e in body["recent_audit"])

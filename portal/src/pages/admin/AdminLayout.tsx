@@ -1,44 +1,42 @@
 import {
+  ArrowsLeftRight,
   Bell,
+  BellSimple,
+  BookOpen,
   Broadcast,
   Buildings,
   Cards,
   ChartBar,
   ChartLineUp,
+  ChatText,
   Coins,
   Cpu,
   Flask,
-  Globe,
-  PiggyBank,
-  Pulse,
-  Package,
-  ShieldCheck,
-  BellSimple,
-  GitBranch,
-  Robot,
   FlowArrow,
-  ChatText,
-  BookOpen,
-  ShieldWarning,
-  Storefront,
-  ShieldCheck,
-  ShieldWarning,
-  TrendUp,
   Gauge,
+  GitBranch,
+  Globe,
   Handshake,
   Lifebuoy,
-  Play,
+  List,
+  MagnifyingGlass,
+  Package,
+  PiggyBank,
   Pulse,
-  Rocket,
+  Robot,
+  RocketLaunch,
+  Scroll,
   ShieldCheck,
   ShieldWarning,
-  Scroll,
   SignOut,
+  Smiley,
   Storefront,
+  TrendUp,
   UsersThree,
+  X,
 } from "@phosphor-icons/react";
-import { useCallback, useEffect, useState } from "react";
-import { Link, NavLink, Navigate, Outlet } from "react-router-dom";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { Link, NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { platformApi } from "../../api";
 import { usePlatformAuth } from "../../platformAuth";
 
@@ -74,7 +72,7 @@ const NAV = [
   { to: `${BASE}/model-gateway`, label: "Model Gateway", icon: Coins },
   { to: `${BASE}/realtime`, label: "Real-Time", icon: Broadcast },
   { to: `${BASE}/security-center`, label: "Security Center", icon: ShieldWarning },
-  { to: `${BASE}/onboarding`, label: "Onboarding", icon: Rocket },
+  { to: `${BASE}/onboarding`, label: "Onboarding", icon: RocketLaunch },
   { to: `${BASE}/capacity`, label: "Capacity", icon: Gauge },
   { to: `${BASE}/partners`, label: "Partners", icon: Handshake },
   { to: `${BASE}/evals`, label: "Evals Lab", icon: Flask },
@@ -90,7 +88,6 @@ const NAV = [
   { to: `${BASE}/traces`, label: "Traces", icon: GitBranch },
   { to: `${BASE}/notifications`, label: "Webhooks & Notif", icon: BellSimple },
   { to: `${BASE}/compliance`, label: "Compliance", icon: ShieldCheck },
-  { to: `${BASE}/onboarding`, label: "Onboarding", icon: RocketLaunch },
   { to: `${BASE}/feedback`, label: "Feedback", icon: Smiley },
   { to: `${BASE}/migrations`, label: "Migrations", icon: ArrowsLeftRight },
   { to: `${BASE}/releases`, label: "Releases", icon: GitBranch },
@@ -100,16 +97,87 @@ const NAV = [
   { to: `${BASE}/knowledge-hub`, label: "Knowledge Hub", icon: BookOpen },
   { to: `${BASE}/risk-center`, label: "Risk Center", icon: ShieldWarning },
   { to: `${BASE}/ecosystem`, label: "Ecosystem", icon: Storefront },
+  { to: `${BASE}/soc`, label: "SOC", icon: ShieldWarning },
   { to: `${BASE}/security`, label: "Security", icon: ShieldCheck },
   { to: `${BASE}/audit`, label: "Audit", icon: Scroll },
   { to: `${BASE}/settings`, label: "Settings", icon: UsersThree },
 ];
 
+function ControlNav({
+  items,
+  query,
+  onQuery,
+  onNavigate,
+}: {
+  items: typeof NAV;
+  query: string;
+  onQuery: (value: string) => void;
+  onNavigate?: () => void;
+}) {
+  const searchId = useId();
+  return (
+    <>
+      <div className="border-b border-border px-3 py-3">
+        <label className="sr-only" htmlFor={searchId}>
+          Buscar sección
+        </label>
+        <div className="relative">
+          <MagnifyingGlass
+            size={16}
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint"
+            aria-hidden
+          />
+          <input
+            id={searchId}
+            type="search"
+            value={query}
+            onChange={(e) => onQuery(e.target.value)}
+            placeholder="Buscar: costs, operations…"
+            className="w-full rounded-md border border-border bg-soft py-2 pl-8 pr-2 text-sm text-text"
+          />
+        </div>
+      </div>
+      <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-3" aria-label="Control Center">
+        {items.length === 0 && (
+          <p className="px-2 py-3 text-xs text-muted">Sin coincidencias.</p>
+        )}
+        {items.map(({ to, label, icon: Icon, end }) => (
+          <NavLink
+            key={to}
+            to={to}
+            end={end}
+            onClick={onNavigate}
+            className={({ isActive }) =>
+              `flex min-h-11 items-center gap-2 rounded-md px-3 text-sm ${
+                isActive
+                  ? "bg-accent-soft text-text"
+                  : "text-muted hover:bg-soft hover:text-text"
+              }`
+            }
+          >
+            <Icon size={18} aria-hidden />
+            {label}
+          </NavLink>
+        ))}
+      </nav>
+    </>
+  );
+}
+
 export default function AdminLayout() {
   const { session, logout } = usePlatformAuth();
+  const location = useLocation();
   const [open, setOpen] = useState(false);
+  const [drawer, setDrawer] = useState(false);
+  const [query, setQuery] = useState("");
   const [notices, setNotices] = useState<Notice[]>([]);
   const [unread, setUnread] = useState(0);
+
+  const filteredNav = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return NAV;
+    return NAV.filter((item) => item.label.toLowerCase().includes(q));
+  }, [query]);
 
   const loadNotices = useCallback(async () => {
     if (!session) return;
@@ -132,7 +200,15 @@ export default function AdminLayout() {
     return () => window.clearInterval(id);
   }, [session, loadNotices]);
 
-  if (!session) return <Navigate to="/control-center/login" replace />;
+  if (!session) {
+    return (
+      <Navigate
+        to="/control-center/login"
+        replace
+        state={{ from: `${location.pathname}${location.search}` }}
+      />
+    );
+  }
 
   async function markRead(id: string) {
     if (!session) return;
@@ -149,33 +225,15 @@ export default function AdminLayout() {
   }
 
   return (
-    <div className="flex min-h-[100dvh]">
-      <aside className="hidden w-60 shrink-0 flex-col border-r border-border bg-surface lg:flex">
+    <div className="flex h-dvh max-h-dvh overflow-hidden">
+      <aside className="hidden h-full w-60 shrink-0 flex-col border-r border-border bg-surface lg:flex">
         <div className="border-b border-border px-4 py-4">
           <p className="text-xs font-medium uppercase tracking-wider text-faint">
             Control Center
           </p>
           <p className="mt-1 text-sm font-semibold text-text">Zent plataforma</p>
         </div>
-        <nav className="flex flex-1 flex-col gap-1 p-3" aria-label="Control Center">
-          {NAV.map(({ to, label, icon: Icon, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              className={({ isActive }) =>
-                `flex min-h-11 items-center gap-2 rounded-md px-3 text-sm ${
-                  isActive
-                    ? "bg-accent-soft text-text"
-                    : "text-muted hover:bg-soft hover:text-text"
-                }`
-              }
-            >
-              <Icon size={18} aria-hidden />
-              {label}
-            </NavLink>
-          ))}
-        </nav>
+        <ControlNav items={filteredNav} query={query} onQuery={setQuery} />
         <div className="border-t border-border p-4">
           <p className="mb-2 truncate text-xs text-faint" title={session.email}>
             {session.email}
@@ -190,10 +248,49 @@ export default function AdminLayout() {
           </button>
         </div>
       </aside>
-      <div className="min-w-0 flex-1">
+      {drawer && (
+        <div className="fixed inset-0 z-40 lg:hidden">
+          <div
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setDrawer(false)}
+            aria-hidden
+          />
+          <div className="absolute inset-y-0 left-0 flex w-72 flex-col border-r border-border bg-surface shadow-pop">
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <p className="text-sm font-semibold text-text">Control Center</p>
+              <button
+                type="button"
+                className="btn btn-ghost min-h-11 min-w-11"
+                aria-label="Cerrar menú"
+                onClick={() => setDrawer(false)}
+              >
+                <X size={18} aria-hidden />
+              </button>
+            </div>
+            <ControlNav
+              items={filteredNav}
+              query={query}
+              onQuery={setQuery}
+              onNavigate={() => setDrawer(false)}
+            />
+          </div>
+        </div>
+      )}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex items-center justify-between border-b border-border px-4 py-3">
-          <span className="text-sm font-semibold lg:hidden">Control Center</span>
-          <span className="hidden text-sm text-muted lg:inline">Inbox de plataforma</span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="btn btn-ghost min-h-11 min-w-11 lg:hidden"
+              aria-label="Abrir menú"
+              aria-expanded={drawer}
+              onClick={() => setDrawer(true)}
+            >
+              <List size={18} aria-hidden />
+            </button>
+            <span className="text-sm font-semibold lg:hidden">Control Center</span>
+            <span className="hidden text-sm text-muted lg:inline">Inbox de plataforma</span>
+          </div>
           <div className="relative flex items-center gap-2">
             <button
               type="button"
@@ -260,7 +357,7 @@ export default function AdminLayout() {
             )}
           </div>
         </header>
-        <main className="p-4 lg:p-6">
+        <main className="min-h-0 flex-1 overflow-y-auto p-4 lg:p-6">
           <Outlet />
         </main>
       </div>

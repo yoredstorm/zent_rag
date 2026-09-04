@@ -1279,7 +1279,7 @@ async def platform_finops_breakdown(
     days: int = 30,
 ):
     ctx = require_platform_permission(request, "analytics.read")
-    from src.platform.finops.breakdown import usage_breakdown
+    from src.platform.finops.breakdown import aggregate_breakdowns, usage_breakdown
 
     oid = UUID(organization_id) if organization_id else None
     if oid is None:
@@ -1290,7 +1290,8 @@ async def platform_finops_breakdown(
             )).fetchall()
         finally:
             await session.close()
-        return {"organizations": [await usage_breakdown(r.id, days) for r in rows]}
+        per_org = [await usage_breakdown(r.id, days) for r in rows]
+        return aggregate_breakdowns(per_org, days)
     return await usage_breakdown(oid, days)
 
 
@@ -1301,7 +1302,7 @@ async def platform_finops_economics(
     days: int = 30,
 ):
     ctx = require_platform_permission(request, "analytics.read")
-    from src.platform.finops.breakdown import economics
+    from src.platform.finops.breakdown import aggregate_economics, economics
 
     oid = UUID(organization_id) if organization_id else None
     if oid is None:
@@ -1312,7 +1313,8 @@ async def platform_finops_economics(
             )).fetchall()
         finally:
             await session.close()
-        return {"organizations": [await economics(r.id, days) for r in rows]}
+        per_org = [await economics(r.id, days) for r in rows]
+        return aggregate_economics(per_org)
     return await economics(oid, days)
 
 
@@ -4252,3 +4254,33 @@ async def platform_ecosystem_dashboard(request: Request):
     from src.platform.marketplacev2.ecosystem import ecosystem_dashboard
 
     return await ecosystem_dashboard()
+
+# ------------------------------------------------------------------ PROMPT 49
+# AI Security Operations Center (SOC) v2
+
+@router.get("/soc/dashboard", summary="Dashboard del SOC")
+async def platform_soc_dashboard(request: Request):
+    ctx = require_platform_permission(request, "operations.read")
+    from src.platform.soc.soc import soc_dashboard
+
+    return await soc_dashboard()
+
+# ------------------------------------------------------------------ PROMPT 50
+# AI Governance Board & Audit Trail v2
+
+@router.get("/governance/dashboard", summary="Dashboard de gobernanza")
+async def platform_governance_dashboard(request: Request):
+    ctx = require_platform_permission(request, "operations.read")
+    from src.platform.governance.board import governance_dashboard
+
+    return await governance_dashboard()
+
+# ------------------------------------------------------------------ PROMPT 51
+# AI Disaster Recovery & High Availability v2
+
+@router.get("/dr/dashboard", summary="Dashboard de DR")
+async def platform_dr_dashboard(request: Request):
+    ctx = require_platform_permission(request, "operations.read")
+    from src.platform.dr.dr_center import dr_dashboard
+
+    return await dr_dashboard()

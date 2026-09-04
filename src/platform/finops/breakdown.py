@@ -119,6 +119,47 @@ async def usage_breakdown(
     }
 
 
+def _merge_dim(groups: list[list[dict]]) -> list[dict]:
+    acc: dict[str, dict] = {}
+    for rows in groups:
+        for row in rows:
+            label = str(row.get("label") or "unknown")
+            cur = acc.setdefault(
+                label, {"label": label, "requests": 0, "cost": 0.0, "tokens": 0}
+            )
+            cur["requests"] += int(row.get("requests") or 0)
+            cur["cost"] += float(row.get("cost") or 0)
+            cur["tokens"] += int(row.get("tokens") or 0)
+    return sorted(acc.values(), key=lambda item: item["cost"], reverse=True)
+
+
+def aggregate_breakdowns(items: list[dict], days: int = 30) -> dict:
+    """Misma forma que usage_breakdown, sumando tenants (vista plataforma)."""
+    return {
+        "days": days,
+        "by_agent": _merge_dim([list(i.get("by_agent") or []) for i in items]),
+        "by_workspace": _merge_dim([list(i.get("by_workspace") or []) for i in items]),
+        "by_deployment": _merge_dim([list(i.get("by_deployment") or []) for i in items]),
+        "by_provider": _merge_dim([list(i.get("by_provider") or []) for i in items]),
+        "by_model": _merge_dim([list(i.get("by_model") or []) for i in items]),
+    }
+
+
+def aggregate_economics(items: list[dict]) -> dict:
+    """Suma requests/tokens/coste de varios tenants."""
+    requests = sum(int(i.get("requests") or 0) for i in items)
+    tokens = sum(int(i.get("tokens") or 0) for i in items)
+    cost = sum(float(i.get("total_cost") or 0) for i in items)
+    return {
+        "requests": requests,
+        "tokens": tokens,
+        "total_cost": round(cost, 6),
+        "cost_per_request": round(cost / requests, 6) if requests else None,
+        "cost_per_1k_requests": round(cost / requests * 1000, 4) if requests else None,
+        "tokens_per_request": round(tokens / requests, 1) if requests else None,
+    }
+
+
 async def economics(
     organization_id: UUID, days: int = 30
 ) -> dict:

@@ -13,10 +13,24 @@ type Job = {
   status: string;
   progress: number;
   attempts: number;
-  error_summary: string | null;
+  error_summary: string | { error?: string; at?: string; attempts?: number } | null;
   created_at: string | null;
   updated_at: string | null;
 };
+
+function formatErrorSummary(value: Job["error_summary"]): string {
+  if (value == null || value === "") return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "object") {
+    if (typeof value.error === "string" && value.error) return value.error;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return "";
+    }
+  }
+  return String(value);
+}
 
 export default function Operations() {
   const { session } = usePlatformAuth();
@@ -38,9 +52,9 @@ export default function Operations() {
         title="Operations"
         subtitle="Jobs de ingestión y errores de toda la plataforma."
       />
-      {error && <ErrorInline>{error}</ErrorInline>}
+      <ErrorInline message={error} />
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <SkeletonBlock />
       ) : jobs.length === 0 ? (
         <div className="panel">
           <EmptyState icon={Gauge} title="Sin jobs" body="No hay jobs de ingestión recientes." />
@@ -60,7 +74,9 @@ export default function Operations() {
               </tr>
             </thead>
             <tbody>
-              {jobs.map((j) => (
+              {jobs.map((j) => {
+                const errText = formatErrorSummary(j.error_summary);
+                return (
                 <tr key={j.id}>
                   <td>
                     <Link className="text-accent hover:underline" to={`/control-center/tenants/${j.organization_id}`}>
@@ -73,14 +89,15 @@ export default function Operations() {
                   </td>
                   <td className="text-sm text-muted">{j.progress ?? 0}%</td>
                   <td className="text-sm text-muted">{j.attempts}</td>
-                  <td className="max-w-52 truncate text-xs text-muted" title={j.error_summary || ""}>
-                    {j.error_summary || "—"}
+                  <td className="max-w-52 truncate text-xs text-muted" title={errText}>
+                    {errText || "—"}
                   </td>
                   <td className="text-sm text-muted">
                     {j.updated_at ? new Date(j.updated_at).toLocaleString("es-PE") : "—"}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

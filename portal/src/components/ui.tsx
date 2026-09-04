@@ -1,5 +1,5 @@
 import type { Icon } from "@phosphor-icons/react";
-import type { ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 
 export function PageHeader({
   title,
@@ -22,6 +22,87 @@ export function PageHeader({
       </div>
       {actions && <div className="flex items-center gap-2">{actions}</div>}
     </header>
+  );
+}
+
+function finePointerHover() {
+  return window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+}
+
+function StatHelp({ label, help }: { label: string; help: string }) {
+  const [open, setOpen] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const id = useId();
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const visible = open || pinned;
+
+  useEffect(() => {
+    if (!visible) return;
+    function onPointer(event: PointerEvent) {
+      if (!wrapRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+        setPinned(false);
+      }
+    }
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setOpen(false);
+        setPinned(false);
+      }
+    }
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [visible]);
+
+  return (
+    <div
+      ref={wrapRef}
+      className="relative"
+      onMouseEnter={() => {
+        if (finePointerHover()) setOpen(true);
+      }}
+      onMouseLeave={() => {
+        if (!pinned) setOpen(false);
+      }}
+    >
+      <button
+        type="button"
+        className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border text-xs font-medium text-muted hover:border-border-strong hover:text-text"
+        aria-label={`Qué significa ${label}`}
+        aria-expanded={visible}
+        aria-controls={id}
+        onClick={() => {
+          if (pinned) {
+            setPinned(false);
+            setOpen(false);
+          } else {
+            setPinned(true);
+            setOpen(true);
+          }
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={(event) => {
+          if (!wrapRef.current?.contains(event.relatedTarget as Node) && !pinned) {
+            setOpen(false);
+          }
+        }}
+      >
+        ?
+      </button>
+      {visible && (
+        <p
+          id={id}
+          role="tooltip"
+          className="absolute right-0 top-full z-50 mt-1.5 w-[min(18rem,calc(100vw-2.5rem))] rounded-md border border-border bg-raised px-3 py-2 text-left text-[13px] font-normal leading-relaxed text-text shadow-pop"
+        >
+          {help}
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -53,16 +134,7 @@ export function StatCard({
       <div className="flex items-center justify-between gap-2">
         <span className="stat-label">{label}</span>
         <span className="flex items-center gap-1">
-          {help && (
-            <button
-              type="button"
-              className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-border text-xs text-muted hover:text-text"
-              aria-label={`Qué significa ${label}`}
-              title={help}
-            >
-              ?
-            </button>
-          )}
+          {help && <StatHelp label={label} help={help} />}
           {IconEl && (
             <IconEl size={16} weight="regular" className={toneClass} aria-hidden />
           )}

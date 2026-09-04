@@ -84,6 +84,48 @@ def test_portal_control_center_routes_are_separate_from_customer_nav() -> None:
     assert "rag_platform_token" in (PORTAL / "platformAuth.tsx").read_text(encoding="utf-8")
 
 
+def test_control_center_nav_stays_in_platform_and_is_scrollable() -> None:
+    """Clicks on CC items must not 404 into tenant /login; sidebar must scroll."""
+    app = (PORTAL / "App.tsx").read_text(encoding="utf-8")
+    for path in ("feedback", "migrations", "releases", "copilot"):
+        assert f'path="{path}"' in app, f"missing control-center route {path}"
+    layout = (PORTAL / "pages" / "admin" / "AdminLayout.tsx").read_text(encoding="utf-8")
+    assert "overflow-y-auto" in layout
+    assert "${BASE}/costs" in layout or "/control-center/costs" in layout
+    assert "${BASE}/operations" in layout or "/control-center/operations" in layout
+    login = (PORTAL / "pages" / "admin" / "Login.tsx").read_text(encoding="utf-8")
+    assert 'to="/control-center"' in login or 'to={from}' in login or "from" in login
+
+
+def test_operations_page_does_not_render_error_summary_object() -> None:
+    """React #31: error_summary JSONB {at, error, attempts} is not a valid child."""
+    src = (PORTAL / "pages" / "admin" / "Operations.tsx").read_text(encoding="utf-8")
+    assert "{j.error_summary ||" not in src
+    assert "formatErrorSummary" in src
+    assert "<ErrorInline message=" in src or "<ErrorInline message={" in src
+
+
+def test_finops_costs_page_does_not_map_undefined_breakdown_rows() -> None:
+    """ /control-center/costs crashed: CostTable called rows.map on undefined. """
+    src = (PORTAL / "pages" / "admin" / "FinOps.tsx").read_text(encoding="utf-8")
+    assert "rows ?? []" in src or "(rows || [])" in src
+    assert "ErrorInline message=" in src or "<ErrorInline message={" in src
+    assert "/finops/summary/organizations/" not in src
+    assert "let total = 0" not in src
+
+
+def test_stat_card_help_is_visible_popover_not_native_title_only() -> None:
+    """FinOps `?` must show help on click; native `title` tooltips do not."""
+    ui = (PORTAL / "components" / "ui.tsx").read_text(encoding="utf-8")
+    assert 'role="tooltip"' in ui
+    assert "aria-expanded" in ui
+    assert "Qué significa" in ui
+    assert "{help}" in ui
+    usage = (PORTAL / "pages" / "admin" / "Usage.tsx").read_text(encoding="utf-8")
+    assert "help=" in usage
+    assert "Revenue (cash)" in usage
+
+
 def test_portal_keys_page_splits_production_and_development() -> None:
     keys = (PORTAL / "pages" / "Keys.tsx").read_text(encoding="utf-8")
     assert "Production" in keys

@@ -61,7 +61,83 @@ function usdCents(cents: number) {
   return usd(cents / 100, 0);
 }
 
-function CostTable({ title, rows }: { title: string; rows: Row[] }) {
+function asRows(value: unknown): Row[] {
+  return Array.isArray(value) ? (value as Row[]) : [];
+}
+
+function mergeRows(groups: Row[][]): Row[] {
+  const acc = new Map<string, Row>();
+  for (const rows of groups) {
+    for (const row of rows) {
+      const current = acc.get(row.label) ?? { label: row.label, requests: 0, cost: 0, tokens: 0 };
+      current.requests += row.requests;
+      current.cost += row.cost;
+      current.tokens += row.tokens;
+      acc.set(row.label, current);
+    }
+  }
+  return [...acc.values()].sort((a, b) => b.cost - a.cost);
+}
+
+type Breakdown = {
+  by_agent: Row[];
+  by_workspace: Row[];
+  by_deployment: Row[];
+  by_provider: Row[];
+  by_model: Row[];
+};
+
+function normalizeBreakdown(payload: {
+  by_agent?: Row[];
+  by_workspace?: Row[];
+  by_deployment?: Row[];
+  by_provider?: Row[];
+  by_model?: Row[];
+  organizations?: Array<Partial<Breakdown>>;
+} | null): Breakdown | null {
+  if (!payload) return null;
+  const orgs = payload.organizations;
+  if (Array.isArray(orgs) && !payload.by_provider && !payload.by_agent) {
+    return {
+      by_agent: mergeRows(orgs.map((item) => asRows(item.by_agent))),
+      by_workspace: mergeRows(orgs.map((item) => asRows(item.by_workspace))),
+      by_deployment: mergeRows(orgs.map((item) => asRows(item.by_deployment))),
+      by_provider: mergeRows(orgs.map((item) => asRows(item.by_provider))),
+      by_model: mergeRows(orgs.map((item) => asRows(item.by_model))),
+    };
+  }
+  return {
+    by_agent: asRows(payload.by_agent),
+    by_workspace: asRows(payload.by_workspace),
+    by_deployment: asRows(payload.by_deployment),
+    by_provider: asRows(payload.by_provider),
+    by_model: asRows(payload.by_model),
+  };
+}
+
+function normalizeEconomics(
+  payload: (Economics & { organizations?: Economics[] }) | null
+): Economics | null {
+  if (!payload) return null;
+  if (typeof payload.requests === "number") return payload;
+  const orgs = payload.organizations;
+  if (!Array.isArray(orgs) || orgs.length === 0) return null;
+  const requests = orgs.reduce((sum, item) => sum + (item.requests || 0), 0);
+  const tokens = orgs.reduce((sum, item) => sum + (item.tokens || 0), 0);
+  const totalCost = orgs.reduce((sum, item) => sum + (item.total_cost || 0), 0);
+  return {
+    requests,
+    tokens,
+    total_cost: totalCost,
+    cost_per_request: requests ? totalCost / requests : null,
+    cost_per_1k_requests: requests ? (totalCost / requests) * 1000 : null,
+    tokens_per_request: requests ? tokens / requests : null,
+  };
+}
+
+function CostTable({ title, rows }: { title: string; rows?: Row[] }) {
+  const list = rows ?? [];
+  const total = list.reduce((sum, row) => sum + row.cost, 0);
   return (
     <div className="overflow-x-auto">
       <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-faint">{title}</p>
@@ -76,69 +152,65 @@ function CostTable({ title, rows }: { title: string; rows: Row[] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr key={r.label}>
-              <td className="text-sm text-text">{r.label}</td>
-              <td className="text-xs text-muted">{r.requests}</td>
-              <td className="text-xs text-muted">{r.tokens.toLocaleString()}</td>
-              <td className="text-sm">{usd(r.cost, 4)}</td>
-              <td className="text-xs text-faint">
-                {total > 0 ? ((r.cost / total) * 100).toFixed(1) : "0.0"}%
+          {list.length === 0 ? (
+            <tr>
+              <td colSpan={5} className="text-sm text-muted">
+                Sin datos.
               </td>
             </tr>
-          ))}
+          ) : (
+            list.map((r) => (
+              <tr key={r.label}>
+                <td className="text-sm text-text">{r.label}</td>
+                <td className="text-xs text-muted">{r.requests}</td>
+                <td className="text-xs text-muted">{r.tokens.toLocaleString()}</td>
+                <td className="text-sm">{usd(r.cost, 4)}</td>
+                <td className="text-xs text-faint">
+                  {total > 0 ? ((r.cost / total) * 100).toFixed(1) : "0.0"}%
+                </td>
+              </tr>
+            ))
+          )}
         </tbody>
       </table>
     </div>
   );
 }
-let total = 0;
 
 export default function AdminFinOpsPage() {
   const { session } = usePlatformAuth();
   const [summary, setSummary] = useState<Summary | null>(null);
-  const [breakdown, setBreakdown] = useState<{
-    by_agent: Row[];
-    by_workspace: Row[];
-    by_deployment: Row[];
-    by_provider: Row[];
-    by_model: Row[];
-  } | null>(null);
+  const [breakdown, setBreakdown] = useState<Breakdown | null>(null);
   const [economics, setEconomics] = useState<Economics | null>(null);
   const [alerts, setAlerts] = useState<FinOpsAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [orgId, setOrgId] = useState("");
 
-  async function load(oid = "") {
+  async function load() {
     if (!session) return;
     setError("");
     try {
-      const base = oid ? `/organizations/${oid}` : "";
-      const [s, b, e, a] = await Promise.all([
-        platformApi<Summary>(`/api/v1/platform/finops/summary${oid ? `/organizations/${oid}` : ""}`, {
+      const [s, b, e] = await Promise.all([
+        platformApi<Summary>("/api/v1/platform/finops/summary", {
           token: session.token,
         }).catch(() => null),
         platformApi<{
-          by_agent: Row[];
-          by_workspace: Row[];
-          by_deployment: Row[];
-          by_provider: Row[];
-          by_model: Row[];
-        }>(`/api/v1/platform/finops/breakdown?organization_id=${oid}`, { token: session.token }),
-        platformApi<Economics>(`/api/v1/platform/finops/economics?organization_id=${oid}`, {
-          token: session.token,
-        }),
-        oid
-          ? platformApi<{ alerts: FinOpsAlert[] }>(`/api/v1/platform/finops/alerts?organization_id=${oid}`, {
-              token: session.token,
-            })
-          : Promise.resolve({ alerts: [] as FinOpsAlert[] }),
+          by_agent?: Row[];
+          by_workspace?: Row[];
+          by_deployment?: Row[];
+          by_provider?: Row[];
+          by_model?: Row[];
+          organizations?: Array<Partial<Breakdown>>;
+        }>("/api/v1/platform/finops/breakdown", { token: session.token }),
+        platformApi<Economics & { organizations?: Economics[] }>(
+          "/api/v1/platform/finops/economics",
+          { token: session.token }
+        ),
       ]);
       setSummary(s);
-      setBreakdown(b);
-      setEconomics(e);
-      setAlerts(a.alerts || []);
+      setBreakdown(normalizeBreakdown(b));
+      setEconomics(normalizeEconomics(e));
+      setAlerts([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error");
     } finally {
@@ -147,32 +219,20 @@ export default function AdminFinOpsPage() {
   }
 
   useEffect(() => {
-    void load(orgId);
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session, orgId]);
+  }, [session]);
 
   async function runChecks() {
     if (!session) return;
     try {
-      const out = await platformApi<{ alerts_created: { type: string }[] }>(
+      const out = await platformApi<{ alerts_created?: { type: string }[] }>(
         "/api/v1/platform/finops/check",
         { method: "POST", token: session.token, body: "{}" }
       );
-      setError(out.alerts_created.length ? `${out.alerts_created.length} alertas creadas` : "Sin alertas nuevas");
-      await load(orgId);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Error");
-    }
-  }
-
-  async function ack(alertId: string) {
-    if (!session) return;
-    try {
-      await platformApi(
-        `/api/v1/platform/finops/alerts/${alertId}/ack?organization_id=${orgId}`,
-        { method: "POST", token: session.token, body: "{}" }
-      );
-      await load(orgId);
+      const created = out.alerts_created?.length ?? 0;
+      setError(created ? `${created} alertas creadas` : "Sin alertas nuevas");
+      await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
     }
@@ -180,11 +240,11 @@ export default function AdminFinOpsPage() {
 
   const groups: { title: string; rows: Row[] }[] = breakdown
     ? [
-        { title: "Por provider", rows: breakdown.by_provider },
-        { title: "Por modelo", rows: breakdown.by_model },
-        { title: "Por workspace", rows: breakdown.by_workspace },
-        { title: "Por agente", rows: breakdown.by_agent },
-        { title: "Por deployment", rows: breakdown.by_deployment },
+        { title: "Por provider", rows: breakdown.by_provider ?? [] },
+        { title: "Por modelo", rows: breakdown.by_model ?? [] },
+        { title: "Por workspace", rows: breakdown.by_workspace ?? [] },
+        { title: "Por agente", rows: breakdown.by_agent ?? [] },
+        { title: "Por deployment", rows: breakdown.by_deployment ?? [] },
       ]
     : [];
 
@@ -199,9 +259,9 @@ export default function AdminFinOpsPage() {
           </button>
         }
       />
-      {error && <ErrorInline>{error}</ErrorInline>}
+      <ErrorInline message={error} />
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <SkeletonBlock />
       ) : (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -253,9 +313,7 @@ export default function AdminFinOpsPage() {
                         </p>
                       </div>
                       {!al.acknowledged && (
-                        <button type="button" className="btn btn-ghost min-h-8 text-xs" onClick={() => void ack(al.id)}>
-                          Reconocer
-                        </button>
+                        <span className="text-xs text-faint">Pendiente</span>
                       )}
                     </li>
                   ))}

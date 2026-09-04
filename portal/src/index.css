@@ -244,7 +244,11 @@
   }
 
   .stat {
-    @apply rounded-lg border border-border bg-surface p-4 shadow-panel;
+    @apply relative overflow-visible rounded-lg border border-border bg-surface p-4 shadow-panel;
+  }
+  .stat:hover,
+  .stat:focus-within {
+    z-index: 20;
   }
   .stat-label {
     @apply text-xs font-medium text-faint;

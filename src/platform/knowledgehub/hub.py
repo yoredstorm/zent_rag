@@ -381,7 +381,7 @@ async def run_refresh_loop() -> dict:
     results = []
     for row in rows:
         try:
-            result = await refresh_source(UUID(row.organization_id), row.id)
+            result = await refresh_source(UUID(str(row.organization_id)), UUID(str(row.id)))
             results.append({"source_id": str(row.id), **result})
         except Exception as exc:  # noqa: BLE001
             logger.exception("refresh source failed", source_id=str(row.id))

@@ -1,16 +1,26 @@
 import { FormEvent, useState } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useLocation } from "react-router-dom";
 import { usePlatformAuth } from "../../platformAuth";
 import { Spinner } from "../../components/ui";
 
+function redirectAfterLogin(state: unknown): string {
+  const from =
+    typeof state === "object" && state != null && "from" in state
+      ? String((state as { from: unknown }).from)
+      : "";
+  if (from.startsWith("/control-center") && !from.includes("/login")) return from;
+  return "/control-center";
+}
+
 export default function AdminLoginPage() {
   const { session, login } = usePlatformAuth();
+  const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  if (session) return <Navigate to="/admin" replace />;
+  if (session) return <Navigate to={redirectAfterLogin(location.state)} replace />;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();

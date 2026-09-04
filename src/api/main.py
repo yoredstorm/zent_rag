@@ -45,6 +45,7 @@ from src.api.routes.connectors import router as connectors_router
 from src.api.routes.copilot import router as copilot_router
 from src.api.routes.deployments import router as deployments_router
 from src.api.routes.devportal import router as devportal_router
+from src.api.routes.dr import router as dr_router
 from src.api.routes.ecosystem import router as ecosystem_router
 from src.api.routes.embed import admin_router as embed_admin_router
 from src.api.routes.embed import public_router as embed_public_router
@@ -53,6 +54,7 @@ from src.api.routes.evaluation import router as eval_router
 from src.api.routes.federated import router as federated_router
 from src.api.routes.feedback import router as feedback_router
 from src.api.routes.gateway import router as gateway_router
+from src.api.routes.governance import router as governance_router
 from src.api.routes.health import router as health_router
 from src.api.routes.ingestion import router as ingestion_router
 from src.api.routes.jobs import router as jobs_router
@@ -72,6 +74,7 @@ from src.api.routes.releases import router as releases_router
 from src.api.routes.risk_center import router as risk_center_router
 from src.api.routes.scim import router as scim_router
 from src.api.routes.share import router as share_router
+from src.api.routes.soc import router as soc_router
 from src.api.routes.sources import router as sources_router
 from src.api.routes.sso import router as sso_router
 from src.api.routes.training import router as training_router
@@ -402,6 +405,9 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(billing_router)
     new_app.include_router(billing_webhooks_router)
     new_app.include_router(connectors_router)
+    new_app.include_router(dr_router)
+    new_app.include_router(governance_router)
+    new_app.include_router(soc_router)
     new_app.include_router(ecosystem_router)
     new_app.include_router(risk_center_router)
     new_app.include_router(knowledge_hub_router)
@@ -419,6 +425,9 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(sso_router)
     new_app.include_router(federated_router)
     new_app.include_router(share_router)
+    new_app.include_router(dr_router)
+    new_app.include_router(governance_router)
+    new_app.include_router(soc_router)
     new_app.include_router(ecosystem_router)
     new_app.include_router(risk_center_router)
     new_app.include_router(knowledge_hub_router)

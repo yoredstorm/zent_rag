@@ -106,6 +106,50 @@ async def _seed_usage(client: AsyncClient, org: dict, cost: float) -> None:
     return agent, dep
 
 
+def test_aggregate_breakdowns_and_economics_for_platform_view() -> None:
+    """Platform FinOps (no org id) must return the same by_* / requests keys as a single org."""
+    from src.platform.finops.breakdown import aggregate_breakdowns, aggregate_economics
+
+    merged = aggregate_breakdowns(
+        [
+            {
+                "by_agent": [{"label": "A", "requests": 2, "cost": 0.1, "tokens": 10}],
+                "by_workspace": [],
+                "by_deployment": [],
+                "by_provider": [{"label": "openai", "requests": 2, "cost": 0.1, "tokens": 10}],
+                "by_model": [],
+            },
+            {
+                "by_agent": [{"label": "A", "requests": 3, "cost": 0.2, "tokens": 20}],
+                "by_workspace": [{"label": "ws", "requests": 1, "cost": 0.05, "tokens": 5}],
+                "by_deployment": [],
+                "by_provider": [{"label": "openai", "requests": 3, "cost": 0.2, "tokens": 20}],
+                "by_model": [],
+            },
+        ],
+        days=30,
+    )
+    assert [r["label"] for r in merged["by_agent"]] == ["A"]
+    assert merged["by_agent"][0]["requests"] == 5
+    assert merged["by_agent"][0]["cost"] == pytest.approx(0.3)
+    assert merged["by_provider"][0]["requests"] == 5
+    assert merged["by_workspace"][0]["label"] == "ws"
+    assert "organizations" not in merged or isinstance(merged.get("by_model"), list)
+
+    econ = aggregate_economics(
+        [
+            {"requests": 2, "tokens": 10, "total_cost": 0.1},
+            {"requests": 3, "tokens": 20, "total_cost": 0.2},
+        ]
+    )
+    assert econ["requests"] == 5
+    assert econ["tokens"] == 30
+    assert econ["total_cost"] == pytest.approx(0.3)
+    assert econ["cost_per_request"] == pytest.approx(0.06)
+    assert econ["cost_per_1k_requests"] == pytest.approx(60.0)
+    assert econ["tokens_per_request"] == pytest.approx(6.0)
+
+
 @pytest.mark.asyncio
 async def test_finops_breakdown_and_economics(async_client: AsyncClient) -> None:
 

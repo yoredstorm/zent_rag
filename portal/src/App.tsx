@@ -68,6 +68,7 @@ const AdminSystemStatusPage = lazy(() => import("./pages/admin/SystemStatus"));
 const SsoCallbackPage = lazy(() => import("./pages/SsoCallback"));
 const AdminDisasterRecoveryPage = lazy(() => import("./pages/admin/DisasterRecovery"));
 const AdminGovernancePage = lazy(() => import("./pages/admin/Governance"));
+const DisasterRecoveryPage = lazy(() => import("./pages/DisasterRecovery"));
 const AdminCustomerSuccessPage = lazy(() => import("./pages/admin/CustomerSuccess"));
 const AdminAuditIntelligencePage = lazy(() => import("./pages/admin/AuditIntelligence"));
 const AdminOptimizerPage = lazy(() => import("./pages/admin/Optimizer"));
@@ -83,9 +84,11 @@ const RiskCenterPage = lazy(() => import("./pages/RiskCenter"));
 const AdminRiskCenterPage = lazy(() => import("./pages/admin/RiskCenter"));
 const EcosystemMarketplacePage = lazy(() => import("./pages/EcosystemMarketplace"));
 const AdminEcosystemPage = lazy(() => import("./pages/admin/Ecosystem"));
+const SecurityCenterPage = lazy(() => import("./pages/SecurityCenter"));
+const AdminSecurityCenterPage = lazy(() => import("./pages/admin/SecurityCenter"));
+const GovernancePage = lazy(() => import("./pages/Governance"));
 const AdminModelGatewayPage = lazy(() => import("./pages/admin/ModelGateway"));
 const AdminRealtimePage = lazy(() => import("./pages/admin/Realtime"));
-const AdminSecurityCenterPage = lazy(() => import("./pages/admin/SecurityCenter"));
 const AdminOnboardingPage = lazy(() => import("./pages/admin/Onboarding"));
 const AdminCapacityPage = lazy(() => import("./pages/admin/Capacity"));
 const DeveloperToolsPage = lazy(() => import("./pages/DeveloperTools"));
@@ -482,6 +485,7 @@ export default function App() {
         <Route path="status" element={<Suspense fallback={<PageFallback />}><AdminSystemStatusPage /></Suspense>} />
         <Route path="dr" element={<Suspense fallback={<PageFallback />}><AdminDisasterRecoveryPage /></Suspense>} />
         <Route path="governance" element={<Suspense fallback={<PageFallback />}><AdminGovernancePage /></Suspense>} />
+        <Route path="dr" element={<Suspense fallback={<PageFallback />}><AdminDisasterRecoveryPage /></Suspense>} />
         <Route path="customers" element={<Suspense fallback={<PageFallback />}><AdminCustomerSuccessPage /></Suspense>} />
         <Route path="audit-intel" element={<Suspense fallback={<PageFallback />}><AdminAuditIntelligencePage /></Suspense>} />
         <Route path="optimizer" element={<Suspense fallback={<PageFallback />}><AdminOptimizerPage /></Suspense>} />
@@ -492,6 +496,9 @@ export default function App() {
         <Route path="knowledge-hub" element={<Suspense fallback={<PageFallback />}><AdminKnowledgeHubPage /></Suspense>} />
         <Route path="risk-center" element={<Suspense fallback={<PageFallback />}><AdminRiskCenterPage /></Suspense>} />
         <Route path="ecosystem" element={<Suspense fallback={<PageFallback />}><AdminEcosystemPage /></Suspense>} />
+        <Route path="soc" element={<Suspense fallback={<PageFallback />}><AdminSecurityCenterPage /></Suspense>} />
+        <Route path="governance" element={<Suspense fallback={<PageFallback />}><AdminGovernancePage /></Suspense>} />
+        <Route path="dr" element={<Suspense fallback={<PageFallback />}><AdminDisasterRecoveryPage /></Suspense>} />
         <Route path="model-gateway" element={<Suspense fallback={<PageFallback />}><AdminModelGatewayPage /></Suspense>} />
         <Route path="realtime" element={<Suspense fallback={<PageFallback />}><AdminRealtimePage /></Suspense>} />
         <Route path="security-center" element={<Suspense fallback={<PageFallback />}><AdminSecurityCenterPage /></Suspense>} />
@@ -517,6 +524,11 @@ export default function App() {
         <Route path="audit" element={<Suspense fallback={<PageFallback />}><AdminAuditPage /></Suspense>} />
         <Route path="settings" element={<Suspense fallback={<PageFallback />}><AdminSettingsPage /></Suspense>} />
         <Route path="settings/plans" element={<Suspense fallback={<PageFallback />}><AdminPlansPage /></Suspense>} />
+        <Route path="feedback" element={<Suspense fallback={<PageFallback />}><AdminFeedbackPage /></Suspense>} />
+        <Route path="migrations" element={<Suspense fallback={<PageFallback />}><AdminMigrationsPage /></Suspense>} />
+        <Route path="releases" element={<Suspense fallback={<PageFallback />}><AdminReleasesPage /></Suspense>} />
+        <Route path="copilot" element={<Suspense fallback={<PageFallback />}><AdminCopilotPage /></Suspense>} />
+        <Route path="*" element={<Navigate to="/control-center" replace />} />
       </Route>
       <Route element={<ProtectedLayout />}>
         <Route path="/" element={<Suspense fallback={<PageFallback />}><DashboardPage /></Suspense>} />
@@ -556,6 +568,9 @@ export default function App() {
       <Route path="/knowledge-hub" element={<Suspense fallback={<PageFallback />}><KnowledgeHubPage /></Suspense>} />
       <Route path="/risk-center" element={<Suspense fallback={<PageFallback />}><RiskCenterPage /></Suspense>} />
       <Route path="/marketplace" element={<Suspense fallback={<PageFallback />}><EcosystemMarketplacePage /></Suspense>} />
+      <Route path="/security-center" element={<Suspense fallback={<PageFallback />}><SecurityCenterPage /></Suspense>} />
+      <Route path="/governance" element={<Suspense fallback={<PageFallback />}><GovernancePage /></Suspense>} />
+      <Route path="/disaster-recovery" element={<Suspense fallback={<PageFallback />}><DisasterRecoveryPage /></Suspense>} />
         <Route path="/settings" element={<Suspense fallback={<PageFallback />}><SettingsPage /></Suspense>} />
         <Route path="/evaluation" element={<Suspense fallback={<PageFallback />}><EvaluationOverviewPage /></Suspense>} />
         <Route path="/evaluation/datasets" element={<Suspense fallback={<PageFallback />}><EvaluationDatasetsPage /></Suspense>} />
