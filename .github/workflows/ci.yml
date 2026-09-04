@@ -44,6 +44,19 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    env:
+      RAG_POSTGRES_HOST: localhost
+      RAG_POSTGRES_PORT: "5432"
+      RAG_POSTGRES_USER: rag_user
+      RAG_POSTGRES_PASSWORD: changeme_in_production
+      RAG_POSTGRES_DB: rag_platform
+      RAG_REDIS_URL: redis://localhost:6379/0
+      RAG_QDRANT_HOST: localhost
+      RAG_QDRANT_PORT: "6333"
+      RAG_BILLING_ENABLED: "false"
+      RAG_ENVIRONMENT: development
+      # Required — no insecure default allowed in Settings
+      RAG_PORTAL_SESSION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -85,12 +98,17 @@ jobs:
 
       - name: Init DB schema
         run: |
+          set -euo pipefail
           sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          export PGPASSWORD=changeme_in_production
+          # Baseline scripts only (01–31). Incremental schema (Alembic 002+,
+          # e.g. organizations.primary_region_id) is applied after pip via
+          # `alembic upgrade head`, matching Dockerfile.api / docker compose.
           for f in src/infrastructure/db_init/[0-9][0-9]-*.sql; do
-            PGPASSWORD=changeme_in_production psql -h localhost -U rag_user -d rag_platform -f "$f"
+            psql -h localhost -U rag_user -d rag_platform -v ON_ERROR_STOP=1 -f "$f"
           done
           for f in src/infrastructure/db_init/seed-demo/farmacia/*.sql; do
-            PGPASSWORD=changeme_in_production psql -h localhost -U rag_user -d rag_platform -f "$f"
+            psql -h localhost -U rag_user -d rag_platform -v ON_ERROR_STOP=1 -f "$f"
           done
 
       - name: Seed dev key (CI-only, mirrors 07-dev-seed.sh)
@@ -100,21 +118,11 @@ jobs:
       - name: Install deps
         run: pip install -e ".[prod,dev]"
 
+      - name: Apply Alembic migrations
+        run: alembic upgrade head
+
       - name: Run tests
         run: pytest tests/ -v --tb=short --timeout=60 -x
-        env:
-          RAG_POSTGRES_HOST: localhost
-          RAG_POSTGRES_PORT: "5432"
-          RAG_POSTGRES_USER: rag_user
-          RAG_POSTGRES_PASSWORD: changeme_in_production
-          RAG_POSTGRES_DB: rag_platform
-          RAG_REDIS_URL: redis://localhost:6379/0
-          RAG_QDRANT_HOST: localhost
-          RAG_QDRANT_PORT: "6333"
-          RAG_BILLING_ENABLED: "false"
-          RAG_ENVIRONMENT: development
-          # Required — no insecure default allowed in Settings
-          RAG_PORTAL_SESSION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 
   sdk-python:
     runs-on: ubuntu-latest

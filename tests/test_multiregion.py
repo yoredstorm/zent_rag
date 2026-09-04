@@ -84,6 +84,35 @@ async def _platform_admin(client: AsyncClient, email: str) -> dict:
 
 
 @pytest.mark.asyncio
+async def test_organizations_primary_region_id_column_exists() -> None:
+    """create_organization INSERT includes primary_region_id; CI schema must have it."""
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    session = await get_async_session()
+    try:
+        found = (
+            await session.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_schema = 'public' AND table_name = 'organizations' "
+                    "AND column_name = 'primary_region_id'"
+                )
+            )
+        ).scalar()
+        us_east = (
+            await session.execute(
+                text("SELECT 1 FROM regions WHERE code = 'us-east-1'")
+            )
+        ).scalar()
+    finally:
+        await session.close()
+    assert found == 1
+    assert us_east == 1
+
+
+@pytest.mark.asyncio
 async def test_regions_catalog_and_healthcheck(async_client: AsyncClient) -> None:
     plat = await _platform_admin(async_client, f"padmin-mr-{uuid4().hex[:8]}@zent.example")
 

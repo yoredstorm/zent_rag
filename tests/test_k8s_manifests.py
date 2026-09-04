@@ -143,6 +143,20 @@ def test_demo_and_prod_compose_remain() -> None:
     assert "ingestion-worker" in prod
 
 
+def test_ci_runs_alembic_upgrade_like_api_container() -> None:
+    """CI used to apply only db_init/01–31 SQL. App code INSERTs
+    organizations.primary_region_id (Alembic 047). Docker API runs
+    `alembic upgrade head` on boot; CI must do the same after pip install.
+    """
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    dockerfile = DOCKERFILE_API.read_text(encoding="utf-8")
+    assert "alembic upgrade head" in dockerfile
+    assert "alembic upgrade head" in ci
+    assert "primary_region_id" in (
+        ROOT / "src" / "infrastructure" / "postgres" / "relational_db.py"
+    ).read_text(encoding="utf-8")
+
+
 def test_kubernetes_docs_explain_when_not_to_use_it() -> None:
     docs = (ROOT / "docs" / "platform" / "KUBERNETES.md").read_text(encoding="utf-8")
     assert "cuando" in docs.lower() or "when" in docs.lower()
