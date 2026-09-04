@@ -9,6 +9,15 @@ import pytest
 from httpx import AsyncClient
 
 
+def test_edge_cache_key_changes_with_policy_generation() -> None:
+    from src.platform.edge.multiregion import cache_key
+
+    oid, did, vid = uuid4(), uuid4(), uuid4()
+    assert cache_key(oid, did, vid, "quién") != cache_key(
+        oid, did, vid, "quién", generation="1"
+    )
+
+
 async def _create_org(client: AsyncClient, name: str) -> dict:
     resp = await client.post(
         "/api/v1/billing/subscription/create-trial",

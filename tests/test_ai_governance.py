@@ -208,6 +208,9 @@ async def test_ai_policies_and_public_query_guardrail(async_client: AsyncClient)
         headers={**_headers(org), "Idempotency-Key": f"ai-q2-{uuid4().hex}"},
         json={"input": "¿quién es el contacto?"},
     )
+    assert q2.status_code == 200, q2.text
+    # Policy change must not reuse the masked cache entry.
+    assert q2.headers.get("x-zent-cache") != "HIT"
     assert "juan@corp.example" in q2.json()["answer"]
 
 

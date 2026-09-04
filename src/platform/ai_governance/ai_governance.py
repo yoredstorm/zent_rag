@@ -115,6 +115,9 @@ async def set_ai_policies(
                 params,
             )
             await session.commit()
+            from src.platform.edge.multiregion import bump_org_cache_generation
+
+            await bump_org_cache_generation(organization_id)
     finally:
         await session.close()
 

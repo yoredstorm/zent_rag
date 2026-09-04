@@ -24,9 +24,39 @@ DEFAULT_CACHE_TTL = 300
 # ---------------------------------------------------------------------------
 # Edge cache (Redis)
 # ---------------------------------------------------------------------------
-def cache_key(organization_id: UUID, deployment_id: UUID, version_id: UUID, input_text: str) -> str:
+def cache_key(
+    organization_id: UUID,
+    deployment_id: UUID,
+    version_id: UUID,
+    input_text: str,
+    *,
+    generation: str = "0",
+) -> str:
     digest = hashlib.sha256(input_text.encode("utf-8")).hexdigest()[:24]
-    return f"rag:edge:{organization_id}:{deployment_id}:{version_id}:{digest}"
+    return (
+        f"rag:edge:{organization_id}:{deployment_id}:{version_id}:"
+        f"{generation}:{digest}"
+    )
+
+
+async def org_cache_generation(organization_id: UUID) -> str:
+    """Monotonic generation so policy changes miss stale edge entries."""
+    try:
+        client = await _get_redis()
+        raw = await client.get(f"rag:edge:gen:{organization_id}")
+        if raw is None:
+            return "0"
+        return str(int(raw if isinstance(raw, str) else raw.decode("utf-8")))
+    except Exception:  # noqa: BLE001
+        return "0"
+
+
+async def bump_org_cache_generation(organization_id: UUID) -> None:
+    try:
+        client = await _get_redis()
+        await client.incr(f"rag:edge:gen:{organization_id}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Edge cache generation bump failed", error=str(exc)[:150])
 
 
 def bypass_requested(request) -> bool:

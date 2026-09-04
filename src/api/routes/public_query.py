@@ -215,14 +215,20 @@ async def deployment_query(
         bypass_requested,
         cache_key,
         get_cached,
+        org_cache_generation,
         set_cached,
         ttl_for_org,
     )
 
     edge_key: str | None = None
     if not bypass_requested(request):
+        generation = await org_cache_generation(organization_id)
         edge_key = cache_key(
-            organization_id, deployment.id, deployment.agent_version_id, body.input
+            organization_id,
+            deployment.id,
+            deployment.agent_version_id,
+            body.input,
+            generation=generation,
         )
         cached = await get_cached(edge_key)
         if cached is not None:
