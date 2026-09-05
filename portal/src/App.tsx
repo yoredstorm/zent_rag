@@ -1,42 +1,7 @@
 import {
-  Bell,
-  Books,
-  Buildings,
-  ChartBar,
-  ChartLineUp,
-  ChatCircleDots,
-  ChatsCircle,
-  ClipboardText,
-  Code,
-  Compass,
-  CreditCard,
-  Database,
-  FolderSimple,
-  FlowArrow,
-  Gear,
-  GraduationCap,
-  Key,
-  Lifebuoy,
   List,
-  NotePencil,
-  Plugs,
-  Robot,
-  Rocket,
-  RocketLaunch,
-  Scales,
-  ShieldCheck,
-  ShieldStar,
   SignOut,
-  Sparkle,
-  SquaresFour,
-  Storefront,
-  Swap,
-  Target,
-  WarningOctagon,
-  UsersThree,
-  WebhooksLogo,
   X,
-  type Icon,
 } from "@phosphor-icons/react";
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
 import { NavLink, Navigate, Outlet, Route, Routes } from "react-router-dom";
@@ -44,11 +9,13 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ApiKeyCreatedModal } from "./components/ApiKeyCreatedModal";
 import { Topbar } from "./components/Topbar";
 import { WorkspaceSelector } from "./components/WorkspaceSelector";
-import { api, SIGNUP_API_KEY_STORAGE, type Session } from "./api";
+import { api, SIGNUP_API_KEY_STORAGE } from "./api";
 import { useAuth } from "./auth";
 import { IMPERSONATING_KEY } from "./platformAuth";
 import { SyncBanner, SyncJobProvider } from "./syncJob";
 import { ToastProvider } from "./Toast";
+import { NAV_GROUPS, canSeeNavItem } from "./lib/nav";
+import { CommandPaletteRoot } from "./components/CommandPalette";
 
 const ChatPage = lazy(() => import("./pages/Chat"));
 const DashboardPage = lazy(() => import("./pages/Dashboard"));
@@ -60,10 +27,12 @@ const UsagePage = lazy(() => import("./pages/Usage"));
 const ProjectsPage = lazy(() => import("./pages/Projects"));
 const AgentsPage = lazy(() => import("./pages/Agents"));
 const AgentBuilderPage = lazy(() => import("./pages/AgentBuilder"));
+const AgentEntryPage = lazy(() => import("./pages/AgentEntry"));
 const ConnectorsPage = lazy(() => import("./pages/Connectors"));
 const BillingPage = lazy(() => import("./pages/Billing"));
 const SettingsPage = lazy(() => import("./pages/Settings"));
 const KnowledgeSourcesPage = lazy(() => import("./pages/knowledge/Sources"));
+const KnowledgeOverviewPage = lazy(() => import("./pages/knowledge/Overview"));
 const KnowledgeCollectionsPage = lazy(() => import("./pages/knowledge/Collections"));
 const KnowledgeDocumentsPage = lazy(() => import("./pages/knowledge/Documents"));
 const KnowledgeSqlPage = lazy(() => import("./pages/knowledge/SqlSources"));
@@ -107,6 +76,7 @@ const EcosystemMarketplacePage = lazy(() => import("./pages/EcosystemMarketplace
 const AdminEcosystemPage = lazy(() => import("./pages/admin/Ecosystem"));
 const SecurityCenterPage = lazy(() => import("./pages/SecurityCenter"));
 const AdminSecurityCenterPage = lazy(() => import("./pages/admin/SecurityCenter"));
+const AdminTrustPage = lazy(() => import("./pages/admin/Trust"));
 const GovernancePage = lazy(() => import("./pages/Governance"));
 const AdminModelGatewayPage = lazy(() => import("./pages/admin/ModelGateway"));
 const AdminRealtimePage = lazy(() => import("./pages/admin/Realtime"));
@@ -150,6 +120,7 @@ const DataSourcesPage = lazy(() => import("./pages/DataSources"));
 const WebhooksPage = lazy(() => import("./pages/Webhooks"));
 const TeamAccessPage = lazy(() => import("./pages/TeamAccess"));
 const SecurityAuditPage = lazy(() => import("./pages/SecurityAudit"));
+const McpPage = lazy(() => import("./pages/Mcp"));
 
 function PageFallback() {
   return (
@@ -163,103 +134,6 @@ function PageFallback() {
 }
 
 type Entitlements = Record<string, boolean | number | null>;
-
-type NavLeaf = { to: string; label: string; icon: Icon; end?: boolean; key?: string };
-type NavGroup = { label: string | null; items: NavLeaf[]; collapsible?: boolean };
-
-const NAV_GROUPS: NavGroup[] = [
-  {
-    label: "Panel general",
-    items: [
-      { to: "/", label: "Panel general", icon: SquaresFour, end: true },
-      { to: "/chat", label: "Playground", icon: ChatCircleDots },
-    ],
-  },
-  {
-    label: "Construir",
-    items: [
-      { to: "/agents", label: "Agentes", icon: Robot },
-      { to: "/knowledge/sources", label: "Conocimiento", icon: Database },
-      { to: "/data-sources", label: "Fuentes de datos", icon: Plugs },
-      { to: "/prompts", label: "Instrucciones", icon: NotePencil, key: "prompts" },
-    ],
-  },
-  {
-    label: "Operar",
-    items: [
-      { to: "/usage", label: "Analítica", icon: ChartLineUp },
-      { to: "/ai-quality", label: "Calidad de IA", icon: Target },
-      { to: "/deployments", label: "Despliegues", icon: RocketLaunch },
-    ],
-  },
-  {
-    label: "Desarrolladores",
-    items: [
-      { to: "/keys", label: "API y Claves", icon: Key, key: "keys" },
-      { to: "/webhooks", label: "Webhooks", icon: WebhooksLogo, key: "keys" },
-      { to: "/developers", label: "Centro de desarrolladores", icon: Code },
-    ],
-  },
-  {
-    label: "Organización",
-    items: [
-      { to: "/team", label: "Equipo y Acceso", icon: UsersThree, key: "users" },
-      { to: "/billing", label: "Facturación", icon: CreditCard, key: "billing" },
-      { to: "/security", label: "Seguridad y Auditoría", icon: ShieldCheck, key: "audit" },
-      { to: "/settings", label: "Configuración", icon: Gear, key: "settings" },
-    ],
-  },
-  {
-    label: "Avanzado",
-    collapsible: true,
-    items: [
-      { to: "/projects", label: "Proyectos", icon: FolderSimple },
-      { to: "/evaluation", label: "Evaluación", icon: ChartBar, key: "eval_ui" },
-      { to: "/connectors", label: "Conectores", icon: Plugs, key: "connectors" },
-      { to: "/workspaces", label: "Workspaces", icon: Buildings },
-      { to: "/security-center", label: "Security Center", icon: ShieldStar },
-      { to: "/governance", label: "Gobernanza", icon: Scales },
-      { to: "/risk-center", label: "Risk Center", icon: WarningOctagon },
-      { to: "/knowledge-hub", label: "Knowledge Hub", icon: Books },
-      { to: "/workflows", label: "Workflows", icon: FlowArrow },
-      { to: "/chat-insights", label: "Chat Insights", icon: ChatsCircle },
-      { to: "/copilot", label: "Copilot", icon: Sparkle },
-      { to: "/marketplace", label: "Marketplace", icon: Storefront },
-      { to: "/migrations", label: "Migraciones", icon: Swap },
-      { to: "/releases", label: "Releases", icon: Rocket },
-      { to: "/training", label: "Training", icon: GraduationCap },
-      { to: "/onboarding", label: "Onboarding", icon: Compass },
-      { to: "/disaster-recovery", label: "Disaster Recovery", icon: Lifebuoy },
-      { to: "/audit/compliance", label: "Audit Compliance", icon: ClipboardText },
-      { to: "/notifications", label: "Notificaciones", icon: Bell },
-    ],
-  },
-];
-
-function isViewerOnly(roles: string[] | undefined): boolean {
-  const r = roles || [];
-  if (r.some((role) => role === "owner" || role === "admin" || role === "member")) {
-    return false;
-  }
-  return r.includes("viewer");
-}
-
-function canSeeNavItem(
-  session: Session | null,
-  key?: string,
-  entitlements: Entitlements = {}
-): boolean {
-  if (!key) return true;
-  const roles = session?.roles || [];
-  const perms = session?.permissions || [];
-  const orgAdmin = roles.includes("owner") || roles.includes("admin");
-  if (key === "users" || key === "keys") return orgAdmin;
-  if (key === "billing" || key === "settings") return orgAdmin;
-  if (key === "audit") return orgAdmin || perms.includes("audit:read");
-  if (key === "prompts" || key === "connectors") return !isViewerOnly(roles);
-  if (key === "eval_ui") return entitlements.eval_ui === true;
-  return true;
-}
 
 function Brand() {
   return (
@@ -310,8 +184,18 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
     () =>
       NAV_GROUPS.map((group) => ({
         ...group,
-        items: group.items.filter((item) => canSeeNavItem(session, item.key, entitlements)),
-      })).filter((group) => group.items.length > 0),
+        items: group.items?.filter((item) => canSeeNavItem(session, item.key, entitlements)),
+        sections: group.sections
+          ?.map((s) => ({
+            heading: s.heading,
+            items: s.items.filter((item) => canSeeNavItem(session, item.key, entitlements)),
+          }))
+          .filter((s) => s.items.length > 0),
+      })).filter(
+        (group) =>
+          (group.items && group.items.length > 0) ||
+          (group.sections && group.sections.length > 0)
+      ),
     [session, entitlements]
   );
 
@@ -341,32 +225,41 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                   </span>
                 </button>
                 {advancedOpen && (
-                  <div className="flex flex-col gap-0.5">
-                    {group.items.map(({ to, label, icon: IconEl, end }) => (
-                      <NavLink
-                        key={to}
-                        to={to}
-                        end={end}
-                        onClick={onNavigate}
-                        className={({ isActive }) =>
-                          `group flex min-h-9 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors duration-150 ${
-                            isActive
-                              ? "bg-accent-soft font-medium text-accent"
-                              : "text-muted hover:bg-soft hover:text-text"
-                          }`
-                        }
-                      >
-                        {({ isActive }) => (
-                          <>
-                            <IconEl
-                              size={16}
-                              weight={isActive ? "fill" : "regular"}
-                              aria-hidden
-                            />
-                            <span className="truncate">{label}</span>
-                          </>
-                        )}
-                      </NavLink>
+                  <div className="flex flex-col gap-2.5">
+                    {(group.sections ?? []).map((section) => (
+                      <div key={section.heading}>
+                        <p className="mb-1 px-2.5 text-[10px] font-semibold tracking-wider text-faint uppercase">
+                          {section.heading}
+                        </p>
+                        <div className="flex flex-col gap-0.5">
+                          {section.items.map(({ to, label, icon: IconEl, end }) => (
+                            <NavLink
+                              key={to}
+                              to={to}
+                              end={end}
+                              onClick={onNavigate}
+                              className={({ isActive }) =>
+                                `group flex min-h-9 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors duration-150 ${
+                                  isActive
+                                    ? "bg-accent-soft font-medium text-accent"
+                                    : "text-muted hover:bg-soft hover:text-text"
+                                }`
+                              }
+                            >
+                              {({ isActive }) => (
+                                <>
+                                  <IconEl
+                                    size={16}
+                                    weight={isActive ? "fill" : "regular"}
+                                    aria-hidden
+                                  />
+                                  <span className="truncate">{label}</span>
+                                </>
+                              )}
+                            </NavLink>
+                          ))}
+                        </div>
+                      </div>
                     ))}
                   </div>
                 )}
@@ -381,7 +274,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                 </p>
               )}
               <div className="flex flex-col gap-0.5">
-                {group.items.map(({ to, label, icon: IconEl, end }) => (
+                {(group.items ?? []).map(({ to, label, icon: IconEl, end }) => (
                   <NavLink
                     key={to}
                     to={to}
@@ -531,6 +424,7 @@ function ProtectedLayout() {
             )}
 
             <main id="contenido" className="mx-auto w-full max-w-[1280px] flex-1 px-4 py-6 sm:px-6 lg:px-10">
+              <CommandPaletteRoot mode="tenant" />
               {impersonating && (
                 <div
                   className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-warn/30 bg-warn-soft px-4 py-3 text-sm text-text"
@@ -607,6 +501,7 @@ export default function App() {
         <Route path="risk-center" element={<Suspense fallback={<PageFallback />}><AdminRiskCenterPage /></Suspense>} />
         <Route path="ecosystem" element={<Suspense fallback={<PageFallback />}><AdminEcosystemPage /></Suspense>} />
         <Route path="soc" element={<Suspense fallback={<PageFallback />}><AdminSecurityCenterPage /></Suspense>} />
+        <Route path="trust" element={<Suspense fallback={<PageFallback />}><AdminTrustPage /></Suspense>} />
         <Route path="security-center" element={<Suspense fallback={<PageFallback />}><AdminSecurityCenterPage /></Suspense>} />
         <Route path="model-gateway" element={<Suspense fallback={<PageFallback />}><AdminModelGatewayPage /></Suspense>} />
         <Route path="realtime" element={<Suspense fallback={<PageFallback />}><AdminRealtimePage /></Suspense>} />
@@ -651,6 +546,7 @@ export default function App() {
         <Route path="/usage" element={<Suspense fallback={<PageFallback />}><UsagePage /></Suspense>} />
         <Route path="/keys" element={<Suspense fallback={<PageFallback />}><KeysPage /></Suspense>} />
         <Route path="/webhooks" element={<Suspense fallback={<PageFallback />}><WebhooksPage /></Suspense>} />
+        <Route path="/knowledge" element={<Suspense fallback={<PageFallback />}><KnowledgeOverviewPage /></Suspense>} />
         <Route path="/knowledge/sources" element={<Suspense fallback={<PageFallback />}><KnowledgeSourcesPage /></Suspense>} />
         <Route path="/knowledge/collections" element={<Suspense fallback={<PageFallback />}><KnowledgeCollectionsPage /></Suspense>} />
         <Route path="/knowledge/documents" element={<Suspense fallback={<PageFallback />}><KnowledgeDocumentsPage /></Suspense>} />
@@ -664,11 +560,13 @@ export default function App() {
         <Route path="/workspaces" element={<Suspense fallback={<PageFallback />}><WorkspacesPage /></Suspense>} />
         <Route path="/training" element={<Suspense fallback={<PageFallback />}><TrainingPage /></Suspense>} />
         <Route path="/developers" element={<Suspense fallback={<PageFallback />}><DeveloperCenterPage /></Suspense>} />
+        <Route path="/developers/mcp" element={<Suspense fallback={<PageFallback />}><McpPage /></Suspense>} />
         <Route path="/developers/tools" element={<Suspense fallback={<PageFallback />}><DeveloperToolsPage /></Suspense>} />
         <Route path="/developers/playground" element={<Suspense fallback={<PageFallback />}><PlaygroundPage /></Suspense>} />
         <Route path="/agents" element={<Suspense fallback={<PageFallback />}><AgentsPage /></Suspense>} />
         <Route path="/agents/new" element={<Suspense fallback={<PageFallback />}><AgentBuilderPage /></Suspense>} />
-        <Route path="/agents/:id" element={<Suspense fallback={<PageFallback />}><AgentBuilderPage /></Suspense>} />
+        <Route path="/agents/:id/builder" element={<Suspense fallback={<PageFallback />}><AgentBuilderPage /></Suspense>} />
+        <Route path="/agents/:id" element={<Suspense fallback={<PageFallback />}><AgentEntryPage /></Suspense>} />
         <Route path="/connectors" element={<Suspense fallback={<PageFallback />}><ConnectorsPage /></Suspense>} />
         <Route path="/billing" element={<Suspense fallback={<PageFallback />}><BillingPage /></Suspense>} />
         <Route path="/ai-quality" element={<Suspense fallback={<PageFallback />}><AiQualityPage /></Suspense>} />

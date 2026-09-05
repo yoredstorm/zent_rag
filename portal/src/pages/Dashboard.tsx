@@ -11,12 +11,12 @@ import {
   Star,
   TrendDown,
   TrendUp,
-  WarningCircle,
 } from "@phosphor-icons/react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { AttentionList } from "../components/AttentionList";
 import { EmptyState, ErrorInline, PageHeader, SkeletonBlock, StatCard } from "../components/ui";
 import { fmtDateTime, fmtLatency, fmtNum, timeAgo } from "../lib/format";
 
@@ -306,36 +306,11 @@ export default function DashboardPage() {
           </div>
 
           <div className="mt-4 grid gap-4 xl:grid-cols-3">
-            <div className="panel xl:col-span-2">
-              <div className="flex items-center justify-between border-b border-border px-5 py-4">
-                <h2 className="text-sm font-semibold text-text">Necesita atención</h2>
-                <span className="mono text-[11px] text-faint">eventos reales</span>
-              </div>
-              {issues.length === 0 ? (
-                <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
-                  <span className="flex h-11 w-11 items-center justify-center rounded-md border border-border bg-soft text-ok">
-                    <Heartbeat size={22} aria-hidden />
-                  </span>
-                  <p className="mt-1 text-sm font-medium text-text">Todo en orden</p>
-                  <p className="max-w-sm text-[13px] leading-relaxed text-muted">
-                    No se detectaron problemas en tu workspace.
-                  </p>
-                </div>
-              ) : (
-                <ul className="divide-y divide-border/60 px-2">
-                  {issues.map((issue) => (
-                    <li key={issue.id} className="flex items-center justify-between gap-3 px-3 py-3">
-                      <span className="flex items-center gap-2 text-[13px] text-text">
-                        <WarningCircle size={15} className="shrink-0 text-warn" aria-hidden />
-                        {issue.label}
-                      </span>
-                      <Link to={issue.to} className="shrink-0 text-xs text-accent hover:underline">
-                        Revisar
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
+            <div className="xl:col-span-2">
+              <AttentionList
+                items={issues}
+                emptyBody="No se detectaron problemas en tu workspace."
+              />
             </div>
 
             <div className="panel">

@@ -1,15 +1,5 @@
-import {
-  ArrowsClockwise,
-  Database,
-  Files,
-  FolderSimple,
-  List,
-  MagnifyingGlass,
-  Plus,
-  type Icon,
-} from "@phosphor-icons/react";
+import { ArrowsClockwise, Database, Plus } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
-import { NavLink } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import {
@@ -20,36 +10,8 @@ import {
   Spinner,
   SuccessInline,
 } from "../../components/ui";
+import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 import { fmtDateTime, fmtNum } from "../../lib/format";
-
-const KNOWLEDGE_TABS: { to: string; label: string; icon: Icon }[] = [
-  { to: "/knowledge/sources", label: "Fuentes", icon: Database },
-  { to: "/knowledge/collections", label: "Colecciones", icon: FolderSimple },
-  { to: "/knowledge/documents", label: "Documentos", icon: Files },
-  { to: "/knowledge/sql", label: "SQL", icon: Database },
-  { to: "/knowledge/jobs", label: "Sincronización", icon: List },
-  { to: "/knowledge/playground", label: "Búsqueda", icon: MagnifyingGlass },
-];
-
-function KnowledgeTabs() {
-  return (
-    <nav className="tabs" aria-label="Secciones de conocimiento">
-      {KNOWLEDGE_TABS.map((tab) => (
-        <NavLink
-          key={tab.to}
-          to={tab.to}
-          end={tab.to === "/knowledge/sources"}
-          className={({ isActive }) =>
-            `tab ${isActive ? "" : "opacity-70 hover:opacity-100"}`
-          }
-        >
-          <tab.icon size={15} aria-hidden />
-          {tab.label}
-        </NavLink>
-      ))}
-    </nav>
-  );
-}
 
 const SOURCE_TYPES = [
   "sql",
@@ -257,7 +219,7 @@ export default function KnowledgeSourcesPage() {
   }
 
   return (
-    <div>
+    <KnowledgeLayout>
       <PageHeader
         title="Conocimiento"
         subtitle="Administra la información que tu IA puede usar para responder: fuentes, colecciones, documentos y sincronización."
@@ -272,7 +234,6 @@ export default function KnowledgeSourcesPage() {
           </button>
         }
       />
-      <KnowledgeTabs />
       <div className="mt-4">
         <ErrorInline message={error} />
         <SuccessInline message={msg} />
@@ -491,6 +452,6 @@ export default function KnowledgeSourcesPage() {
           ))}
         </div>
       )}
-    </div>
+    </KnowledgeLayout>
   );
 }

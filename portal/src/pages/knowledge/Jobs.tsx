@@ -9,6 +9,7 @@ import {
   SkeletonBlock,
 } from "../../components/ui";
 import { fmtDateTime, fmtNum } from "../../lib/format";
+import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 
 type Job = {
   id: string;
@@ -40,7 +41,7 @@ export default function KnowledgeJobsPage() {
   }, [session]);
 
   return (
-    <div>
+    <KnowledgeLayout>
       <PageHeader
         title="Trabajos de sync"
         subtitle="Jobs de ingestión de tu organización. La API legacy de ingestión sigue disponible."
@@ -88,6 +89,6 @@ export default function KnowledgeJobsPage() {
           </div>
         )}
       </div>
-    </div>
+    </KnowledgeLayout>
   );
 }

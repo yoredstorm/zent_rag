@@ -159,8 +159,6 @@ export default function AdminModelHealthPage() {
     }
   }
 
-  const budgetByModel = new Map(budgets.map((b) => [`${b.organization_id}:${b.model}`, b]));
-
   return (
     <div className="space-y-6">
       <PageHeader title="Model Health" subtitle="Budgets con throttling, guardrails de salida y circuit breakers por modelo." />

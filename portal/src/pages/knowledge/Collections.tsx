@@ -17,6 +17,7 @@ import {
   SuccessInline,
 } from "../../components/ui";
 import { fmtDateTime } from "../../lib/format";
+import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 
 type KB = {
   id: string;
@@ -129,7 +130,7 @@ export default function KnowledgeBasesPage() {
   }
 
   return (
-    <div>
+    <KnowledgeLayout>
       <PageHeader
         title="Colecciones"
         subtitle="Bases de conocimiento vectorizadas. Al eliminarlas se purgan sus vectores de Qdrant (solo los de tu organización)."
@@ -200,6 +201,6 @@ export default function KnowledgeBasesPage() {
           ))}
         </div>
       )}
-    </div>
+    </KnowledgeLayout>
   );
 }

@@ -1,6 +1,7 @@
 import { Bell, Coins, Gauge, WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api";
+import { PageTabs } from "../../components/PageTabs";
 import {
   EmptyState,
   ErrorInline,
@@ -179,6 +180,7 @@ function CostTable({ title, rows }: { title: string; rows?: Row[] }) {
 
 export default function AdminFinOpsPage() {
   const { session } = usePlatformAuth();
+  const [tab, setTab] = useState<"overview" | "costs">("overview");
   const [summary, setSummary] = useState<Summary | null>(null);
   const [breakdown, setBreakdown] = useState<Breakdown | null>(null);
   const [economics, setEconomics] = useState<Economics | null>(null);
@@ -190,7 +192,7 @@ export default function AdminFinOpsPage() {
     if (!session) return;
     setError("");
     try {
-      const [s, b, e] = await Promise.all([
+      const [s, b, e, al] = await Promise.all([
         platformApi<Summary>("/api/v1/platform/finops/summary", {
           token: session.token,
         }).catch(() => null),
@@ -206,11 +208,14 @@ export default function AdminFinOpsPage() {
           "/api/v1/platform/finops/economics",
           { token: session.token }
         ),
+        platformApi<{ alerts: FinOpsAlert[] }>("/api/v1/platform/finops/alerts", {
+          token: session.token,
+        }).catch(() => ({ alerts: [] as FinOpsAlert[] })),
       ]);
       setSummary(s);
       setBreakdown(normalizeBreakdown(b));
       setEconomics(normalizeEconomics(e));
-      setAlerts([]);
+      setAlerts(al.alerts || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error");
     } finally {
@@ -260,9 +265,20 @@ export default function AdminFinOpsPage() {
         }
       />
       <ErrorInline message={error} />
+      <div className="mb-4">
+        <PageTabs
+          idPrefix="finops"
+          tabs={[
+            { id: "overview", label: "Overview" },
+            { id: "costs", label: "Costs" },
+          ]}
+          active={tab}
+          onChange={(next) => setTab(next as "overview" | "costs")}
+        />
+      </div>
       {loading ? (
         <SkeletonBlock />
-      ) : (
+      ) : tab === "overview" ? (
         <>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {summary && (
@@ -281,12 +297,20 @@ export default function AdminFinOpsPage() {
               <>
                 <StatCard label="Requests" value={economics.requests} />
                 <StatCard label="Cost/request" value={economics.cost_per_request != null ? usd(economics.cost_per_request, 6) : "—"} />
-                <StatCard label="Cost/1K requests" value={economics.cost_per_1k_requests != null ? usd(economics.cost_per_1k_requests, 4) : "—"} />
+                <StatCard
+                  label="Cost/customer"
+                  value={summary?.economics.cost_per_customer != null ? usd(summary.economics.cost_per_customer, 4) : "—"}
+                />
                 <StatCard label="Tokens/request" value={economics.tokens_per_request ?? "—"} />
               </>
             )}
           </div>
-
+          <p className="text-xs text-faint">
+            Desglose por provider, modelo, workspace, agente y deployment en la pestaña Costs.
+          </p>
+        </>
+      ) : (
+        <>
           <section>
             <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
               <Bell size={15} aria-hidden /> Alertas FinOps

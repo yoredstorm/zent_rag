@@ -2,6 +2,7 @@ import {
   Bell,
   CaretDown,
   CircleNotch,
+  MagnifyingGlass,
   Question,
   SignOut,
   GearSix,
@@ -10,18 +11,22 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { openCommandPalette } from "./CommandPalette";
+import { ThemeToggle } from "./ThemeToggle";
 
 const ROUTE_TITLES: Record<string, string> = {
   "/": "Panel general",
   "/chat": "Playground",
   "/agents": "Agentes",
   "/agents/new": "Nuevo agente",
+  "/knowledge": "Conocimiento",
   "/knowledge/sources": "Conocimiento",
   "/knowledge/collections": "Colecciones",
   "/knowledge/documents": "Documentos",
   "/knowledge/sql": "Fuentes SQL",
   "/knowledge/jobs": "Trabajos de sync",
   "/knowledge/playground": "Búsqueda",
+  "/workflows": "Workflows",
   "/data-sources": "Fuentes de datos",
   "/prompts": "Instrucciones",
   "/usage": "Analítica",
@@ -30,6 +35,7 @@ const ROUTE_TITLES: Record<string, string> = {
   "/keys": "API y Claves",
   "/webhooks": "Webhooks",
   "/developers": "Centro de desarrolladores",
+  "/developers/mcp": "MCP",
   "/team": "Equipo y Acceso",
   "/billing": "Facturación",
   "/security": "Seguridad y Auditoría",
@@ -130,6 +136,17 @@ export function Topbar() {
       </div>
 
       <div className="flex items-center gap-2.5">
+        <button
+          type="button"
+          className="inline-flex h-9 items-center gap-2 rounded-sm border border-border bg-soft px-2.5 text-xs text-muted transition-colors duration-150 hover:border-border-strong hover:text-text"
+          onClick={() => openCommandPalette("tenant")}
+          aria-label="Buscar (Ctrl+K)"
+        >
+          <MagnifyingGlass size={14} aria-hidden />
+          <span className="hidden sm:inline">Buscar</span>
+          <kbd className="rounded-xs border border-border bg-bg px-1 font-mono text-[10px] text-faint">Ctrl K</kbd>
+        </button>
+
         <span className="badge badge-muted">{env}</span>
 
         <span
@@ -150,6 +167,8 @@ export function Topbar() {
         </span>
 
         <span className="mx-1 h-5 w-px bg-border" aria-hidden />
+
+        <ThemeToggle />
 
         <Link
           to="/notifications"

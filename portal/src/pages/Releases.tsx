@@ -5,8 +5,8 @@ import { useAuth } from "../auth";
 import { ErrorInline, PageHeader, SkeletonBlock } from "../components/ui";
 
 type Version = { id: string; version_number: number; status: string; notes: string | null; created_at: string };
-type Release = { id: string; agent_id: string; version_id: string; version_number: number; channel: string; traffic_pct: number; status: string; health_score: number | null; created_at: string; events?: { event_type: string; detail: string; created_at: string }[] };
-type Diff = { version_a: { number: number }; version_b: { number: number }; config_diff: { key: string; kind: string; a: unknown; b: unknown }[]; prompt_diff: { changed: boolean; a: string; b: string }; model_changed: boolean; tools_changed: boolean };
+type Release = { id: string; agent_id: string; version_id: string; version_number: number; channel: string; traffic_pct: number; status: string; health_score: number | null; created_at: string; events?: { id: string; event_type: string; detail: string; created_at: string }[] };
+type Diff = { version_a: { number: number }; version_b: { number: number }; config_diff: { key: string; kind: string; a: unknown; b: unknown }[]; prompt_diff: { changed: boolean; a_chars: number; b_chars: number }; model_changed: boolean; tools_changed: boolean };
 
 export default function ReleasesPage() {
   const { session } = useAuth();

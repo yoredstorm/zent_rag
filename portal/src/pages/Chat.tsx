@@ -41,7 +41,7 @@ function renderMarkdown(text: string) {
 
 type SourceItem = { text: string; image?: string; score?: number };
 
-type Message = StoredMessage & { id: string };
+type Message = StoredMessage & { id: string; reasonPrompt?: boolean };
 
 type StreamMeta = {
   sources: SourceItem[];
@@ -753,7 +753,7 @@ function MessageBubble({
           )}
 
           {message.sqlQuery && (
-            <div className="mt-2 rounded-xs border border-border/70 bg-black/20">
+            <div className="mt-2 rounded-xs border border-border/70 bg-[var(--zent-code-bg)]">
               <div className="flex items-center gap-1 px-2.5 py-1.5">
                 <button
                   type="button"

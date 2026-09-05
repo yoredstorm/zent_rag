@@ -69,7 +69,7 @@ export default function ChatInsightsPage() {
                 { label: "Sesiones", value: funnel?.total_sessions ?? 0 },
                 { label: "Sesiones activas (≥2 msgs)", value: funnel?.active_sessions ?? 0 },
                 { label: "Resueltas (rating ≥4)", value: funnel?.resolved_sessions ?? 0 },
-              ].map((s, i) => (
+              ].map((s) => (
                 <div key={s.label} className="mb-1">
                   <div className="flex justify-between text-[11px]"><span className="text-faint">{s.label}</span><span className="text-text">{s.value}</span></div>
                   <div className="h-1.5 rounded bg-soft"><div className="h-1.5 rounded bg-accent" style={{ width: `${(s.value / Math.max((funnel?.total_messages ?? 1), 1)) * 100}%` }} /></div>

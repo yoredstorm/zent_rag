@@ -11,6 +11,8 @@ import {
   Spinner,
   SuccessInline,
 } from "../../components/ui";
+import { QualityLayout } from "../../components/QualityLayout";
+import { fmtDateTime } from "../../lib/format";
 
 type Dataset = { id: string; name: string };
 type Run = {
@@ -93,15 +95,10 @@ export default function EvaluationRunsPage() {
   }
 
   return (
-    <div>
+    <QualityLayout>
       <PageHeader
         title="Runs de evaluación"
         subtitle="El juez LLM no es determinista. Los costes del judge se registran en usage."
-        actions={
-          <Link to="/evaluation/compare" className="btn btn-secondary min-h-11">
-            Comparar
-          </Link>
-        }
       />
       <ErrorInline message={error} />
       <SuccessInline message={msg} />
@@ -177,9 +174,7 @@ export default function EvaluationRunsPage() {
                   </td>
                   <td className="py-3 pr-3">{run.status || "—"}</td>
                   <td className="py-3 text-muted">
-                    {run.created_at
-                      ? new Date(run.created_at).toLocaleString("es-CL")
-                      : "—"}
+                    {run.created_at ? fmtDateTime(run.created_at) : "—"}
                   </td>
                 </tr>
               ))}
@@ -187,6 +182,6 @@ export default function EvaluationRunsPage() {
           </table>
         </div>
       )}
-    </div>
+    </QualityLayout>
   );
 }

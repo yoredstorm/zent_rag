@@ -1,4 +1,4 @@
-import { CurrencyDollar, Plus, SealCheck, Star, Storefront } from "@phosphor-icons/react";
+import { CurrencyDollar, Plus, SealCheck, Storefront } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";

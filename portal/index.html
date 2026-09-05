@@ -9,6 +9,20 @@
       content="Zent AI Platform: conecta tus datos, construye agentes de IA, evalúa su calidad y despliégalos en tus aplicaciones empresariales. Por Omnio Solutions."
     />
     <meta name="theme-color" content="#0b0f14" />
+    <script>
+      (function () {
+        try {
+          var pref = localStorage.getItem("zent_theme") || "system";
+          var dark =
+            pref === "dark" ||
+            (pref === "system" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      })();
+    </script>
     <meta property="og:title" content="Zent AI Platform" />
     <meta
       property="og:description"

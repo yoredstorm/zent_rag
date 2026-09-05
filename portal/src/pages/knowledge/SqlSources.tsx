@@ -11,6 +11,7 @@ import { useAuth } from "../../auth";
 import { EmptyState, ErrorInline, PageHeader, SkeletonBlock, Spinner } from "../../components/ui";
 import { fmtNum, timeAgo } from "../../lib/format";
 import { useSyncJob } from "../../syncJob";
+import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 
 type TableProgress = {
   rows_indexed: number;
@@ -165,7 +166,7 @@ export default function IngestionPage() {
   const showProgress = Boolean(sync.jobId);
 
   return (
-    <div>
+    <KnowledgeLayout>
       <PageHeader
         title="Fuentes SQL"
         subtitle="Descubre tablas y sincroniza tu información para poder hacer preguntas. Las tablas grandes se indexan solas a medida que las preguntas las necesitan."
@@ -395,6 +396,6 @@ export default function IngestionPage() {
         Las tablas con columna de actualización se sincronizan incrementalmente (solo lo
         nuevo).
       </p>
-    </div>
+    </KnowledgeLayout>
   );
 }

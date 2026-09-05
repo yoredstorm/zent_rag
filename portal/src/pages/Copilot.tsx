@@ -18,7 +18,7 @@ export default function CopilotPage() {
   const [activeSession, setActiveSession] = useState<string | null>(null);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [input, setInput] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const endRef = useRef<HTMLDivElement>(null);
@@ -150,7 +150,7 @@ export default function CopilotPage() {
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === "Enter" && !busy) void send(); }}
                 />
-                <button type="button" className="btn btn-primary min-h-8 text-xs" disabled={busy || !input.trim()} onClick={() => void send()}>
+                <button type="button" className="btn btn-primary min-h-8 text-xs" disabled={!!busy || !input.trim()} onClick={() => void send()}>
                   <Sparkle size={13} /> Enviar
                 </button>
               </div>

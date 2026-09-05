@@ -11,6 +11,7 @@ import {
   StatCard,
   StatusBadge,
 } from "../../components/ui";
+import { QualityLayout } from "../../components/QualityLayout";
 
 type RunRow = {
   run_id: string;
@@ -49,23 +50,10 @@ export default function EvaluationOverview() {
   const last = completed[0];
 
   return (
-    <div>
+    <QualityLayout>
       <PageHeader
         title="Evaluation"
         subtitle="Calidad de respuestas RAG y agentes: runs, métricas y regresiones."
-        actions={
-          <div className="flex flex-wrap gap-2">
-            <Link className="btn btn-secondary min-h-11" to="/evaluation/datasets">
-              Datasets
-            </Link>
-            <Link className="btn btn-secondary min-h-11" to="/evaluation/runs">
-              Runs
-            </Link>
-            <Link className="btn btn-secondary min-h-11" to="/evaluation/compare">
-              Comparar
-            </Link>
-          </div>
-        }
       />
       {error && <ErrorInline>{error}</ErrorInline>}
       {loading ? (
@@ -137,6 +125,6 @@ export default function EvaluationOverview() {
           )}
         </>
       )}
-    </div>
+    </QualityLayout>
   );
 }

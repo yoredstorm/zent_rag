@@ -1,6 +1,5 @@
 import { ChartLineUp, Star, Target, ThumbsDown, ThumbsUp } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import {
@@ -10,6 +9,7 @@ import {
   SkeletonBlock,
   StatCard,
 } from "../components/ui";
+import { QualityLayout } from "../components/QualityLayout";
 import { fmtDateTime, fmtLatency, fmtNum } from "../lib/format";
 
 type EvalStats = {
@@ -74,15 +74,10 @@ export default function AiQualityPage() {
   const hasData = Boolean(stats && stats.total_evaluations > 0);
 
   return (
-    <div>
+    <QualityLayout>
       <PageHeader
         title="Calidad de IA"
         subtitle="Mide y mejora la calidad de tus respuestas a partir del feedback real de los usuarios."
-        actions={
-          <Link to="/evaluation" className="btn btn-secondary">
-            Laboratorio de evaluación
-          </Link>
-        }
       />
       <ErrorInline message={error} />
 
@@ -200,6 +195,6 @@ export default function AiQualityPage() {
           </div>
         </>
       )}
-    </div>
+    </QualityLayout>
   );
 }

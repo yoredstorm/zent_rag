@@ -33,7 +33,9 @@ type Deployment = {
   endpoint: string | null;
 };
 
-const SNIPPETS: Record<string, Record<string, string>> = {
+type SnippetEntry = { label: string; code: string | ((slug: string) => string) };
+
+const SNIPPETS: Record<string, SnippetEntry> = {
   curl: {
     label: "cURL",
     code: (slug: string) => `curl -X POST https://api.zent.example/api/v1/deployments/${slug}/query \\
@@ -187,7 +189,8 @@ export default function DeveloperCenter() {
     }
   }
 
-  const snippet = selectedSlug ? SNIPPETS[lang]?.code(selectedSlug) : "";
+  const entry = selectedSlug ? SNIPPETS[lang] : undefined;
+  const snippet = entry ? (typeof entry.code === "function" ? entry.code(selectedSlug) : entry.code) : "";
 
   return (
     <div>

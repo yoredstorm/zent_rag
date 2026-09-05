@@ -61,7 +61,7 @@ export default function AdminSystemStatusPage() {
   const [alerts, setAlerts] = useState<IncidentAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [orgId, setOrgId] = useState("");
+  const [orgId] = useState("");
 
   async function load(oid = "") {
     if (!session) return;

@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { ErrorInline, PageHeader, SkeletonBlock, StatCard } from "../../components/ui";
+import { QualityLayout } from "../../components/QualityLayout";
 
 type CaseRow = {
   case_id: string;
@@ -75,23 +76,10 @@ export default function EvaluationRunDetailPage() {
   ];
 
   return (
-    <div>
+    <QualityLayout>
       <PageHeader
         title={data?.dataset_name || "Detalle del run"}
         subtitle="Solo se muestran métricas que el engine calculó. Nada inventado."
-        actions={
-          <div className="flex flex-wrap gap-2">
-            <Link to="/evaluation/runs" className="btn btn-secondary min-h-11">
-              Runs
-            </Link>
-            <Link
-              to={`/evaluation/compare?current=${runId || ""}`}
-              className="btn btn-secondary min-h-11"
-            >
-              Comparar
-            </Link>
-          </div>
-        }
       />
       <ErrorInline message={error} />
       {!data && !error && <SkeletonBlock rows={6} />}
@@ -204,6 +192,6 @@ export default function EvaluationRunDetailPage() {
           </div>
         </>
       )}
-    </div>
+    </QualityLayout>
   );
 }

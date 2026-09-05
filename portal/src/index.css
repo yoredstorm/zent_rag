@@ -1,27 +1,31 @@
 @import "tailwindcss";
 
+/* ------------------------------------------------------------------ */
+/* Theme tokens (dark por defecto; light bajo [data-theme="light"])    */
+/* ------------------------------------------------------------------ */
+
 @theme {
-  --color-bg: #0b0f14;
-  --color-surface: #10161d;
-  --color-raised: #161e27;
-  --color-soft: #1c2632;
-  --color-border: #223041;
-  --color-border-strong: #31445a;
-  --color-text: #e6edf4;
-  --color-muted: #93a5b8;
-  --color-faint: #5d7087;
-  --color-accent: #34d3a6;
-  --color-accent-dim: #1a9e7a;
-  --color-accent-fg: #06241c;
-  --color-accent-soft: rgb(52 211 166 / 0.12);
-  --color-danger: #f07178;
-  --color-danger-soft: rgb(240 113 120 / 0.12);
-  --color-warn: #e6c07b;
-  --color-warn-soft: rgb(230 192 123 / 0.12);
-  --color-ok: #4fc98f;
-  --color-ok-soft: rgb(79 201 143 / 0.12);
-  --color-info: #6ea8fe;
-  --color-info-soft: rgb(110 168 254 / 0.12);
+  --color-bg: var(--zent-bg);
+  --color-surface: var(--zent-surface);
+  --color-raised: var(--zent-raised);
+  --color-soft: var(--zent-soft);
+  --color-border: var(--zent-border);
+  --color-border-strong: var(--zent-border-strong);
+  --color-text: var(--zent-text);
+  --color-muted: var(--zent-muted);
+  --color-faint: var(--zent-faint);
+  --color-accent: var(--zent-accent);
+  --color-accent-dim: var(--zent-accent-dim);
+  --color-accent-fg: var(--zent-accent-fg);
+  --color-accent-soft: var(--zent-accent-soft);
+  --color-danger: var(--zent-danger);
+  --color-danger-soft: var(--zent-danger-soft);
+  --color-warn: var(--zent-warn);
+  --color-warn-soft: var(--zent-warn-soft);
+  --color-ok: var(--zent-ok);
+  --color-ok-soft: var(--zent-ok-soft);
+  --color-info: var(--zent-info);
+  --color-info-soft: var(--zent-info-soft);
 
   --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
@@ -103,6 +107,62 @@
   }
 }
 
+:root {
+  --zent-bg: #0b0f14;
+  --zent-surface: #10161d;
+  --zent-raised: #161e27;
+  --zent-soft: #1c2632;
+  --zent-border: #223041;
+  --zent-border-strong: #31445a;
+  --zent-text: #e6edf4;
+  --zent-muted: #93a5b8;
+  --zent-faint: #5d7087;
+  --zent-accent: #34d3a6;
+  --zent-accent-dim: #1a9e7a;
+  --zent-accent-fg: #06241c;
+  --zent-accent-soft: rgb(52 211 166 / 0.12);
+  --zent-danger: #f07178;
+  --zent-danger-soft: rgb(240 113 120 / 0.12);
+  --zent-warn: #e6c07b;
+  --zent-warn-soft: rgb(230 192 123 / 0.12);
+  --zent-ok: #4fc98f;
+  --zent-ok-soft: rgb(79 201 143 / 0.12);
+  --zent-info: #6ea8fe;
+  --zent-info-soft: rgb(110 168 254 / 0.12);
+  --zent-code-bg: rgb(0 0 0 / 0.35);
+  --zent-glow-a: rgb(26 61 54 / 0.35);
+  --zent-glow-b: rgb(26 42 68 / 0.28);
+  --zent-overlay: rgb(0 0 0 / 0.6);
+}
+
+[data-theme="light"] {
+  --zent-bg: #f6f8fb;
+  --zent-surface: #ffffff;
+  --zent-raised: #eef2f7;
+  --zent-soft: #e7ecf3;
+  --zent-border: #d6dee9;
+  --zent-border-strong: #b6c3d3;
+  --zent-text: #10171f;
+  --zent-muted: #4e5f73;
+  --zent-faint: #7c8ca0;
+  --zent-accent: #0d9d78;
+  --zent-accent-dim: #0b8265;
+  --zent-accent-fg: #ffffff;
+  --zent-accent-soft: rgb(13 157 120 / 0.12);
+  --zent-danger: #d43d47;
+  --zent-danger-soft: rgb(212 61 71 / 0.1);
+  --zent-warn: #a9741f;
+  --zent-warn-soft: rgb(169 116 31 / 0.12);
+  --zent-ok: #1f9d63;
+  --zent-ok-soft: rgb(31 157 99 / 0.1);
+  --zent-info: #2766c9;
+  --zent-info-soft: rgb(39 102 201 / 0.1);
+  --zent-code-bg: #e9eef4;
+  --zent-glow-a: rgb(52 211 166 / 0.08);
+  --zent-glow-b: rgb(110 168 254 / 0.08);
+  --zent-overlay: rgb(15 23 32 / 0.5);
+}
+
 /* ------------------------------------------------------------------ */
 /* Base                                                               */
 /* ------------------------------------------------------------------ */
@@ -115,8 +175,8 @@
   body {
     @apply bg-bg text-text font-sans antialiased;
     background-image:
-      radial-gradient(900px 420px at 8% -8%, rgb(26 61 54 / 0.35), transparent 62%),
-      radial-gradient(820px 400px at 96% -6%, rgb(26 42 68 / 0.28), transparent 62%);
+      radial-gradient(900px 420px at 8% -8%, var(--zent-glow-a), transparent 62%),
+      radial-gradient(820px 400px at 96% -6%, var(--zent-glow-b), transparent 62%);
     background-attachment: fixed;
     font-feature-settings: "cv11";
   }
@@ -369,7 +429,8 @@
     @apply rounded-xs bg-soft px-1.5 py-0.5 font-mono text-[13px] text-accent;
   }
   .chat-markdown pre {
-    @apply mb-2 overflow-x-auto rounded-sm bg-black/30 p-3;
+    @apply mb-2 overflow-x-auto rounded-sm p-3;
+    background: var(--zent-code-bg);
   }
   .chat-markdown pre code {
     @apply bg-transparent p-0 text-text;

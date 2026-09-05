@@ -11,6 +11,7 @@ import {
   Spinner,
   SuccessInline,
 } from "../../components/ui";
+import { QualityLayout } from "../../components/QualityLayout";
 
 type Dataset = {
   id: string;
@@ -92,15 +93,10 @@ export default function EvaluationDatasetsPage() {
   }
 
   return (
-    <div>
+    <QualityLayout>
       <PageHeader
         title="Datasets de evaluación"
         subtitle="Golden set schema v2: question, expected_answer (opcional), expected_sources."
-        actions={
-          <Link to="/evaluation/runs" className="btn btn-secondary min-h-11">
-            Ver runs
-          </Link>
-        }
       />
       <ErrorInline message={error} />
       <SuccessInline message={msg} />
@@ -178,6 +174,6 @@ export default function EvaluationDatasetsPage() {
           ))}
         </ul>
       )}
-    </div>
+    </QualityLayout>
   );
 }

@@ -1,6 +1,8 @@
 import { ArrowsLeftRight, Coins, Plus } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { platformApi } from "../../api";
+import { PageTabs } from "../../components/PageTabs";
 import {
   EmptyState,
   ErrorInline,
@@ -44,6 +46,7 @@ type ModelStat = {
 
 export default function AdminModelGatewayPage() {
   const { session } = usePlatformAuth();
+  const [tab, setTab] = useState<"routing" | "budgets" | "performance">("routing");
   const [routes, setRoutes] = useState<Route[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [analytics, setAnalytics] = useState<ModelStat[]>([]);
@@ -140,12 +143,33 @@ export default function AdminModelGatewayPage() {
       <PageHeader
         title="Model Gateway"
         subtitle="Routing por condiciones, A/B por tráfico, presupuestos por modelo y analytics."
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <Link to="/control-center/inference-proxy" className="btn btn-secondary min-h-11">
+              Models (Inference)
+            </Link>
+            <Link to="/control-center/model-health" className="btn btn-secondary min-h-11">
+              Policies (Guardrails)
+            </Link>
+          </div>
+        }
       />
       {error && <ErrorInline>{error}</ErrorInline>}
+      <div className="mb-4">
+        <PageTabs
+          idPrefix="gateway"
+          tabs={[
+            { id: "routing", label: "Routing" },
+            { id: "budgets", label: "Budgets" },
+            { id: "performance", label: "Performance" },
+          ]}
+          active={tab}
+          onChange={(next) => setTab(next as "routing" | "budgets" | "performance")}
+        />
+      </div>
       {loading ? (
         <SkeletonBlock className="h-40" />
-      ) : (
-        <>
+      ) : tab === "routing" ? (
           <section>
             <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
               <ArrowsLeftRight size={15} aria-hidden /> Rutas (usar alias zent-routed en el agente)
@@ -235,7 +259,7 @@ export default function AdminModelGatewayPage() {
               )}
             </div>
           </section>
-
+        ) : tab === "budgets" ? (
           <section>
             <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
               <Coins size={15} aria-hidden /> Presupuestos por modelo
@@ -303,7 +327,7 @@ export default function AdminModelGatewayPage() {
               )}
             </div>
           </section>
-
+        ) : (
           <section>
             <h3 className="mb-2 text-sm font-semibold text-text">Analytics por modelo (30d)</h3>
             <div className="panel overflow-x-auto">
@@ -341,7 +365,6 @@ export default function AdminModelGatewayPage() {
               )}
             </div>
           </section>
-        </>
       )}
     </div>
   );

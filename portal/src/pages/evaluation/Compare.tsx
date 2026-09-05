@@ -3,6 +3,8 @@ import { useSearchParams } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { ErrorInline, PageHeader, SkeletonBlock, StatCard } from "../../components/ui";
+import { QualityLayout } from "../../components/QualityLayout";
+import { fmtDateTime } from "../../lib/format";
 
 type Run = { id: string; dataset_name?: string; created_at?: string };
 type Dimension = {
@@ -70,7 +72,7 @@ export default function EvaluationComparePage() {
   }
 
   return (
-    <div>
+    <QualityLayout>
       <PageHeader
         title="Comparar runs"
         subtitle="Regresión contra un baseline. Veredictos del compare existente: pass / warn / fail."
@@ -93,7 +95,7 @@ export default function EvaluationComparePage() {
             {runs.map((run) => (
               <option key={run.id} value={run.id}>
                 {(run.dataset_name || run.id.slice(0, 8)) +
-                  (run.created_at ? ` · ${new Date(run.created_at).toLocaleString("es-CL")}` : "")}
+                  (run.created_at ? ` · ${fmtDateTime(run.created_at)}` : "")}
               </option>
             ))}
           </select>
@@ -113,7 +115,7 @@ export default function EvaluationComparePage() {
             {runs.map((run) => (
               <option key={run.id} value={run.id}>
                 {(run.dataset_name || run.id.slice(0, 8)) +
-                  (run.created_at ? ` · ${new Date(run.created_at).toLocaleString("es-CL")}` : "")}
+                  (run.created_at ? ` · ${fmtDateTime(run.created_at)}` : "")}
               </option>
             ))}
           </select>
@@ -151,6 +153,6 @@ export default function EvaluationComparePage() {
           </ul>
         </>
       )}
-    </div>
+    </QualityLayout>
   );
 }

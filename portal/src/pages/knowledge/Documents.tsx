@@ -9,6 +9,7 @@ import {
   SkeletonBlock,
 } from "../../components/ui";
 import { fmtDateTime } from "../../lib/format";
+import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 
 type SourceRow = { id: string; name: string };
 type DocRow = {
@@ -57,7 +58,7 @@ export default function KnowledgeDocumentsPage() {
   }, [session]);
 
   return (
-    <div>
+    <KnowledgeLayout>
       <PageHeader
         title="Documentos"
         subtitle="Registry de documentos indexados por fuente (solo tu organización)."
@@ -105,6 +106,6 @@ export default function KnowledgeDocumentsPage() {
           </div>
         )}
       </div>
-    </div>
+    </KnowledgeLayout>
   );
 }

@@ -1,44 +1,17 @@
 import {
-  ArrowsLeftRight,
   Bell,
-  BellSimple,
-  BookOpen,
-  Broadcast,
-  Buildings,
-  Cards,
-  ChartBar,
-  ChartLineUp,
-  ChatText,
-  Coins,
-  Cpu,
-  Flask,
-  FlowArrow,
-  Gauge,
-  GitBranch,
-  Globe,
-  Handshake,
-  Lifebuoy,
   List,
   MagnifyingGlass,
-  Package,
-  PiggyBank,
-  Pulse,
-  Robot,
-  RocketLaunch,
-  Scroll,
-  ShieldCheck,
-  ShieldWarning,
   SignOut,
-  Smiley,
-  Storefront,
-  TrendUp,
-  UsersThree,
   X,
 } from "@phosphor-icons/react";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { platformApi } from "../../api";
 import { usePlatformAuth } from "../../platformAuth";
+import { PLATFORM_NAV, type PlatformNavItem, type PlatformNavGroup } from "../../lib/platformNav";
+import { CommandPaletteRoot, openCommandPalette } from "../../components/CommandPalette";
+import { ThemeToggle } from "../../components/ThemeToggle";
 
 type Notice = {
   id: string;
@@ -53,68 +26,50 @@ type Notice = {
 
 const BASE = "/control-center";
 
-const NAV = [
-  { to: `${BASE}`, label: "Overview", icon: Gauge, end: true },
-  { to: `${BASE}/tenants`, label: "Tenants", icon: Buildings },
-  { to: `${BASE}/subscriptions`, label: "Subscriptions", icon: Cards },
-  { to: `${BASE}/usage`, label: "Usage", icon: ChartLineUp },
-  { to: `${BASE}/costs`, label: "AI Costs", icon: Coins },
-  { to: `${BASE}/operations`, label: "Operations", icon: Gauge },
-  { to: `${BASE}/status`, label: "System Status", icon: Pulse },
-  { to: `${BASE}/dr`, label: "Disaster Recovery", icon: Lifebuoy },
-  { to: `${BASE}/governance`, label: "Governance", icon: ShieldCheck },
-  { to: `${BASE}/customers`, label: "Customers", icon: UsersThree },
-  { to: `${BASE}/audit-intel`, label: "Audit Intelligence", icon: ShieldWarning },
-  { to: `${BASE}/optimizer`, label: "Optimizer", icon: ChartLineUp },
-  { to: `${BASE}/analytics`, label: "Analytics", icon: ChartBar },
-  { to: `${BASE}/marketplace`, label: "Marketplace", icon: Storefront },
-
-  { to: `${BASE}/model-gateway`, label: "Model Gateway", icon: Coins },
-  { to: `${BASE}/realtime`, label: "Real-Time", icon: Broadcast },
-  { to: `${BASE}/security-center`, label: "Security Center", icon: ShieldWarning },
-  { to: `${BASE}/onboarding`, label: "Onboarding", icon: RocketLaunch },
-  { to: `${BASE}/capacity`, label: "Capacity", icon: Gauge },
-  { to: `${BASE}/partners`, label: "Partners", icon: Handshake },
-  { to: `${BASE}/evals`, label: "Evals Lab", icon: Flask },
-  { to: `${BASE}/metering`, label: "Metering", icon: Gauge },
-  { to: `${BASE}/inference-proxy`, label: "Inference Proxy", icon: Cpu },
-  { to: `${BASE}/regions`, label: "Regions", icon: Globe },
-  { to: `${BASE}/cost-governance`, label: "Cost Governance", icon: PiggyBank },
-  { to: `${BASE}/ops-center`, label: "Ops Center", icon: ShieldCheck },
-  { to: `${BASE}/model-health`, label: "Model Health", icon: Pulse },
-  { to: `${BASE}/revenue`, label: "Revenue", icon: TrendUp },
-  { to: `${BASE}/data-export`, label: "Data Export", icon: Package },
-  { to: `${BASE}/trust-safety`, label: "Trust & Safety", icon: ShieldWarning },
-  { to: `${BASE}/traces`, label: "Traces", icon: GitBranch },
-  { to: `${BASE}/notifications`, label: "Webhooks & Notif", icon: BellSimple },
-  { to: `${BASE}/compliance`, label: "Compliance", icon: ShieldCheck },
-  { to: `${BASE}/feedback`, label: "Feedback", icon: Smiley },
-  { to: `${BASE}/migrations`, label: "Migrations", icon: ArrowsLeftRight },
-  { to: `${BASE}/releases`, label: "Releases", icon: GitBranch },
-  { to: `${BASE}/copilot`, label: "Copilot", icon: Robot },
-  { to: `${BASE}/workflows`, label: "Workflows", icon: FlowArrow },
-  { to: `${BASE}/chat-insights`, label: "Chat Insights", icon: ChatText },
-  { to: `${BASE}/knowledge-hub`, label: "Knowledge Hub", icon: BookOpen },
-  { to: `${BASE}/risk-center`, label: "Risk Center", icon: ShieldWarning },
-  { to: `${BASE}/ecosystem`, label: "Ecosystem", icon: Storefront },
-  { to: `${BASE}/soc`, label: "SOC", icon: ShieldWarning },
-  { to: `${BASE}/security`, label: "Security", icon: ShieldCheck },
-  { to: `${BASE}/audit`, label: "Audit", icon: Scroll },
-  { to: `${BASE}/settings`, label: "Settings", icon: UsersThree },
-];
+const NAV = PLATFORM_NAV;
 
 function ControlNav({
-  items,
+  groups,
   query,
   onQuery,
   onNavigate,
 }: {
-  items: typeof NAV;
+  groups: PlatformNavGroup[];
   query: string;
   onQuery: (value: string) => void;
   onNavigate?: () => void;
 }) {
   const searchId = useId();
+  const [open, setOpen] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(groups.map((g) => [g.label, true]))
+  );
+
+  const q = query.trim().toLowerCase();
+  const flat = q
+    ? groups.flatMap((g) => g.items).filter((item) => item.label.toLowerCase().includes(q))
+    : [];
+
+  function renderItem({ to, label, icon: Icon, end }: PlatformNavItem) {
+    return (
+      <NavLink
+        key={to}
+        to={to}
+        end={end}
+        onClick={onNavigate}
+        className={({ isActive }) =>
+          `flex min-h-11 items-center gap-2 rounded-md px-3 text-sm ${
+            isActive
+              ? "bg-accent-soft text-text"
+              : "text-muted hover:bg-soft hover:text-text"
+          }`
+        }
+      >
+        <Icon size={18} aria-hidden />
+        {label}
+      </NavLink>
+    );
+  }
+
   return (
     <>
       <div className="border-b border-border px-3 py-3">
@@ -137,28 +92,35 @@ function ControlNav({
           />
         </div>
       </div>
-      <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-3" aria-label="Control Center">
-        {items.length === 0 && (
-          <p className="px-2 py-3 text-xs text-muted">Sin coincidencias.</p>
+      <nav className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3" aria-label="Control Center">
+        {q ? (
+          <>
+            {flat.length === 0 && <p className="px-2 py-3 text-xs text-muted">Sin coincidencias.</p>}
+            {flat.map(renderItem)}
+          </>
+        ) : (
+          groups.map((group) => {
+            const expanded = open[group.label] ?? true;
+            return (
+              <div key={group.label}>
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between rounded-xs px-2 py-1 text-[10px] font-semibold tracking-wider text-faint uppercase transition-colors duration-150 hover:text-muted"
+                  aria-expanded={expanded}
+                  onClick={() => setOpen((v) => ({ ...v, [group.label]: !(v[group.label] ?? true) }))}
+                >
+                  {group.label}
+                  <span className={`transition-transform duration-150 ${expanded ? "rotate-90" : ""}`} aria-hidden>
+                    ▸
+                  </span>
+                </button>
+                {expanded && (
+                  <div className="flex flex-col gap-1">{group.items.map(renderItem)}</div>
+                )}
+              </div>
+            );
+          })
         )}
-        {items.map(({ to, label, icon: Icon, end }) => (
-          <NavLink
-            key={to}
-            to={to}
-            end={end}
-            onClick={onNavigate}
-            className={({ isActive }) =>
-              `flex min-h-11 items-center gap-2 rounded-md px-3 text-sm ${
-                isActive
-                  ? "bg-accent-soft text-text"
-                  : "text-muted hover:bg-soft hover:text-text"
-              }`
-            }
-          >
-            <Icon size={18} aria-hidden />
-            {label}
-          </NavLink>
-        ))}
       </nav>
     </>
   );
@@ -173,11 +135,14 @@ export default function AdminLayout() {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [unread, setUnread] = useState(0);
 
-  const filteredNav = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return NAV;
-    return NAV.filter((item) => item.label.toLowerCase().includes(q));
-  }, [query]);
+  useEffect(() => {
+    if (!open) return;
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
 
   const loadNotices = useCallback(async () => {
     if (!session) return;
@@ -233,7 +198,7 @@ export default function AdminLayout() {
           </p>
           <p className="mt-1 text-sm font-semibold text-text">Zent plataforma</p>
         </div>
-        <ControlNav items={filteredNav} query={query} onQuery={setQuery} />
+        <ControlNav groups={NAV} query={query} onQuery={setQuery} />
         <div className="border-t border-border p-4">
           <p className="mb-2 truncate text-xs text-faint" title={session.email}>
             {session.email}
@@ -268,7 +233,7 @@ export default function AdminLayout() {
               </button>
             </div>
             <ControlNav
-              items={filteredNav}
+              groups={NAV}
               query={query}
               onQuery={setQuery}
               onNavigate={() => setDrawer(false)}
@@ -294,6 +259,16 @@ export default function AdminLayout() {
           <div className="relative flex items-center gap-2">
             <button
               type="button"
+              className="btn btn-ghost hidden min-h-11 items-center gap-2 px-2 text-xs text-muted sm:flex"
+              onClick={() => openCommandPalette("platform")}
+              aria-label="Buscar (Ctrl+K)"
+            >
+              <MagnifyingGlass size={16} aria-hidden />
+              Buscar
+              <kbd className="rounded-xs border border-border bg-bg px-1 font-mono text-[10px] text-faint">Ctrl K</kbd>
+            </button>
+            <button
+              type="button"
               className="btn btn-ghost relative min-h-11 min-w-11"
               aria-label="Notificaciones"
               aria-expanded={open}
@@ -306,6 +281,7 @@ export default function AdminLayout() {
                 </span>
               )}
             </button>
+            <ThemeToggle compact />
             <button type="button" className="btn btn-ghost min-h-11 text-sm lg:hidden" onClick={logout}>
               Salir
             </button>
@@ -358,6 +334,7 @@ export default function AdminLayout() {
           </div>
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto p-4 lg:p-6">
+          <CommandPaletteRoot mode="platform" />
           <Outlet />
         </main>
       </div>

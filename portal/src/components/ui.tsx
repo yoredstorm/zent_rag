@@ -1,5 +1,6 @@
-import type { Icon } from "@phosphor-icons/react";
+import { SquaresFour, type Icon } from "@phosphor-icons/react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { fmtDateTime } from "../lib/format";
 
 export function PageHeader({
   title,
@@ -146,26 +147,30 @@ export function StatCard({
   );
 }
 
-export function ErrorInline({ message }: { message: string }) {
-  if (!message) return null;
+type InlineProps = { message?: string; children?: ReactNode };
+
+export function ErrorInline({ message, children }: InlineProps) {
+  const text = message || (typeof children === "string" ? children : "");
+  if (!text) return null;
   return (
     <div
       className="mb-4 flex items-start gap-2 rounded-md border border-danger/25 bg-danger-soft px-3 py-2.5 text-sm text-danger"
       role="alert"
     >
-      {message}
+      {text}
     </div>
   );
 }
 
-export function SuccessInline({ message }: { message: string }) {
-  if (!message) return null;
+export function SuccessInline({ message, children }: InlineProps) {
+  const text = message || (typeof children === "string" ? children : "");
+  if (!text) return null;
   return (
     <div
       className="mb-4 flex items-start gap-2 rounded-md border border-ok/25 bg-ok-soft px-3 py-2.5 text-sm text-ok"
       role="status"
     >
-      {message}
+      {text}
     </div>
   );
 }
@@ -190,9 +195,9 @@ export function LoadingDots() {
   );
 }
 
-export function SkeletonBlock({ rows = 3 }: { rows?: number }) {
+export function SkeletonBlock({ rows = 3, className = "" }: { rows?: number; className?: string }) {
   return (
-    <div className="flex flex-col gap-3 p-1" aria-hidden>
+    <div className={`flex flex-col gap-3 p-1 ${className}`} aria-hidden>
       {Array.from({ length: rows }).map((_, i) => (
         <div
           key={i}
@@ -210,7 +215,7 @@ export function EmptyState({
   body,
   action,
 }: {
-  icon: Icon;
+  icon?: Icon;
   title: string;
   body?: string;
   action?: ReactNode;
@@ -218,7 +223,7 @@ export function EmptyState({
   return (
     <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
       <div className="flex h-11 w-11 items-center justify-center rounded-md border border-border bg-soft text-faint">
-        <IconEl size={22} weight="regular" aria-hidden />
+        {IconEl ? <IconEl size={22} weight="regular" aria-hidden /> : <SquaresFour size={22} aria-hidden />}
       </div>
       <p className="mt-1 text-sm font-medium text-text">{title}</p>
       {body && <p className="max-w-sm text-[13px] leading-relaxed text-muted">{body}</p>}
@@ -318,6 +323,9 @@ export function TenantHealthBadge({
   );
 }
 
+/** Alias genérico de health con semántica HEALTHY / WATCH / AT RISK. */
+export const HealthBadge = TenantHealthBadge;
+
 export function PermissionMatrix({
   roles,
 }: {
@@ -374,7 +382,7 @@ export function RecentActivity({
             <p className="text-xs text-faint">{item.resource_type}</p>
           </div>
           <span className="shrink-0 text-xs text-faint">
-            {item.created_at ? new Date(item.created_at).toLocaleString("es-PE") : ""}
+            {fmtDateTime(item.created_at)}
           </span>
         </li>
       ))}

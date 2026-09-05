@@ -4,6 +4,8 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App";
 import { AuthProvider } from "./auth";
 import { PlatformAuthProvider } from "./platformAuth";
+import { LocaleProvider } from "./lib/locale";
+import { ThemeProvider } from "./lib/theme";
 import "@fontsource/geist/400.css";
 import "@fontsource/geist/500.css";
 import "@fontsource/geist/600.css";
@@ -17,7 +19,11 @@ createRoot(document.getElementById("root")!).render(
     <BrowserRouter>
       <AuthProvider>
         <PlatformAuthProvider>
-          <App />
+          <ThemeProvider>
+            <LocaleProvider>
+              <App />
+            </LocaleProvider>
+          </ThemeProvider>
         </PlatformAuthProvider>
       </AuthProvider>
     </BrowserRouter>

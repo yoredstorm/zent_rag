@@ -3,14 +3,19 @@ import {
   ChartLineUp,
   ChatCircleDots,
   FloppyDisk,
+  Gauge,
   PaperPlaneRight,
   Play,
   Robot,
+  Sparkle,
 } from "@phosphor-icons/react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { Breadcrumb } from "../components/Breadcrumb";
+import { PageTabs } from "../components/PageTabs";
+import { Stepper } from "../components/Stepper";
 import {
   EmptyState,
   EnvironmentBadge,
@@ -19,7 +24,6 @@ import {
   ReadinessScore,
   SkeletonBlock,
   Spinner,
-  StatCard,
   StatusBadge,
   SuccessInline,
   VersionBadge,
@@ -27,37 +31,54 @@ import {
 
 const TABS = [
   "instructions",
-  "retrieval",
+  "model",
   "output",
   "knowledge",
+  "retrieval",
   "tools",
-  "model",
   "security",
   "limits",
+  "playground",
+  "readiness",
+  "evaluation",
   "versions",
   "deployments",
-  "analytics",
-  "playground",
   "embed",
 ] as const;
 
 type Tab = (typeof TABS)[number];
+type StageId = "configure" | "context" | "capabilities" | "test" | "release";
+
+const STAGES: { id: StageId; label: string; tabs: Tab[] }[] = [
+  { id: "configure", label: "Configure", tabs: ["instructions", "model", "output"] },
+  { id: "context", label: "Context", tabs: ["knowledge", "retrieval"] },
+  { id: "capabilities", label: "Capabilities", tabs: ["tools", "security", "limits"] },
+  { id: "test", label: "Test", tabs: ["playground", "readiness", "evaluation"] },
+  { id: "release", label: "Release", tabs: ["versions", "deployments", "embed"] },
+];
+
+const STAGE_ORDER: StageId[] = ["configure", "context", "capabilities", "test", "release"];
 
 const TAB_LABELS: Record<Tab, string> = {
-  instructions: "Instructions",
-  retrieval: "Retrieval",
+  instructions: "Instrucciones",
+  model: "Modelo",
   output: "Output",
   knowledge: "Knowledge",
+  retrieval: "Retrieval",
   tools: "Tools",
-  model: "Model",
   security: "Security",
-  limits: "Limits",
-  versions: "Versions",
-  deployments: "Deployments",
-  analytics: "Analytics",
+  limits: "Límites",
   playground: "Playground",
+  readiness: "Readiness",
+  evaluation: "Evaluación",
+  versions: "Versiones",
+  deployments: "Deployments",
   embed: "Embed",
 };
+
+function stageOf(tab: Tab): StageId {
+  return (STAGES.find((s) => s.tabs.includes(tab))?.id ?? "configure") as StageId;
+}
 
 type AgentConfig = {
   purpose: string | null;
@@ -70,6 +91,8 @@ type AgentConfig = {
     max_cost_usd: number | null;
   } | null;
   security: { sql_enabled: boolean; api_calls_enabled: boolean } | null;
+  retrieval?: { strategy: string; top_k: number; score_threshold: number };
+  output_schema?: Record<string, unknown>;
 };
 
 type Agent = {
@@ -82,17 +105,10 @@ type Agent = {
   is_active: boolean;
   created_at: string;
   config: AgentConfig;
+  workspace_id?: string | null;
 };
 
 type KB = { id: string; name: string; status: string };
-
-type UsageRow = {
-  agent_id: string;
-  requests: number;
-  tokens: number;
-  estimated_cost: number;
-  avg_latency_ms: number;
-};
 
 function parseSchema(raw: string): Record<string, unknown> | null {
   try {
@@ -129,12 +145,21 @@ export default function AgentBuilderPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { session } = useAuth();
-  const tab = (TABS.includes(searchParams.get("tab") as Tab)
-    ? (searchParams.get("tab") as Tab)
-    : isNew
-      ? "instructions"
-      : "instructions") as Tab;
+  const rawTab = searchParams.get("tab");
+  const tab = (TABS.includes(rawTab as Tab) ? (rawTab as Tab) : "instructions") as Tab;
+  const rawStage = searchParams.get("stage") as StageId | null;
+  const stage: StageId = rawStage && STAGE_ORDER.includes(rawStage) ? rawStage : stageOf(tab);
 
+  function goTab(next: Tab) {
+    setSearchParams({ tab: next, stage: stageOf(next) }, { replace: true });
+  }
+
+  function goStage(next: StageId) {
+    const first = STAGES.find((s) => s.id === next)?.tabs[0] ?? "instructions";
+    setSearchParams({ tab: first, stage: next }, { replace: true });
+  }
+
+  const currentStage = STAGES.find((s) => s.id === stage) ?? STAGES[0];
   const [agent, setAgent] = useState<Agent | null>(null);
   const [kbs, setKbs] = useState<KB[]>([]);
   const [name, setName] = useState("");
@@ -152,7 +177,6 @@ export default function AgentBuilderPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
-  const [usage, setUsage] = useState<UsageRow | null>(null);
   const [playInput, setPlayInput] = useState("");
   const [playAnswer, setPlayAnswer] = useState("");
   const [playStatus, setPlayStatus] = useState("");
@@ -172,6 +196,7 @@ export default function AgentBuilderPage() {
   type Environment = { id: string; name: string; slug: string; is_default: boolean };
   type Deployment = {
     id: string;
+    agent_id: string;
     environment_id: string;
     agent_version_id: string;
     slug: string;
@@ -196,9 +221,33 @@ export default function AgentBuilderPage() {
   const [readiness, setReadiness] = useState<{ score: number; items: { key: string; label: string; met: boolean; weight: number; detail: string }[] } | null>(null);
   const [workspaces, setWorkspaces] = useState<{ id: string; name: string }[]>([]);
   const [workspaceId, setWorkspaceId] = useState("");
+  const [savedPayload, setSavedPayload] = useState("");
 
-  function setTab(next: Tab) {
-    setSearchParams({ tab: next }, { replace: true });
+  function initialSnapshot(data: Agent): string {
+    const semantic = data.tools.includes("search_knowledge");
+    const sqlTool = data.tools.includes("query_database");
+    const apiTool = data.tools.includes("call_api");
+    const retr = { strategy: "vector", top_k: 8, score_threshold: 0.0, ...(data.config?.retrieval || {}) };
+    const snapshot: unknown = {
+      name: (data.name || "").trim(),
+      description: (data.description || "").trim() || null,
+      system_prompt: (data.system_prompt || "").trim() || null,
+      model: (data.model || "").trim() || null,
+      tools: toolsFromCapabilities(semantic, sqlTool, apiTool),
+      is_active: data.is_active,
+      config: {
+        purpose: (data.config?.purpose || "").trim() || null,
+        temperature: data.config?.temperature ?? 0.2,
+        tone: data.config?.tone ?? "professional",
+        knowledge_base_ids: data.config?.knowledge_base_ids ?? [],
+        limits: data.config?.limits ?? null,
+        security: { sql_enabled: sqlTool, api_calls_enabled: apiTool },
+        retrieval: retr.strategy ? retr : undefined,
+        output_schema: data.config?.output_schema ?? undefined,
+      },
+      workspace_id: data.workspace_id || undefined,
+    };
+    return JSON.stringify(snapshot);
   }
 
   useEffect(() => {
@@ -242,6 +291,7 @@ export default function AgentBuilderPage() {
         if (data.config.retrieval) setRetrieval({ ...retrieval, ...data.config.retrieval });
         if (data.config.output_schema) setOutputSchema(JSON.stringify(data.config.output_schema, null, 2));
         if (data.workspace_id) setWorkspaceId(data.workspace_id);
+        setSavedPayload(initialSnapshot(data));
         api<{ score: number; items: { key: string; label: string; met: boolean; weight: number; detail: string }[] }>(
           `/api/v1/agents/${id}/readiness`,
           { token: session.token, organizationId: session.organizationId }
@@ -268,19 +318,6 @@ export default function AgentBuilderPage() {
       .then((out) => setCanCustomModel(out.entitlements?.custom_models === true))
       .catch(() => setCanCustomModel(false));
   }, [session]);
-
-  useEffect(() => {
-    if (!session || isNew || tab !== "analytics") return;
-    api<{ agents: UsageRow[] }>("/api/v1/billing/usage/agents", {
-      token: session.token,
-      organizationId: session.organizationId,
-    })
-      .then((data) => {
-        const row = (data.agents || []).find((a) => a.agent_id === id) || null;
-        setUsage(row);
-      })
-      .catch(() => setUsage(null));
-  }, [session, id, isNew, tab]);
 
   async function refreshVersions() {
     if (!session || isNew || !id) return;
@@ -331,6 +368,13 @@ export default function AgentBuilderPage() {
     if (tab === "deployments") void refreshDeployments();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, id, isNew, tab]);
+
+  useEffect(() => {
+    if (!session || isNew || !id) return;
+    void refreshVersions();
+    void refreshDeployments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, id, isNew]);
 
   async function createSnapshot() {
     if (!session || !id) return;
@@ -495,7 +539,7 @@ export default function AgentBuilderPage() {
           body: JSON.stringify(payload),
         });
         setMsg("Agente creado.");
-        navigate(`/agents/${created.id}?tab=playground`);
+        navigate(`/agents/${created.id}/builder?tab=playground`);
       } else {
         const updated = await api<Agent>(`/api/v1/agents/${id}`, {
           method: "PUT",
@@ -504,6 +548,7 @@ export default function AgentBuilderPage() {
           body: JSON.stringify(payload),
         });
         setAgent(updated);
+        setSavedPayload(JSON.stringify(payload));
         setMsg("Cambios guardados.");
       }
     } catch (err) {
@@ -591,8 +636,28 @@ export default function AgentBuilderPage() {
     );
   }
 
+  const currentDeployment = deployments.find((d) => d.status === "healthy") || deployments[0] || null;
+  const currentEnv = currentDeployment
+    ? environments.find((e) => e.id === currentDeployment.environment_id) ?? null
+    : null;
+  const latestVersion =
+    versions.find((v) => v.status === "production") ||
+    versions.find((v) => v.status === "staging") ||
+    versions.find((v) => v.status === "ready") ||
+    versions[0] ||
+    null;
+  const workspaceName = workspaces.find((w) => w.id === workspaceId)?.name || "default";
+  const dirty = !isNew && savedPayload !== "" && JSON.stringify(payload) !== savedPayload;
+
   return (
     <div>
+      <Breadcrumb
+        items={[
+          { label: "Agentes", to: "/agents" },
+          { label: isNew ? "Nuevo agente" : name || "Agente", to: isNew ? undefined : `/agents/${id}` },
+          { label: currentStage.label },
+        ]}
+      />
       <PageHeader
         title={isNew ? "Crear agente" : name || "Agente"}
         subtitle={
@@ -601,35 +666,69 @@ export default function AgentBuilderPage() {
             : config.purpose || "Configura y prueba tu agente."
         }
         actions={
-          <Link to="/agents" className="btn btn-secondary min-h-11">
-            <ArrowLeft size={16} aria-hidden />
-            Volver
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            {!isNew && (
+              <Link to={`/agents/${id}`} className="btn btn-secondary min-h-11">
+                <Gauge size={16} aria-hidden />
+                Resumen
+              </Link>
+            )}
+            <Link to="/agents" className="btn btn-secondary min-h-11">
+              <ArrowLeft size={16} aria-hidden />
+              Volver
+            </Link>
+          </div>
         }
       />
       <ErrorInline message={error} />
       <SuccessInline message={msg} />
 
-      <div className="mb-4 flex flex-wrap gap-1 overflow-x-auto" role="tablist" aria-label="Secciones del agente">
-        {TABS.map((item) => (
-          <button
-            key={item}
-            type="button"
-            role="tab"
-            aria-selected={tab === item}
-            className={`min-h-11 whitespace-nowrap rounded-md px-3 py-2 text-sm ${
-              tab === item
-                ? "bg-accent-soft font-medium text-accent"
-                : "text-muted hover:bg-soft hover:text-text"
-            }`}
-            onClick={() => setTab(item)}
-          >
-            {TAB_LABELS[item]}
-          </button>
-        ))}
+      <Stepper
+        steps={STAGES.map((s) => ({ id: s.id, label: s.label }))}
+        active={stage}
+        onSelect={(next) => goStage(next as StageId)}
+      />
+
+      {!isNew && (
+        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-border bg-surface px-4 py-3 text-[13px]">
+          <span className="flex items-center gap-1.5 text-muted">
+            <span className="text-faint">Workspace</span>
+            <span className="font-medium text-text">{workspaceName}</span>
+          </span>
+          {latestVersion && (
+            <VersionBadge versionNumber={latestVersion.version_number} status={latestVersion.status} />
+          )}
+          {currentDeployment && (
+            <span className="flex items-center gap-1.5 text-muted">
+              <span className="text-faint">Deploy</span>
+              <StatusBadge status={currentDeployment.status} />
+              {currentEnv && <EnvironmentBadge name={currentEnv.slug} />}
+            </span>
+          )}
+          {readiness && (
+            <span className="flex items-center gap-1.5 text-muted">
+              <span className="text-faint">Readiness</span>
+              <span
+                className={`font-medium ${readiness.score >= 80 ? "text-ok" : readiness.score >= 50 ? "text-warn" : "text-danger"}`}
+              >
+                {readiness.score}%
+              </span>
+            </span>
+          )}
+          {dirty && <span className="badge badge-pending">Cambios sin guardar</span>}
+        </div>
+      )}
+
+      <div className="mb-4">
+        <PageTabs
+          idPrefix="agent-stage"
+          tabs={currentStage.tabs.map((t) => ({ id: t, label: TAB_LABELS[t] }))}
+          active={tab}
+          onChange={(next) => goTab(next as Tab)}
+        />
       </div>
 
-      {(tab === "instructions" || isNew) && tab === "instructions" && (
+      {tab === "instructions" && (
         <section className="panel p-5">
           <div className="grid gap-4">
             <label className="block">
@@ -1169,24 +1268,51 @@ export default function AgentBuilderPage() {
           </div>
         </section>
       )}
-      {tab === "analytics" && (
+
+      {tab === "readiness" && (
         <section>
-          {!usage ? (
+          {isNew ? (
             <div className="panel">
               <EmptyState
-                icon={ChartLineUp}
-                title="Sin uso aún"
-                body="Ejecuta el agente en el playground para ver requests, tokens y costo."
+                icon={Gauge}
+                title="Guarda el agente primero"
+                body="El readiness evalúa prompt, modelo, conocimiento y despliegue tras guardar el agente."
+              />
+            </div>
+          ) : !readiness ? (
+            <div className="panel">
+              <EmptyState
+                icon={Gauge}
+                title="Sin readiness aún"
+                body="Guarda el agente para recalcular su puntaje de producción."
               />
             </div>
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <StatCard label="Requests" value={usage.requests} />
-              <StatCard label="Tokens" value={usage.tokens} />
-              <StatCard label="Costo estimado" value={`$${usage.estimated_cost.toFixed(4)}`} />
-              <StatCard label="Latencia media" value={`${usage.avg_latency_ms.toFixed(0)} ms`} />
-            </div>
+            <ReadinessScore score={readiness.score} items={readiness.items} />
           )}
+        </section>
+      )}
+
+      {tab === "evaluation" && (
+        <section className="panel p-5">
+          <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
+            <Sparkle size={15} aria-hidden /> Evaluación
+          </h3>
+          <p className="mb-4 text-[13px] leading-relaxed text-muted">
+            Crea golden sets, ejecuta runs y compara regresiones contra un baseline para medir
+            la calidad de tus respuestas. La evaluación usa el motor /api/v1/eval existente.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Link to="/evaluation/datasets" className="btn btn-secondary min-h-11">
+              Datasets
+            </Link>
+            <Link to="/evaluation/runs" className="btn btn-secondary min-h-11">
+              Runs
+            </Link>
+            <Link to="/evaluation/compare" className="btn btn-secondary min-h-11">
+              Regresiones
+            </Link>
+          </div>
         </section>
       )}
 

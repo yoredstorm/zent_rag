@@ -49,7 +49,7 @@ export default function AdminOptimizerPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
-  const [orgId, setOrgId] = useState("");
+  const [orgId] = useState("");
 
   async function load() {
     if (!session) return;
