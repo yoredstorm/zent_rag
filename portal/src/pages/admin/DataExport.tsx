@@ -201,7 +201,7 @@ export default function AdminDataExportPage() {
                             className="btn btn-ghost min-h-8 px-2 text-xs"
                             onClick={() => {
                               if (!session) return;
-                              window.open(`/api/v1/platform/data-export/exports/${e.id}/download?token=${encodeURIComponent(session.token)}`, "_blank");
+                              window.open(`/api/v1/platform/data-export/exports/${e.id}/download?token=${encodeURIComponent(session.token || "")}`, "_blank");
                             }}
                           >
                             <DownloadSimple size={13} aria-hidden />

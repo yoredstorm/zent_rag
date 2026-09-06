@@ -35,18 +35,33 @@ class AuditLogService:
             await self._repo.write(
                 AuditLogEntry(
                     organization_id=ctx.tenant_id,
-                    actor_user_id=ctx.user_id,
+                    actor_user_id=self._actor(ctx),
                     action=action,
                     resource_type=resource_type,
                     resource_id=str(resource_id) if resource_id else None,
                     ip_address=ip_address,
-                    metadata=metadata or {},
+                    metadata=self._metadata_with_impersonation(ctx, metadata),
                 )
             )
         except Exception as exc:
             # La auditoría falla en silencio para no romper el flujo principal,
             # pero deja rastro en logs (el observability team lo correlaciona).
             logger.warning("Audit write failed", action=action, error=str(exc))
+
+    @staticmethod
+    def _actor(ctx: TenantContext) -> UUID | None:
+        """FASE 09: durante impersonación, el actor es el platform admin real."""
+        return ctx.impersonated_by if ctx.impersonated_by is not None else ctx.user_id
+
+    @staticmethod
+    def _metadata_with_impersonation(ctx: TenantContext, metadata: dict | None) -> dict:
+        """Marca la entrada cuando fue ejecutada bajo impersonación."""
+        base = dict(metadata or {})
+        if ctx.impersonated_by is not None:
+            base["impersonated_by"] = str(ctx.impersonated_by)
+            if ctx.user_id is not None:
+                base["impersonated_user"] = str(ctx.user_id)
+        return base
 
     async def write_or_raise(
         self,
@@ -64,12 +79,12 @@ class AuditLogService:
         await write_fn(
             AuditLogEntry(
                 organization_id=organization_id if organization_id is not None else ctx.tenant_id,
-                actor_user_id=ctx.user_id,
+                actor_user_id=self._actor(ctx),
                 action=action,
                 resource_type=resource_type,
                 resource_id=str(resource_id) if resource_id else None,
                 ip_address=ip_address,
-                metadata=metadata or {},
+                metadata=self._metadata_with_impersonation(ctx, metadata),
             )
         )
 

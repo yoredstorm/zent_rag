@@ -168,6 +168,15 @@ class RAGOrchestrator:
         # Align anti-hallucination gate with configured score threshold (min 0.1 when threshold is 0)
         self._min_meaningful_score = max(score_threshold, 0.1) if score_threshold > 0 else 0.1
 
+    async def _resolve_user_groups(self, organization_id: UUID, user_id: UUID) -> list[str]:
+        """Grupos del usuario para el filtro ACL (FASE 15)."""
+        try:
+            from src.platform.acl.groups import user_group_names
+
+            return await user_group_names(organization_id, user_id)
+        except Exception:  # noqa: BLE001
+            return []
+
     async def execute(
         self,
         organization_id: UUID,
@@ -371,6 +380,8 @@ class RAGOrchestrator:
                     query=query,
                     organization_id=organization_id,
                     role=role,
+                    user_id=user_id,
+                    groups=list(await self._resolve_user_groups(organization_id, user_id)) if user_id else [],
                     top_k=top_k,
                     effective_top_k=effective_top_k,
                     rerank_top_k=retrieval_config.rerank_top_k,

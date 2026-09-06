@@ -154,6 +154,131 @@ jobs:
       - run: npm ci && npm test && npm run build
         working-directory: sdk/node
 
+  portal:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test
+      - run: npm run build
+
+  portal-e2e:
+    runs-on: ubuntu-latest
+    env:
+      RAG_POSTGRES_HOST: localhost
+      RAG_POSTGRES_PORT: "5432"
+      RAG_POSTGRES_USER: rag_user
+      RAG_POSTGRES_PASSWORD: changeme_in_production
+      RAG_POSTGRES_DB: rag_platform
+      RAG_REDIS_URL: redis://localhost:6379/0
+      RAG_QDRANT_HOST: localhost
+      RAG_QDRANT_PORT: "6333"
+      RAG_ENVIRONMENT: development
+      RAG_LITELLM_DEFAULT_MODEL: gpt-4o
+      RAG_PORTAL_SESSION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      RAG_PORTAL_DEV_EMAIL: demo@zenttech.com
+      RAG_PORTAL_DEV_PASSWORD: demo-password-change-me
+      RAG_PLATFORM_ADMIN_EMAIL: admin@zent.dev
+      PYTHONPATH: ${{ github.workspace }}
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: rag_user
+          POSTGRES_PASSWORD: changeme_in_production
+          POSTGRES_DB: rag_platform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      qdrant:
+        image: qdrant/qdrant:v1.13.4
+        ports:
+          - 6333:6333
+          - 6334:6334
+        options: >-
+          --health-cmd "bash -c ': > /dev/tcp/127.0.0.1/6333'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+
+      - name: Init DB schema
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          export PGPASSWORD=changeme_in_production
+          for f in src/infrastructure/db_init/[0-9][0-9]-*.sql; do
+            psql -h localhost -U rag_user -d rag_platform -v ON_ERROR_STOP=1 -f "$f"
+          done
+          for f in src/infrastructure/db_init/seed-demo/farmacia/*.sql; do
+            psql -h localhost -U rag_user -d rag_platform -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Seed dev key (mirrors 07-dev-seed.sh)
+        run: |
+          PGPASSWORD=changeme_in_production psql -h localhost -U rag_user -d rag_platform -c "INSERT INTO api_keys (id, organization_id, key_hash, key_prefix, name, scopes) SELECT '30000000-0000-0000-0000-000000000001','00000000-0000-0000-0000-000000000001',encode(sha256('rag_test_dev_token_for_local_testing_123'::bytea),'hex'),'rag_test_','Dev Token','[\"rag:query\",\"rag:ingest\",\"admin:*\"]'::jsonb WHERE EXISTS (SELECT 1 FROM organizations WHERE id='00000000-0000-0000-0000-000000000001') AND NOT EXISTS (SELECT 1 FROM api_keys WHERE organization_id='00000000-0000-0000-0000-000000000001');"
+
+      - name: Install deps
+        run: pip install -e ".[prod,dev]"
+
+      - name: Apply Alembic migrations
+        run: alembic upgrade head
+
+      - name: Start API
+        run: |
+          nohup uvicorn src.api.main:app --host 127.0.0.1 --port 8000 > /tmp/api.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8000/health > /dev/null; then break; fi
+            sleep 2
+          done
+          curl -sf http://127.0.0.1:8000/health
+
+      - name: Portal deps + browsers
+        working-directory: portal
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Run E2E (smoke + axe)
+        working-directory: portal
+        run: npx playwright test
+
+      - name: Upload API log on failure
+        if: failure()
+        run: cat /tmp/api.log || true
+
   kustomize:
     runs-on: ubuntu-latest
     steps:
@@ -168,7 +293,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    needs: [lint, test, sdk-python, sdk-node]
+    needs: [lint, test, sdk-python, sdk-node, portal]
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

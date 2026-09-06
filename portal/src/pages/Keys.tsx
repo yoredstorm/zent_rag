@@ -13,6 +13,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import { useToast } from "../Toast";
 import { PageTabs } from "../components/PageTabs";
 import WebhooksPage from "./Webhooks";
@@ -149,6 +150,9 @@ export default function KeysPage() {
       setError(err instanceof Error ? err.message : "Error al revocar");
     }
   }
+
+  /** Revocación con confirmación reforzada (Fase 10). */
+  const [revokeTarget, setRevokeTarget] = useState<{ id: string; name: string } | null>(null);
 
   async function rotateKey(keyId: string, name: string) {
     if (!session) return;
@@ -428,7 +432,7 @@ export default function KeysPage() {
                                     <button
                                       type="button"
                                       className="btn btn-ghost min-h-11 px-2 py-1.5 text-xs"
-                                      onClick={() => void revokeKey(key.id, key.name)}
+                                      onClick={() => setRevokeTarget({ id: key.id, name: key.name })}
                                       aria-label={`Revocar ${key.name}`}
                                     >
                                       <Trash size={14} aria-hidden />
@@ -485,6 +489,24 @@ export default function KeysPage() {
       )}
       </>
       )}
+
+      <ConfirmDialog
+        open={revokeTarget !== null}
+        title="Revocar API key"
+        body={
+          <p>
+            La clave <strong className="text-text">{revokeTarget?.name}</strong> dejará de
+            funcionar de inmediato. Los clientes que la usan recibirán 401.
+          </p>
+        }
+        confirmLabel="Revocar"
+        confirmText="REVOKE"
+        onConfirm={() => {
+          if (revokeTarget) void revokeKey(revokeTarget.id, revokeTarget.name);
+          setRevokeTarget(null);
+        }}
+        onCancel={() => setRevokeTarget(null)}
+      />
     </div>
   );
 }

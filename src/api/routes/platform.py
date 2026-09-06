@@ -126,6 +126,8 @@ def _client_ip(request: Request) -> str:
 
 class ImpersonateBody(BaseModel):
     expires_seconds: int = Field(default=3600, ge=60, le=3600)
+    reason: str = Field(..., min_length=3, max_length=500)
+    ticket: str | None = Field(default=None, max_length=100)
 
 
 class PlanBody(BaseModel):
@@ -515,6 +517,7 @@ async def get_platform_organization(org_id: str, request: Request):
 @router.post("/organizations/{org_id}/plan")
 async def change_plan(org_id: str, body: PlanBody, request: Request):
     ctx = require_platform_permission(request, "billing.manage")
+    await _require_step_up(request)
     oid = _parse_org(org_id)
     billing_repo = PostgresBillingRepository()
     sub = await billing_repo.get_subscription_by_organization(oid)
@@ -542,17 +545,20 @@ async def change_plan(org_id: str, body: PlanBody, request: Request):
 
 @router.post("/organizations/{org_id}/pause")
 async def pause_org(org_id: str, request: Request):
+    await _require_step_up(request)
     return await _transition(org_id, request, "paused", "platform.pause")
 
 
 @router.post("/organizations/{org_id}/suspend")
 async def suspend_org(org_id: str, request: Request):
+    await _require_step_up(request)
     return await _transition(org_id, request, "suspended", "platform.suspend")
 
 
 @router.post("/organizations/{org_id}/cancel")
 async def cancel_org(org_id: str, request: Request):
     ctx = require_platform_permission(request, "tenant.suspend")
+    await _require_step_up(request)
     oid = _parse_org(org_id)
     billing_repo = PostgresBillingRepository()
     sub = await billing_repo.get_subscription_by_organization(oid)
@@ -582,6 +588,7 @@ async def cancel_org(org_id: str, request: Request):
 @router.post("/organizations/{org_id}/usage/reset")
 async def reset_usage(org_id: str, request: Request):
     ctx = require_platform_permission(request, "billing.manage")
+    await _require_step_up(request)
     oid = _parse_org(org_id)
     billing_repo = PostgresBillingRepository()
     sub = await billing_repo.get_subscription_by_organization(oid)
@@ -617,9 +624,52 @@ async def reset_usage(org_id: str, request: Request):
     return {"status": "reset", "organization_id": str(oid)}
 
 
+async def _require_step_up(request: Request) -> None:
+    """FASE 08: operaciones críticas exigen MFA confirmado recientemente.
+
+    Solo aplica cuando el platform admin tiene MFA habilitado; sin MFA
+    configurado, la sesión es el único factor y no hay step-up posible.
+    """
+    from src.platform.auth.mfa import mfa_enabled, step_up_recent
+    from src.platform.auth.session import SessionTokenError, decrypt_session
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error_code": "step_up_required",
+                "message": "Confirma MFA para ejecutar esta operación.",
+            },
+        )
+    try:
+        payload = decrypt_session(auth_header[7:])
+    except SessionTokenError:
+        raise HTTPException(401, "Session inválida") from None
+    if payload.typ != "platform":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error_code": "step_up_required",
+                "message": "Confirma MFA para ejecutar esta operación.",
+            },
+        )
+    if not await mfa_enabled(payload.user_id):
+        return  # Sin MFA configurado: no hay step-up posible
+    if not step_up_recent(payload):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error_code": "step_up_required",
+                "message": "Confirma MFA para ejecutar esta operación.",
+            },
+        )
+
+
 @router.post("/organizations/{org_id}/impersonate")
 async def impersonate(org_id: str, body: ImpersonateBody, request: Request):
     ctx = require_platform_permission(request, "support.impersonate")
+    await _require_step_up(request)
     oid = _parse_org(org_id)
     org = await PostgresOrganizationRepository().get_by_id(oid)
     if org is None:
@@ -642,13 +692,22 @@ async def impersonate(org_id: str, body: ImpersonateBody, request: Request):
             "target_organization_id": str(oid),
             "target_user_id": str(user.id),
             "expires_seconds": body.expires_seconds,
+            "reason": body.reason,
+            "ticket": body.ticket,
+            "trace_id": request.headers.get("X-Trace-Id"),
         },
     )
 
     from src.platform.auth.session import encrypt_session
 
     ttl_hours = body.expires_seconds / 3600.0
-    token = encrypt_session(user.id, oid, ttl_hours=ttl_hours)
+    # FASE 09: la sesión impersonada lleva imp_by (el admin real nunca se pierde).
+    token = encrypt_session(
+        user.id,
+        oid,
+        ttl_hours=ttl_hours,
+        imp_by=ctx.user_id,
+    )
     return {
         "access_token": token,
         "token_type": "Bearer",
@@ -1679,6 +1738,7 @@ async def platform_gov_purge(body: GovPurgeIn, request: Request):
 @router.post("/governance/organizations/{org_id}/dsr-export", summary="Exportar datos personales (DSR)")
 async def platform_gov_dsr_export(org_id: str, request: Request):
     ctx = require_platform_permission(request, "operations.write")
+    await _require_step_up(request)
     from src.platform.governance.governance import dsr_export
 
     oid = _parse_org(org_id)
@@ -1688,6 +1748,7 @@ async def platform_gov_dsr_export(org_id: str, request: Request):
 @router.post("/governance/organizations/{org_id}/dsr-erasure", summary="Borrar datos personales (DSR)")
 async def platform_gov_dsr_erasure(org_id: str, request: Request):
     ctx = require_platform_permission(request, "operations.write")
+    await _require_step_up(request)
     from src.platform.governance.governance import dsr_erasure
 
     oid = _parse_org(org_id)
@@ -2303,6 +2364,7 @@ async def platform_gw_routes(request: Request, organization_id: str | None = Non
 @router.post("/model-gateway/routes", status_code=201, summary="Crear ruta de modelo")
 async def platform_gw_route_create(body: ModelRouteIn, request: Request):
     ctx = require_platform_permission(request, "operations.write")
+    await _require_step_up(request)
     from src.platform.model_gateway.gateway import create_route
 
     oid = _parse_org(body.organization_id)
@@ -3786,6 +3848,7 @@ async def platform_retention_policy_delete(policy_id: str, request: Request):
 @router.post("/data-export/retention/purge", summary="Ejecutar purgas ahora")
 async def platform_retention_purge(request: Request):
     ctx = require_platform_permission(request, "operations.write")
+    await _require_step_up(request)
     from src.platform.datacompliance.data_export import run_retention_purges
 
     return await run_retention_purges()

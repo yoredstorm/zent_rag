@@ -33,6 +33,9 @@ class RetrievalQuery:
     organization_id: UUID
     role: str = "admin"
     knowledge_base_id: UUID | None = None
+    # FASE 15: identidad del usuario para filtro ACL por chunk (pre-LLM).
+    user_id: UUID | None = None
+    groups: list[str] = field(default_factory=list)
     top_k: int = 200
     # Presupuesto total tras prioridad de doc_type (follow-ups recortan esto)
     effective_top_k: int | None = None

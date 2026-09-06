@@ -616,6 +616,19 @@ class Settings(BaseSettings):
     # REQUIRED via env (RAG_PORTAL_SESSION_KEY). No insecure hardcoded default.
     PORTAL_SESSION_KEY: SecretStr
     PORTAL_SESSION_TTL_HOURS: int = Field(default=24, ge=1, le=168)
+    # FASE 05: sesiones por cookie HttpOnly (portal + control center).
+    SESSION_COOKIE_ENABLED: bool = Field(default=True)
+    SESSION_COOKIE_SECURE: bool = Field(default=False)
+    SESSION_IDLE_MINUTES: int = Field(default=30, ge=1, le=1440)
+    # Origenes válidos para CSRF double-submit (por defecto el proxy del portal y la API).
+    CSRF_ALLOWED_ORIGINS: list[str] = Field(
+        default_factory=lambda: [
+            "localhost:8080",
+            "127.0.0.1:8080",
+            "localhost:8000",
+            "127.0.0.1:8000",
+        ]
+    )
     PORTAL_BASE_URL: str = "http://localhost:5173"
     AUTH_LOGIN_MAX_ATTEMPTS: int = Field(default=5, ge=1, le=50)
     AUTH_LOGIN_WINDOW_SECONDS: int = Field(default=900, ge=60, le=86400)

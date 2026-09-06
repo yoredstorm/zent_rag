@@ -28,6 +28,7 @@ if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 from src.api.body_limit_middleware import BodySizeLimitMiddleware
+from src.api.csrf_middleware import CsrfMiddleware
 from src.api.idempotency_middleware import IdempotencyMiddleware
 from src.api.middleware import TraceMiddleware
 from src.api.rate_limit_middleware import RateLimitMiddleware
@@ -268,6 +269,47 @@ async def _run_startup() -> None:
                     "Dev portal password seeded",
                     email=settings.PORTAL_DEV_EMAIL,
                 )
+            # Platform admin de desarrollo (Control Center E2E/local).
+            # Solo en development; en producción se gestiona manualmente.
+            plat_email = settings.PLATFORM_ADMIN_EMAIL
+            if plat_email:
+                import hashlib
+
+                from sqlalchemy import text
+
+                from src.infrastructure.postgres.session import get_async_session
+
+                plat = await user_repo.get_by_email(plat_email)
+                if plat is None:
+                    session = await get_async_session()
+                    try:
+                        await session.execute(
+                            text(
+                                "INSERT INTO users "
+                                "(id, organization_id, external_id, email_hash, role, email, "
+                                "password_hash, is_platform_admin, created_at) "
+                                "SELECT :id, NULL, 'platform-admin', :email_hash, 'admin', "
+                                "CAST(:email AS varchar), "
+                                "NULL, true, now() "
+                                "WHERE NOT EXISTS (SELECT 1 FROM users WHERE email = CAST(:email AS varchar))"
+                            ),
+                            {
+                                "id": "00000000-0000-0000-0000-000000000099",
+                                "email_hash": hashlib.sha256(plat_email.encode()).hexdigest(),
+                                "email": plat_email,
+                            },
+                        )
+                        await session.commit()
+                    finally:
+                        await session.close()
+                    plat = await user_repo.get_by_email(plat_email)
+                    logger.info("Dev platform admin created", email=plat_email)
+                if plat is not None and not plat.password_hash:
+                    await user_repo.set_password(
+                        plat.id,
+                        hash_password(settings.PORTAL_DEV_PASSWORD.get_secret_value()),
+                    )
+                    logger.info("Dev platform admin password seeded", email=plat_email)
         except Exception as exc:
             logger.warning("Could not seed portal dev password", error=str(exc))
 
@@ -366,6 +408,7 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.add_middleware(IdempotencyMiddleware)
     new_app.add_middleware(RateLimitMiddleware)
     new_app.add_middleware(OrgCorsMiddleware)
+    new_app.add_middleware(CsrfMiddleware)
 
     # -------------------------------------------------------------------------
     # Middleware de Tenant (autenticación + TenantContext; inyecta organización)

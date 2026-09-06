@@ -34,7 +34,17 @@ class _FakeVectorStore:
         self.kb_chunks: dict[str, list] = {}
         self.calls: list[tuple[str, list]] = []  # (kb_id, top_k)
 
-    async def search_hybrid(self, organization_id, query, embedding, top_k=5, knowledge_base_id=None, role="admin"):
+    async def search_hybrid(
+        self,
+        organization_id,
+        query,
+        embedding,
+        top_k=5,
+        knowledge_base_id=None,
+        role="admin",
+        user_id=None,
+        groups=None,
+    ):
         self.calls.append((str(knowledge_base_id), top_k))
         return _Ctx(self.kb_chunks.get(str(knowledge_base_id), []))
 

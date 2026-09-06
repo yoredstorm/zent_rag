@@ -13,10 +13,12 @@ function redirectAfterLogin(state: unknown): string {
 }
 
 export default function AdminLoginPage() {
-  const { session, login } = usePlatformAuth();
+  const { session, login, loginMfa } = usePlatformAuth();
   const location = useLocation();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [mfaSession, setMfaSession] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -27,9 +29,26 @@ export default function AdminLoginPage() {
     setError("");
     setLoading(true);
     try {
-      await login(email.trim(), password);
+      const mfa = await login(email.trim(), password);
+      if (mfa?.mfaRequired && mfa.mfaSession) {
+        setMfaSession(mfa.mfaSession);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo iniciar sesión");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onSubmitMfa(e: FormEvent) {
+    e.preventDefault();
+    if (!mfaCode.trim()) return;
+    setError("");
+    setLoading(true);
+    try {
+      await loginMfa(mfaSession, mfaCode.trim());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Código inválido");
     } finally {
       setLoading(false);
     }
@@ -82,6 +101,38 @@ export default function AdminLoginPage() {
           </Link>
         </p>
       </form>
+
+      {mfaSession && (
+        <form className="panel w-full max-w-[400px] space-y-4 p-6" onSubmit={onSubmitMfa}>
+          <div>
+            <h2 className="text-base font-semibold text-text">Verificación MFA</h2>
+            <p className="mt-1 text-sm text-muted">
+              Ingresa el código de 6 dígitos de tu autenticador.
+            </p>
+          </div>
+          {error && (
+            <p className="rounded-md border border-danger/25 bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="field">
+            <label htmlFor="admin-mfa">Código TOTP</label>
+            <input
+              id="admin-mfa"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              value={mfaCode}
+              onChange={(e) => setMfaCode(e.target.value.replace(/[^0-9]/g, ""))}
+              placeholder="123456"
+              required
+            />
+          </div>
+          <button type="submit" className="btn btn-primary w-full min-h-11" disabled={loading || !mfaCode.trim()}>
+            {loading ? <Spinner /> : "Verificar"}
+          </button>
+        </form>
+      )}
     </div>
   );
 }

@@ -559,6 +559,7 @@ class TenantContext:
     subscription_id: UUID | None = None
     token_id: UUID | None = None
     partner_id: UUID | None = None  # si la key pertenece a un partner (rev-share)
+    impersonated_by: UUID | None = None  # FASE 09: platform admin que impersona (nunca se pierde)
 
     @property
     def organization_id(self) -> UUID:

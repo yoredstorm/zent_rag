@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { WarningCircle, X } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 
@@ -10,11 +10,13 @@ type ConfirmDialogProps = {
   cancelLabel?: string;
   tone?: "danger" | "default";
   busy?: boolean;
+  /** Fase 10: exige escribir esta frase exacta para habilitar el botón destructivo. */
+  confirmText?: string;
   onConfirm: () => void;
   onCancel: () => void;
 };
 
-/** Diálogo de confirmación con focus trap y Escape. */
+/** Diálogo de confirmación con focus trap, Escape y verificación por texto. */
 export function ConfirmDialog({
   open,
   title,
@@ -23,14 +25,18 @@ export function ConfirmDialog({
   cancelLabel = "Cancelar",
   tone = "danger",
   busy = false,
+  confirmText,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
   const confirmRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const [typed, setTyped] = useState("");
+  const enabled = !busy && (!confirmText || typed.trim() === confirmText);
 
   useEffect(() => {
     if (!open) return;
+    setTyped("");
     confirmRef.current?.focus();
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -101,6 +107,20 @@ export function ConfirmDialog({
           </button>
         </div>
         <div className="mt-3 text-sm leading-relaxed text-muted">{body}</div>
+        {confirmText && (
+          <label className="mt-4 block">
+            <span className="mb-1 block text-[13px] text-muted">
+              Escribe <code className="rounded-xs bg-soft px-1 py-0.5 font-mono text-xs text-accent">{confirmText}</code> para confirmar
+            </span>
+            <input
+              type="text"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              autoComplete="off"
+              className="w-full rounded-md border border-border bg-soft px-3 py-2 text-sm text-text outline-none focus:border-accent"
+            />
+          </label>
+        )}
         <div className="mt-5 flex flex-wrap justify-end gap-2">
           <button type="button" className="btn btn-secondary min-h-10" onClick={onCancel}>
             {cancelLabel}
@@ -109,7 +129,7 @@ export function ConfirmDialog({
             ref={confirmRef}
             type="button"
             className={tone === "danger" ? "btn btn-danger min-h-10" : "btn btn-primary min-h-10"}
-            disabled={busy}
+            disabled={!enabled}
             onClick={onConfirm}
           >
             {busy ? "Procesando…" : confirmLabel}

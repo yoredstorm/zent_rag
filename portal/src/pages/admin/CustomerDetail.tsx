@@ -1,7 +1,8 @@
 import { CaretDown, UserSwitch, WarningOctagon } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { platformApi, saveSession } from "../../api";
+import { platformApi } from "../../api";
+import { useAuth } from "../../auth";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { Timeline, type TimelineItem } from "../../components/Timeline";
 import {
@@ -73,6 +74,7 @@ export default function AdminCustomerDetailPage() {
   const { orgId } = useParams();
   const navigate = useNavigate();
   const { session } = usePlatformAuth();
+  const { applySession } = useAuth();
   const [tab, setTab] = useState<Tab>("Overview");
   const [data, setData] = useState<Detail | null>(null);
   const [finops, setFinops] = useState<FinopsOrg | null>(null);
@@ -89,6 +91,8 @@ export default function AdminCustomerDetailPage() {
   const [busy, setBusy] = useState("");
   const [confirmAction, setConfirmAction] = useState<"" | "pause" | "suspend" | "cancel" | "reset">("");
   const [impersonateConfirm, setImpersonateConfirm] = useState(false);
+  const [impersonateReason, setImpersonateReason] = useState("");
+  const [impersonateTicket, setImpersonateTicket] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
 
   useEffect(() => {
@@ -262,24 +266,41 @@ export default function AdminCustomerDetailPage() {
 
   async function impersonate() {
     if (!session || !orgId || !data) return;
+    if (!impersonateReason.trim()) {
+      setError("El motivo es obligatorio para impersonar.");
+      return;
+    }
     setBusy("impersonate");
     setError("");
     try {
-      const out = await platformApi<{ access_token: string }>(
+      const out = await platformApi<{ access_token: string; expires_seconds?: number }>(
         `/api/v1/platform/organizations/${orgId}/impersonate`,
         {
           method: "POST",
           token: session.token,
-          body: JSON.stringify({ expires_seconds: 3600 }),
+          body: JSON.stringify({
+            expires_seconds: 3600,
+            reason: impersonateReason.trim(),
+            ticket: impersonateTicket.trim() || null,
+          }),
         }
       );
-      saveSession({
+      applySession({
         token: out.access_token,
         organizationId: orgId,
         companyName: data.company_name || data.name,
         email: data.email || undefined,
       });
-      localStorage.setItem(IMPERSONATING_KEY, data.company_name || data.name);
+      // Metadatos de la impersonación (no sensibles) para el banner.
+      sessionStorage.setItem(IMPERSONATING_KEY, data.company_name || data.name);
+      sessionStorage.setItem(
+        "zent_impersonation_meta",
+        JSON.stringify({
+          tenant: data.company_name || data.name,
+          reason: impersonateReason.trim(),
+          expiresAt: Math.floor(Date.now() / 1000) + (out.expires_seconds || 3600),
+        })
+      );
       navigate("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo impersonar");
@@ -623,10 +644,13 @@ export default function AdminCustomerDetailPage() {
               ? "Cancelar detiene la suscripción. Se puede revertir manualmente."
               : confirmAction === "reset"
                 ? "Reset de uso reinicia los contadores del período."
-                : "Esta operación es reversible desde la ficha."}
+                : confirmAction === "suspend"
+                  ? "Suspend bloqueará requests, logins y deployments del tenant."
+                  : "Esta operación es reversible desde la ficha."}
           </p>
         }
         confirmLabel={confirmAction || "Confirmar"}
+        confirmText={confirmAction === "suspend" ? "SUSPEND" : confirmAction === "cancel" ? "CANCEL" : undefined}
         busy={busy === confirmAction}
         onConfirm={() => {
           if (confirmAction) {
@@ -640,11 +664,32 @@ export default function AdminCustomerDetailPage() {
         open={impersonateConfirm}
         title="Impersonar tenant"
         body={
-          <p>
-            Vas a entrar como <strong className="text-text">{data?.company_name || data?.name || ""}</strong>{" "}
-            usando tu sesión de plataforma. Es una <strong className="text-text">operación privilegiada</strong> que
-            queda registrada en auditoría. Cierra sesión del portal al terminar.
-          </p>
+          <div className="space-y-3">
+            <p>
+              Vas a entrar como <strong className="text-text">{data?.company_name || data?.name || ""}</strong>{" "}
+              usando tu sesión de plataforma. Es una <strong className="text-text">operación privilegiada</strong> que
+              queda registrada en auditoría con el motivo. La sesión del admin real nunca se pierde.
+            </p>
+            <label className="block text-sm text-text">
+              Motivo (obligatorio)
+              <input
+                className="mt-1 w-full rounded-md border border-border bg-soft px-3 py-2 text-sm"
+                value={impersonateReason}
+                onChange={(e) => setImpersonateReason(e.target.value)}
+                placeholder="Ej. Soporte: usuario reportó acceso caído"
+              />
+            </label>
+            <label className="block text-sm text-text">
+              Ticket de soporte (opcional)
+              <input
+                className="mt-1 w-full rounded-md border border-border bg-soft px-3 py-2 text-sm"
+                value={impersonateTicket}
+                onChange={(e) => setImpersonateTicket(e.target.value)}
+                placeholder="SUP-1234"
+              />
+            </label>
+            <p className="text-xs text-faint">Duración máxima: 1 hora. Expira automáticamente.</p>
+          </div>
         }
         confirmLabel="Impersonar"
         busy={busy === "impersonate"}

@@ -36,29 +36,27 @@ def test_portal_knowledge_center_routes_and_redirects() -> None:
     assert "/evaluation/datasets" in app
     assert "/evaluation/runs" in app
     assert "/evaluation/compare" in app
-    assert "eval_ui" in app
+    nav = (PORTAL / "lib" / "nav.ts").read_text(encoding="utf-8")
+    assert "eval_ui" in nav
+    assert "canSeeNavItem" in nav
 
 
 def test_portal_agent_builder_has_tabs_and_playground() -> None:
     builder = (PORTAL / "pages" / "AgentBuilder.tsx").read_text(encoding="utf-8")
-    for tab in (
-        "Instructions",
-        "Knowledge",
-        "Tools",
-        "Model",
-        "Security",
-        "Limits",
-        "Analytics",
-        "Playground",
-        "Embed",
-    ):
+    for stage in ("Configure", "Context", "Capabilities", "Test", "Release"):
+        assert stage in builder, f"missing stage {stage}"
+    for tab in ("Playground", "Readiness", "Versiones", "Deployments", "Embed"):
         assert tab in builder, f"missing tab {tab}"
     assert "/api/v1/agents/${id}/run/stream" in builder or "/run/stream" in builder
-    assert "/api/v1/billing/usage/agents" in builder
     assert "search_knowledge" in builder
     assert "/api/v1/gateway/routes" in builder
     assert "zent-default" in builder
     assert "query_database" in builder
+    assert "Cambios sin guardar" in builder
+    assert "ReadinessScore" in builder
+
+    overview = (PORTAL / "pages" / "AgentOverview.tsx").read_text(encoding="utf-8")
+    assert "/api/v1/billing/usage/agents" in overview
 
     listing = (PORTAL / "pages" / "Agents.tsx").read_text(encoding="utf-8")
     assert "/agents/new" in listing
@@ -91,8 +89,9 @@ def test_control_center_nav_stays_in_platform_and_is_scrollable() -> None:
         assert f'path="{path}"' in app, f"missing control-center route {path}"
     layout = (PORTAL / "pages" / "admin" / "AdminLayout.tsx").read_text(encoding="utf-8")
     assert "overflow-y-auto" in layout
-    assert "${BASE}/costs" in layout or "/control-center/costs" in layout
-    assert "${BASE}/operations" in layout or "/control-center/operations" in layout
+    platform_nav = (PORTAL / "lib" / "platformNav.ts").read_text(encoding="utf-8")
+    assert "${BASE}/costs" in platform_nav or "/control-center/costs" in platform_nav
+    assert "${BASE}/operations" in platform_nav or "/control-center/operations" in platform_nav
     login = (PORTAL / "pages" / "admin" / "Login.tsx").read_text(encoding="utf-8")
     assert 'to="/control-center"' in login or 'to={from}' in login or "from" in login
 
@@ -137,7 +136,7 @@ def test_portal_keys_page_splits_production_and_development() -> None:
 
 
 def test_portal_nav_hides_users_and_keys_for_viewers() -> None:
-    nav = (PORTAL / "App.tsx").read_text(encoding="utf-8") + (
+    nav = (PORTAL / "lib" / "nav.ts").read_text(encoding="utf-8") + (
         PORTAL / "auth.tsx"
     ).read_text(encoding="utf-8")
     assert "roles" in nav

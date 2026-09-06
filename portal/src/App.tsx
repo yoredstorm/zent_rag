@@ -9,13 +9,16 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ApiKeyCreatedModal } from "./components/ApiKeyCreatedModal";
 import { Topbar } from "./components/Topbar";
 import { WorkspaceSelector } from "./components/WorkspaceSelector";
-import { api, SIGNUP_API_KEY_STORAGE } from "./api";
+import { api, clearSession, loadSession, SIGNUP_API_KEY_STORAGE } from "./api";
 import { useAuth } from "./auth";
 import { IMPERSONATING_KEY } from "./platformAuth";
 import { SyncBanner, SyncJobProvider } from "./syncJob";
 import { ToastProvider } from "./Toast";
 import { NAV_GROUPS, canSeeNavItem } from "./lib/nav";
 import { CommandPaletteRoot } from "./components/CommandPalette";
+import { IdleSessionWarning } from "./components/IdleSessionWarning";
+
+const IDLE_SESSION_MINUTES = 30;
 
 const ChatPage = lazy(() => import("./pages/Chat"));
 const DashboardPage = lazy(() => import("./pages/Dashboard"));
@@ -345,13 +348,53 @@ function ProtectedLayout() {
   const { session, ready, logout } = useAuth();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [signupKey, setSignupKey] = useState<string | null>(null);
+  const [impersonationMeta, setImpersonationMeta] = useState<{
+    tenant: string;
+    reason?: string;
+    expiresAt?: number;
+  } | null>(null);
+  const [nowTs, setNowTs] = useState(0);
   const impersonating =
-    typeof localStorage !== "undefined" ? localStorage.getItem(IMPERSONATING_KEY) : null;
+    typeof sessionStorage !== "undefined" ? sessionStorage.getItem(IMPERSONATING_KEY) : null;
+
+  useEffect(() => {
+    setNowTs(Math.floor(Date.now() / 1000));
+    const id = window.setInterval(() => setNowTs(Math.floor(Date.now() / 1000)), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    if (impersonating) {
+      try {
+        const raw = sessionStorage.getItem("zent_impersonation_meta");
+        if (raw) setImpersonationMeta(JSON.parse(raw) as { tenant: string; reason?: string; expiresAt?: number });
+      } catch {
+        setImpersonationMeta(null);
+      }
+    }
+  }, [impersonating]);
 
   useEffect(() => {
     const key = sessionStorage.getItem(SIGNUP_API_KEY_STORAGE);
     if (key) setSignupKey(key);
   }, []);
+
+  async function exitImpersonation() {
+    // FASE 09: revoca la sesión impersonada server-side y vuelve al Control Center.
+    const current = loadSession();
+    if (current?.token) {
+      await api("/api/v1/auth/impersonation/exit", {
+        method: "POST",
+        token: current.token,
+        organizationId: current.organizationId,
+      }).catch(() => undefined);
+    }
+    sessionStorage.removeItem(IMPERSONATING_KEY);
+    sessionStorage.removeItem("zent_impersonation_meta");
+    clearSession();
+    logout();
+    window.location.assign("/control-center/tenants");
+  }
 
   if (!ready) {
     return (
@@ -425,22 +468,35 @@ function ProtectedLayout() {
 
             <main id="contenido" className="mx-auto w-full max-w-[1280px] flex-1 px-4 py-6 sm:px-6 lg:px-10">
               <CommandPaletteRoot mode="tenant" />
+              <IdleSessionWarning minutes={IDLE_SESSION_MINUTES} onLogout={logout} />
               {impersonating && (
                 <div
-                  className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-warn/30 bg-warn-soft px-4 py-3 text-sm text-text"
+                  className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger/40 bg-danger-soft px-4 py-3 text-sm text-text"
                   role="status"
                 >
-                  <span>Estás impersonando {impersonating}.</span>
+                  <span>
+                    <strong className="font-semibold text-danger">IMPERSONATION MODE</strong> — operando como{" "}
+                    <span className="font-medium text-text">{impersonating}</span>
+                    {impersonationMeta && (
+                      <>
+                        {impersonationMeta.reason && (
+                          <span className="text-muted"> · motivo: {impersonationMeta.reason}</span>
+                        )}
+                        {impersonationMeta.expiresAt && (
+                          <span className="mono text-muted">
+                            {" "}
+                            · expira en {Math.max(0, impersonationMeta.expiresAt - nowTs)}s
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </span>
                   <button
                     type="button"
-                    className="btn btn-secondary min-h-11"
-                    onClick={() => {
-                      localStorage.removeItem(IMPERSONATING_KEY);
-                      logout();
-                      window.location.assign("/admin/customers");
-                    }}
+                    className="btn btn-danger min-h-11"
+                    onClick={() => void exitImpersonation()}
                   >
-                    Volver al Control Center
+                    Salir de impersonación
                   </button>
                 </div>
               )}

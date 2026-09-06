@@ -257,6 +257,7 @@ export default function DashboardPage() {
                       <div className="flex h-[240px] items-center justify-center">
                         <span
                           className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-border-strong border-t-accent"
+                          role="status"
                           aria-label="Cargando gráfico"
                         />
                       </div>

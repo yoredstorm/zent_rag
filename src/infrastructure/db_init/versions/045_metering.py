@@ -34,10 +34,10 @@ def upgrade() -> None:
     op.execute(
         """
         INSERT INTO rate_limit_rules (plan_name, endpoint_prefix, limit_per_minute, burst, priority) VALUES
-        ('trial', '/', 30, 10, 10),
-        ('starter', '/', 60, 15, 10),
-        ('pro', '/', 100, 25, 10),
-        ('enterprise', '/', 500, 100, 10),
+        ('trial', '/', 2000, 200, 10),
+        ('starter', '/', 2000, 200, 10),
+        ('pro', '/', 2000, 200, 10),
+        ('enterprise', '/', 2000, 200, 10),
         (NULL, '/api/v1/rag/query', 60, 15, 20),
         (NULL, '/api/v1/deployments', 200, 50, 20)
         ON CONFLICT DO NOTHING

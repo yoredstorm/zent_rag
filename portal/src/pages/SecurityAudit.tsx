@@ -1,5 +1,5 @@
 import { Key, LockKey, Scroll, ShieldWarning } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
@@ -10,6 +10,7 @@ import {
   ErrorInline,
   PageHeader,
   SkeletonBlock,
+  Spinner,
 } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
 
@@ -32,6 +33,17 @@ type SecurityEvent = {
   responses: number;
   detected_at: string;
   resolved_at: string | null;
+};
+
+type SsoConfig = {
+  sso_enabled: boolean;
+  issuer: string | null;
+  client_id: string | null;
+  client_secret_set: boolean;
+  roles_claim: string | null;
+  scim_enabled: boolean;
+  scim_token_prefix: string | null;
+  key_max_age_days: number | null;
 };
 
 const TABS = [
@@ -184,14 +196,7 @@ export default function SecurityAuditPage() {
         </div>
       )}
 
-      {tab === "auth" && (
-        <div className="mt-4">
-          <ComingSoon>
-            Configuración de autenticación (SSO, contraseñas y sesiones) disponible en una próxima
-            fase.
-          </ComingSoon>
-        </div>
-      )}
+      {tab === "auth" && <AuthConfigPanel session={session} />}
 
       {tab === "api" && (
         <div className="mt-4">
@@ -203,6 +208,310 @@ export default function SecurityAuditPage() {
           </ComingSoon>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Configuración real de autenticación: SSO, SCIM y política de claves (Fase 17). */
+function AuthConfigPanel({ session }: { session: ReturnType<typeof useAuth>["session"] }) {
+  const [cfg, setCfg] = useState<SsoConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState("");
+  const [form, setForm] = useState({
+    enabled: false,
+    issuer: "",
+    client_id: "",
+    client_secret: "",
+    roles_claim: "roles",
+  });
+  const [keyDays, setKeyDays] = useState("");
+  const [scimToken, setScimToken] = useState("");
+
+  async function load() {
+    if (!session) return;
+    setLoading(true);
+    setError("");
+    try {
+      const data = await api<SsoConfig>("/api/v1/auth/sso/config", {
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      setCfg(data);
+      setForm({
+        enabled: data.sso_enabled,
+        issuer: data.issuer || "",
+        client_id: data.client_id || "",
+        client_secret: "",
+        roles_claim: data.roles_claim || "roles",
+      });
+      setKeyDays(data.key_max_age_days != null ? String(data.key_max_age_days) : "");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error cargando configuración");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+
+  async function saveSso(e: FormEvent) {
+    e.preventDefault();
+    if (!session) return;
+    setBusy("sso");
+    setError("");
+    setMsg("");
+    try {
+      await api("/api/v1/auth/sso/config", {
+        method: "PUT",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify({
+          enabled: form.enabled,
+          issuer: form.issuer.trim() || null,
+          client_id: form.client_id.trim() || null,
+          client_secret: form.client_secret.trim() || null,
+          roles_claim: form.roles_claim.trim() || "roles",
+        }),
+      });
+      setMsg("Configuración SSO guardada.");
+      setForm((f) => ({ ...f, client_secret: "" }));
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al guardar SSO");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function testSso() {
+    if (!session) return;
+    setBusy("test");
+    setError("");
+    setMsg("");
+    try {
+      const out = await api<{ status: string; authorization_endpoint?: string }>(
+        "/api/v1/auth/sso/test",
+        {
+          method: "POST",
+          token: session.token,
+          organizationId: session.organizationId,
+          body: JSON.stringify({ enabled: form.enabled, issuer: form.issuer.trim(), client_id: form.client_id.trim(), roles_claim: form.roles_claim }),
+        }
+      );
+      setMsg(out.status === "ok" ? "IdP accesible." : "No se pudo contactar el IdP.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error probando SSO");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function generateScim() {
+    if (!session) return;
+    setBusy("scim");
+    setError("");
+    setMsg("");
+    try {
+      const out = await api<{ token: string }>("/api/v1/auth/sso/scim-token", {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      setScimToken(out.token);
+      setMsg("Token SCIM generado. Cópialo ahora; no se vuelve a mostrar.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error generando token SCIM");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function revokeScim() {
+    if (!session) return;
+    setBusy("scim-del");
+    setError("");
+    setMsg("");
+    try {
+      await api("/api/v1/auth/sso/scim-token", {
+        method: "DELETE",
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      setScimToken("");
+      setMsg("SCIM deshabilitado.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error deshabilitando SCIM");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function saveKeyPolicy() {
+    if (!session) return;
+    setBusy("keys");
+    setError("");
+    setMsg("");
+    try {
+      const days = keyDays.trim() === "" ? null : Number(keyDays.trim());
+      await api("/api/v1/auth/sso/key-policy", {
+        method: "PUT",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify({ max_age_days: days }),
+      });
+      setMsg("Política de expiración guardada.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error guardando política");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="mt-4">
+        <SkeletonBlock rows={5} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      <ErrorInline message={error} />
+      {msg && (
+        <div className="rounded-md border border-ok/25 bg-ok-soft px-3 py-2.5 text-sm text-ok" role="status">
+          {msg}
+        </div>
+      )}
+
+      <section className="panel p-5">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-text">
+          <LockKey size={15} aria-hidden /> SSO (OIDC)
+        </h2>
+        <p className="mt-1 mb-3 text-[13px] text-muted">
+          Inicia sesión con tu proveedor de identidad. La configuración se guarda cifrada.
+        </p>
+        <form className="flex flex-col gap-3" onSubmit={(e) => void saveSso(e)}>
+          <label className="flex min-h-11 items-center gap-2 text-sm text-text">
+            <input
+              type="checkbox"
+              checked={form.enabled}
+              onChange={(e) => setForm((f) => ({ ...f, enabled: e.target.checked }))}
+            />
+            Habilitar SSO
+          </label>
+          <label className="block text-sm text-text">
+            Issuer
+            <input
+              className="mt-1 w-full min-h-11 rounded-md border border-border bg-soft px-3 py-2 text-sm"
+              value={form.issuer}
+              onChange={(e) => setForm((f) => ({ ...f, issuer: e.target.value }))}
+              placeholder="https://idp.example.com"
+            />
+          </label>
+          <label className="block text-sm text-text">
+            Client ID
+            <input
+              className="mt-1 w-full min-h-11 rounded-md border border-border bg-soft px-3 py-2 text-sm"
+              value={form.client_id}
+              onChange={(e) => setForm((f) => ({ ...f, client_id: e.target.value }))}
+            />
+          </label>
+          <label className="block text-sm text-text">
+            Client Secret {cfg?.client_secret_set && <span className="badge badge-ok">configurado</span>}
+            <input
+              type="password"
+              className="mt-1 w-full min-h-11 rounded-md border border-border bg-soft px-3 py-2 text-sm"
+              value={form.client_secret}
+              onChange={(e) => setForm((f) => ({ ...f, client_secret: e.target.value }))}
+              placeholder={cfg?.client_secret_set ? "Dejar vacío para conservarlo" : ""}
+            />
+          </label>
+          <label className="block text-sm text-text">
+            Claim de roles
+            <input
+              className="mt-1 w-full min-h-11 rounded-md border border-border bg-soft px-3 py-2 text-sm"
+              value={form.roles_claim}
+              onChange={(e) => setForm((f) => ({ ...f, roles_claim: e.target.value }))}
+            />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            <button type="submit" className="btn btn-primary min-h-10" disabled={busy !== ""}>
+              {busy === "sso" ? <Spinner size={14} /> : "Guardar"}
+            </button>
+            <button
+              type="button"
+              className="btn btn-secondary min-h-10"
+              disabled={busy !== "" || !form.issuer.trim()}
+              onClick={() => void testSso()}
+            >
+              {busy === "test" ? <Spinner size={14} /> : "Probar IdP"}
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <section className="panel p-5">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-text">
+          <Key size={15} aria-hidden /> SCIM provisioning
+        </h2>
+        <p className="mt-1 mb-3 text-[13px] text-muted">
+          Endpoint <code className="rounded-xs bg-soft px-1 py-0.5 font-mono text-xs text-accent">/api/v1/scim/v2</code>{" "}
+          con token Bearer. Estado:{" "}
+          {cfg?.scim_enabled ? (
+            <span className="badge badge-ok">habilitado</span>
+          ) : (
+            <span className="badge badge-muted">deshabilitado</span>
+          )}
+        </p>
+        {scimToken && (
+          <p className="mb-3 break-all rounded-md border border-border bg-soft p-3 font-mono text-xs text-accent">
+            {scimToken}
+          </p>
+        )}
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="btn btn-secondary min-h-10" disabled={busy !== ""} onClick={() => void generateScim()}>
+            {busy === "scim" ? <Spinner size={14} /> : "Generar token"}
+          </button>
+          {cfg?.scim_enabled && (
+            <button type="button" className="btn btn-ghost min-h-10 text-danger" disabled={busy !== ""} onClick={() => void revokeScim()}>
+              Deshabilitar SCIM
+            </button>
+          )}
+        </div>
+
+        <h2 className="mt-6 flex items-center gap-2 text-sm font-semibold text-text">
+          <Key size={15} aria-hidden /> Política de API keys
+        </h2>
+        <p className="mt-1 mb-3 text-[13px] text-muted">
+          Expiración forzada: las claves con más de N días se rechazan automáticamente.
+        </p>
+        <div className="flex flex-wrap items-end gap-2">
+          <label className="block text-sm text-text">
+            Máx. edad (días)
+            <input
+              type="number"
+              min={1}
+              max={3650}
+              className="mt-1 w-36 min-h-11 rounded-md border border-border bg-soft px-3 py-2 text-sm"
+              value={keyDays}
+              onChange={(e) => setKeyDays(e.target.value)}
+              placeholder="Ej. 90"
+            />
+          </label>
+          <button type="button" className="btn btn-secondary min-h-11" disabled={busy !== ""} onClick={() => void saveKeyPolicy()}>
+            {busy === "keys" ? <Spinner size={14} /> : "Guardar política"}
+          </button>
+        </div>
+      </section>
     </div>
   );
 }

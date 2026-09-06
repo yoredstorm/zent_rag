@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -13,5 +14,14 @@ export default defineConfig({
       "/redoc": { target: "http://localhost:8000", changeOrigin: true },
       "/openapi.json": { target: "http://localhost:8000", changeOrigin: true },
     },
+  },
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: ["./src/test/setup.ts"],
+    include: ["src/**/*.test.{ts,tsx}"],
+    css: false,
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
   },
 });

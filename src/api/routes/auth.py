@@ -8,6 +8,7 @@ import re
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from src.infrastructure.observability.logging_config import get_logger
@@ -28,6 +29,26 @@ from src.platform.billing.service import BillingService
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/auth", tags=["Auth"])
+
+
+def _session_response(payload: dict, typ: str) -> JSONResponse:
+    """Respuesta de sesión con cookies HttpOnly (FASE 05) cuando está habilitado."""
+    from src.core.config import get_settings
+    from src.platform.auth.cookies import (
+        set_csrf_cookie,
+        set_platform_session_cookie,
+        set_portal_session_cookie,
+    )
+
+    settings = get_settings()
+    resp = JSONResponse(payload)
+    if settings.SESSION_COOKIE_ENABLED:
+        set_csrf_cookie(resp)
+        if typ == "portal":
+            set_portal_session_cookie(resp, payload["access_token"])
+        else:
+            set_platform_session_cookie(resp, payload["access_token"])
+    return resp
 
 
 async def _audit_login(
@@ -214,18 +235,21 @@ async def signup(
         organization_id=str(organization_id),
         email=body.email,
     )
-    return {
-        "access_token": access_token,
-        "token_type": "Bearer",
-        "organization_id": str(organization_id),
-        "company_name": organization_name,
-        "email": body.email,
-        "subscription_id": str(subscription.id),
-        "status": "trialing",
-        "trial_end": subscription.trial_end.isoformat() if subscription.trial_end else None,
-        "api_key": api_token,
-        "message": "Trial created. Save api_key now — it will not be shown again.",
-    }
+    return _session_response(
+        {
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "organization_id": str(organization_id),
+            "company_name": organization_name,
+            "email": body.email,
+            "subscription_id": str(subscription.id),
+            "status": "trialing",
+            "trial_end": subscription.trial_end.isoformat() if subscription.trial_end else None,
+            "api_key": api_token,
+            "message": "Trial created. Save api_key now — it will not be shown again.",
+        },
+        "portal",
+    )
 
 
 @router.post("/forgot-password", summary="Solicitar reset de contraseña")
@@ -314,13 +338,16 @@ async def login(body: LoginRequest, request: Request):
     organization = await organization_repo.get_by_id(user.organization_id)
     company = (organization.company_name or organization.name) if organization else ""
 
-    return {
-        "access_token": access_token,
-        "token_type": "Bearer",
-        "organization_id": str(user.organization_id),
-        "company_name": company,
-        "email": user.email or body.email,
-    }
+    return _session_response(
+        {
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "organization_id": str(user.organization_id),
+            "company_name": company,
+            "email": user.email or body.email,
+        },
+        "portal",
+    )
 
 
 @router.post("/platform/login", summary="Login de platform admin (Control Center)")
@@ -357,6 +384,19 @@ async def platform_login(body: LoginRequest, request: Request):
             },
         )
 
+    # FASE 07: si el platform admin tiene MFA habilitado, devolver desafío.
+    from src.platform.auth.mfa import mfa_enabled
+
+    if await mfa_enabled(user.id):
+        challenge = encrypt_session(
+            user.id, None, typ="mfa_challenge", ttl_hours=5 / 60
+        )
+        return {
+            "mfa_required": True,
+            "mfa_session": challenge,
+            "token_type": "Bearer",
+        }
+
     access_token = encrypt_session(user.id, None, typ="platform")
     await clear_auth_failures(email_key, ip_key)
     logger.info("Platform admin login", user_id=str(user.id), email=body.email)
@@ -381,23 +421,264 @@ async def platform_login(body: LoginRequest, request: Request):
         action="auth.platform_login",
         email=user.email or body.email,
     )
-    return {
-        "access_token": access_token,
-        "token_type": "Bearer",
-        "typ": "platform",
-        "email": user.email or body.email,
-    }
+    return _session_response(
+        {
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "typ": "platform",
+            "email": user.email or body.email,
+        },
+        "platform",
+    )
 
 
 @router.post("/logout", summary="Revocar la sesión portal actual")
 async def logout(request: Request):
     """Invalida la sesión en el registro server-side (revocación real)."""
+    from src.core.config import settings
+    from src.platform.auth.cookies import (
+        clear_platform_session_cookie,
+        clear_portal_session_cookie,
+    )
     from src.platform.auth.session import revoke_session
 
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         await revoke_session(auth_header[7:])
-    return {"status": "logged_out"}
+    resp = JSONResponse({"status": "logged_out"})
+    if settings.SESSION_COOKIE_ENABLED:
+        clear_portal_session_cookie(resp)
+        clear_platform_session_cookie(resp)
+    return resp
+
+
+@router.post("/platform/mfa/enroll", summary="Iniciar enrollment TOTP (plataforma)")
+async def platform_mfa_enroll(request: Request):
+    """Genera un secreto TOTP pendiente de confirmación para el platform admin."""
+    from src.platform.auth.mfa import (
+        get_enrollment,
+        new_totp_secret,
+        otpauth_uri,
+        save_enrollment,
+    )
+
+    ctx = _require_platform_session(request)
+    if ctx is None or ctx.user_id is None:
+        raise HTTPException(401, "Not authenticated")
+    secret = new_totp_secret()
+    await save_enrollment(ctx.user_id, secret)
+    return {
+        "secret": secret,
+        "otpauth_url": otpauth_uri(ctx.user_id, secret),
+        "confirmed": False,
+        "existing": bool(await get_enrollment(ctx.user_id)),
+    }
+
+
+@router.post("/platform/mfa/verify", summary="Confirmar enrollment TOTP")
+async def platform_mfa_verify(body: dict, request: Request):
+    from src.platform.auth.mfa import confirm_enrollment
+
+    ctx = _require_platform_session(request)
+    if ctx is None or ctx.user_id is None:
+        raise HTTPException(401, "Not authenticated")
+    code = (body.get("code") or "").strip()
+    if not code:
+        raise HTTPException(400, "code requerido")
+    if await confirm_enrollment(ctx.user_id, code):
+        return {"status": "enabled"}
+    raise HTTPException(400, detail={"error_code": "mfa_code_invalid", "message": "Código TOTP inválido."})
+
+
+@router.post("/platform/mfa/disable", summary="Deshabilitar MFA")
+async def platform_mfa_disable(request: Request):
+    from src.platform.auth.mfa import disable_mfa
+
+    ctx = _require_platform_session(request)
+    if ctx is None or ctx.user_id is None:
+        raise HTTPException(401, "Not authenticated")
+    await disable_mfa(ctx.user_id)
+    return {"status": "disabled"}
+
+
+@router.get("/platform/mfa/status", summary="Estado MFA del platform admin")
+async def platform_mfa_status(request: Request):
+    from src.platform.auth.mfa import get_enrollment
+
+    ctx = _require_platform_session(request)
+    if ctx is None or ctx.user_id is None:
+        raise HTTPException(401, "Not authenticated")
+    enrollment = await get_enrollment(ctx.user_id)
+    return {
+        "enabled": bool(enrollment and enrollment["enabled"]),
+        "pending": bool(enrollment and not enrollment["enabled"]),
+    }
+
+
+@router.post("/platform/login/mfa", summary="Completar login de plataforma con TOTP")
+async def platform_login_mfa(body: dict, request: Request):
+    """Intercambia el desafío MFA por la sesión de plataforma completa."""
+    from src.platform.auth.mfa import mfa_enabled, verify_totp
+    from src.platform.auth.session import SessionTokenError, decrypt_session
+
+    challenge = (body.get("mfa_session") or "").strip()
+    code = (body.get("code") or "").strip()
+    if not challenge or not code:
+        raise HTTPException(400, "mfa_session y code requeridos")
+    try:
+        session = decrypt_session(challenge)
+    except SessionTokenError as exc:
+        raise HTTPException(400, detail={"error_code": "mfa_session_invalid", "message": str(exc)}) from None
+    if session.typ != "mfa_challenge":
+        raise HTTPException(400, "mfa_session inválido")
+    if not await mfa_enabled(session.user_id):
+        raise HTTPException(400, "MFA no habilitado")
+    if not await verify_totp(session.user_id, code):
+        await record_auth_failure(f"mfa:{session.user_id}", _client_ip(request))
+        raise HTTPException(
+            401,
+            detail={"error_code": "mfa_code_invalid", "message": "Código TOTP inválido."},
+        )
+    await clear_auth_failures(f"mfa:{session.user_id}", _client_ip(request))
+    import time as _time
+
+    access_token = encrypt_session(
+        session.user_id,
+        None,
+        typ="platform",
+        assurance="totp",
+        mfa_confirmed_at=int(_time.time()),
+    )
+    await _audit_login(
+        organization_id=None,
+        user_id=session.user_id,
+        ip=_client_ip(request),
+        action="auth.platform_login",
+        email="platform-admin",
+    )
+    return _session_response(
+        {
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "typ": "platform",
+            "email": None,
+        },
+        "platform",
+    )
+
+
+@router.post("/platform/step-up", summary="Step-up: confirmar MFA para operación crítica")
+async def platform_step_up(body: dict, request: Request):
+    """Re-emite la sesión de plataforma con mfa_confirmed_at fresco (FASE 08)."""
+    import time as _time
+
+    from src.platform.auth.mfa import verify_totp
+    from src.platform.auth.session import decrypt_session
+
+    auth_header = request.headers.get("Authorization", "")
+    code = (body.get("code") or "").strip()
+    if not auth_header.startswith("Bearer ") or not code:
+        raise HTTPException(400, "Authorization y code requeridos")
+    try:
+        current = decrypt_session(auth_header[7:])
+    except Exception as exc:
+        raise HTTPException(401, "Session inválida") from exc
+    if current.typ != "platform":
+        raise HTTPException(403, "Se requiere sesión de plataforma")
+    if not await verify_totp(current.user_id, code):
+        raise HTTPException(
+            401,
+            detail={"error_code": "mfa_code_invalid", "message": "Código TOTP inválido."},
+        )
+    access_token = encrypt_session(
+        current.user_id,
+        None,
+        typ="platform",
+        assurance="totp",
+        mfa_confirmed_at=int(_time.time()),
+    )
+    return _session_response(
+        {
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "typ": "platform",
+            "step_up": True,
+        },
+        "platform",
+    )
+
+
+def _require_platform_session(request: Request):
+    """Devuelve la sesión de plataforma del request o None."""
+    from src.platform.auth.session import SessionTokenError, decrypt_session
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return None
+    try:
+        session = decrypt_session(auth_header[7:])
+    except SessionTokenError:
+        return None
+    if session.typ != "platform":
+        return None
+    return session
+
+
+@router.get("/impersonation/status", summary="Estado de la sesión impersonada (FASE 09)")
+async def impersonation_status(request: Request):
+    from src.platform.auth.cookies import PORTAL_SESSION_COOKIE
+    from src.platform.auth.session import SessionTokenError, decrypt_session
+
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else request.cookies.get(PORTAL_SESSION_COOKIE)
+    if not token:
+        return {"impersonating": False}
+    try:
+        session = decrypt_session(token)
+    except SessionTokenError:
+        return {"impersonating": False}
+    if session.typ != "portal" or session.imp_by is None:
+        return {"impersonating": False}
+    return {
+        "impersonating": True,
+        "target_organization_id": str(session.organization_id),
+        "expires_at": session.exp,
+        "impersonated_by": str(session.imp_by),
+    }
+
+
+@router.post("/impersonation/exit", summary="Salir de la impersonación (FASE 09)")
+async def impersonation_exit(request: Request):
+    """Revoca la sesión impersonada y limpia la cookie del portal."""
+
+    from src.core.config import get_settings as _get_settings
+    from src.platform.auth.cookies import (
+        PORTAL_SESSION_COOKIE,
+        clear_portal_session_cookie,
+    )
+    from src.platform.auth.session import SessionTokenError, decrypt_session, revoke_session
+
+    settings = _get_settings()
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header[7:] if auth_header.startswith("Bearer ") else request.cookies.get(PORTAL_SESSION_COOKIE)
+    if token:
+        try:
+            session = decrypt_session(token)
+            if session.typ == "portal" and session.imp_by is not None:
+                await revoke_session(token)
+                await _audit_login(
+                    organization_id=session.organization_id,
+                    user_id=session.user_id,
+                    ip=_client_ip(request),
+                    action="auth.impersonation_exit",
+                    email="impersonated",
+                )
+        except SessionTokenError:
+            pass
+    resp = JSONResponse({"status": "exited"})
+    if settings.SESSION_COOKIE_ENABLED:
+        clear_portal_session_cookie(resp)
+    return resp
 
 
 @router.get("/me", summary="Perfil de la sesión portal actual")

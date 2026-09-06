@@ -219,6 +219,8 @@ class FakeVectorStore(VectorStore):
         score_threshold: float = 0.1,
         role: str = "admin",
         knowledge_base_id: UUID | None = None,
+        user_id: UUID | None = None,
+        groups: list[str] | None = None,
     ) -> RetrievalContext:
         self.calls.append(
             {"top_k": top_k, "filters": filters, "exclude": exclude_filters}
@@ -258,6 +260,8 @@ class FakeLexicalStore(LexicalStore):
         score_threshold: float = 0.1,
         role: str = "admin",
         knowledge_base_id: UUID | None = None,
+        user_id: UUID | None = None,
+        groups: list[str] | None = None,
     ) -> RetrievalContext:
         chunks = self._results.get(("sparse",), [])
         return RetrievalContext(

@@ -2,6 +2,7 @@ import { CreditCard } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { ConfirmDialog } from "../components/ConfirmDialog";
 import {
   EmptyState,
   ErrorInline,
@@ -291,36 +292,32 @@ export default function BillingPage() {
             ) : (
               <p className="self-center text-sm text-muted">Contactar a Zent</p>
             )}
-            {canCancel &&
-              (confirmCancel ? (
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="btn btn-danger min-h-11"
-                    disabled={!!busy}
-                    onClick={() => void cancelPlan()}
-                  >
-                    Confirmar cancelación
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary min-h-11"
-                    onClick={() => setConfirmCancel(false)}
-                  >
-                    Volver
-                  </button>
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="btn btn-secondary min-h-11"
-                  disabled={!!busy}
-                  onClick={() => setConfirmCancel(true)}
-                >
-                  Cancelar plan
-                </button>
-              ))}
+            {canCancel && (
+              <button
+                type="button"
+                className="btn btn-secondary min-h-11"
+                disabled={!!busy}
+                onClick={() => setConfirmCancel(true)}
+              >
+                Cancelar plan
+              </button>
+            )}
           </div>
+          <ConfirmDialog
+            open={confirmCancel}
+            title="Cancelar suscripción"
+            body={
+              <p>
+                Se cancela el plan actual al final del período. Perderás el acceso a las
+                funciones del plan y los datos se conservan según la política de retención.
+              </p>
+            }
+            confirmLabel="Cancelar plan"
+            confirmText="CANCEL"
+            busy={!!busy}
+            onConfirm={() => void cancelPlan()}
+            onCancel={() => setConfirmCancel(false)}
+          />
           <div className="panel mt-4">
             <div className="border-b border-border px-5 py-4">
               <h2 className="text-sm font-semibold text-text">Planes disponibles</h2>
@@ -434,14 +431,14 @@ export default function BillingPage() {
                           <button
                             type="button"
                             className="btn btn-ghost min-h-8 px-2 text-xs"
-                            onClick={() => session && window.open(`/api/v1/billing/invoices/${inv.id}/csv?token=${encodeURIComponent(session.token)}&organizationId=${encodeURIComponent(session.organizationId)}`, "_blank")}
+                            onClick={() => session && window.open(`/api/v1/billing/invoices/${inv.id}/csv?token=${encodeURIComponent(session.token || "")}&organizationId=${encodeURIComponent(session.organizationId)}`, "_blank")}
                           >
                             CSV
                           </button>
                           <button
                             type="button"
                             className="btn btn-ghost min-h-8 px-2 text-xs"
-                            onClick={() => session && window.open(`/api/v1/billing/invoices/${inv.id}/pdf?token=${encodeURIComponent(session.token)}&organizationId=${encodeURIComponent(session.organizationId)}`, "_blank")}
+                            onClick={() => session && window.open(`/api/v1/billing/invoices/${inv.id}/pdf?token=${encodeURIComponent(session.token || "")}&organizationId=${encodeURIComponent(session.organizationId)}`, "_blank")}
                           >
                             PDF
                           </button>

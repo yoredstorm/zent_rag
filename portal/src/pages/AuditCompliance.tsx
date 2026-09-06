@@ -127,7 +127,7 @@ export default function AuditCompliancePage() {
                   <button
                     type="button"
                     className="btn btn-ghost min-h-7 px-2 text-[11px]"
-                    onClick={() => session && window.open(`/api/v1/audit/reports/${r.id}/download?token=${encodeURIComponent(session.token)}&organizationId=${encodeURIComponent(session.organizationId)}`, "_blank")}
+                    onClick={() => session && window.open(`/api/v1/audit/reports/${r.id}/download?token=${encodeURIComponent(session.token || "")}&organizationId=${encodeURIComponent(session.organizationId)}`, "_blank")}
                   >
                     Descargar
                   </button>

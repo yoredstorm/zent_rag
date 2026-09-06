@@ -73,10 +73,22 @@ async def federated_search(
     workspace_ids: list[UUID] | None = None,
     top_k: int = 10,
     per_kb_top: int = 10,
+    role: str = "admin",
+    user_id: UUID | None = None,
 ) -> dict:
     kbs = await _resolve_kbs(organization_id, knowledge_base_ids, workspace_ids)
     if not kbs:
         return {"query": query, "results": [], "sources": [], "kb_count": 0}
+
+    # FASE 15: resolver grupos del usuario para el filtro ACL pre-LLM.
+    groups: list[str] = []
+    if user_id is not None:
+        try:
+            from src.platform.acl.groups import user_group_names
+
+            groups = await user_group_names(organization_id, user_id)
+        except Exception:  # noqa: BLE001
+            groups = []
 
     query_embedding = await embedding_provider.embed(query)
 
@@ -88,7 +100,9 @@ async def federated_search(
                 query_embedding,
                 top_k=per_kb_top,
                 knowledge_base_id=kb["id"],
-                role="admin",
+                role=role,
+                user_id=user_id,
+                groups=groups,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Federated KB search failed", kb=str(kb["id"]), error=str(exc)[:150])

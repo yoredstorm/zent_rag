@@ -2,11 +2,13 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
 import { platformApi } from "./api";
+import { AUTH_EXPIRED_EVENT } from "./lib/errors";
 
 const TOKEN_KEY = "rag_platform_token";
 const EMAIL_KEY = "rag_platform_email";
@@ -36,7 +38,13 @@ function clearPlatformSession() {
 
 type PlatformAuthValue = {
   session: PlatformSession | null;
-  login: (email: string, password: string) => Promise<void>;
+  login: (
+    email: string,
+    password: string
+  ) => Promise<{ mfaRequired: boolean; mfaSession?: string } | void>;
+  loginMfa: (mfaSession: string, code: string) => Promise<void>;
+  /** FASE 08: confirma MFA y renueva la sesión de plataforma (step-up). */
+  stepUp: (code: string) => Promise<void>;
   logout: () => void;
 };
 
@@ -47,27 +55,80 @@ export function PlatformAuthProvider({ children }: { children: ReactNode }) {
     loadPlatformSession()
   );
 
+  // Forced logout de plataforma ante 401 (scope platform).
+  useEffect(() => {
+    function onAuthExpired(event: Event) {
+      const detail = (event as CustomEvent<{ scope?: string }>).detail;
+      if (detail?.scope && detail.scope !== "platform") return;
+      clearPlatformSession();
+      setSession(null);
+    }
+    window.addEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
+  }, []);
+
   const logout = useCallback(() => {
+    const current = loadPlatformSession();
+    if (current?.token) {
+      // Revocar server-side (FASE 06): la cookie HttpOnly se limpia en el servidor.
+      void platformApi("/api/v1/auth/logout", {
+        method: "POST",
+        token: current.token,
+      }).catch(() => undefined);
+    }
     clearPlatformSession();
     setSession(null);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
+    const data = await platformApi<{
+      access_token?: string;
+      mfa_required?: boolean;
+      mfa_session?: string;
+      email?: string;
+    }>("/api/v1/auth/platform/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    });
+    if (data.mfa_required) {
+      return { mfaRequired: true, mfaSession: data.mfa_session };
+    }
+    const next = { token: data.access_token || "", email: data.email || email };
+    savePlatformSession(next);
+    setSession(next);
+    return undefined;
+  }, []);
+
+  const loginMfa = useCallback(async (mfaSession: string, code: string) => {
     const data = await platformApi<{ access_token: string; email?: string }>(
-      "/api/v1/auth/platform/login",
+      "/api/v1/auth/platform/login/mfa",
       {
         method: "POST",
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ mfa_session: mfaSession, code }),
       }
     );
-    const next = { token: data.access_token, email: data.email || email };
+    const next = { token: data.access_token, email: data.email || "" };
+    savePlatformSession(next);
+    setSession(next);
+  }, []);
+
+  const stepUp = useCallback(async (code: string) => {
+    const data = await platformApi<{ access_token: string; step_up?: boolean }>(
+      "/api/v1/auth/platform/step-up",
+      {
+        method: "POST",
+        body: JSON.stringify({ code }),
+      }
+    );
+    const current = loadPlatformSession();
+    const next = { token: data.access_token, email: current?.email || "" };
     savePlatformSession(next);
     setSession(next);
   }, []);
 
   const value = useMemo(
-    () => ({ session, login, logout }),
-    [session, login, logout]
+    () => ({ session, login, loginMfa, stepUp, logout }),
+    [session, login, loginMfa, stepUp, logout]
   );
   return (
     <PlatformAuthContext.Provider value={value}>

@@ -56,6 +56,9 @@ class SessionPayload:
     exp: int
     typ: str = "portal"
     sid: str | None = None  # session id for server-side revocation
+    assurance: str | None = None  # FASE 07: "totp" cuando el login pasó MFA
+    mfa_confirmed_at: int | None = None  # epoch; freshness para step-up
+    imp_by: UUID | None = None  # FASE 09: platform admin que impersona al tenant
 
 
 def _decode_key(raw: str) -> bytes:
@@ -83,10 +86,13 @@ def encrypt_session(
     *,
     typ: str = "portal",
     ttl_hours: int | None = None,
+    assurance: str | None = None,
+    mfa_confirmed_at: int | None = None,
+    imp_by: UUID | None = None,
 ) -> str:
-    if typ not in ("portal", "platform"):
-        raise ValueError("session typ must be portal or platform")
-    if typ == "portal" and organization_id is None:
+    if typ not in ("portal", "platform", "mfa_challenge"):
+        raise ValueError("session typ must be portal, platform or mfa_challenge")
+    if typ in ("portal", "mfa_challenge") and organization_id is None and typ == "portal":
         raise ValueError("portal session requires organization_id")
     if typ == "platform":
         organization_id = None
@@ -100,6 +106,12 @@ def encrypt_session(
         "exp": int(time.time()) + int(hours * 3600),
         "typ": typ,
     }
+    if assurance:
+        payload["assurance"] = assurance
+    if mfa_confirmed_at:
+        payload["mfa_confirmed_at"] = mfa_confirmed_at
+    if imp_by is not None:
+        payload["imp_by"] = str(imp_by)
     plaintext = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     nonce = os.urandom(_NONCE_LEN)
     ciphertext = _aesgcm().encrypt(nonce, plaintext, None)
@@ -168,7 +180,7 @@ def decrypt_session(token: str) -> SessionPayload:
         data = json.loads(plaintext.decode("utf-8"))
     except Exception as exc:
         raise SessionTokenError("Corrupt session payload") from exc
-    if data.get("typ") not in ("portal", "platform"):
+    if data.get("typ") not in ("portal", "platform", "mfa_challenge"):
         raise SessionTokenError("Invalid session type")
     exp = int(data.get("exp", 0))
     if exp <= int(time.time()):
@@ -176,7 +188,7 @@ def decrypt_session(token: str) -> SessionPayload:
     try:
         typ = data["typ"]
         tid_raw = data.get("tid")
-        if typ == "platform":
+        if typ in ("platform", "mfa_challenge"):
             organization_id = None
         else:
             organization_id = UUID(tid_raw)
@@ -186,6 +198,9 @@ def decrypt_session(token: str) -> SessionPayload:
             exp=exp,
             typ=typ,
             sid=data.get("sid"),
+            assurance=data.get("assurance"),
+            mfa_confirmed_at=data.get("mfa_confirmed_at"),
+            imp_by=UUID(data["imp_by"]) if data.get("imp_by") else None,
         )
     except (KeyError, ValueError, TypeError) as exc:
         raise SessionTokenError("Invalid session claims") from exc

@@ -30,6 +30,18 @@ from src.mcp_server.errors import McpAuthError, McpPolicyError, McpToolError
 from src.mcp_server.policy import McpPolicy
 from src.rag.retrieval.models import RetrievalQuery
 
+
+async def _acl_groups_for(tenant) -> list[str]:
+    """Grupos ACL del principal para el filtro de retrieval (FASE 15)."""
+    try:
+        if not tenant.tenant_id or not tenant.user_id:
+            return []
+        from src.platform.acl.groups import user_group_names
+
+        return await user_group_names(tenant.tenant_id, tenant.user_id)
+    except Exception:  # noqa: BLE001
+        return []
+
 logger = get_logger(__name__)
 
 _MAX_CHUNK_CHARS = 2000
@@ -142,6 +154,8 @@ def register_tools(server, deps: McpDeps | None = None) -> None:
                 query=query,
                 organization_id=tenant.tenant_id,
                 role=role,
+                user_id=tenant.user_id,
+                groups=await _acl_groups_for(tenant),
                 knowledge_base_id=kb_id,
                 top_k=top_k_eff,
                 effective_top_k=top_k_eff,

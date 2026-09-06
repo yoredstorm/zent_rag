@@ -43,6 +43,7 @@ _PUBLIC_AUTH_POST = {
     "/api/v1/auth/login",
     "/api/v1/auth/signup",
     "/api/v1/auth/platform/login",
+    "/api/v1/auth/platform/login/mfa",
     "/api/v1/auth/forgot-password",
     "/api/v1/auth/reset-password",
 }
@@ -220,7 +221,27 @@ class TenantMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+        elif settings.SESSION_COOKIE_ENABLED:
+            # FASE 05: sesión por cookie HttpOnly (portal / control center).
+            from src.platform.auth.cookies import (
+                PLATFORM_SESSION_COOKIE,
+                PORTAL_SESSION_COOKIE,
+            )
+
+            token = request.cookies.get(PORTAL_SESSION_COOKIE) or request.cookies.get(
+                PLATFORM_SESSION_COOKIE
+            )
+            if not token:
+                return JSONResponse(
+                    status_code=401,
+                    content={
+                        "error_code": "missing_token",
+                        "message": "Authorization: Bearer <token> is required",
+                    },
+                )
+        else:
             return JSONResponse(
                 status_code=401,
                 content={
@@ -228,8 +249,6 @@ class TenantMiddleware(BaseHTTPMiddleware):
                     "message": "Authorization: Bearer <token> is required",
                 },
             )
-
-        token = auth_header[7:]
         from src.platform.auth.session import (
             SessionTokenError,
             decrypt_session,
@@ -401,6 +420,18 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 except Exception as exc:
                     logger.warning("Failed to resolve default user", error=str(exc))
 
+            # FASE 09: si la sesión portal es una impersonación, preservar al admin real.
+            impersonated_by = None
+            if billing_ctx.auth_type == "portal_session":
+                from src.platform.auth.session import SessionTokenError, decrypt_session
+
+                try:
+                    payload = decrypt_session(token)
+                    if payload.imp_by is not None:
+                        impersonated_by = payload.imp_by
+                except SessionTokenError:
+                    pass
+
             tenant_ctx = TenantContext(
                 tenant_id=billing_ctx.organization_id,
                 user_id=user_id,
@@ -410,6 +441,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 auth_type=billing_ctx.auth_type,
                 subscription_id=billing_ctx.subscription_id,
                 token_id=billing_ctx.token_id,
+                impersonated_by=impersonated_by,
             )
             # Partner ecosystem: si la key es de un partner, propaga partner_id.
             if billing_ctx.token_id and "partner:*" in billing_ctx.scopes:

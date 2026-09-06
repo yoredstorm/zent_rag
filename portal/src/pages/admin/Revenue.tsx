@@ -173,7 +173,7 @@ export default function AdminRevenuePage() {
                   className="btn btn-secondary min-h-8 px-2 text-xs"
                   onClick={() => {
                     if (!session) return;
-                    window.open(`/api/v1/platform/revenue/export.csv?token=${encodeURIComponent(session.token)}`, "_blank");
+                    window.open(`/api/v1/platform/revenue/export.csv?token=${encodeURIComponent(session.token || "")}`, "_blank");
                   }}
                 >
                   <DownloadSimple size={13} aria-hidden /> CSV

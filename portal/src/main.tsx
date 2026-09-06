@@ -6,6 +6,9 @@ import { AuthProvider } from "./auth";
 import { PlatformAuthProvider } from "./platformAuth";
 import { LocaleProvider } from "./lib/locale";
 import { ThemeProvider } from "./lib/theme";
+import { initFrontendObservability } from "./lib/observability";
+
+initFrontendObservability();
 import "@fontsource/geist/400.css";
 import "@fontsource/geist/500.css";
 import "@fontsource/geist/600.css";

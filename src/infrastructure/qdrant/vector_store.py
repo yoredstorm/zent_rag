@@ -243,6 +243,8 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         exclude_filters: dict[str, str] | None,
         role: str,
         knowledge_base_id: UUID | None,
+        user_id: UUID | None = None,
+        groups: list[str] | None = None,
     ) -> qdrant_models.Filter:
         must_conditions = [
             qdrant_models.FieldCondition(
@@ -259,13 +261,41 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
                 )
             )
 
-        if role == "customer":
-            must_conditions.append(
+        # FASE 15: ACL por documento/chunk ANTES de entregar contexto al LLM.
+        # - admin → ve todo (aislamiento por organization_id).
+        # - no-admin → debe cumplir al menos una de:
+        #     visibility == "public"  |  acl_users contiene al usuario  |  acl_groups intersecta sus grupos
+        # El filtro es a nivel Qdrant (pre-LLM), nunca post-hoc.
+        if role != "admin":
+            should: list = [
                 qdrant_models.FieldCondition(
-                    key="metadata.visibility",
+                    key="visibility",
                     match=qdrant_models.MatchValue(value="public"),
                 )
-            )
+            ]
+            if user_id is not None:
+                should.append(
+                    qdrant_models.FieldCondition(
+                        key="acl_users",
+                        match=qdrant_models.MatchAny(any=[str(user_id)]),
+                    )
+                )
+            if groups:
+                should.append(
+                    qdrant_models.FieldCondition(
+                        key="acl_groups",
+                        match=qdrant_models.MatchAny(any=[g for g in groups if g]),
+                    )
+                )
+            if should:
+                must_conditions.append(
+                    qdrant_models.Filter(
+                        should=should,
+                        min_should=qdrant_models.MinShould(
+                            conditions=should, min_count=1
+                        ),
+                    )
+                )
 
         if filters:
             must_conditions.extend([
@@ -320,6 +350,8 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         score_threshold: float = 0.1,
         role: str = "admin",
         knowledge_base_id: UUID | None = None,
+        user_id: UUID | None = None,
+        groups: list[str] | None = None,
     ) -> RetrievalContext:
         if organization_id is None:
             raise ValueError("search() requires organization_id (tenant isolation)")
@@ -330,8 +362,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         start = time.perf_counter()
 
         qdrant_filter = self._build_qdrant_filter(
-            organization_id, filters, exclude_filters, role, knowledge_base_id
-        )
+            organization_id, filters, exclude_filters, role, knowledge_base_id, user_id, groups)
 
         kwargs: dict[str, object] = {
             "collection_name": RAG_DOCUMENTS_COLLECTION,
@@ -378,6 +409,8 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         score_threshold: float = 0.1,
         role: str = "admin",
         knowledge_base_id: UUID | None = None,
+        user_id: UUID | None = None,
+        groups: list[str] | None = None,
     ) -> RetrievalContext:
         if organization_id is None:
             raise ValueError("search_sparse() requires organization_id (tenant isolation)")
@@ -389,8 +422,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         start = time.perf_counter()
 
         qdrant_filter = self._build_qdrant_filter(
-            organization_id, filters, exclude_filters, role, knowledge_base_id
-        )
+            organization_id, filters, exclude_filters, role, knowledge_base_id, user_id, groups)
 
         sparse_vector = encode_sparse(query_text)
         if not sparse_vector:
@@ -437,6 +469,8 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         role: str = "admin",
         knowledge_base_id: UUID | None = None,
         fusion_weights: dict[str, float] | None = None,
+        user_id: UUID | None = None,
+        groups: list[str] | None = None,
     ) -> RetrievalContext:
         """Fusión RRF server-side (un solo round-trip).
 
@@ -455,8 +489,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         start = time.perf_counter()
 
         qdrant_filter = self._build_qdrant_filter(
-            organization_id, filters, exclude_filters, role, knowledge_base_id
-        )
+            organization_id, filters, exclude_filters, role, knowledge_base_id, user_id, groups)
 
         sparse_vector = encode_sparse(query_text)
         if not sparse_vector:
@@ -535,10 +568,19 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
 
             structs = []
             for i, (document_id, embedding, content, metadata) in enumerate(points):
+                md = metadata or {}
+                # FASE 15: ACL por chunk — visibility (public/admin) + listas
+                # de usuarios/grupos. Vacío en acl_* = acceso org-wide.
+                visibility = str(md.get("visibility") or "public")
+                acl_users = [str(u) for u in (md.get("acl_users") or [])]
+                acl_groups = [str(g) for g in (md.get("acl_groups") or [])]
                 payload = {
                     "content": content,
-                    "metadata": metadata or {},
+                    "metadata": md,
                     "organization_id": str(organization_id),
+                    "visibility": visibility,
+                    "acl_users": acl_users,
+                    "acl_groups": acl_groups,
                     **(
                         {"knowledge_base_id": str(knowledge_base_id)}
                         if knowledge_base_id is not None

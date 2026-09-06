@@ -34,6 +34,7 @@ async def federated_search_endpoint(
     ctx = require_permission(request, "rag:read")
     kb_ids = [UUID(x) for x in body.knowledge_base_ids] if body.knowledge_base_ids else None
     ws_ids = [UUID(x) for x in body.workspace_ids] if body.workspace_ids else None
+    role = "admin" if ctx.is_organization_admin() else "customer"
     return await federated_search(
         organization_id=ctx.organization_id,
         query=body.query,
@@ -43,4 +44,6 @@ async def federated_search_endpoint(
         workspace_ids=ws_ids,
         top_k=body.top_k,
         per_kb_top=body.per_kb_top,
+        role=role,
+        user_id=ctx.user_id,
     )

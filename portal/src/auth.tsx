@@ -15,6 +15,7 @@ import {
   SIGNUP_API_KEY_STORAGE,
   type Session,
 } from "./api";
+import { AUTH_EXPIRED_EVENT } from "./lib/errors";
 
 type AuthContextValue = {
   session: Session | null;
@@ -26,6 +27,8 @@ type AuthContextValue = {
     password: string
   ) => Promise<void>;
   logout: () => void;
+  /** Aplica una sesión ya emitida por el backend (p. ej. impersonation). */
+  applySession: (session: Session) => void;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -156,9 +159,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     []
   );
 
+  const applySession = useCallback((next: Session) => {
+    saveSession(next);
+    setSession(next);
+  }, []);
+
+  // Forced logout: 401 de la app tenant dispara AUTH_EXPIRED_EVENT (scope tenant).
+  useEffect(() => {
+    function onAuthExpired(event: Event) {
+      const detail = (event as CustomEvent<{ scope?: string }>).detail;
+      if (detail?.scope && detail.scope !== "tenant") return;
+      clearSession();
+      setSession(null);
+    }
+    window.addEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
+  }, []);
+
+  // Revalidación periódica: detecta sesión revocada/vencida (FASE 06).
+  useEffect(() => {
+    if (!session) return;
+    const id = window.setInterval(() => {
+      void api<{ organization_id: string }>("/api/v1/auth/me", {
+        token: session.token,
+        organizationId: session.organizationId,
+      })
+        .then(() => undefined)
+        .catch(() => {
+          // El error 401 ya disparó AUTH_EXPIRED_EVENT en el cliente.
+        });
+    }, 5 * 60 * 1000);
+    return () => window.clearInterval(id);
+  }, [session]);
+
   const value = useMemo(
-    () => ({ session, ready, login, signup, logout }),
-    [session, ready, login, signup, logout]
+    () => ({ session, ready, login, signup, logout, applySession }),
+    [session, ready, login, signup, logout, applySession]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

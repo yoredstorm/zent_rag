@@ -11,7 +11,11 @@ import { platformApi } from "../../api";
 import { usePlatformAuth } from "../../platformAuth";
 import { PLATFORM_NAV, type PlatformNavItem, type PlatformNavGroup } from "../../lib/platformNav";
 import { CommandPaletteRoot, openCommandPalette } from "../../components/CommandPalette";
+import { IdleSessionWarning } from "../../components/IdleSessionWarning";
+import { StepUpModal } from "../../components/StepUpModal";
 import { ThemeToggle } from "../../components/ThemeToggle";
+
+const IDLE_SESSION_MINUTES = 30;
 
 type Notice = {
   id: string;
@@ -276,7 +280,7 @@ export default function AdminLayout() {
             >
               <Bell size={18} aria-hidden />
               {unread > 0 && (
-                <span className="absolute right-1 top-1 inline-flex min-w-5 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-white">
+                <span className="absolute right-1 top-1 inline-flex min-w-5 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-accent-fg">
                   {unread > 99 ? "99+" : unread}
                 </span>
               )}
@@ -335,6 +339,8 @@ export default function AdminLayout() {
         </header>
         <main className="min-h-0 flex-1 overflow-y-auto p-4 lg:p-6">
           <CommandPaletteRoot mode="platform" />
+          <IdleSessionWarning minutes={IDLE_SESSION_MINUTES} onLogout={logout} />
+          <StepUpModal />
           <Outlet />
         </main>
       </div>

@@ -1,6 +1,7 @@
 import { CheckCircle, XCircle } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { saveSession } from "../api";
 import { Spinner } from "../components/ui";
 
 export default function SsoCallbackPage() {
@@ -11,13 +12,13 @@ export default function SsoCallbackPage() {
     const params = new URLSearchParams(window.location.search);
     const token = params.get("token");
     const org = params.get("org");
-    if (!token) {
+    if (!token || !org) {
       setError("Faltó el token de sesión en el callback SSO.");
       return;
     }
     try {
-      localStorage.setItem("rag_session", token);
-      if (org) localStorage.setItem("rag_org", org);
+      // Guarda la sesión con el esquema real del portal (FASE 17: callback SSO corregido).
+      saveSession({ token, organizationId: org, companyName: "", email: undefined });
       navigate("/", { replace: true });
     } catch {
       setError("No se pudo guardar la sesión.");

@@ -26,5 +26,7 @@ class LexicalRetriever(Retriever):
             exclude_filters=query.exclude_filters or None,
             score_threshold=query.score_threshold,
             role=query.role,
+        user_id=query.user_id,
+        groups=query.groups,
             knowledge_base_id=query.knowledge_base_id,
         )

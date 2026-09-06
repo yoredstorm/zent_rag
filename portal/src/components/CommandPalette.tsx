@@ -26,7 +26,7 @@ export function openCommandPalette(mode: PaletteMode) {
 async function buildTenantCommands(session: Session): Promise<Command[]> {
   const token = session.token;
   const organizationId = session.organizationId;
-  let entitlements: Record<string, boolean | number | null> = {};
+  let entitlements: Record<string, boolean | number | null>;
   try {
     const out = await api<{ entitlements: Record<string, boolean | number | null> }>(
       "/api/v1/billing/entitlements",

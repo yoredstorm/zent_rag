@@ -1,3 +1,7 @@
+import { ApiError, emitAuthExpired, emitStepUpRequired, RETRYABLE_STATUS } from "./lib/errors";
+
+// El token de sesión vive en sessionStorage (no persistente; la sesión real es
+// la cookie HttpOnly del servidor, FASE 05). El perfil (no sensible) va en localStorage.
 const TOKEN_KEY = "rag_portal_token";
 const ORG_KEY = "rag_portal_org";
 const COMPANY_KEY = "rag_portal_company";
@@ -6,7 +10,7 @@ const ROLES_KEY = "rag_portal_roles";
 const PERMS_KEY = "rag_portal_permissions";
 
 export type Session = {
-  token: string;
+  token?: string;
   organizationId: string;
   companyName: string;
   email?: string;
@@ -14,8 +18,36 @@ export type Session = {
   permissions?: string[];
 };
 
+function readToken(): string | undefined {
+  const current = sessionStorage.getItem(TOKEN_KEY);
+  if (current) return current;
+  const legacy = localStorage.getItem(TOKEN_KEY);
+  if (legacy) {
+    // Migración de sesiones previas: mover a sessionStorage.
+    sessionStorage.setItem(TOKEN_KEY, legacy);
+    localStorage.removeItem(TOKEN_KEY);
+    return legacy;
+  }
+  return undefined;
+}
+
+function writeToken(token: string | undefined) {
+  if (token) {
+    sessionStorage.setItem(TOKEN_KEY, token);
+  } else {
+    sessionStorage.removeItem(TOKEN_KEY);
+  }
+  // Nunca persistir el token en localStorage.
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+/** Token CSRF double-submit (cookie no HttpOnly emitida por el backend). */
+export function getCsrfToken(): string | null {
+  const match = document.cookie.match(/(?:^|;\s*)rag_csrf=([^;]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 export function loadSession(): Session | null {
-  const token = localStorage.getItem(TOKEN_KEY);
   const organizationId =
     localStorage.getItem(ORG_KEY) ||
     // migración de sesiones previas (tenant)
@@ -33,12 +65,13 @@ export function loadSession(): Session | null {
     roles = undefined;
     permissions = undefined;
   }
-  if (!token || !organizationId) return null;
+  if (!organizationId) return null;
+  const token = readToken();
   return { token, organizationId, companyName, email, roles, permissions };
 }
 
 export function saveSession(session: Session) {
-  localStorage.setItem(TOKEN_KEY, session.token);
+  writeToken(session.token);
   localStorage.setItem(ORG_KEY, session.organizationId);
   localStorage.removeItem("rag_portal_tenant");
   localStorage.setItem(COMPANY_KEY, session.companyName);
@@ -60,6 +93,7 @@ export function saveSession(session: Session) {
 }
 
 export function clearSession() {
+  sessionStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(ORG_KEY);
   localStorage.removeItem("rag_portal_tenant");
@@ -69,28 +103,39 @@ export function clearSession() {
   localStorage.removeItem(PERMS_KEY);
 }
 
-async function parseError(res: Response): Promise<string> {
-  try {
-    const data = await res.json();
-    if (typeof data.message === "string") return data.message;
-    if (typeof data.detail === "string") return data.detail;
-    if (data.detail && typeof data.detail === "object") {
-      const code = typeof data.detail.error_code === "string" ? data.detail.error_code : "";
-      const msg = typeof data.detail.message === "string" ? data.detail.message : "";
-      return [code, msg].filter(Boolean).join(" ") || res.statusText;
-    }
-    if (typeof data.error_code === "string") return data.error_code;
-    return res.statusText;
-  } catch {
-    return res.statusText;
-  }
+/** Extrae el trace id del backend (TraceMiddleware → X-Trace-Id). */
+function traceIdFrom(res: Response): string | null {
+  return res.headers.get("X-Trace-Id");
 }
 
-export const SIGNUP_API_KEY_STORAGE = "zent_signup_api_key";
+async function toApiError(res: Response): Promise<ApiError> {
+  const traceId = traceIdFrom(res);
+  let code = "";
+  let message = "";
+  try {
+    const data = await res.json();
+    if (typeof data.message === "string") message = data.message;
+    else if (typeof data.detail === "string") message = data.detail;
+    else if (data.detail && typeof data.detail === "object") {
+      code = typeof data.detail.error_code === "string" ? data.detail.error_code : "";
+      message = typeof data.detail.message === "string" ? data.detail.message : "";
+    }
+    if (!code && typeof data.error_code === "string") code = data.error_code;
+    if (!message) message = res.statusText;
+    if (code && message && message !== res.statusText) message = `${code} ${message}`;
+    if (!message && code) message = code;
+  } catch {
+    message = res.statusText;
+  }
+  return new ApiError(message || res.statusText, res.status, code, traceId);
+}
 
-export async function api<T>(
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function request<T>(
   path: string,
-  options: RequestInit & { token?: string; organizationId?: string } = {}
+  options: RequestInit & { token?: string; organizationId?: string } = {},
+  opts: { safeRetry?: boolean; idempotency?: boolean; platform?: boolean } = {}
 ): Promise<T> {
   const { token, organizationId, headers, ...rest } = options;
   const h = new Headers(headers);
@@ -98,31 +143,54 @@ export async function api<T>(
   if (token) h.set("Authorization", `Bearer ${token}`);
   if (organizationId) h.set("X-Organization-Id", organizationId);
   const method = (rest.method || "GET").toUpperCase();
-  if (["POST", "PUT", "PATCH"].includes(method) && !h.has("Idempotency-Key")) {
+  const platform = opts.platform === true;
+  if (opts.idempotency !== false && ["POST", "PUT", "PATCH"].includes(method) && !h.has("Idempotency-Key")) {
     h.set("Idempotency-Key", crypto.randomUUID());
   }
-
-  const res = await fetch(path, { ...rest, headers: h });
-  if (!res.ok) {
-    throw new Error(await parseError(res));
+  // CSRF double-submit: cookie no HttpOnly + header (FASE 05/11).
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(method) && !h.has("X-Zent-Csrf")) {
+    const csrf = getCsrfToken();
+    if (csrf) h.set("X-Zent-Csrf", csrf);
   }
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+
+  let attempt = 0;
+  for (;;) {
+    const res = await fetch(path, { ...rest, headers: h, credentials: "same-origin" });
+    if (res.ok) {
+      if (res.status === 204) return undefined as T;
+      return res.json() as Promise<T>;
+    }
+    const err = await toApiError(res);
+    if (err.status === 401) emitAuthExpired(platform ? "platform" : "tenant");
+    if (err.status === 403 && err.code === "step_up_required") emitStepUpRequired();
+    const canRetry =
+      opts.safeRetry === true &&
+      attempt < 1 &&
+      ["GET", "HEAD"].includes(method) &&
+      RETRYABLE_STATUS.includes(err.status);
+    if (canRetry) {
+      attempt += 1;
+      await delay(300 * attempt);
+      continue;
+    }
+    throw err;
+  }
 }
 
-/** Control Center client: never sends X-Organization-Id (not a tenant credential). */
+/** Cliente del Customer Portal (tenant). */
+export async function api<T>(
+  path: string,
+  options: RequestInit & { token?: string; organizationId?: string } = {}
+): Promise<T> {
+  return request<T>(path, options, { safeRetry: true });
+}
+
+/** Cliente del Control Center: nunca envía X-Organization-Id (no es credencial tenant). */
 export async function platformApi<T>(
   path: string,
   options: RequestInit & { token?: string } = {}
 ): Promise<T> {
-  const { token, headers, ...rest } = options;
-  const h = new Headers(headers);
-  if (!h.has("Content-Type")) h.set("Content-Type", "application/json");
-  if (token) h.set("Authorization", `Bearer ${token}`);
-  const res = await fetch(path, { ...rest, headers: h });
-  if (!res.ok) {
-    throw new Error(await parseError(res));
-  }
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+  return request<T>(path, options, { safeRetry: true, platform: true });
 }
+
+export const SIGNUP_API_KEY_STORAGE = "zent_signup_api_key";
