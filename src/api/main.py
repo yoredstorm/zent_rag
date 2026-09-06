@@ -36,6 +36,7 @@ from src.api.routes.admin import router as admin_router
 from src.api.routes.agent_runs import router as agent_runs_router
 from src.api.routes.agent_versions import router as agent_versions_router
 from src.api.routes.agents import router as agents_router
+from src.api.routes.approvals import router as approvals_router
 from src.api.routes.audit import router as audit_router
 from src.api.routes.audit_reports import router as audit_reports_router
 from src.api.routes.auth import router as auth_router
@@ -61,12 +62,14 @@ from src.api.routes.ingestion import router as ingestion_router
 from src.api.routes.jobs import router as jobs_router
 from src.api.routes.knowledge_bases import router as kbs_router
 from src.api.routes.knowledge_hub import router as knowledge_hub_router
+from src.api.routes.mcp_admin import router as mcp_admin_router
 from src.api.routes.migrations import router as migrations_router
 from src.api.routes.notifications import router as notifications_router
 from src.api.routes.onboarding import router as onboarding_router
 from src.api.routes.organizations import router as organizations_router
 from src.api.routes.payments_webhook import router as payments_webhook_router
 from src.api.routes.platform import router as platform_router
+from src.api.routes.platform_features import router as platform_features_router
 from src.api.routes.projects import router as projects_router
 from src.api.routes.prompt import router as prompt_router
 from src.api.routes.public_query import router as public_query_router
@@ -440,6 +443,9 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(agent_runs_router)
     new_app.include_router(agent_versions_router)
     new_app.include_router(agents_router)
+    new_app.include_router(mcp_admin_router)
+    new_app.include_router(approvals_router)
+    new_app.include_router(platform_features_router)
     new_app.include_router(embed_admin_router)
     new_app.include_router(embed_public_router)
     new_app.include_router(embed_widget_router)

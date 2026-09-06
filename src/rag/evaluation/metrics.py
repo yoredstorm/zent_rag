@@ -104,6 +104,34 @@ def answer_keyword_coverage(answer: str, keywords: list[str]) -> float | None:
     )
 
 
+_SQL_SKIP = re.compile(r"--[^\n]*")
+
+
+def _normalize_sql(sql: str) -> str:
+    """Normaliza SQL para comparación determinista (FASE 03).
+
+    Quita comentarios, espacios redundantes, semicolons finales y colapsa
+    case/whitespace. NO ejecuta ni parsea AST: la comparación es textual.
+    """
+    if not sql:
+        return ""
+    cleaned = _SQL_SKIP.sub(" ", sql).replace(";", " ").replace("\n", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip().lower()
+    return cleaned
+
+
+def sql_accuracy(answer: str, expected_sql: str | None) -> float | None:
+    """Precisión SQL determinista (0.0/1.0); None si el caso no define expected_sql.
+
+    El SQL generado (answer) se compara normalizado contra expected_sql.
+    """
+    if not expected_sql:
+        return None
+    if not answer:
+        return 0.0
+    return 1.0 if _normalize_sql(answer) == _normalize_sql(expected_sql) else 0.0
+
+
 def percentile(values: Iterable[float], p: float) -> float:
     ordered = sorted(float(v) for v in values)
     if not ordered:

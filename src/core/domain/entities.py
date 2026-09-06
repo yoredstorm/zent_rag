@@ -245,6 +245,7 @@ class Agent:
     config_json: dict = field(default_factory=dict)
     status: AgentStatus = AgentStatus.DRAFT
     is_active: bool = True
+    created_by: UUID | None = None  # FASE 03 (S17): quién creó el agente
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 

@@ -186,7 +186,9 @@ class Settings(BaseSettings):
     )
     GATEWAY_CHEAP_MODEL: str = Field(
         default="",
-        description="Primary para alias zent-cheap. Vacío = LITELLM_DEFAULT_MODEL.",
+    )
+    GATEWAY_FAST_MODEL: str = Field(
+        default="",
     )
     GATEWAY_QUALITY_MODEL: str = Field(
         default="",

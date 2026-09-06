@@ -22,6 +22,7 @@ import {
   Robot,
   Rocket,
   RocketLaunch,
+  StackSimple,
   Scales,
   ShieldCheck,
   ShieldStar,
@@ -66,6 +67,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: "/usage", label: "Analítica", icon: ChartLineUp },
       { to: "/ai-quality", label: "Calidad de IA", icon: Target },
       { to: "/deployments", label: "Despliegues", icon: RocketLaunch },
+      { to: "/environments", label: "Entornos", icon: StackSimple },
     ],
   },
   {

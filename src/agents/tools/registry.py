@@ -61,11 +61,23 @@ def _has_permission(ctx: ToolContext, permission: str) -> bool:
     return "*" in ctx.permissions or permission in ctx.permissions
 
 
+def _has_agent_permission(ctx: ToolContext, permission: str) -> bool:
+    """FASE 03 (S18): los grants del agente NUNCA elevan; solo acotan."""
+    if ctx.agent_permissions is None:
+        return True  # compat: sin grants explícitos
+    if not permission:
+        return True
+    return "*" in ctx.agent_permissions or permission in ctx.agent_permissions
+
+
 def tool_allowed(tool: Tool, agent_tools: list[str], ctx: ToolContext) -> bool:
-    """Allowlist del agente + permiso RBAC del tenant. Doble gate."""
+    """Allowlist del agente + permiso RBAC del tenant + grants del agente.
+    Triple gate: el agente nunca hereda privilegios ilimitados del caller."""
     if tool.name not in agent_tools:
         return False
-    return _has_permission(ctx, tool.permission)
+    if not _has_permission(ctx, tool.permission):
+        return False
+    return _has_agent_permission(ctx, tool.permission)
 
 
 def resolve_allowed_tools(

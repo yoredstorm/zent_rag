@@ -22,6 +22,7 @@ from src.rag.evaluation.metrics import (
     mean_or,
     retrieval_precision,
     retrieval_recall,
+    sql_accuracy,
 )
 from src.rag.evaluation.targets import EvalTarget
 
@@ -51,6 +52,7 @@ class CaseEval:
     retrieved: list[dict] = field(default_factory=list)
     expected_answer: str | None = None
     expected_sources: list[str] = field(default_factory=list)
+    expected_sql: str | None = None  # FASE 03: habilita la métrica sql_accuracy
     error: str | None = None
 
 
@@ -129,6 +131,9 @@ class EvalRunner:
             "faithfulness": faithfulness,
             "citation_accuracy": citations["accuracy"],
             "hallucinated": hallucinated,
+            "sql_accuracy": sql_accuracy(
+                target_result.answer, case.expected_sql
+            ),
             "latency_ms": wall_ms if not target_result.total_latency_ms else target_result.total_latency_ms,
             "retrieval_latency_ms": target_result.retrieval_latency_ms,
             "llm_latency_ms": target_result.llm_latency_ms,
@@ -154,6 +159,7 @@ class EvalRunner:
             retrieved=retrieved,
             expected_answer=case.expected_answer,
             expected_sources=list(case.expected_sources or []),
+            expected_sql=case.expected_sql,
             error=target_result.error,
         )
 
@@ -241,6 +247,9 @@ class EvalRunner:
                 [r.metrics["citation_accuracy"] for r in results]
             ),
             "hallucination_rate": _hallucination_rate(results),
+            "sql_accuracy": _mean_none_ok(
+                [r.metrics["sql_accuracy"] for r in results]
+            ),
             "judge_enabled": judge_enabled,
             "judge_model": judge_model,
         }

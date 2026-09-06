@@ -1009,3 +1009,30 @@ async def tenant_reports_delete(sub_id: str, request: Request):
     if not ok:
         raise HTTPException(404, "Subscription not found")
     return {"status": "deleted"}
+
+@router.get("/quality-gates", summary="Quality gates de la organización (FASE 03)")
+async def get_quality_gates(request: Request, workspace_id: UUID | None = None):
+    from src.api.security import resolve_organization
+    from src.platform.quality.gates import get_gate
+    from src.platform.rbac.policy import require_organization_admin
+
+    require_organization_admin(request)
+    organization_id = resolve_organization(request)
+    gate = await get_gate(organization_id, workspace_id)
+    return {"gate": gate, "supported_metrics": [
+        "composite_score", "faithfulness", "answer_relevance",
+        "context_relevance", "retrieval_precision", "retrieval_recall",
+        "citation_accuracy", "sql_accuracy", "hallucination_rate",
+    ]}
+
+
+@router.put("/quality-gates", summary="Guardar quality gates de la organización (FASE 03)")
+async def put_quality_gates(body: dict, request: Request, workspace_id: UUID | None = None):
+    from src.api.security import resolve_organization
+    from src.platform.quality.gates import upsert_gate
+    from src.platform.rbac.policy import require_organization_admin
+
+    ctx = require_organization_admin(request)
+    organization_id = resolve_organization(request)
+    gate = await upsert_gate(organization_id, body, workspace_id=workspace_id, updated_by=ctx.user_id)
+    return {"gate": gate}

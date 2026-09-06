@@ -12,6 +12,7 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { Breadcrumb } from "../components/Breadcrumb";
+import OutcomesPanel from "../components/OutcomesPanel";
 import {
   EmptyState,
   EnvironmentBadge,
@@ -263,6 +264,8 @@ export default function AgentOverviewPage() {
               </div>
             )}
           </div>
+
+          <OutcomesPanel agentId={agent.id} session={session} />
         </div>
 
         <div className="flex flex-col gap-4">

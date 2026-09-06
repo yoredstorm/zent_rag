@@ -1231,6 +1231,7 @@ class PostgresAgentRepository(AgentRepository):
             config_json=row.config_json if isinstance(row.config_json, dict) else {},
             is_active=row.is_active,
             status=AgentStatus(row.status) if row.status else AgentStatus.DRAFT,
+            created_by=getattr(row, "created_by", None),
             created_at=row.created_at,
         )
 
@@ -1278,17 +1279,18 @@ class PostgresAgentRepository(AgentRepository):
         tools: list[str] | None = None,
         model: str | None = None,
         config_json: dict | None = None,
+        created_by: UUID | None = None,
     ) -> Agent:
         session = await get_async_session()
         try:
             result = await session.execute(
                 text(
                     "INSERT INTO agents (id, organization_id, name, description, project_id, "
-                    "workspace_id, system_prompt, tools, model, config_json) "
+                    "workspace_id, system_prompt, tools, model, config_json, created_by) "
                     "VALUES (uuid_generate_v4(), :oid, :name, :description, :pid, "
-                    ":wid, :prompt, :tools, :model, CAST(:config AS jsonb)) "
+                    ":wid, :prompt, :tools, :model, CAST(:config AS jsonb), :created_by) "
                     "RETURNING id, organization_id, name, project_id, description, system_prompt, "
-                    "tools, model, config_json, is_active, status, workspace_id, created_at"
+                    "tools, model, config_json, is_active, status, workspace_id, created_by, created_at"
                 ),
                 {
                     "oid": organization_id,
@@ -1300,6 +1302,7 @@ class PostgresAgentRepository(AgentRepository):
                     "tools": json.dumps(tools or []),
                     "model": model,
                     "config": json.dumps(config_json or {}),
+                    "created_by": created_by,
                 },
             )
             row = result.fetchone()

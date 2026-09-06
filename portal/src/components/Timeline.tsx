@@ -7,7 +7,7 @@ export type TimelineItem = {
   at: string;
   title: string;
   detail?: string;
-  kind?: "audit" | "deployment" | "job" | "billing" | "key" | "user" | "notification";
+  kind?: "audit" | "deployment" | "job" | "billing" | "key" | "user" | "notification" | "feedback" | "spike";
   tone?: "ok" | "warn" | "danger" | "default";
 };
 
@@ -19,6 +19,8 @@ const KIND_ICONS: Record<NonNullable<TimelineItem["kind"]>, Icon> = {
   key: Key,
   user: UsersThree,
   notification: Warning,
+  feedback: Warning,
+  spike: Warning,
 };
 
 function dayLabel(iso: string): string {

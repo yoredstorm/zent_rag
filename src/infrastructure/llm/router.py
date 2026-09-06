@@ -12,7 +12,7 @@ from src.infrastructure.observability.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-ROUTE_ALIASES = ("zent-cheap", "zent-default", "zent-quality")
+ROUTE_ALIASES = ("zent-fast", "zent-cheap", "zent-default", "zent-quality")
 
 GenerateFn = Callable[..., Awaitable[LLMResponse]]
 
@@ -74,6 +74,9 @@ def resolve_route(
             alias=name if name in ROUTE_ALIASES else None,
         )
 
+    if name == "zent-fast":
+        primary = (settings.GATEWAY_FAST_MODEL or "").strip() or default_model
+        return ResolvedRoute(primary=primary, fallback=fallback, alias="zent-fast")
     if name == "zent-cheap":
         primary = (settings.GATEWAY_CHEAP_MODEL or "").strip() or default_model
         return ResolvedRoute(primary=primary, fallback=fallback, alias="zent-cheap")

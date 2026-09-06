@@ -1,4 +1,5 @@
 import { Plugs, ShieldCheck, TerminalWindow } from "@phosphor-icons/react";
+import McpControlPanel from "../components/McpControlPanel";
 import { PageHeader } from "../components/ui";
 
 const TOOLS = [
@@ -95,6 +96,8 @@ async def main():
 asyncio.run(main())`}
         </pre>
       </section>
+
+      <McpControlPanel />
     </div>
   );
 }

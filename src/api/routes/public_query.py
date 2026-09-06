@@ -191,6 +191,22 @@ async def deployment_query(
     if agent is None or version is None:
         return await _respond(404, error="Agent/version not found", deployment_id=deployment.id)
 
+    # FASE 03 (S7): canary traffic split — hash estable del request id.
+    from src.platform.releases.releases import resolve_deployment_version
+
+    chosen_version_id, routing_decision = await resolve_deployment_version(
+        organization_id,
+        deployment.agent_id,
+        deployment.agent_version_id,
+        request_id,
+    )
+    if chosen_version_id != deployment.agent_version_id:
+        version = await version_repo.get_version(
+            organization_id, deployment.agent_id, chosen_version_id
+        )
+        if version is None:
+            return await _respond(500, error="Canary version not found", deployment_id=deployment.id)
+
     resolved = resolve_agent(agent, version.config_snapshot)
 
     # Trust & Safety: moderación del INPUT (block → 422).
@@ -251,16 +267,29 @@ async def deployment_query(
 
     from src.agents.runtime.agent_runtime import AgentRunRequest
 
+    # Resolver el entorno del deployment (development|staging|production).
+    env_slug: str | None = None
+    try:
+        env = await deployment_repo.get_environment(
+            organization_id, deployment.environment_id
+        )
+        env_slug = getattr(env, "slug", None) or getattr(env, "name", None)
+    except Exception:  # noqa: BLE001
+        env_slug = None
+
     run_request = AgentRunRequest(
         agent=resolved,
         message=body.input,
         user_id=ctx.user_id,
         deployment_id=deployment.id,
+        version_id=chosen_version_id,
+        environment=env_slug,
         role="admin",
         conversation_id=uuid4(),
         permissions=ctx.permissions,
         org_config={},
         trace_id=request.headers.get("X-Trace-Id") or str(request_id),
+        routing=routing_decision,
     )
     try:
         result = await runtime.run(run_request)

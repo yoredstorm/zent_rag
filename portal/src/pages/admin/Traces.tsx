@@ -19,7 +19,21 @@ type Trace = {
 };
 
 type Span = { id: string; stage: string; name: string; status: string; started_ms: number; duration_ms: number; tokens: number; metadata: Record<string, unknown> };
-type TraceDetail = Trace & { output: string | null; error: string | null; spans: Span[] };
+type Markers = {
+  llm_calls: number;
+  models_used: string[];
+  retries: number;
+  fallback_detected: boolean;
+  error_spans: number;
+  bottleneck: { stage: string; name: string; duration_ms: number } | null;
+};
+type Feedback = { rating: string; reason: string | null; comment: string | null; created_at: string } | null;
+type TraceDetail = Trace & { run_id: string | null; output: string | null; error: string | null; spans: Span[]; markers: Markers; feedback: Feedback; provider: string | null; environment: string | null; version_id: string | null; prompt_tokens: number; completion_tokens: number };
+type RootCause = {
+  probable_causes: { factor: string; label: string; evidence: string[] }[];
+  possible_contributing_factors: { factor: string; label: string; evidence: string[] }[];
+  signals: Record<string, unknown>;
+};
 type Compare = {
   same_input: boolean;
   a: { trace_id: string; status: string; model: string | null; latency_ms: number; tokens: number; cost: number; spans_count: number; error: string | null };
@@ -31,13 +45,16 @@ type Compare = {
 };
 type Stage = { stage: string; spans: number; avg_duration_ms: number; p95_duration_ms: number; tokens: number; errors: number; error_rate: number };
 
-const STAGE_COLOR: Record<string, string> = { llm: "bg-blue-500", retrieval: "bg-emerald-500", tool: "bg-amber-500", rerank: "bg-purple-500", total: "bg-slate-400" };
+const STAGE_COLOR: Record<string, string> = { llm: "bg-blue-500", retrieval: "bg-emerald-500", tool: "bg-amber-500", rerank: "bg-purple-500", sql: "bg-cyan-500", total: "bg-slate-400" };
+const STAGE_LABEL: Record<string, string> = { llm: "LLM", retrieval: "Retrieval", rerank: "Rerank", sql: "SQL", tool: "Tools", total: "Total" };
 
 export default function AdminTracesPage() {
   const { session } = usePlatformAuth();
   const [traces, setTraces] = useState<Trace[]>([]);
   const [stages, setStages] = useState<Stage[]>([]);
   const [detail, setDetail] = useState<TraceDetail | null>(null);
+  const [rootCause, setRootCause] = useState<RootCause | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
   const [compare, setCompare] = useState<Compare | null>(null);
   const [usage, setUsage] = useState<{ usage_events: unknown[]; api_logs: unknown[] } | null>(null);
   const [orgs, setOrgs] = useState<{ id: string }[]>([]);
@@ -90,6 +107,7 @@ export default function AdminTracesPage() {
   async function showDetail(traceId: string) {
     if (!session) return;
     setError("");
+    setRootCause(null);
     try {
       const [d, u] = await Promise.all([
         platformApi<TraceDetail>(`/api/v1/platform/observability/traces/${traceId}`, { token: session.token }),
@@ -99,6 +117,23 @@ export default function AdminTracesPage() {
       setUsage(u);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
+    }
+  }
+
+  async function analyze() {
+    if (!session || !detail?.run_id) return;
+    setAnalyzing(true);
+    setError("");
+    try {
+      const r = await platformApi<RootCause>(
+        `/api/v1/agents/runs/${detail.run_id}/analysis`,
+        { method: "POST", token: session.token, body: "{}" }
+      );
+      setRootCause(r);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    } finally {
+      setAnalyzing(false);
     }
   }
 
@@ -112,8 +147,6 @@ export default function AdminTracesPage() {
       setError(e instanceof Error ? e.message : "Error");
     }
   }
-
-  const maxSpan = Math.max(...(detail?.spans ?? []).map((s) => s.duration_ms), 1);
 
   return (
     <div className="space-y-6">
@@ -206,27 +239,48 @@ export default function AdminTracesPage() {
 
             {detail && (
               <section className="panel p-4">
-                <h3 className="mb-2 text-sm font-semibold text-text">Spans · {detail.trace_id.slice(0, 12)}</h3>
-                <p className="mb-2 max-h-16 overflow-auto rounded-md bg-soft p-2 text-[10px] text-faint">{detail.input}</p>
-                <p className="mb-2 max-h-24 overflow-auto rounded-md bg-soft p-2 text-[10px] text-text">{detail.output ?? "—"}</p>
-                <div className="space-y-1">
-                  {detail.spans.map((s) => (
-                    <div key={s.id} className="rounded-md bg-soft px-3 py-1.5 text-[11px]">
-                      <div className="flex items-center justify-between">
-                        <span className="flex items-center gap-1 truncate text-text">
-                          <span className={`h-1.5 w-1.5 rounded-full ${STAGE_COLOR[s.stage] ?? "bg-slate-300"}`} />
-                          {s.stage} · {s.name}
-                        </span>
-                        <span className="mono text-faint">{s.duration_ms.toFixed(0)}ms · {s.tokens} tok</span>
-                      </div>
-                      <div className="mt-1 h-1 rounded-full bg-soft">
-                        <div className={`h-1 rounded-full ${STAGE_COLOR[s.stage] ?? "bg-slate-300"}`} style={{ width: `${(s.duration_ms / maxSpan) * 100}%` }} />
-                      </div>
-                    </div>
-                  ))}
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-text">Trace · {detail.trace_id.slice(0, 12)}</h3>
+                  {detail.run_id && (
+                    <button type="button" className="btn btn-secondary min-h-8 px-2 text-xs" disabled={analyzing} onClick={() => void analyze()}>
+                      {analyzing ? "Analizando…" : "Root cause"}
+                    </button>
+                  )}
                 </div>
-                <h4 className="mb-1 mt-3 text-[11px] font-semibold text-text">Correlación</h4>
+
+                {/* Waterfall (FASE 03, S2) */}
+                <TraceWaterfall spans={detail.spans} totalLatencyMs={detail.total_latency_ms} markers={detail.markers} />
+
+                {/* Campos del spec (cuando existan) */}
+                <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
+                  <Field k="Modelo" v={detail.model ?? "—"} mono />
+                  <Field k="Provider" v={detail.provider ?? "—"} mono />
+                  <Field k="Entorno" v={detail.environment ?? "—"} />
+                  <Field k="Versión" v={detail.version_id ? detail.version_id.slice(0, 8) : "—"} mono />
+                  <Field k="Estado" v={detail.status} />
+                  <Field k="Tokens" v={`${detail.total_tokens} (${detail.prompt_tokens} + ${detail.completion_tokens})`} />
+                  <Field k="Latencia" v={`${detail.total_latency_ms.toFixed(0)}ms`} />
+                  <Field k="Costo" v={`$${detail.cost.toFixed(5)}`} />
+                  {detail.feedback && (
+                    <div className="col-span-2 rounded-md bg-soft px-2 py-1">
+                      <span className={`font-medium ${detail.feedback.rating === "down" ? "text-danger" : "text-ok"}`}>
+                        Feedback: {detail.feedback.rating === "down" ? "negativo" : "positivo"}
+                      </span>
+                      {detail.feedback.reason && <span className="text-faint"> · {detail.feedback.reason}</span>}
+                      {detail.feedback.comment && <span className="block truncate text-faint" title={detail.feedback.comment}>{detail.feedback.comment}</span>}
+                    </div>
+                  )}
+                </div>
+
+                <p className="mb-1 mt-3 text-[11px] font-semibold text-text">Input</p>
+                <p className="mb-2 max-h-16 overflow-auto rounded-md bg-soft p-2 text-[10px] text-faint">{detail.input}</p>
+                <p className="mb-1 text-[11px] font-semibold text-text">Output</p>
+                <p className="mb-2 max-h-28 overflow-auto rounded-md bg-soft p-2 text-[10px] text-text">{detail.output ?? "—"}</p>
+
+                <h4 className="mb-1 text-[11px] font-semibold text-text">Correlación</h4>
                 <p className="text-[10px] text-faint">{usage?.usage_events.length ?? 0} usage events · {usage?.api_logs.length ?? 0} api logs</p>
+
+                {rootCause && <RootCausePanel data={rootCause} />}
               </section>
             )}
           </div>
@@ -264,6 +318,111 @@ export default function AdminTracesPage() {
           )}
         </>
       )}
+    </div>
+  );
+}
+function Field({ k, v, mono = false }: { k: string; v: string; mono?: boolean }) {
+  return (
+    <p className="flex items-baseline justify-between gap-2">
+      <span className="text-faint">{k}</span>
+      <span className={mono ? "mono text-right text-[11px] text-text" : "text-right text-text"}>{v}</span>
+    </p>
+  );
+}
+
+function TraceWaterfall({
+  spans,
+  totalLatencyMs,
+  markers,
+}: {
+  spans: Span[];
+  totalLatencyMs: number;
+  markers: Markers | undefined;
+}) {
+  const ordered = [...spans].sort((a, b) => a.started_ms - b.started_ms);
+  const minStart = ordered.length ? Math.min(...ordered.map((s) => s.started_ms)) : 0;
+  const maxEnd = ordered.length
+    ? Math.max(...ordered.map((s) => s.started_ms + s.duration_ms))
+    : totalLatencyMs;
+  const total = Math.max(maxEnd - minStart, totalLatencyMs, 1);
+  const mk = markers;
+
+  return (
+    <div className="rounded-md border border-border bg-soft p-3">
+      <p className="mb-2 flex items-center gap-2 text-[11px] font-semibold text-text">Waterfall</p>
+      {mk && (
+        <div className="mb-2 flex flex-wrap gap-1.5 text-[10px]">
+          {mk.bottleneck && (
+            <span className="badge badge-danger">bottleneck: {STAGE_LABEL[mk.bottleneck.stage] ?? mk.bottleneck.stage} · {mk.bottleneck.duration_ms.toFixed(0)}ms</span>
+          )}
+          {mk.retries > 0 && <span className="badge badge-warning">{mk.retries} retry(ies)</span>}
+          {mk.fallback_detected && <span className="badge badge-warning">fallback → {mk.models_used.join(", ")}</span>}
+          {mk.error_spans > 0 && <span className="badge badge-danger">{mk.error_spans} span(s) con error</span>}
+        </div>
+      )}
+      <div className="space-y-1">
+        {ordered.map((s) => {
+          const left = Math.max(0, ((s.started_ms - minStart) / total) * 100);
+          const width = Math.max(1, (s.duration_ms / total) * 100);
+          const isError = s.status === "error";
+          return (
+            <div key={s.id} className="flex items-center gap-2 text-[10px]">
+              <span className="w-20 shrink-0 truncate text-faint" title={s.name}>
+                {STAGE_LABEL[s.stage] ?? s.stage}
+              </span>
+              <div className="relative h-3.5 flex-1 rounded-sm bg-bg">
+                <div
+                  className={`absolute inset-y-0 rounded-sm ${isError ? "bg-danger" : STAGE_COLOR[s.stage] ?? "bg-slate-400"}`}
+                  style={{ left: `${left}%`, width: `${width}%` }}
+                  title={`${s.name} · ${s.duration_ms.toFixed(0)}ms · ${s.tokens} tok${isError ? " · error" : ""}`}
+                />
+              </div>
+              <span className="mono w-16 shrink-0 text-right text-faint">{s.duration_ms.toFixed(0)}ms</span>
+            </div>
+          );
+        })}
+        {ordered.length === 0 && <p className="py-2 text-center text-[10px] text-faint">Sin spans.</p>}
+      </div>
+    </div>
+  );
+}
+
+function RootCausePanel({ data }: { data: RootCause }) {
+  return (
+    <div className="mt-3 rounded-md border border-border bg-soft p-3">
+      <h4 className="mb-2 text-[11px] font-semibold text-text">Análisis de causa</h4>
+      {data.probable_causes.length === 0 && data.possible_contributing_factors.length === 0 && (
+        <p className="text-[10px] text-faint">Sin señales claras de fallo en este run.</p>
+      )}
+      {data.probable_causes.length > 0 && (
+        <div className="mb-2">
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-danger">Probable cause</p>
+          {data.probable_causes.map((c) => (
+            <CauseRow key={c.factor} label={c.label} evidence={c.evidence} tone="danger" />
+          ))}
+        </div>
+      )}
+      {data.possible_contributing_factors.length > 0 && (
+        <div>
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-warn">Possible contributing factor</p>
+          {data.possible_contributing_factors.map((c) => (
+            <CauseRow key={c.factor} label={c.label} evidence={c.evidence} tone="warn" />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CauseRow({ label, evidence, tone }: { label: string; evidence: string[]; tone: "danger" | "warn" }) {
+  return (
+    <div className="mb-1.5 rounded-md bg-bg px-2 py-1.5">
+      <p className={`text-[11px] font-medium ${tone === "danger" ? "text-danger" : "text-warn"}`}>{label}</p>
+      <ul className="list-disc pl-4 text-[10px] text-faint">
+        {evidence.map((e, i) => (
+          <li key={i}>{e}</li>
+        ))}
+      </ul>
     </div>
   );
 }

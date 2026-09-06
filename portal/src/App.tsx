@@ -119,6 +119,7 @@ const EvaluationRunDetailPage = lazy(() => import("./pages/evaluation/RunDetail"
 const EvaluationComparePage = lazy(() => import("./pages/evaluation/Compare"));
 const AiQualityPage = lazy(() => import("./pages/AiQuality"));
 const DeploymentsPage = lazy(() => import("./pages/Deployments"));
+const EnvironmentsPage = lazy(() => import("./pages/Environments"));
 const DataSourcesPage = lazy(() => import("./pages/DataSources"));
 const WebhooksPage = lazy(() => import("./pages/Webhooks"));
 const TeamAccessPage = lazy(() => import("./pages/TeamAccess"));
@@ -627,6 +628,7 @@ export default function App() {
         <Route path="/billing" element={<Suspense fallback={<PageFallback />}><BillingPage /></Suspense>} />
         <Route path="/ai-quality" element={<Suspense fallback={<PageFallback />}><AiQualityPage /></Suspense>} />
         <Route path="/deployments" element={<Suspense fallback={<PageFallback />}><DeploymentsPage /></Suspense>} />
+              <Route path="/environments" element={<Suspense fallback={<PageFallback />}><EnvironmentsPage /></Suspense>} />
         <Route path="/data-sources" element={<Suspense fallback={<PageFallback />}><DataSourcesPage /></Suspense>} />
         <Route path="/security" element={<Suspense fallback={<PageFallback />}><SecurityAuditPage /></Suspense>} />
         <Route path="/audit/compliance" element={<Suspense fallback={<PageFallback />}><AuditCompliancePage /></Suspense>} />

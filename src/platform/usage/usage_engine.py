@@ -126,7 +126,7 @@ async def record_event(event: UsageEvent) -> bool:
                     "prompt_tokens, completion_tokens, total_tokens, "
                     "embedding_tokens, retrieval_count, reranking_count, "
                     "tool_calls, latency_ms, status, estimated_cost, "
-                    "actual_cost, currency, created_at, cost_tags, trace_id) "
+                    "actual_cost, currency, created_at, cost_tags, trace_id, routing) "
                     "VALUES (:rid, :etype, :org, :uid, :pid, :aid, :did, :kid, "
                     ":model, :provider, :ptok, :ctok, :ttok, :etok, :rc, "
                     ":rrc, :tc, :lat, :status, :cost, :acost, :cur, :created, :ctags, :tid) "
@@ -163,6 +163,7 @@ async def record_event(event: UsageEvent) -> bool:
                     "created": event.created_at,
                     "ctags": json.dumps(event.cost_tags or {}),
                     "tid": (event.trace_id or "")[:64] or None,
+                    "routing": json.dumps(event.routing) if event.routing else None,
                 },
             )
             await session.commit()

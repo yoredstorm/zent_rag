@@ -15,6 +15,7 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { Breadcrumb } from "../components/Breadcrumb";
 import { PageTabs } from "../components/PageTabs";
+import QualityGatesPanel from "../components/QualityGatesPanel";
 import { Stepper } from "../components/Stepper";
 import {
   EmptyState,
@@ -841,9 +842,13 @@ export default function AgentBuilderPage() {
                 setModel(next);
               }}
             >
+              <option value="zent-fast">zent-fast</option>
+              <option value="zent-cheap">zent-cheap</option>
               <option value="zent-default">zent-default</option>
+              <option value="zent-quality">zent-quality</option>
+              <option value="zent-routed">zent-routed (routing con policy)</option>
               {routes
-                .filter((r) => r.name !== "zent-default")
+                .filter((r) => r.name !== "zent-default" && !["zent-fast", "zent-cheap", "zent-quality", "zent-routed"].includes(r.name))
                 .map((r) => (
                   <option key={r.name} value={r.name}>
                     {r.name}
@@ -1081,6 +1086,8 @@ export default function AgentBuilderPage() {
               </table>
             </div>
           )}
+
+          <QualityGatesPanel session={session} />
         </section>
       )}
 

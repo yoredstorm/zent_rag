@@ -56,12 +56,15 @@ class AgentRunRequest:
     message: str
     user_id: UUID | None = None
     deployment_id: UUID | None = None
+    version_id: UUID | None = None
+    environment: str | None = None
     role: str = "admin"
     conversation_id: UUID | None = None
     permissions: frozenset[str] = frozenset()
     org_config: dict = field(default_factory=dict)
     on_step: object | None = None  # callback opcional (streaming)
     trace_id: str | None = None  # correlación con observabilidad
+    routing: dict | None = None  # FASE 03: decisión canary/routing trazable
 
 
 @dataclass(kw_only=True)
@@ -74,13 +77,20 @@ class AgentRunResult:
     message: str = ""
     user_id: UUID | None = None
     deployment_id: UUID | None = None
+    version_id: UUID | None = None
+    environment: str | None = None
     role: str = "admin"
     steps: list[dict] = field(default_factory=list)
     spans: list[dict] = field(default_factory=list)
     total_latency_ms: float = 0.0
     total_tokens: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
     cost: float = 0.0
     injection_detected: bool = False
+    trace_id: str | None = None
+    model: str | None = None
+    provider: str | None = None
 
 
 def _parse_action(content: str) -> dict:
@@ -210,6 +220,11 @@ class AgentRuntime:
                     message=request.message,
                     user_id=request.user_id,
                     role=request.role,
+                    deployment_id=request.deployment_id,
+                    version_id=request.version_id,
+                    environment=request.environment,
+                    trace_id=request.trace_id,
+                    model=str(config["model"]),
                     steps=[
                         {
                             "type": "guardrail",
@@ -240,6 +255,11 @@ class AgentRuntime:
                 message=request.message,
                 user_id=request.user_id,
                 role=request.role,
+                deployment_id=request.deployment_id,
+                version_id=request.version_id,
+                environment=request.environment,
+                trace_id=request.trace_id,
+                model=str(config["model"]),
                 steps=[
                     {
                         "type": "guardrail",
@@ -306,11 +326,22 @@ class AgentRuntime:
             _proxy_acquired = bool(admission["admitted"])
         except Exception as exc:  # noqa: BLE001
             logger.warning("Proxy admission failed", error=str(exc)[:150])
+        # FASE 03 (S18): grants explícitos del agente (None = compat).
+        agent_permissions = None
+        try:
+            from src.platform.agents.permissions import get_agent_permissions
+
+            agent_permissions = await get_agent_permissions(agent.id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Agent permissions load failed", error=str(exc)[:120])
+            agent_permissions = None
+
         ctx = ToolContext(
             tenant_id=agent.organization_id,
             user_id=request.user_id,
             role=request.role,
             permissions=request.permissions,
+            agent_permissions=agent_permissions,
             conversation_id=request.conversation_id,
             org_config=org_config,
             agent_config=dict(agent.config_json or {}),
@@ -325,6 +356,11 @@ class AgentRuntime:
             message=request.message,
             user_id=request.user_id,
             role=request.role,
+            deployment_id=request.deployment_id,
+            version_id=request.version_id,
+            environment=request.environment,
+            trace_id=request.trace_id,
+            model=str(config["model"]),
             injection_detected=has_injection_indicators(request.message),
         )
 
@@ -459,6 +495,11 @@ class AgentRuntime:
                 trace_id=trace_id,
                 status=result.status,
                 model=str(config["model"]),
+                provider=getattr(result, "provider", None),
+                version_id=request.version_id,
+                environment=request.environment,
+                prompt_tokens=result.prompt_tokens,
+                completion_tokens=result.completion_tokens,
                 input_text=request.message,
                 output_text=result.answer,
                 error=(
@@ -554,6 +595,8 @@ class AgentRuntime:
             model=config["model"],
             provider=extract_provider(str(config["model"])),
             total_tokens=result.total_tokens,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
             tool_calls=tool_calls,
             latency_ms=result.total_latency_ms,
             status=result.status,
@@ -561,6 +604,7 @@ class AgentRuntime:
             actual_cost=result.cost,
             cost_tags=dict((request.agent.config_json or {}).get("cost_tags") or {}),
             trace_id=request.trace_id or str(result.run_id),
+            routing=request.routing,
         )
         inserted = await record_event(event)
         if inserted:
@@ -648,11 +692,14 @@ class AgentRuntime:
                 config["model"] = used_model
             llm_latency = (time.perf_counter() - llm_start) * 1000
             result.total_tokens += resp.total_tokens
+            result.prompt_tokens += int(getattr(resp, "prompt_tokens", 0) or 0)
+            result.completion_tokens += int(getattr(resp, "completion_tokens", 0) or 0)
             result.cost += await estimate_cost(
                 str(config["model"]),
                 prompt_tokens=resp.prompt_tokens,
                 completion_tokens=resp.completion_tokens,
             )
+            result.model = used_model
             result.spans.append(
                 {
                     "stage": "llm",
@@ -660,6 +707,10 @@ class AgentRuntime:
                     "duration_ms": round(llm_latency, 2),
                     "tokens": resp.total_tokens,
                     "started_ms": round(llm_start * 1000, 1),
+                    "metadata": {
+                        "prompt_tokens": int(getattr(resp, "prompt_tokens", 0) or 0),
+                        "completion_tokens": int(getattr(resp, "completion_tokens", 0) or 0),
+                    },
                 }
             )
 
@@ -735,6 +786,36 @@ class AgentRuntime:
                 )
                 continue
 
+            # FASE 03 (S14): Human-in-the-loop — tools flaggeadas pausan el run.
+            try:
+                from src.platform.approvals.service import (
+                    approval_required_tools,
+                    has_recent_approval,
+                    request_approval,
+                )
+
+                if tool_name in approval_required_tools(request.org_config):
+                    if not await has_recent_approval(
+                        request.agent.organization_id, request.agent.id, tool_name
+                    ):
+                        await request_approval(
+                            request.agent.organization_id,
+                            request.agent.id,
+                            result.run_id,
+                            tool_name,
+                            f"El agente solicitó ejecutar '{tool_name}' (aprobación requerida).",
+                        )
+                        result.status = "awaiting_approval"
+                        result.steps.append(
+                            {
+                                "type": "approval",
+                                "detail": f"Se requiere aprobación humana para ejecutar '{tool_name}'",
+                            }
+                        )
+                        return
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Approval gate failed (fail-open)", error=str(exc)[:120])
+
             tool_start = time.perf_counter()
             raw_args = action.get("arguments")
             arguments = raw_args if isinstance(raw_args, dict) else {}
@@ -750,6 +831,8 @@ class AgentRuntime:
                 stage = "retrieval"
             elif "rerank" in tool_name.lower():
                 stage = "rerank"
+            elif "sql" in tool_name.lower() or tool_name == "query_database":
+                stage = "sql"
             result.spans.append(
                 {
                     "stage": stage,

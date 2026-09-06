@@ -3,6 +3,7 @@
 # =============================================================================
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -85,11 +86,71 @@ async def list_environments(
     request: Request,
     repo: DeploymentRepository = Depends(get_deployment_repo),
 ):
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "deployments:read")
     envs = await ensure_default_environments(repo, ctx.organization_id)
-    return {"environments": [_environment_response(e) for e in envs]}
+    env_map = {e.id: e for e in envs}
+
+    # FASE 03 (S6): por entorno, el deployment healthy actual (versión, estado,
+    # endpoint, traffic, health/SLO). Versión ≠ deployment: nunca se confunden.
+    deployments = await repo.list_deployments(ctx.organization_id)
+    by_env: dict[str, dict] = {}
+    for dep in deployments:
+        if dep.environment_id not in env_map:
+            continue
+        dep_at = dep.deployed_at or dep.created_at
+        existing = by_env.get(str(dep.environment_id))
+        if existing and existing["_at"] >= (dep_at or datetime.min.replace(tzinfo=timezone.utc)):
+            continue
+        base = _deployment_response(dep)
+        base["_at"] = dep_at
+        base["version_number"] = None
+        base["agent_name"] = None
+        base["traffic_pct"] = 100
+        base["slos"] = None
+        by_env[str(dep.environment_id)] = base
+
+    # Resolver número de versión + SLOs (fail-soft).
+    session = await get_async_session()
+    try:
+        for dep in by_env.values():
+            dep.pop("_at", None)
+            if dep["agent_version_id"]:
+                row = (
+                    await session.execute(
+                        text(
+                            "SELECT version_number FROM agent_versions WHERE id = :vid"
+                        ),
+                        {"vid": dep["agent_version_id"]},
+                    )
+                ).fetchone()
+                if row:
+                    dep["version_number"] = int(row.version_number)
+            try:
+                from src.platform.observability.slos import deployment_slos
+
+                slos = await deployment_slos(
+                    ctx.organization_id, UUID(dep["id"])
+                )
+                dep["slos"] = slos
+            except Exception:  # noqa: BLE001
+                dep["slos"] = None
+    finally:
+        await session.close()
+
+    return {
+        "environments": [
+            {
+                **_environment_response(e),
+                "deployment": by_env.get(str(e.id)),
+            }
+            for e in envs
+        ]
+    }
 
 
 @router.post("/environments", status_code=201, summary="Crear entorno")

@@ -150,7 +150,7 @@ async def promote_agent_version(
         raise HTTPException(400, "agent_id and version_id must be valid UUIDs")
     await _require_own_agent(request, agent_repo, ctx.organization_id, aid)
     if body.status == AgentVersionStatus.PRODUCTION:
-        await _check_promotion_gate(ctx.organization_id, vid)
+        await _check_promotion_gate(ctx.organization_id, aid, vid)
 
     try:
         version = await promote_version(
@@ -166,19 +166,21 @@ async def promote_agent_version(
         metadata={"status": body.status.value, "version_number": version.version_number},
     )
     return _version_response(version)
-async def _check_promotion_gate(organization_id: UUID, version_id: UUID) -> None:
-    """Bloquea promotion a production si el último run de evaluación de la
-    versión no alcanza los thresholds configurados (gate opcional)."""
+async def _check_promotion_gate(
+    organization_id: UUID, agent_id: UUID, version_id: UUID
+) -> None:
+    """FASE 03 (S4/S5): bloquea promotion a production si la evaluación de la
+    versión candidata no pasa el quality gate configurado, o si hay una
+    regresión vs la versión actualmente desplegada."""
     from sqlalchemy import text
 
-    from src.core.config import get_settings
+    from src.api.deps import get_agent_repo
     from src.infrastructure.postgres.session import get_async_session
-
-    settings = get_settings()
-    min_score = settings.EVAL_PROMOTION_MIN_SCORE
-    max_hallucination = settings.EVAL_PROMOTION_MAX_HALLUCINATION
-    if min_score <= 0 and max_hallucination >= 1.0:
-        return
+    from src.platform.quality.gates import (
+        gate_blocked,
+        get_gate,
+        regression_blocked,
+    )
 
     session = await get_async_session()
     try:
@@ -203,17 +205,51 @@ async def _check_promotion_gate(organization_id: UUID, version_id: UUID) -> None
             "(el promotion gate está activo).",
         )
     summary = row.summary if isinstance(row.summary, dict) else {}
-    quality = summary.get("quality") or {}
-    score = quality.get("composite_score")
-    hallucination = quality.get("hallucination_rate")
+    candidate_quality = summary.get("quality") or {}
 
-    reasons = []
-    if score is not None and min_score > 0 and score < min_score:
-        reasons.append(f"score {score:.1f} < {min_score}")
-    if hallucination is not None and max_hallucination < 1.0 and hallucination > max_hallucination:
-        reasons.append(f"hallucination {hallucination:.2f} > {max_hallucination}")
+    # Gate configurado por org (y por workspace del agente si existe).
+    workspace_id = None
+    try:
+        agent = await get_agent_repo().get_agent(organization_id, agent_id)
+        workspace_id = getattr(agent, "workspace_id", None)
+    except Exception:  # noqa: BLE001
+        pass
+    gate = await get_gate(organization_id, workspace_id)
+
+    reasons = await gate_blocked(candidate_quality, gate)
+
+    # Regresión vs la versión desplegada (S5): comparar candidata contra la
+    # eval de la versión production actual del agente.
+    baseline_quality = None
+    if not reasons:
+        base = (
+            await session.execute(
+                text(
+                    "SELECT v.id FROM agent_versions v "
+                    "WHERE v.agent_id = :aid AND v.status = 'production' "
+                    "ORDER BY v.version_number DESC LIMIT 1"
+                ),
+                {"aid": str(agent_id)},
+            )
+        ).fetchone()
+        if base is not None:
+            baseline = (
+                await session.execute(
+                    text(
+                        "SELECT summary FROM eval_runs "
+                        "WHERE organization_id = :oid AND version_id = :vid "
+                        "AND target_type = 'agent' AND status = 'completed' "
+                        "ORDER BY created_at DESC LIMIT 1"
+                    ),
+                    {"oid": organization_id, "vid": str(base["id"])},
+                )
+            ).fetchone()
+            if baseline is not None and isinstance(baseline.summary, dict):
+                baseline_quality = baseline.summary.get("quality") or {}
+        reasons = await regression_blocked(candidate_quality, baseline_quality, gate)
+
     if reasons:
         raise HTTPException(
             409,
-            "Promotion blocked por thresholds de evaluación: " + "; ".join(reasons),
+            "Promotion blocked: " + "; ".join(reasons[:6]),
         )

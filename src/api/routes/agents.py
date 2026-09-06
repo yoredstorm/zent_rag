@@ -90,6 +90,9 @@ def _agent_response(agent) -> dict:
         "tools": agent.tools,
         "model": agent.model,
         "is_active": agent.is_active,
+        # FASE 03 (S17): identidad de agente diferenciada del usuario humano.
+        "identity": f"agent://{agent.organization_id}/{agent.id}",
+        "created_by": str(agent.created_by) if agent.created_by else None,
         "created_at": agent.created_at.isoformat(),
         "config": parse_agent_config(agent.config_json),
     }
@@ -153,6 +156,7 @@ async def create_agent(
         tools=body.tools,
         model=body.model,
         config_json=config_payload,
+        created_by=ctx.user_id,
     )
     await _audit().write(ctx, "agent.created", "agent", agent.id, metadata={"name": agent.name})
     try:
@@ -162,6 +166,49 @@ async def create_agent(
     except Exception:  # noqa: BLE001
         pass
     return _agent_response(agent)
+
+
+async def _require_own_agent(request, organization_id, agent_id) -> None:
+    from src.api.deps import get_agent_repo
+
+    agent = await get_agent_repo().get_agent(organization_id, agent_id)
+    if agent is None:
+        raise HTTPException(404, "Agent not found")
+
+
+@router.get("/{agent_id}/permissions", summary="Permisos delegados del agente (FASE 03)")
+async def get_agent_permissions(agent_id: str, request: Request):
+    from src.platform.agents.permissions import get_agent_permissions as _load
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "agents:read")
+    try:
+        aid = UUID(agent_id)
+    except ValueError as exc:
+        raise HTTPException(400, "agent_id must be a valid UUID") from exc
+    await _require_own_agent(request, ctx.organization_id, aid)
+    perms = await _load(aid)
+    return {
+        "agent_id": agent_id,
+        "permissions": sorted(p for p in (perms or []) if p != "__zent_deny_all__"),
+        "explicit": perms is not None,
+    }
+
+
+@router.put("/{agent_id}/permissions", summary="Asignar permisos delegados del agente (FASE 03)")
+async def set_agent_permissions(body: dict, agent_id: str, request: Request):
+    from src.platform.agents.permissions import set_agent_permissions as _save
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "agents:write")
+    try:
+        aid = UUID(agent_id)
+    except ValueError as exc:
+        raise HTTPException(400, "agent_id must be a valid UUID") from exc
+    await _require_own_agent(request, ctx.organization_id, aid)
+    permissions = [str(p) for p in (body.get("permissions") or []) if isinstance(p, str)]
+    await _save(ctx.organization_id, aid, permissions)
+    return {"agent_id": agent_id, "permissions": sorted(set(permissions))}
 
 
 @router.get("/{agent_id}", summary="Obtener agente")

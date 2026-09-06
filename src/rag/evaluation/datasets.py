@@ -37,6 +37,7 @@ class EvalCase:
     question: str
     expected_answer: str | None = None
     expected_sources: list[str] = field(default_factory=list)
+    expected_sql: str | None = None  # FASE 03: habilita la métrica sql_accuracy
     metadata: dict = field(default_factory=dict)
 
     @property
@@ -83,11 +84,13 @@ def _normalize_case(raw: dict, index: int) -> EvalCase:
         expected_sources = [str(c) for c in raw["relevant_chunks"]]
 
     expected_answer = raw.get("expected_answer")
+    expected_sql = raw.get("expected_sql")
     return EvalCase(
         id=case_id,
         question=str(question).strip(),
         expected_answer=str(expected_answer) if expected_answer else None,
         expected_sources=[str(s) for s in expected_sources],
+        expected_sql=str(expected_sql) if expected_sql else None,
         metadata=metadata,
     )
 

@@ -35,6 +35,11 @@ async def record_trace(
     agent_id: UUID | None = None,
     deployment_id: UUID | None = None,
     run_id: UUID | None = None,
+    provider: str | None = None,
+    version_id: UUID | None = None,
+    environment: str | None = None,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
 ) -> None:
     try:
         session = await get_async_session()
@@ -46,10 +51,12 @@ async def record_trace(
                 text(
                     "INSERT INTO traces (id, organization_id, agent_id, deployment_id, "
                     "run_id, trace_id, status, model, input, output, error, "
-                    "total_latency_ms, total_tokens, cost, started_at, completed_at) "
+                    "total_latency_ms, total_tokens, cost, started_at, completed_at, "
+                    "provider, version_id, environment, prompt_tokens, completion_tokens) "
                     "VALUES (gen_random_uuid(), :oid, :aid, :did, :rid, :tid, :status, "
                     ":model, :input, :output, :error, :lat, :tokens, :cost, "
-                    ":started, NOW()) "
+                    ":started, NOW(), :provider, :version_id, :environment, "
+                    ":prompt_tokens, :completion_tokens) "
                     "ON CONFLICT (trace_id) DO NOTHING"
                 ),
                 {
@@ -67,6 +74,11 @@ async def record_trace(
                     "tokens": int(total_tokens),
                     "cost": round(cost, 8),
                     "started": started_at,
+                    "provider": (provider or "")[:60] or None,
+                    "version_id": version_id,
+                    "environment": (environment or "")[:30] or None,
+                    "prompt_tokens": int(prompt_tokens or 0),
+                    "completion_tokens": int(completion_tokens or 0),
                 },
             )
             for span in spans[:100]:
@@ -137,8 +149,9 @@ async def list_traces(
             await session.execute(
                 text(
                     "SELECT id, organization_id, agent_id, deployment_id, trace_id, "
-                    "status, model, input, total_latency_ms, total_tokens, cost, "
-                    "started_at, completed_at FROM traces WHERE "
+                    "status, model, provider, version_id, environment, input, "
+                    "total_latency_ms, total_tokens, cost, started_at, completed_at "
+                    "FROM traces WHERE "
                     + " AND ".join(where)
                     + " ORDER BY started_at DESC LIMIT :limit"
                 ),
@@ -154,9 +167,12 @@ async def list_traces(
                 "organization_id": str(r.organization_id),
                 "agent_id": str(r.agent_id) if r.agent_id else None,
                 "deployment_id": str(r.deployment_id) if r.deployment_id else None,
+                "version_id": str(r.version_id) if r.version_id else None,
+                "environment": r.environment,
                 "trace_id": r.trace_id,
                 "status": r.status,
                 "model": r.model,
+                "provider": r.provider,
                 "input": (r.input or "")[:200],
                 "total_latency_ms": round(float(r.total_latency_ms), 1),
                 "total_tokens": int(r.total_tokens),
@@ -178,7 +194,8 @@ async def get_trace(trace_id: str) -> dict | None:
                 text(
                     "SELECT id, organization_id, agent_id, deployment_id, run_id, "
                     "trace_id, status, model, input, output, error, total_latency_ms, "
-                    "total_tokens, cost, started_at, completed_at "
+                    "total_tokens, cost, started_at, completed_at, provider, "
+                    "version_id, environment, prompt_tokens, completion_tokens "
                     "FROM traces WHERE trace_id = :tid"
                 ),
                 {"tid": trace_id[:64]},
@@ -196,39 +213,100 @@ async def get_trace(trace_id: str) -> dict | None:
                 {"tid": trace_id[:64]},
             )
         ).fetchall()
+        feedback = None
+        if row.run_id is not None:
+            feedback = (
+                await session.execute(
+                    text(
+                        "SELECT rating, reason, comment, created_at FROM feedback "
+                        "WHERE run_id = :rid OR trace_id = :tid "
+                        "ORDER BY created_at LIMIT 1"
+                    ),
+                    {"tid": trace_id[:64], "rid": row.run_id},
+                )
+            ).fetchone()
     finally:
         await session.close()
+
+    span_dicts = [
+        {
+            "id": str(s.id),
+            "parent_span_id": str(s.parent_span_id) if s.parent_span_id else None,
+            "stage": s.stage,
+            "name": s.name,
+            "status": s.status,
+            "started_ms": round(float(s.started_ms), 1),
+            "duration_ms": round(float(s.duration_ms), 1),
+            "tokens": int(s.tokens),
+            "metadata": s.metadata,
+        }
+        for s in spans
+    ]
+    # Marcadores de latencia/errores (FASE 03: waterfall + bottleneck + fallbacks).
+    markers = _trace_markers(span_dicts)
     return {
         "id": str(row.id),
         "organization_id": str(row.organization_id),
         "agent_id": str(row.agent_id) if row.agent_id else None,
         "deployment_id": str(row.deployment_id) if row.deployment_id else None,
+        "version_id": str(row.version_id) if row.version_id else None,
+        "environment": row.environment,
         "run_id": str(row.run_id) if row.run_id else None,
         "trace_id": row.trace_id,
         "status": row.status,
         "model": row.model,
+        "provider": row.provider,
         "input": row.input,
         "output": row.output,
         "error": row.error,
         "total_latency_ms": round(float(row.total_latency_ms), 1),
         "total_tokens": int(row.total_tokens),
+        "prompt_tokens": int(row.prompt_tokens or 0),
+        "completion_tokens": int(row.completion_tokens or 0),
         "cost": round(float(row.cost), 6),
         "started_at": row.started_at.isoformat(),
         "completed_at": row.completed_at.isoformat(),
-        "spans": [
+        "feedback": (
             {
-                "id": str(s.id),
-                "parent_span_id": str(s.parent_span_id) if s.parent_span_id else None,
-                "stage": s.stage,
-                "name": s.name,
-                "status": s.status,
-                "started_ms": round(float(s.started_ms), 1),
-                "duration_ms": round(float(s.duration_ms), 1),
-                "tokens": int(s.tokens),
-                "metadata": s.metadata,
+                "rating": feedback.rating,
+                "reason": feedback.reason,
+                "comment": (feedback.comment or "")[:500],
+                "created_at": feedback.created_at.isoformat(),
             }
-            for s in spans
-        ],
+            if feedback is not None
+            else None
+        ),
+        "markers": markers,
+        "spans": span_dicts,
+    }
+
+
+def _trace_markers(spans) -> dict:
+    """FASE 03: bottleneck, retries, fallbacks y errores derivados de spans."""
+    llm_spans = [s for s in spans if s.get("stage") == "llm"]
+    models_used = {str(s.get("name", "")).replace("llm:", "") for s in llm_spans}
+    error_spans = [s for s in spans if s.get("status") == "error"]
+    durations = [float(s.get("duration_ms", 0) or 0) for s in spans]
+    bottleneck = (
+        max(spans, key=lambda s: float(s.get("duration_ms", 0) or 0))
+        if spans
+        else None
+    )
+    return {
+        "llm_calls": len(llm_spans),
+        "models_used": sorted(m for m in models_used if m),
+        "retries": max(len(llm_spans) - 1, 0),
+        "fallback_detected": len(models_used) > 1,
+        "error_spans": len(error_spans),
+        "bottleneck": (
+            {
+                "stage": bottleneck.get("stage"),
+                "name": bottleneck.get("name"),
+                "duration_ms": round(float(bottleneck.get("duration_ms", 0) or 0), 1),
+            }
+            if bottleneck
+            else None
+        ),
     }
 
 

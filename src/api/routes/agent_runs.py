@@ -204,6 +204,24 @@ async def get_agent_run(
     return run
 
 
+@router.post(
+    "/runs/{run_id}/analysis",
+    summary="Root cause de una respuesta (FASE 03) — admin org",
+)
+async def analyze_agent_run(run_id: UUID, request: Request):
+    """Clasifica posibles causas usando señales reales del run + feedback.
+
+    Language honesto: 'Probable cause' / 'Possible contributing factor'.
+    """
+    from src.api.security import resolve_organization
+    from src.platform.quality.analysis import analyze_run
+    from src.platform.rbac.policy import require_organization_admin
+
+    require_organization_admin(request)
+    organization_id = resolve_organization(request)
+    return await analyze_run(organization_id, run_id)
+
+
 @router.get("/{agent_id}/runs", summary="Traces de un agente (admin org)")
 async def list_agent_runs(
     agent_id: UUID,

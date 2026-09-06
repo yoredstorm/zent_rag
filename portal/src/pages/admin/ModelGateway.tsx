@@ -1,4 +1,4 @@
-import { ArrowsLeftRight, Coins, Plus } from "@phosphor-icons/react";
+import { ArrowsLeftRight, Coins, Plus, Scales } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { platformApi } from "../../api";
@@ -46,7 +46,7 @@ type ModelStat = {
 
 export default function AdminModelGatewayPage() {
   const { session } = usePlatformAuth();
-  const [tab, setTab] = useState<"routing" | "budgets" | "performance">("routing");
+  const [tab, setTab] = useState<"routing" | "budgets" | "performance" | "quality">("routing");
   const [routes, setRoutes] = useState<Route[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
   const [analytics, setAnalytics] = useState<ModelStat[]>([]);
@@ -162,14 +162,17 @@ export default function AdminModelGatewayPage() {
             { id: "routing", label: "Routing" },
             { id: "budgets", label: "Budgets" },
             { id: "performance", label: "Performance" },
+            { id: "quality", label: "Costo vs Calidad" },
           ]}
           active={tab}
-          onChange={(next) => setTab(next as "routing" | "budgets" | "performance")}
+          onChange={(next) => setTab(next as typeof tab)}
         />
       </div>
       {loading ? (
         <SkeletonBlock className="h-40" />
-      ) : tab === "routing" ? (
+      ) : (
+        <>
+          {tab === "routing" && (
           <section>
             <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
               <ArrowsLeftRight size={15} aria-hidden /> Rutas (usar alias zent-routed en el agente)
@@ -259,7 +262,8 @@ export default function AdminModelGatewayPage() {
               )}
             </div>
           </section>
-        ) : tab === "budgets" ? (
+        )}
+          {tab === "budgets" && (
           <section>
             <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
               <Coins size={15} aria-hidden /> Presupuestos por modelo
@@ -327,7 +331,8 @@ export default function AdminModelGatewayPage() {
               )}
             </div>
           </section>
-        ) : (
+        )}
+          {tab === "performance" && (
           <section>
             <h3 className="mb-2 text-sm font-semibold text-text">Analytics por modelo (30d)</h3>
             <div className="panel overflow-x-auto">
@@ -365,7 +370,80 @@ export default function AdminModelGatewayPage() {
               )}
             </div>
           </section>
+        )}
+          {tab === "quality" && session && <QualityCostPanel session={session} />}
+        </>
       )}
     </div>
+  );
+}
+
+/** FASE 03 (S10): costo vs calidad por modelo — solo datos reales. */
+function QualityCostPanel({ session }: { session: NonNullable<ReturnType<typeof usePlatformAuth>["session"]> }) {
+  const [rows, setRows] = useState<{ model: string; requests: number; cost: number; cost_per_request: number; quality: number | null; last_eval_at: string | null }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!session) return;
+    platformApi<{ models: typeof rows; note: string }>("/api/v1/platform/finops/quality-cost", { token: session.token })
+      .then((d) => setRows(d.models || []))
+      .catch((e) => setError(e instanceof Error ? e.message : "Error"))
+      .finally(() => setLoading(false));
+  }, [session]);
+
+  return (
+    <section>
+      <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
+        <Scales size={15} aria-hidden /> Costo vs calidad
+      </h3>
+      <p className="mb-3 text-xs text-muted">
+        Solo datos reales. Los cambios de modelo requieren aprobación humana — aquí no se recomienda automáticamente nada.
+      </p>
+      {error && <ErrorInline>{error}</ErrorInline>}
+      {loading ? (
+        <SkeletonBlock className="h-32" />
+      ) : (
+        <div className="panel overflow-x-auto">
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Modelo / target</th>
+                <th>Requests</th>
+                <th>Costo total</th>
+                <th>Costo / request</th>
+                <th>Calidad (composite)</th>
+                <th>Última eval</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((m) => (
+                <tr key={m.model}>
+                  <td className="mono text-xs">{m.model}</td>
+                  <td className="text-xs">{m.requests.toLocaleString()}</td>
+                  <td className="text-xs">${m.cost.toFixed(2)}</td>
+                  <td className="text-xs">${m.cost_per_request.toFixed(5)}</td>
+                  <td className="text-xs">
+                    {m.quality != null ? (
+                      <span className={`badge ${m.quality >= 0.8 ? "badge-ok" : m.quality >= 0.6 ? "badge-warning" : "badge-danger"}`}>
+                        {(m.quality * 100).toFixed(1)}%
+                      </span>
+                    ) : (
+                      <span className="text-faint">sin eval</span>
+                    )}
+                  </td>
+                  <td className="text-xs text-faint">{m.last_eval_at ? m.last_eval_at.slice(0, 16) : "—"}</td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="p-4 text-center text-xs text-faint">Sin datos de costo/calidad.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }

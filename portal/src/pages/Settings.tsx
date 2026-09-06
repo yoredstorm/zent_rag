@@ -5,6 +5,7 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { ComingSoon } from "../components/ComingSoon";
 import { PageTabs } from "../components/PageTabs";
+import ResidencyPanel from "../components/ResidencyPanel";
 import {
   ErrorInline,
   PageHeader,
@@ -171,6 +172,7 @@ export default function SettingsPage() {
               Administra tus workspaces aquí.
             </Link>
           </ComingSoon>
+          <ResidencyPanel session={session} />
         </div>
       )}
 

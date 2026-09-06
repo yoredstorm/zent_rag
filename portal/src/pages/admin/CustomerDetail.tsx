@@ -49,6 +49,7 @@ type Detail = {
 type Health = {
   score: number;
   label: string;
+  factors: { key: string; label: string; score: number; weight: number; status: string; detail: string }[];
   requests_30d: number;
   tokens_30d: number;
   cost_30d: number;
@@ -144,50 +145,37 @@ export default function AdminCustomerDetailPage() {
     if (!session || !orgId) return;
     setTimelineLoading(true);
     try {
-      const [aud, bil, ops, sec, us, not] = await Promise.all([
-        platformApi<{ entries: AuditEntry[] }>(`/api/v1/platform/organizations/${orgId}/audit`, { token: session.token }).catch(() => ({ entries: [] })),
-        platformApi<TenantBilling>(`/api/v1/platform/organizations/${orgId}/billing`, { token: session.token }).catch(() => null),
-        platformApi<{ jobs: { id: string; job_type: string; status: string; organization_id: string; created_at: string; error_summary: string | null }[] }>("/api/v1/platform/operations", { token: session.token }).catch(() => ({ jobs: [] })),
+      // FASE 03 (S12): timeline server-side con deployments/feedback/spikes.
+      const server = await platformApi<{
+        items: { id: string; at: string; kind: string; title: string; detail?: string; tone?: string }[];
+        spikes: { kind: string; at: string; detail: string; tone: string }[];
+      }>(`/api/v1/platform/organizations/${orgId}/timeline`, { token: session.token }).catch(() => ({ items: [], spikes: [] }));
+
+      const items: TimelineItem[] = (server.items || []).map((e) => ({
+        id: e.id,
+        at: e.at,
+        title: e.title,
+        detail: e.detail || undefined,
+        kind: (e.kind as TimelineItem["kind"]) || "audit",
+        tone: (e.tone as TimelineItem["tone"]) || "default",
+      }));
+      (server.spikes || []).forEach((s, i) => {
+        items.push({
+          id: `spike-${i}`,
+          at: s.at,
+          title: s.kind === "error_spike" ? "Spike de errores" : "Spike de costo",
+          detail: s.detail,
+          kind: "spike",
+          tone: (s.tone as TimelineItem["tone"]) || "warn",
+        });
+      });
+
+      // Extras que el endpoint no cubre: keys, users, notifications.
+      const [sec, us, not] = await Promise.all([
         platformApi<{ api_keys: TenantKey[] }>(`/api/v1/platform/organizations/${orgId}/security`, { token: session.token }).catch(() => ({ api_keys: [] })),
         platformApi<{ users: TenantUser[] }>(`/api/v1/platform/organizations/${orgId}/users`, { token: session.token }).catch(() => ({ users: [] })),
         platformApi<{ notifications: { id: string; title: string; organization_id: string | null; created_at: string | null }[] }>("/api/v1/platform/notifications", { token: session.token }).catch(() => ({ notifications: [] })),
       ]);
-      const items: TimelineItem[] = [];
-      (aud.entries || []).forEach((e, i) => {
-        if (!e.created_at) return;
-        items.push({
-          id: `audit-${i}`,
-          at: e.created_at,
-          title: e.action,
-          detail: e.resource_type ? `${e.resource_type}${e.resource_id ? ` · ${e.resource_id.slice(0, 8)}` : ""}` : undefined,
-          kind: "audit",
-          tone: e.action.includes("delete") || e.action.includes("cancel") || e.action.includes("suspend") ? "danger" : "default",
-        });
-      });
-      (bil?.invoices || []).forEach((inv, i) => {
-        if (!inv.created_at) return;
-        items.push({
-          id: `invoice-${i}`,
-          at: inv.created_at,
-          title: `Factura ${inv.status}`,
-          detail: `$${fmtCurrencyCents(inv.total_cents)}`,
-          kind: "billing",
-          tone: inv.status === "paid" ? "ok" : inv.status === "open" || inv.status === "draft" ? "warn" : "default",
-        });
-      });
-      (ops.jobs || [])
-        .filter((j) => j.organization_id === orgId)
-        .forEach((j, i) => {
-          if (!j.created_at) return;
-          items.push({
-            id: `job-${i}`,
-            at: j.created_at,
-            title: `Sync ${j.job_type} ${j.status}`,
-            detail: j.error_summary ? j.error_summary.slice(0, 140) : undefined,
-            kind: "job",
-            tone: j.status === "failed" || j.status === "dead" ? "danger" : j.status === "completed" ? "ok" : "default",
-          });
-        });
       (sec.api_keys || []).forEach((k, i) => {
         if (!k.created_at) return;
         items.push({
@@ -219,6 +207,7 @@ export default function AdminCustomerDetailPage() {
             tone: "warn",
           });
         });
+      items.sort((a, b) => (a.at < b.at ? 1 : -1));
       setTimeline(items);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error cargando timeline");
@@ -328,6 +317,16 @@ export default function AdminCustomerDetailPage() {
           <span className="badge badge-muted">Plan: {data.plan || "—"}</span>
           <StatusBadge status={data.subscription_status || data.status || "unknown"} />
           <TenantHealthBadge label={health.label} score={health.score} />
+          {health.factors && (
+            <span
+              className="cursor-help rounded-md border border-border bg-soft px-2 py-1 text-[11px] text-muted"
+              title={health.factors
+                .map((f) => `${f.label}: ${f.detail}${f.status !== "ok" ? " ✗" : " ✓"}`)
+                .join("\n")}
+            >
+              {health.factors.filter((f) => f.status !== "ok").length} factor(es) a revisar
+            </span>
+          )}
           <span className="mx-1 hidden h-4 w-px bg-border sm:inline-block" aria-hidden />
           <span className="text-xs text-muted">
             MRR <span className="mono font-medium text-text">{fmtCurrencyCents(data.mrr_cents, 0)}</span>
@@ -344,6 +343,23 @@ export default function AdminCustomerDetailPage() {
               {finops?.gross_margin_pct != null ? `${finops.gross_margin_pct.toFixed(1)}%` : "—"}
             </span>
           </span>
+        </div>
+      )}
+      {data && health && health.factors && health.factors.some((f) => f.status !== "ok") && (
+        <div className="mb-4 rounded-md border border-border bg-surface p-4">
+          <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-text">
+            Health {health.score}/100 · Factores
+          </h3>
+          <ul className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+            {health.factors
+              .filter((f) => f.status !== "ok")
+              .map((f) => (
+                <li key={f.key} className="flex items-center justify-between gap-2 rounded-md bg-soft px-2.5 py-1.5 text-[12px]">
+                  <span className="text-text">{f.label}</span>
+                  <span className={`mono ${f.status === "bad" ? "text-danger" : "text-warn"}`}>−{f.weight} · {f.detail}</span>
+                </li>
+              ))}
+          </ul>
         </div>
       )}
 

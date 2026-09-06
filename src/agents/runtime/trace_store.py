@@ -32,6 +32,14 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     total_tokens INTEGER DEFAULT 0,
     cost DOUBLE PRECISION DEFAULT 0,
     injection_detected BOOLEAN DEFAULT FALSE,
+    trace_id VARCHAR(64),
+    model VARCHAR(120),
+    provider VARCHAR(60),
+    deployment_id UUID,
+    version_id UUID,
+    environment VARCHAR(30),
+    prompt_tokens INTEGER DEFAULT 0,
+    completion_tokens INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 """
@@ -78,10 +86,14 @@ async def save_run(result) -> None:
                     "INSERT INTO agent_runs "
                     "(id, organization_id, agent_id, user_id, role, status, "
                     "message, answer, steps, total_latency_ms, total_tokens, "
-                    "cost, injection_detected) "
+                    "cost, injection_detected, trace_id, model, provider, "
+                    "deployment_id, version_id, environment, prompt_tokens, "
+                    "completion_tokens) "
                     "VALUES (:id, :oid, :aid, :uid, :role, :status, :message, "
                     ":answer, CAST(:steps AS jsonb), :latency, :tokens, "
-                    ":cost, :injection)"
+                    ":cost, :injection, :trace_id, :model, :provider, "
+                    ":deployment_id, :version_id, :environment, :prompt_tokens, "
+                    ":completion_tokens)"
                 ),
                 {
                     "id": result.run_id,
@@ -97,6 +109,14 @@ async def save_run(result) -> None:
                     "tokens": result.total_tokens,
                     "cost": round(result.cost, 6),
                     "injection": result.injection_detected,
+                    "trace_id": (getattr(result, "trace_id", None) or "")[:64] or None,
+                    "model": (getattr(result, "model", None) or "")[:120] or None,
+                    "provider": (getattr(result, "provider", None) or "")[:60] or None,
+                    "deployment_id": getattr(result, "deployment_id", None),
+                    "version_id": getattr(result, "version_id", None),
+                    "environment": (getattr(result, "environment", None) or "")[:30] or None,
+                    "prompt_tokens": getattr(result, "prompt_tokens", 0) or 0,
+                    "completion_tokens": getattr(result, "completion_tokens", 0) or 0,
                 },
             )
             await session.commit()
@@ -117,7 +137,9 @@ async def get_run(organization_id: UUID, run_id: UUID) -> dict | None:
                 text(
                     "SELECT id, organization_id, agent_id, user_id, role, "
                     "status, message, answer, steps, total_latency_ms, "
-                    "total_tokens, cost, injection_detected, created_at "
+                    "total_tokens, cost, injection_detected, trace_id, model, "
+                    "provider, deployment_id, version_id, environment, "
+                    "prompt_tokens, completion_tokens, created_at "
                     "FROM agent_runs "
                     "WHERE organization_id = :oid AND id = :rid"
                 ),
@@ -139,6 +161,14 @@ async def get_run(organization_id: UUID, run_id: UUID) -> dict | None:
             "total_tokens": row.total_tokens,
             "cost": row.cost,
             "injection_detected": row.injection_detected,
+            "trace_id": row.trace_id,
+            "model": row.model,
+            "provider": row.provider,
+            "deployment_id": str(row.deployment_id) if row.deployment_id else None,
+            "version_id": str(row.version_id) if row.version_id else None,
+            "environment": row.environment,
+            "prompt_tokens": row.prompt_tokens or 0,
+            "completion_tokens": row.completion_tokens or 0,
             "created_at": row.created_at.isoformat(),
         }
     finally:
@@ -157,7 +187,8 @@ async def list_runs(
         query = (
             "SELECT id, agent_id, user_id, role, status, message, "
             "total_latency_ms, total_tokens, cost, injection_detected, "
-            "created_at FROM agent_runs WHERE organization_id = :oid "
+            "trace_id, model, provider, deployment_id, version_id, "
+            "environment, created_at FROM agent_runs WHERE organization_id = :oid "
         )
         params: dict = {"oid": organization_id, "limit": limit, "offset": offset}
         if agent_id is not None:
@@ -177,6 +208,12 @@ async def list_runs(
                 "total_tokens": r.total_tokens,
                 "cost": r.cost,
                 "injection_detected": r.injection_detected,
+                "trace_id": r.trace_id,
+                "model": r.model,
+                "provider": r.provider,
+                "deployment_id": str(r.deployment_id) if r.deployment_id else None,
+                "version_id": str(r.version_id) if r.version_id else None,
+                "environment": r.environment,
                 "created_at": r.created_at.isoformat(),
             }
             for r in rows

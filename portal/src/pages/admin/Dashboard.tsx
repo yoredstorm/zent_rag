@@ -12,6 +12,14 @@ type Metrics = {
   ai_requests_30d: number;
   llm_cost_30d: number;
   gross_margin_pct: number | null;
+  churn_30d?: number;
+  churn_rate_30d_pct?: number | null;
+  arpu_cents?: number;
+  csat_pct?: number | null;
+  open_incidents?: number;
+  critical_alerts?: number;
+  error_rate_7d_pct?: number | null;
+  latency_p95_7d_ms?: number;
 };
 
 type EvalSummary = {
@@ -118,6 +126,25 @@ export default function AdminDashboardPage() {
               label="Gross margin"
               value={data.gross_margin_pct == null ? "—" : `${data.gross_margin_pct}%`}
             />
+            <StatCard
+              label="Churn (30d)"
+              value={data.churn_30d != null ? String(data.churn_30d) : "—"}
+              hint={data.churn_rate_30d_pct != null ? `${data.churn_rate_30d_pct}%` : undefined}
+            />
+            <StatCard label="ARPU (30d)" value={data.arpu_cents != null ? money(data.arpu_cents) : "—"} />
+            <StatCard
+              label="CSAT"
+              value={data.csat_pct != null ? `${data.csat_pct}%` : "—"}
+              hint="feedback up / total"
+            />
+            <StatCard
+              label="Error rate (7d)"
+              value={data.error_rate_7d_pct != null ? `${data.error_rate_7d_pct}%` : "—"}
+            />
+            <StatCard
+              label="p95 latencia"
+              value={data.latency_p95_7d_ms != null ? `${data.latency_p95_7d_ms.toFixed(0)}ms` : "—"}
+            />
             {evalSummary && (
               <StatCard
                 label="Eval runs"
@@ -125,6 +152,11 @@ export default function AdminDashboardPage() {
                 hint={`${evalSummary.organizations.length} orgs · sin texto de casos`}
               />
             )}
+            <StatCard
+              label="Incidentes abiertos"
+              value={data.open_incidents != null ? String(data.open_incidents) : "—"}
+              hint={data.critical_alerts != null ? `${data.critical_alerts} alertas críticas` : undefined}
+            />
           </div>
 
           <AttentionList

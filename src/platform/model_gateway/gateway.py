@@ -238,9 +238,86 @@ def _pick_weighted(models: list[dict]) -> str:
     return models[0]["model"]
 
 
+async def _condition_met(route: dict, organization_id: UUID) -> bool:
+    """FASE 03 (S9): evalúa condition_type (cost/latency/quality) contra estado real.
+
+    Toda decisión se registra en usage_events.routing (trazable).
+    """
+    ctype = route.get("condition_type") or "default"
+    if ctype == "default":
+        return True
+    threshold = float(route.get("condition_value") or 0)
+    if ctype == "cost":
+        # Costo promedio por request del modelo en los últimos 30 días.
+        session = await get_async_session()
+        try:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT COALESCE(AVG(COALESCE(actual_cost, estimated_cost)), -1) AS avg_cost "
+                        "FROM usage_events WHERE organization_id = :oid AND model = :model "
+                        "AND created_at >= NOW() - interval '30 days' AND event_type = 'agent_run'"
+                    ),
+                    {"oid": organization_id, "model": route["model"]},
+                )
+            ).fetchone()
+        finally:
+            await session.close()
+        avg_cost = float(row.avg_cost) if row and row.avg_cost is not None else -1.0
+        if avg_cost < 0:
+            return True  # sin datos: no excluir (fail-open observable)
+        return avg_cost <= threshold
+    if ctype == "latency":
+        session = await get_async_session()
+        try:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms), -1) AS p95 "
+                        "FROM usage_events WHERE organization_id = :oid AND model = :model "
+                        "AND created_at >= NOW() - interval '7 days'"
+                    ),
+                    {"oid": organization_id, "model": route["model"]},
+                )
+            ).fetchone()
+        finally:
+            await session.close()
+        p95 = float(row.p95) if row and row.p95 is not None else -1.0
+        if p95 < 0:
+            return True
+        return p95 <= threshold
+    if ctype == "quality":
+        # Última eval del agente que usó el modelo (composite score) — por org.
+        session = await get_async_session()
+        try:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT summary->'quality'->>'composite_score' AS score "
+                        "FROM eval_runs WHERE organization_id = :oid AND status = 'completed' "
+                        "AND summary->'quality'->>'composite_score' IS NOT NULL "
+                        "ORDER BY created_at DESC LIMIT 1"
+                    ),
+                    {"oid": organization_id},
+                )
+            ).fetchone()
+        finally:
+            await session.close()
+        if row is None or row.score is None:
+            return True
+        try:
+            score = float(row.score)
+        except (TypeError, ValueError):
+            return True
+        return score >= threshold
+    return True
+
+
 async def resolve_models(organization_id: UUID) -> list[str]:
     """Devuelve la cadena de modelos para zent-routed: [primario, fallbacks...].
-    Excluye modelos bloqueados por presupuesto y elige primario por traffic_pct."""
+    Excluye modelos bloqueados por presupuesto y rutas que no cumplen la
+    condición configurada (cost/latency/quality — FASE 03 S9); elige primario
+    por traffic_pct."""
     settings = get_settings()
     routes = await list_routes(organization_id)
     active = [r for r in routes if r["active"]]
@@ -249,9 +326,15 @@ async def resolve_models(organization_id: UUID) -> list[str]:
 
     blocked = await _blocked_models(organization_id)
     available = [r for r in active if r["model"].lower() not in blocked]
+    # Condiciones de política evaluadas con estado real (S9).
+    condition_ok: list[dict] = []
+    for r in available:
+        if await _condition_met(r, organization_id):
+            condition_ok.append(r)
+    available = condition_ok
     if not available:
-        # Todas las rutas bloqueadas por presupuesto. Solo caer al default si
-        # el default no está bloqueado; si también lo está, no hay modelo.
+        # Todas las rutas bloqueadas por presupuesto o condición. Solo caer al
+        # default si el default no está bloqueado; si también lo está, no hay modelo.
         if settings.LITELLM_DEFAULT_MODEL.lower() not in blocked:
             return [settings.LITELLM_DEFAULT_MODEL]
         return []

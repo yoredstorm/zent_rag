@@ -22,6 +22,9 @@ class ToolContext:
     user_id: UUID | None = None
     role: str = "admin"
     permissions: frozenset[str] = frozenset()
+    # FASE 03 (S18): grants explícitos del agente. None = compat (caller);
+    # frozenset() = deny-all explícito.
+    agent_permissions: frozenset[str] | None = None
     conversation_id: UUID | None = None
     org_config: dict = field(default_factory=dict)
     agent_config: dict = field(default_factory=dict)

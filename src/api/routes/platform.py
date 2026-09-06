@@ -208,24 +208,190 @@ async def platform_metrics(request: Request):
         ).fetchone()
         ai_requests_30d = int(usage_row.requests if usage_row else 0)
         llm_cost_30d = float(usage_row.cost if usage_row else 0.0)
+        extra = await _executive_kpis(session)
     finally:
         await session.close()
 
-    mrr_dollars = mrr_cents / 100.0
-    if mrr_dollars <= 0 or llm_cost_30d <= 0:
-        margin = None
-    else:
-        margin = round((mrr_dollars - llm_cost_30d) / mrr_dollars * 100.0, 2)
 
-    return {
-        "mrr_cents": mrr_cents,
-        "arr_cents": mrr_cents * 12,
-        "customers": customers,
-        "active_agents": active_agents,
-        "ai_requests_30d": ai_requests_30d,
-        "llm_cost_30d": llm_cost_30d,
-        "gross_margin_pct": margin,
-    }
+async def _executive_kpis(session) -> dict:
+    """KPIs aditivos del overview ejecutivo (FASE 03, S25)."""
+    out: dict = {}
+
+    # Churn + ARPU (finops basis: invoices pagadas).
+    finops = (
+        await session.execute(
+            text(
+                "SELECT "
+                "COUNT(*) FILTER (WHERE created_at >= NOW() - interval '30 days')::int AS paid_30d, "
+                "COALESCE(SUM(total_cents) FILTER (WHERE created_at >= NOW() "
+                "- interval '30 days'), 0)::int AS revenue_30d "
+                "FROM invoices WHERE status = 'paid'"
+            )
+        )
+    ).fetchone()
+    paid_30d = int(finops.paid_30d if finops else 0)
+    revenue_30d = int(finops.revenue_30d if finops else 0)
+    churned = (
+        await session.execute(
+            text(
+                "SELECT COUNT(*)::int AS n FROM subscriptions "
+                "WHERE status IN ('canceled', 'expired') "
+                "AND updated_at >= NOW() - interval '30 days'"
+            )
+        )
+    ).fetchone()
+    total_customers = (
+        await session.execute(
+            text(
+                "SELECT COUNT(*)::int AS n FROM organizations WHERE status = 'active'"
+            )
+        )
+    ).fetchone()
+    tc = int(total_customers.n if total_customers else 0)
+    churn_30d = int(churned.n if churned else 0)
+    out["churn_30d"] = churn_30d
+    out["churn_rate_30d_pct"] = round(churn_30d / tc * 100, 2) if tc else None
+    out["arpu_cents"] = round(revenue_30d / max(paid_30d, 1))
+
+    # CSAT/NPS desde feedback.
+    csat = (
+        await session.execute(
+            text(
+                "SELECT COUNT(*) FILTER (WHERE rating = 'up')::int AS up, "
+                "COUNT(*)::int AS total FROM feedback "
+                "WHERE created_at >= NOW() - interval '30 days'"
+            )
+        )
+    ).fetchone()
+    total_fb = int(csat.total if csat else 0)
+    up_fb = int(csat.up if csat else 0)
+    out["csat_pct"] = round(up_fb / total_fb * 100, 1) if total_fb else None
+
+    # Incidentes abiertos + alertas críticas.
+    incidents = (
+        await session.execute(
+            text(
+                "SELECT COUNT(*)::int AS n FROM incidents "
+                "WHERE status IN ('open', 'acknowledged')"
+            )
+        )
+    ).fetchone()
+    out["open_incidents"] = int(incidents.n if incidents else 0)
+    alerts = (
+        await session.execute(
+            text(
+                "SELECT COUNT(*)::int AS n FROM incident_alerts "
+                "WHERE status IN ('open', 'acknowledged') AND severity = 'critical'"
+            )
+        )
+    ).fetchone()
+    out["critical_alerts"] = int(alerts.n if alerts else 0)
+
+    # Error rate + p95 global (7d).
+    perf = (
+        await session.execute(
+            text(
+                "SELECT COUNT(*)::int AS total, "
+                "COUNT(*) FILTER (WHERE status = 'failed')::int AS errors, "
+                "COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms), 0)::float AS p95 "
+                "FROM usage_events WHERE created_at >= NOW() - interval '7 days'"
+            )
+        )
+    ).fetchone()
+    total_req = int(perf.total if perf else 0)
+    errors = int(perf.errors if perf else 0)
+    out["error_rate_7d_pct"] = round(errors / total_req * 100, 2) if total_req else None
+    out["latency_p95_7d_ms"] = round(float(perf.p95 or 0), 1)
+    return out
+
+
+@router.get(
+    "/tenants/health-distribution",
+    summary="Distribución de health por tenant (FASE 03, S11)",
+)
+async def platform_health_distribution(request: Request):
+    ctx = require_platform_permission(request, "tenant.read")
+    del ctx
+    session = await get_async_session()
+    try:
+        counts = await _health_distribution(session)
+    finally:
+        await session.close()
+    return counts
+
+
+async def _health_distribution(session) -> dict:
+    """Distribución de health por org activa (score 0-100) — FASE 03 (S11)."""
+    from src.platform.rbac.policy import require_platform_permission  # noqa: F401 (uso futuro)
+
+    counts = {"healthy": 0, "watch": 0, "at_risk": 0}
+    orgs = (
+        await session.execute(
+            text("SELECT id FROM organizations WHERE status = 'active' LIMIT 500")
+        )
+    ).fetchall()
+    for org in orgs:
+        try:
+            resp = await tenant_health_internal(session, org.id)
+        except Exception as exc:  # noqa: BLE001, S112
+            logger.warning("Health distribution org failed", error=str(exc)[:120])
+            continue
+        if resp["score"] >= 70:
+            counts["healthy"] += 1
+        elif resp["score"] >= 40:
+            counts["watch"] += 1
+        else:
+            counts["at_risk"] += 1
+    return counts
+
+
+async def tenant_health_internal(session, oid) -> dict:
+    """Versión reutilizable del health score (misma lógica que el endpoint)."""
+    org = await PostgresOrganizationRepository().get_by_id(oid)
+    if org is None:
+        return {"score": 0, "label": "UNKNOWN"}
+    usage = (
+        await session.execute(
+            text(
+                "SELECT COUNT(*) AS requests FROM usage_events WHERE organization_id = :oid "
+                "AND created_at > NOW() - INTERVAL '30 days'"
+            ),
+            {"oid": oid},
+        )
+    ).fetchone()
+    errors = (
+        await session.execute(
+            text(
+                "SELECT COUNT(*) FROM usage_events WHERE organization_id = :oid "
+                "AND status = 'failed' AND created_at > NOW() - INTERVAL '7 days'"
+            ),
+            {"oid": oid},
+        )
+    ).scalar()
+    sub = (
+        await session.execute(
+            text(
+                "SELECT status FROM subscriptions WHERE organization_id = :oid "
+                "ORDER BY created_at DESC LIMIT 1"
+            ),
+            {"oid": oid},
+        )
+    ).fetchone()
+    sub_status = sub.status if sub else None
+    score = 100
+    if org.status == "suspended":
+        score -= 60
+    if sub_status in ("canceled", "expired", "paused"):
+        score -= 30
+    if sub_status == "past_due":
+        score -= 20
+    if int(usage.requests or 0) == 0:
+        score -= 15
+    if int(errors or 0) > 10:
+        score -= 10
+    score = max(0, min(100, score))
+    label = "HEALTHY" if score >= 70 else "WATCH" if score >= 40 else "AT_RISK"
+    return {"score": score, "label": label}
 
 
 def _finops_period(start: str | None, end: str | None) -> tuple:
@@ -1199,6 +1365,91 @@ async def tenant_billing(org_id: str, request: Request):
     }
 
 
+@router.get(
+    "/organizations/{org_id}/timeline",
+    summary="Timeline del tenant con contexto de incidente (FASE 03, S12)",
+)
+async def tenant_timeline(org_id: str, request: Request, hours: int = 168):
+    from src.platform.tenants.timeline import org_timeline
+
+    oid = await _require_org(request, org_id, "tenant.read")
+    return await org_timeline(oid, hours=max(24, min(hours, 720)))
+
+
+@router.get(
+    "/finops/quality-cost",
+    summary="Costo vs calidad por modelo (FASE 03, S10)",
+)
+async def platform_quality_cost(request: Request, days: int = 30):
+    """Combina costo por modelo (finops breakdown) con la última calidad de
+    evaluación por target. Solo datos reales; candidatos requieren aprobación."""
+    ctx = require_platform_permission(request, "analytics.read")
+    del ctx
+    session = await get_async_session()
+    try:
+        cost_rows = (
+            await session.execute(
+                text(
+                    "SELECT COALESCE(model, 'unknown') AS model, "
+                    "COUNT(*) AS requests, "
+                    "COALESCE(SUM(COALESCE(actual_cost, estimated_cost)), 0) AS cost "
+                    "FROM usage_events WHERE created_at >= NOW() - (make_interval(days => :days)) "
+                    "GROUP BY 1 ORDER BY cost DESC LIMIT 25"
+                ),
+                {"days": days},
+            )
+        ).fetchall()
+        quality_rows = (
+            await session.execute(
+                text(
+                    "SELECT r.target_name, "
+                    "COALESCE(r.summary->'quality'->>'composite_score', '0') AS score, "
+                    "r.created_at FROM eval_runs r "
+                    "WHERE r.status = 'completed' "
+                    "AND r.summary->'quality'->>'composite_score' IS NOT NULL "
+                    "ORDER BY r.created_at DESC LIMIT 200"
+                ),
+            )
+        ).fetchall()
+    finally:
+        await session.close()
+
+    per_model: dict[str, dict] = {}
+    for r in cost_rows:
+        per_model[r.model] = {
+            "model": r.model,
+            "requests": int(r.requests or 0),
+            "cost": round(float(r.cost or 0), 4),
+            "cost_per_request": round(float(r.cost or 0) / max(int(r.requests or 1), 1), 6),
+            "quality": None,
+            "last_eval_at": None,
+        }
+    for r in quality_rows:
+        try:
+            score = float(r.score)
+        except (TypeError, ValueError):
+            continue
+        entry = per_model.setdefault(
+            r.target_name or "unknown",
+            {
+                "model": r.target_name or "unknown",
+                "requests": 0,
+                "cost": 0.0,
+                "cost_per_request": 0.0,
+                "quality": None,
+                "last_eval_at": None,
+            },
+        )
+        if entry["quality"] is None:
+            entry["quality"] = round(score, 3)
+            entry["last_eval_at"] = r.created_at.isoformat()
+    return {
+        "days": days,
+        "models": sorted(per_model.values(), key=lambda m: -(m["cost"] or 0)),
+        "note": "Solo datos reales. Los cambios de modelo requieren aprobación humana.",
+    }
+
+
 @router.get("/organizations/{org_id}/security", summary="Tenant 360: security")
 async def tenant_security(org_id: str, request: Request):
     oid = await _require_org(request, org_id, "tenant.read")
@@ -1302,27 +1553,110 @@ async def tenant_health(org_id: str, request: Request):
                 {"oid": oid},
             )
         ).fetchone()
+        failed_syncs = (
+            await session.execute(
+                text(
+                    "SELECT COUNT(*) FROM ingestion_jobs "
+                    "WHERE organization_id = :oid AND status = 'failed' "
+                    "AND created_at > NOW() - INTERVAL '7 days'"
+                ),
+                {"oid": oid},
+            )
+        ).scalar()
+        feedback_down = (
+            await session.execute(
+                text(
+                    "SELECT COUNT(*) FROM feedback WHERE organization_id = :oid "
+                    "AND rating = 'down' AND created_at > NOW() - INTERVAL '14 days'"
+                ),
+                {"oid": oid},
+            )
+        ).scalar()
+        open_incidents = (
+            await session.execute(
+                text(
+                    "SELECT COUNT(*) FROM incidents WHERE organization_id = :oid "
+                    "AND status IN ('open', 'acknowledged')"
+                ),
+                {"oid": oid},
+            )
+        ).scalar()
+        near_quota = (
+            await session.execute(
+                text(
+                    "SELECT COUNT(*) FROM subscriptions s "
+                    "JOIN plans p ON p.id = s.plan_id "
+                    "JOIN request_quota q ON q.subscription_id = s.id "
+                    "WHERE s.organization_id = :oid "
+                    "AND COALESCE(p.requests_per_month, 0) > 0 "
+                    "AND q.request_count >= p.requests_per_month * 0.9"
+                ),
+                {"oid": oid},
+            )
+        ).scalar()
+        recent_requests = (
+            await session.execute(
+                text(
+                    "SELECT COUNT(*) FROM usage_events WHERE organization_id = :oid "
+                    "AND created_at > NOW() - INTERVAL '7 days'"
+                ),
+                {"oid": oid},
+            )
+        ).scalar()
     finally:
         await session.close()
 
     sub_status = sub.status if sub else None
+
+    # FASE 03 (S11): health explicable — factores con peso, estado y detalle.
+    factors: list[dict] = []
+
+    def _add(key: str, label: str, penalty: int, ok: bool, detail: str) -> None:
+        factors.append(
+            {
+                "key": key,
+                "label": label,
+                "score": max(0, 100 - penalty),
+                "weight": penalty,
+                "status": "ok" if ok else "warn" if penalty < 30 else "bad",
+                "detail": detail,
+            }
+        )
+
+    _add("organization_status", "Estado de la organización", 60, org.status.value != "suspended",
+         f"organización {org.status.value}")
+    _add("payment", "Estado de pago", 30, sub_status not in ("canceled", "expired", "paused"),
+         f"suscripción {sub_status or 'sin suscripción'}")
+    _add("payment_past_due", "Pago atrasado", 20, sub_status != "past_due",
+         f"suscripción {sub_status or 'sin suscripción'}")
+    _add("api_usage", "Uso de API", 15, int(usage.requests or 0) > 0,
+         f"{int(usage.requests or 0)} requests en 30d")
+    _add("errors", "Errores de API", 10, int(errors or 0) <= 10,
+         f"{int(errors or 0)} errores en 7d")
+    _add("failed_syncs", "Syncs fallidos", 8, int(failed_syncs or 0) == 0,
+         f"{int(failed_syncs or 0)} ingestion jobs fallidos en 7d")
+    _add("ai_quality", "Calidad de IA (feedback)", 8, int(feedback_down or 0) <= 3,
+         f"{int(feedback_down or 0)} feedbacks negativos en 14d")
+    _add("deployment_health", "Salud de deployments", 10, int(errors or 0) <= 10,
+         "derivado de errores de API")
+    _add("incidents", "Incidentes abiertos", 15, int(open_incidents or 0) == 0,
+         f"{int(open_incidents or 0)} incidente(s) abierto(s)")
+    _add("quota", "Cuota del plan", 12, int(near_quota or 0) == 0,
+         "cerca del límite de cuota" if int(near_quota or 0) > 0 else "cuota normal")
+    _add("usage_trend", "Tendencia de uso", 5, int(recent_requests or 0) > 0,
+         f"{int(recent_requests or 0)} requests en 7d")
+
     score = 100
-    if org.status == "suspended":
-        score -= 60
-    if sub_status in ("canceled", "expired", "paused"):
-        score -= 30
-    if sub_status == "past_due":
-        score -= 20
-    if int(usage.requests or 0) == 0:
-        score -= 15
-    if int(errors or 0) > 10:
-        score -= 10
+    for f in factors:
+        if f["status"] != "ok":
+            score -= f["weight"]
     score = max(0, min(100, score))
     label = "HEALTHY" if score >= 70 else "WATCH" if score >= 40 else "AT_RISK"
     return {
         "organization_id": str(oid),
         "score": score,
         "label": label,
+        "factors": factors,
         "requests_30d": int(usage.requests or 0),
         "tokens_30d": int(usage.tokens or 0),
         "cost_30d": float(usage.cost or 0),
@@ -4257,6 +4591,68 @@ async def platform_releases_list(request: Request):
     from src.platform.releases.releases import list_releases
 
     return await list_releases()
+
+
+@router.get(
+    "/releases/migrations",
+    summary="Estado de migraciones de esquema (FASE 03, S22)",
+)
+async def platform_migrations_status(request: Request):
+    """Head alembic actual + migraciones pendientes y compatibilidad."""
+    import ast
+    from pathlib import Path
+
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    ctx = require_platform_permission(request, "operations.read")
+    del ctx
+
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
+        ).fetchone()
+    finally:
+        await session.close()
+    current = row.version_num if row else None
+
+    versions_dir = Path(__file__).resolve().parents[2] / "infrastructure" / "db_init" / "versions"
+    known: set[str] = set()
+    for f in sorted(versions_dir.glob("[0-9]*.py")):
+        try:
+            tree = ast.parse(f.read_text(encoding="utf-8"))
+            revision = None
+            for node in tree.body:
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name) and target.id == "revision":
+                            if isinstance(node.value, ast.Constant):
+                                revision = str(node.value.value)
+            if revision:
+                known.add(revision)
+        except Exception as exc:  # noqa: BLE001, S112
+            logger.warning("Migration file parse failed", error=str(exc)[:120])
+            continue
+
+    # Pendientes: migraciones en el directorio posteriores al head de la DB.
+    pending: list[str] = []
+    current_key = _revision_key(current) if current else (0, "")
+    for rev in sorted(known, key=_revision_key):
+        if _revision_key(rev) > current_key:
+            pending.append(rev)
+
+    return {
+        "current": current,
+        "pending": pending,
+        "applied_count": len(known),
+        "up_to_date": not pending,
+    }
+
+
+def _revision_key(rev: str):
+    return (len(rev), rev)
 
 # ------------------------------------------------------------------ PROMPT 43
 # AI Copilot & Assistant Platform v2

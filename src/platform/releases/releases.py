@@ -18,6 +18,64 @@ HEALTH_GATE_MIN = 70.0
 
 
 # ---------------------------------------------------------------------------
+# Canary traffic split (FASE 03, S7)
+# ---------------------------------------------------------------------------
+async def resolve_deployment_version(
+    organization_id: UUID,
+    agent_id: UUID,
+    current_version_id: UUID,
+    request_key: str,
+) -> tuple[UUID, dict | None]:
+    """Resuelve la versión para un request desplegado con split canary.
+
+    Si existe un release canary running con traffic_pct < 100 para el agente,
+    enruta por hash estable del request_key (request id): bucket < traffic_pct
+    → versión canary; si no → versión actual. La decisión se devuelve para
+    registrarla en usage_events.routing (trazable).
+    """
+    import hashlib
+
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT r.version_id, r.traffic_pct FROM agent_releases r "
+                    "JOIN agent_versions v ON v.id = r.version_id "
+                    "WHERE r.agent_id = :aid AND r.channel = 'canary' "
+                    "AND r.status = 'running' AND r.traffic_pct < 100 "
+                    "ORDER BY r.created_at DESC LIMIT 1"
+                ),
+                {"aid": agent_id},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+
+    if row is None:
+        return current_version_id, None
+
+    bucket = int(hashlib.sha256(str(request_key).encode()).hexdigest(), 16) % 100
+    canary_version_id = row.version_id
+    traffic_pct = int(row.traffic_pct)
+    if bucket < traffic_pct:
+        return canary_version_id, {
+            "channel": "canary",
+            "traffic_pct": traffic_pct,
+            "bucket": bucket,
+            "chosen": "canary",
+            "version_id": str(canary_version_id),
+        }
+    return current_version_id, {
+        "channel": "canary",
+        "traffic_pct": traffic_pct,
+        "bucket": bucket,
+        "chosen": "stable",
+        "version_id": str(current_version_id),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Historial de versiones + diff
 # ---------------------------------------------------------------------------
 async def list_versions(agent_id: UUID) -> dict:
