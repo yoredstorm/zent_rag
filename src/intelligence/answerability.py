@@ -198,8 +198,15 @@ class AnswerabilityGate:
                 ),
             )
 
-        # 4) CLARIFICATION_REQUIRED — ambigüedad resoluble con UNA pregunta
-        if understanding.ambiguity and understanding.clarifying_question:
+        # 4) CLARIFICATION_REQUIRED — ambigüedad resoluble con UNA pregunta.
+        #    Solo se pide aclaración cuando NO hay evidencia contestable: si la
+        #    recuperación/SQL ya aporta una respuesta, responder con evidencia
+        #    es preferible a frictionar al usuario (p. ej. el demo de farmacia).
+        if (
+            understanding.ambiguity
+            and understanding.clarifying_question
+            and signals.result_presence <= 0
+        ):
             return AnswerabilityDecision(
                 status=AnswerabilityStatus.CLARIFICATION_REQUIRED,
                 answerable=False,
@@ -213,7 +220,7 @@ class AnswerabilityGate:
             )
 
         # 5) AMBIGUOUS — ambigüedad sin pregunta única que la resuelva
-        if understanding.ambiguity:
+        if understanding.ambiguity and signals.result_presence <= 0:
             return AnswerabilityDecision(
                 status=AnswerabilityStatus.AMBIGUOUS,
                 answerable=False,

@@ -189,7 +189,21 @@ class TestQueryPlanner:
             query="¿Cuál es el margen del último trimestre?",
             sql_available=True,
         )
-        assert plan.strategy == PlanStrategy.CLARIFICATION
+        # Con fuentes disponibles se recopila evidencia; el gate decide la
+        # aclaración post-evidencia (no frictiona con datos en mano).
+        assert plan.strategy != PlanStrategy.CLARIFICATION
+        assert plan.needs_sql or plan.needs_retrieval
+
+    def test_ambiguous_without_sources_goes_abstain(self) -> None:
+        """Sin fuentes, la abstención (DATA_MISSING) es más informativa que clarificar."""
+        plan = self.planner.plan(
+            _understanding(
+                ambiguity=True, clarifying_question="¿Quieres margen bruto o neto?"
+            ),
+            query="¿Cuál es el margen del último trimestre?",
+            sql_available=False, kb_available=False, tools_available=False,
+        )
+        assert plan.strategy == PlanStrategy.ABSTAIN
 
     def test_no_sources_goes_abstain(self) -> None:
         plan = self.planner.plan(
@@ -271,20 +285,31 @@ class TestAnswerabilityGate:
 
     def test_clarification_required(self) -> None:
         decision = self._eval(
+            _gate_signals(result_presence=0.0),
+            understanding=_understanding(
+                ambiguity=True, clarifying_question="¿Bruto o neto?"
+            ),
+            evidences=[],
+        )
+        assert decision.status == AnswerabilityStatus.CLARIFICATION_REQUIRED
+        assert decision.clarifying_question == "¿Bruto o neto?"
+
+    def test_clarification_not_asked_when_evidence_exists(self) -> None:
+        """Con evidencia contestable NO se pide aclaración (se responde)."""
+        decision = self._eval(
             _gate_signals(),
             understanding=_understanding(
                 ambiguity=True, clarifying_question="¿Bruto o neto?"
             ),
             evidences=[_evidence("ERP", 10.0)],
         )
-        assert decision.status == AnswerabilityStatus.CLARIFICATION_REQUIRED
-        assert decision.clarifying_question == "¿Bruto o neto?"
+        assert decision.status == AnswerabilityStatus.ANSWERABLE
 
     def test_ambiguous_without_question(self) -> None:
         decision = self._eval(
-            _gate_signals(),
+            _gate_signals(result_presence=0.0),
             understanding=_understanding(ambiguity=True, clarifying_question=None),
-            evidences=[_evidence("ERP", 10.0)],
+            evidences=[],
         )
         assert decision.status == AnswerabilityStatus.AMBIGUOUS
 

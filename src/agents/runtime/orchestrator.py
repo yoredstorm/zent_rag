@@ -400,6 +400,7 @@ class RAGOrchestrator:
                     intelligence_understanding = await self._intelligence.understand(  # type: ignore[union-attr]
                         organization_id,
                         query,
+                        use_llm=not is_followup,
                     )
                 router_score: float | None = None
                 if self._sql_router is not None:
@@ -488,7 +489,6 @@ class RAGOrchestrator:
                         plan=intelligence_plan,
                         budget=intelligence_budget,
                     )
-
             # -----------------------------------------------------------------
             # Paso 4: Ejecutar retrieval + SQL Expert EN PARALELO
             # -----------------------------------------------------------------

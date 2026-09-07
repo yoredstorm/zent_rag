@@ -35,21 +35,21 @@ class QueryPlanner:
         rationale: list[str] = []
         limitations: list[str] = []
 
-        # 1) Ambigüedad resoluble con UNA pregunta -> CLARIFICATION
-        if understanding.ambiguity and understanding.clarifying_question:
-            return QueryPlan(
-                strategy=PlanStrategy.CLARIFICATION,
-                steps=["ask_clarification"],
-                rationale=["Ambigüedad resoluble con una única pregunta"],
-            )
-
-        # 2) Sin ninguna fuente disponible -> ABSTAIN
+        # 1) Sin ninguna fuente disponible -> ABSTAIN
         if not sql_available and not kb_available and not tools_available:
             return QueryPlan(
                 strategy=PlanStrategy.ABSTAIN,
                 steps=["abstain"],
                 rationale=["Ninguna fuente disponible para esta consulta"],
                 limitations=["No hay SQL, ni knowledge base, ni tools configuradas"],
+            )
+
+        # 2) Ambigüedad: con fuentes se recopila evidencia y el Answerability
+        #    Gate decide la aclaración post-evidencia (responder con datos
+        #    gana a frictionar al usuario). Sin fuentes -> CLARIFICATION.
+        if understanding.ambiguity:
+            rationale.append(
+                "Ambigüedad detectada: recopilar evidencia antes de decidir aclaración"
             )
 
         unresolved = [
@@ -61,9 +61,12 @@ class QueryPlanner:
                 understanding.requires_structured_data
                 or (router_score is not None and router_score >= sql_router_threshold)
             ):
-                rationale.append(
-                    f"Intento business_metric con señales SQL (router={router_score:.2f})"
+                router_desc = (
+                    f"router={router_score:.2f}"
+                    if router_score is not None
+                    else "sin score de router"
                 )
+                rationale.append(f"Intento business_metric con señales SQL ({router_desc})")
                 causal = bool(_CAUSAL_RE.search(query))
                 needs_docs = understanding.requires_documents or causal
                 if needs_docs and kb_available:

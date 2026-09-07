@@ -233,10 +233,15 @@ class QueryUnderstandingService:
         self,
         query: str,
         resolve_concepts: Callable[[list[str]], Awaitable[dict[str, bool]]] | None = None,
+        use_llm: bool = True,
     ) -> QueryUnderstanding:
         understanding = self.understand_deterministic(query)
 
-        if self._llm is not None and self._concept_llm_enabled:
+        if (
+            use_llm
+            and self._llm is not None
+            and self._concept_llm_enabled
+        ):
             try:
                 resp = await self._llm.generate(
                     prompt=_LLM_UNDERSTAND_PROMPT.format(question=query[:3000]),
@@ -272,8 +277,13 @@ class QueryUnderstandingService:
         entities = [str(e).strip() for e in (parsed.get("entities") or [])]
         entities = [e for e in entities if e]
         clarifying = parsed.get("clarifying_question")
+        if clarifying is not None:
+            clarifying = str(clarifying).strip()
+            # El LLM a veces devuelve el literal "null"/"none" en vez de JSON null.
+            if not clarifying or clarifying.lower() in ("null", "none", "n/a"):
+                clarifying = None
         ambiguity = bool(parsed.get("ambiguity")) or (
-            clarifying is not None and str(clarifying).strip() != ""
+            clarifying is not None
         )
         time_scope = parsed.get("time_scope")
         if not time_scope or str(time_scope).strip().lower() == "null":

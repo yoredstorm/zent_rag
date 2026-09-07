@@ -376,7 +376,9 @@ class TestEngineGoldenCases:
             understanding, query="¿Cuál es el margen del trimestre?",
             sql_available=True, router_score=0.9,
         )
-        assert plan.strategy.value == "clarification"
+        # Con fuentes disponibles el plan recopila evidencia; sin evidencia
+        # contestable (sin definición/retrieval) el gate pide aclaración.
+        assert plan.needs_sql or plan.needs_retrieval
         decision = engine.evaluate(
             engine.collect_signals(understanding, plan, None, None, []),
             understanding, plan, [],

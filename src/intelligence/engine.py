@@ -118,12 +118,14 @@ class IntelligenceEngine:
         self,
         organization_id: UUID,
         query: str,
+        use_llm: bool = True,
     ) -> QueryUnderstanding:
         return await self._understanding_service.understand(
             query,
             resolve_concepts=lambda concepts: self._definitions.resolve_concepts(
                 organization_id, concepts
             ),
+            use_llm=use_llm,
         )
 
     def plan(
