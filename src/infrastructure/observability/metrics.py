@@ -171,6 +171,129 @@ rag_agent_loop_preventions_total = Counter(
     labelnames=["organization_id", "scope"],  # scope: sql_repair | agent_runtime
 )
 
+# -----------------------------------------------------------------------------
+# Zent Discovery Engine & Semantic Catalog (FASE 24)
+# -----------------------------------------------------------------------------
+rag_discovery_jobs_total = Counter(
+    "rag_discovery_jobs_total",
+    "Jobs de discovery ejecutados por el Discovery Engine",
+    labelnames=["organization_id", "engine", "status"],
+)
+
+rag_discovery_duration_seconds = Histogram(
+    "rag_discovery_duration_seconds",
+    "Duración de scans de discovery",
+    labelnames=["organization_id"],
+    buckets=(1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0),
+)
+
+rag_catalog_objects_total = Counter(
+    "rag_catalog_objects_total",
+    "Objetos registrados en el catálogo",
+    labelnames=["organization_id", "object_type"],
+)
+
+rag_inferred_relationships_total = Counter(
+    "rag_inferred_relationships_total",
+    "Relaciones inferidas sin FK declarada",
+    labelnames=["organization_id"],
+)
+
+rag_approved_relationships_total = Counter(
+    "rag_approved_relationships_total",
+    "Relaciones confirmadas/aprobadas",
+    labelnames=["organization_id"],
+)
+
+rag_unknown_codes_total = Counter(
+    "rag_unknown_codes_total",
+    "Columnas categóricas sin significado documentado (UNDEFINED_ENUM)",
+    labelnames=["organization_id"],
+)
+
+rag_semantic_suggestions_total = Counter(
+    "rag_semantic_suggestions_total",
+    "Sugerencias semánticas creadas",
+    labelnames=["organization_id", "type"],
+)
+
+rag_semantic_suggestions_approved_total = Counter(
+    "rag_semantic_suggestions_approved_total",
+    "Sugerencias semánticas aprobadas por humanos",
+    labelnames=["organization_id"],
+)
+
+rag_context_readiness = Gauge(
+    "rag_context_readiness",
+    "Context Readiness global (último cálculo, 0-100)",
+    labelnames=["organization_id"],
+)
+
+# -----------------------------------------------------------------------------
+# Governed Learning (FASE 25)
+# -----------------------------------------------------------------------------
+rag_context_gaps_total = Counter(
+    "rag_context_gaps_total",
+    "Gaps de contexto registrados",
+    labelnames=["organization_id", "type"],
+)
+
+rag_context_gaps_resolved_total = Counter(
+    "rag_context_gaps_resolved_total",
+    "Gaps resueltos",
+    labelnames=["organization_id"],
+)
+
+rag_semantic_approvals_total = Counter(
+    "rag_semantic_approvals_total",
+    "Aprobaciones de conocimiento semántico",
+    labelnames=["organization_id", "knowledge_type"],
+)
+
+rag_semantic_rejections_total = Counter(
+    "rag_semantic_rejections_total",
+    "Rechazos de conocimiento semántico",
+    labelnames=["organization_id"],
+)
+
+rag_answerability_rate = Gauge(
+    "rag_answerability_rate",
+    "Tasa de answerability (último cálculo, 0-100)",
+    labelnames=["organization_id"],
+)
+
+rag_unsupported_question_rate = Gauge(
+    "rag_unsupported_question_rate",
+    "Tasa de preguntas no soportadas (último cálculo, 0-100)",
+    labelnames=["organization_id"],
+)
+
+rag_context_gap_resolution_time = Histogram(
+    "rag_context_gap_resolution_time_seconds",
+    "Tiempo entre creación y resolución de gaps",
+    labelnames=["organization_id"],
+    buckets=(60, 600, 3600, 86400, 604800, 2592000),
+)
+
+rag_spider_scan_duration_seconds = Histogram(
+    "rag_spider_scan_duration_seconds",
+    "Duración de scans del Zent Spider",
+    labelnames=["organization_id"],
+    buckets=(1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0),
+)
+
+rag_spider_findings_total = Counter(
+    "rag_spider_findings_total",
+    "Hallazgos del Zent Spider",
+    labelnames=["organization_id", "kind"],
+)
+
+rag_knowledge_invalidations_total = Counter(
+    "rag_knowledge_invalidations_total",
+    "Invalidaciones de conocimiento por revocación",
+    labelnames=["organization_id"],
+)
+
 
 def setup_metrics(app: FastAPI) -> Instrumentator:
     """Configura y expone /metrics para Prometheus scraping.

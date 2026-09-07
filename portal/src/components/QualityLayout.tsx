@@ -3,6 +3,8 @@ import {
   ChartBar,
   Flask,
   Gauge,
+  ListChecks,
+  TrendUp,
   type Icon,
 } from "@phosphor-icons/react";
 import { NavLink } from "react-router-dom";
@@ -13,6 +15,8 @@ const QUALITY_TABS: { to: string; label: string; icon: Icon; end?: boolean }[] =
   { to: "/evaluation/datasets", label: "Datasets", icon: Flask },
   { to: "/evaluation/runs", label: "Runs", icon: ChartBar },
   { to: "/evaluation/compare", label: "Regresiones", icon: ArrowCounterClockwise },
+  { to: "/evaluation/gaps", label: "Context Gaps", icon: ListChecks },
+  { to: "/evaluation/impact", label: "Impacto", icon: TrendUp },
 ];
 
 /** Hub de Calidad: subnavegación compartida entre Calidad de IA y Evaluación. */

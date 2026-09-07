@@ -16,12 +16,17 @@ from src.connectors.plugin.base import (
     assert_host_safe,
 )
 from src.connectors.plugin.models import (
+    ColumnProfile,
     ColumnSchema,
+    DeepSchemaDiscovery,
+    DeepTableProfile,
     IndexInfo,
+    Relationship,
     SchemaDiscovery,
     TableSchema,
 )
 from src.core.config import get_settings
+from src.core.domain.pii import is_sensitive_column, pii_flags_for_column
 
 _SYSTEM_SCHEMAS = {"information_schema", "pg_catalog", "pg_toast"}
 
@@ -217,6 +222,204 @@ class PostgresPlugin(ConnectorPlugin):
             return int(row[0]) if row else None
         except Exception:
             return None
+
+    async def deep_discover(self, max_samples: int = 50) -> DeepSchemaDiscovery:
+        """Discovery profundo read-only: comentarios, FKs y estadísticas pg_stats.
+
+        Los perfiles provienen de metadata/estadísticas del catálogo (pg_stats),
+        NO de consultas sobre datos de producción.
+        """
+        await self.connect()
+        try:
+            async with self._engine.connect() as conn:  # type: ignore[union-attr]
+                discovery = await self.discover()
+                tables: list[DeepTableProfile] = []
+                for table in discovery.tables:
+                    table_comment = await self._table_comment(conn, table)
+                    stats = await self._column_stats(conn, table, max_samples)
+                    fks = await self._foreign_keys(conn, table)
+                    columns = []
+                    for c in table.columns:
+                        stat = stats.get(c.name)
+                        columns.append(
+                            ColumnProfile(
+                                name=c.name,
+                                data_type=c.data_type,
+                                nullable=c.nullable,
+                                is_primary_key=c.is_primary_key,
+                                column_comment=stat.get("comment") if stat else None,
+                                null_ratio=stat.get("null_frac") if stat else None,
+                                cardinality=stat.get("n_distinct") if stat else None,
+                                distinct_values=stat.get("common_vals") or [],
+                                pii_flags=pii_flags_for_column(c.name),
+                                sensitive=is_sensitive_column(c.name),
+                                sample_disabled=is_sensitive_column(c.name),
+                            )
+                        )
+                    tables.append(
+                        DeepTableProfile(
+                            table_name=table.name,
+                            schema=table.schema,
+                            is_view=table.is_view,
+                            row_count_approx=table.row_count,
+                            table_comment=table_comment,
+                            columns=columns,
+                            foreign_keys=fks,
+                        )
+                    )
+            return DeepSchemaDiscovery(tables=tables, source="postgres")
+        except ConnectorError:
+            raise
+        except Exception as exc:
+            raise ConnectorError(f"Deep discovery failed: {exc}") from exc
+        finally:
+            await self.close()
+
+    async def _table_comment(self, conn, table: TableSchema) -> str | None:
+        try:
+            row = (
+                await conn.execute(
+                    text(
+                        "SELECT obj_description(c.oid) "
+                        "FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+                        "WHERE n.nspname = :schema AND c.relname = :table"
+                    ),
+                    {"schema": table.schema, "table": table.name},
+                )
+            ).fetchone()
+            return str(row[0])[:2000] if row and row[0] else None
+        except Exception:
+            return None
+
+    async def _column_stats(
+        self, conn, table: TableSchema, max_samples: int
+    ) -> dict[str, dict]:
+        """null_frac / n_distinct / most_common_vals desde pg_stats (OBSERVED)."""
+        out: dict[str, dict] = {}
+        try:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT attname, null_frac, n_distinct, "
+                        "most_common_vals::text, most_common_freqs::text "
+                        "FROM pg_stats "
+                        "WHERE schemaname = :schema AND tablename = :table"
+                    ),
+                    {"schema": table.schema, "table": table.name},
+                )
+            ).fetchall()
+            for row in rows:
+                n_distinct = row.n_distinct
+                if n_distinct is None:
+                    cardinality = None
+                elif n_distinct < 0:
+                    cardinality = None
+                else:
+                    cardinality = int(n_distinct)
+                common_vals: list[str] = []
+                if row.most_common_vals:
+                    raw = str(row.most_common_vals)
+                    if raw.startswith("{") and raw.endswith("}"):
+                        common_vals = [
+                            v.strip('"') for v in raw[1:-1].split(",") if v.strip() != ""
+                        ]
+                out[row.attname] = {
+                    "null_frac": round(float(row.null_frac), 4) if row.null_frac is not None else None,
+                    "n_distinct": cardinality,
+                    "common_vals": common_vals[: max(int(max_samples), 10)],
+                    "comment": None,
+                }
+        except Exception:
+            pass
+        # Comentarios de columna (independiente de pg_stats).
+        try:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT a.attname, col_description(c.oid, a.attnum) AS comment "
+                        "FROM pg_class c "
+                        "JOIN pg_namespace n ON n.oid = c.relnamespace "
+                        "JOIN pg_attribute a ON a.attrelid = c.oid "
+                        "WHERE n.nspname = :schema AND c.relname = :table "
+                        "AND a.attnum > 0 AND NOT a.attisdropped"
+                    ),
+                    {"schema": table.schema, "table": table.name},
+                )
+            ).fetchall()
+            for row in rows:
+                if row.comment:
+                    entry = out.setdefault(row.attname, {"comment": None})
+                    entry["comment"] = str(row.comment)[:2000]
+        except Exception:
+            pass
+        return out
+
+    async def _foreign_keys(self, conn, table: TableSchema) -> list[Relationship]:
+        try:
+            rows = (
+                await conn.execute(
+                    text(
+                        "SELECT kcu.column_name AS from_column, "
+                        "ccu.table_name AS to_table, ccu.column_name AS to_column "
+                        "FROM information_schema.table_constraints tc "
+                        "JOIN information_schema.key_column_usage kcu "
+                        "  ON tc.constraint_name = kcu.constraint_name "
+                        " AND tc.table_schema = kcu.table_schema "
+                        "JOIN information_schema.constraint_column_usage ccu "
+                        "  ON ccu.constraint_name = tc.constraint_name "
+                        " AND ccu.constraint_schema = tc.table_schema "
+                        "WHERE tc.constraint_type = 'FOREIGN KEY' "
+                        "AND tc.table_schema = :schema AND tc.table_name = :table"
+                    ),
+                    {"schema": table.schema, "table": table.name},
+                )
+            ).fetchall()
+            return [
+                Relationship(
+                    from_column=r.from_column,
+                    to_table=r.to_table,
+                    to_column=r.to_column,
+                )
+                for r in rows
+            ]
+        except Exception:
+            return []
+
+    async def sample_distinct_values(
+        self, schema: str, table: str, column: str, max_samples: int = 50
+    ) -> list[str]:
+        """Muestreo acotado de valores distintos (solo lectura, LIMIT).
+
+        La capa de profiling decide cuándo invocarlo (nunca para columnas
+        sensibles; presupuesto de queries por scan).
+        """
+        from src.connectors.sql.schema_discovery import quote_ident
+
+        try:
+            schema_ident = quote_ident(schema)
+            table_ident = quote_ident(table)
+            col_ident = quote_ident(column)
+        except ValueError:
+            return []
+        try:
+            await self.connect()
+            try:
+                async with self._engine.connect() as conn:  # type: ignore[union-attr]
+                    rows = (
+                        await conn.execute(  # noqa: S608 — identifiers quote_ident-validados
+                            text(
+                                f"SELECT DISTINCT {col_ident} FROM "
+                                f"{schema_ident}.{table_ident} "
+                                f"WHERE {col_ident} IS NOT NULL "
+                                f"ORDER BY 1 LIMIT {int(max_samples)}"
+                            )
+                        )
+                    ).fetchall()
+                    return [str(r[0])[:200] for r in rows]
+            finally:
+                await self.close()
+        except Exception:
+            return []
 
     async def close(self) -> None:
         engine = getattr(self, "_engine", None)

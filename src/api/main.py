@@ -15,6 +15,7 @@ import asyncio
 import sys
 from contextlib import asynccontextmanager, nullcontext
 from pathlib import Path
+from uuid import UUID
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -152,6 +153,8 @@ async def lifespan(app: FastAPI):
             _retention_task = asyncio.create_task(_retention_loop())
             _webhook_deliveries_task = asyncio.create_task(_webhook_deliveries_loop())
             _knowledge_refresh_task = asyncio.create_task(_knowledge_refresh_loop())
+            _catalog_discovery_task = asyncio.create_task(_catalog_discovery_loop())
+            _spider_task = asyncio.create_task(_spider_loop())
             yield
         finally:
             _region_health_task.cancel()
@@ -160,6 +163,8 @@ async def lifespan(app: FastAPI):
             _retention_task.cancel()
             _webhook_deliveries_task.cancel()
             _knowledge_refresh_task.cancel()
+            _catalog_discovery_task.cancel()
+            _spider_task.cancel()
             await _run_shutdown()
 
 
@@ -191,6 +196,77 @@ async def _knowledge_refresh_loop() -> None:
                 logger.info("knowledge refresh loop", refreshed=result["refreshed"])
         except Exception:  # noqa: BLE001
             logger.exception("knowledge refresh loop failed")
+        await _asyncio.sleep(300)
+
+
+async def _catalog_discovery_loop() -> None:
+    """Scheduler del Discovery Engine: encola rescans programados (FASE 24)."""
+    import asyncio as _asyncio
+    from datetime import datetime, timezone
+
+    while True:
+        try:
+            if not settings.RAG_CATALOG_ENABLED:
+                await _asyncio.sleep(300)
+                continue
+            from src.api.deps import get_catalog_store, get_job_repo
+            from src.catalog.jobs import start_discovery_scan
+
+            store = get_catalog_store()
+            due = await store.list_due_scans(datetime.now(timezone.utc), limit=10)
+            for source in due:
+                try:
+                    await start_discovery_scan(
+                        job_repo=get_job_repo(),
+                        catalog_store=store,
+                        organization_id=UUID(source["organization_id"]),
+                        connector_id=UUID(source["connector_id"]),
+                        scan_type="scheduled",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Scheduled catalog rescan failed",
+                        source_id=source["id"],
+                        error=str(exc)[:200],
+                    )
+            if due:
+                logger.info("catalog discovery loop", enqueued=len(due))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("catalog discovery loop error", error=str(exc)[:150])
+        await _asyncio.sleep(300)
+
+
+async def _spider_loop() -> None:
+    """Scheduler del Zent Spider: políticas vencidas -> jobs spider:run (FASE 25)."""
+    import asyncio as _asyncio
+    from datetime import datetime, timezone
+
+    while True:
+        try:
+            if not settings.RAG_SPIDER_ENABLED or not settings.RAG_LEARNING_ENABLED:
+                await _asyncio.sleep(300)
+                continue
+            from src.api.deps import get_learning_store, get_spider_service
+
+            store = get_learning_store()
+            due = await store.list_due_spider_policies(
+                datetime.now(timezone.utc), limit=10
+            )
+            for policy in due:
+                try:
+                    await get_spider_service().start_policy_run(
+                        UUID(policy["organization_id"]), UUID(policy["id"])
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Scheduled spider run failed",
+                        policy_id=policy["id"],
+                        error=str(exc)[:200],
+                    )
+            if due:
+                logger.info("spider loop", enqueued=len(due))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("spider loop error", error=str(exc)[:150])
         await _asyncio.sleep(300)
 
 
@@ -501,6 +577,12 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     from src.api.routes.intelligence import router as intelligence_router
 
     new_app.include_router(intelligence_router)
+    from src.api.routes.catalog import router as catalog_router
+
+    new_app.include_router(catalog_router)
+    from src.api.routes.learning import router as learning_router
+
+    new_app.include_router(learning_router)
 
     # -------------------------------------------------------------------------
     # MCP Server — montado como sub-app: TODOS los middleware de la API

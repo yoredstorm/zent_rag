@@ -303,6 +303,194 @@ def get_retriever():
 _intelligence_engine: object | None = None
 _intelligence_store: object | None = None
 _business_definition_registry: object | None = None
+_catalog_store: object | None = None
+_catalog_discovery_engine: object | None = None
+_semantic_schema_linking: object | None = None
+_learning_store: object | None = None
+_context_gap_analyzer: object | None = None
+_context_advisor: object | None = None
+_approval_service: object | None = None
+_replay_engine: object | None = None
+_spider_service: object | None = None
+_revocation_service: object | None = None
+_agent_readiness_service: object | None = None
+_learning_analytics: object | None = None
+
+
+def get_learning_store():
+    """Store del ciclo gobernado (FASE 25)."""
+    global _learning_store
+    if _learning_store is None:
+        from src.learning.store import PostgresLearningStore
+
+        _learning_store = PostgresLearningStore()
+    return _learning_store
+
+
+def get_context_gap_analyzer():
+    """ContextGapAnalyzer (convierte abstenciones en gaps estructurados)."""
+    global _context_gap_analyzer
+    if _context_gap_analyzer is None:
+        from src.learning.gaps import ContextGapAnalyzer
+
+        _context_gap_analyzer = ContextGapAnalyzer(
+            get_learning_store(), intelligence_store=get_intelligence_store()
+        )
+    return _context_gap_analyzer
+
+
+def get_context_advisor():
+    """ContextAdvisor (recomendaciones accionables sobre gaps reales)."""
+    global _context_advisor
+    if _context_advisor is None:
+        from src.learning.advisor import ContextAdvisor
+
+        _context_advisor = ContextAdvisor(
+            get_catalog_store(),
+            intelligence_store=get_intelligence_store(),
+            learning_store=get_learning_store(),
+        )
+    return _context_advisor
+
+
+def get_replay_engine():
+    """EvaluationReplayService (jobs eval_replay:*)."""
+    global _replay_engine
+    if _replay_engine is None:
+        from src.learning.replay import EvaluationReplayService
+
+        _replay_engine = EvaluationReplayService(
+            store=get_learning_store(),
+            job_repo=get_job_repo(),
+            orchestrator=get_rag_orchestrator(),
+        )
+    return _replay_engine
+
+
+def get_approval_service():
+    """ApprovalService (registro + disparo de replays)."""
+    global _approval_service
+    if _approval_service is None:
+        from src.core.config import get_settings as _settings
+        from src.learning.approvals import ApprovalService
+
+        _approval_service = ApprovalService(
+            store=get_learning_store(),
+            replay_starter=get_replay_engine().start,
+            replay_required=_settings().RAG_LEARNING_REPLAY_REQUIRED,
+        )
+    return _approval_service
+
+
+def get_spider_service():
+    """Zent Spider (discovery continuo autorizado)."""
+    global _spider_service
+    if _spider_service is None:
+        from src.infrastructure.secrets.secret_store_resolver import get_secret_store
+        from src.learning.spider import SpiderService
+
+        _spider_service = SpiderService(
+            store=get_learning_store(),
+            catalog_store=get_catalog_store(),
+            connector_repo=get_connector_repo(),
+            secret_store=get_secret_store(),
+            intelligence_store=get_intelligence_store(),
+            job_repo=get_job_repo(),
+        )
+    return _spider_service
+
+
+def get_revocation_service():
+    """RevocationService (impacto + propagación de revocación)."""
+    global _revocation_service
+    if _revocation_service is None:
+        from src.learning.revocation import RevocationService
+
+        _revocation_service = RevocationService(
+            get_catalog_store(), learning_store=get_learning_store()
+        )
+    return _revocation_service
+
+
+def get_agent_readiness_service():
+    """Agent Intelligence Readiness."""
+    global _agent_readiness_service
+    if _agent_readiness_service is None:
+        from src.learning.readiness import AgentReadinessService
+
+        _agent_readiness_service = AgentReadinessService(
+            get_learning_store(),
+            get_catalog_store(),
+            intelligence_store=get_intelligence_store(),
+        )
+    return _agent_readiness_service
+
+
+def get_learning_analytics():
+    """LearningAnalytics (tendencias + continuous improvement)."""
+    global _learning_analytics
+    if _learning_analytics is None:
+        from src.learning.analytics import LearningAnalytics
+
+        _learning_analytics = LearningAnalytics(
+            get_learning_store(),
+            catalog_store=get_catalog_store(),
+            intelligence_store=get_intelligence_store(),
+        )
+    return _learning_analytics
+
+
+def get_catalog_store():
+    """Store del Discovery Engine & Semantic Catalog (FASE 24)."""
+    global _catalog_store
+    if _catalog_store is None:
+        from src.catalog.store import PostgresCatalogStore
+
+        _catalog_store = PostgresCatalogStore()
+    return _catalog_store
+
+
+def get_catalog_discovery_engine():
+    """Motor de discovery (jobs durables 'catalog_discovery:*')."""
+    global _catalog_discovery_engine
+    if _catalog_discovery_engine is None:
+        from src.catalog.jobs import CatalogDiscoveryEngine
+        from src.infrastructure.secrets.secret_store_resolver import get_secret_store
+
+        _catalog_discovery_engine = CatalogDiscoveryEngine(
+            job_repo=get_job_repo(),
+            connector_repo=get_connector_repo(),
+            catalog_store=get_catalog_store(),
+            intelligence_store=get_intelligence_store(),
+            secret_store=get_secret_store(),
+            llm_provider=get_llm_provider(),
+        )
+    return _catalog_discovery_engine
+
+
+def get_semantic_schema_linking():
+    """Ranking semántico del SQL Expert (schema linking del catálogo)."""
+    global _semantic_schema_linking
+    if _semantic_schema_linking is None:
+        from src.catalog.schema_linking import SemanticSchemaLinking
+
+        _semantic_schema_linking = SemanticSchemaLinking(
+            get_catalog_store(), intelligence_store=get_intelligence_store()
+        )
+    return _semantic_schema_linking
+
+
+async def _resolve_authoritative_source(
+    organization_id: UUID, concepts: list[str]
+) -> str | None:
+    """Fuente autoritativa para conceptos vía catalog_authority (fail-soft)."""
+    try:
+        from src.catalog.authority import AuthorityService
+
+        service = AuthorityService(get_catalog_store())
+        return await service.authoritative_source(organization_id, concepts)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def get_intelligence_store():
@@ -383,6 +571,11 @@ def get_intelligence_engine():
             concept_llm_enabled=settings.RAG_ANSWERABILITY_CONCEPT_LLM_ENABLED,
             sql_router_threshold=settings.RAG_SQL_ROUTER_THRESHOLD,
             freshness_resolver=_resolve_source_freshness,
+            authority_resolver=(
+                _resolve_authoritative_source
+                if settings.RAG_CATALOG_ENABLED
+                else None
+            ),
         )
     return _intelligence_engine
 
@@ -426,6 +619,11 @@ def get_rag_orchestrator() -> RAGOrchestrator:
             retriever=get_retriever(),
             sql_router=sql_router,
             intelligence=get_intelligence_engine(),
+            learning=(
+                get_context_gap_analyzer()
+                if settings.RAG_LEARNING_ENABLED
+                else None
+            ),
         )
     return _orchestrator
 
@@ -441,6 +639,11 @@ def get_sql_expert():
         _sql_expert = PostgresSqlExpert(
             llm_provider=get_llm_provider(),
             cache=get_cache_provider(),
+            semantic_linking=(
+                get_semantic_schema_linking()
+                if settings.RAG_CATALOG_ENABLED
+                else None
+            ),
         )
         _ = settings.RAG_SQL_EXPERT_ENABLED  # el singleton no depende del flag
     return _sql_expert

@@ -314,7 +314,11 @@ async def _requeue_due_knowledge_jobs() -> None:
 
 
 async def _process_knowledge_job(job_id: str) -> None:
-    """Procesa un job de la Knowledge Platform (estado en Postgres)."""
+    """Procesa un job de la Knowledge Platform (estado en Postgres).
+
+    FASE 24: jobs con job_type 'catalog_discovery:*' se despachan al
+    CatalogDiscoveryEngine (Discovery Engine & Semantic Catalog).
+    """
     from uuid import UUID
 
     from src.api.deps import get_knowledge_engine
@@ -324,6 +328,64 @@ async def _process_knowledge_job(job_id: str) -> None:
     except ValueError:
         logger.warning("Invalid knowledge job id, skipping", job_id=job_id)
         return
+
+    try:
+        from src.catalog.jobs import DISCOVERY_JOB_PREFIX
+        from src.core.ports.platform_repos import IngestionJobRepository
+        from src.infrastructure.postgres.knowledge_repos import (
+            PostgresIngestionJobRepository,
+        )
+
+        job_repo: IngestionJobRepository = PostgresIngestionJobRepository()
+        job = await job_repo.get_job(None, jid)
+        if job is not None and (job.job_type or "").startswith(DISCOVERY_JOB_PREFIX):
+            from src.api.deps import get_catalog_discovery_engine
+
+            engine = get_catalog_discovery_engine()
+            job = await engine.execute_job(jid)
+            logger.info(
+                "Catalog discovery job finished",
+                job_id=job_id,
+                status=job.status.value,
+                attempts=job.attempts,
+                tables=job.records_processed,
+            )
+            return
+        if job is not None and (job.job_type or "").startswith("eval_replay"):
+            from src.api.deps import get_replay_engine
+
+            cursor = job.cursor_snapshot or {}
+            replay_id = cursor.get("replay_id")
+            if replay_id:
+                from uuid import UUID as _UUID
+
+                await get_replay_engine().execute(_UUID(replay_id))
+                logger.info(
+                    "Evaluation replay job finished",
+                    job_id=job_id,
+                    replay_id=replay_id,
+                )
+            return
+        if job is not None and (job.job_type or "").startswith("spider"):
+            from src.api.deps import get_spider_service
+
+            cursor = job.cursor_snapshot or {}
+            spider_run_id = cursor.get("spider_run_id")
+            if spider_run_id:
+                from uuid import UUID as _UUID
+
+                await get_spider_service().execute_run(_UUID(spider_run_id))
+                logger.info(
+                    "Spider run job finished",
+                    job_id=job_id,
+                    spider_run_id=spider_run_id,
+                )
+            return
+    except ValueError as exc:
+        logger.warning("Catalog discovery job missing, skipping", job_id=job_id, error=str(exc))
+        return
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Catalog discovery dispatch failed", job_id=job_id, error=str(exc))
 
     try:
         engine = get_knowledge_engine()

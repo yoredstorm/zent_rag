@@ -18,7 +18,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import ClassVar
 
-from src.connectors.plugin.models import SchemaDiscovery
+from src.connectors.plugin.models import (
+    DeepSchemaDiscovery,
+    SchemaDiscovery,
+)
 from src.core.config import get_settings
 
 
@@ -134,6 +137,47 @@ class ConnectorPlugin(ABC):
     async def discover(self) -> SchemaDiscovery:
         """Descubre estructura. Default: vacío (fuentes sin schema)."""
         return SchemaDiscovery(source=self.connector_type)
+
+    async def deep_discover(self, max_samples: int = 50) -> DeepSchemaDiscovery:
+        """Discovery profundo seguro (FASE 24): estructura + perfiles OBSERVED.
+
+        Default: deriva del discover() sin estadísticas adicionales. Los
+        plugins SQL lo sobreescriben con metadata/estadísticas read-only
+        (nunca consultas agresivas sobre producción).
+        """
+        from src.connectors.plugin.models import ColumnProfile, DeepTableProfile
+
+        discovery = await self.discover()
+        tables = [
+            DeepTableProfile(
+                table_name=t.name,
+                schema=t.schema,
+                is_view=t.is_view,
+                row_count_approx=t.row_count,
+                columns=[
+                    ColumnProfile(
+                        name=c.name,
+                        data_type=c.data_type,
+                        nullable=c.nullable,
+                        is_primary_key=c.is_primary_key,
+                    )
+                    for c in t.columns
+                ],
+                foreign_keys=list(t.foreign_keys),
+            )
+            for t in discovery.tables
+        ]
+        return DeepSchemaDiscovery(tables=tables, source=self.connector_type)
+
+    async def sample_distinct_values(
+        self, schema: str, table: str, column: str, max_samples: int = 50
+    ) -> list[str]:
+        """Muestreo acotado de valores distintos (solo lectura, LIMIT).
+
+        Default: sin muestreo. La capa de profiling decide cuándo invocarlo
+        (nunca para columnas sensibles; presupuesto de queries por scan).
+        """
+        return []
 
     async def close(self) -> None:
         """Libera recursos. Default no-op."""

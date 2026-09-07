@@ -370,6 +370,40 @@ async def agent_readiness(
     return {"agent_id": str(aid), "score": result.score, "items": result.checklist()}
 
 
+@router.get(
+    "/{agent_id}/intelligence-readiness",
+    summary="Intelligence Readiness del agente (FASE 25, 9 dimensiones)",
+)
+async def agent_intelligence_readiness(
+    agent_id: str,
+    request: Request,
+    repo: AgentRepository = Depends(get_agent_repo),
+):
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "agents:read")
+    try:
+        aid = UUID(agent_id)
+    except ValueError:
+        raise HTTPException(400, "agent_id must be a valid UUID")
+    agent = await repo.get_agent(ctx.organization_id, aid)
+    if agent is None:
+        raise HTTPException(404, "Agent not found")
+
+    from src.api.deps import get_agent_readiness_service
+
+    result = await get_agent_readiness_service().compute(
+        ctx.organization_id, aid, agent_config=agent.config_json
+    )
+    return {
+        "agent_id": str(aid),
+        "name": agent.name,
+        "overall": result["overall"],
+        "score": result["score"],
+        "dimensions": result["dimensions"],
+    }
+
+
 @router.post("/{agent_id}/archive", summary="Archivar agente")
 async def archive_agent(
     agent_id: str,

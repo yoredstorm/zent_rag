@@ -94,6 +94,13 @@ class BusinessDefinitionRegistry:
             status=definition.status,
             authoritative_source_id=definition.authoritative_source_id,
             created_by=definition.created_by,
+            synonyms=definition.synonyms,
+            owner=definition.owner,
+            version=definition.version,
+            effective_from=definition.effective_from,
+            effective_to=definition.effective_to,
+            approved_by=definition.approved_by,
+            provenance=definition.provenance,
         )
         await self._invalidate(definition.organization_id)
         return saved

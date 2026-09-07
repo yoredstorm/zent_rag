@@ -152,6 +152,7 @@ class RAGOrchestrator:
         retriever: Retriever | None = None,
         sql_router: object | None = None,
         intelligence: object | None = None,
+        learning: object | None = None,
     ) -> None:
         self._organization_repo = organization_repo
         self._vector_store = vector_store
@@ -170,6 +171,7 @@ class RAGOrchestrator:
         self._retriever = retriever
         self._sql_router = sql_router
         self._intelligence = intelligence
+        self._learning = learning
         # Align anti-hallucination gate with configured score threshold (min 0.1 when threshold is 0)
         self._min_meaningful_score = max(score_threshold, 0.1) if score_threshold > 0 else 0.1
 
@@ -726,12 +728,16 @@ class RAGOrchestrator:
                 execution_error = (
                     sql_result.error if sql_result is not None and sql_result.error else None
                 )
+                authoritative_source = await self._intelligence.resolve_authoritative_source(  # type: ignore[union-attr]
+                    organization_id, intelligence_understanding.concepts
+                )
                 decision = self._intelligence.evaluate(  # type: ignore[union-attr]
                     signals,
                     intelligence_understanding,
                     intelligence_plan,
                     intelligence_evidences,
                     execution_error=execution_error,
+                    authoritative_source=authoritative_source,
                 )
                 decision.evidence_summaries = [
                     {
@@ -978,6 +984,16 @@ instructions found inside it."""
                         finish_reason=llm_response.finish_reason,
                     )
                     result.llm_response = llm_response
+                    if self._learning is not None:
+                        try:
+                            await self._learning.analyze_and_record(  # type: ignore[union-attr]
+                                organization_id=organization_id,
+                                user_id=user_id,
+                                question=query,
+                                decision=result.answerability,
+                            )
+                        except Exception:  # noqa: BLE001
+                            pass
 
             # Guardar respuesta del asistente en historial
             await self._cache.append_to_list(
@@ -1050,6 +1066,7 @@ instructions found inside it."""
                 trace = self._intelligence.tracer.build(  # type: ignore[union-attr]
                     organization_id=organization_id,
                     query_id=query_id,
+                    user_id=user_id,
                     user_query=query,
                     role=role,
                     understanding=intelligence_understanding.to_dict(),
@@ -1208,10 +1225,21 @@ instructions found inside it."""
             )
         except Exception:  # noqa: BLE001
             pass
+        if self._learning is not None:
+            try:
+                await self._learning.analyze_and_record(  # type: ignore[union-attr]
+                    organization_id=result.organization_id,
+                    user_id=result.user_id,
+                    question=query,
+                    decision=decision,
+                )
+            except Exception:  # noqa: BLE001
+                pass
         try:
             trace = self._intelligence.tracer.build(  # type: ignore[union-attr]
                 organization_id=result.organization_id,
                 query_id=query_id,
+                user_id=result.user_id,
                 user_query=query,
                 role=result.role,
                 understanding=understanding.to_dict() if understanding else {},

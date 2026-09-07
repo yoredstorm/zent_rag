@@ -29,6 +29,7 @@ class TraceRecorder:
         *,
         organization_id: UUID,
         query_id: UUID | None,
+        user_id: UUID | None,
         user_query: str,
         role: str,
         understanding: dict,
@@ -45,6 +46,7 @@ class TraceRecorder:
         return IntelligenceTrace(
             organization_id=organization_id,
             query_id=query_id,
+            user_id=user_id,
             user_query=user_query,
             role=role,
             understanding=understanding,

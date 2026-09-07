@@ -167,7 +167,11 @@ async def _ensure_developer_scopes() -> None:
                     ('40000000-0000-0000-0000-000000000027', 'prompt:read',
                      'Ver system prompts de la organización'),
                     ('40000000-0000-0000-0000-000000000028', 'prompt:write',
-                     'Editar system prompts de la organización')
+                     'Editar system prompts de la organización'),
+                    ('40000000-0000-0000-0000-000000000051', 'catalog:read',
+                     'Ver catálogo semántico y descubrimiento'),
+                    ('40000000-0000-0000-0000-000000000052', 'catalog:write',
+                     'Gestionar catálogo, glosario, métricas y revisar sugerencias')
                 ON CONFLICT (code) DO NOTHING
                 """
             )

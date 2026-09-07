@@ -6,6 +6,8 @@
 # =============================================================================
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
@@ -31,6 +33,8 @@ class BusinessDefinitionCreate(BaseModel):
     data_type: str = Field(default="concept", max_length=20)
     status: str = Field(default="approved", max_length=20)
     authoritative_source_id: str | None = Field(default=None, max_length=120)
+    synonyms: list[str] = Field(default_factory=list)
+    owner: str | None = Field(default=None, max_length=120)
 
     @field_validator("concept")
     @classmethod
@@ -70,6 +74,19 @@ def _definition_payload(definition) -> dict:
         "data_type": definition.data_type,
         "status": definition.status,
         "authoritative_source_id": definition.authoritative_source_id,
+        "synonyms": definition.synonyms,
+        "owner": definition.owner,
+        "version": definition.version,
+        "effective_from": (
+            definition.effective_from.isoformat()
+            if definition.effective_from
+            else None
+        ),
+        "effective_to": (
+            definition.effective_to.isoformat() if definition.effective_to else None
+        ),
+        "approved_by": str(definition.approved_by) if definition.approved_by else None,
+        "provenance": definition.provenance,
         "created_by": str(definition.created_by) if definition.created_by else None,
         "created_at": definition.created_at.isoformat(),
         "updated_at": definition.updated_at.isoformat(),
@@ -98,6 +115,158 @@ async def get_trace(
     if trace is None:
         raise HTTPException(404, "Trace not found")
     return trace
+
+
+@router.get(
+    "/why/{query_id}",
+    summary="Why does Zent know this? (inspección de una respuesta)",
+    responses={
+        200: {"description": "Explicación de la respuesta (conceptos, versiones, fuentes, evidencia)"},
+        404: {"description": "Traza no encontrada (o de otra organización)"},
+    },
+)
+async def why_knows(
+    query_id: UUID,
+    request: Request,
+    store: PostgresIntelligenceStore = Depends(get_intelligence_store),
+) -> dict:
+    require_permission(request, "rag:read")
+    ctx = _tenant_ctx(request)
+    if ctx is None or not ctx.organization_id:
+        raise HTTPException(401, "Tenant context required")
+    trace = await store.get_trace_by_query_id(ctx.organization_id, query_id)
+    if trace is None:
+        raise HTTPException(404, "Trace not found")
+    understanding = trace.get("understanding") or {}
+    decision = trace.get("decision") or {}
+
+    # Versión de conceptos desde el glosario (para la explicación).
+    concept_versions: dict[str, dict] = {}
+    for concept in understanding.get("concepts") or []:
+        try:
+            definition = await store.get_definition(ctx.organization_id, concept)
+            if definition:
+                concept_versions[concept] = {
+                    "version": definition.version,
+                    "status": definition.status,
+                    "provenance": definition.provenance,
+                    "effective_from": (
+                        definition.effective_from.isoformat()
+                        if definition.effective_from
+                        else None
+                    ),
+                }
+        except Exception:  # noqa: BLE001
+            pass
+
+    return {
+        "query_id": str(query_id),
+        "question": trace.get("user_query"),
+        "answer": trace.get("answer"),
+        "status": trace.get("status"),
+        "intent": understanding.get("intent"),
+        "business_concepts": understanding.get("concepts") or [],
+        "concept_versions": concept_versions,
+        "source_of_truth": await _authority_for_concepts(
+            ctx.organization_id, understanding.get("concepts") or []
+        ),
+        "physical_sources": [
+            {
+                "type": e.get("type"),
+                "source_name": e.get("source_name"),
+                "authority_level": e.get("authority_level"),
+                "freshness": e.get("freshness"),
+            }
+            for e in (trace.get("evidence") or [])
+        ],
+        "model": trace.get("model"),
+        "method": trace.get("method"),
+        "trace_id": trace.get("trace_id"),
+        "confidence_explanation": decision.get("confidence_level"),
+        "reason_codes": decision.get("reason_codes") or [],
+        "created_at": trace.get("created_at"),
+    }
+
+
+@router.get(
+    "/why-not/{query_id}",
+    summary="Why couldn't Zent answer? (abstención explicada)",
+    responses={
+        200: {"description": "Qué faltó, qué había disponible, impacto y recomendación"},
+        404: {"description": "Traza no encontrada (o de otra organización)"},
+    },
+)
+async def why_not(
+    query_id: UUID,
+    request: Request,
+    store: PostgresIntelligenceStore = Depends(get_intelligence_store),
+) -> dict:
+    require_permission(request, "rag:read")
+    ctx = _tenant_ctx(request)
+    if ctx is None or not ctx.organization_id:
+        raise HTTPException(401, "Tenant context required")
+    trace = await store.get_trace_by_query_id(ctx.organization_id, query_id)
+    if trace is None:
+        raise HTTPException(404, "Trace not found")
+    decision = trace.get("decision") or {}
+    question = trace.get("user_query") or ""
+    status = trace.get("status") or decision.get("status") or "UNKNOWN"
+
+    advisor_payload: dict = {"available": [], "missing": [], "recommendation": None}
+    try:
+        from src.api.deps import get_context_advisor
+
+        gap = {
+            "gap_type": status,
+            "concept": (decision.get("missing_context") or [""])[0]
+            .replace("Definition of ", ""),
+            "impact": {},
+        }
+        advised = await get_context_advisor().advise(ctx.organization_id, question, gap=gap)
+        advisor_payload = {
+            "available": advised.get("available") or decision.get("found") or [],
+            "missing": advised.get("missing") or decision.get("missing_context") or [],
+            "recommendation": advised.get("recommendation"),
+        }
+    except Exception:  # noqa: BLE001
+        advisor_payload = {
+            "available": decision.get("found") or [],
+            "missing": (
+                decision.get("missing_context") or decision.get("missing_data") or []
+            ),
+            "recommendation": None,
+        }
+
+    return {
+        "query_id": str(query_id),
+        "question": question,
+        "status": status,
+        "answerable": bool(decision.get("answerable")),
+        "confidence": decision.get("confidence_level"),
+        "reason_codes": decision.get("reason_codes") or [],
+        "available": advisor_payload["available"],
+        "missing": advisor_payload["missing"],
+        "recommendation": advisor_payload["recommendation"],
+        "impact": {
+            "query_count_30d": 0,
+            "users": 0,
+            "agents": 0,
+        },
+        "trace_id": trace.get("trace_id"),
+    }
+
+
+async def _authority_for_concepts(
+    organization_id: UUID, concepts: list[str]
+) -> list[dict]:
+    """Fuentes autoritativas de la org (fail-soft)."""
+    try:
+        from src.api.deps import get_catalog_store
+        from src.catalog.authority import AuthorityService
+
+        return await AuthorityService(get_catalog_store()).list(organization_id)
+    except Exception:  # noqa: BLE001
+        return []
 
 
 @router.get(
@@ -143,7 +312,11 @@ async def upsert_definition(
         data_type=body.data_type,
         status=body.status,
         authoritative_source_id=body.authoritative_source_id,
+        synonyms=body.synonyms,
+        owner=body.owner,
         created_by=ctx.user_id,
+        approved_by=ctx.user_id if body.status == "approved" else None,
+        provenance="APPROVED" if body.status == "approved" else "OBSERVED",
     )
     saved = await registry.upsert(definition)
     return _definition_payload(saved)

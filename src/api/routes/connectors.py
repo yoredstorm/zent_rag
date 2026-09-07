@@ -351,10 +351,37 @@ async def delete_connector(
         raise HTTPException(400, "connector_id must be a valid UUID")
     if await repo.get_connector(ctx.organization_id, cid) is None:
         raise HTTPException(404, "Connector not found")
+
+    # FASE 25 — Revocation propagation: impacto + invalidación de derivados.
+    revocation = None
+    try:
+        from src.api.deps import get_revocation_service
+
+        revocation = await get_revocation_service().revoke(
+            ctx.organization_id, cid, policy="purge"
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
     await repo.delete_connector(ctx.organization_id, cid)
     await get_secret_store().delete(ctx.organization_id, cid)
-    await _audit().write(ctx, "connector.deleted", "connector", cid)
-    return {"status": "deleted", "connector_id": str(cid)}
+    await _audit().write(
+        ctx,
+        "connector.deleted",
+        "connector",
+        cid,
+        metadata={
+            "revocation_policy": "purge",
+            "impact": {
+                k: v for k, v in (revocation or {}).items() if k != "connector_id"
+            },
+        },
+    )
+    return {
+        "status": "deleted",
+        "connector_id": str(cid),
+        "revocation_impact": revocation or {},
+    }
 
 
 @router.post("/{connector_id}/test", summary="Probar conexión del conector")

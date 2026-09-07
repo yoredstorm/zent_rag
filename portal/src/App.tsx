@@ -41,6 +41,12 @@ const KnowledgeDocumentsPage = lazy(() => import("./pages/knowledge/Documents"))
 const KnowledgeSqlPage = lazy(() => import("./pages/knowledge/SqlSources"));
 const KnowledgeJobsPage = lazy(() => import("./pages/knowledge/Jobs"));
 const KnowledgePlaygroundPage = lazy(() => import("./pages/knowledge/Playground"));
+const KnowledgeCatalogPage = lazy(() => import("./pages/knowledge/Catalog"));
+const KnowledgeGlossaryPage = lazy(() => import("./pages/knowledge/Glossary"));
+const KnowledgeReviewPage = lazy(() => import("./pages/knowledge/Review"));
+const KnowledgeImprovementsPage = lazy(() => import("./pages/knowledge/Improvements"));
+const EvaluationGapsPage = lazy(() => import("./pages/evaluation/Gaps"));
+const EvaluationImpactPage = lazy(() => import("./pages/evaluation/Impact"));
 const WorkspacesPage = lazy(() => import("./pages/Workspaces"));
 const TrainingPage = lazy(() => import("./pages/Training"));
 const DeveloperCenterPage = lazy(() => import("./pages/DeveloperCenter"));
@@ -610,6 +616,10 @@ export default function App() {
         <Route path="/knowledge/sql" element={<Suspense fallback={<PageFallback />}><KnowledgeSqlPage /></Suspense>} />
         <Route path="/knowledge/jobs" element={<Suspense fallback={<PageFallback />}><KnowledgeJobsPage /></Suspense>} />
         <Route path="/knowledge/playground" element={<Suspense fallback={<PageFallback />}><KnowledgePlaygroundPage /></Suspense>} />
+        <Route path="/knowledge/catalog" element={<Suspense fallback={<PageFallback />}><KnowledgeCatalogPage /></Suspense>} />
+        <Route path="/knowledge/glossary" element={<Suspense fallback={<PageFallback />}><KnowledgeGlossaryPage /></Suspense>} />
+<Route path="/knowledge/review" element={<Suspense fallback={<PageFallback />}><KnowledgeReviewPage /></Suspense>} />
+        <Route path="/knowledge/improvements" element={<Suspense fallback={<PageFallback />}><KnowledgeImprovementsPage /></Suspense>} />
         <Route path="/prompts" element={<Suspense fallback={<PageFallback />}><PromptsPage /></Suspense>} />
         <Route path="/chat" element={<Suspense fallback={<PageFallback />}><ChatPage /></Suspense>} />
         <Route path="/team" element={<Suspense fallback={<PageFallback />}><TeamAccessPage /></Suspense>} />
@@ -650,7 +660,9 @@ export default function App() {
         <Route path="/evaluation/datasets" element={<Suspense fallback={<PageFallback />}><EvaluationDatasetsPage /></Suspense>} />
         <Route path="/evaluation/runs" element={<Suspense fallback={<PageFallback />}><EvaluationRunsPage /></Suspense>} />
         <Route path="/evaluation/runs/:runId" element={<Suspense fallback={<PageFallback />}><EvaluationRunDetailPage /></Suspense>} />
-        <Route path="/evaluation/compare" element={<Suspense fallback={<PageFallback />}><EvaluationComparePage /></Suspense>} />
+<Route path="/evaluation/compare" element={<Suspense fallback={<PageFallback />}><EvaluationComparePage /></Suspense>} />
+        <Route path="/evaluation/gaps" element={<Suspense fallback={<PageFallback />}><EvaluationGapsPage /></Suspense>} />
+        <Route path="/evaluation/impact" element={<Suspense fallback={<PageFallback />}><EvaluationImpactPage /></Suspense>} />
         <Route path="/evaluation/playground-compare" element={<Navigate to="/evaluation/compare" replace />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

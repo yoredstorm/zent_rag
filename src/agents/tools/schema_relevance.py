@@ -175,23 +175,33 @@ def score_table(question_tokens: set[str], source: DataSource) -> float:
     return score
 
 
+def _qualified_name(source: DataSource) -> str:
+    return f"{source.schema_name}.{source.table_name}"
+
+
 def rank_tables(
     question: str,
     sources: list[DataSource],
     max_tables: int = 8,
+    semantic_boosts: dict[str, float] | None = None,
 ) -> list[DataSource]:
     """Selecciona las tablas más relevantes para la pregunta.
 
+    Los boosts semánticos del catálogo (FASE 24 — schema linking) se suman
+    al score heurístico; sin catálogo el comportamiento es el histórico.
     Fallback: si ninguna tabla matchea, devuelve las primeras N (nunca
     vacío salvo schema vacío) para que el LLM decida con inventario acotado.
     """
+    boosts = semantic_boosts or {}
     question_tokens = _tokens(question)
-    scored = sorted(
-        sources,
-        key=lambda s: score_table(question_tokens, s),
-        reverse=True,
-    )
-    top = [s for s in scored if score_table(question_tokens, s) > 0][:max_tables]
+
+    def _total(s: DataSource) -> float:
+        base = score_table(question_tokens, s)
+        semantic = boosts.get(_qualified_name(s), 0.0)
+        return base + semantic * 3.0
+
+    scored = sorted(sources, key=_total, reverse=True)
+    top = [s for s in scored if _total(s) > 0][:max_tables]
     if not top:
         top = scored[:max_tables]
     return top
@@ -298,9 +308,16 @@ def build_relevant_schema(
     question: str,
     sources: list[DataSource],
     max_tables: int = 8,
+    semantic_boosts: dict[str, float] | None = None,
 ) -> list[DataSource]:
-    """Subconjunto de tablas + columnas relevantes listo para el prompt."""
-    relevant_tables = rank_tables(question, sources, max_tables)
+    """Subconjunto de tablas + columnas relevantes listo para el prompt.
+
+    FASE 24: semantic_boosts (catálogo) mejora el ranking; sin ellos el
+    comportamiento es el histórico.
+    """
+    relevant_tables = rank_tables(
+        question, sources, max_tables, semantic_boosts=semantic_boosts
+    )
     expanded = _fk_expand(relevant_tables, sources, max_tables)
     result: list[DataSource] = []
     for source in expanded:

@@ -322,6 +322,94 @@ class Settings(BaseSettings):
         description="Frescura máxima de fuentes documentales (días).",
     )
     # -------------------------------------------------------------------------
+    # Zent Discovery Engine & Semantic Catalog (FASE 24)
+    # -------------------------------------------------------------------------
+    RAG_CATALOG_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Activa el Discovery Engine + Semantic Catalog (scan seguro de "
+            "metadata y construcción del catálogo semántico)."
+        ),
+    )
+    RAG_CATALOG_MAX_TABLES_PER_SCAN: int = Field(default=200, ge=1, le=5000)
+    RAG_CATALOG_MAX_COLUMNS_PER_TABLE: int = Field(default=200, ge=1, le=2000)
+    RAG_CATALOG_MAX_SAMPLES: int = Field(default=50, ge=1, le=1000)
+    RAG_CATALOG_MAX_QUERY_SECONDS: float = Field(default=10.0, ge=1.0, le=120.0)
+    RAG_CATALOG_MAX_SCAN_COST: int = Field(
+        default=500,
+        ge=10,
+        le=100_000,
+        description="Máximo de queries de metadata por scan (presupuesto).",
+    )
+    RAG_CATALOG_MAX_PARALLELISM: int = Field(default=3, ge=1, le=10)
+    RAG_CATALOG_PROFILING_ENABLED: bool = Field(
+        default=True,
+        description="Profiling de null_ratio/cardinalidad/muestras (conservador).",
+    )
+    RAG_CATALOG_INFERENCE_LLM_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Sugerencias semánticas con LLM sobre metadata (nunca datos crudos, "
+            "nunca PII; las inferencias nunca se auto-aprueban)."
+        ),
+    )
+    RAG_CATALOG_DRIFT_CHECK_ENABLED: bool = Field(
+        default=True,
+        description="Detección de cambios entre scans (tablas/columnas/tipos).",
+    )
+    RAG_SQL_SEMANTIC_LINKING_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Boosts semánticos del catálogo en el ranking de schema del SQL "
+            "Expert (fallback heurístico sin catálogo)."
+        ),
+    )
+    # -------------------------------------------------------------------------
+    # Governed Learning — Context Advisor & Learning Loop (FASE 25)
+    # -------------------------------------------------------------------------
+    RAG_LEARNING_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Activa el ciclo de aprendizaje gobernado: gaps, improvements, "
+            "approvals, evaluation replay, spider y revocación."
+        ),
+    )
+    RAG_LEARNING_REPLAY_REQUIRED: bool = Field(
+        default=True,
+        description=(
+            "Cambios críticos de conocimiento (métricas/glosario aprobados) "
+            "requieren Evaluation Replay antes de promoverse a producción."
+        ),
+    )
+    RAG_LEARNING_CLUSTER_THRESHOLD: float = Field(
+        default=0.45,
+        ge=0.1,
+        le=1.0,
+        description="Umbral de similitud Jaccard para agrupar preguntas no contestadas.",
+    )
+    RAG_LEARNING_CLUSTER_MIN_SIZE: int = Field(
+        default=3,
+        ge=2,
+        le=50,
+        description="Tamaño mínimo de un cluster de preguntas para generar sugerencia.",
+    )
+    RAG_LEARNING_PATTERN_MIN_QUERIES: int = Field(
+        default=20,
+        ge=5,
+        le=1000,
+        description="Consultas exitosas idénticas mínimas para sugerir métrica reusable.",
+    )
+    RAG_LEARNING_GAP_WINDOW_DAYS: int = Field(
+        default=30,
+        ge=1,
+        le=180,
+        description="Ventana de impacto de gaps (queries/usuarios en N días).",
+    )
+    RAG_SPIDER_ENABLED: bool = Field(
+        default=True,
+        description="Zent Spider: discovery continuo autorizado (políticas org-scoped).",
+    )
+    # -------------------------------------------------------------------------
     # Agent Runtime
     # -------------------------------------------------------------------------
     RAG_AGENT_MODEL: str = Field(default="")

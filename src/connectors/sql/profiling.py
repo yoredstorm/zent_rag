@@ -3,38 +3,18 @@
 # =============================================================================
 # Detecta tipos, PK/FK, null rates, cardinalidad y candidatos PII/sensibles
 # ANTES de exponer datos a los agentes (fase previa a la ingestión).
+# Los patrones PII/sensibles viven en core/domain/pii.py (reutilizados por el
+# Discovery Engine de la FASE 24).
 # =============================================================================
 from __future__ import annotations
-
-import re
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Heurísticas de candidatos PII por nombre de columna.
-_PII_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("email", re.compile(r"email|correo", re.I)),
-    ("phone", re.compile(r"phone|telefono|celular|movil|phone_number", re.I)),
-    ("national_id", re.compile(r"rut|dni|cedula|passport|nid", re.I)),
-    ("secret", re.compile(r"password|passwd|secret|token|api_key|credential", re.I)),
-    ("payment_card", re.compile(r"card|credit|payment_method|bin_", re.I)),
-    ("address", re.compile(r"address|direccion|domicilio|calle", re.I)),
-    ("birth_date", re.compile(r"birth|nacimiento|fecha_nac", re.I)),
-    ("health", re.compile(r"health|salud|medical|clinical|diagnost", re.I)),
-]
-
-# Heurísticas de campos sensibles de negocio.
-_SENSITIVE_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("cost", re.compile(r"cost|salario|salary|sueldo", re.I)),
-    ("revenue", re.compile(r"revenue|ingreso|factura", re.I)),
-    ("pii_related", re.compile(r"insured|coverage|beneficiario", re.I)),
-]
-
-
-def _flags_for_column(name: str) -> tuple[list[str], bool]:
-    pii = [label for label, pattern in _PII_PATTERNS if pattern.search(name)]
-    sensitive = any(pattern.search(name) for _label, pattern in _SENSITIVE_PATTERNS)
-    return pii, sensitive
+from src.core.domain.pii import (
+    is_sensitive_column,
+    pii_flags_for_column,
+)
 
 
 async def profile_table(
@@ -83,7 +63,8 @@ async def profile_table(
 
     cols = []
     for col in columns:
-        pii, sensitive = _flags_for_column(col.column_name)
+        pii = pii_flags_for_column(col.column_name)
+        sensitive = is_sensitive_column(col.column_name)
         null_rate: float | None = None
         cardinality: int | None = None
         try:

@@ -409,10 +409,12 @@ class PostgresSqlExpert(SqlExpert):
         self,
         llm_provider: LLMProvider,
         cache: CacheProvider | None = None,
+        semantic_linking: object | None = None,
     ) -> None:
         self._llm = llm_provider
         self._last_cost: float | None = None
         self._permissions: dict | None = None
+        self._semantic_linking = semantic_linking
         settings = get_settings()
         self._schema_cache = (
             SchemaCache(cache, ttl_seconds=settings.RAG_SQL_SCHEMA_CACHE_TTL)
@@ -620,9 +622,30 @@ class PostgresSqlExpert(SqlExpert):
         all_sources = await self._discover_sources(organization_id)
 
         # Schema intelligence: solo el subconjunto relevante va al LLM.
+        # FASE 24 — Schema linking semántico (catálogo) sobre el ranking
+        # heurístico; fallback silencioso si no hay catálogo o falla.
         settings = get_settings()
+        semantic_boosts: dict[str, float] | None = None
+        if (
+            self._semantic_linking is not None
+            and settings.RAG_SQL_SEMANTIC_LINKING_ENABLED
+        ):
+            try:
+                semantic_boosts = await self._semantic_linking.candidate_scores(
+                    organization_id,
+                    question,
+                    [f"{s.schema_name}.{s.table_name}" for s in all_sources],
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Semantic schema linking failed; using heuristic",
+                    error=str(exc)[:200],
+                )
         sources = build_relevant_schema(
-            question, all_sources, max_tables=settings.RAG_SQL_MAX_TABLES
+            question,
+            all_sources,
+            max_tables=settings.RAG_SQL_MAX_TABLES,
+            semantic_boosts=semantic_boosts,
         )
         if not sources:
             return SqlQueryResult(

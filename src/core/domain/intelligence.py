@@ -165,7 +165,11 @@ class EvidenceObject:
 
 @dataclass(kw_only=True)
 class BusinessDefinition:
-    """Definición empresarial aprobada (única fuente de verdad de conceptos)."""
+    """Definición empresarial aprobada (única fuente de verdad de conceptos).
+
+    FASE 24: extendido con gobernanza de glosario (synonyms, owner, version,
+    fechas de vigencia, approved_by, provenance).
+    """
 
     id: UUID
     organization_id: UUID
@@ -176,6 +180,13 @@ class BusinessDefinition:
     status: str = "approved"  # draft | approved | deprecated
     authoritative_source_id: str | None = None
     created_by: UUID | None = None
+    synonyms: list[str] = field(default_factory=list)
+    owner: str | None = None
+    version: int = 1
+    effective_from: datetime | None = None
+    effective_to: datetime | None = None
+    approved_by: UUID | None = None
+    provenance: str = "APPROVED"  # OBSERVED | INFERRED | APPROVED | REJECTED | DEPRECATED
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -366,6 +377,7 @@ class IntelligenceTrace:
     trace_id: str = field(default_factory=lambda: str(uuid4()))
     organization_id: UUID
     query_id: UUID | None = None
+    user_id: UUID | None = None
     user_query: str = ""
     role: str = "admin"
     understanding: dict = field(default_factory=dict)
@@ -385,6 +397,7 @@ class IntelligenceTrace:
             "trace_id": self.trace_id,
             "organization_id": str(self.organization_id),
             "query_id": str(self.query_id) if self.query_id else None,
+            "user_id": str(self.user_id) if self.user_id else None,
             "user_query": self.user_query,
             "role": self.role,
             "understanding": self.understanding,

@@ -39,6 +39,10 @@ FreshnessResolver = Callable[
     [UUID, list[str]], Awaitable[dict[str, str]]
 ]
 
+AuthorityResolver = Callable[
+    [UUID, list[str]], Awaitable[str | None]
+]
+
 
 class IntelligenceEngine:
     """Pipeline de answerability usado por el orchestrator (no reescribe RAG)."""
@@ -59,6 +63,7 @@ class IntelligenceEngine:
         concept_llm_enabled: bool = True,
         sql_router_threshold: float = 0.5,
         freshness_resolver: FreshnessResolver | None = None,
+        authority_resolver: AuthorityResolver | None = None,
     ) -> None:
         self._store = store or PostgresIntelligenceStore()
         self._definitions = definition_registry or BusinessDefinitionRegistry(
@@ -85,12 +90,28 @@ class IntelligenceEngine:
         self._abstention = AbstentionBuilder()
         self._sql_router_threshold = sql_router_threshold
         self._freshness_resolver = freshness_resolver
+        self._authority_resolver = authority_resolver
         self.tracer = TraceRecorder(self._store)
 
     async def get_definitions(
         self, organization_id: UUID
     ) -> list[BusinessDefinition]:
         return await self._definitions.get_all(organization_id)
+
+    async def resolve_authoritative_source(
+        self, organization_id: UUID, concepts: list[str]
+    ) -> str | None:
+        """Fuente autoritativa para los conceptos (FASE 24 — catalog_authority).
+
+        Alimenta al Answerability Gate para resolver SOURCE_CONFLICT sin
+        elegir fuentes arbitrariamente. Fail-soft: None sin catálogo.
+        """
+        if self._authority_resolver is None or not concepts:
+            return None
+        try:
+            return await self._authority_resolver(organization_id, concepts)
+        except Exception:  # noqa: BLE001
+            return None
 
     # ------------------------------------------------------------- pipeline
     async def understand(
