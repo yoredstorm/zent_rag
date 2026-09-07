@@ -499,9 +499,19 @@ class PostgresIngestionService(IngestionService):
         return f"rag:sync_ts:{organization_id.hex}:{schema_name}.{table_name}"
 
     async def sync_table(
-        self, organization_id: UUID, schema_name: str, table_name: str, full_refresh: bool = False
+        self,
+        organization_id: UUID,
+        schema_name: str,
+        table_name: str,
+        full_refresh: bool = False,
+        ignore_org_filter: bool = False,
     ) -> IngestionResult:
-        """Sincroniza una tabla específica."""
+        """Sincroniza una tabla específica.
+
+        ignore_org_filter=True: ingiere TODAS las filas (schema compartido/
+        demo) aunque la tabla tenga columna organization_id, y las etiqueta
+        con el organization destino. Solo para datos demo compartidos.
+        """
         start = time.perf_counter()
 
         # Validar y quotear identificadores ANTES de ejecutar SQL (anti inyección).
@@ -538,7 +548,17 @@ class PostgresIngestionService(IngestionService):
         has_updated_at = any(c.name == "updated_at" for c in columns)
         since_ts: str | None = None
 
-        if full_refresh:
+        if ignore_org_filter:
+            # Datos demo compartidos (schema farmacia): siempre se relee todo;
+            # los ids de vector son deterministas (uuid5), el upsert es idempotente.
+            has_updated_at = False
+            if self._cache:
+                await self._cache.delete(sync_ts_key)
+            logger.info(
+                "Shared-schema sync (ignore_org_filter=True)",
+                table=f"{schema_name}.{table_name}",
+            )
+        elif full_refresh:
             await self._vector_store.delete_by_organization(organization_id)
             if self._cache:
                 await self._cache.delete(sync_ts_key)
@@ -574,7 +594,10 @@ class PostgresIngestionService(IngestionService):
         )
 
         table_result = await self._ingest_table(
-            organization_id, source, since_timestamp=since_ts
+            organization_id,
+            source,
+            since_timestamp=since_ts,
+            ignore_org_filter=ignore_org_filter,
         )
         result.rows_indexed = table_result.rows_indexed
         result.vectors_upserted = table_result.vectors_upserted
@@ -650,6 +673,7 @@ class PostgresIngestionService(IngestionService):
         source: DataSource,
         since_timestamp: str | None = None,
         job_id: str | None = None,
+        ignore_org_filter: bool = False,
     ) -> IngestionResult:
         """Ingiere filas de una tabla a Qdrant (embed paralelo + upsert batch)."""
         result = IngestionResult(organization_id=organization_id, tables_processed=1)
@@ -666,6 +690,21 @@ class PostgresIngestionService(IngestionService):
             if pk_col is None:
                 result.errors.append(f"Table {table_full} has no columns")
                 return result
+
+            # El cache guarda el timestamp como ISO string; asyncpg exige
+            # datetime para columnas timestamptz.
+            if since_timestamp is not None and isinstance(since_timestamp, str):
+                from datetime import datetime
+
+                try:
+                    since_timestamp = datetime.fromisoformat(
+                        since_timestamp.replace("Z", "+00:00")
+                    )
+                except ValueError:
+                    result.errors.append(
+                        f"Invalid since_timestamp for {table_full}: {since_timestamp}"
+                    )
+                    return result
 
             fk_resolutions = await self._build_fk_resolutions(session, source)
             product_images = await self._load_product_images(session, schema, table)
@@ -695,7 +734,9 @@ class PostgresIngestionService(IngestionService):
 
                 # Aislamiento multi-organization: si la tabla tiene organization_id,
                 # SOLO se ingieren las filas del organization autenticado.
-                if has_organization_col and since_timestamp:
+                # ignore_org_filter=True: datos demo compartidos (schema farmacia)
+                # — se ingieren todas las filas y se etiquetan con el org destino.
+                if has_organization_col and not ignore_org_filter and since_timestamp:
                     query = text(
                         f"SELECT * FROM {schema_q}.{table_q} "
                         f'WHERE "updated_at" > :since_ts AND "organization_id" = :organization_id '
@@ -705,7 +746,7 @@ class PostgresIngestionService(IngestionService):
                     rows = await session.execute(
                         query, {"since_ts": since_timestamp, "organization_id": organization_id}
                     )
-                elif has_organization_col:
+                elif has_organization_col and not ignore_org_filter:
                     rows = await session.execute(
                         text(
                             f"SELECT * FROM {schema_q}.{table_q} "

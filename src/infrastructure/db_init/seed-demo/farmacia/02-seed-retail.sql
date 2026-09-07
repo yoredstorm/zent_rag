@@ -487,7 +487,6 @@ ON CONFLICT DO NOTHING;
 -- =============================================================================
 -- VISTA MATERIALIZADA — Catálogo completo de farmacia
 -- =============================================================================
-DROP VIEW IF EXISTS farmacia.vw_product_catalog;
 DROP MATERIALIZED VIEW IF EXISTS farmacia.vw_product_catalog;
 
 CREATE MATERIALIZED VIEW farmacia.vw_product_catalog AS

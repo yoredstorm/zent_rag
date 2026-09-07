@@ -136,6 +136,7 @@ async def _process_job_inner(
     schema_name_raw: str = job_data.get("schema_name", "")
     table_name_raw: str = job_data.get("table_name", "")
     full_refresh = job_data.get("full_refresh", "0") == "1"
+    ignore_org_filter = job_data.get("ignore_org_filter", "0") == "1"
 
     schema_name: str | None = schema_name_raw if schema_name_raw else None
     table_name: str | None = table_name_raw if table_name_raw else None
@@ -147,6 +148,7 @@ async def _process_job_inner(
         schema_name=schema_name,
         table_name=table_name,
         full_refresh=full_refresh,
+        ignore_org_filter=ignore_org_filter,
     )
 
     await update_job_status(job_id, "running", progress=0)
@@ -155,7 +157,13 @@ async def _process_job_inner(
         service = await _build_ingestion_service()
 
         if schema_name and table_name:
-            result = await service.sync_table(organization_id, schema_name, table_name, full_refresh)
+            result = await service.sync_table(
+                organization_id,
+                schema_name,
+                table_name,
+                full_refresh,
+                ignore_org_filter=ignore_org_filter,
+            )
         else:
             result = await service.sync_all(organization_id, full_refresh)
 
@@ -319,6 +327,7 @@ async def _process_knowledge_job(job_id: str) -> None:
     FASE 24: jobs con job_type 'catalog_discovery:*' se despachan al
     CatalogDiscoveryEngine (Discovery Engine & Semantic Catalog).
     """
+    from datetime import datetime, timezone
     from uuid import UUID
 
     from src.api.deps import get_knowledge_engine
@@ -329,6 +338,34 @@ async def _process_knowledge_job(job_id: str) -> None:
         logger.warning("Invalid knowledge job id, skipping", job_id=job_id)
         return
 
+    job_repo: IngestionJobRepository | None = None
+
+    async def _fail_terminal(message: str) -> None:
+        """Marca el job como fallido terminal (sin retry): el objetivo no
+        existe (p.ej. spider run / replay borrado), reintentar es inútil y
+        re-encolar cada scan provoca inanición de la cola legacy."""
+        nonlocal job_repo
+        try:
+            if job_repo is None:
+                from src.infrastructure.postgres.knowledge_repos import (
+                    PostgresIngestionJobRepository,
+                )
+
+                job_repo = PostgresIngestionJobRepository()
+            await job_repo.update_job(
+                jid,
+                status="failed",
+                attempts=3,
+                retry_at=None,
+                error_summary={"error": message},
+            )
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Failed to mark knowledge job terminal",
+                job_id=job_id,
+                error=str(message),
+            )
+
     try:
         from src.catalog.jobs import DISCOVERY_JOB_PREFIX
         from src.core.ports.platform_repos import IngestionJobRepository
@@ -336,7 +373,7 @@ async def _process_knowledge_job(job_id: str) -> None:
             PostgresIngestionJobRepository,
         )
 
-        job_repo: IngestionJobRepository = PostgresIngestionJobRepository()
+        job_repo = PostgresIngestionJobRepository()
         job = await job_repo.get_job(None, jid)
         if job is not None and (job.job_type or "").startswith(DISCOVERY_JOB_PREFIX):
             from src.api.deps import get_catalog_discovery_engine
@@ -356,33 +393,59 @@ async def _process_knowledge_job(job_id: str) -> None:
 
             cursor = job.cursor_snapshot or {}
             replay_id = cursor.get("replay_id")
-            if replay_id:
+            if not replay_id:
+                await _fail_terminal("eval_replay job sin replay_id en cursor")
+                return
+            try:
                 from uuid import UUID as _UUID
 
                 await get_replay_engine().execute(_UUID(replay_id))
-                logger.info(
-                    "Evaluation replay job finished",
-                    job_id=job_id,
-                    replay_id=replay_id,
-                )
+            except ValueError as exc:
+                await _fail_terminal(f"Replay {replay_id} not found: {exc}")
+                return
+            # Replay ejecutado: job terminal COMPLETED para no re-ejecutarlo
+            # (re-encolar repetía el replay cada scan — efecto duplicado).
+            await job_repo.update_job(
+                jid,
+                status="completed",
+                retry_at=None,
+                completed_at=datetime.now(timezone.utc),
+            )
+            logger.info(
+                "Evaluation replay job finished",
+                job_id=job_id,
+                replay_id=replay_id,
+            )
             return
         if job is not None and (job.job_type or "").startswith("spider"):
             from src.api.deps import get_spider_service
 
             cursor = job.cursor_snapshot or {}
             spider_run_id = cursor.get("spider_run_id")
-            if spider_run_id:
+            if not spider_run_id:
+                await _fail_terminal("spider job sin spider_run_id en cursor")
+                return
+            try:
                 from uuid import UUID as _UUID
 
                 await get_spider_service().execute_run(_UUID(spider_run_id))
-                logger.info(
-                    "Spider run job finished",
-                    job_id=job_id,
-                    spider_run_id=spider_run_id,
-                )
+            except ValueError as exc:
+                await _fail_terminal(f"Spider run {spider_run_id} not found: {exc}")
+                return
+            await job_repo.update_job(
+                jid,
+                status="completed",
+                retry_at=None,
+                completed_at=datetime.now(timezone.utc),
+            )
+            logger.info(
+                "Spider run job finished",
+                job_id=job_id,
+                spider_run_id=spider_run_id,
+            )
             return
     except ValueError as exc:
-        logger.warning("Catalog discovery job missing, skipping", job_id=job_id, error=str(exc))
+        await _fail_terminal(f"Job target missing: {exc}")
         return
     except Exception as exc:  # noqa: BLE001
         logger.error("Catalog discovery dispatch failed", job_id=job_id, error=str(exc))

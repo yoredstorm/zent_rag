@@ -361,7 +361,9 @@ class RAGOrchestrator:
             if history:
                 for item in history:
                     msg = json.loads(item)
-                    if msg.get("role") == "cited_chunks":
+                    if msg.get("role") in ("user", "assistant"):
+                        # Cualquier turno previo (incluido responder una
+                        # aclaración) hace de esta consulta un follow-up.
                         is_followup = True
                         break
 

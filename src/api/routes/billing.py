@@ -267,6 +267,17 @@ async def _do_create_trial(
         logger.error("Failed to create trial subscription", error=str(exc), exc_info=True)
         raise HTTPException(500, "Failed to create trial")
 
+    try:
+        from src.platform.demo.provisioning import provision_demo_kb
+
+        await provision_demo_kb(organization_id)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "Demo provisioning skipped",
+            organization_id=str(organization_id),
+            exc_info=True,
+        )
+
     return {
         "subscription_id": str(subscription.id),
         "organization_id": str(organization_id),

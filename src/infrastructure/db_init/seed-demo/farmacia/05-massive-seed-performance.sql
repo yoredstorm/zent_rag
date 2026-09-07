@@ -1,8 +1,8 @@
 -- =============================================================================
--- Massive Seed Data — Farmacia ZentSalud (~400K registros)
+-- Seed Data — Farmacia ZentSalud (demo reducida, <=500 filas por tabla)
 -- =============================================================================
--- Resultados: 500 categorías, 30 proveedores, 50K productos, 25K clientes,
--- 50K ventas, 150K reseñas, 5K recetas médicas
+-- Resultados: 500 categorías, 30 proveedores, 500 productos, 500 clientes,
+-- 500 ventas, 500 reseñas, 500 recetas médicas
 -- Usa generate_series() + LATERAL join combinando arrays de fármacos reales
 -- =============================================================================
 
@@ -142,7 +142,7 @@ SELECT
         conc[1 + (((g * 3) % array_length(conc, 1)) + 1)],
         CASE WHEN g % 4 = 0 THEN 'receta' ELSE 'otc' END
     ]
-FROM generate_series(1, 50000) AS g
+FROM generate_series(1, 500) AS g
 CROSS JOIN LATERAL (
     SELECT ARRAY[
         'Paracetamol','Ibuprofeno','Naproxeno Sódico','Ácido Acetilsalicílico','Diclofenaco Sódico',
@@ -253,7 +253,7 @@ SELECT
     (SELECT id FROM farmacia.health_insurance WHERE organization_id = '00000000-0000-0000-0000-000000000001' OFFSET (g % 8) LIMIT 1),
     CASE WHEN g % 10 = 0 THEN 'gold' WHEN g % 5 = 0 THEN 'silver' ELSE 'bronce' END,
     NOW() - ((g % 730) || ' days')::interval
-FROM generate_series(1, 25000) AS g
+FROM generate_series(1, 500) AS g
 CROSS JOIN LATERAL (
     SELECT ARRAY[
         'María','Carmen','Ana','Rosa','Patricia','Claudia','Carolina','Francisca','Valentina','Daniela',
@@ -288,7 +288,7 @@ SELECT
     CASE WHEN g % 3 = 0 THEN 'Control en 30 días. Ajustar dosis según respuesta.' WHEN g % 3 = 1 THEN 'No suspender tratamiento bruscamente.' ELSE 'Mantener dosis indicada.' END,
     ('2026-01-01'::date + ((g * 7) % 210 || ' days')::interval),
     ('2026-01-08'::date + ((g * 7) % 210 + 30 || ' days')::interval)
-FROM generate_series(1, 5000) AS g
+FROM generate_series(1, 500) AS g
 CROSS JOIN LATERAL (
     SELECT ARRAY[
         'Dr. Andrés Valenzuela Muñoz','Dra. María Teresa Barrientos','Dr. Juan Carlos Morales R.',
@@ -335,7 +335,7 @@ SELECT
     CASE WHEN g % 20 = 0 THEN 'cancelled' WHEN g % 50 = 0 THEN 'refunded' ELSE 'completed' END,
     NOW() - ((g % 365) || ' days')::interval,
     (ARRAY['presencial','presencial','presencial','web','app'])[1 + (g % 5)]
-FROM generate_series(1, 50000) AS g
+FROM generate_series(1, 500) AS g
 CROSS JOIN LATERAL (
     SELECT ARRAY(SELECT id FROM farmacia.products WHERE sku LIKE 'FAR-%' ORDER BY id) AS prod_ids
 ) AS p
@@ -366,7 +366,7 @@ SELECT
     g % 3 != 0,
     g % 200,
     NOW() - ((g % 365) || ' days')::interval
-FROM generate_series(1, 150000) AS g
+FROM generate_series(1, 500) AS g
 CROSS JOIN LATERAL (
     SELECT ARRAY(SELECT id FROM farmacia.products WHERE sku LIKE 'FAR-%' ORDER BY id) AS prod_ids
 ) AS p

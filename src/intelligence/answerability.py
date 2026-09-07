@@ -273,9 +273,11 @@ class AnswerabilityGate:
 
         # 7) DATA_MISSING — la información física necesaria no existe o no está conectada
         if signals.result_presence <= 0:
-            hints = missing_data_hints or [
-                f"Datos para {'/'.join(understanding.concepts) or 'la consulta'}"
-            ]
+            # Solo conceptos que son entidades de datos reales (definicionales);
+            # conceptos inventados por el LLM (p.ej. "dolor_de_cabeza") no se
+            # presentan como datos faltantes — serían confusos.
+            topics = understanding.requires_definition or ["la consulta"]
+            hints = missing_data_hints or [f"Datos sobre: {'/'.join(topics)}"]
             return AnswerabilityDecision(
                 status=AnswerabilityStatus.DATA_MISSING,
                 answerable=False,
