@@ -136,6 +136,49 @@ class TestQueryUnderstandingDeterministic:
         u = self.service.understand_deterministic("Hola, buenos días")
         assert u.intent == "general"
 
+    def test_concept_types_populated_and_definitional_filtered(self) -> None:
+        u = self.service.understand_deterministic(
+            "¿Cuántos clientes corporativos rentables tenemos?"
+        )
+        assert u.concept_types.get("clientes") == "ENTITY"
+        assert u.concept_types.get("corporativos") == "SEGMENT"
+        assert u.concept_types.get("rentables") == "BUSINESS_RULE"
+        assert "clientes" not in u.requires_definition
+        assert "corporativos" in u.requires_definition
+        assert "rentables" in u.requires_definition
+        assert "concept_types" in u.to_dict()
+
+    def test_sales_fact_does_not_require_definition(self) -> None:
+        u = self.service.understand_deterministic("¿Cuántas ventas hubo ayer?")
+        assert "ventas" in u.concepts
+        assert u.concept_types.get("ventas") == "FACT"
+        assert u.requires_definition == []
+
+    def test_merge_llm_classifies_instead_of_all_concepts_definitional(self) -> None:
+        base = self.service.understand_deterministic("¿Cuántas ventas hubo ayer?")
+        merged = QueryUnderstandingService._merge_llm(
+            base,
+            {
+                "intent": "business_metric",
+                "entities": ["Aeroméxico"],
+                "concepts": ["cliente", "venta", "margen"],
+                "time_scope": "past",
+                "requires_structured_data": True,
+                "requires_documents": False,
+                "requires_tools": False,
+                "ambiguity": False,
+                "clarifying_question": None,
+            },
+        )
+        assert merged.extraction_source == "llm"
+        assert merged.entities == ["Aeroméxico"]
+        assert merged.concept_types.get("cliente") == "ENTITY"
+        assert merged.concept_types.get("venta") == "FACT"
+        assert merged.concept_types.get("margen") == "DERIVED_METRIC"
+        assert merged.requires_definition == ["margen"]
+        assert "cliente" not in merged.requires_definition
+        assert "venta" not in merged.requires_definition
+
 
 class TestQueryPlanner:
     def setup_method(self) -> None:

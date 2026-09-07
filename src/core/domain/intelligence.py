@@ -71,6 +71,7 @@ class QueryUnderstanding:
     intent: str = "general"  # business_metric | document_policy | operational_status | concept_definition | general
     entities: list[str] = field(default_factory=list)
     concepts: list[str] = field(default_factory=list)
+    concept_types: dict[str, str] = field(default_factory=dict)
     requires_definition: list[str] = field(default_factory=list)
     resolved_concepts: dict[str, bool] = field(default_factory=dict)
     time_scope: str | None = None  # current | past | period | range
@@ -88,6 +89,7 @@ class QueryUnderstanding:
             "intent": self.intent,
             "entities": self.entities,
             "concepts": self.concepts,
+            "concept_types": self.concept_types,
             "requires_definition": self.requires_definition,
             "resolved_concepts": self.resolved_concepts,
             "time_scope": self.time_scope,

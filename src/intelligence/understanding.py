@@ -13,6 +13,9 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from src.core.domain.intelligence import QueryUnderstanding
+from src.intelligence.concept_classification import ConceptClassifier
+
+_CLASSIFIER = ConceptClassifier()
 
 _INTENT_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
     (
@@ -79,15 +82,6 @@ _CONCEPT_CANDIDATE_RE = re.compile(
     r"corporativo|corporativos|prioridad|urgencia|estado|status)\b",
     re.IGNORECASE,
 )
-
-# Conceptos cuya respuesta depende de una DEFINICIÓN empresarial aprobada
-# (derivados/estados de negocio). Un concepto no-definicional (p. ej.
-# "cliente", "producto") no dispara CONTEXT_MISSING por sí solo.
-_DEFINITIONAL_TERMS = {
-    "activo", "activos", "rentable", "rentables", "margen", "corporativo",
-    "corporativos", "prioridad", "urgencia", "vigente", "moroso", "morosos",
-    "premium", "estado", "status",
-}
 
 _LLM_UNDERSTAND_PROMPT = """Eres el módulo QueryUnderstanding de un sistema RAG empresarial.
 Analiza la pregunta del usuario y responde SOLO con JSON válido (sin markdown):
@@ -209,6 +203,9 @@ class QueryUnderstandingService:
     def understand_deterministic(self, query: str) -> QueryUnderstanding:
         intent, signals = _detect_intent(query)
         concepts = _extract_candidate_concepts(query)
+        concept_types, requires_definition = _CLASSIFIER.classify_many(
+            concepts, intent=intent
+        )
         time_scope = _detect_time_scope(query)
         requires_structured = intent == "business_metric"
         requires_documents = intent in ("document_policy", "concept_definition")
@@ -217,9 +214,8 @@ class QueryUnderstandingService:
             intent=intent,
             entities=[],
             concepts=concepts,
-            requires_definition=[
-                c for c in concepts if c in _DEFINITIONAL_TERMS
-            ],
+            concept_types=concept_types,
+            requires_definition=requires_definition,
             time_scope=time_scope,
             requires_structured_data=requires_structured,
             requires_documents=requires_documents,
@@ -274,6 +270,7 @@ class QueryUnderstandingService:
             intent = base.intent
         concepts = [str(c).strip().lower() for c in (parsed.get("concepts") or [])]
         concepts = [c for c in concepts if c and len(c) <= 160]
+        concepts = concepts or list(base.concepts)
         entities = [str(e).strip() for e in (parsed.get("entities") or [])]
         entities = [e for e in entities if e]
         clarifying = parsed.get("clarifying_question")
@@ -288,11 +285,16 @@ class QueryUnderstandingService:
         time_scope = parsed.get("time_scope")
         if not time_scope or str(time_scope).strip().lower() == "null":
             time_scope = base.time_scope
+        # Classify after merge — never treat all LLM concepts as definitional.
+        concept_types, requires_definition = _CLASSIFIER.classify_many(
+            concepts, intent=intent
+        )
         return QueryUnderstanding(
             intent=intent,
             entities=entities,
-            concepts=concepts or base.concepts,
-            requires_definition=concepts or base.requires_definition,
+            concepts=concepts,
+            concept_types=concept_types,
+            requires_definition=requires_definition,
             time_scope=str(time_scope) if time_scope else None,
             requires_structured_data=bool(
                 parsed.get("requires_structured_data", base.requires_structured_data)
