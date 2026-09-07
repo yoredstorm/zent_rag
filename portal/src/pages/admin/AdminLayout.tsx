@@ -337,7 +337,7 @@ export default function AdminLayout() {
             )}
           </div>
         </header>
-        <main className="min-h-0 flex-1 overflow-y-auto p-4 lg:p-6">
+        <main className="min-h-0 flex-1 overflow-y-auto p-4 lg:p-6" tabIndex={-1}>
           <CommandPaletteRoot mode="platform" />
           <IdleSessionWarning minutes={IDLE_SESSION_MINUTES} onLogout={logout} />
           <StepUpModal />
