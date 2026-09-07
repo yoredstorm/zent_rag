@@ -150,19 +150,9 @@ def _detect_intent(text: str) -> tuple[str, list[str]]:
 
 
 def _detect_time_scope(text: str) -> str | None:
-    lowered = text.lower()
-    if re.search(
-        r"\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|"
-        r"octubre|noviembre|diciembre)\b|\bq[1-4]\b|\b20\d\d\b|\bmes pasado\b|"
-        r"\b[úu]ltimo mes\b|\b[úu]ltimos? (d[ií]as|meses)\b|\bhoy\b|\bayer\b",
-        lowered,
-    ):
-        return "past"
-    if re.search(r"\bactualmente\b|\bhoy\b|\bactual\b|\bhasta ahora\b", lowered):
-        return "current"
-    if re.search(r"\bproyecci[oó]n\b|\bpr[oó]ximo\b|\bfuturo\b|\bestimaci[oó]n\b", lowered):
-        return "future"
-    return None
+    from src.intelligence.temporal import TemporalResolver
+
+    return TemporalResolver().detect_scope(text)
 
 
 def _extract_candidate_concepts(text: str) -> list[str]:

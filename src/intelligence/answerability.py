@@ -175,12 +175,20 @@ class AnswerabilityGate:
             )
 
         # 3) SOURCE_CONFLICT — fuentes se contradicen sin fuente autoritativa
-        conflicts = detect_source_conflicts(
+        #    Phase 28C: numeric + cross-type (docs/SQL/metrics/definitions)
+        from src.intelligence.source_conflict import SourceConflictAnalyzer
+
+        conflict_report = SourceConflictAnalyzer().analyze(
             evidences,
+            authority=(
+                {"source_name": authoritative_source}
+                if authoritative_source
+                else None
+            ),
             tolerance_pct=self._conflict_tolerance_pct,
-            authoritative_source=authoritative_source,
         )
-        if conflicts:
+        conflicts = conflict_report.conflicts if conflict_report.has_conflict else []
+        if conflicts and not conflict_report.resolved:
             return AnswerabilityDecision(
                 status=AnswerabilityStatus.SOURCE_CONFLICT,
                 answerable=False,

@@ -92,13 +92,14 @@ class QueryPlanner:
                 if needs_docs and kb_available:
                     return QueryPlan(
                         strategy=PlanStrategy.SQL_RAG,
-                        steps=["sql", "retrieval", "merge"],
+                        steps=["sql", "retrieval", "merge", "research_plan"],
                         needs_sql=True,
                         needs_retrieval=True,
                         needs_semantic_resolution=bool(unresolved),
                         rationale=rationale
                         + [
                             "Pregunta causal/explicativa: SQL para el dato y RAG para el contexto",
+                            "Analytical Reasoning: build Research Plan (Phase 29)",
                         ],
                     )
                 return QueryPlan(
