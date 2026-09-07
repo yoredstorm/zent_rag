@@ -391,7 +391,7 @@ class TestEngineGoldenCases:
         engine = await _engine()
         org = ORG_DEV
         understanding = await engine.understand(org, "¿Cuántas devoluciones hubo en agosto?")
-        assert understanding.requires_definition == []  # devoluciones es entidad
+        assert understanding.requires_definition == []  # devoluciones is FACT, not definitional
         plan = engine.plan(
             understanding, query="¿Cuántas devoluciones hubo en agosto?",
             sql_available=True, router_score=0.9,
@@ -414,6 +414,86 @@ class TestEngineGoldenCases:
         decision = engine.evaluate(signals, understanding, plan, evidences)
         assert decision.status == AnswerabilityStatus.ANSWERABLE
         assert decision.answerable
+
+    @pytest.mark.asyncio
+    async def test_case26a_sales_classified_as_fact_no_definition(self) -> None:
+        """Benchmark TEST 1: Sale as FACT — no unnecessary business definition."""
+        engine = await _engine()
+        org = ORG_DEV
+        understanding = await engine.understand(org, "¿Cuántas ventas hubo ayer?")
+        assert understanding.concept_types.get("ventas") == "FACT"
+        assert understanding.requires_definition == []
+        plan = engine.plan(
+            understanding,
+            query="¿Cuántas ventas hubo ayer?",
+            sql_available=True,
+            router_score=0.9,
+        )
+        sql_result = SqlQueryResult(
+            sql="SELECT COUNT(*) FROM sales WHERE day=current_date-1",
+            columns=["count"],
+            rows=[["12"]],
+            row_count=1,
+        )
+        evidences = await engine.collect_evidence(
+            organization_id=org,
+            query="¿Cuántas ventas hubo ayer?",
+            understanding=understanding,
+            retrieval_context=None,
+            sql_result=sql_result,
+            definitions=[],
+        )
+        decision = engine.evaluate(
+            engine.collect_signals(understanding, plan, None, sql_result, evidences),
+            understanding,
+            plan,
+            evidences,
+        )
+        assert decision.status == AnswerabilityStatus.ANSWERABLE
+
+    @pytest.mark.asyncio
+    async def test_case26a_profitable_customers_need_definition(self) -> None:
+        """Benchmark TEST 2: profitable customers without definition → CONTEXT_MISSING."""
+        store = await _fresh_store()
+        # Seed DB may already have "rentables" approved — isolate this case.
+        await store.delete_definition(ORG_DEV, "rentables")
+        engine = await _engine(store=store)
+        org = ORG_DEV
+        understanding = await engine.understand(
+            org, "¿Cuántos clientes rentables tenemos?"
+        )
+        assert understanding.concept_types.get("rentables") == "BUSINESS_RULE"
+        assert "rentables" in understanding.requires_definition
+        assert "clientes" not in understanding.requires_definition
+        assert understanding.resolved_concepts.get("rentables") is False
+        plan = engine.plan(
+            understanding,
+            query="¿Cuántos clientes rentables tenemos?",
+            sql_available=True,
+            router_score=0.9,
+        )
+        sql_result = SqlQueryResult(
+            sql="SELECT COUNT(*) FROM customers",
+            columns=["count"],
+            rows=[["5"]],
+            row_count=1,
+        )
+        evidences = await engine.collect_evidence(
+            organization_id=org,
+            query="¿Cuántos clientes rentables tenemos?",
+            understanding=understanding,
+            retrieval_context=None,
+            sql_result=sql_result,
+            definitions=[],
+        )
+        decision = engine.evaluate(
+            engine.collect_signals(understanding, plan, None, sql_result, evidences),
+            understanding,
+            plan,
+            evidences,
+        )
+        assert decision.status == AnswerabilityStatus.CONTEXT_MISSING
+        assert not decision.answerable
 
 
 class TestRagQueryResponseAnswerability:
