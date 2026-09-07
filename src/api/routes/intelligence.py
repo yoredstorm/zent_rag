@@ -11,10 +11,16 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from src.api.deps import get_business_definition_registry, get_intelligence_store
+from src.api.deps import (
+    get_business_definition_registry,
+    get_intelligence_store,
+    get_verified_query_service,
+)
+from src.core.domain.verified_query import VerifiedQueryStatus
 from src.infrastructure.observability.logging_config import get_logger
 from src.intelligence.definitions import BusinessDefinitionRegistry
 from src.intelligence.store import PostgresIntelligenceStore
+from src.intelligence.verified_queries import VerifiedQueryService
 from src.platform.rbac.policy import require_permission
 
 logger = get_logger(__name__)
@@ -345,10 +351,6 @@ async def delete_definition(
 # ---------------------------------------------------------------------------
 # Verified Queries (Phase 26C)
 # ---------------------------------------------------------------------------
-
-from src.api.deps import get_verified_query_service
-from src.core.domain.verified_query import VerifiedQueryStatus
-from src.intelligence.verified_queries import VerifiedQueryService
 
 
 class VerifiedQueryBody(BaseModel):

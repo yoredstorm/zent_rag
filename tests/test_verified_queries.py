@@ -1,7 +1,7 @@
 """Phase 26C — Verified Query search and mapping suggestions."""
 from __future__ import annotations
 
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 
@@ -12,7 +12,6 @@ from src.core.domain.verified_query import (
     VerifiedQueryStatus,
 )
 from src.intelligence.verified_queries import VerifiedQueryService
-
 
 ORG = UUID(int=1)
 

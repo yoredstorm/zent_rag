@@ -10,7 +10,6 @@ from typing import Iterable
 
 from src.core.domain.intelligence import BusinessDefinition, QueryUnderstanding
 from src.core.domain.semantic import (
-    DEFINITIONAL_TYPES,
     BusinessObjectType,
     BusinessSemanticAST,
     SemanticCompileResult,

@@ -44,21 +44,25 @@ class EntityResolutionEngine:
         right: dict[str, Any] | EnterpriseEntity | EntityAlias,
     ) -> dict[str, Any]:
         """Score determinista: exact ids, normalized names, fuzzy."""
-        l = self._as_record(left)
-        r = self._as_record(right)
+        left_rec = self._as_record(left)
+        right_rec = self._as_record(right)
         signals: dict[str, float] = {
             "exact_id": 0.0,
             "normalized_name": 0.0,
             "fuzzy": 0.0,
         }
 
-        lid = (l.get("identifier_value") or "").strip().lower()
-        rid = (r.get("identifier_value") or "").strip().lower()
+        lid = (left_rec.get("identifier_value") or "").strip().lower()
+        rid = (right_rec.get("identifier_value") or "").strip().lower()
         if lid and rid and lid == rid:
             signals["exact_id"] = 1.0
 
-        ln = normalize_name(l.get("display_name") or l.get("canonical_name") or "")
-        rn = normalize_name(r.get("display_name") or r.get("canonical_name") or "")
+        ln = normalize_name(
+            left_rec.get("display_name") or left_rec.get("canonical_name") or ""
+        )
+        rn = normalize_name(
+            right_rec.get("display_name") or right_rec.get("canonical_name") or ""
+        )
         if ln and rn and ln == rn:
             signals["normalized_name"] = 1.0
             signals["fuzzy"] = 1.0
@@ -79,8 +83,8 @@ class EntityResolutionEngine:
         return {
             "score": round(min(score, 1.0), 4),
             "signals": signals,
-            "left": l,
-            "right": r,
+            "left": left_rec,
+            "right": right_rec,
         }
 
     def suggest_match(
@@ -94,11 +98,15 @@ class EntityResolutionEngine:
         result = self.score_match(left, right)
         if result["score"] < min_score:
             return None
-        l = result["left"]
-        r = result["right"]
+        left_rec = result["left"]
+        right_rec = result["right"]
         return EntityMatch(
-            left_entity_id=str(l.get("entity_id") or l.get("identifier_value") or ""),
-            right_entity_id=str(r.get("entity_id") or r.get("identifier_value") or ""),
+            left_entity_id=str(
+                left_rec.get("entity_id") or left_rec.get("identifier_value") or ""
+            ),
+            right_entity_id=str(
+                right_rec.get("entity_id") or right_rec.get("identifier_value") or ""
+            ),
             status=EntityMatchStatus.SUGGESTED_MATCH,
             score=result["score"],
             signals=result["signals"],
