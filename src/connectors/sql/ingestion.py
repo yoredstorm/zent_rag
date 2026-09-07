@@ -996,7 +996,13 @@ class PostgresIngestionService(IngestionService):
             )
             pk_value = row_dict.get(pk_col.name)
             pk_str = str(pk_value) if pk_value else str(uuid4())
-            parent_id = uuid5(_VECTOR_NS, f"{schema}.{table}:{pk_str}")
+            # El namespace DEBE incluir organization_id: sin él, dos orgs que
+            # sincronizan el mismo schema/tabla (p.ej. data demo compartida)
+            # generan IDs idénticos y el último sync sobreescribe los puntos
+            # del otro org (fuga/colisión cross-tenant en la colección).
+            parent_id = uuid5(
+                _VECTOR_NS, f"{organization_id}:{schema}.{table}:{pk_str}"
+            )
             text_chunks = _chunk_text(
                 content_text, self._chunk_max_chars, self._chunk_overlap
             )
@@ -1006,7 +1012,7 @@ class PostgresIngestionService(IngestionService):
                     if len(text_chunks) == 1
                     else uuid5(
                         _VECTOR_NS,
-                        f"{schema}.{table}:{pk_str}:chunk:{chunk_index}",
+                        f"{organization_id}:{schema}.{table}:{pk_str}:chunk:{chunk_index}",
                     )
                 )
                 page_texts.append(chunk_text)

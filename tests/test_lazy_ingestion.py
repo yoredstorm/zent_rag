@@ -806,7 +806,8 @@ async def test_ingest_candidates_concurrent_is_idempotent(
 
     assert all(not r.errors for r in results)
     expected_ids = {
-        uuid5(_VECTOR_NS, f"farmacia.products:{pk}") for pk in ("row-1", "row-2")
+        uuid5(_VECTOR_NS, f"{organization_id}:farmacia.products:{pk}")
+        for pk in ("row-1", "row-2")
     }
     assert set(vs.points) == expected_ids
     for r in results:
@@ -1054,7 +1055,7 @@ async def test_ingest_rows_idempotent_uuid5() -> None:
     ids_first = set(vs.points)
     second = await svc._ingest_rows(organization_id, source, rows, ingestion_mode="lazy")
 
-    expected = uuid5(_VECTOR_NS, "farmacia.products:row-1")
+    expected = uuid5(_VECTOR_NS, f"{organization_id}:farmacia.products:row-1")
     assert expected in vs.points
     assert ids_first == set(vs.points)
     assert first.vectors_upserted >= 1
