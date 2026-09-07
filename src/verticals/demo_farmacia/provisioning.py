@@ -9,16 +9,16 @@ Fail-soft: si algo falla, el trial se crea igual sin datos demo.
 
 from __future__ import annotations
 
-import logging
 import sys
 from uuid import UUID
 
 from sqlalchemy import text
 
 from src.core.config import get_settings
+from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.relational_db import get_async_session
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 _DEMO_SCHEMA = "farmacia"
 

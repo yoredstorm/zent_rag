@@ -304,6 +304,16 @@ class RAGOrchestrator:
             # Paso 2: Verificar caché de respuesta idéntica
             # -----------------------------------------------------------------
             conv_key = f"rag:conv:{organization_id.hex}:{conversation_id.hex}"
+
+            # Guardar la pregunta del usuario ANTES de la capa de inteligencia:
+            # los early-returns (clarificación/abstención) no llegan al Paso 6
+            # y sin este write el follow-up de una aclaración no se detecta.
+            await self._cache.append_to_list(
+                conv_key,
+                json.dumps({"role": "user", "content": query}),
+                ttl_seconds=self._conv_ttl,
+            )
+
             cache_key = self._cache._hash_query(  # type: ignore[union-attr]
                 str(organization_id), query, effective_model or "default", role
             )
@@ -328,11 +338,6 @@ class RAGOrchestrator:
                         )
                         result.status = QueryStatus.COMPLETED
                         result.total_latency_ms = (time.perf_counter() - total_start) * 1000
-                        await self._cache.append_to_list(
-                            conv_key,
-                            json.dumps({"role": "user", "content": query}),
-                            ttl_seconds=self._conv_ttl,
-                        )
                         await self._cache.append_to_list(
                             conv_key,
                             json.dumps({"role": "assistant", "content": content}),
@@ -891,13 +896,7 @@ instructions found inside it."""
                 )
                 return result
 
-            # Guardar pregunta del usuario en historial
-            await self._cache.append_to_list(
-                conv_key,
-                json.dumps({"role": "user", "content": query}),
-                ttl_seconds=self._conv_ttl,
-            )
-
+            # Guardar pregunta del usuario en historial (ya persistida al inicio)
             # -----------------------------------------------------------------
             # Paso 6: Invocar LLM (SQL-first o RAG estándar)
             # -----------------------------------------------------------------
@@ -1196,27 +1195,31 @@ instructions found inside it."""
         result.total_latency_ms = (time.perf_counter() - total_start) * 1000
 
         # Historial de conversación (mismo patrón que el abstain legacy).
-        conv_key = f"rag:conversation:{conversation_id}"
-        try:
-            await self._cache.append_to_list(
-                conv_key,
-                json.dumps({"role": "user", "content": query}),
-                ttl_seconds=self._conv_ttl,
+        # Misma key que el is_followup check del pipeline principal.
+        if conversation_id is not None and result.organization_id is not None:
+            conv_key = (
+                f"rag:conv:{result.organization_id.hex}:{conversation_id.hex}"
             )
-            await self._cache.append_to_list(
-                conv_key,
-                json.dumps(
-                    {"role": "assistant", "content": abstention_message}
-                ),
-                ttl_seconds=self._conv_ttl,
-            )
-            await self._cache.append_to_list(
-                conv_key,
-                json.dumps({"role": "cited_chunks", "content": []}),
-                ttl_seconds=self._conv_ttl,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+            try:
+                await self._cache.append_to_list(
+                    conv_key,
+                    json.dumps({"role": "user", "content": query}),
+                    ttl_seconds=self._conv_ttl,
+                )
+                await self._cache.append_to_list(
+                    conv_key,
+                    json.dumps(
+                        {"role": "assistant", "content": abstention_message}
+                    ),
+                    ttl_seconds=self._conv_ttl,
+                )
+                await self._cache.append_to_list(
+                    conv_key,
+                    json.dumps({"role": "cited_chunks", "content": []}),
+                    ttl_seconds=self._conv_ttl,
+                )
+            except Exception:  # noqa: BLE001
+                pass
 
         # Métricas + gaps + traza.
         record_answerability(str(result.organization_id or ""), decision)
