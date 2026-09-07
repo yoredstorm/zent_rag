@@ -66,7 +66,6 @@ export async function expectNoA11yViolations(page: Page) {
     expect.soft(false, `Violaciones de accesibilidad:\n${summary}`).toBeTruthy();
   }
 }
-}
 
 /** Limpia el agente de smoke si existe (idempotente entre runs). */
 export async function cleanupSmokeAgent(request: APIRequestContext) {
