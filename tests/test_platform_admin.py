@@ -430,7 +430,7 @@ async def test_impersonate_returns_short_lived_token_and_writes_audit(
     headers = await _platform_headers(async_client)
     resp = await async_client.post(
         f"/api/v1/platform/organizations/{customer['organization_id']}/impersonate",
-        json={"expires_seconds": 600},
+        json={"expires_seconds": 600, "reason": "test impersonation"},
         headers=headers,
     )
     assert resp.status_code == 200, resp.text

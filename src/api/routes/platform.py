@@ -212,6 +212,25 @@ async def platform_metrics(request: Request):
     finally:
         await session.close()
 
+    mrr_dollars = mrr_cents / 100.0
+    if mrr_dollars <= 0 or llm_cost_30d <= 0:
+        margin = None
+    else:
+        margin = round((mrr_dollars - llm_cost_30d) / mrr_dollars * 100.0, 2)
+
+    response = {
+        "mrr_cents": mrr_cents,
+        "arr_cents": mrr_cents * 12,
+        "customers": customers,
+        "active_agents": active_agents,
+        "ai_requests_30d": ai_requests_30d,
+        "llm_cost_30d": llm_cost_30d,
+        "gross_margin_pct": margin,
+    }
+    # KPIs ejecutivos aditivos (FASE 03, S25).
+    response.update({k: v for k, v in (extra or {}).items() if k not in response})
+    return response
+
 
 async def _executive_kpis(session) -> dict:
     """KPIs aditivos del overview ejecutivo (FASE 03, S25)."""
