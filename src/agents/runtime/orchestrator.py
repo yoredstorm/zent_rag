@@ -60,6 +60,9 @@ from src.rag.retrieval.base import Retriever
 from src.rag.retrieval.config import resolve_retrieval_config
 from src.rag.retrieval.models import RetrievalQuery
 
+# Zent Intelligence Layer (Answerability Engine) — imports lazy para no
+# acoplar el orquestador al engine cuando está deshabilitado.
+
 logger = get_logger(__name__)
 
 # System prompt genérico que encapsula el comportamiento del asistente RAG.
@@ -148,6 +151,7 @@ class RAGOrchestrator:
         lazy_ingestion: IngestionService | None = None,
         retriever: Retriever | None = None,
         sql_router: object | None = None,
+        intelligence: object | None = None,
     ) -> None:
         self._organization_repo = organization_repo
         self._vector_store = vector_store
@@ -165,6 +169,7 @@ class RAGOrchestrator:
         self._lazy_ingestion = lazy_ingestion
         self._retriever = retriever
         self._sql_router = sql_router
+        self._intelligence = intelligence
         # Align anti-hallucination gate with configured score threshold (min 0.1 when threshold is 0)
         self._min_meaningful_score = max(score_threshold, 0.1) if score_threshold > 0 else 0.1
 
@@ -361,6 +366,128 @@ class RAGOrchestrator:
             effective_top_k = max(top_k // 3, 20) if is_followup else top_k
 
             # -----------------------------------------------------------------
+            # Paso 3.5: Zent Intelligence Layer — Query Understanding + Planner
+            # -----------------------------------------------------------------
+            intelligence_plan: object | None = None
+            intelligence_understanding: object | None = None
+            intelligence_evidences: list = []
+            intelligence_budget: object | None = None
+            if self._intelligence is not None:
+                from src.core.domain.intelligence import (
+                    AnswerabilityDecision,
+                    AnswerabilityStatus,
+                    Budget,
+                    BudgetLimits,
+                    ConfidenceLevel,
+                    PlanStrategy,
+                )
+                from src.intelligence.abstention import AbstentionBuilder
+
+                settings_il = get_settings()
+                intelligence_budget = Budget(
+                    limits=BudgetLimits(
+                        max_plan_attempts=settings_il.RAG_ANSWERABILITY_MAX_PLAN_ATTEMPTS,
+                        max_retrieval_rounds=settings_il.RAG_ANSWERABILITY_MAX_RETRIEVAL_ROUNDS,
+                        max_llm_calls=settings_il.RAG_ANSWERABILITY_MAX_LLM_CALLS,
+                        max_execution_seconds=settings_il.RAG_ANSWERABILITY_MAX_EXECUTION_SECONDS,
+                        max_total_tokens=settings_il.RAG_ANSWERABILITY_MAX_TOTAL_TOKENS,
+                        max_cost_usd=settings_il.RAG_ANSWERABILITY_MAX_COST_USD,
+                    )
+                )
+                async with trace_span("intelligence.understand"):
+                    intelligence_understanding = await self._intelligence.understand(  # type: ignore[union-attr]
+                        organization_id,
+                        query,
+                    )
+                router_score: float | None = None
+                if self._sql_router is not None:
+                    try:
+                        from src.agents.tools.sql_router import SqlIntentRouter
+
+                        router_score = SqlIntentRouter.heuristic_score(query)
+                    except Exception:  # noqa: BLE001
+                        router_score = None
+                intelligence_plan = self._intelligence.plan(  # type: ignore[union-attr]
+                    intelligence_understanding,
+                    query=query,
+                    sql_available=self._sql_expert is not None,
+                    router_score=router_score,
+                    kb_available=(
+                        self._retriever is not None or self._vector_store is not None
+                    ),
+                    tools_available=False,
+                )
+                if intelligence_budget.exceeded:  # type: ignore[union-attr]
+                    decision = AnswerabilityDecision(
+                        status=AnswerabilityStatus.EXECUTION_FAILED,
+                        answerable=False,
+                        confidence_level=ConfidenceLevel.INSUFFICIENT,
+                        reason_codes=["BUDGET_EXCEEDED"],
+                        message=(
+                            "La consulta superó los límites duros de ejecución "
+                            "antes de recopilar evidencia."
+                        ),
+                    )
+                    return await self._finish_intelligence_abstention(
+                        result,
+                        decision,
+                        query_id,
+                        conversation_id,
+                        query,
+                        total_start,
+                    )
+
+                if intelligence_plan.strategy == PlanStrategy.CLARIFICATION:  # type: ignore[union-attr]
+                    decision = AnswerabilityDecision(
+                        status=AnswerabilityStatus.CLARIFICATION_REQUIRED,
+                        answerable=False,
+                        confidence_level=ConfidenceLevel.MEDIUM,
+                        score=0.0,
+                        reason_codes=["AMBIGUOUS_QUERY"],
+                        clarifying_question=getattr(
+                            intelligence_understanding, "clarifying_question", None
+                        ),
+                        message=getattr(
+                            intelligence_understanding, "clarifying_question", None
+                        ),
+                    )
+                    return await self._finish_intelligence_abstention(
+                        result,
+                        decision,
+                        query_id,
+                        conversation_id,
+                        query,
+                        total_start,
+                        understanding=intelligence_understanding,
+                        plan=intelligence_plan,
+                        budget=intelligence_budget,
+                    )
+
+                if intelligence_plan.strategy == PlanStrategy.ABSTAIN:  # type: ignore[union-attr]
+                    decision = AnswerabilityDecision(
+                        status=AnswerabilityStatus.DATA_MISSING,
+                        answerable=False,
+                        confidence_level=ConfidenceLevel.INSUFFICIENT,
+                        reason_codes=["NO_SOURCE_AVAILABLE"],
+                        missing_data=["No hay fuentes (SQL/KB/tools) configuradas"],
+                        message=(
+                            "No puedo responder: ninguna fuente de información "
+                            "está configurada para esta organización."
+                        ),
+                    )
+                    return await self._finish_intelligence_abstention(
+                        result,
+                        decision,
+                        query_id,
+                        conversation_id,
+                        query,
+                        total_start,
+                        understanding=intelligence_understanding,
+                        plan=intelligence_plan,
+                        budget=intelligence_budget,
+                    )
+
+            # -----------------------------------------------------------------
             # Paso 4: Ejecutar retrieval + SQL Expert EN PARALELO
             # -----------------------------------------------------------------
             # Ruta nueva: motor de retrieval inyectado (HybridRetriever).
@@ -447,7 +574,11 @@ class RAGOrchestrator:
 
             async with trace_span("rag.retrieval"):
                 sql_permissions = (organization.config_json or {}).get("sql")
-                if self._sql_expert:
+                plan_needs_sql = (
+                    intelligence_plan is None
+                    or getattr(intelligence_plan, "needs_sql", True)
+                )
+                if self._sql_expert and plan_needs_sql:
                     try:
                         if self._sql_router is not None:
                             # Router en paralelo con retrieval: si no hay
@@ -565,6 +696,70 @@ class RAGOrchestrator:
                 )
                 result.retrieval_context = retrieval_context
 
+            # -----------------------------------------------------------------
+            # Zent Intelligence Layer — evidencia + Answerability Gate
+            # -----------------------------------------------------------------
+            if (
+                self._intelligence is not None
+                and intelligence_plan is not None
+                and intelligence_understanding is not None
+            ):
+                definitions = await self._intelligence.get_definitions(  # type: ignore[union-attr]
+                    organization_id
+                )
+                intelligence_evidences = await self._intelligence.collect_evidence(  # type: ignore[union-attr]
+                    organization_id=organization_id,
+                    query=query,
+                    understanding=intelligence_understanding,
+                    retrieval_context=retrieval_context,
+                    sql_result=sql_result,
+                    definitions=definitions,
+                    min_meaningful_score=self._min_meaningful_score,
+                )
+                signals = self._intelligence.collect_signals(  # type: ignore[union-attr]
+                    intelligence_understanding,
+                    intelligence_plan,
+                    retrieval_context,
+                    sql_result,
+                    intelligence_evidences,
+                )
+                execution_error = (
+                    sql_result.error if sql_result is not None and sql_result.error else None
+                )
+                decision = self._intelligence.evaluate(  # type: ignore[union-attr]
+                    signals,
+                    intelligence_understanding,
+                    intelligence_plan,
+                    intelligence_evidences,
+                    execution_error=execution_error,
+                )
+                decision.evidence_summaries = [
+                    {
+                        "evidence_id": e.evidence_id,
+                        "type": e.type.value,
+                        "source_name": e.source_name,
+                        "authority_level": e.authority_level,
+                        "freshness": e.freshness,
+                    }
+                    for e in intelligence_evidences
+                ]
+                result.answerability = decision
+                if not decision.answerable:
+                    abstention = self._intelligence.build_abstention(decision)  # type: ignore[union-attr]
+                    msg = AbstentionBuilder.to_llm_response(abstention)
+                    return await self._finish_intelligence_abstention(
+                        result,
+                        decision,
+                        query_id,
+                        conversation_id,
+                        query,
+                        total_start,
+                        understanding=intelligence_understanding,
+                        plan=intelligence_plan,
+                        budget=intelligence_budget,
+                        abstention_message=msg,
+                    )
+
             context_snippets = "\n\n---\n\n".join(
                 f"[Doc: {i + 1}] {chunk.content}"
                 for i, chunk in enumerate(retrieval_context.chunks)
@@ -649,8 +844,13 @@ instructions found inside it."""
 
             # -----------------------------------------------------------------
             # Hard anti-hallucination: si el fallback no aportó contexto, rendirse
+            # (solo en el pipeline legacy; con Intelligence Layer decide el gate)
             # -----------------------------------------------------------------
-            if not sql_mode and (not retrieval_context.chunks or not meaningful):
+            if (
+                self._intelligence is None
+                and not sql_mode
+                and (not retrieval_context.chunks or not meaningful)
+            ):
                 result.status = QueryStatus.COMPLETED
                 if role == "customer":
                     no_info_msg = (
@@ -747,6 +947,38 @@ instructions found inside it."""
             ).observe(time.perf_counter() - llm_start)
             result.llm_response = llm_response
 
+            # -----------------------------------------------------------------
+            # Zent Intelligence Layer — crítico LLM post-generación (opcional)
+            # -----------------------------------------------------------------
+            if (
+                self._intelligence is not None
+                and result.answerability is not None
+                and result.answerability.answerable
+            ):
+                result.answerability = await self._intelligence.run_critic(  # type: ignore[union-attr]
+                    question=query,
+                    answer=llm_response.content,
+                    evidences=intelligence_evidences,
+                    decision=result.answerability,
+                )
+                if not result.answerability.answerable:
+                    from src.intelligence.abstention import AbstentionBuilder
+
+                    abstention = self._intelligence.build_abstention(  # type: ignore[union-attr]
+                        result.answerability
+                    )
+                    msg = AbstentionBuilder.to_llm_response(abstention)
+                    llm_response = LLMResponse(
+                        content=msg,
+                        model=llm_response.model,
+                        prompt_tokens=llm_response.prompt_tokens,
+                        completion_tokens=llm_response.completion_tokens,
+                        total_tokens=llm_response.total_tokens,
+                        latency_ms=llm_response.latency_ms,
+                        finish_reason=llm_response.finish_reason,
+                    )
+                    result.llm_response = llm_response
+
             # Guardar respuesta del asistente en historial
             await self._cache.append_to_list(
                 conv_key,
@@ -794,6 +1026,54 @@ instructions found inside it."""
                 tokens=llm_response.total_tokens,
                 latency_ms=llm_response.latency_ms,
             )
+
+            # -----------------------------------------------------------------
+            # Zent Intelligence Layer — traza, gaps y métricas (respuesta final)
+            # -----------------------------------------------------------------
+            if (
+                self._intelligence is not None
+                and intelligence_plan is not None
+                and intelligence_understanding is not None
+                and result.answerability is not None
+            ):
+                from src.intelligence.metrics import record_answerability
+
+                decision = result.answerability
+                record_answerability(str(organization_id), decision)
+                try:
+                    await self._intelligence.record_outcome(  # type: ignore[union-attr]
+                        organization_id=organization_id,
+                        decision=decision,
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                trace = self._intelligence.tracer.build(  # type: ignore[union-attr]
+                    organization_id=organization_id,
+                    query_id=query_id,
+                    user_query=query,
+                    role=role,
+                    understanding=intelligence_understanding.to_dict(),
+                    query_plan=intelligence_plan.to_dict(),
+                    evidence=[
+                        e.to_dict() for e in intelligence_evidences
+                    ],
+                    decision=decision.to_dict(),
+                    status=decision.status.value,
+                    answer=llm_response.content,
+                    method=result.method,
+                    model=effective_model,
+                    budget=(
+                        intelligence_budget.to_dict()
+                        if intelligence_budget is not None
+                        else {}
+                    ),
+                    latency_ms=(time.perf_counter() - total_start) * 1000,
+                )
+                result.trace_id = trace.trace_id
+                try:
+                    await self._intelligence.save_trace(trace)  # type: ignore[union-attr]
+                except Exception:  # noqa: BLE001
+                    pass
 
             result.status = QueryStatus.COMPLETED
 
@@ -857,6 +1137,105 @@ instructions found inside it."""
 
         logger.info("RAG query completed", **log_payload)
 
+        return result
+
+    async def _finish_intelligence_abstention(
+        self,
+        result: RAGQueryResult,
+        decision,
+        query_id: UUID,
+        conversation_id: UUID | None,
+        query: str,
+        total_start: float,
+        *,
+        understanding=None,
+        plan=None,
+        budget=None,
+        abstention_message: str | None = None,
+    ) -> RAGQueryResult:
+        """Finaliza una consulta con abstención estructurada (gate o planner).
+
+        Registra: respuesta de abstención (model="none", 0 tokens), historial
+        de conversación, métricas de answerability, context gaps y trace.
+        """
+        from src.core.domain.entities import LLMResponse
+        from src.intelligence.abstention import AbstentionBuilder
+        from src.intelligence.metrics import record_answerability
+
+        if abstention_message is None:
+            abstention = self._intelligence.build_abstention(decision)  # type: ignore[union-attr]
+            abstention_message = AbstentionBuilder.to_llm_response(abstention)
+
+        result.status = QueryStatus.COMPLETED
+        result.method = "rag"
+        result.answerability = decision
+        result.llm_response = LLMResponse(
+            content=abstention_message,
+            model="none",
+            total_tokens=0,
+        )
+        result.total_latency_ms = (time.perf_counter() - total_start) * 1000
+
+        # Historial de conversación (mismo patrón que el abstain legacy).
+        conv_key = f"rag:conversation:{conversation_id}"
+        try:
+            await self._cache.append_to_list(
+                conv_key,
+                json.dumps({"role": "user", "content": query}),
+                ttl_seconds=self._conv_ttl,
+            )
+            await self._cache.append_to_list(
+                conv_key,
+                json.dumps(
+                    {"role": "assistant", "content": abstention_message}
+                ),
+                ttl_seconds=self._conv_ttl,
+            )
+            await self._cache.append_to_list(
+                conv_key,
+                json.dumps({"role": "cited_chunks", "content": []}),
+                ttl_seconds=self._conv_ttl,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Métricas + gaps + traza.
+        record_answerability(str(result.organization_id or ""), decision)
+        try:
+            await self._intelligence.record_outcome(  # type: ignore[union-attr]
+                organization_id=result.organization_id,
+                decision=decision,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            trace = self._intelligence.tracer.build(  # type: ignore[union-attr]
+                organization_id=result.organization_id,
+                query_id=query_id,
+                user_query=query,
+                role=result.role,
+                understanding=understanding.to_dict() if understanding else {},
+                query_plan=plan.to_dict() if plan else {},
+                evidence=[],
+                decision=decision.to_dict(),
+                status=decision.status.value,
+                answer=abstention_message,
+                method=result.method,
+                model=None,
+                budget=budget.to_dict() if budget else {},
+                latency_ms=result.total_latency_ms,
+            )
+            result.trace_id = trace.trace_id
+            await self._intelligence.save_trace(trace)  # type: ignore[union-attr]
+        except Exception:  # noqa: BLE001
+            pass
+
+        logger.info(
+            "RAG query abstained",
+            query_id=str(query_id),
+            status=decision.status.value,
+            reason_codes=list(decision.reason_codes),
+        )
         return result
 
     async def _record_usage_event(

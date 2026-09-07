@@ -245,6 +245,82 @@ class Settings(BaseSettings):
             "(los tenants pueden extender vía config_json)."
         ),
     )
+    RAG_SQL_MAX_REPAIR_ATTEMPTS: int = Field(
+        default=3,
+        ge=1,
+        le=6,
+        description=(
+            "Intentos máximos de auto-repair del SQL Expert (1 reparación de "
+            "validación + 2 de ejecución = 3, comportamiento histórico)."
+        ),
+    )
+    # -------------------------------------------------------------------------
+    # Zent Intelligence Layer — Answerability Engine
+    # -------------------------------------------------------------------------
+    RAG_ANSWERABILITY_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Activa el pipeline de answerability: understanding -> plan -> "
+            "evidencia -> gate -> responder O abstenerse de forma estructurada."
+        ),
+    )
+    RAG_ANSWERABILITY_MAX_PLAN_ATTEMPTS: int = Field(default=2, ge=1, le=5)
+    RAG_ANSWERABILITY_MAX_RETRIEVAL_ROUNDS: int = Field(default=2, ge=1, le=5)
+    RAG_ANSWERABILITY_MAX_LLM_CALLS: int = Field(default=10, ge=1, le=50)
+    RAG_ANSWERABILITY_MAX_EXECUTION_SECONDS: int = Field(
+        default=45, ge=5, le=300
+    )
+    RAG_ANSWERABILITY_MAX_TOTAL_TOKENS: int = Field(
+        default=6000, ge=256, le=100_000
+    )
+    RAG_ANSWERABILITY_MAX_COST_USD: float = Field(
+        default=0.10, ge=0.001, le=100.0
+    )
+    RAG_ANSWERABILITY_MIN_SCORE: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Umbral del score del Answerability Gate para considerar una "
+            "consulta answerable (señales deterministas, no solo LLM)."
+        ),
+    )
+    RAG_ANSWERABILITY_LLM_CRITIC_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Critic LLM post-generación como señal ADICIONAL del gate "
+            "(nunca la única señal)."
+        ),
+    )
+    RAG_ANSWERABILITY_CONCEPT_LLM_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Extracción LLM de conceptos/entidades en QueryUnderstanding "
+            "(con fallback determinista)."
+        ),
+    )
+    RAG_ANSWERABILITY_CONFLICT_TOLERANCE_PCT: float = Field(
+        default=5.0,
+        ge=0.0,
+        le=100.0,
+        description=(
+            "Tolerancia porcentual entre evidencias numéricas antes de "
+            "declarar SOURCE_CONFLICT."
+        ),
+    )
+    RAG_ANSWERABILITY_RETRIEVAL_COVERAGE_MIN: float = Field(
+        default=0.2,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Cobertura mínima de chunks relevantes (sobre el total recuperado) "
+            "para señal retrieval_coverage suficiente."
+        ),
+    )
+    RAG_ANSWERABILITY_FRESHNESS_MAX_DAYS: int = Field(
+        default=30, ge=1, le=365,
+        description="Frescura máxima de fuentes documentales (días).",
+    )
     # -------------------------------------------------------------------------
     # Agent Runtime
     # -------------------------------------------------------------------------

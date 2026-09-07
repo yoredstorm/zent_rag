@@ -246,7 +246,28 @@ async def rag_query(
         method=result.method,
         sql_query=sql_for_client,
         lazy_ingested=bool(getattr(result, "lazy_ingested", False)),
+        answerability=_answerability_for_client(result),
+        trace_id=getattr(result, "trace_id", None),
     )
+
+
+def _answerability_for_client(result) -> dict | None:
+    """Convierte la decisión del gate en el bloque answerability de la API."""
+    decision = getattr(result, "answerability", None)
+    if decision is None:
+        return None
+    return {
+        "status": decision.status.value,
+        "answerable": decision.answerable,
+        "confidence": decision.confidence_level.value,
+        "reason_codes": list(decision.reason_codes),
+        "missing_context": list(decision.missing_context),
+        "missing_data": list(decision.missing_data),
+        "conflicting_sources": list(decision.conflicting_sources),
+        "clarifying_question": decision.clarifying_question,
+        "recommended_actions": list(decision.recommended_actions),
+        "evidence": list(decision.evidence_summaries or []),
+    }
 
 
 @router.post(
@@ -379,6 +400,8 @@ async def rag_query_stream(
                             "total_tokens": result.llm_response.total_tokens if result.llm_response else 0,
                         },
                         "latency_ms": result.total_latency_ms,
+                        "answerability": _answerability_for_client(result),
+                        "trace_id": getattr(result, "trace_id", None),
                     },
                 )
             )

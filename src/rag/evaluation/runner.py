@@ -17,6 +17,7 @@ from src.rag.evaluation.datasets import EvalCase, EvalDataset
 from src.rag.evaluation.judge import LLMJudge
 from src.rag.evaluation.metrics import (
     answer_keyword_coverage,
+    answerability_accuracy,
     citation_stats,
     latency_summary,
     mean_or,
@@ -53,6 +54,7 @@ class CaseEval:
     expected_answer: str | None = None
     expected_sources: list[str] = field(default_factory=list)
     expected_sql: str | None = None  # FASE 03: habilita la métrica sql_accuracy
+    expected_answerability: str | None = None  # FASE 23
     error: str | None = None
 
 
@@ -134,6 +136,12 @@ class EvalRunner:
             "sql_accuracy": sql_accuracy(
                 target_result.answer, case.expected_sql
             ),
+            "answerability_accuracy": answerability_accuracy(
+                target_result.answerability_status,
+                case.expected_answerability,
+            ),
+            "answerability_status": target_result.answerability_status,
+            "expected_answerability": case.expected_answerability,
             "latency_ms": wall_ms if not target_result.total_latency_ms else target_result.total_latency_ms,
             "retrieval_latency_ms": target_result.retrieval_latency_ms,
             "llm_latency_ms": target_result.llm_latency_ms,
@@ -160,6 +168,7 @@ class EvalRunner:
             expected_answer=case.expected_answer,
             expected_sources=list(case.expected_sources or []),
             expected_sql=case.expected_sql,
+            expected_answerability=case.expected_answerability,
             error=target_result.error,
         )
 
@@ -249,6 +258,9 @@ class EvalRunner:
             "hallucination_rate": _hallucination_rate(results),
             "sql_accuracy": _mean_none_ok(
                 [r.metrics["sql_accuracy"] for r in results]
+            ),
+            "answerability_accuracy": _mean_none_ok(
+                [r.metrics["answerability_accuracy"] for r in results]
             ),
             "judge_enabled": judge_enabled,
             "judge_model": judge_model,

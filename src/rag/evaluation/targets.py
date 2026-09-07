@@ -32,6 +32,7 @@ class TargetResult:
     method: str = "rag"
     cost: float = 0.0
     error: str | None = None
+    answerability_status: str | None = None  # FASE 23: estado del gate (si aplica)
 
 
 def _context_to_dicts(context: RetrievalContext | None) -> list[dict]:
@@ -118,6 +119,11 @@ class RAGTarget:
             status=str(result.status),
             method=result.method,
             error=result.error_message,
+            answerability_status=(
+                result.answerability.status.value
+                if getattr(result, "answerability", None) is not None
+                else None
+            ),
         )
 
 

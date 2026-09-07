@@ -27,7 +27,12 @@ from src.core.domain.services import ColumnMeta, DataSource
 from src.core.ports import CacheProvider, LLMProvider
 from src.core.ports.sql_expert import SqlExpert, SqlQueryResult, SqlValidationError
 from src.infrastructure.observability.logging_config import get_logger
+from src.infrastructure.observability.metrics import (
+    rag_agent_loop_preventions_total,
+    rag_sql_repair_attempts_total,
+)
 from src.infrastructure.postgres.session import get_async_session
+from src.intelligence.loop_guard import SQLRepairGuard
 
 logger = get_logger(__name__)
 
@@ -650,44 +655,56 @@ class PostgresSqlExpert(SqlExpert):
         sql = self._clean_sql(sql)
         sql = stabilize_sql(sql, question)
 
+        settings = get_settings()
+        max_repair_attempts = settings.RAG_SQL_MAX_REPAIR_ATTEMPTS
+        repair_guard = SQLRepairGuard()
+
         try:
             safe_sql = await self.validate_sql(sql, sources, role, organization_id)
         except SqlValidationError as exc:
-            repaired = await self._repair_sql(
-                schema=schema_ctx["schema"],
-                fk_chains=schema_ctx["fk_chains"],
-                question=question,
-                sql=sql,
-                error=str(exc),
-            )
-            if repaired is not None:
-                repaired = self._clean_sql(repaired)
-                repaired = stabilize_sql(repaired, question)
-                try:
-                    safe_sql = await self.validate_sql(
-                        repaired, sources, role, organization_id
-                    )
-                    logger.info(
-                        "SQL repaired after validation failure",
-                        original=sql[:300],
-                        repaired=repaired[:300],
-                    )
-                    return await self._run_with_execution_repair(
-                        safe_sql,
+            if max_repair_attempts >= 1:
+                if repair_guard.allow(sql, str(exc)):
+                    repaired = await self._repair_sql(
                         schema=schema_ctx["schema"],
                         fk_chains=schema_ctx["fk_chains"],
                         question=question,
-                        sources=sources,
-                        role=role,
-                        organization_id=organization_id,
+                        sql=sql,
+                        error=str(exc),
                     )
-                except SqlValidationError as exc2:
-                    logger.info(
-                        "SQL repair failed validation",
-                        sql=repaired[:300],
-                        error=str(exc2),
-                    )
-                    return SqlQueryResult(sql=repaired, error=str(exc2))
+                    self._count_sql_repair(organization_id)
+                    if repaired is not None:
+                        repaired = self._clean_sql(repaired)
+                        repaired = stabilize_sql(repaired, question)
+                        try:
+                            safe_sql = await self.validate_sql(
+                                repaired, sources, role, organization_id
+                            )
+                            logger.info(
+                                "SQL repaired after validation failure",
+                                original=sql[:300],
+                                repaired=repaired[:300],
+                            )
+                            return await self._run_with_execution_repair(
+                                safe_sql,
+                                schema=schema_ctx["schema"],
+                                fk_chains=schema_ctx["fk_chains"],
+                                question=question,
+                                sources=sources,
+                                role=role,
+                                organization_id=organization_id,
+                                max_repair_attempts=max(
+                                    max_repair_attempts - 1, 0
+                                ),
+                            )
+                        except SqlValidationError as exc2:
+                            logger.info(
+                                "SQL repair failed validation",
+                                sql=repaired[:300],
+                                error=str(exc2),
+                            )
+                            return SqlQueryResult(sql=repaired, error=str(exc2))
+                    else:
+                        self._count_loop_prevention(organization_id)
             logger.info(
                 "SQL failed validation, falling back",
                 sql=sql[:300],
@@ -703,6 +720,7 @@ class PostgresSqlExpert(SqlExpert):
             sources=sources,
             role=role,
             organization_id=organization_id,
+            max_repair_attempts=max_repair_attempts,
         )
 
     async def _run_with_execution_repair(
@@ -715,16 +733,31 @@ class PostgresSqlExpert(SqlExpert):
         sources: list[DataSource],
         role: str,
         organization_id: UUID,
+        max_repair_attempts: int = 2,
     ) -> SqlQueryResult:
-        """Ejecuta el SQL validado; si falla contra los datos, hasta 2 repairs."""
+        """Ejecuta el SQL validado; si falla contra los datos, repairs acotados.
+
+        Cada repair exige nueva información: (sql, error) idéntico repetido se
+        detiene (loop prevention).
+        """
         result = await self._run_query(safe_sql)
         if result.error is None:
             return result
 
         current_sql = safe_sql
         last_error: str | None = result.error
-        for _attempt in range(2):
+        repair_guard = SQLRepairGuard()
+        for _attempt in range(max_repair_attempts):
             if last_error is None:
+                break
+            if not repair_guard.allow(current_sql, last_error):
+                self._count_loop_prevention(organization_id)
+                logger.warning(
+                    "SQL repair loop prevented (identical sql+error repeated)",
+                    organization_id=str(organization_id),
+                    sql=current_sql[:300],
+                    error=last_error[:300],
+                )
                 break
             repaired = await self._repair_sql(
                 schema=schema,
@@ -733,6 +766,7 @@ class PostgresSqlExpert(SqlExpert):
                 sql=current_sql,
                 error=last_error,
             )
+            self._count_sql_repair(organization_id)
             if repaired is None:
                 return result
             repaired = self._clean_sql(repaired)
@@ -758,6 +792,18 @@ class PostgresSqlExpert(SqlExpert):
             return await self._run_query(safe_sql2)
 
         return result
+
+    @staticmethod
+    def _count_sql_repair(organization_id: UUID) -> None:
+        rag_sql_repair_attempts_total.labels(
+            organization_id=str(organization_id)
+        ).inc()
+
+    @staticmethod
+    def _count_loop_prevention(organization_id: UUID) -> None:
+        rag_agent_loop_preventions_total.labels(
+            organization_id=str(organization_id), scope="sql_repair"
+        ).inc()
 
     async def _repair_sql(
         self,

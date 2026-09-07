@@ -10,6 +10,8 @@
 # =============================================================================
 from __future__ import annotations
 
+from uuid import UUID
+
 # Connector Platform: registra plugins builtin + entry points al importar.
 import src.connectors.plugin.plugins  # noqa: F401 (registro de builtins)
 from src.agents.runtime.orchestrator import RAGOrchestrator
@@ -38,6 +40,7 @@ from src.core.ports import (
     VectorStore,
     WorkspaceRepository,
 )
+from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.knowledge_repos import (
     PostgresDocumentRegistryRepository,
     PostgresIngestionJobRepository,
@@ -60,6 +63,8 @@ from src.infrastructure.postgres.relational_db import (
 )
 from src.infrastructure.qdrant.vector_store import QdrantVectorStore
 from src.infrastructure.redis.cache import RedisCache
+
+logger = get_logger(__name__)
 
 load_entry_points()
 load_plugin_modules()
@@ -295,6 +300,93 @@ def get_retriever():
     return _retriever
 
 
+_intelligence_engine: object | None = None
+_intelligence_store: object | None = None
+_business_definition_registry: object | None = None
+
+
+def get_intelligence_store():
+    """Store de la Intelligence Layer (traces, definiciones, gaps)."""
+    global _intelligence_store
+    if _intelligence_store is None:
+        from src.intelligence.store import PostgresIntelligenceStore
+
+        _intelligence_store = PostgresIntelligenceStore()
+    return _intelligence_store
+
+
+def get_business_definition_registry():
+    """Registro de definiciones empresariales (con caché compartida)."""
+    global _business_definition_registry
+    if _business_definition_registry is None:
+        from src.intelligence.definitions import BusinessDefinitionRegistry
+
+        _business_definition_registry = BusinessDefinitionRegistry(
+            store=get_intelligence_store(), cache=get_cache_provider()
+        )
+    return _business_definition_registry
+
+
+async def _resolve_source_freshness(
+    organization_id: UUID, source_ids: list[str]
+) -> dict[str, str]:
+    """Días desde la última sync exitosa por source (señal source_freshness)."""
+    from datetime import datetime, timezone
+
+    repo = get_sync_state_repo()
+    out: dict[str, str] = {}
+    for source_id in source_ids:
+        try:
+            state = await repo.get_state(UUID(source_id))
+            if state is not None and state.last_success_at is not None:
+                days = max(
+                    int(
+                        (
+                            datetime.now(timezone.utc)
+                            - state.last_success_at.replace(tzinfo=timezone.utc)
+                        ).total_seconds()
+                        // 86400
+                    ),
+                    0,
+                )
+                out[source_id] = str(days)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Source freshness lookup failed", error=str(exc)[:200])
+    return out
+
+
+def get_intelligence_engine():
+    """Engine de answerability (None si RAG_ANSWERABILITY_ENABLED=false)."""
+    global _intelligence_engine
+    settings = get_settings()
+    if not settings.RAG_ANSWERABILITY_ENABLED:
+        return None
+    if _intelligence_engine is None:
+        from src.intelligence.definitions import BusinessDefinitionRegistry
+        from src.intelligence.engine import IntelligenceEngine
+        from src.intelligence.store import PostgresIntelligenceStore
+
+        store = PostgresIntelligenceStore()
+        _intelligence_engine = IntelligenceEngine(
+            llm_provider=get_llm_provider(),
+            definition_registry=BusinessDefinitionRegistry(
+                store=store, cache=get_cache_provider()
+            ),
+            store=store,
+            cache=get_cache_provider(),
+            min_meaningful_score=max(settings.RAG_SCORE_THRESHOLD, 0.1),
+            min_score=settings.RAG_ANSWERABILITY_MIN_SCORE,
+            coverage_min=settings.RAG_ANSWERABILITY_RETRIEVAL_COVERAGE_MIN,
+            conflict_tolerance_pct=settings.RAG_ANSWERABILITY_CONFLICT_TOLERANCE_PCT,
+            freshness_max_days=settings.RAG_ANSWERABILITY_FRESHNESS_MAX_DAYS,
+            llm_critic_enabled=settings.RAG_ANSWERABILITY_LLM_CRITIC_ENABLED,
+            concept_llm_enabled=settings.RAG_ANSWERABILITY_CONCEPT_LLM_ENABLED,
+            sql_router_threshold=settings.RAG_SQL_ROUTER_THRESHOLD,
+            freshness_resolver=_resolve_source_freshness,
+        )
+    return _intelligence_engine
+
+
 def get_rag_orchestrator() -> RAGOrchestrator:
     """Inyecta el orquestador RAG con todas sus dependencias cableadas."""
     global _orchestrator
@@ -333,6 +425,7 @@ def get_rag_orchestrator() -> RAGOrchestrator:
             lazy_ingestion=lazy_ingestion,
             retriever=get_retriever(),
             sql_router=sql_router,
+            intelligence=get_intelligence_engine(),
         )
     return _orchestrator
 

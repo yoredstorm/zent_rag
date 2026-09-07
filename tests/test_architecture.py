@@ -77,7 +77,15 @@ def test_core_imports_only_core() -> None:
 
 def test_infrastructure_imports_no_upper_layers() -> None:
     """infrastructure/ solo implementa puertos; no conoce capas superiores."""
-    forbidden = ("src.api", "src.rag", "src.agents", "src.platform", "src.connectors", "src.verticals")
+    forbidden = (
+        "src.api",
+        "src.rag",
+        "src.agents",
+        "src.platform",
+        "src.connectors",
+        "src.verticals",
+        "src.intelligence",
+    )
     # Pre-existing (Fase 04 Stripe apply + Qdrant tenant filter). Do not add more.
     allowed_infra_platform = {
         "src/infrastructure/billing/stripe_provider.py": (
@@ -102,14 +110,14 @@ def test_infrastructure_imports_no_upper_layers() -> None:
 
 
 def test_rag_and_agents_do_not_import_adapters() -> None:
-    """rag/ y agents/ dependen solo de puertos (DI); nunca de adaptadores.
+    """rag/, agents/ e intelligence/ dependen solo de puertos (DI); nunca de adaptadores.
 
     Excepciones: módulos ambientales (logging/métricas/tracing), la fábrica
     de sesión de datos, y los shims deprecados.
     """
     allowed = _AMBIENT_MODULES | _DATA_ACCESS_FACTORIES
     violations: list[str] = []
-    for layer in ("rag", "agents"):
+    for layer in ("rag", "agents", "intelligence"):
         for path in _py_files(layer):
             if _is_shim(path):
                 continue
@@ -119,7 +127,7 @@ def test_rag_and_agents_do_not_import_adapters() -> None:
                     and mod not in allowed
                 ):
                     violations.append(f"{path.relative_to(ROOT)}: imports {mod}")
-    assert not violations, "rag/agents importan adaptadores:\n" + "\n".join(violations)
+    assert not violations, "rag/agents/intelligence importan adaptadores:\n" + "\n".join(violations)
 
 
 def test_no_vertical_business_terms_in_generic_layers() -> None:

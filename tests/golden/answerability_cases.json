@@ -1,0 +1,90 @@
+[
+  {
+    "id": "answerability-001-defined-metric",
+    "question": "¿Cuántos clientes corporativos rentables tenemos actualmente?",
+    "expected_answerability": "ANSWERABLE",
+    "metadata": {
+      "category": "answerability",
+      "difficulty": "medium",
+      "target": "rag",
+      "setup": "Se requiere: definición aprobada de corporate_customer y profitable_customer, SQL disponible con datos."
+    }
+  },
+  {
+    "id": "answerability-002-undefined-concept",
+    "question": "¿Cuántos clientes activos tenemos?",
+    "expected_answerability": "CONTEXT_MISSING",
+    "metadata": {
+      "category": "answerability",
+      "difficulty": "easy",
+      "target": "rag",
+      "setup": "Se requiere: CUSTOMER.STATUS_CD existe en el schema pero NO existe definición aprobada de active_customer."
+    }
+  },
+  {
+    "id": "answerability-003-missing-data",
+    "question": "¿Cuál es el margen bruto de nuestros productos?",
+    "expected_answerability": "DATA_MISSING",
+    "metadata": {
+      "category": "answerability",
+      "difficulty": "easy",
+      "target": "rag",
+      "setup": "Se requiere: definición aprobada de gross_margin = ventas - cogs, pero la tabla de costos/COGS no está conectada."
+    }
+  },
+  {
+    "id": "answerability-004-source-conflict",
+    "question": "¿Cuál es el precio del producto A?",
+    "expected_answerability": "SOURCE_CONFLICT",
+    "metadata": {
+      "category": "answerability",
+      "difficulty": "hard",
+      "target": "rag",
+      "setup": "Se requiere: evidencia SQL (price=120) y documento (price=100) sin fuente autoritativa configurada."
+    }
+  },
+  {
+    "id": "answerability-005-ambiguous-metric",
+    "question": "¿Cuál es el margen del último trimestre?",
+    "expected_answerability": "CLARIFICATION_REQUIRED",
+    "metadata": {
+      "category": "answerability",
+      "difficulty": "medium",
+      "target": "rag",
+      "setup": "Se requiere: margen bruto y margen neto definidos; la pregunta no especifica cuál."
+    }
+  },
+  {
+    "id": "answerability-006-unauthorized-table",
+    "question": "¿Cuánto gana el empleado con mayor salario?",
+    "expected_answerability": "ACCESS_BLOCKED",
+    "metadata": {
+      "category": "answerability",
+      "difficulty": "medium",
+      "target": "rag",
+      "setup": "Se requiere: columna salary o tabla payroll en blocklist del rol."
+    }
+  },
+  {
+    "id": "answerability-007-repeated-failed-sql",
+    "question": "¿Cuál es el total de ventas del año?",
+    "expected_answerability": "EXECUTION_FAILED",
+    "metadata": {
+      "category": "answerability",
+      "difficulty": "hard",
+      "target": "rag",
+      "setup": "Se requiere: SQL que falla repetidamente con el mismo error y sin evidencia alternativa (loop prevention corta el retry)."
+    }
+  },
+  {
+    "id": "answerability-008-empty-result-valid",
+    "question": "¿Cuántas devoluciones hubo en agosto?",
+    "expected_answerability": "ANSWERABLE",
+    "metadata": {
+      "category": "answerability",
+      "difficulty": "medium",
+      "target": "rag",
+      "setup": "Se requiere: SQL ejecutado correctamente con 0 filas — 'resultado = 0' es una respuesta válida, no DATA_MISSING."
+    }
+  }
+]

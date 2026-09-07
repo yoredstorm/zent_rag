@@ -113,6 +113,64 @@ rag_lazy_ingestion_latency = Histogram(
     buckets=(0.1, 0.25, 0.5, 1.0, 2.5, 4.0, 8.0, 15.0, 30.0),
 )
 
+# -----------------------------------------------------------------------------
+# Zent Intelligence Layer — Answerability Engine (PHASE 23)
+# Baja cardinalidad: organization_id (+ reason = 10 estados formales).
+# -----------------------------------------------------------------------------
+rag_answerable_queries_total = Counter(
+    "rag_answerable_queries_total",
+    "Consultas que el Answerability Gate consideró contestables",
+    labelnames=["organization_id"],
+)
+
+rag_abstained_queries_total = Counter(
+    "rag_abstained_queries_total",
+    "Consultas abstenidas de forma estructurada (por estado formal)",
+    labelnames=["organization_id", "reason"],
+)
+
+rag_context_missing_total = Counter(
+    "rag_context_missing_total",
+    "Abstenciones por CONTEXT_MISSING (data existe sin definición/regla)",
+    labelnames=["organization_id"],
+)
+
+rag_data_missing_total = Counter(
+    "rag_data_missing_total",
+    "Abstenciones por DATA_MISSING (información física inexistente/no conectada)",
+    labelnames=["organization_id"],
+)
+
+rag_ambiguous_queries_total = Counter(
+    "rag_ambiguous_queries_total",
+    "Consultas ambiguas (AMBIGUOUS o CLARIFICATION_REQUIRED)",
+    labelnames=["organization_id"],
+)
+
+rag_source_conflicts_total = Counter(
+    "rag_source_conflicts_total",
+    "Abstenciones por SOURCE_CONFLICT (fuentes contradictorias)",
+    labelnames=["organization_id"],
+)
+
+rag_execution_failures_total = Counter(
+    "rag_execution_failures_total",
+    "Abstenciones por EXECUTION_FAILED (ejecución fallida sin evidencia)",
+    labelnames=["organization_id"],
+)
+
+rag_sql_repair_attempts_total = Counter(
+    "rag_sql_repair_attempts_total",
+    "Intentos de reparación del SQL Expert (loop prevention incluida)",
+    labelnames=["organization_id"],
+)
+
+rag_agent_loop_preventions_total = Counter(
+    "rag_agent_loop_preventions_total",
+    "Operaciones idénticas bloqueadas por loop prevention",
+    labelnames=["organization_id", "scope"],  # scope: sql_repair | agent_runtime
+)
+
 
 def setup_metrics(app: FastAPI) -> Instrumentator:
     """Configura y expone /metrics para Prometheus scraping.

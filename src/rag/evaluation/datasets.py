@@ -38,6 +38,7 @@ class EvalCase:
     expected_answer: str | None = None
     expected_sources: list[str] = field(default_factory=list)
     expected_sql: str | None = None  # FASE 03: habilita la métrica sql_accuracy
+    expected_answerability: str | None = None  # FASE 23: estado formal esperado
     metadata: dict = field(default_factory=dict)
 
     @property
@@ -85,12 +86,18 @@ def _normalize_case(raw: dict, index: int) -> EvalCase:
 
     expected_answer = raw.get("expected_answer")
     expected_sql = raw.get("expected_sql")
+    expected_answerability = raw.get("expected_answerability")
     return EvalCase(
         id=case_id,
         question=str(question).strip(),
         expected_answer=str(expected_answer) if expected_answer else None,
         expected_sources=[str(s) for s in expected_sources],
         expected_sql=str(expected_sql) if expected_sql else None,
+        expected_answerability=(
+            str(expected_answerability).strip().upper()
+            if expected_answerability
+            else None
+        ),
         metadata=metadata,
     )
 
@@ -129,6 +136,7 @@ def dataset_to_payload(dataset: EvalDataset) -> list[dict]:
             "question": case.question,
             "expected_answer": case.expected_answer,
             "expected_sources": case.expected_sources,
+            "expected_answerability": case.expected_answerability,
             "metadata": case.metadata,
         }
         for case in dataset.cases

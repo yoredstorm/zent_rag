@@ -21,8 +21,13 @@ from src.agents.tools.guards import ToolRateLimiter, execute_tool_guarded
 from src.agents.tools.registry import get_tool, resolve_allowed_tools
 from src.core.config import get_settings
 from src.core.domain.entities import Agent
+from src.core.domain.intelligence import ToolFingerprint
 from src.core.ports import CacheProvider, LLMProvider
 from src.infrastructure.observability.logging_config import get_logger
+from src.infrastructure.observability.metrics import (
+    rag_agent_loop_preventions_total,
+)
+from src.intelligence.loop_guard import LoopGuard
 
 logger = get_logger(__name__)
 
@@ -154,6 +159,7 @@ class AgentRuntime:
     ) -> None:
         self._llm = llm_provider
         self._rate_limiter = ToolRateLimiter(cache_provider)
+        self._loop_guard = LoopGuard()
 
     def _agent_config(self, agent: Agent) -> dict:
         settings = get_settings()
@@ -819,6 +825,39 @@ class AgentRuntime:
             tool_start = time.perf_counter()
             raw_args = action.get("arguments")
             arguments = raw_args if isinstance(raw_args, dict) else {}
+
+            # FASE 23 — Loop prevention: la misma operación sin nueva
+            # información no puede repetirse. El contexto de observación es el
+            # historial reciente: si no cambió, el retry no está justificado.
+            fingerprint = ToolFingerprint.compute(
+                tool=tool_name,
+                source=None,
+                arguments=arguments,
+                query=request.message,
+                agent_id=str(request.agent.id),
+                organization_id=str(request.agent.organization_id),
+            )
+            observation_context = "\n".join(history[-6:])
+            if not self._loop_guard.check(
+                fingerprint, observation_context=observation_context
+            ):
+                rag_agent_loop_preventions_total.labels(
+                    organization_id=str(request.agent.organization_id),
+                    scope="agent_runtime",
+                ).inc()
+                history.append(
+                    "OBSERVATION: error: duplicate tool call blocked "
+                    "(loop prevention). Try a different approach."
+                )
+                result.steps.append(
+                    {
+                        "type": "guardrail",
+                        "tool": tool_name,
+                        "detail": "loop prevention: duplicate tool call without new information",
+                    }
+                )
+                continue
+
             tool_result = await execute_tool_guarded(
                 tool,
                 ctx,

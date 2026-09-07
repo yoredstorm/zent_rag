@@ -132,6 +132,20 @@ def sql_accuracy(answer: str, expected_sql: str | None) -> float | None:
     return 1.0 if _normalize_sql(answer) == _normalize_sql(expected_sql) else 0.0
 
 
+def answerability_accuracy(
+    predicted: str | None, expected: str | None
+) -> float | None:
+    """Precisión de answerability (FASE 23): 1.0 si el estado predicho coincide.
+
+    None si el caso no define expected_answerability (no aplica).
+    """
+    if not expected:
+        return None
+    predicted_norm = (predicted or "").strip().upper()
+    expected_norm = expected.strip().upper()
+    return 1.0 if predicted_norm == expected_norm else 0.0
+
+
 def percentile(values: Iterable[float], p: float) -> float:
     ordered = sorted(float(v) for v in values)
     if not ordered:

@@ -182,6 +182,35 @@ def sources_for_client(result: RAGQueryResult) -> list[RetrievalChunkResponse]:
     ]
 
 
+class AnswerabilityEvidenceResponse(BaseModel):
+    """Resumen de evidencia expuesto al cliente (sin filas de datos)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    evidence_id: str
+    type: str
+    source_name: str
+    authority_level: str
+    freshness: str | None = None
+
+
+class AnswerabilityResponse(BaseModel):
+    """Decisión estructurada del Answerability Gate (FASE 23)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    answerable: bool
+    confidence: str = "insufficient"
+    reason_codes: list[str] = Field(default_factory=list)
+    missing_context: list[str] = Field(default_factory=list)
+    missing_data: list[str] = Field(default_factory=list)
+    conflicting_sources: list[dict] = Field(default_factory=list)
+    clarifying_question: str | None = None
+    recommended_actions: list[str] = Field(default_factory=list)
+    evidence: list[AnswerabilityEvidenceResponse] = Field(default_factory=list)
+
+
 class RAGQueryResponse(BaseModel):
     """Respuesta de la API RAG para el cliente."""
 
@@ -199,6 +228,9 @@ class RAGQueryResponse(BaseModel):
     method: str = "rag"  # "sql" = SQL-first, "rag" = vector-only
     sql_query: str | None = None  # admin-only when method == "sql"
     lazy_ingested: bool = False
+    # Zent Intelligence Layer — opcional, backward compatible.
+    answerability: AnswerabilityResponse | None = None
+    trace_id: str | None = None
 
 
 class ErrorResponse(BaseModel):

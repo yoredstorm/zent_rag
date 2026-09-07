@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from enum import StrEnum
 from uuid import UUID, uuid4
 
+from src.core.domain.intelligence import AnswerabilityDecision
+
 
 class OrganizationStatus(StrEnum):
     ACTIVE = "active"
@@ -425,6 +427,9 @@ class RAGQueryResult:
     lazy_ingested: bool = False
     lazy_rows_indexed: int = 0
     lazy_tables: list[str] = field(default_factory=list)
+    # Zent Intelligence Layer (Answerability Engine) — opcional, backward compatible.
+    answerability: AnswerabilityDecision | None = None
+    trace_id: str | None = None
 
 
 # -----------------------------------------------------------------------------
