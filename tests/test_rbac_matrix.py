@@ -41,8 +41,8 @@ async def _seed_platform_admin(email: str, password: str) -> None:
             await session.execute(
                 text(
                     "INSERT INTO users (id, email, password_hash, "
-                    "is_platform_admin, created_at, updated_at) "
-                    "VALUES (gen_random_uuid(), :email, :ph, true, now(), now())"
+                    "is_platform_admin, created_at) "
+                    "VALUES (gen_random_uuid(), :email, :ph, true, now())"
                 ),
                 {"email": email, "ph": hash_password(password)},
             )
