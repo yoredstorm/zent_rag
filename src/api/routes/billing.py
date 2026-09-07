@@ -268,7 +268,7 @@ async def _do_create_trial(
         raise HTTPException(500, "Failed to create trial")
 
     try:
-        from src.platform.demo.provisioning import provision_demo_kb
+        from src.verticals.demo_farmacia.provisioning import provision_demo_kb
 
         await provision_demo_kb(organization_id)
     except Exception:  # noqa: BLE001
