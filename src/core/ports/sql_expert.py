@@ -18,6 +18,7 @@ class SqlQueryResult:
     error: str | None = None
     truncated: bool = False  # True si se alcanzó el límite de filas
     cost: float | None = None  # Costo estimado del plan (EXPLAIN Total Cost)
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass

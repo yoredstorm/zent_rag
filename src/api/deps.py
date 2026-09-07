@@ -644,9 +644,26 @@ def get_sql_expert():
                 if settings.RAG_CATALOG_ENABLED
                 else None
             ),
+            verified_query_service=get_verified_query_service(),
         )
         _ = settings.RAG_SQL_EXPERT_ENABLED  # el singleton no depende del flag
     return _sql_expert
+
+
+_verified_query_service: object | None = None
+
+
+def get_verified_query_service():
+    """Singleton Verified Query Repository (Phase 26C)."""
+    global _verified_query_service
+    if _verified_query_service is None:
+        from src.intelligence.verified_queries import VerifiedQueryService
+        from src.intelligence.verified_query_store import PostgresVerifiedQueryStore
+
+        _verified_query_service = VerifiedQueryService(
+            store=PostgresVerifiedQueryStore()
+        )
+    return _verified_query_service
 
 
 _agent_runtime: object | None = None

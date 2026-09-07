@@ -340,3 +340,151 @@ async def delete_definition(
     if not deleted:
         raise HTTPException(404, "Definition not found")
     return {"deleted": concept.strip().lower()}
+
+
+# ---------------------------------------------------------------------------
+# Verified Queries (Phase 26C)
+# ---------------------------------------------------------------------------
+
+from src.api.deps import get_verified_query_service
+from src.core.domain.verified_query import VerifiedQueryStatus
+from src.intelligence.verified_queries import VerifiedQueryService
+
+
+class VerifiedQueryBody(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    canonical_question: str = Field(min_length=1, max_length=4000)
+    verified_sql: str = Field(min_length=1, max_length=50000)
+    description: str = ""
+    question_variants: list[str] = Field(default_factory=list)
+    semantic_ast: dict = Field(default_factory=dict)
+    dialect: str = "postgres"
+    status: str = "DRAFT"
+    metric_dependencies: list[str] = Field(default_factory=list)
+    concept_dependencies: list[str] = Field(default_factory=list)
+    table_dependencies: list[str] = Field(default_factory=list)
+
+
+class MappingReviewBody(BaseModel):
+    action: str = Field(description="APPROVE | REJECT | EDIT_AND_APPROVE")
+    physical_predicate: str | None = None
+
+
+@router.get("/verified-queries", summary="Lista verified queries del tenant")
+async def list_verified_queries(
+    request: Request,
+    status: str | None = None,
+    service: VerifiedQueryService = Depends(get_verified_query_service),
+) -> dict:
+    require_permission(request, "catalog:read")
+    ctx = _tenant_ctx(request)
+    if ctx is None or not ctx.organization_id:
+        raise HTTPException(401, "Tenant context required")
+    await service.store.ensure_tables()
+    items = await service.store.list(ctx.organization_id, status=status)
+    return {"items": [i.to_dict() for i in items]}
+
+
+@router.post(
+    "/verified-queries",
+    status_code=201,
+    summary="Crea o actualiza una verified query",
+)
+async def create_verified_query(
+    body: VerifiedQueryBody,
+    request: Request,
+    service: VerifiedQueryService = Depends(get_verified_query_service),
+) -> dict:
+    require_permission(request, "catalog:write")
+    ctx = _tenant_ctx(request)
+    if ctx is None or not ctx.organization_id:
+        raise HTTPException(401, "Tenant context required")
+    try:
+        status = VerifiedQueryStatus(body.status.upper())
+    except ValueError as exc:
+        raise HTTPException(400, f"Invalid status: {body.status}") from exc
+    await service.store.ensure_tables()
+    # Verified SQL must still be treated as untrusted until validation elsewhere
+    item = await service.create(
+        ctx.organization_id,
+        name=body.name,
+        canonical_question=body.canonical_question,
+        verified_sql=body.verified_sql,
+        semantic_ast=body.semantic_ast,
+        question_variants=body.question_variants,
+        dialect=body.dialect,
+        status=status,
+        metric_dependencies=body.metric_dependencies,
+        concept_dependencies=body.concept_dependencies,
+        table_dependencies=body.table_dependencies,
+        approved_by=ctx.user_id if status == VerifiedQueryStatus.VERIFIED else None,
+    )
+    return item.to_dict()
+
+
+@router.get(
+    "/verified-queries/search",
+    summary="Busca verified queries por pregunta + semántica",
+)
+async def search_verified_queries(
+    request: Request,
+    q: str,
+    service: VerifiedQueryService = Depends(get_verified_query_service),
+) -> dict:
+    require_permission(request, "catalog:read")
+    ctx = _tenant_ctx(request)
+    if ctx is None or not ctx.organization_id:
+        raise HTTPException(401, "Tenant context required")
+    await service.store.ensure_tables()
+    hits = await service.search(ctx.organization_id, question=q)
+    return {"matches": [h.to_dict() for h in hits]}
+
+
+@router.get(
+    "/mapping-suggestions",
+    summary="Sugerencias INFERRED de mapeo físico (requieren aprobación)",
+)
+async def list_mapping_suggestions(
+    request: Request,
+    status: str | None = "INFERRED",
+    service: VerifiedQueryService = Depends(get_verified_query_service),
+) -> dict:
+    require_permission(request, "catalog:read")
+    ctx = _tenant_ctx(request)
+    if ctx is None or not ctx.organization_id:
+        raise HTTPException(401, "Tenant context required")
+    await service.store.ensure_tables()
+    items = await service.store.list_mapping_suggestions(
+        ctx.organization_id, status=status
+    )
+    return {"items": [i.to_dict() for i in items]}
+
+
+@router.post(
+    "/mapping-suggestions/{suggestion_id}/review",
+    summary="APPROVE / REJECT / EDIT_AND_APPROVE — nunca auto-promoción",
+)
+async def review_mapping_suggestion(
+    suggestion_id: UUID,
+    body: MappingReviewBody,
+    request: Request,
+    service: VerifiedQueryService = Depends(get_verified_query_service),
+) -> dict:
+    require_permission(request, "catalog:write")
+    ctx = _tenant_ctx(request)
+    if ctx is None or not ctx.organization_id:
+        raise HTTPException(401, "Tenant context required")
+    await service.store.ensure_tables()
+    try:
+        updated = await service.store.review_mapping_suggestion(
+            ctx.organization_id,
+            suggestion_id,
+            action=body.action,
+            reviewed_by=ctx.user_id,
+            physical_predicate=body.physical_predicate,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if updated is None:
+        raise HTTPException(404, "Suggestion not found")
+    return updated.to_dict()

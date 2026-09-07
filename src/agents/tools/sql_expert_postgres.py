@@ -410,11 +410,13 @@ class PostgresSqlExpert(SqlExpert):
         llm_provider: LLMProvider,
         cache: CacheProvider | None = None,
         semantic_linking: object | None = None,
+        verified_query_service: object | None = None,
     ) -> None:
         self._llm = llm_provider
         self._last_cost: float | None = None
         self._permissions: dict | None = None
         self._semantic_linking = semantic_linking
+        self._verified_queries = verified_query_service
         settings = get_settings()
         self._schema_cache = (
             SchemaCache(cache, ttl_seconds=settings.RAG_SQL_SCHEMA_CACHE_TTL)
@@ -447,6 +449,65 @@ class PostgresSqlExpert(SqlExpert):
         no deben llegar al prompt del LLM ni ser consultables.
         """
         return [s for s in sources if s.schema_name.lower() != "public"]
+
+    async def _try_verified_query(
+        self,
+        organization_id: UUID,
+        question: str,
+        sources: list[DataSource],
+        role: str,
+    ) -> SqlQueryResult | None:
+        """Reuse VERIFIED SQL when semantic search finds a strong match (26D).
+
+        Still runs full validate_sql — Verified != unrestricted.
+        """
+        if self._verified_queries is None:
+            return None
+        try:
+            matches = await self._verified_queries.search(
+                organization_id,
+                question=question,
+                compile_result=None,
+                min_score=0.55,
+                limit=1,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Verified query search failed", error=str(exc)[:200])
+            return None
+        if not matches:
+            return None
+        hit = matches[0]
+        # Prefer exact-ish reuse; adaptable-only hits still need planner/time compile
+        if hit.adaptable and hit.signals.get("time", 0) < 1.0 and hit.score < 0.75:
+            return None
+        sql = hit.query.verified_sql
+        try:
+            safe_sql = await self.validate_sql(sql, sources, role, organization_id)
+        except SqlValidationError as exc:
+            logger.info(
+                "Verified SQL failed validation; falling back to LLM",
+                error=str(exc)[:200],
+                verified_id=str(hit.query.id),
+            )
+            return None
+        result = await self._run_with_execution_repair(
+            safe_sql,
+            schema="",
+            fk_chains="",
+            question=question,
+            sources=sources,
+            role=role,
+            organization_id=organization_id,
+            max_repair_attempts=0,
+        )
+        if result.error:
+            return None
+        result.metadata = {
+            "verified_query_id": str(hit.query.id),
+            "verified_query_score": hit.score,
+            "verified_query_signals": hit.signals,
+        }
+        return result
 
     async def _discover_columns(
         self, session: AsyncSession, schema: str, table: str
@@ -654,6 +715,13 @@ class PostgresSqlExpert(SqlExpert):
             )
 
         schema_ctx = self._build_schema_context(sources, role)
+
+        # Phase 26D — try Verified Query Repository before LLM generation.
+        verified_hit = await self._try_verified_query(
+            organization_id, question, sources, role
+        )
+        if verified_hit is not None:
+            return verified_hit
 
         prompt = _SQL_GENERATION_PROMPT.format(
             schema=schema_ctx["schema"],
