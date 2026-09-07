@@ -89,6 +89,7 @@ class UsageEvent:
     )
     cost_tags: dict = field(default_factory=dict)
     trace_id: str | None = None
+    routing: dict | None = None  # metadata de ruteo del gateway (modelo/backend) — FIX: faltaba en el dataclass
 
 
 async def ensure_usage_table() -> None:
@@ -129,7 +130,8 @@ async def record_event(event: UsageEvent) -> bool:
                     "actual_cost, currency, created_at, cost_tags, trace_id, routing) "
                     "VALUES (:rid, :etype, :org, :uid, :pid, :aid, :did, :kid, "
                     ":model, :provider, :ptok, :ctok, :ttok, :etok, :rc, "
-                    ":rrc, :tc, :lat, :status, :cost, :acost, :cur, :created, :ctags, :tid) "
+                    ":rrc, :tc, :lat, :status, :cost, :acost, :cur, :created, "
+                    ":ctags, :tid, :routing) "
                     "ON CONFLICT (request_id, event_type) DO NOTHING "
                     "RETURNING id"
                 ),
