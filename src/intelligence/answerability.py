@@ -236,13 +236,10 @@ class AnswerabilityGate:
             )
 
         # 6) CONTEXT_MISSING — la data existe pero falta su definición/regla
-        #    Solo los conceptos que REQUIEREN definición disparan este estado
-        #    (evita abstenerse por sustantivos genéricos sin regla empresarial).
+        #    Solo conceptos clasificados como definitional (Phase 26A) disparan
+        #    este estado. Nunca usar understanding.concepts crudos del LLM.
         resolved = understanding.resolved_concepts or {}
-        definitional = (
-            understanding.requires_definition
-            or (understanding.concepts if understanding.extraction_source == "llm" else [])
-        )
+        definitional = list(understanding.requires_definition or [])
         undefined = [c for c in definitional if not resolved.get(c, False)]
         if undefined and (
             plan.needs_semantic_resolution

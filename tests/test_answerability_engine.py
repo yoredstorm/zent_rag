@@ -381,6 +381,27 @@ class TestAnswerabilityGate:
         )
         assert decision.status == AnswerabilityStatus.ANSWERABLE
 
+    def test_llm_extraction_does_not_treat_all_concepts_as_definitional(self) -> None:
+        """Regression 26A: LLM concepts alone must not force CONTEXT_MISSING."""
+        decision = self._eval(
+            _gate_signals(concept_resolution=0.0, business_definition_status=0.0),
+            understanding=_understanding(
+                concepts=["cliente", "venta"],
+                concept_types={"cliente": "ENTITY", "venta": "FACT"},
+                requires_definition=[],
+                resolved_concepts={"cliente": False, "venta": False},
+                extraction_source="llm",
+            ),
+            plan=QueryPlan(
+                strategy=PlanStrategy.SQL,
+                needs_sql=True,
+                needs_semantic_resolution=True,
+            ),
+            evidences=[_evidence("ERP", 10.0)],
+        )
+        assert decision.status == AnswerabilityStatus.ANSWERABLE
+        assert decision.answerable is True
+
     def test_data_missing_no_data_at_all(self) -> None:
         decision = self._eval(_gate_signals(result_presence=0.0))
         assert decision.status == AnswerabilityStatus.DATA_MISSING
