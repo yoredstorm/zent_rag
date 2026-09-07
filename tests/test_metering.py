@@ -171,8 +171,8 @@ async def test_rate_limit_rules_and_effective(async_client: AsyncClient) -> None
         if stale["plan_name"] == "trial" and stale["endpoint_prefix"] == "/api/v1/rag/query":
             await async_client.delete(f"/api/v1/platform/rate-limits/rules/{stale['id']}", headers=plat)
     trial = next(r for r in seeded if r["plan_name"] == "trial" and r["endpoint_prefix"] == "/")
-    assert trial["limit_per_minute"] == 30
-    assert trial["burst"] == 10
+    assert trial["limit_per_minute"] == 2000
+    assert trial["burst"] == 200
 
     # Límites efectivos para la org trial.
     eff = await async_client.get(

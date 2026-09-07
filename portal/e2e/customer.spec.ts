@@ -28,7 +28,7 @@ test.describe("Customer portal — flujo smoke", () => {
 
     // Crear agente (UI)
     await page.goto("/agents");
-    await page.getByRole("link", { name: "Crear agente" }).click();
+    await page.getByRole("link", { name: "Crear agente" }).first().click();
     await page.getByLabel("Nombre").fill(AGENT_NAME);
     await page.getByRole("button", { name: "Crear agente" }).click();
     await expect(page).toHaveURL(/\/agents\/[^/]+\/builder\?tab=playground/);
