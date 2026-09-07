@@ -496,6 +496,32 @@ class TestEngineGoldenCases:
         assert not decision.answerable
 
 
+    @pytest.mark.asyncio
+    async def test_case26b_compile_before_plan(self) -> None:
+        """understand → compile AST → plan with compile_result."""
+        store = await _fresh_store()
+        await store.delete_definition(ORG_DEV, "margen")
+        engine = await _engine(store=store)
+        query = "¿Cuál fue el margen corporativo?"
+        understanding = await engine.understand(ORG_DEV, query)
+        compiled = await engine.compile(ORG_DEV, understanding, query=query)
+        assert compiled.semantic_ast.query_type == "metric_query"
+        assert any(m["name"] == "margen" for m in compiled.semantic_ast.metrics)
+        assert "corporativo" in compiled.semantic_ast.segments or any(
+            u["name"] == "corporativo" for u in compiled.unresolved_objects
+        )
+        assert compiled.has_blocking_gaps
+        plan = engine.plan(
+            understanding,
+            query=query,
+            sql_available=True,
+            router_score=0.9,
+            compile_result=compiled,
+        )
+        assert plan.needs_semantic_resolution is True
+        assert any("Semantic AST" in r for r in plan.rationale)
+
+
 class TestRagQueryResponseAnswerability:
     @pytest.mark.asyncio
     async def test_answerability_block_in_api_response(

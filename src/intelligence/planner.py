@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 
 from src.core.domain.intelligence import PlanStrategy, QueryPlan, QueryUnderstanding
+from src.core.domain.semantic import SemanticCompileResult, SemanticGapCode
 
 _CAUSAL_RE = re.compile(
     r"\bpor qu[ée]\b|\bcausa\b|\bmotivo\b|\ba qu[ée] se debe\b|"
@@ -31,6 +32,7 @@ class QueryPlanner:
         sql_router_threshold: float = 0.5,
         kb_available: bool = True,
         tools_available: bool = False,
+        compile_result: SemanticCompileResult | None = None,
     ) -> QueryPlan:
         rationale: list[str] = []
         limitations: list[str] = []
@@ -52,9 +54,27 @@ class QueryPlanner:
                 "Ambigüedad detectada: recopilar evidencia antes de decidir aclaración"
             )
 
-        unresolved = [
-            c for c, defined in (understanding.resolved_concepts or {}).items() if not defined
-        ]
+        if compile_result is not None:
+            unresolved = [
+                str(u.get("name"))
+                for u in compile_result.unresolved_objects
+                if u.get("code") == SemanticGapCode.CONTEXT_MISSING.value
+            ]
+            rationale.append(
+                "Semantic AST compiled "
+                f"(query_type={compile_result.semantic_ast.query_type})"
+            )
+            if compile_result.has_blocking_gaps:
+                limitations.append(
+                    "Semantic compiler: essential objects unresolved — "
+                    "refuse invented physical relationships"
+                )
+        else:
+            unresolved = [
+                c
+                for c, defined in (understanding.resolved_concepts or {}).items()
+                if not defined
+            ]
 
         if understanding.intent == "business_metric":
             if sql_available and (

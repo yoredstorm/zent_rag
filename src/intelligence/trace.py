@@ -29,7 +29,7 @@ class TraceRecorder:
         *,
         organization_id: UUID,
         query_id: UUID | None,
-        user_id: UUID | None,
+        user_id: UUID | None = None,
         user_query: str,
         role: str,
         understanding: dict,
@@ -42,6 +42,7 @@ class TraceRecorder:
         model: str | None,
         budget: dict,
         latency_ms: float,
+        semantic_compile: dict | None = None,
     ) -> IntelligenceTrace:
         return IntelligenceTrace(
             organization_id=organization_id,
@@ -50,6 +51,7 @@ class TraceRecorder:
             user_query=user_query,
             role=role,
             understanding=understanding,
+            semantic_compile=semantic_compile or {},
             query_plan=query_plan,
             evidence=evidence,
             decision=decision,

@@ -21,6 +21,7 @@ from src.core.domain.intelligence import (
     QueryPlan,
     QueryUnderstanding,
 )
+from src.core.domain.semantic import SemanticCompileResult
 from src.core.ports.sql_expert import SqlQueryResult
 from src.infrastructure.observability.logging_config import get_logger
 from src.intelligence.abstention import AbstentionBuilder, AbstentionMessage
@@ -28,6 +29,7 @@ from src.intelligence.answerability import AnswerabilityGate
 from src.intelligence.definitions import BusinessDefinitionRegistry
 from src.intelligence.evidence import EvidenceCollector
 from src.intelligence.planner import QueryPlanner
+from src.intelligence.semantic_compiler import SemanticCompiler
 from src.intelligence.signals import SignalCollector, SignalSet
 from src.intelligence.store import PostgresIntelligenceStore
 from src.intelligence.trace import TraceRecorder
@@ -73,6 +75,7 @@ class IntelligenceEngine:
             llm_provider=llm_provider,
             concept_llm_enabled=concept_llm_enabled,
         )
+        self._compiler = SemanticCompiler()
         self._planner = QueryPlanner()
         self._collector = EvidenceCollector()
         self._signals = SignalCollector(
@@ -128,6 +131,24 @@ class IntelligenceEngine:
             use_llm=use_llm,
         )
 
+    async def compile(
+        self,
+        organization_id: UUID,
+        understanding: QueryUnderstanding,
+        *,
+        query: str = "",
+    ) -> SemanticCompileResult:
+        """Build Business Semantic AST and resolve against approved definitions.
+
+        Runs after understand, before plan. Never invents physical SQL joins.
+        """
+        definitions = await self._definitions.get_all(organization_id)
+        return self._compiler.compile(
+            understanding,
+            query=query,
+            definitions=definitions,
+        )
+
     def plan(
         self,
         understanding: QueryUnderstanding,
@@ -137,6 +158,7 @@ class IntelligenceEngine:
         router_score: float | None = None,
         kb_available: bool = True,
         tools_available: bool = False,
+        compile_result: SemanticCompileResult | None = None,
     ) -> QueryPlan:
         return self._planner.plan(
             understanding,
@@ -146,6 +168,7 @@ class IntelligenceEngine:
             sql_router_threshold=self._sql_router_threshold,
             kb_available=kb_available,
             tools_available=tools_available,
+            compile_result=compile_result,
         )
 
     async def collect_evidence(

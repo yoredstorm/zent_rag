@@ -383,6 +383,7 @@ class IntelligenceTrace:
     user_query: str = ""
     role: str = "admin"
     understanding: dict = field(default_factory=dict)
+    semantic_compile: dict = field(default_factory=dict)
     query_plan: dict = field(default_factory=dict)
     evidence: list[dict] = field(default_factory=list)
     decision: dict = field(default_factory=dict)
@@ -403,6 +404,7 @@ class IntelligenceTrace:
             "user_query": self.user_query,
             "role": self.role,
             "understanding": self.understanding,
+            "semantic_compile": self.semantic_compile,
             "query_plan": self.query_plan,
             "evidence": self.evidence,
             "decision": self.decision,

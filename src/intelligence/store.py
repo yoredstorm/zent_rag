@@ -94,6 +94,13 @@ class PostgresIntelligenceStore:
         try:
             session: AsyncSession = await get_async_session()
             try:
+                understanding_payload = dict(trace.understanding or {})
+                if trace.semantic_compile:
+                    # Nested until a dedicated column exists (no migration in 26B).
+                    understanding_payload = {
+                        **understanding_payload,
+                        "semantic_compile": trace.semantic_compile,
+                    }
                 await session.execute(
                     text(
                         "INSERT INTO intelligence_traces "
@@ -113,7 +120,7 @@ class PostgresIntelligenceStore:
                         "uid": trace.user_id,
                         "query": trace.user_query[:32000],
                         "role": trace.role,
-                        "understanding": json.dumps(trace.understanding or {}),
+                        "understanding": json.dumps(understanding_payload),
                         "plan": json.dumps(trace.query_plan or {}),
                         "evidence": json.dumps(trace.evidence or []),
                         "decision": json.dumps(trace.decision or {}),

@@ -54,9 +54,37 @@ No evidence != answer
 Basic ENTITY/FACT != missing business definition
 ```
 
-## Planned (not in 26A)
+## 26B — Business Semantic AST (implemented)
 
-- **26B** Business Semantic AST + compiler IR
+After classification, `SemanticCompiler.compile()` builds an intermediate
+**Business Semantic AST** (no physical table/column names) and a compile IR
+for the Query Planner:
+
+```text
+Understanding
+  → ConceptClassifier (26A)
+  → Business Semantic AST
+  → resolve vs approved definitions
+  → SemanticCompileResult
+  → Query Planner
+```
+
+IR fields: `semantic_ast`, `resolved_objects`, `unresolved_objects`,
+`physical_candidates`, `required_sources`, `required_metrics`,
+`required_relationships`, `warnings`.
+
+Physical candidates come **only** from approved definition expressions —
+the compiler never invents joins or legacy table names.
+
+Key modules:
+
+- `src/core/domain/semantic.py` — `BusinessSemanticAST`, `SemanticCompileResult`, `SemanticGapCode`
+- `src/intelligence/semantic_compiler.py` — `SemanticCompiler`
+- `src/intelligence/engine.py` — `IntelligenceEngine.compile()` then `plan(..., compile_result=)`
+- `src/intelligence/planner.py` — uses unresolved CONTEXT_MISSING from compile IR
+
+## Planned (not in 26A/26B)
+
 - **26C** Verified Query Repository
 - **26D** Verified Query ↔ SQL Expert
 - Hybrid catalog search, entity resolution, temporal semantics, analytical
