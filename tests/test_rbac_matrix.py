@@ -11,7 +11,9 @@ import pytest_asyncio
 async def _seed_platform_admin(email: str, password: str) -> None:
     """Garantiza el platform admin (is_platform_admin + super_admin) con la
     contraseña esperada. CI no siembra admin@zent.dev: los tests de login de
-    plataforma deben auto-sembrarlo."""
+    plataforma deben auto-sembrarlo (mismo patrón que test_platform_admin)."""
+    import hashlib
+
     from sqlalchemy import text
 
     from src.infrastructure.postgres.relational_db import (
@@ -38,14 +40,29 @@ async def _seed_platform_admin(email: str, password: str) -> None:
                 {"ph": hash_password(password), "id": existing.id},
             )
         else:
-            await session.execute(
+            result = await session.execute(
                 text(
-                    "INSERT INTO users (id, email, password_hash, "
-                    "is_platform_admin, created_at) "
-                    "VALUES (gen_random_uuid(), :email, :ph, true, now())"
+                    "INSERT INTO users (id, organization_id, external_id, email_hash, "
+                    "role, email, password_hash, is_platform_admin) "
+                    "VALUES (gen_random_uuid(), NULL, :ext, :eh, 'platform', "
+                    ":email, :ph, true) RETURNING id"
                 ),
-                {"email": email, "ph": hash_password(password)},
+                {
+                    "ext": f"platform-{uuid4().hex[:12]}",
+                    "eh": hashlib.sha256(email.encode()).hexdigest(),
+                    "email": email,
+                    "ph": hash_password(password),
+                },
             )
+            existing = result.fetchone()
+        await session.execute(
+            text(
+                "INSERT INTO user_platform_roles (user_id, role_id) "
+                "SELECT :uid, id FROM platform_roles WHERE name = 'super_admin' "
+                "ON CONFLICT DO NOTHING"
+            ),
+            {"uid": existing.id},
+        )
         await session.commit()
     finally:
         await session.close()
