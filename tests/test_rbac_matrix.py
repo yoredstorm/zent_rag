@@ -5,6 +5,57 @@
 impersonación auditada con motivo, step-up MFA y campos ACL en el payload."""
 from uuid import uuid4
 
+import pytest_asyncio
+
+
+async def _seed_platform_admin(email: str, password: str) -> None:
+    """Garantiza el platform admin (is_platform_admin + super_admin) con la
+    contraseña esperada. CI no siembra admin@zent.dev: los tests de login de
+    plataforma deben auto-sembrarlo."""
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.relational_db import (
+        ensure_platform_admin_schema,
+    )
+    from src.infrastructure.postgres.session import get_async_session
+    from src.platform.auth.passwords import hash_password
+
+    await ensure_platform_admin_schema()
+    session = await get_async_session()
+    try:
+        existing = (
+            await session.execute(
+                text("SELECT id FROM users WHERE lower(email) = lower(:email)"),
+                {"email": email},
+            )
+        ).fetchone()
+        if existing:
+            await session.execute(
+                text(
+                    "UPDATE users SET is_platform_admin = true, "
+                    "password_hash = :ph WHERE id = :id"
+                ),
+                {"ph": hash_password(password), "id": existing.id},
+            )
+        else:
+            await session.execute(
+                text(
+                    "INSERT INTO users (id, email, password_hash, "
+                    "is_platform_admin, created_at, updated_at) "
+                    "VALUES (gen_random_uuid(), :email, :ph, true, now(), now())"
+                ),
+                {"email": email, "ph": hash_password(password)},
+            )
+        await session.commit()
+    finally:
+        await session.close()
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _ensure_platform_admin() -> None:
+    """Todos los tests del módulo requieren el super admin por defecto."""
+    await _seed_platform_admin("admin@zent.dev", "demo-password-change-me")
+
 
 def _h(token: str) -> dict:
     return {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
