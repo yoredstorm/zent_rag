@@ -435,12 +435,14 @@ async def platform_login(body: LoginRequest, request: Request):
 @router.post("/logout", summary="Revocar la sesión portal actual")
 async def logout(request: Request):
     """Invalida la sesión en el registro server-side (revocación real)."""
-    from src.core.config import settings
+    from src.core.config import get_settings
     from src.platform.auth.cookies import (
         clear_platform_session_cookie,
         clear_portal_session_cookie,
     )
     from src.platform.auth.session import revoke_session
+
+    settings = get_settings()
 
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):

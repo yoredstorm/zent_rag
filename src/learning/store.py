@@ -689,10 +689,10 @@ class PostgresLearningStore:
                         "WHERE p.enabled = true "
                         "GROUP BY p.id, p.organization_id, p.schedule_hours "
                         "HAVING COALESCE(MAX(r.started_at), 'epoch'::timestamptz) "
-                        "<= :now - (p.schedule_hours || ' hours')::interval "
+                        "<= now() - make_interval(hours => p.schedule_hours) "
                         "ORDER BY last_run LIMIT :limit"
                     ),
-                    {"now": now, "limit": limit},
+                    {"limit": limit},
                 )
             ).fetchall()
             return [

@@ -17,6 +17,11 @@ from src.core.domain.pii import (
 )
 
 
+def _flags_for_column(name: str) -> tuple[list[str], bool]:
+    """Compatibilidad: contrato histórico (pii_flags, sensitive) del profiling."""
+    return pii_flags_for_column(name), is_sensitive_column(name)
+
+
 async def profile_table(
     session: AsyncSession, schema: str, table: str
 ) -> dict:
