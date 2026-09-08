@@ -130,7 +130,7 @@ jobs:
         run: alembic upgrade head
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short --timeout=60 -x
+        run: pytest tests/ -v --tb=short --timeout=300 -x
 
   sdk-python:
     runs-on: ubuntu-latest

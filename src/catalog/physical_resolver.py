@@ -210,7 +210,7 @@ class PhysicalResolver:
             )
             score = sum(1 for h in hints if h.replace(" ", "") in blob.replace(" ", ""))
             if score > best_score:
-                best = field
+                best = fld
                 best_score = score
         return best if best_score else None
 
