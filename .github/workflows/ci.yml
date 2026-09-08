@@ -58,6 +58,8 @@ jobs:
       RAG_QDRANT_PORT: "6333"
       RAG_BILLING_ENABLED: "false"
       RAG_ENVIRONMENT: development
+      RAG_SEED_DEMO_DATA: "true"
+      RAG_DEMO_SQL_SCHEMAS: farmacia
       # Default de gateway distinto de gpt-4o-mini: test_model_budgets_blocking
       # exige que el fallback default no sea el modelo bloqueado por presupuesto.
       RAG_LITELLM_DEFAULT_MODEL: gpt-4o
@@ -184,6 +186,8 @@ jobs:
       RAG_QDRANT_HOST: localhost
       RAG_QDRANT_PORT: "6333"
       RAG_ENVIRONMENT: development
+      RAG_SEED_DEMO_DATA: "true"
+      RAG_DEMO_SQL_SCHEMAS: farmacia
       RAG_LITELLM_DEFAULT_MODEL: gpt-4o
       RAG_PORTAL_SESSION_KEY: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
       RAG_PORTAL_DEV_EMAIL: demo@zenttech.com

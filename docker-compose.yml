@@ -108,6 +108,7 @@ x-common-env: &common-env
   RAG_LOG_LEVEL: ${LOG_LEVEL:-INFO}
   # Phase 31C — customer DBs on the same cluster. Adapters rds/neon: NotImplementedError.
   RAG_MANAGED_DB_PROVIDER: ${RAG_MANAGED_DB_PROVIDER:-local}
+  RAG_DEMO_SQL_SCHEMAS: ${RAG_DEMO_SQL_SCHEMAS:-farmacia}
   RAG_METRICS_TOKEN: ${METRICS_TOKEN:-rag-metrics-scrape-token}
   RAG_RATE_LIMIT_ENABLED: ${RAG_RATE_LIMIT_ENABLED:-true}
   RAG_RATE_LIMIT_PER_MINUTE: ${RAG_RATE_LIMIT_PER_MINUTE:-3000}

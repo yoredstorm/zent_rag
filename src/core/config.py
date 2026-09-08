@@ -873,10 +873,10 @@ class Settings(BaseSettings):
     )
     DEMO_SQL_ORGANIZATION_ID: str = Field(
         default="00000000-0000-0000-0000-000000000001",
-        description="Org dueña del schema demo compartido (farmacia.*).",
+        description="Org dueña de los schemas demo compartidos.",
     )
     DEMO_SQL_SCHEMAS: str = Field(
-        default="farmacia",
+        default="",
         description="Schemas SQL compartidos del demo; el filtro de org incluye el seed.",
     )
     MANAGED_DB_PROVIDER: str = Field(

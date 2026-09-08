@@ -108,7 +108,12 @@ def test_organization_filter_skips_tables_without_organization_column() -> None:
     assert "l.organization_id" not in out, out
 
 
-def test_farmacia_demo_schema_allows_seed_org_for_trial_tenant() -> None:
+def test_farmacia_demo_schema_allows_seed_org_for_trial_tenant(monkeypatch) -> None:
+    from src.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "SEED_DEMO_DATA", True)
+    monkeypatch.setattr(settings, "DEMO_SQL_SCHEMAS", "farmacia")
     trial = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     sql = "SELECT p.name FROM farmacia.products AS p LIMIT 10"
     out = _expert()._inject_organization_filter(sql, trial, _SOURCES)
