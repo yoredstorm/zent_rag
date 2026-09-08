@@ -1,6 +1,7 @@
 -- =============================================================================
 -- PHASE 31C — Workspace isolation (demo vs business)
 -- =============================================================================
+-- Idempotente. catalog_sources puede no existir aún en initdb (Alembic 080).
 
 ALTER TABLE workspaces
     ADD COLUMN IF NOT EXISTS kind VARCHAR(20) NOT NULL DEFAULT 'business';
@@ -21,23 +22,26 @@ ALTER TABLE kb_sources
 CREATE INDEX IF NOT EXISTS idx_kb_sources_workspace
     ON kb_sources(organization_id, workspace_id);
 
-ALTER TABLE catalog_sources
-    ADD COLUMN IF NOT EXISTS workspace_id UUID;
-CREATE INDEX IF NOT EXISTS idx_catalog_sources_workspace
-    ON catalog_sources(organization_id, workspace_id);
+DO $$
+BEGIN
+    IF to_regclass('public.catalog_sources') IS NOT NULL THEN
+        ALTER TABLE catalog_sources ADD COLUMN IF NOT EXISTS workspace_id UUID;
+        CREATE INDEX IF NOT EXISTS idx_catalog_sources_workspace
+            ON catalog_sources(organization_id, workspace_id);
+        UPDATE catalog_sources cs
+        SET workspace_id = w.id
+        FROM workspaces w
+        WHERE cs.workspace_id IS NULL
+          AND w.organization_id = cs.organization_id
+          AND w.slug = 'default';
+    END IF;
+END $$;
 
 UPDATE kb_sources ks
 SET workspace_id = w.id
 FROM workspaces w
 WHERE ks.workspace_id IS NULL
   AND w.organization_id = ks.organization_id
-  AND w.slug = 'default';
-
-UPDATE catalog_sources cs
-SET workspace_id = w.id
-FROM workspaces w
-WHERE cs.workspace_id IS NULL
-  AND w.organization_id = cs.organization_id
   AND w.slug = 'default';
 
 UPDATE connectors c

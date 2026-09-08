@@ -51,14 +51,23 @@ def upgrade() -> None:
         "ON kb_sources(organization_id, workspace_id)"
     )
     op.execute(
-        "ALTER TABLE catalog_sources ADD COLUMN IF NOT EXISTS workspace_id UUID"
+        """
+        DO $$
+        BEGIN
+            IF to_regclass('public.catalog_sources') IS NOT NULL THEN
+                ALTER TABLE catalog_sources ADD COLUMN IF NOT EXISTS workspace_id UUID;
+                CREATE INDEX IF NOT EXISTS idx_catalog_sources_workspace
+                    ON catalog_sources(organization_id, workspace_id);
+                UPDATE catalog_sources cs
+                SET workspace_id = w.id
+                FROM workspaces w
+                WHERE cs.workspace_id IS NULL
+                  AND w.organization_id = cs.organization_id
+                  AND w.slug = 'default';
+            END IF;
+        END $$;
+        """
     )
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS idx_catalog_sources_workspace "
-        "ON catalog_sources(organization_id, workspace_id)"
-    )
-
-
     op.execute(
         """
         UPDATE kb_sources ks

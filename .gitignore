@@ -26,7 +26,8 @@ Thumbs.db
 docker-compose.override.yml
 
 # Runtime tenant data (exports, reports, backups, DSR, agent migrations)
-data/
+# Root only — portal/src/pages/onboarding/data is source code and must be tracked
+/data/
 uploads/
 
 # Construction / internal docs (producto: solo README.md raíz)
