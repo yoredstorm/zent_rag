@@ -89,7 +89,11 @@ class DataOnboardingService:
         return [self.public(r) for r in rows]
 
     async def gate(
-        self, organization_id: UUID, workspace_id: UUID | None = None
+        self,
+        organization_id: UUID,
+        workspace_id: UUID | None = None,
+        *,
+        workspace_kind: str | None = None,
     ) -> dict:
         from src.api.deps import get_connector_repo, get_source_repo
 
@@ -107,11 +111,12 @@ class DataOnboardingService:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("onboarding gate sources failed", error=str(exc)[:200])
-        real_sources = [
-            s
-            for s in sources
-            if s.type != "sql" and "farmacia" not in (s.name or "").lower()
-        ]
+        # Demo workspaces hold seeded sample data, not real business data.
+        real_sources = (
+            []
+            if workspace_kind == "demo"
+            else [s for s in sources if s.type != "sql"]
+        )
         sessions = await self._store.list(organization_id, workspace_id=workspace_id)
         resume = next(
             (
@@ -121,7 +126,7 @@ class DataOnboardingService:
             ),
             None,
         )
-        has_real = bool(connectors or real_sources)
+        has_real = workspace_kind != "demo" and bool(connectors or real_sources)
         return {
             "has_real_data": has_real,
             "resume_session_id": resume["id"] if resume else None,

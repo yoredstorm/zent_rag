@@ -123,7 +123,9 @@ async def onboarding_gate(request: Request):
     from src.platform.workspaces.context import resolve_workspace
 
     ws = await resolve_workspace(request)
-    return await _svc.gate(_org(request), workspace_id=ws.id)
+    return await _svc.gate(
+        _org(request), workspace_id=ws.id, workspace_kind=str(ws.kind.value)
+    )
 
 
 @router.post("/sessions", status_code=201, summary="Crear sesión de onboarding")
