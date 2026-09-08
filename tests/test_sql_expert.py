@@ -209,3 +209,16 @@ async def test_repair_gives_up_when_llm_cannot_fix() -> None:
     )
     assert result.error is not None
     assert len(expert.validated) == 1
+
+
+def test_stabilize_expands_analgesic_search_to_tags_and_description() -> None:
+    sql = (
+        "SELECT p.name FROM farmacia.products AS p "
+        "JOIN farmacia.categories AS c ON p.category_id = c.id "
+        "WHERE p.name ILIKE '%analgésico%' LIMIT 10"
+    )
+    out = stabilize_sql(sql, "Recomiéndame un analgésico")
+    flat = _flat(out)
+    assert "tags" in flat
+    assert "description" in flat
+    assert "c.name ilike" in flat

@@ -340,6 +340,9 @@ _SQL_GENERATION_PROMPT = """You are a PostgreSQL SQL expert. Generate a valid, s
 15. For entity tables, SELECT only user-readable business columns (display name,
     price, description...). Never SELECT technical columns (internal codes,
     costs, slugs, registration numbers).
+16. For product recommendations or category-like needs, search name, description,
+    tags AND joined category names — not only the product name. Use ILIKE
+    on those columns (and CAST(tags AS text) when tags is an array).
 
 ## OUTPUT FORMAT
 Return ONLY the SQL statement. No markdown, no explanation, no backticks, no prefix.
@@ -1307,7 +1310,7 @@ class PostgresSqlExpert(SqlExpert):
         bare_aware: set[str] = {t.split(".", 1)[-1] for t in organization_aware}
 
         expr = sqlglot.parse_one(sql, error_level=sqlglot.ErrorLevel.RAISE)
-        targets: list[tuple[sqlglot.exp.Select, str]] = []
+        targets: list[tuple[sqlglot.exp.Select, str, str | None, str]] = []
         for select in expr.find_all(sqlglot.exp.Select):
             for table in self._direct_tables(select):
                 schema, name = self._table_identity(table)
@@ -1315,23 +1318,49 @@ class PostgresSqlExpert(SqlExpert):
                     continue
                 if schema and f"{schema}.{name}" not in organization_aware:
                     continue
-                targets.append((select, table.alias_or_name))
+                targets.append((select, table.alias_or_name, schema, name))
 
         rewrite_organization_id_literals(expr, organization_id)
         auth = str(organization_id)
+        seed_org, demo_schemas = self._demo_sql_scope()
 
-        for select, ref in targets:
+        for select, ref, schema, name in targets:
             where = select.args.get("where")
             snapshot = where.sql() if where is not None else ""
-            if re.search(
-                rf"\b{re.escape(ref)}\.organization_id\s*=\s*'?{re.escape(auth)}",
-                snapshot,
-                re.IGNORECASE,
+            extra_org = None
+            if (
+                seed_org is not None
+                and str(seed_org) != auth
+                and self._is_demo_sql_table(schema, name, sources, demo_schemas)
             ):
-                continue
-            pred_eq = sqlglot.parse_one(
-                f"{ref}.organization_id = '{organization_id}'::uuid"
+                extra_org = str(seed_org)
+            already_auth = bool(
+                re.search(
+                    rf"\b{re.escape(ref)}\.organization_id\s*=\s*'?{re.escape(auth)}",
+                    snapshot,
+                    re.IGNORECASE,
+                )
             )
+            already_seed = bool(
+                extra_org
+                and re.search(
+                    rf"\b{re.escape(ref)}\.organization_id\s*=\s*'?{re.escape(extra_org)}",
+                    snapshot,
+                    re.IGNORECASE,
+                )
+            )
+            if extra_org:
+                if already_auth and already_seed:
+                    continue
+                pred_sql = (
+                    f"({ref}.organization_id = '{organization_id}'::uuid "
+                    f"OR {ref}.organization_id = '{extra_org}'::uuid)"
+                )
+            else:
+                if already_auth:
+                    continue
+                pred_sql = f"{ref}.organization_id = '{organization_id}'::uuid"
+            pred_eq = sqlglot.parse_one(pred_sql)
             condition = self._where_condition(where)
             if condition is None:
                 new_where: sqlglot.exp.Expression = sqlglot.exp.Where(this=pred_eq)
@@ -1342,6 +1371,38 @@ class PostgresSqlExpert(SqlExpert):
             select.set("where", new_where)
 
         return expr.sql()
+
+    @staticmethod
+    def _demo_sql_scope() -> tuple[UUID | None, set[str]]:
+        settings = get_settings()
+        schemas = {
+            s.strip().lower()
+            for s in (settings.DEMO_SQL_SCHEMAS or "").split(",")
+            if s.strip()
+        }
+        if not settings.SEED_DEMO_DATA or not schemas:
+            return None, set()
+        raw = (settings.DEMO_SQL_ORGANIZATION_ID or "").strip()
+        try:
+            return UUID(raw), schemas
+        except ValueError:
+            return None, schemas
+
+    @staticmethod
+    def _is_demo_sql_table(
+        schema: str | None,
+        name: str,
+        sources: list[DataSource],
+        demo_schemas: set[str],
+    ) -> bool:
+        if not demo_schemas:
+            return False
+        if schema and schema.lower() in demo_schemas:
+            return True
+        return any(
+            s.schema_name.lower() in demo_schemas and s.table_name.lower() == name
+            for s in sources
+        )
 
     @staticmethod
     def _cap_limit(sql: str, max_limit: int = 500) -> str:

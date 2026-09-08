@@ -871,6 +871,14 @@ class Settings(BaseSettings):
         default=True,
         description="Permite sembrar datos demo/dev (token admin) en la BD.",
     )
+    DEMO_SQL_ORGANIZATION_ID: str = Field(
+        default="00000000-0000-0000-0000-000000000001",
+        description="Org dueña del schema demo compartido (farmacia.*).",
+    )
+    DEMO_SQL_SCHEMAS: str = Field(
+        default="farmacia",
+        description="Schemas SQL compartidos del demo; el filtro de org incluye el seed.",
+    )
     MANAGED_DB_PROVIDER: str = Field(
         default="local",
         description="Managed database provider id (local today; rds/neon later).",

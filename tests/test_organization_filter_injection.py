@@ -106,3 +106,12 @@ def test_organization_filter_skips_tables_without_organization_column() -> None:
     out = _expert()._inject_organization_filter(sql, _OID, sources)
     assert "s.organization_id = CAST" in out, out
     assert "l.organization_id" not in out, out
+
+
+def test_farmacia_demo_schema_allows_seed_org_for_trial_tenant() -> None:
+    trial = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    sql = "SELECT p.name FROM farmacia.products AS p LIMIT 10"
+    out = _expert()._inject_organization_filter(sql, trial, _SOURCES)
+    assert str(trial) in out
+    assert str(_OID) in out
+    assert "OR" in out

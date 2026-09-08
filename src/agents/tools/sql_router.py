@@ -69,6 +69,17 @@ _ENTITY_PATTERNS = (
     r"\bcategor[íi]as?\b",
     r"\btransacciones?\b",
 )
+# Catálogo / recomendación: inventario, no métrica, igual requiere SQL.
+_CATALOG_PATTERNS = (
+    r"\brecomi[eé]nd",
+    r"\brecomend",
+    r"\bsugi[eé]r",
+    r"\balgo\s+para\b",
+    r"\bquiero\s+(un|una|algo)\b",
+    r"\bnecesito\s+(un|una|algo)\b",
+    r"\bqu[ée]\s+\w+\s+tienen\b",
+    r"\btienen\s+disponible",
+)
 # Señales de pregunta documental (baja el score SQL).
 _RAG_PATTERNS = (
     r"\bpol[íi]tica\w*\b",
@@ -83,7 +94,8 @@ _RAG_PATTERNS = (
 
 _ROUTER_PROMPT = """Classify the user question. Answer with ONLY one word.
 SQL = the question asks for numbers, counts, sums, totals, rankings,
-comparisons or data from business records (sales, customers, products).
+comparisons, product recommendations, or data from business records
+(sales, customers, products, catalog).
 RAG = the question asks about policies, documentation, definitions or
 explanations.
 
@@ -126,6 +138,11 @@ class SqlIntentRouter:
         )
         signals += sum(1 for pattern in _DATE_PATTERNS if re.search(pattern, text))
         signals += sum(1 for pattern in _ENTITY_PATTERNS if re.search(pattern, text))
+        catalog_signals = sum(
+            1 for pattern in _CATALOG_PATTERNS if re.search(pattern, text)
+        )
+        # Una señal de catálogo basta para cruzar el umbral 0.5 (2 × 0.4).
+        signals += catalog_signals * 2
         rag_signals = sum(
             1 for pattern in _RAG_PATTERNS if re.search(pattern, text)
         )
@@ -133,6 +150,12 @@ class SqlIntentRouter:
         score = min(signals * 0.4, 1.0)
         score = max(score - rag_signals * 0.35, 0.0)
         return score
+
+    @staticmethod
+    def is_catalog_intent(question: str) -> bool:
+        """True si la pregunta pide inventario / recomendación, no una métrica."""
+        text = (question or "").lower()
+        return any(re.search(pattern, text) for pattern in _CATALOG_PATTERNS)
 
     async def is_sql_intent(
         self,

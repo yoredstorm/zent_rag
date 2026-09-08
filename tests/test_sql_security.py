@@ -320,6 +320,13 @@ class TestRouter:
         router = SqlIntentRouter(llm_provider=None)
         assert router.heuristic_score("Hola") < 0.5
 
+    def test_recommendation_question_scores_sql(self) -> None:
+        router = SqlIntentRouter(llm_provider=None)
+        assert router.heuristic_score("Recomiéndame un analgésico") >= 0.5
+        assert router.heuristic_score("¿Qué analgésicos tienen disponible?") >= 0.5
+        assert SqlIntentRouter.is_catalog_intent("Recomiéndame un analgésico")
+        assert not SqlIntentRouter.is_catalog_intent("¿Cuánto vendimos este mes?")
+
     @pytest.mark.asyncio
     async def test_clear_sql_intent_skips_llm(self) -> None:
         router = SqlIntentRouter(llm_provider=_FakeLLM("RAG"), llm_confirm_enabled=True)
@@ -351,6 +358,13 @@ class TestSchemaRelevance:
         relevant = build_relevant_schema("ventas por producto", _sources())
         sales = next(s for s in relevant if s.table_name == "sales")
         assert any(c.name == "product_id" for c in sales.columns)
+
+    def test_accented_category_query_ranks_products(self) -> None:
+        from src.agents.tools.schema_relevance import _tokens
+
+        assert "analgesico" in _tokens("analgésico")
+        top = rank_tables("Recomiéndame un analgésico", _sources(), max_tables=1)
+        assert top[0].table_name == "products"
 
 
 # -----------------------------------------------------------------------------

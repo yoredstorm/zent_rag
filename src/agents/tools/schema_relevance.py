@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from uuid import UUID
 
 from src.core.domain.services import ColumnMeta, DataSource
@@ -33,6 +34,9 @@ _RETAIL_SYNONYMS: dict[str, str] = {
     "pedido": "orders", "pedidos": "orders", "orden": "orders", "ordenes": "orders",
     "producto": "products", "productos": "products",
     "medicamento": "products", "medicamentos": "products",
+    "analgesico": "products", "analgesicos": "products",
+    "antiinflamatorio": "products", "antiinflamatorios": "products",
+    "antipiretico": "products", "antipireticos": "products",
     "proveedor": "suppliers", "proveedores": "suppliers",
     "laboratorio": "suppliers", "laboratorios": "suppliers",
     "categoria": "categories", "categorias": "categories",
@@ -59,8 +63,13 @@ _TECHNICAL_COLUMN_PATTERNS = (
 )
 
 
+def _strip_accents(text: str) -> str:
+    normalized = unicodedata.normalize("NFD", text)
+    return "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+
+
 def _tokens(text: str) -> set[str]:
-    lowered = (text or "").lower()
+    lowered = _strip_accents((text or "").lower())
     lowered = re.sub(r"[^a-z0-9\s]", " ", lowered)
     return set(_TOKEN_RE.findall(lowered))
 
