@@ -54,6 +54,17 @@ _FORBIDDEN_KEYWORDS = re.compile(
 
 _READ_ONLY_STATEMENTS = {"select", "describe"}
 
+
+def assert_reader_runtime_secrets(secrets: dict | None) -> dict:
+    """Refuse schema_admin credentials in the Text-to-SQL runtime."""
+    from src.platform.managed_db.service import query_runtime_secrets
+
+    cleaned = query_runtime_secrets(secrets or {})
+    if "schema_admin_password" in (secrets or {}):
+        if cleaned.get("schema_admin_password"):
+            raise RuntimeError("SQL Expert must not use schema_admin credentials")
+    return cleaned
+
 # Pistas de fallo de conexión del pool read-only. Se detectan ANTES de
 # etiquetarlos como "Invalid SQL" para no enmascarar problemas de
 # provisionamiento del rol (POSTGRES_READONLY_USER / 09-readonly-role.sh).
@@ -542,6 +553,15 @@ class PostgresSqlExpert(SqlExpert):
                 f"\n  {', '.join(cols)}"
             )
 
+        hints = getattr(self, "_enum_hints", None) or []
+        if hints:
+            lines.append("Approved enum meanings (use these predicates, do not guess codes):")
+            for hint in hints:
+                lines.append(
+                    f"  {hint.get('qualified')}.{hint.get('column')} = '{hint.get('value')}' "
+                    f"means {hint.get('meaning')}"
+                )
+
         schema_inventory = "\n\n".join(lines)
 
         # Build FK chain visualization
@@ -634,7 +654,7 @@ class PostgresSqlExpert(SqlExpert):
 
         start = time.perf_counter()
         result = await self._execute_inner(
-            organization_id, question, role, permissions
+            organization_id, question, role, permissions, user_id=user_id
         )
         elapsed_ms = (time.perf_counter() - start) * 1000
 
@@ -678,9 +698,51 @@ class PostgresSqlExpert(SqlExpert):
         question: str,
         role: str,
         permissions: dict | None,
+        user_id: UUID | None = None,
     ) -> SqlQueryResult:
         self._permissions = permissions
+        self._query_organization_id = organization_id
+        self._query_workspace_id = None
+        if user_id is not None:
+            try:
+                from src.platform.workspaces.context import get_active_workspace_id
+
+                self._query_workspace_id = await get_active_workspace_id(
+                    organization_id, user_id
+                )
+            except Exception:  # noqa: BLE001
+                self._query_workspace_id = None
         all_sources = await self._discover_sources(organization_id)
+        self._column_allowlist = None
+        self._enum_hints: list[dict] = []
+        try:
+            from src.catalog.physical_resolver import PhysicalResolver
+
+            resolved = await PhysicalResolver().resolve_question(
+                organization_id,
+                question,
+                workspace_id=getattr(self, "_query_workspace_id", None),
+            )
+            if resolved.context_missing:
+                return SqlQueryResult(
+                    sql="",
+                    error=resolved.message,
+                    metadata={
+                        "answerability": resolved.answerability,
+                        "studio_path": resolved.studio_path,
+                    },
+                )
+            if resolved.allowlist and not resolved.use_legacy:
+                self._column_allowlist = {
+                    k.lower(): {c.lower() for c in cols}
+                    for k, cols in resolved.allowlist.items()
+                }
+                mapped = self._apply_mapping_allowlist(all_sources, resolved.allowlist)
+                if mapped:
+                    all_sources = mapped
+                self._enum_hints = resolved.enum_predicates
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("PhysicalResolver skipped", error=str(exc)[:200])
 
         # Schema intelligence: solo el subconjunto relevante va al LLM.
         # FASE 24 — Schema linking semántico (catálogo) sobre el ranking
@@ -1035,6 +1097,52 @@ class PostgresSqlExpert(SqlExpert):
                             sql,
                         )
 
+    def _check_mapping_column_allowlist(self, sql: str) -> None:
+        allow = getattr(self, "_column_allowlist", None)
+        if not allow:
+            return
+        allowed_cols = {c for cols in allow.values() for c in cols}
+        if not allowed_cols:
+            return
+        statements = sqlglot.parse(sql, error_level=sqlglot.ErrorLevel.RAISE)
+        for stmt in statements:
+            for col in stmt.find_all(sqlglot.exp.Column):
+                name = str(col.name).lower()
+                if name and name not in allowed_cols:
+                    raise SqlValidationError(
+                        f"Column '{col.name}' is not in the approved mapping allowlist",
+                        sql,
+                    )
+
+    @staticmethod
+    def _apply_mapping_allowlist(
+        sources: list[DataSource], allowlist: dict[str, list[str]]
+    ) -> list[DataSource]:
+        allowed: dict[str, set[str]] = {
+            k.lower(): {c.lower() for c in cols} for k, cols in allowlist.items()
+        }
+        out: list[DataSource] = []
+        for source in sources:
+            qualified = f"{source.schema_name}.{source.table_name}".lower()
+            bare = source.table_name.lower()
+            cols_ok = allowed.get(qualified) or allowed.get(bare)
+            if not cols_ok:
+                continue
+            filtered = [c for c in source.columns if c.name.lower() in cols_ok]
+            if not filtered:
+                continue
+            out.append(
+                DataSource(
+                    schema_name=source.schema_name,
+                    table_name=source.table_name,
+                    columns=filtered,
+                    row_count=source.row_count,
+                    is_view=source.is_view,
+                    is_discovered=source.is_discovered,
+                )
+            )
+        return out
+
     # ---------------------------------------------------------------------
     # JOIN type safety — determinista sobre la metadata del discovery
     # ---------------------------------------------------------------------
@@ -1375,6 +1483,7 @@ class PostgresSqlExpert(SqlExpert):
 
         # Allowlist determinística de tablas (no regex, no dead code).
         self._check_table_allowlist(sql, sources)
+        self._check_mapping_column_allowlist(sql)
 
         # Chequeo determinista de tipos en JOINs (guidance para el repair).
         self._check_join_types(sql, sources)
@@ -1470,8 +1579,20 @@ class PostgresSqlExpert(SqlExpert):
         max_rows = settings.RAG_SQL_MAX_ROWS
         cost = getattr(self, "_last_cost", None)
         from src.infrastructure.postgres.readonly_session import get_readonly_session
+        from src.platform.managed_db.service import open_managed_query_session
 
-        session = await get_readonly_session()
+        session = None
+        org_id = getattr(self, "_query_organization_id", None)
+        if org_id is not None:
+            try:
+                session = await open_managed_query_session(
+                    org_id, getattr(self, "_query_workspace_id", None)
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Managed query session skipped", error=str(exc)[:180])
+                session = None
+        if session is None:
+            session = await get_readonly_session()
         try:
             from src.infrastructure.postgres.readonly_session import apply_readonly_transaction
 

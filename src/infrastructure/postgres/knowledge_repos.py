@@ -37,8 +37,8 @@ logger = get_logger(__name__)
 class PostgresSourceRepository(SourceRepository):
 
     _COLS = (
-        "id, organization_id, knowledge_base_id, name, type, config_json, "
-        "status, created_at"
+        "id, organization_id, knowledge_base_id, workspace_id, name, type, "
+        "config_json, status, created_at"
     )
 
     @staticmethod
@@ -47,6 +47,7 @@ class PostgresSourceRepository(SourceRepository):
             id=row.id,
             organization_id=row.organization_id,
             knowledge_base_id=row.knowledge_base_id,
+            workspace_id=getattr(row, "workspace_id", None),
             name=row.name,
             type=row.type,
             config_json=row.config_json if isinstance(row.config_json, dict) else {},
@@ -55,7 +56,10 @@ class PostgresSourceRepository(SourceRepository):
         )
 
     async def list_sources(
-        self, organization_id: UUID, knowledge_base_id: UUID | None = None
+        self,
+        organization_id: UUID,
+        knowledge_base_id: UUID | None = None,
+        workspace_id: UUID | None = None,
     ) -> list[KbSource]:
         session = await get_async_session()
         try:
@@ -67,6 +71,9 @@ class PostgresSourceRepository(SourceRepository):
             if knowledge_base_id is not None:
                 query += "AND knowledge_base_id = :kid "
                 params["kid"] = knowledge_base_id
+            if workspace_id is not None:
+                query += "AND workspace_id = :wid "
+                params["wid"] = workspace_id
             query += "ORDER BY created_at DESC"
             result = await session.execute(text(query), params)
             return [self._row_to_source(row) for row in result.fetchall()]
@@ -99,20 +106,22 @@ class PostgresSourceRepository(SourceRepository):
         source_type: str,
         knowledge_base_id: UUID | None = None,
         config_json: dict | None = None,
+        workspace_id: UUID | None = None,
     ) -> KbSource:
         session = await get_async_session()
         try:
             result = await session.execute(
                 text(
                     "INSERT INTO kb_sources (id, organization_id, knowledge_base_id, "
-                    "name, type, config_json, status) "
-                    "VALUES (uuid_generate_v4(), :oid, :kid, :name, :type, "
+                    "workspace_id, name, type, config_json, status) "
+                    "VALUES (uuid_generate_v4(), :oid, :kid, :wid, :name, :type, "
                     "CAST(:config AS jsonb), 'created') "
                     f"RETURNING {self._COLS}"
                 ),
                 {
                     "oid": organization_id,
                     "kid": knowledge_base_id,
+                    "wid": workspace_id,
                     "name": name,
                     "type": source_type,
                     "config": json.dumps(config_json or {}),

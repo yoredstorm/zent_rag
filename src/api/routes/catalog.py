@@ -168,7 +168,10 @@ async def list_catalog_sources(
     catalog_store: PostgresCatalogStore = Depends(get_catalog_store),
 ) -> list[dict]:
     require_permission(request, "catalog:read")
-    return await catalog_store.list_sources(_org(request))
+    from src.platform.workspaces.context import resolve_workspace
+
+    ws = await resolve_workspace(request)
+    return await catalog_store.list_sources(_org(request), workspace_id=ws.id)
 
 
 @router.get("/sources/{source_id}", summary="Detalle de fuente de catálogo")
@@ -940,3 +943,282 @@ def _parse_dt(value: str | None):
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
         return None
+
+
+class StudioReviewBody(BaseModel):
+    action: str = Field(pattern="^(confirm|change|reject|ignore)$")
+    payload: dict | None = None
+
+
+class StudioFieldCreateBody(BaseModel):
+    entity_id: UUID | None = None
+    entity_name: str | None = Field(default=None, max_length=160)
+    name: str = Field(min_length=1, max_length=160)
+    mapped_column_id: UUID | None = None
+    role: str = "UNKNOWN"
+
+
+class StudioFreeTextBody(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    column_id: UUID | None = None
+
+
+class StudioBulkBody(BaseModel):
+    suggestion_ids: list[UUID]
+    action: str = "approve"
+
+
+class LexiconBody(BaseModel):
+    token: str = Field(min_length=1, max_length=80)
+    meaning: str = Field(min_length=1, max_length=160)
+    role: str = "UNKNOWN"
+    status: str = Field(default="signal", pattern="^(signal|approved)$")
+
+
+class EnumMeaningBody(BaseModel):
+    meaning: str = Field(min_length=1, max_length=400)
+
+
+class VerifiedDraftBody(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    sql: str = Field(min_length=1, max_length=8000)
+    name: str | None = Field(default=None, max_length=160)
+
+
+async def _studio_audit(request: Request, org: UUID, action: str, knowledge_id: str, payload: dict) -> None:
+    try:
+        from src.api.deps import get_approval_service
+        from src.core.domain.learning import ApprovalAction
+
+        await get_approval_service().record(
+            organization_id=org,
+            knowledge_type="field",
+            knowledge_id=knowledge_id,
+            action=ApprovalAction.APPROVE,
+            acted_by=_user(request),
+            reason=f"catalog.mapping.{action}",
+            source_evidence=["studio"],
+            new_version=payload,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("catalog.mapping audit failed", action=action)
+
+
+@router.get("/studio/{source_id}", summary="Mapping Studio: árbol de tablas y grupos")
+async def studio_tree(
+    source_id: UUID,
+    request: Request,
+    catalog_store: PostgresCatalogStore = Depends(get_catalog_store),
+    q: str = "",
+    limit: int = 80,
+    offset: int = 0,
+) -> dict:
+    require_permission(request, "catalog:read")
+    org = _org(request)
+    await catalog_store.ensure_tables()
+    source = await catalog_store.get_source(org, source_id)
+    if source is None:
+        raise HTTPException(404, "Catalog source not found")
+    from src.catalog.studio import StudioService
+
+    return await StudioService(catalog_store).tree(
+        org, source_id, q=q, limit=min(limit, 200), offset=offset
+    )
+
+
+@router.get("/studio/tables/{table_id}", summary="Mapping Studio: detalle de tabla")
+async def studio_table(
+    table_id: UUID,
+    request: Request,
+    catalog_store: PostgresCatalogStore = Depends(get_catalog_store),
+) -> dict:
+    require_permission(request, "catalog:read")
+    org = _org(request)
+    from src.catalog.studio import StudioService
+
+    detail = await StudioService(catalog_store).table_detail(org, table_id)
+    if detail is None:
+        raise HTTPException(404, "Table not found")
+    return detail
+
+
+@router.post("/studio/fields/{field_id}/review", summary="Confirmar / cambiar / rechazar mapping")
+async def studio_review_field(
+    field_id: UUID,
+    body: StudioReviewBody,
+    request: Request,
+    catalog_store: PostgresCatalogStore = Depends(get_catalog_store),
+) -> dict:
+    require_permission(request, "catalog:write")
+    org = _org(request)
+    from src.catalog.studio import StudioService
+
+    result = await StudioService(catalog_store).review_field(
+        org, field_id, action=body.action, payload=body.payload, reviewed_by=_user(request)
+    )
+    if result is None:
+        raise HTTPException(404, "Field not found")
+    await _studio_audit(request, org, body.action, str(field_id), body.payload or {})
+    return result
+
+
+@router.post("/studio/fields", status_code=201, summary="Crear campo de negocio custom")
+async def studio_create_field(
+    body: StudioFieldCreateBody,
+    request: Request,
+    catalog_store: PostgresCatalogStore = Depends(get_catalog_store),
+) -> dict:
+    require_permission(request, "catalog:write")
+    org = _org(request)
+    from src.catalog.studio import StudioService
+
+    result = await StudioService(catalog_store).create_custom_field(
+        org,
+        entity_id=body.entity_id,
+        entity_name=body.entity_name,
+        name=body.name,
+        mapped_column_id=body.mapped_column_id,
+        role=body.role,
+        created_by=_user(request),
+    )
+    await _studio_audit(request, org, "create", result["id"], body.model_dump(mode="json"))
+    return result
+
+
+@router.post("/studio/free-text", summary="Texto libre → draft de campo (no APPROVED)")
+async def studio_free_text(
+    body: StudioFreeTextBody,
+    request: Request,
+    catalog_store: PostgresCatalogStore = Depends(get_catalog_store),
+) -> dict:
+    require_permission(request, "catalog:write")
+    org = _org(request)
+    from src.catalog.studio import StudioService
+
+    result = await StudioService(catalog_store).free_text_draft(
+        org, body.text, column_id=body.column_id, created_by=_user(request)
+    )
+    await _studio_audit(request, org, "free_text", result.get("id", ""), {"text": body.text[:200]})
+    return result
+
+
+@router.post("/studio/bulk", summary="Aprobar mappings por IDs explícitos")
+async def studio_bulk(
+    body: StudioBulkBody,
+    request: Request,
+    catalog_store: PostgresCatalogStore = Depends(get_catalog_store),
+) -> dict:
+    require_permission(request, "catalog:write")
+    if not body.suggestion_ids:
+        raise HTTPException(400, "suggestion_ids required")
+    if body.action != "approve":
+        raise HTTPException(400, "only action=approve is supported")
+    org = _org(request)
+    from src.catalog.studio import StudioService
+
+    result = await StudioService(catalog_store).bulk_approve(
+        org, [str(i) for i in body.suggestion_ids], reviewed_by=_user(request)
+    )
+    await _studio_audit(
+        request, org, "bulk_approve", "bulk", {"ids": [str(i) for i in body.suggestion_ids]}
+    )
+    return result
+
+
+@router.get("/lexicon", summary="Léxico de abreviaturas de la organización")
+async def list_lexicon(
+    request: Request,
+    catalog_store: PostgresCatalogStore = Depends(get_catalog_store),
+) -> list[dict]:
+    require_permission(request, "catalog:read")
+    org = _org(request)
+    await catalog_store.ensure_tables()
+    return await catalog_store.list_lexicon(org)
+
+
+@router.put("/lexicon", summary="Upsert token del léxico org (señal, no verdad global)")
+async def put_lexicon(
+    body: LexiconBody,
+    request: Request,
+    catalog_store: PostgresCatalogStore = Depends(get_catalog_store),
+) -> dict:
+    require_permission(request, "catalog:write")
+    org = _org(request)
+    await catalog_store.ensure_tables()
+    result = await catalog_store.upsert_lexicon_entry(
+        organization_id=org,
+        token=body.token,
+        meaning=body.meaning,
+        role=body.role,
+        status=body.status,
+        created_by=_user(request),
+    )
+    await _studio_audit(request, org, "lexicon", body.token, body.model_dump())
+    return result
+
+
+@router.put("/enums/{value_id}", summary="Significado de un valor de enum")
+async def put_enum_meaning(
+    value_id: UUID,
+    body: EnumMeaningBody,
+    request: Request,
+    catalog_store: PostgresCatalogStore = Depends(get_catalog_store),
+) -> dict:
+    require_permission(request, "catalog:write")
+    org = _org(request)
+    existing = await catalog_store.get_enum_value(org, value_id)
+    if existing is None:
+        raise HTTPException(404, "Enum value not found")
+    updated = await catalog_store.update_enum_meaning_by_id(
+        organization_id=org,
+        value_id=value_id,
+        meaning=body.meaning,
+        reviewed_by=_user(request),
+    )
+    if updated is None:
+        raise HTTPException(404, "Enum value not found")
+    try:
+        from src.core.domain.verified_query import MappingSuggestion, MappingSuggestionStatus
+        from src.intelligence.verified_query_store import PostgresVerifiedQueryStore
+
+        col = await catalog_store.get_column(org, UUID(existing["column_id"]))
+        predicate = f"{(col or {}).get('column_name', 'col')} = '{existing['value']}'"
+        await PostgresVerifiedQueryStore().upsert_mapping_suggestion(
+            MappingSuggestion(
+                organization_id=org,
+                concept=body.meaning,
+                entity_type="ENUM",
+                physical_predicate=predicate,
+                evidence_count=1,
+                evidence_sample=[existing["value"]],
+                status=MappingSuggestionStatus.INFERRED,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("enum mapping_suggestion skipped", error=str(exc)[:200])
+    await _studio_audit(request, org, "enum", str(value_id), {"meaning": body.meaning})
+    return updated
+
+
+@router.post("/studio/verified-query-draft", summary="Guardar SQL de prueba como DRAFT")
+async def studio_verified_draft(
+    body: VerifiedDraftBody,
+    request: Request,
+) -> dict:
+    require_permission(request, "catalog:write")
+    org = _org(request)
+    from src.api.deps import get_verified_query_service
+    from src.core.domain.verified_query import VerifiedQueryStatus
+
+    svc = get_verified_query_service()
+    await svc.store.ensure_tables()
+    item = await svc.create(
+        org,
+        name=body.name or body.question[:80],
+        canonical_question=body.question,
+        verified_sql=body.sql,
+        status=VerifiedQueryStatus.DRAFT,
+        approved_by=None,
+    )
+    await _studio_audit(request, org, "verified_draft", str(item.id), {"question": body.question})
+    return item.to_dict() if hasattr(item, "to_dict") else {"id": str(item.id), "status": "DRAFT"}

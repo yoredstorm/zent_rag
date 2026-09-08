@@ -59,6 +59,9 @@ export default function KnowledgeOverviewPage() {
   const [sql, setSql] = useState<SqlOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [hasRealData, setHasRealData] = useState(true);
+  const [resumeId, setResumeId] = useState<string | null>(null);
+  const [attention, setAttention] = useState<{ id: string; warning?: string | null } | null>(null);
 
   useEffect(() => {
     if (!session) return;
@@ -66,7 +69,7 @@ export default function KnowledgeOverviewPage() {
       setLoading(true);
       setError("");
       try {
-        const [s, j, kb, st, ing] = await Promise.all([
+        const [s, j, kb, st, ing, gate, attentionData] = await Promise.all([
           api<{ sources: Source[] }>("/api/v1/sources", {
             token: session.token,
             organizationId: session.organizationId,
@@ -87,12 +90,26 @@ export default function KnowledgeOverviewPage() {
             token: session.token,
             organizationId: session.organizationId,
           }).catch(() => null),
+          api<{ has_real_data: boolean; resume_session_id: string | null }>(
+            "/api/v1/data-onboarding/gate",
+            { token: session.token, organizationId: session.organizationId }
+          ).catch(() => ({ has_real_data: false, resume_session_id: null })),
+          api<{ sessions: Array<{ id: string; warning?: string | null }> }>(
+            "/api/v1/data-onboarding/sessions?status=NEEDS_ATTENTION",
+            { token: session.token, organizationId: session.organizationId }
+          ).catch(() => ({ sessions: [] })),
         ]);
         setSources(s.sources || []);
         setJobs(j.jobs || []);
         setKbs(kb.knowledge_bases || []);
         setVectorPoints(st?.vector_points ?? null);
         setSql(ing);
+        setHasRealData(
+          Boolean(gate.has_real_data) ||
+            (s.sources || []).some((src) => src.type !== "sql")
+        );
+        setResumeId(gate.resume_session_id);
+        setAttention(attentionData.sessions?.[0] || null);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Error cargando conocimiento");
       } finally {
@@ -129,9 +146,53 @@ export default function KnowledgeOverviewPage() {
     <KnowledgeLayout>
       <PageHeader
         title="Conocimiento"
-        subtitle="Conecta y administra toda la información que tu IA puede utilizar: fuentes, colecciones, documentos, bases de datos y conectores."
+        subtitle="Conecta y administra toda la información que tu IA puede utilizar."
+        actions={
+          <div className="flex flex-wrap gap-2">
+            {resumeId && (
+              <Link to={`/knowledge/add/${resumeId}`} className="btn btn-secondary">
+                Continuar
+              </Link>
+            )}
+            <Link to="/knowledge/add" className="btn btn-primary">
+              Añade conocimiento a Zent
+            </Link>
+          </div>
+        }
       />
       <ErrorInline message={error} />
+      {hasRealData && (
+        <div className="mb-4 rounded-md border border-border p-4">
+          <h2 className="font-semibold">Your business knowledge is ready.</h2>
+          <p className="text-sm text-muted">
+            Connected: {sources.length} sources. Needs Review: {broken.length} items.
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Link to="/chat" className="btn btn-primary">Ask Zent</Link>
+            <Link to="/agents/new" className="btn btn-secondary">Build Agent</Link>
+            <Link to="/knowledge/improvements" className="btn btn-secondary">Review Improvements</Link>
+          </div>
+        </div>
+      )}
+      {attention && (
+        <div className="mb-4 rounded-md border border-warn/40 bg-warn/10 px-4 py-3 text-sm">
+          {attention.warning ||
+            "Tu fuente es usable, pero la precisión mejora si revisas los mappings pendientes."}{" "}
+          <Link className="text-accent underline" to={`/knowledge/add/${attention.id}`}>
+            Revisar ahora
+          </Link>
+        </div>
+      )}
+      {!loading && !hasRealData && (
+        <div className="panel mb-4 p-6">
+          <p className="text-sm text-muted">
+            Aún no hay datos de negocio. Empieza con el asistente guiado.
+          </p>
+          <Link to="/knowledge/add" className="btn btn-primary mt-3">
+            Añade conocimiento a Zent
+          </Link>
+        </div>
+      )}
 
       {loading ? (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
@@ -240,17 +301,17 @@ export default function KnowledgeOverviewPage() {
               </div>
               <div className="flex flex-col gap-2 p-4">
                 <Link
-                  to="/knowledge/sources"
+                  to="/knowledge/add"
                   className="group flex items-center justify-between rounded-md border border-border bg-soft px-4 py-3 text-sm text-text transition-all duration-200 hover:border-accent/40 hover:bg-raised"
                 >
-                  Conectar una fuente
+                  Añade conocimiento a Zent
                   <span className="text-faint transition-transform group-hover:translate-x-0.5">→</span>
                 </Link>
                 <Link
-                  to="/knowledge/sql"
+                  to="/knowledge/sources"
                   className="group flex items-center justify-between rounded-md border border-border bg-soft px-4 py-3 text-sm text-text transition-all duration-200 hover:border-accent/40 hover:bg-raised"
                 >
-                  Sincronizar bases de datos SQL
+                  Ver fuentes
                   <span className="text-faint transition-transform group-hover:translate-x-0.5">→</span>
                 </Link>
                 <Link

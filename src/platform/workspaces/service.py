@@ -6,12 +6,14 @@ from __future__ import annotations
 import re
 from uuid import UUID
 
-from src.core.domain.entities import Workspace
+from src.core.domain.entities import Workspace, WorkspaceKind
 from src.core.ports import WorkspaceRepository
 
 _SLUG_RE = re.compile(r"[^a-z0-9-]+")
 _DEFAULT_NAME = "Default Workspace"
 _DEFAULT_SLUG = "default"
+_DEMO_NAME = "Demo Workspace"
+_DEMO_SLUG = "demo"
 
 
 def workspace_slugify(name: str) -> str:
@@ -20,14 +22,52 @@ def workspace_slugify(name: str) -> str:
 
 
 async def ensure_default_workspace(
-    repo: WorkspaceRepository, organization_id: UUID
+    repo: WorkspaceRepository,
+    organization_id: UUID,
+    *,
+    kind: str = "business",
 ) -> Workspace:
     """Crea el workspace por defecto si no existe (idempotente)."""
+    from src.platform.workspaces.context import ensure_workspace_schema
+
+    await ensure_workspace_schema()
     existing = await repo.get_workspace_by_slug(organization_id, _DEFAULT_SLUG)
     if existing is not None:
         return existing
     return await repo.create_workspace(
-        organization_id, _DEFAULT_NAME, _DEFAULT_SLUG
+        organization_id, _DEFAULT_NAME, _DEFAULT_SLUG, kind=kind
+    )
+
+
+async def ensure_demo_workspace(
+    repo: WorkspaceRepository,
+    organization_id: UUID,
+    created_by: UUID | None = None,
+) -> Workspace:
+    """Workspace demo del trial. Idempotente."""
+    from src.platform.workspaces.context import ensure_workspace_schema
+
+    await ensure_workspace_schema()
+    demo = await repo.get_workspace_by_slug(organization_id, _DEMO_SLUG)
+    if demo is not None:
+        return demo
+    default = await repo.get_workspace_by_slug(organization_id, _DEFAULT_SLUG)
+    if default is None:
+        return await repo.create_workspace(
+            organization_id,
+            _DEMO_NAME,
+            _DEFAULT_SLUG,
+            kind="demo",
+            created_by=created_by,
+        )
+    if default.kind == WorkspaceKind.DEMO:
+        return default
+    return await repo.create_workspace(
+        organization_id,
+        _DEMO_NAME,
+        _DEMO_SLUG,
+        kind="demo",
+        created_by=created_by,
     )
 
 

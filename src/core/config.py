@@ -871,6 +871,10 @@ class Settings(BaseSettings):
         default=True,
         description="Permite sembrar datos demo/dev (token admin) en la BD.",
     )
+    MANAGED_DB_PROVIDER: str = Field(
+        default="local",
+        description="Managed database provider id (local today; rds/neon later).",
+    )
     REDIS_PASSWORD: SecretStr | None = Field(
         default=None,
         validation_alias=AliasChoices("REDIS_PASSWORD", "RAG_REDIS_PASSWORD"),

@@ -46,6 +46,27 @@ class ApiSourceConnector(SourceConnector):
             raise ConnectorError("api source requires 'base_url' in config")
         return f"{base}/{path}" if path else base
 
+    def _connector_id(self):
+        raw = self.config.get("connector_id")
+        if not raw:
+            return None
+        from uuid import UUID
+
+        try:
+            return UUID(str(raw))
+        except ValueError as exc:
+            raise ConnectorError("api connector_id must be a UUID") from exc
+
+    async def _ensure_secrets(self) -> dict:
+        if self.config.get("connector_id"):
+            from src.infrastructure.secrets.secret_store_resolver import get_secret_store
+
+            loaded = await get_secret_store().get(
+                self.source.organization_id, self._connector_id()
+            )
+            return dict(loaded or {})
+        return {}
+
     def _headers(self) -> dict[str, str]:
         headers = {k: str(v) for k, v in (self.config.get("headers") or {}).items()}
         env_var = self.config.get("auth_env_var")
@@ -56,6 +77,12 @@ class ApiSourceConnector(SourceConnector):
                     f"Environment variable '{env_var}' (auth_env_var) is not set"
                 )
             headers["Authorization"] = f"Bearer {token}"
+            return headers
+        secrets = getattr(self, "_secrets", {}) or {}
+        if secrets.get("bearer_token"):
+            headers["Authorization"] = f"Bearer {secrets['bearer_token']}"
+        elif secrets.get("api_key"):
+            headers["X-Api-Key"] = str(secrets["api_key"])
         return headers
 
     def _pagination(self) -> dict:
@@ -63,6 +90,7 @@ class ApiSourceConnector(SourceConnector):
 
     async def validate(self) -> None:
         self._endpoint()
+        self._secrets = await self._ensure_secrets()
         items_path = self.config.get("items_path")
         if not isinstance(items_path, list) or not items_path:
             raise ConnectorError("api source requires 'items_path' (list of keys)")

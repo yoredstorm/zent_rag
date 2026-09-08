@@ -21,6 +21,7 @@ from src.core.ports import IngestionJobRepository, SourceRepository
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.relational_db import PostgresAuditLogRepository
 from src.platform.audit.service import AuditLogService
+from src.platform.workspaces.context import resolve_workspace
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["Knowledge Sources"])
@@ -57,6 +58,7 @@ def _source_response(source, extra: dict | None = None) -> dict:
         "name": source.name,
         "type": source.type,
         "knowledge_base_id": str(source.knowledge_base_id) if source.knowledge_base_id else None,
+        "workspace_id": str(source.workspace_id) if getattr(source, "workspace_id", None) else None,
         "config": source.config_json,
         "status": source.status,
         "created_at": source.created_at.isoformat(),
@@ -155,7 +157,10 @@ async def list_sources(
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "sources:read")
-    sources = await repo.list_sources(ctx.organization_id, knowledge_base_id)
+    ws = await resolve_workspace(request)
+    sources = await repo.list_sources(
+        ctx.organization_id, knowledge_base_id, workspace_id=ws.id
+    )
     stats = await _source_stats(ctx.organization_id, [s.id for s in sources])
     return {
         "sources": [_source_response(s, stats.get(s.id)) for s in sources],
@@ -195,12 +200,14 @@ async def create_source(
 
     ctx = require_permission(request, "sources:write")
     await _assert_own_kb(ctx, body.knowledge_base_id)
+    ws = await resolve_workspace(request)
     source = await repo.create_source(
         ctx.organization_id,
         body.name,
         body.type,
         knowledge_base_id=body.knowledge_base_id,
         config_json=body.config,
+        workspace_id=ws.id,
     )
     await _audit().write(
         ctx, "source.created", "source", source.id,
@@ -224,12 +231,14 @@ async def create_kb_source(
     except ValueError:
         raise HTTPException(400, "kb_id must be a valid UUID")
     await _assert_own_kb(ctx, kid)
+    ws = await resolve_workspace(request)
     source = await repo.create_source(
         ctx.organization_id,
         body.name,
         body.type,
         knowledge_base_id=kid,
         config_json=body.config,
+        workspace_id=ws.id,
     )
     await _audit().write(
         ctx, "source.created", "source", source.id,
@@ -474,15 +483,15 @@ async def upload_file_source(
         raise HTTPException(413, "File too large (max 25 MB)")
 
     filename = file.filename or "upload.bin"
-    extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    from src.platform.data_onboarding.mime import MimeRejected, detect_source_type
+
+    try:
+        detected = detect_source_type(filename, data)
+    except MimeRejected as exc:
+        raise HTTPException(415, str(exc)) from None
 
     if source_type is None:
-        if extension in ("csv",):
-            source_type = "csv"
-        elif extension in ("xlsx", "xls"):
-            source_type = "excel"
-        else:
-            source_type = "file"
+        source_type = detected
 
     from src.knowledge.storage import store_upload
 

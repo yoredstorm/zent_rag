@@ -17,7 +17,15 @@ from src.infrastructure.postgres.session import get_async_session
 logger = get_logger(__name__)
 
 BOOL_KEYS = frozenset(
-    {"api_access", "custom_models", "embed_widget", "eval_ui", "sso"}
+    {
+        "api_access",
+        "custom_models",
+        "embed_widget",
+        "eval_ui",
+        "sso",
+        "managed_db",
+        "managed_db_backups",
+    }
 )
 INT_KEYS = frozenset(
     {
@@ -27,6 +35,7 @@ INT_KEYS = frozenset(
         "max_knowledge_bases",
         "max_connectors",
         "max_documents",
+        "managed_db_max_mb",
     }
 )
 KNOWN_KEYS = BOOL_KEYS | INT_KEYS
@@ -233,6 +242,28 @@ _BACKFILL = (
     """
     INSERT INTO plan_entitlements (plan_id, key, value_type, value_bool)
     SELECT id, 'sso', 'bool', false FROM plans
+    ON CONFLICT (plan_id, key) DO NOTHING
+    """,
+    """
+    INSERT INTO plan_entitlements (plan_id, key, value_type, value_bool)
+    SELECT id, 'managed_db', 'bool', true FROM plans
+    ON CONFLICT (plan_id, key) DO NOTHING
+    """,
+    """
+    INSERT INTO plan_entitlements (plan_id, key, value_type, value_bool)
+    SELECT id, 'managed_db_backups', 'bool', (name IN ('pro', 'enterprise')) FROM plans
+    ON CONFLICT (plan_id, key) DO NOTHING
+    """,
+    """
+    INSERT INTO plan_entitlements (plan_id, key, value_type, value_int)
+    SELECT id, 'managed_db_max_mb', 'int',
+        CASE name
+            WHEN 'trial' THEN 256
+            WHEN 'starter' THEN 1024
+            WHEN 'pro' THEN 10240
+            ELSE NULL
+        END
+    FROM plans
     ON CONFLICT (plan_id, key) DO NOTHING
     """,
 )

@@ -182,8 +182,8 @@ async def verify_totp(user_id: UUID, code: str) -> bool:
 
 
 def step_up_recent(payload) -> bool:
-    """¿La sesión confirmó MFA hace menos de STEP_UP_WINDOW_SECONDS?"""
-    if getattr(payload, "assurance", None) != "totp":
+    """¿La sesión confirmó MFA/password hace menos de STEP_UP_WINDOW_SECONDS?"""
+    if getattr(payload, "assurance", None) not in {"totp", "password"}:
         return False
     confirmed = getattr(payload, "mfa_confirmed_at", None)
     if not confirmed:

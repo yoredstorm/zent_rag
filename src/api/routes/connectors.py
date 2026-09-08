@@ -39,7 +39,7 @@ class CreateConnectorRequest(BaseModel):
 
 class DriveOAuthStartRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
-    folder_id: str = Field(..., min_length=1, max_length=256)
+    folder_id: str = Field(default="", max_length=256)
     connector_id: UUID | None = None
 
 
@@ -94,7 +94,10 @@ async def list_connectors(
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "connectors:read")
-    connectors = await repo.list_connectors(ctx.organization_id)
+    from src.platform.workspaces.context import resolve_workspace
+
+    ws = await resolve_workspace(request)
+    connectors = await repo.list_connectors(ctx.organization_id, workspace_id=ws.id)
     return {"connectors": [_connector_response(c) for c in connectors], "count": len(connectors)}
 
 
@@ -118,16 +121,21 @@ async def create_connector(
     except PlanLimitError as exc:
         raise HTTPException(status_code=409, detail=plan_limit_detail(exc)) from None
     _require_known_type(body.type)
+    from src.platform.workspaces.context import resolve_workspace
+
+    ws = await resolve_workspace(request)
+    workspace_id = body.workspace_id or ws.id
     if body.project_id is not None:
-        if body.workspace_id is not None:
-            await _require_own_workspace(ctx, body.workspace_id)
+        await _require_own_workspace(ctx, workspace_id)
         await _require_own_project(ctx, body.project_id)
+    elif body.workspace_id is not None:
+        await _require_own_workspace(ctx, workspace_id)
     connector = await repo.create_connector(
         ctx.organization_id,
         body.name,
         body.type,
         project_id=body.project_id,
-        workspace_id=body.workspace_id,
+        workspace_id=workspace_id,
         config_json=body.config,
     )
     if body.secrets:
@@ -186,7 +194,9 @@ async def start_drive_oauth(
         connector = await repo.get_connector(ctx.organization_id, body.connector_id)
         if connector is None or connector.type != "gdrive":
             raise HTTPException(404, "Connector not found")
-        merged = {**(connector.config_json or {}), "folder_id": body.folder_id}
+        merged = {**(connector.config_json or {})}
+        if body.folder_id.strip():
+            merged["folder_id"] = body.folder_id.strip()
         connector = await repo.update_connector(
             ctx.organization_id, connector.id, name=body.name, config_json=merged
         )
@@ -201,11 +211,14 @@ async def start_drive_oauth(
             await check_resource_limit(ctx.organization_id, "connectors")
         except PlanLimitError as exc:
             raise HTTPException(status_code=409, detail=plan_limit_detail(exc)) from None
+        config = {}
+        if body.folder_id.strip():
+            config["folder_id"] = body.folder_id.strip()
         connector = await repo.create_connector(
             ctx.organization_id,
             body.name,
             "gdrive",
-            config_json={"folder_id": body.folder_id},
+            config_json=config,
         )
     try:
         state = sign_drive_oauth_state(
@@ -216,7 +229,7 @@ async def start_drive_oauth(
         raise HTTPException(503, str(exc)) from None
     await _audit().write(
         ctx, "connector.oauth.drive.start", "connector", connector.id,
-        metadata={"folder_id": body.folder_id},
+        metadata={"folder_id": body.folder_id or None},
     )
     return {
         "authorization_url": authorization_url,
@@ -267,9 +280,22 @@ async def drive_oauth_callback(
         organization_id, connector_id, {"refresh_token": refresh_token}
     )
     if return_base:
-        sep = "&" if "?" in return_base else "?"
+        from urllib.parse import urlparse
+
+        parsed = urlparse(return_base)
+        origin = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
+        return_path = str(payload.get("return_path") or "")
+        if (
+            origin
+            and return_path.startswith("/")
+            and not return_path.startswith("//")
+        ):
+            dest = f"{origin}{return_path}"
+        else:
+            dest = return_base
+        sep = "&" if "?" in dest else "?"
         return RedirectResponse(
-            url=f"{return_base}{sep}gdrive=ok&connector_id={connector_id}",
+            url=f"{dest}{sep}gdrive=ok&connector_id={connector_id}",
             status_code=302,
         )
     return {"ok": True, "connector_id": str(connector_id), "has_secrets": True}

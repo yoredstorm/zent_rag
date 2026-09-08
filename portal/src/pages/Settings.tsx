@@ -165,13 +165,11 @@ export default function SettingsPage() {
       )}
 
       {tab === "workspace" && (
-        <div className="mt-4 max-w-xl">
-          <ComingSoon>
-            Preferencias del workspace (identidad, entorno y regiones).{" "}
-            <Link to="/workspaces" className="text-accent underline underline-offset-2">
-              Administra tus workspaces aquí.
-            </Link>
-          </ComingSoon>
+        <div className="mt-4 max-w-xl space-y-4">
+          <Link to="/workspaces" className="text-accent underline underline-offset-2">
+            Administra tus workspaces aquí.
+          </Link>
+          <WorkspaceResetPanel />
           <ResidencyPanel session={session} />
         </div>
       )}
@@ -206,6 +204,58 @@ export default function SettingsPage() {
           </ComingSoon>
         </div>
       )}
+    </div>
+  );
+}
+
+function WorkspaceResetPanel() {
+  const { session } = useAuth();
+  const [docs, setDocs] = useState(false);
+  const [sources, setSources] = useState(false);
+  const [semantic, setSemantic] = useState(false);
+  const [agents, setAgents] = useState(false);
+  const [full, setFull] = useState(false);
+  const [confirm, setConfirm] = useState("");
+  const [msg, setMsg] = useState("");
+  const [err, setErr] = useState("");
+
+  async function run() {
+    if (!session) return;
+    setErr("");
+    try {
+      await api("/api/v1/demo-transition/reset", {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify({
+          confirmation: confirm,
+          documents: docs,
+          sources,
+          semantic,
+          agents,
+          all_business_data: full,
+        }),
+      });
+      setMsg("Reset ejecutado.");
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : "Error");
+    }
+  }
+
+  return (
+    <div className="rounded-md border border-border p-4 text-sm">
+      <h2 className="mb-2 font-medium">Reset Data</h2>
+      <label className="flex gap-2"><input type="checkbox" checked={docs} onChange={(e) => setDocs(e.target.checked)} /> Remove uploaded documents</label>
+      <label className="flex gap-2"><input type="checkbox" checked={sources} onChange={(e) => setSources(e.target.checked)} /> Remove source connections</label>
+      <label className="flex gap-2"><input type="checkbox" checked={semantic} onChange={(e) => setSemantic(e.target.checked)} /> Remove semantic mappings</label>
+      <label className="flex gap-2"><input type="checkbox" checked={agents} onChange={(e) => setAgents(e.target.checked)} /> Remove agents</label>
+      <label className="flex gap-2"><input type="checkbox" checked={full} onChange={(e) => setFull(e.target.checked)} /> Full reset</label>
+      <input className="input mt-2" placeholder="RESET" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+      {err && <p className="text-danger">{err}</p>}
+      {msg && <p>{msg}</p>}
+      <button type="button" className="btn btn-primary mt-2" onClick={() => void run()}>
+        Reset
+      </button>
     </div>
   );
 }

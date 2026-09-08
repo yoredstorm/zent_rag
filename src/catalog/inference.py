@@ -13,7 +13,9 @@ import re
 from typing import Any
 from uuid import UUID
 
+from src.catalog.signals import infer_column, infer_table_entity
 from src.catalog.store import PostgresCatalogStore
+from src.catalog.templates import template_for
 from src.connectors.plugin.models import DeepSchemaDiscovery
 from src.core.domain.catalog import (
     CatalogEntity,
@@ -124,6 +126,7 @@ class SemanticInference:
         tables_meta: list[dict],
     ) -> list[dict]:
         """Crea entidades/campos INFERRED y sugerencias; retorna resumen."""
+        await self._store.ensure_tables()
         suggestions: list[dict] = []
         existing_entities = await self._store.list_entities(organization_id, limit=1000)
         existing_names = {e["name"].lower() for e in existing_entities}
@@ -131,7 +134,10 @@ class SemanticInference:
         for table in deep.tables:
             if _TECHNICAL_TABLE_RE.search(table.table_name):
                 continue
-            entity_name = infer_entity_name(table.table_name)
+            entity_name, entity_conf, entity_evidence = infer_table_entity(table.table_name)
+            heuristic = infer_entity_name(table.table_name)
+            if heuristic:
+                entity_name = heuristic
             if not entity_name:
                 continue
             table_meta = next(
@@ -151,8 +157,8 @@ class SemanticInference:
                     display_name=entity_name,
                     description=f"Entidad inferida desde {table.schema}.{table.table_name}",
                     provenance=CatalogProvenance.INFERRED,
-                    confidence="medium",
-                    evidence=["column names", "table naming patterns"],
+                    confidence=entity_conf,
+                    evidence=entity_evidence or ["column names", "table naming patterns"],
                     mapped_table_id=table_id,
                     status="draft",
                 )
@@ -196,22 +202,46 @@ class SemanticInference:
             existing_field_names = {f["name"].lower() for f in existing_fields}
             columns = await self._store.list_columns(organization_id, table_id)
             col_by_name = {c["column_name"]: c for c in columns}
+            neighbor_names = [c["column_name"] for c in columns]
+            try:
+                org_lexicon = self._store.lexicon_as_signals(
+                    await self._store.list_lexicon(organization_id)
+                )
+            except Exception:  # noqa: BLE001
+                org_lexicon = {}
             for col in table.columns:
-                field_name = infer_field_name(col.name)
-                if not field_name or col.sensitive:
-                    continue
-                if field_name.lower() in existing_field_names:
+                if col.sensitive:
                     continue
                 mapped_col = col_by_name.get(col.name)
+                inferred = infer_column(
+                    column_name=col.name,
+                    table_name=table.table_name,
+                    data_type=col.data_type,
+                    is_pk=col.is_primary_key,
+                    null_ratio=getattr(col, "null_ratio", None),
+                    cardinality=getattr(col, "cardinality", None),
+                    neighbor_names=neighbor_names,
+                    org_lexicon=org_lexicon,
+                )
+                field_name = inferred.label.replace(" ", "")
+                if not field_name:
+                    continue
+                already = field_name.lower() in existing_field_names
+                if already:
+                    continue
                 field = CatalogField(
                     organization_id=organization_id,
                     entity_id=entity_id,
                     name=field_name,
                     description=f"Campo inferido desde columna {col.name}",
                     provenance=CatalogProvenance.INFERRED,
-                    confidence="low",
+                    confidence=inferred.confidence,
                     mapped_column_id=UUID(mapped_col["id"]) if mapped_col else None,
                     status="draft",
+                    role=inferred.role,
+                    mapping_type="ENUM" if inferred.role == "STATUS" else "DIRECT",
+                    synonyms=[inferred.label],
+                    signal_scores=inferred.signal_scores,
                 )
                 await self._store.upsert_field(field)
                 existing_field_names.add(field_name.lower())
@@ -223,6 +253,39 @@ class SemanticInference:
                         "column": col.name,
                     }
                 )
+                if mapped_col:
+                    await self._store.create_suggestion(
+                        CatalogSuggestion(
+                            organization_id=organization_id,
+                            type=SuggestionType.FIELD_MAPPING,
+                            title=f"'{col.name}' probablemente es {inferred.label}.",
+                            description=(
+                                "Inferencia multi-señal (INFERRED). Confirmar o cambiar; "
+                                "nunca se auto-aprueba."
+                            ),
+                            evidence=inferred.evidence,
+                            confidence=inferred.confidence,
+                            payload={
+                                "entity_id": str(entity_id),
+                                "field_id": str(field.id),
+                                "column_id": mapped_col["id"],
+                                "mapped_column_id": mapped_col["id"],
+                                "physical_name": col.name,
+                                "business_name": inferred.label,
+                                "role": inferred.role,
+                                "alternatives": [
+                                    {"label": lab, "score": score}
+                                    for lab, score in inferred.alternatives
+                                ],
+                                "signal_scores": inferred.signal_scores,
+                                "conflicting": inferred.conflicting,
+                            },
+                            affected_sources=[str(catalog_source_id)],
+                        )
+                    )
+            tpl = template_for(entity_name)
+            if tpl:
+                suggestions.append({"type": "template", "entity": entity_name, "slots": tpl["slots"]})
 
         return suggestions
 

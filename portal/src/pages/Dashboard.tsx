@@ -85,6 +85,11 @@ export default function DashboardPage() {
   const [agentCount, setAgentCount] = useState<number | null>(null);
   const [quality, setQuality] = useState<EvalStats | null>(null);
   const [lazyActivity, setLazyActivity] = useState<LazyActivity | null>(null);
+  const [hasRealData, setHasRealData] = useState<boolean | null>(null);
+  const [resumeId, setResumeId] = useState<string | null>(null);
+  const [attentionSessions, setAttentionSessions] = useState<
+    Array<{ id: string; warning?: string | null }>
+  >([]);
   const [issues, setIssues] = useState<{ id: string; label: string; to: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -99,7 +104,7 @@ export default function DashboardPage() {
         const healthData = await h.json().catch(() => ({ checks: {} as HealthChecks }));
         setHealth(h.ok && healthData.status === "healthy" ? "ok" : "down");
         setChecks(healthData.checks || {});
-        const [subData, usageData, lazyData, agentData, qualityData, sourceData] =
+        const [subData, usageData, lazyData, agentData, qualityData, sourceData, connData, gateData, attentionData] =
           await Promise.all([
             api<Subscription>("/api/v1/billing/subscription", {
               token: session.token,
@@ -121,13 +126,25 @@ export default function DashboardPage() {
               token: session.token,
               organizationId: session.organizationId,
             }).catch(() => null),
-            api<{ sources: { id: string; name: string; status: string }[] }>(
+            api<{ sources: { id: string; name: string; status: string; type: string }[] }>(
               "/api/v1/sources",
               {
                 token: session.token,
                 organizationId: session.organizationId,
               }
-            ).catch(() => ({ sources: [] as { id: string; name: string; status: string }[] })),
+            ).catch(() => ({ sources: [] as { id: string; name: string; status: string; type: string }[] })),
+            api<{ connectors: Array<{ id: string; connector_type: string }> }>(
+              "/api/v1/connectors",
+              { token: session.token, organizationId: session.organizationId }
+            ).catch(() => ({ connectors: [] })),
+            api<{ has_real_data: boolean; resume_session_id: string | null }>(
+              "/api/v1/data-onboarding/gate",
+              { token: session.token, organizationId: session.organizationId }
+            ).catch(() => ({ has_real_data: false, resume_session_id: null })),
+            api<{ sessions: Array<{ id: string; status: string; warning?: string | null }> }>(
+              "/api/v1/data-onboarding/sessions?status=NEEDS_ATTENTION",
+              { token: session.token, organizationId: session.organizationId }
+            ).catch(() => ({ sessions: [] })),
           ]);
         setSub(subData);
         setUsage(usageData);
@@ -137,6 +154,11 @@ export default function DashboardPage() {
         const bad = (sourceData.sources || []).filter(
           (s) => s.status === "error" || s.status === "failed"
         );
+        const realSources = (sourceData.sources || []).filter((s) => s.type !== "sql");
+        const realConnectors = connData.connectors || [];
+        setHasRealData(realSources.length > 0 || realConnectors.length > 0);
+        setResumeId(gateData.resume_session_id);
+        setAttentionSessions(attentionData.sessions || []);
         setIssues(
           bad.slice(0, 5).map((s) => ({
             id: s.id,
@@ -170,6 +192,38 @@ export default function DashboardPage() {
 
       <ErrorInline message={error} />
 
+      {!loading && attentionSessions.length > 0 && (
+        <div className="mb-4 rounded-md border border-warn/40 bg-warn/10 px-4 py-3 text-sm">
+          {attentionSessions[0].warning ||
+            "Tu fuente es usable, pero la precisión mejora si revisas los mappings pendientes."}{" "}
+          <Link className="text-accent underline" to={`/knowledge/add/${attentionSessions[0].id}`}>
+            Revisar ahora
+          </Link>
+        </div>
+      )}
+
+      {!loading && hasRealData === false && (
+        <div className="panel mb-6 p-8">
+          <h2 className="text-xl font-semibold text-text">Bienvenido a Zent</h2>
+          <p className="mt-2 max-w-[60ch] text-sm text-muted">
+            Empieza añadiendo el conocimiento de tu negocio. Zent te guía paso a paso.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link to="/knowledge/add" className="btn btn-primary">
+              Conectar mis datos
+            </Link>
+            <Link to="/chat" className="btn btn-secondary">
+              Explorar demo
+            </Link>
+            {resumeId && (
+              <Link to={`/knowledge/add/${resumeId}`} className="btn btn-secondary">
+                Continuar donde lo dejé
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
           {Array.from({ length: 6 }).map((_, i) => (
@@ -178,7 +232,7 @@ export default function DashboardPage() {
             </div>
           ))}
         </div>
-      ) : (
+      ) : hasRealData === false ? null : (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
             <StatCard
@@ -399,10 +453,10 @@ export default function DashboardPage() {
               </div>
               <div className="flex flex-col gap-2 p-4">
                 <Link
-                  to="/knowledge/sql"
+                  to="/knowledge/add"
                   className="group flex items-center justify-between rounded-md border border-border bg-soft px-4 py-3 text-sm text-text transition-all duration-200 hover:border-accent/40 hover:bg-raised"
                 >
-                  Conectar conocimiento
+                  Añade conocimiento a Zent
                   <ArrowRight size={15} className="text-faint transition-transform group-hover:translate-x-0.5" aria-hidden />
                 </Link>
                 <Link

@@ -245,6 +245,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         knowledge_base_id: UUID | None,
         user_id: UUID | None = None,
         groups: list[str] | None = None,
+        workspace_id: UUID | None = None,
     ) -> qdrant_models.Filter:
         must_conditions = [
             qdrant_models.FieldCondition(
@@ -258,6 +259,13 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
                 qdrant_models.FieldCondition(
                     key="knowledge_base_id",
                     match=qdrant_models.MatchValue(value=str(knowledge_base_id)),
+                )
+            )
+        if workspace_id is not None:
+            must_conditions.append(
+                qdrant_models.FieldCondition(
+                    key="workspace_id",
+                    match=qdrant_models.MatchValue(value=str(workspace_id)),
                 )
             )
 
@@ -539,11 +547,13 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         content: str,
         metadata: dict[str, str] | None = None,
         knowledge_base_id: UUID | None = None,
+        workspace_id: UUID | None = None,
     ) -> None:
         await self.upsert_batch(
             organization_id,
             [(document_id, embedding, content, metadata)],
             knowledge_base_id=knowledge_base_id,
+            workspace_id=workspace_id,
         )
 
     async def upsert_batch(
@@ -552,6 +562,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         points: list[tuple[UUID, list[float], str, dict[str, str] | None]],
         knowledge_base_id: UUID | None = None,
         sparse_vectors: list[dict[str, float]] | None = None,
+        workspace_id: UUID | None = None,
     ) -> None:
         if not points:
             return
@@ -584,6 +595,11 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
                     **(
                         {"knowledge_base_id": str(knowledge_base_id)}
                         if knowledge_base_id is not None
+                        else {}
+                    ),
+                    **(
+                        {"workspace_id": str(workspace_id or md.get("workspace_id"))}
+                        if (workspace_id or md.get("workspace_id"))
                         else {}
                     ),
                 }
@@ -632,6 +648,28 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
                 )
             ],
             log_message=f"Deleted organization {organization_id} vectors from shared collection",
+        )
+
+    async def delete_by_workspace(
+        self, organization_id: UUID, workspace_id: UUID
+    ) -> None:
+        """Elimina vectores de un workspace (siempre scoped a la organización)."""
+        organization_id = bind_organization_id(organization_id)
+        await self._delete_with_filter(
+            must=[
+                qdrant_models.FieldCondition(
+                    key="organization_id",
+                    match=qdrant_models.MatchValue(value=str(organization_id)),
+                ),
+                qdrant_models.FieldCondition(
+                    key="workspace_id",
+                    match=qdrant_models.MatchValue(value=str(workspace_id)),
+                ),
+            ],
+            log_message=(
+                f"Deleted workspace {workspace_id} vectors "
+                f"(organization {organization_id})"
+            ),
         )
 
     async def delete_by_knowledge_base(

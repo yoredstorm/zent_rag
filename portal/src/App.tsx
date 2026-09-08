@@ -17,6 +17,8 @@ import { ToastProvider } from "./Toast";
 import { NAV_GROUPS, canSeeNavItem } from "./lib/nav";
 import { CommandPaletteRoot } from "./components/CommandPalette";
 import { IdleSessionWarning } from "./components/IdleSessionWarning";
+import { DemoBanner } from "./components/DemoBanner";
+import { TenantStepUpModal } from "./components/TenantStepUpModal";
 
 const IDLE_SESSION_MINUTES = 30;
 
@@ -36,6 +38,8 @@ const BillingPage = lazy(() => import("./pages/Billing"));
 const SettingsPage = lazy(() => import("./pages/Settings"));
 const KnowledgeSourcesPage = lazy(() => import("./pages/knowledge/Sources"));
 const KnowledgeOverviewPage = lazy(() => import("./pages/knowledge/Overview"));
+const KnowledgeOnboardingPage = lazy(() => import("./pages/onboarding/data/OnboardingWizard"));
+const KnowledgeUnderstandingPage = lazy(() => import("./pages/knowledge/Understanding"));
 const KnowledgeCollectionsPage = lazy(() => import("./pages/knowledge/Collections"));
 const KnowledgeDocumentsPage = lazy(() => import("./pages/knowledge/Documents"));
 const KnowledgeSqlPage = lazy(() => import("./pages/knowledge/SqlSources"));
@@ -45,6 +49,10 @@ const KnowledgeCatalogPage = lazy(() => import("./pages/knowledge/Catalog"));
 const KnowledgeGlossaryPage = lazy(() => import("./pages/knowledge/Glossary"));
 const KnowledgeReviewPage = lazy(() => import("./pages/knowledge/Review"));
 const KnowledgeImprovementsPage = lazy(() => import("./pages/knowledge/Improvements"));
+const KnowledgeDatabasePage = lazy(() => import("./pages/knowledge/DatabaseBuilder"));
+const KnowledgeManagedImportPage = lazy(() => import("./pages/knowledge/ManagedImport"));
+const KnowledgeSourceDetailPage = lazy(() => import("./pages/knowledge/SourceDetail"));
+const TransitionWizardPage = lazy(() => import("./pages/onboarding/TransitionWizard"));
 const EvaluationGapsPage = lazy(() => import("./pages/evaluation/Gaps"));
 const EvaluationImpactPage = lazy(() => import("./pages/evaluation/Impact"));
 const WorkspacesPage = lazy(() => import("./pages/Workspaces"));
@@ -438,6 +446,8 @@ function ProtectedLayout() {
 
           <div className="flex min-h-[100dvh] flex-col">
             <Topbar />
+            <DemoBanner />
+            <TenantStepUpModal />
 
             <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-border bg-bg/85 px-4 py-3 backdrop-blur-md lg:hidden">
               <button
@@ -610,7 +620,14 @@ export default function App() {
         <Route path="/keys" element={<Suspense fallback={<PageFallback />}><KeysPage /></Suspense>} />
         <Route path="/webhooks" element={<Suspense fallback={<PageFallback />}><WebhooksPage /></Suspense>} />
         <Route path="/knowledge" element={<Suspense fallback={<PageFallback />}><KnowledgeOverviewPage /></Suspense>} />
+        <Route path="/knowledge/understanding" element={<Suspense fallback={<PageFallback />}><KnowledgeUnderstandingPage /></Suspense>} />
+        <Route path="/knowledge/add/:sessionId" element={<Suspense fallback={<PageFallback />}><KnowledgeOnboardingPage /></Suspense>} />
+        <Route path="/knowledge/add" element={<Suspense fallback={<PageFallback />}><KnowledgeOnboardingPage /></Suspense>} />
+        <Route path="/knowledge/sources/:sourceId" element={<Suspense fallback={<PageFallback />}><KnowledgeSourceDetailPage /></Suspense>} />
         <Route path="/knowledge/sources" element={<Suspense fallback={<PageFallback />}><KnowledgeSourcesPage /></Suspense>} />
+        <Route path="/knowledge/database/import" element={<Suspense fallback={<PageFallback />}><KnowledgeManagedImportPage /></Suspense>} />
+        <Route path="/knowledge/database" element={<Suspense fallback={<PageFallback />}><KnowledgeDatabasePage /></Suspense>} />
+        <Route path="/onboarding/transition" element={<Suspense fallback={<PageFallback />}><TransitionWizardPage /></Suspense>} />
         <Route path="/knowledge/collections" element={<Suspense fallback={<PageFallback />}><KnowledgeCollectionsPage /></Suspense>} />
         <Route path="/knowledge/documents" element={<Suspense fallback={<PageFallback />}><KnowledgeDocumentsPage /></Suspense>} />
         <Route path="/knowledge/sql" element={<Suspense fallback={<PageFallback />}><KnowledgeSqlPage /></Suspense>} />

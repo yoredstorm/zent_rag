@@ -21,6 +21,7 @@ const INT_LABELS: Record<string, string> = {
   max_agents: "Agentes",
   max_knowledge_bases: "Colecciones",
   max_connectors: "Conectores",
+  managed_db_max_mb: "Managed DB MB",
 };
 
 const BOOL_LABELS: Record<string, string> = {
@@ -29,6 +30,8 @@ const BOOL_LABELS: Record<string, string> = {
   embed_widget: "Widget embebido",
   eval_ui: "Evaluación RAG",
   sso: "SSO",
+  managed_db: "Managed DB",
+  managed_db_backups: "Managed DB backups",
 };
 
 function draftFrom(plan: Plan): Entitlements {

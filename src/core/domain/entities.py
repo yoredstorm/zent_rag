@@ -150,6 +150,7 @@ class KbSource:
     name: str
     type: str  # sql | file | csv | excel | web | s3 | api | gdrive
     knowledge_base_id: UUID | None = None
+    workspace_id: UUID | None = None
     config_json: dict = field(default_factory=dict)
     status: str = "active"
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -256,6 +257,11 @@ class WorkspaceStatus(StrEnum):
     ARCHIVED = "archived"
 
 
+class WorkspaceKind(StrEnum):
+    DEMO = "demo"
+    BUSINESS = "business"
+
+
 @dataclass(kw_only=True, frozen=True)
 class Workspace:
     """Espacio de trabajo de la organización (agrupador de agentes/KBs/connectors)."""
@@ -266,6 +272,7 @@ class Workspace:
     slug: str
     description: str | None = None
     status: WorkspaceStatus = WorkspaceStatus.ACTIVE
+    kind: WorkspaceKind = WorkspaceKind.BUSINESS
     created_by: UUID | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 

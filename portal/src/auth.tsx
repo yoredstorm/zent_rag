@@ -67,6 +67,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           email?: string | null;
           roles?: string[];
           permissions?: string[];
+          active_workspace_id?: string | null;
+          workspace_kind?: string | null;
         }>("/api/v1/auth/me", {
           token: current.token,
           organizationId: current.organizationId,
@@ -79,6 +81,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           email: me.email || current.email,
           roles: me.roles || [],
           permissions: me.permissions || [],
+          workspaceId: me.active_workspace_id || current.workspaceId,
+          workspaceKind: me.workspace_kind || current.workspaceKind,
         };
         saveSession(next);
         setSession(next);
@@ -107,13 +111,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: "POST",
       body: JSON.stringify({ email, password }),
     });
-    const me = await api<{ roles?: string[]; permissions?: string[] }>(
+    const me = await api<{
+      roles?: string[];
+      permissions?: string[];
+      active_workspace_id?: string | null;
+      workspace_kind?: string | null;
+    }>(
       "/api/v1/auth/me",
       {
         token: data.access_token,
         organizationId: data.organization_id,
       }
-    ).catch(() => ({ roles: [] as string[], permissions: [] as string[] }));
+    ).catch(() => ({
+      roles: [] as string[],
+      permissions: [] as string[],
+      active_workspace_id: null,
+      workspace_kind: null,
+    }));
     const next: Session = {
       token: data.access_token,
       organizationId: data.organization_id,
@@ -121,6 +135,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       email: data.email,
       roles: me.roles || [],
       permissions: me.permissions || [],
+      workspaceId: me.active_workspace_id || undefined,
+      workspaceKind: me.workspace_kind || undefined,
     };
     saveSession(next);
     setSession(next);
@@ -145,13 +161,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (data.api_key) {
         sessionStorage.setItem(SIGNUP_API_KEY_STORAGE, data.api_key);
       }
+      const me = await api<{
+        roles?: string[];
+        permissions?: string[];
+        active_workspace_id?: string | null;
+        workspace_kind?: string | null;
+      }>("/api/v1/auth/me", {
+        token: data.access_token,
+        organizationId: data.organization_id,
+      }).catch(() => ({
+        roles: ["owner"] as string[],
+        permissions: [] as string[],
+        active_workspace_id: null,
+        workspace_kind: null,
+      }));
       const next: Session = {
         token: data.access_token,
         organizationId: data.organization_id,
         companyName: data.company_name,
         email: data.email,
-        roles: ["owner"],
-        permissions: [],
+        roles: me.roles || ["owner"],
+        permissions: me.permissions || [],
+        workspaceId: me.active_workspace_id || undefined,
+        workspaceKind: me.workspace_kind || undefined,
       };
       saveSession(next);
       setSession(next);

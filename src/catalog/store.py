@@ -28,7 +28,7 @@ from src.infrastructure.postgres.session import get_async_session
 logger = get_logger(__name__)
 
 _CREATE_TABLES = [
-    "CREATE TABLE IF NOT EXISTS catalog_sources (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL, connector_id UUID NOT NULL, kb_source_id UUID, engine VARCHAR(30) NOT NULL DEFAULT '', phase VARCHAR(30) NOT NULL DEFAULT 'QUEUED', budgets JSONB NOT NULL DEFAULT '{}'::jsonb, last_scan_at TIMESTAMPTZ, next_scan_at TIMESTAMPTZ, scan_interval_hours INT NOT NULL DEFAULT 0, content_signature VARCHAR(64), scan_error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE (organization_id, connector_id))",
+    "CREATE TABLE IF NOT EXISTS catalog_sources (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL, connector_id UUID NOT NULL, kb_source_id UUID, workspace_id UUID, engine VARCHAR(30) NOT NULL DEFAULT '', phase VARCHAR(30) NOT NULL DEFAULT 'QUEUED', budgets JSONB NOT NULL DEFAULT '{}'::jsonb, last_scan_at TIMESTAMPTZ, next_scan_at TIMESTAMPTZ, scan_interval_hours INT NOT NULL DEFAULT 0, content_signature VARCHAR(64), scan_error TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE (organization_id, connector_id))",
     "CREATE TABLE IF NOT EXISTS catalog_scans (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL, source_id UUID NOT NULL, scan_type VARCHAR(20) NOT NULL DEFAULT 'initial', status VARCHAR(20) NOT NULL DEFAULT 'completed', tables_scanned INT NOT NULL DEFAULT 0, changes JSONB NOT NULL DEFAULT '[]'::jsonb, error TEXT, duration_ms DOUBLE PRECISION NOT NULL DEFAULT 0, started_at TIMESTAMPTZ, completed_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now())",
     "CREATE TABLE IF NOT EXISTS catalog_tables (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL, source_id UUID NOT NULL, schema_name VARCHAR(128) NOT NULL DEFAULT '', table_name VARCHAR(128) NOT NULL, is_view BOOLEAN NOT NULL DEFAULT false, row_count_approx BIGINT, table_comment TEXT, indexes JSONB NOT NULL DEFAULT '[]'::jsonb, content_hash VARCHAR(64), detected_at TIMESTAMPTZ NOT NULL DEFAULT now(), removed_at TIMESTAMPTZ, UNIQUE (organization_id, source_id, schema_name, table_name))",
     "CREATE TABLE IF NOT EXISTS catalog_columns (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL, table_id UUID NOT NULL, column_name VARCHAR(128) NOT NULL, ordinal_position INT NOT NULL DEFAULT 0, data_type VARCHAR(128) NOT NULL DEFAULT '', nullable BOOLEAN NOT NULL DEFAULT true, is_primary_key BOOLEAN NOT NULL DEFAULT false, column_default TEXT, column_comment TEXT, null_ratio DOUBLE PRECISION, cardinality_approx BIGINT, pii_flags JSONB NOT NULL DEFAULT '[]'::jsonb, is_sensitive BOOLEAN NOT NULL DEFAULT false, sample_disabled BOOLEAN NOT NULL DEFAULT false, UNIQUE (organization_id, table_id, column_name))",
@@ -40,6 +40,25 @@ _CREATE_TABLES = [
     "CREATE TABLE IF NOT EXISTS catalog_suggestions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL, type VARCHAR(40) NOT NULL, title VARCHAR(300) NOT NULL, description TEXT, evidence JSONB NOT NULL DEFAULT '[]'::jsonb, confidence VARCHAR(10) NOT NULL DEFAULT 'low', payload JSONB NOT NULL DEFAULT '{}'::jsonb, status VARCHAR(20) NOT NULL DEFAULT 'pending', affected_sources JSONB NOT NULL DEFAULT '[]'::jsonb, affected_agents JSONB NOT NULL DEFAULT '[]'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), reviewed_by UUID, reviewed_at TIMESTAMPTZ)",
     "CREATE TABLE IF NOT EXISTS catalog_enum_values (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL, column_id UUID NOT NULL, value VARCHAR(200) NOT NULL, occurrence_count INT NOT NULL DEFAULT 0, documented_meaning TEXT, provenance VARCHAR(20) NOT NULL DEFAULT 'OBSERVED', confidence VARCHAR(10) NOT NULL DEFAULT 'low', status VARCHAR(20) NOT NULL DEFAULT 'pending', created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE (organization_id, column_id, value))",
     "CREATE TABLE IF NOT EXISTS catalog_lineage (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL, upstream_type VARCHAR(40) NOT NULL, upstream_id VARCHAR(64) NOT NULL, downstream_type VARCHAR(40) NOT NULL, downstream_id VARCHAR(64) NOT NULL, relation VARCHAR(30) NOT NULL, metadata JSONB NOT NULL DEFAULT '{}'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT now())",
+    "CREATE TABLE IF NOT EXISTS catalog_abbrev_lexicon (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL, token VARCHAR(80) NOT NULL, meaning VARCHAR(160) NOT NULL, role VARCHAR(40) NOT NULL DEFAULT 'UNKNOWN', status VARCHAR(20) NOT NULL DEFAULT 'signal', created_by UUID, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), UNIQUE (organization_id, token, meaning))",
+    "CREATE TABLE IF NOT EXISTS catalog_mapping_versions (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), organization_id UUID NOT NULL, field_id UUID, column_id UUID, old_mapping JSONB NOT NULL DEFAULT '{}'::jsonb, new_mapping JSONB NOT NULL DEFAULT '{}'::jsonb, reason TEXT, source VARCHAR(40) NOT NULL DEFAULT 'studio', version INT NOT NULL DEFAULT 1, created_by UUID, created_at TIMESTAMPTZ NOT NULL DEFAULT now())",
+]
+
+_ALTER_COLUMNS = [
+    "ALTER TABLE catalog_fields ADD COLUMN IF NOT EXISTS role VARCHAR(40) NOT NULL DEFAULT 'UNKNOWN'",
+    "ALTER TABLE catalog_fields ADD COLUMN IF NOT EXISTS mapping_type VARCHAR(40) NOT NULL DEFAULT 'DIRECT'",
+    "ALTER TABLE catalog_fields ADD COLUMN IF NOT EXISTS unit VARCHAR(40)",
+    "ALTER TABLE catalog_fields ADD COLUMN IF NOT EXISTS currency VARCHAR(12)",
+    "ALTER TABLE catalog_fields ADD COLUMN IF NOT EXISTS grain VARCHAR(40)",
+    "ALTER TABLE catalog_fields ADD COLUMN IF NOT EXISTS aggregation_behavior VARCHAR(40)",
+    "ALTER TABLE catalog_fields ADD COLUMN IF NOT EXISTS synonyms JSONB NOT NULL DEFAULT '[]'::jsonb",
+    "ALTER TABLE catalog_fields ADD COLUMN IF NOT EXISTS signal_scores JSONB NOT NULL DEFAULT '{}'::jsonb",
+    "ALTER TABLE catalog_fields ADD COLUMN IF NOT EXISTS effective_from TIMESTAMPTZ",
+    "ALTER TABLE catalog_fields ADD COLUMN IF NOT EXISTS effective_to TIMESTAMPTZ",
+    "ALTER TABLE catalog_relationships ADD COLUMN IF NOT EXISTS business_from VARCHAR(160)",
+    "ALTER TABLE catalog_relationships ADD COLUMN IF NOT EXISTS business_to VARCHAR(160)",
+    "ALTER TABLE catalog_relationships ADD COLUMN IF NOT EXISTS business_verb VARCHAR(40)",
+    "ALTER TABLE catalog_sources ADD COLUMN IF NOT EXISTS workspace_id UUID",
 ]
 
 
@@ -52,6 +71,13 @@ class PostgresCatalogStore:
             for stmt in _CREATE_TABLES:
                 await session.execute(text(stmt))
             await session.commit()
+            for stmt in _ALTER_COLUMNS:
+                try:
+                    await session.execute(text(stmt))
+                    await session.commit()
+                except Exception as alter_exc:  # noqa: BLE001
+                    await session.rollback()
+                    logger.warning("Catalog alter skipped", error=str(alter_exc)[:200])
         except Exception as exc:  # noqa: BLE001
             await session.rollback()
             logger.warning("Catalog ensure_tables failed", error=str(exc))
@@ -67,20 +93,22 @@ class PostgresCatalogStore:
         kb_source_id: UUID | None = None,
         engine: str = "",
         budgets: dict | None = None,
+        workspace_id: UUID | None = None,
     ) -> dict:
         session: AsyncSession = await get_async_session()
         source_id = uuid4()
         now = datetime.now(timezone.utc)
         try:
-            await session.execute(
+            result = await session.execute(
                 text(
                     "INSERT INTO catalog_sources "
-                    "(id, organization_id, connector_id, kb_source_id, engine, "
+                    "(id, organization_id, connector_id, kb_source_id, workspace_id, engine, "
                     "phase, budgets, created_at, updated_at) "
-                    "VALUES (:id, :oid, :connector, :kb, :engine, 'QUEUED', "
+                    "VALUES (:id, :oid, :connector, :kb, :wid, :engine, 'QUEUED', "
                     "CAST(:budgets AS jsonb), :now, :now) "
                     "ON CONFLICT (organization_id, connector_id) DO UPDATE SET "
                     "kb_source_id = EXCLUDED.kb_source_id, "
+                    "workspace_id = COALESCE(EXCLUDED.workspace_id, catalog_sources.workspace_id), "
                     "budgets = EXCLUDED.budgets, "
                     "updated_at = EXCLUDED.updated_at "
                     "RETURNING id, phase, budgets"
@@ -90,12 +118,16 @@ class PostgresCatalogStore:
                     "oid": organization_id,
                     "connector": connector_id,
                     "kb": kb_source_id,
+                    "wid": workspace_id,
                     "engine": engine[:30],
                     "budgets": json.dumps(budgets or {}),
                     "now": now,
                 },
             )
+            row = result.fetchone()
             await session.commit()
+            if row is not None:
+                source_id = UUID(str(row.id))
         except Exception as exc:  # noqa: BLE001
             await session.rollback()
             logger.warning("Catalog source upsert failed", error=str(exc))
@@ -158,25 +190,31 @@ class PostgresCatalogStore:
             "scan_interval_hours": row.scan_interval_hours,
             "content_signature": row.content_signature,
             "scan_error": row.scan_error,
+            "workspace_id": str(getattr(row, "workspace_id", None))
+            if getattr(row, "workspace_id", None)
+            else None,
             "created_at": row.created_at.isoformat(),
             "updated_at": row.updated_at.isoformat(),
         }
 
-    async def list_sources(self, organization_id: UUID) -> list[dict]:
+    async def list_sources(
+        self, organization_id: UUID, workspace_id: UUID | None = None
+    ) -> list[dict]:
         session: AsyncSession = await get_async_session()
         try:
-            rows = (
-                await session.execute(
-                    text(
-                        "SELECT id, organization_id, connector_id, kb_source_id, "
-                        "engine, phase, budgets, last_scan_at, next_scan_at, "
-                        "scan_interval_hours, content_signature, scan_error, "
-                        "created_at, updated_at FROM catalog_sources "
-                        "WHERE organization_id = :oid ORDER BY created_at DESC"
-                    ),
-                    {"oid": organization_id},
-                )
-            ).fetchall()
+            query = (
+                "SELECT id, organization_id, connector_id, kb_source_id, workspace_id, "
+                "engine, phase, budgets, last_scan_at, next_scan_at, "
+                "scan_interval_hours, content_signature, scan_error, "
+                "created_at, updated_at FROM catalog_sources "
+                "WHERE organization_id = :oid"
+            )
+            params: dict = {"oid": organization_id}
+            if workspace_id is not None:
+                query += " AND workspace_id = :wid"
+                params["wid"] = workspace_id
+            query += " ORDER BY created_at DESC"
+            rows = (await session.execute(text(query), params)).fetchall()
             return [self._source_row(r) for r in rows]
         finally:
             await session.close()
@@ -613,7 +651,19 @@ class PostgresCatalogStore:
                     "sample_disabled": sample_disabled,
                 },
             )
+            existing = (
+                await session.execute(
+                    text(
+                        "SELECT id FROM catalog_columns "
+                        "WHERE organization_id = :oid AND table_id = :table "
+                        "AND column_name = :name"
+                    ),
+                    {"oid": organization_id, "table": table_id, "name": column_name},
+                )
+            ).fetchone()
             await session.commit()
+            if existing:
+                column_id = UUID(str(existing[0]))
         except Exception as exc:  # noqa: BLE001
             await session.rollback()
             logger.warning("Catalog column upsert failed", error=str(exc))
@@ -745,7 +795,27 @@ class PostgresCatalogStore:
                     "evidence": json.dumps(evidence or []),
                 },
             )
+            existing = (
+                await session.execute(
+                    text(
+                        "SELECT id FROM catalog_relationships "
+                        "WHERE organization_id = :oid AND from_table_id = :from_table "
+                        "AND from_column = :from_col AND to_table_id = :to_table "
+                        "AND to_column = :to_col AND relation_type = :rtype"
+                    ),
+                    {
+                        "oid": organization_id,
+                        "from_table": from_table_id,
+                        "from_col": from_column,
+                        "to_table": to_table_id,
+                        "to_col": to_column,
+                        "rtype": relation_type,
+                    },
+                )
+            ).fetchone()
             await session.commit()
+            if existing:
+                rel_id = UUID(str(existing[0]))
         except Exception as exc:  # noqa: BLE001
             await session.rollback()
             logger.warning("Catalog relationship upsert failed", error=str(exc))
@@ -767,7 +837,8 @@ class PostgresCatalogStore:
             query = (
                 "SELECT id, source_id, from_table_id, from_column, to_table_id, "
                 "to_column, relation_type, confidence, status, evidence, "
-                "reviewed_by, reviewed_at, created_at FROM catalog_relationships "
+                "reviewed_by, reviewed_at, created_at, business_from, business_to, "
+                "business_verb FROM catalog_relationships "
                 "WHERE organization_id = :oid AND source_id = :source "
             )
             params: dict = {"oid": organization_id, "source": source_id, "limit": limit, "offset": offset}
@@ -792,6 +863,9 @@ class PostgresCatalogStore:
                     "evidence": r.evidence or [],
                     "reviewed_by": str(r.reviewed_by) if r.reviewed_by else None,
                     "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
+                    "business_from": getattr(r, "business_from", None),
+                    "business_to": getattr(r, "business_to", None),
+                    "business_verb": getattr(r, "business_verb", None),
                 }
                 for r in rows
             ]
@@ -971,7 +1045,9 @@ class PostgresCatalogStore:
                 await session.execute(
                     text(
                         "SELECT id, entity_id, name, description, provenance, "
-                        "confidence, mapped_column_id, status, created_by, approved_by "
+                        "confidence, mapped_column_id, status, created_by, approved_by, "
+                        "role, mapping_type, unit, currency, grain, aggregation_behavior, "
+                        "synonyms, signal_scores "
                         "FROM catalog_fields WHERE organization_id = :oid "
                         "AND entity_id = :entity ORDER BY name"
                     ),
@@ -979,20 +1055,63 @@ class PostgresCatalogStore:
                 )
             ).fetchall()
             return [
-                {
-                    "id": str(r.id),
-                    "entity_id": str(r.entity_id),
-                    "name": r.name,
-                    "description": r.description,
-                    "provenance": r.provenance,
-                    "confidence": r.confidence,
-                    "mapped_column_id": str(r.mapped_column_id) if r.mapped_column_id else None,
-                    "status": r.status,
-                    "created_by": str(r.created_by) if r.created_by else None,
-                    "approved_by": str(r.approved_by) if r.approved_by else None,
-                }
+                self._field_row(r)
                 for r in rows
             ]
+        finally:
+            await session.close()
+
+    @staticmethod
+    def _field_row(r) -> dict:
+        synonyms = getattr(r, "synonyms", None) or []
+        if isinstance(synonyms, str):
+            try:
+                synonyms = json.loads(synonyms)
+            except (TypeError, ValueError):
+                synonyms = []
+        scores = getattr(r, "signal_scores", None) or {}
+        if isinstance(scores, str):
+            try:
+                scores = json.loads(scores)
+            except (TypeError, ValueError):
+                scores = {}
+        return {
+            "id": str(r.id),
+            "entity_id": str(r.entity_id),
+            "name": r.name,
+            "description": r.description,
+            "provenance": r.provenance,
+            "confidence": r.confidence,
+            "mapped_column_id": str(r.mapped_column_id) if r.mapped_column_id else None,
+            "status": r.status,
+            "role": getattr(r, "role", None) or "UNKNOWN",
+            "mapping_type": getattr(r, "mapping_type", None) or "DIRECT",
+            "unit": getattr(r, "unit", None),
+            "currency": getattr(r, "currency", None),
+            "grain": getattr(r, "grain", None),
+            "aggregation_behavior": getattr(r, "aggregation_behavior", None),
+            "synonyms": synonyms if isinstance(synonyms, list) else [],
+            "signal_scores": scores if isinstance(scores, dict) else {},
+            "created_by": str(r.created_by) if r.created_by else None,
+            "approved_by": str(r.approved_by) if r.approved_by else None,
+        }
+
+    async def get_field(self, organization_id: UUID, field_id: UUID) -> dict | None:
+        session: AsyncSession = await get_async_session()
+        try:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT id, entity_id, name, description, provenance, "
+                        "confidence, mapped_column_id, status, created_by, approved_by, "
+                        "role, mapping_type, unit, currency, grain, aggregation_behavior, "
+                        "synonyms, signal_scores "
+                        "FROM catalog_fields WHERE organization_id = :oid AND id = :id"
+                    ),
+                    {"oid": organization_id, "id": field_id},
+                )
+            ).fetchone()
+            return self._field_row(row) if row else None
         finally:
             await session.close()
 
@@ -1005,9 +1124,12 @@ class PostgresCatalogStore:
                     "INSERT INTO catalog_fields "
                     "(id, organization_id, entity_id, name, description, "
                     "provenance, confidence, mapped_column_id, status, created_by, "
-                    "approved_by, created_at, updated_at) "
+                    "approved_by, created_at, updated_at, role, mapping_type, unit, "
+                    "currency, grain, aggregation_behavior, synonyms, signal_scores) "
                     "VALUES (:id, :oid, :entity, :name, :description, :provenance, "
-                    ":confidence, :mapped, :status, :created_by, :approved_by, :now, :now) "
+                    ":confidence, :mapped, :status, :created_by, :approved_by, :now, :now, "
+                    ":role, :mapping_type, :unit, :currency, :grain, :agg, "
+                    "CAST(:synonyms AS jsonb), CAST(:scores AS jsonb)) "
                     "ON CONFLICT (organization_id, entity_id, name) DO UPDATE SET "
                     "description = COALESCE(EXCLUDED.description, catalog_fields.description), "
                     "provenance = EXCLUDED.provenance, "
@@ -1015,6 +1137,14 @@ class PostgresCatalogStore:
                     "mapped_column_id = EXCLUDED.mapped_column_id, "
                     "status = EXCLUDED.status, "
                     "approved_by = EXCLUDED.approved_by, "
+                    "role = EXCLUDED.role, "
+                    "mapping_type = EXCLUDED.mapping_type, "
+                    "unit = EXCLUDED.unit, "
+                    "currency = EXCLUDED.currency, "
+                    "grain = EXCLUDED.grain, "
+                    "aggregation_behavior = EXCLUDED.aggregation_behavior, "
+                    "synonyms = EXCLUDED.synonyms, "
+                    "signal_scores = EXCLUDED.signal_scores, "
                     "updated_at = EXCLUDED.updated_at"
                 ),
                 {
@@ -1030,9 +1160,32 @@ class PostgresCatalogStore:
                     "created_by": field.created_by,
                     "approved_by": field.approved_by,
                     "now": now,
+                    "role": field.role or "UNKNOWN",
+                    "mapping_type": field.mapping_type or "DIRECT",
+                    "unit": field.unit,
+                    "currency": field.currency,
+                    "grain": field.grain,
+                    "agg": field.aggregation_behavior,
+                    "synonyms": json.dumps(field.synonyms or []),
+                    "scores": json.dumps(field.signal_scores or {}),
                 },
             )
+            existing = (
+                await session.execute(
+                    text(
+                        "SELECT id FROM catalog_fields "
+                        "WHERE organization_id = :oid AND entity_id = :entity AND name = :name"
+                    ),
+                    {
+                        "oid": field.organization_id,
+                        "entity": field.entity_id,
+                        "name": field.name,
+                    },
+                )
+            ).fetchone()
             await session.commit()
+            if existing:
+                field.id = UUID(str(existing[0]))
         except Exception as exc:  # noqa: BLE001
             await session.rollback()
             logger.warning("Catalog field upsert failed", error=str(exc))
@@ -1614,5 +1767,324 @@ class PostgresCatalogStore:
                 }
                 for r in rows
             ]
+        finally:
+            await session.close()
+
+    async def list_fields_all(
+        self,
+        organization_id: UUID,
+        *,
+        limit: int = 2000,
+        workspace_id: UUID | None = None,
+    ) -> list[dict]:
+        session: AsyncSession = await get_async_session()
+        try:
+            sql = (
+                "SELECT f.id, f.entity_id, f.name, f.description, f.provenance, "
+                "f.confidence, f.mapped_column_id, f.status, f.created_by, f.approved_by, "
+                "f.role, f.mapping_type, f.unit, f.currency, f.grain, f.aggregation_behavior, "
+                "f.synonyms, f.signal_scores "
+                "FROM catalog_fields f "
+            )
+            params: dict = {"oid": organization_id, "limit": limit}
+            if workspace_id is not None:
+                sql += (
+                    "JOIN catalog_columns c ON f.mapped_column_id = c.id "
+                    "JOIN catalog_tables t ON c.table_id = t.id "
+                    "JOIN catalog_sources s ON t.source_id = s.id "
+                    "WHERE f.organization_id = :oid AND s.workspace_id = :wid "
+                )
+                params["wid"] = workspace_id
+            else:
+                sql += "WHERE f.organization_id = :oid "
+            sql += "ORDER BY f.name LIMIT :limit"
+            rows = (await session.execute(text(sql), params)).fetchall()
+            return [self._field_row(r) for r in rows]
+        finally:
+            await session.close()
+
+    async def list_lexicon(self, organization_id: UUID) -> list[dict]:
+        session: AsyncSession = await get_async_session()
+        try:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT id, token, meaning, role, status, created_by, "
+                        "created_at, updated_at FROM catalog_abbrev_lexicon "
+                        "WHERE organization_id = :oid ORDER BY token, meaning"
+                    ),
+                    {"oid": organization_id},
+                )
+            ).fetchall()
+            return [
+                {
+                    "id": str(r.id),
+                    "token": r.token,
+                    "meaning": r.meaning,
+                    "role": r.role,
+                    "status": r.status,
+                    "created_by": str(r.created_by) if r.created_by else None,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                }
+                for r in rows
+            ]
+        finally:
+            await session.close()
+
+    async def upsert_lexicon_entry(
+        self,
+        *,
+        organization_id: UUID,
+        token: str,
+        meaning: str,
+        role: str = "UNKNOWN",
+        status: str = "signal",
+        created_by: UUID | None = None,
+    ) -> dict:
+        session: AsyncSession = await get_async_session()
+        entry_id = uuid4()
+        try:
+            await session.execute(
+                text(
+                    "INSERT INTO catalog_abbrev_lexicon "
+                    "(id, organization_id, token, meaning, role, status, created_by, "
+                    "created_at, updated_at) "
+                    "VALUES (:id, :oid, :token, :meaning, :role, :status, :created_by, "
+                    "now(), now()) "
+                    "ON CONFLICT (organization_id, token, meaning) DO UPDATE SET "
+                    "role = EXCLUDED.role, status = EXCLUDED.status, updated_at = now()"
+                ),
+                {
+                    "id": entry_id,
+                    "oid": organization_id,
+                    "token": token.strip().upper()[:80],
+                    "meaning": meaning.strip()[:160],
+                    "role": role[:40],
+                    "status": status[:20],
+                    "created_by": created_by,
+                },
+            )
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT id, token, meaning, role, status FROM catalog_abbrev_lexicon "
+                        "WHERE organization_id = :oid AND token = :token AND meaning = :meaning"
+                    ),
+                    {
+                        "oid": organization_id,
+                        "token": token.strip().upper()[:80],
+                        "meaning": meaning.strip()[:160],
+                    },
+                )
+            ).fetchone()
+            await session.commit()
+            if row:
+                return {
+                    "id": str(row.id),
+                    "token": row.token,
+                    "meaning": row.meaning,
+                    "role": row.role,
+                    "status": row.status,
+                }
+            return {
+                "id": str(entry_id),
+                "token": token.strip().upper(),
+                "meaning": meaning.strip(),
+                "role": role,
+                "status": status,
+            }
+        except Exception as exc:  # noqa: BLE001
+            await session.rollback()
+            logger.warning("Catalog lexicon upsert failed", error=str(exc))
+            raise
+        finally:
+            await session.close()
+
+    def lexicon_as_signals(self, rows: list[dict]) -> dict[str, list[tuple[str, str, float]]]:
+        out: dict[str, list[tuple[str, str, float]]] = {}
+        for row in rows:
+            token = str(row.get("token") or "").upper()
+            meaning = str(row.get("meaning") or "")
+            role = str(row.get("role") or "UNKNOWN")
+            score = 0.88 if row.get("status") == "approved" else 0.62
+            out.setdefault(token, []).append((meaning, role, score))
+        return out
+
+    async def record_mapping_version(
+        self,
+        *,
+        organization_id: UUID,
+        field_id: UUID | None,
+        column_id: UUID | None,
+        old_mapping: dict,
+        new_mapping: dict,
+        reason: str | None = None,
+        source: str = "studio",
+        created_by: UUID | None = None,
+    ) -> None:
+        session: AsyncSession = await get_async_session()
+        try:
+            version_row = (
+                await session.execute(
+                    text(
+                        "SELECT COALESCE(MAX(version), 0) + 1 AS v "
+                        "FROM catalog_mapping_versions "
+                        "WHERE organization_id = :oid AND field_id IS NOT DISTINCT FROM :fid"
+                    ),
+                    {"oid": organization_id, "fid": field_id},
+                )
+            ).fetchone()
+            version = int(version_row[0]) if version_row else 1
+            await session.execute(
+                text(
+                    "INSERT INTO catalog_mapping_versions "
+                    "(id, organization_id, field_id, column_id, old_mapping, new_mapping, "
+                    "reason, source, version, created_by, created_at) "
+                    "VALUES (:id, :oid, :fid, :cid, CAST(:old AS jsonb), CAST(:new AS jsonb), "
+                    ":reason, :source, :version, :created_by, now())"
+                ),
+                {
+                    "id": uuid4(),
+                    "oid": organization_id,
+                    "fid": field_id,
+                    "cid": column_id,
+                    "old": json.dumps(old_mapping or {}),
+                    "new": json.dumps(new_mapping or {}),
+                    "reason": reason,
+                    "source": source[:40],
+                    "version": version,
+                    "created_by": created_by,
+                },
+            )
+            await session.commit()
+        except Exception as exc:  # noqa: BLE001
+            await session.rollback()
+            logger.warning("Catalog mapping version write failed", error=str(exc))
+        finally:
+            await session.close()
+
+    async def list_mapping_versions(
+        self, organization_id: UUID, field_id: UUID | None = None, limit: int = 50
+    ) -> list[dict]:
+        session: AsyncSession = await get_async_session()
+        try:
+            query = (
+                "SELECT id, field_id, column_id, old_mapping, new_mapping, reason, "
+                "source, version, created_by, created_at FROM catalog_mapping_versions "
+                "WHERE organization_id = :oid "
+            )
+            params: dict = {"oid": organization_id, "limit": limit}
+            if field_id:
+                query += "AND field_id = :fid "
+                params["fid"] = field_id
+            query += "ORDER BY created_at DESC LIMIT :limit"
+            rows = (await session.execute(text(query), params)).fetchall()
+            return [
+                {
+                    "id": str(r.id),
+                    "field_id": str(r.field_id) if r.field_id else None,
+                    "column_id": str(r.column_id) if r.column_id else None,
+                    "old_mapping": r.old_mapping or {},
+                    "new_mapping": r.new_mapping or {},
+                    "reason": r.reason,
+                    "source": r.source,
+                    "version": r.version,
+                    "created_by": str(r.created_by) if r.created_by else None,
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                }
+                for r in rows
+            ]
+        finally:
+            await session.close()
+
+    async def get_enum_value(self, organization_id: UUID, value_id: UUID) -> dict | None:
+        session: AsyncSession = await get_async_session()
+        try:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT id, column_id, value, occurrence_count, "
+                        "documented_meaning, provenance, confidence, status "
+                        "FROM catalog_enum_values "
+                        "WHERE organization_id = :oid AND id = :id"
+                    ),
+                    {"oid": organization_id, "id": value_id},
+                )
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                "id": str(row.id),
+                "column_id": str(row.column_id),
+                "value": row.value,
+                "occurrence_count": row.occurrence_count,
+                "documented_meaning": row.documented_meaning,
+                "provenance": row.provenance,
+                "confidence": row.confidence,
+                "status": row.status,
+            }
+        finally:
+            await session.close()
+
+    async def update_enum_meaning_by_id(
+        self,
+        *,
+        organization_id: UUID,
+        value_id: UUID,
+        meaning: str,
+        reviewed_by: UUID | None = None,
+    ) -> dict | None:
+        del reviewed_by
+        session: AsyncSession = await get_async_session()
+        try:
+            await session.execute(
+                text(
+                    "UPDATE catalog_enum_values SET documented_meaning = :meaning, "
+                    "provenance = 'APPROVED', status = 'approved', "
+                    "confidence = 'high', updated_at = now() "
+                    "WHERE organization_id = :oid AND id = :id"
+                ),
+                {"meaning": meaning[:400], "oid": organization_id, "id": value_id},
+            )
+            await session.commit()
+        except Exception as exc:  # noqa: BLE001
+            await session.rollback()
+            logger.warning("Catalog enum meaning by id failed", error=str(exc))
+            return None
+        finally:
+            await session.close()
+        return await self.get_enum_value(organization_id, value_id)
+
+    async def get_pending_suggestion_for_column(
+        self, organization_id: UUID, column_id: UUID
+    ) -> dict | None:
+        session: AsyncSession = await get_async_session()
+        try:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT id, type, title, description, evidence, confidence, "
+                        "payload, status FROM catalog_suggestions "
+                        "WHERE organization_id = :oid AND status = 'pending' "
+                        "AND type = 'field_mapping' "
+                        "AND (payload->>'column_id' = :cid OR payload->>'mapped_column_id' = :cid) "
+                        "ORDER BY created_at DESC LIMIT 1"
+                    ),
+                    {"oid": organization_id, "cid": str(column_id)},
+                )
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                "id": str(row.id),
+                "type": row.type,
+                "title": row.title,
+                "description": row.description,
+                "evidence": row.evidence or [],
+                "confidence": row.confidence,
+                "payload": row.payload or {},
+                "status": row.status,
+            }
         finally:
             await session.close()

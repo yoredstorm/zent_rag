@@ -160,6 +160,18 @@ class ReadinessService:
         )
         report.pending_review_count = len(suggestions)
 
+        critical = []
+        for entity in await self._store.list_entities(organization_id, limit=1000):
+            for f in await self._store.list_fields(organization_id, UUID(entity["id"])):
+                if f.get("role") in {"MEASURE", "IDENTIFIER"}:
+                    critical.append(f)
+        approved_critical = [
+            f for f in critical if f.get("status") == "approved" and f.get("mapped_column_id")
+        ]
+        report.sql_readiness = (
+            round(len(approved_critical) / len(critical) * 100, 2) if critical else 0.0
+        )
+
         # Overall ponderado (los counts no puntúan).
         dimensions = [
             report.schema_coverage,

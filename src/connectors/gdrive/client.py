@@ -129,6 +129,33 @@ def extension_for_file(name: str, mime_type: str) -> str | None:
     return None
 
 
+async def list_drive_folders(
+    access_token: str, parent_id: str | None = None
+) -> list[dict]:
+    """Lista carpetas (no archivos) bajo parent_id o My Drive root."""
+    parent = (parent_id or "root").strip() or "root"
+    query = (
+        f"'{parent}' in parents and mimeType = 'application/vnd.google-apps.folder' "
+        "and trashed = false"
+    )
+    status, body = await gdrive_get(
+        DRIVE_FILES_URL,
+        headers={"Authorization": f"Bearer {access_token}"},
+        params={
+            "q": query,
+            "fields": "files(id,name,mimeType,modifiedTime)",
+            "pageSize": "100",
+            "supportsAllDrives": "true",
+            "includeItemsFromAllDrives": "true",
+        },
+    )
+    if status >= 400:
+        raise ValueError(f"Drive folder list failed ({status})")
+    if not isinstance(body, dict):
+        raise ValueError("Drive folder list returned a non-JSON body")
+    return list(body.get("files") or [])
+
+
 async def list_folder_files(access_token: str, folder_id: str) -> list[dict]:
     query = f"'{folder_id}' in parents and trashed = false"
     status, body = await gdrive_get(

@@ -31,6 +31,7 @@ async def enqueue_sync(
     table_name: str | None = None,
     full_refresh: bool = False,
     ignore_org_filter: bool = False,
+    workspace_id: UUID | None = None,
 ) -> str:
     job_id = uuid4().hex
 
@@ -42,6 +43,7 @@ async def enqueue_sync(
         "table_name": table_name or "",
         "full_refresh": "1" if full_refresh else "0",
         "ignore_org_filter": "1" if ignore_org_filter else "0",
+        "workspace_id": str(workspace_id) if workspace_id else "",
         "status": "pending",
         "progress": "0",
         "message": "En cola",

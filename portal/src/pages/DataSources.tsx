@@ -88,33 +88,35 @@ const countBy = (types: string[]) =>
     {
       icon: Database,
       label: "Base de datos",
-      desc: "Sincroniza tablas SQL y las convierte en conocimiento vectorial.",
-      count: countBy(["sql"]),
-      to: "/knowledge/sql",
+      desc: "Conecta tu ERP o base empresarial. Zent entiende tablas y te ayuda a preguntar.",
+      count: connectors.filter((c) =>
+        ["postgres", "mysql", "mssql", "oracle", "db2"].includes(c.connector_type)
+      ).length,
+      to: "/knowledge/add",
       types: ["sql"],
     },
     {
       icon: CloudArrowUp,
       label: "Subida de archivos",
-      desc: "Documentos, CSV y Excel con análisis de perfil y PII.",
+      desc: "Documentos, CSV y Excel.",
       count: countBy(FILE_TYPES),
-      to: "/knowledge/sources",
+      to: "/knowledge/add",
       types: FILE_TYPES,
     },
     {
       icon: Globe,
       label: "Sitios web",
-      desc: "Ingesta de contenido web para que tus agentes lo consulten.",
+      desc: "Una URL para que Zent lea el contenido de tu sitio.",
       count: countBy(["web"]),
-      to: "/knowledge/sources",
+      to: "/knowledge/add",
       types: ["web"],
     },
     {
       icon: Plugs,
       label: "API REST",
-      desc: "Conecta sistemas vía API para retrieval estructurado.",
+      desc: "Conecta sistemas vía API.",
       count: countBy(["api"]),
-      to: "/knowledge/sources",
+      to: "/knowledge/add",
       types: ["api"],
     },
   ];
@@ -131,8 +133,8 @@ const countBy = (types: string[]) =>
         title="Fuentes de datos"
         subtitle="Conecta sistemas de negocio y datos estructurados a Zent para que tus agentes respondan con información de la empresa."
         actions={
-          <Link to="/connectors" className="btn btn-secondary">
-            Ver conectores
+          <Link to="/knowledge/add" className="btn btn-primary">
+            Añade conocimiento a Zent
           </Link>
         }
       />
@@ -181,7 +183,7 @@ const countBy = (types: string[]) =>
                   title="Sin fuentes de datos"
                   body="Conecta documentos, bases de datos o sitios web para que tus agentes respondan con información de la empresa."
                   action={
-                    <Link to="/knowledge/sources" className="btn btn-primary">
+                    <Link to="/knowledge/add" className="btn btn-primary">
                       Añadir fuente
                     </Link>
                   }

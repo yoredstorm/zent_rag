@@ -35,6 +35,9 @@ const ENTITLEMENT_LABELS: Record<string, string> = {
   embed_widget: "Widget embebido",
   eval_ui: "Evaluación RAG",
   sso: "SSO",
+  managed_db: "Base de datos Zent",
+  managed_db_backups: "Backups managed DB",
+  managed_db_max_mb: "Tamaño managed DB (MB)",
 };
 
 function formatEntitlement(value: boolean | number | null | undefined): string {

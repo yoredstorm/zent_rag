@@ -39,7 +39,9 @@ async def _demo_schema_tables() -> list[str]:
         await session.close()
 
 
-async def provision_demo_kb(organization_id: UUID) -> bool:
+async def provision_demo_kb(
+    organization_id: UUID, workspace_id: UUID | None = None
+) -> bool:
     """Encuela la ingestión del demo farmacia para la organización.
 
     Returns True si se encoló la ingestión demo, False si no aplica
@@ -75,6 +77,7 @@ async def provision_demo_kb(organization_id: UUID) -> bool:
                 table_name=table,
                 full_refresh=(index == 0),
                 ignore_org_filter=True,
+                workspace_id=workspace_id,
             )
         logger.info(
             "provision_demo_kb: demo farmacia encolado",

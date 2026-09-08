@@ -22,10 +22,12 @@ from src.connectors.plugin.base import ConnectorError
 from src.connectors.plugin.registry import get_plugin
 from src.core.config import get_settings
 from src.core.domain.catalog import (
+    CatalogSuggestion,
     DiscoveryBudgets,
     DiscoveryPhase,
     ScanBudget,
     ScanType,
+    SuggestionType,
 )
 from src.core.domain.entities import IngestionJobStatus
 from src.infrastructure.observability.logging_config import get_logger
@@ -96,6 +98,7 @@ class CatalogDiscoveryEngine:
         )
         job = await self._jobs.get_job(None, job_id)
         started = time.perf_counter()
+        await self._store.ensure_tables()
         try:
             await self._run(job)
             duration_ms = (time.perf_counter() - started) * 1000
@@ -264,6 +267,42 @@ class CatalogDiscoveryEngine:
         )
         for r in relationships:
             _object_counter(str(job.organization_id), "relationship")
+
+        stored_rels = await self._store.list_relationships(
+            job.organization_id, UUID(catalog_source_id), status="suggested", limit=500
+        )
+        pending_rel = await self._store.list_suggestions(
+            job.organization_id, status="pending", type="relationship_candidate", limit=500
+        )
+        already = {str((s.get("payload") or {}).get("relationship_id")) for s in pending_rel}
+        for rel in stored_rels:
+            if rel["id"] in already:
+                continue
+            await self._store.create_suggestion(
+                CatalogSuggestion(
+                    organization_id=job.organization_id,
+                    type=SuggestionType.RELATIONSHIP_CANDIDATE,
+                    title=(
+                        f"Relación de negocio candidata: "
+                        f"{rel['from_column']} → {rel['to_column']}"
+                    ),
+                    description=(
+                        "FK físico no equivale a relación de negocio aprobada. "
+                        "Confirmar o rechazar."
+                    ),
+                    evidence=rel.get("evidence") or ["inferred relationship"],
+                    confidence=rel.get("confidence") or "medium",
+                    payload={
+                        "relationship_id": rel["id"],
+                        "from_table_id": rel["from_table_id"],
+                        "to_table_id": rel["to_table_id"],
+                        "from_column": rel["from_column"],
+                        "to_column": rel["to_column"],
+                        "business_verb": "REFERENCES",
+                    },
+                    affected_sources=[catalog_source_id],
+                )
+            )
 
         inference = SemanticInference(
             self._store,

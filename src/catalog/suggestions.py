@@ -110,6 +110,32 @@ class ReviewQueueService:
                             status="draft",
                         )
                     )
+        if stype == SuggestionType.FIELD_MAPPING.value:
+            field_id = suggestion["payload"].get("field_id")
+            if field_id:
+                field = await self._store.get_field(organization_id, UUID(str(field_id)))
+                if field:
+                    await self._store.upsert_field(
+                        CatalogField(
+                            id=UUID(str(field_id)),
+                            organization_id=organization_id,
+                            entity_id=UUID(field["entity_id"]),
+                            name=field["name"],
+                            description=field.get("description"),
+                            provenance=CatalogProvenance.REJECTED,
+                            confidence=field.get("confidence") or "low",
+                            mapped_column_id=(
+                                UUID(field["mapped_column_id"])
+                                if field.get("mapped_column_id")
+                                else None
+                            ),
+                            status="draft",
+                            role=field.get("role") or "UNKNOWN",
+                            mapping_type=field.get("mapping_type") or "DIRECT",
+                            synonyms=field.get("synonyms") or [],
+                            signal_scores=field.get("signal_scores") or {},
+                        )
+                    )
         if stype == SuggestionType.RELATIONSHIP_CANDIDATE.value:
             rel_id = suggestion["payload"].get("relationship_id")
             if rel_id:
@@ -187,38 +213,63 @@ class ReviewQueueService:
 
         elif stype == SuggestionType.FIELD_MAPPING.value:
             field_id = payload.get("field_id")
+            column_id = (
+                payload.get("mapped_column_id")
+                or payload.get("column_id")
+            )
+            field = None
             if field_id:
-                field = await self._get_field(organization_id, UUID(field_id))
-                if field:
-                    await self._store.upsert_field(
-                        CatalogField(
-                            id=UUID(field_id),
-                            organization_id=organization_id,
-                            entity_id=UUID(field["entity_id"]),
-                            name=field["name"],
-                            description=payload.get("description") or field["description"],
-                            provenance=CatalogProvenance.APPROVED,
-                            confidence=field["confidence"],
-                            mapped_column_id=(
-                                UUID(payload["mapped_column_id"])
-                                if payload.get("mapped_column_id")
-                                else (
-                                    UUID(field["mapped_column_id"])
-                                    if field.get("mapped_column_id")
-                                    else None
-                                )
-                            ),
-                            status="approved",
-                            approved_by=reviewed_by,
-                        )
+                field = await self._store.get_field(organization_id, UUID(str(field_id)))
+            if field is None:
+                field = await self._ensure_field_from_payload(
+                    organization_id, payload, reviewed_by=reviewed_by
+                )
+                field_id = field["id"] if field else field_id
+            if field:
+                mapped = column_id or field.get("mapped_column_id")
+                new_name = payload.get("business_name") or payload.get("name") or field["name"]
+                await self._store.upsert_field(
+                    CatalogField(
+                        id=UUID(str(field_id)),
+                        organization_id=organization_id,
+                        entity_id=UUID(str(field["entity_id"])),
+                        name=new_name,
+                        description=payload.get("description") or field.get("description"),
+                        provenance=CatalogProvenance.APPROVED,
+                        confidence="high",
+                        mapped_column_id=UUID(str(mapped)) if mapped else None,
+                        status="approved",
+                        role=payload.get("role") or field.get("role") or "UNKNOWN",
+                        mapping_type=payload.get("mapping_type") or field.get("mapping_type") or "DIRECT",
+                        synonyms=payload.get("synonyms") or field.get("synonyms") or [],
+                        signal_scores=field.get("signal_scores") or {},
+                        approved_by=reviewed_by,
                     )
-                    column_id = payload.get("mapped_column_id") or field.get("mapped_column_id")
-                    if column_id:
-                        await self._lineage.record_field_mapping(
-                            organization_id=organization_id,
-                            field_id=UUID(field_id),
-                            column_id=UUID(column_id),
-                        )
+                )
+                await self._store.record_mapping_version(
+                    organization_id=organization_id,
+                    field_id=UUID(str(field_id)),
+                    column_id=UUID(str(mapped)) if mapped else None,
+                    old_mapping={
+                        "status": field.get("status"),
+                        "name": field.get("name"),
+                        "mapped_column_id": field.get("mapped_column_id"),
+                    },
+                    new_mapping={
+                        "status": "approved",
+                        "name": new_name,
+                        "mapped_column_id": str(mapped) if mapped else None,
+                    },
+                    reason="review queue approve",
+                    source="review_queue",
+                    created_by=reviewed_by,
+                )
+                if mapped:
+                    await self._lineage.record_field_mapping(
+                        organization_id=organization_id,
+                        field_id=UUID(str(field_id)),
+                        column_id=UUID(str(mapped)),
+                    )
 
         elif stype == SuggestionType.RELATIONSHIP_CANDIDATE.value:
             rel_id = payload.get("relationship_id")
@@ -281,13 +332,54 @@ class ReviewQueueService:
                     created_by=reviewed_by,
                 )
 
-    async def _get_field(
-        self, organization_id: UUID, field_id: UUID
+    async def _ensure_field_from_payload(
+        self,
+        organization_id: UUID,
+        payload: dict,
+        *,
+        reviewed_by: UUID | None = None,
     ) -> dict | None:
-        for entity in await self._store.list_entities(organization_id, limit=1000):
-            for f in await self._store.list_fields(
-                organization_id, UUID(entity["id"])
-            ):
-                if str(f["id"]) == str(field_id):
-                    return f
-        return None
+        entity_id = payload.get("entity_id")
+        column_id = payload.get("column_id") or payload.get("mapped_column_id")
+        name = (
+            payload.get("business_name")
+            or payload.get("name")
+            or payload.get("physical_name")
+            or "field"
+        )
+        if not entity_id:
+            entity_name = payload.get("entity_name") or "Dataset"
+            existing = None
+            for e in await self._store.list_entities(organization_id, limit=1000):
+                if e["name"].lower() == entity_name.lower():
+                    existing = e
+                    break
+            if existing:
+                entity_id = existing["id"]
+            else:
+                entity = CatalogEntity(
+                    organization_id=organization_id,
+                    name=entity_name,
+                    display_name=entity_name,
+                    provenance=CatalogProvenance.APPROVED,
+                    confidence="high",
+                    status="approved",
+                    approved_by=reviewed_by,
+                )
+                await self._store.upsert_entity(entity)
+                entity_id = str(entity.id)
+        field = CatalogField(
+            organization_id=organization_id,
+            entity_id=UUID(str(entity_id)),
+            name=str(name),
+            description=payload.get("description"),
+            provenance=CatalogProvenance.APPROVED,
+            confidence="high",
+            mapped_column_id=UUID(str(column_id)) if column_id else None,
+            status="approved",
+            role=payload.get("role") or "UNKNOWN",
+            mapping_type=payload.get("mapping_type") or "DIRECT",
+            approved_by=reviewed_by,
+        )
+        await self._store.upsert_field(field)
+        return await self._store.get_field(organization_id, field.id)

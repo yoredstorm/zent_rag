@@ -227,6 +227,25 @@ async def signup(
     except ValueError as exc:
         raise HTTPException(500, str(exc)) from exc
 
+    from src.infrastructure.postgres.relational_db import PostgresWorkspaceRepository
+    from src.platform.workspaces.context import set_active_workspace
+    from src.platform.workspaces.service import ensure_demo_workspace
+
+    demo_ws = await ensure_demo_workspace(
+        PostgresWorkspaceRepository(), organization_id, created_by=user.id
+    )
+    await set_active_workspace(organization_id, user.id, demo_ws.id)
+    try:
+        from src.verticals.demo_farmacia.provisioning import provision_demo_kb
+
+        await provision_demo_kb(organization_id, workspace_id=demo_ws.id)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "Demo provisioning skipped on signup",
+            organization_id=str(organization_id),
+            exc_info=True,
+        )
+
     access_token = encrypt_session(user.id, organization_id)
     await clear_auth_failures(email_key, ip_key)
 
@@ -610,6 +629,61 @@ async def platform_step_up(body: dict, request: Request):
     )
 
 
+@router.post("/step-up", summary="Step-up tenant: MFA o contraseña")
+async def tenant_step_up(body: dict, request: Request):
+    import time as _time
+
+    from src.infrastructure.postgres.relational_db import PostgresUserRepository
+    from src.platform.auth.mfa import mfa_enabled, verify_totp
+    from src.platform.auth.passwords import verify_password
+    from src.platform.auth.session import decrypt_session
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(401, "Not authenticated")
+    try:
+        current = decrypt_session(auth_header[7:])
+    except Exception as exc:
+        raise HTTPException(401, "Session inválida") from exc
+    if current.typ != "portal":
+        raise HTTPException(403, "Se requiere sesión de portal")
+    user = await PostgresUserRepository().get_by_id(current.user_id, current.organization_id)
+    if user is None:
+        raise HTTPException(401, "User not found")
+    if await mfa_enabled(current.user_id):
+        code = (body.get("code") or "").strip()
+        if not await verify_totp(current.user_id, code):
+            raise HTTPException(
+                401,
+                detail={"error_code": "mfa_code_invalid", "message": "Código TOTP inválido."},
+            )
+        assurance = "totp"
+    else:
+        password = body.get("password") or ""
+        if not verify_password(password, user.password_hash):
+            raise HTTPException(
+                401,
+                detail={"error_code": "password_invalid", "message": "Contraseña inválida."},
+            )
+        assurance = "password"
+    access_token = encrypt_session(
+        current.user_id,
+        current.organization_id,
+        typ="portal",
+        assurance=assurance,
+        mfa_confirmed_at=int(_time.time()),
+    )
+    return _session_response(
+        {
+            "access_token": access_token,
+            "token_type": "Bearer",
+            "step_up": True,
+            "organization_id": str(current.organization_id),
+        },
+        "portal",
+    )
+
+
 def _require_platform_session(request: Request):
     """Devuelve la sesión de plataforma del request o None."""
     from src.platform.auth.session import SessionTokenError, decrypt_session
@@ -713,7 +787,7 @@ async def me(request: Request):
     if user is None:
         user = await user_repo.get_any_user(ctx.organization_id)
 
-    return {
+    payload = {
         "organization_id": str(ctx.organization_id),
         "company_name": (organization.company_name or organization.name) if organization else "",
         "email": user.email if user else None,
@@ -725,3 +799,13 @@ async def me(request: Request):
         "status": billing_ctx.status.value if billing_ctx else None,
         "auth_type": ctx.auth_type,
     }
+    from src.platform.workspaces.context import resolve_workspace
+
+    try:
+        ws = await resolve_workspace(request)
+        payload["active_workspace_id"] = str(ws.id)
+        payload["workspace_kind"] = getattr(ws.kind, "value", str(ws.kind))
+    except HTTPException:
+        payload["active_workspace_id"] = None
+        payload["workspace_kind"] = None
+    return payload

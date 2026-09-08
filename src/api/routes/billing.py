@@ -267,10 +267,18 @@ async def _do_create_trial(
         logger.error("Failed to create trial subscription", error=str(exc), exc_info=True)
         raise HTTPException(500, "Failed to create trial")
 
+    from src.infrastructure.postgres.relational_db import PostgresWorkspaceRepository
+    from src.platform.workspaces.context import set_active_workspace
+    from src.platform.workspaces.service import ensure_demo_workspace
+
+    demo_ws = await ensure_demo_workspace(
+        PostgresWorkspaceRepository(), organization_id, created_by=user.id
+    )
+    await set_active_workspace(organization_id, user.id, demo_ws.id)
     try:
         from src.verticals.demo_farmacia.provisioning import provision_demo_kb
 
-        await provision_demo_kb(organization_id)
+        await provision_demo_kb(organization_id, workspace_id=demo_ws.id)
     except Exception:  # noqa: BLE001
         logger.warning(
             "Demo provisioning skipped",

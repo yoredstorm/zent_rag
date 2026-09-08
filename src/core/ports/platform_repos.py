@@ -220,7 +220,10 @@ class SourceRepository(ABC):
 
     @abstractmethod
     async def list_sources(
-        self, organization_id: UUID, knowledge_base_id: UUID | None = None
+        self,
+        organization_id: UUID,
+        knowledge_base_id: UUID | None = None,
+        workspace_id: UUID | None = None,
     ) -> list[KbSource]: ...
 
     @abstractmethod
@@ -236,6 +239,7 @@ class SourceRepository(ABC):
         source_type: str,
         knowledge_base_id: UUID | None = None,
         config_json: dict | None = None,
+        workspace_id: UUID | None = None,
     ) -> KbSource: ...
 
     @abstractmethod
@@ -406,6 +410,7 @@ class WorkspaceRepository(ABC):
         slug: str,
         description: str | None = None,
         created_by: UUID | None = None,
+        kind: str = "business",
     ) -> Workspace: ...
 
     @abstractmethod
@@ -494,7 +499,9 @@ class DeploymentRepository(ABC):
 class ConnectorRepository(ABC):
 
     @abstractmethod
-    async def list_connectors(self, organization_id: UUID) -> list[Connector]: ...
+    async def list_connectors(
+        self, organization_id: UUID, workspace_id: UUID | None = None
+    ) -> list[Connector]: ...
 
     @abstractmethod
     async def get_connector(

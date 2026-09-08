@@ -12,6 +12,11 @@ from src.api.deps import get_workspace_repo
 from src.core.ports import WorkspaceRepository
 from src.infrastructure.postgres.relational_db import PostgresAuditLogRepository
 from src.platform.audit.service import AuditLogService
+from src.platform.workspaces.context import (
+    ensure_workspace_schema,
+    resolve_workspace,
+    set_active_workspace,
+)
 from src.platform.workspaces.service import (
     ensure_default_workspace,
     workspace_slugify,
@@ -31,6 +36,7 @@ def _workspace_response(ws, counts: dict | None = None) -> dict:
         "slug": ws.slug,
         "description": ws.description,
         "status": ws.status.value,
+        "kind": getattr(ws.kind, "value", ws.kind),
         "created_at": ws.created_at.isoformat(),
         "counts": (counts or {}).get(ws.id, {}),
     }
@@ -39,12 +45,17 @@ def _workspace_response(ws, counts: dict | None = None) -> dict:
 class CreateWorkspaceRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=4000)
+    kind: str = Field(default="business", pattern="^(demo|business)$")
 
 
 class UpdateWorkspaceRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=4000)
     status: str | None = Field(default=None, pattern="^(active|archived)$")
+
+
+class SetActiveWorkspaceRequest(BaseModel):
+    workspace_id: UUID
 
 
 @router.get("", summary="Listar workspaces (auto-crea el default)")
@@ -55,12 +66,15 @@ async def list_workspaces(
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "workspaces:read")
+    await ensure_workspace_schema()
     await ensure_default_workspace(repo, ctx.organization_id)
     workspaces = await repo.list_workspaces(ctx.organization_id)
     counts = await repo.workspace_counts(ctx.organization_id)
+    active = await resolve_workspace(request)
     return {
         "workspaces": [_workspace_response(w, counts) for w in workspaces],
         "count": len(workspaces),
+        "active_workspace_id": str(active.id),
     }
 
 
@@ -83,6 +97,7 @@ async def create_workspace(
         slug,
         description=body.description,
         created_by=ctx.user_id,
+        kind=body.kind,
     )
     await _audit().write(
         ctx,
@@ -91,6 +106,25 @@ async def create_workspace(
         ws.id,
         metadata={"name": ws.name, "slug": ws.slug},
     )
+    counts = await repo.workspace_counts(ctx.organization_id)
+    return _workspace_response(ws, counts)
+
+
+@router.put("/active", summary="Fijar workspace activo")
+async def set_active(
+    body: SetActiveWorkspaceRequest,
+    request: Request,
+    repo: WorkspaceRepository = Depends(get_workspace_repo),
+):
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "workspaces:write")
+    ws = await repo.get_workspace(ctx.organization_id, body.workspace_id)
+    if ws is None:
+        raise HTTPException(404, "Workspace not found")
+    if ctx.user_id is None:
+        raise HTTPException(400, "User session required")
+    await set_active_workspace(ctx.organization_id, ctx.user_id, ws.id)
     counts = await repo.workspace_counts(ctx.organization_id)
     return _workspace_response(ws, counts)
 

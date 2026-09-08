@@ -1,5 +1,6 @@
 import { ArrowsClockwise, Database, Plus } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import {
@@ -36,6 +37,7 @@ type SourceRow = {
   document_count: number;
   error_count: number;
   last_processed_count?: number;
+  config?: { managed?: boolean };
 };
 
 const PENDING_KEY = "zent_gdrive_pending";
@@ -329,76 +331,67 @@ export default function KnowledgeSourcesPage() {
             }
           />
         ) : (
-          <div className="overflow-x-auto">
-            <table className="table min-w-[720px]">
-              <thead>
-                <tr>
-                  <th>Nombre</th>
-                  <th>Tipo</th>
-                  <th>Estado</th>
-                  <th>Último sync</th>
-                  <th className="text-right">Filas / chunks</th>
-                  <th className="text-right">Errores</th>
-                  <th>Acción</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sources.map((s) => (
-                  <tr key={s.id}>
-                    <td className="font-medium text-text">{s.name}</td>
-                    <td className="mono text-xs">
-                      {s.type === "gdrive" ? "Google Drive" : s.type}
-                    </td>
-                    <td>
-                      <span
-                        className={`badge ${s.status === "error" ? "badge-danger" : s.status === "ready" || s.status === "indexed" ? "badge-ok" : s.status === "ingesting" || s.status === "discovering" ? "badge-pending" : "badge-muted"}`}
-                      >
-                        {s.status || "—"}
-                      </span>
-                    </td>
-                    <td className="text-muted">
-                      {s.last_sync ? fmtDateTime(s.last_sync) : "—"}
-                      {s.last_error ? (
-                        <p className="mt-1 max-w-xs text-xs text-danger">{s.last_error}</p>
-                      ) : null}
-                    </td>
-                    <td className="mono text-right">
-                      {fmtNum(s.document_count || s.last_processed_count || 0)}
-                    </td>
-                    <td className="mono text-right">
-                      {s.error_count > 0 ? (
-                        <span className="text-danger">{fmtNum(s.error_count)}</span>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="btn btn-ghost min-h-11 px-3 text-xs"
-                        aria-label={`Perfilizar ${s.name}`} onClick={() => void profileSource(s.id)}
-                          >
-                            Perfilizar
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-ghost min-h-11 px-3 text-xs"
-                            aria-label={`Sincronizar ${s.name}`}
-                        disabled={syncingId === s.id}
-                        onClick={() => void syncSource(s.id)}
-                      >
-                        {syncingId === s.id ? (
-                          <Spinner size={14} />
-                        ) : (
-                          <ArrowsClockwise size={14} aria-hidden />
-                        )}
-                        Sync
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="grid gap-3 md:grid-cols-2">
+            {sources.map((s) => (
+              <article key={s.id} className="panel p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <Link to={`/knowledge/sources/${s.id}`} className="font-medium text-text hover:underline">
+                      {s.name}
+                    </Link>
+                    <p className="text-xs text-muted">
+                      {s.config?.managed ? "Managed Database" : s.type === "gdrive" ? "Google Drive" : s.type}
+                    </p>
+                  </div>
+                  <span
+                    className={`badge ${s.status === "error" ? "badge-danger" : s.status === "ready" || s.status === "indexed" ? "badge-ok" : s.status === "ingesting" || s.status === "discovering" ? "badge-pending" : "badge-muted"}`}
+                  >
+                    {s.status || "—"}
+                  </span>
+                </div>
+                <p className="mt-2 text-sm text-muted">
+                  {s.config?.managed || s.type === "sql"
+                    ? "Entities, fields, relationships and metrics."
+                    : s.type === "file"
+                      ? "Topics, sections, entities and policies."
+                      : s.type === "csv" || s.type === "excel"
+                        ? "Dataset fields, measures and dimensions."
+                        : s.type === "web"
+                          ? "Pages, topics and products or services."
+                          : "Open the source to see what Zent understood."}
+                </p>
+                <dl className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted">
+                  <div>Last sync: {s.last_sync ? fmtDateTime(s.last_sync) : "—"}</div>
+                  <div>Usage: {fmtNum(s.document_count || s.last_processed_count || 0)}</div>
+                  <div>Readiness: {s.status === "ready" || s.status === "indexed" ? "Ready" : "In progress"}</div>
+                  <div>Issues: {s.error_count > 0 ? fmtNum(s.error_count) : "none"}</div>
+                </dl>
+                {s.last_error ? <p className="mt-2 text-xs text-danger">{s.last_error}</p> : null}
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Link to={`/knowledge/sources/${s.id}`} className="btn btn-secondary min-h-11 px-3 text-xs">
+                    Open
+                  </Link>
+                  <button
+                    type="button"
+                    className="btn btn-ghost min-h-11 px-3 text-xs"
+                    aria-label={`Perfilizar ${s.name}`}
+                    onClick={() => void profileSource(s.id)}
+                  >
+                    Perfilizar
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost min-h-11 px-3 text-xs"
+                    aria-label={`Sincronizar ${s.name}`}
+                    disabled={syncingId === s.id}
+                    onClick={() => void syncSource(s.id)}
+                  >
+                    {syncingId === s.id ? <Spinner size={14} /> : <ArrowsClockwise size={14} aria-hidden />}
+                    Sync
+                  </button>
+                </div>
+              </article>
+            ))}
           </div>
         )}
       </div>

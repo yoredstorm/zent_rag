@@ -41,6 +41,7 @@ from src.core.domain.entities import (
     SubscriptionStatus,
     User,
     Workspace,
+    WorkspaceKind,
     WorkspaceStatus,
     display_api_key_prefix,
 )
@@ -1389,18 +1390,22 @@ class PostgresConnectorRepository(ConnectorRepository):
             created_at=row.created_at,
         )
 
-    async def list_connectors(self, organization_id: UUID) -> list[Connector]:
+    async def list_connectors(
+        self, organization_id: UUID, workspace_id: UUID | None = None
+    ) -> list[Connector]:
         session = await get_async_session()
         try:
-            result = await session.execute(
-                text(
-                    "SELECT id, organization_id, name, type, project_id, workspace_id, "
-                    "config_json, status, created_at FROM connectors "
-                    "WHERE organization_id = :oid "
-                    "ORDER BY created_at DESC"
-                ),
-                {"oid": organization_id},
+            query = (
+                "SELECT id, organization_id, name, type, project_id, workspace_id, "
+                "config_json, status, created_at FROM connectors "
+                "WHERE organization_id = :oid "
             )
+            params: dict = {"oid": organization_id}
+            if workspace_id is not None:
+                query += "AND workspace_id = :wid "
+                params["wid"] = workspace_id
+            query += "ORDER BY created_at DESC"
+            result = await session.execute(text(query), params)
             return [self._row_to_connector(row) for row in result.fetchall()]
         finally:
             await session.close()
@@ -2392,6 +2397,11 @@ class PostgresWorkspaceRepository(WorkspaceRepository):
 
     @staticmethod
     def _row_to_workspace(row) -> Workspace:
+        kind_raw = getattr(row, "kind", None) or "business"
+        try:
+            kind = WorkspaceKind(kind_raw)
+        except ValueError:
+            kind = WorkspaceKind.BUSINESS
         return Workspace(
             id=row.id,
             organization_id=row.organization_id,
@@ -2399,6 +2409,7 @@ class PostgresWorkspaceRepository(WorkspaceRepository):
             slug=row.slug,
             description=row.description,
             status=WorkspaceStatus(row.status),
+            kind=kind,
             created_by=row.created_by,
             created_at=row.created_at,
         )
@@ -2409,7 +2420,7 @@ class PostgresWorkspaceRepository(WorkspaceRepository):
             result = await session.execute(
                 text(
                     "SELECT id, organization_id, name, slug, description, status, "
-                    "created_by, created_at FROM workspaces "
+                    "kind, created_by, created_at FROM workspaces "
                     "WHERE organization_id = :oid ORDER BY created_at ASC"
                 ),
                 {"oid": organization_id},
@@ -2426,7 +2437,7 @@ class PostgresWorkspaceRepository(WorkspaceRepository):
             result = await session.execute(
                 text(
                     "SELECT id, organization_id, name, slug, description, status, "
-                    "created_by, created_at FROM workspaces "
+                    "kind, created_by, created_at FROM workspaces "
                     "WHERE id = :wid AND organization_id = :oid"
                 ),
                 {"wid": workspace_id, "oid": organization_id},
@@ -2444,7 +2455,7 @@ class PostgresWorkspaceRepository(WorkspaceRepository):
             result = await session.execute(
                 text(
                     "SELECT id, organization_id, name, slug, description, status, "
-                    "created_by, created_at FROM workspaces "
+                    "kind, created_by, created_at FROM workspaces "
                     "WHERE organization_id = :oid AND slug = :slug"
                 ),
                 {"oid": organization_id, "slug": slug},
@@ -2461,18 +2472,26 @@ class PostgresWorkspaceRepository(WorkspaceRepository):
         slug: str,
         description: str | None = None,
         created_by: UUID | None = None,
+        kind: str = "business",
     ) -> Workspace:
         session = await get_async_session()
         try:
             result = await session.execute(
                 text(
                     "INSERT INTO workspaces (id, organization_id, name, slug, "
-                    "description, created_by) "
-                    "VALUES (uuid_generate_v4(), :oid, :name, :slug, :desc, :by) "
+                    "description, created_by, kind) "
+                    "VALUES (uuid_generate_v4(), :oid, :name, :slug, :desc, :by, :kind) "
                     "RETURNING id, organization_id, name, slug, description, status, "
-                    "created_by, created_at"
+                    "kind, created_by, created_at"
                 ),
-                {"oid": organization_id, "name": name, "slug": slug, "desc": description, "by": created_by},
+                {
+                    "oid": organization_id,
+                    "name": name,
+                    "slug": slug,
+                    "desc": description,
+                    "by": created_by,
+                    "kind": kind if kind in ("demo", "business") else "business",
+                },
             )
             row = result.fetchone()
             await session.commit()
@@ -2489,7 +2508,7 @@ class PostgresWorkspaceRepository(WorkspaceRepository):
         workspace_id: UUID,
         **fields,
     ) -> Workspace | None:
-        allowed = {"name", "slug", "description", "status"}
+        allowed = {"name", "slug", "description", "status", "kind"}
         updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
         session = await get_async_session()
         try:

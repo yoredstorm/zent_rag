@@ -74,3 +74,22 @@ ON CONFLICT (plan_id, key) DO NOTHING;
 INSERT INTO plan_entitlements (plan_id, key, value_type, value_bool)
 SELECT id, 'sso', 'bool', false FROM plans
 ON CONFLICT (plan_id, key) DO NOTHING;
+
+INSERT INTO plan_entitlements (plan_id, key, value_type, value_bool)
+SELECT id, 'managed_db', 'bool', true FROM plans
+ON CONFLICT (plan_id, key) DO NOTHING;
+
+INSERT INTO plan_entitlements (plan_id, key, value_type, value_bool)
+SELECT id, 'managed_db_backups', 'bool', (name IN ('pro', 'enterprise')) FROM plans
+ON CONFLICT (plan_id, key) DO NOTHING;
+
+INSERT INTO plan_entitlements (plan_id, key, value_type, value_int)
+SELECT id, 'managed_db_max_mb', 'int',
+    CASE name
+        WHEN 'trial' THEN 256
+        WHEN 'starter' THEN 1024
+        WHEN 'pro' THEN 10240
+        ELSE NULL
+    END
+FROM plans
+ON CONFLICT (plan_id, key) DO NOTHING;

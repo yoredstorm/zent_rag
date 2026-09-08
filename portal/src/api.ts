@@ -8,6 +8,8 @@ const COMPANY_KEY = "rag_portal_company";
 const EMAIL_KEY = "rag_portal_email";
 const ROLES_KEY = "rag_portal_roles";
 const PERMS_KEY = "rag_portal_permissions";
+const WS_KEY = "rag_portal_workspace";
+const WS_KIND_KEY = "rag_portal_workspace_kind";
 
 export type Session = {
   token?: string;
@@ -16,6 +18,8 @@ export type Session = {
   email?: string;
   roles?: string[];
   permissions?: string[];
+  workspaceId?: string;
+  workspaceKind?: string;
 };
 
 function readToken(): string | undefined {
@@ -67,7 +71,9 @@ export function loadSession(): Session | null {
   }
   if (!organizationId) return null;
   const token = readToken();
-  return { token, organizationId, companyName, email, roles, permissions };
+  const workspaceId = localStorage.getItem(WS_KEY) || undefined;
+  const workspaceKind = localStorage.getItem(WS_KIND_KEY) || undefined;
+  return { token, organizationId, companyName, email, roles, permissions, workspaceId, workspaceKind };
 }
 
 export function saveSession(session: Session) {
@@ -90,6 +96,16 @@ export function saveSession(session: Session) {
   } else {
     localStorage.removeItem(PERMS_KEY);
   }
+  if (session.workspaceId) {
+    localStorage.setItem(WS_KEY, session.workspaceId);
+  } else {
+    localStorage.removeItem(WS_KEY);
+  }
+  if (session.workspaceKind) {
+    localStorage.setItem(WS_KIND_KEY, session.workspaceKind);
+  } else {
+    localStorage.removeItem(WS_KIND_KEY);
+  }
 }
 
 export function clearSession() {
@@ -101,6 +117,8 @@ export function clearSession() {
   localStorage.removeItem(EMAIL_KEY);
   localStorage.removeItem(ROLES_KEY);
   localStorage.removeItem(PERMS_KEY);
+  localStorage.removeItem(WS_KEY);
+  localStorage.removeItem(WS_KIND_KEY);
 }
 
 /** Extrae el trace id del backend (TraceMiddleware → X-Trace-Id). */
@@ -134,14 +152,20 @@ const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function request<T>(
   path: string,
-  options: RequestInit & { token?: string; organizationId?: string } = {},
+  options: RequestInit & { token?: string; organizationId?: string; workspaceId?: string } = {},
   opts: { safeRetry?: boolean; idempotency?: boolean; platform?: boolean } = {}
 ): Promise<T> {
-  const { token, organizationId, headers, ...rest } = options;
+  const { token, organizationId, workspaceId, headers, ...rest } = options;
   const h = new Headers(headers);
-  if (!h.has("Content-Type")) h.set("Content-Type", "application/json");
+  if (rest.body instanceof FormData) {
+    h.delete("Content-Type");
+  } else if (!h.has("Content-Type")) {
+    h.set("Content-Type", "application/json");
+  }
   if (token) h.set("Authorization", `Bearer ${token}`);
   if (organizationId) h.set("X-Organization-Id", organizationId);
+  const resolvedWorkspace = workspaceId || (!opts.platform ? loadSession()?.workspaceId : undefined);
+  if (resolvedWorkspace) h.set("X-Workspace-Id", resolvedWorkspace);
   const method = (rest.method || "GET").toUpperCase();
   const platform = opts.platform === true;
   if (opts.idempotency !== false && ["POST", "PUT", "PATCH"].includes(method) && !h.has("Idempotency-Key")) {

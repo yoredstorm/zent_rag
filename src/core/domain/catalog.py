@@ -64,6 +64,27 @@ class SuggestionStatus(StrEnum):
     EDITED_APPROVED = "edited_approved"
 
 
+class FieldRole(StrEnum):
+    IDENTIFIER = "IDENTIFIER"
+    DESCRIPTION = "DESCRIPTION"
+    MEASURE = "MEASURE"
+    DATE = "DATE"
+    STATUS = "STATUS"
+    CATEGORY = "CATEGORY"
+    RELATIONSHIP = "RELATIONSHIP"
+    UNKNOWN = "UNKNOWN"
+
+
+class MappingType(StrEnum):
+    DIRECT = "DIRECT"
+    TRANSFORMED = "TRANSFORMED"
+    DERIVED = "DERIVED"
+    ENUM = "ENUM"
+    IDENTIFIER = "IDENTIFIER"
+    RELATIONSHIP = "RELATIONSHIP"
+    APPROVED_BY_SCHEMA_DESIGN = "APPROVED_BY_SCHEMA_DESIGN"
+
+
 class LineageRelation(StrEnum):
     DEFINES = "DEFINES"
     USES = "USES"
@@ -216,6 +237,9 @@ class CatalogRelationship:
     confidence: str = "high"  # high | medium | low
     status: RelationshipStatus = RelationshipStatus.SUGGESTED
     evidence: list[str] = field(default_factory=list)
+    business_from: str | None = None
+    business_to: str | None = None
+    business_verb: str | None = None
     reviewed_by: UUID | None = None
     reviewed_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -254,6 +278,16 @@ class CatalogField:
     confidence: str = "low"
     mapped_column_id: UUID | None = None
     status: str = "draft"
+    role: str = FieldRole.UNKNOWN.value
+    mapping_type: str = MappingType.DIRECT.value
+    unit: str | None = None
+    currency: str | None = None
+    grain: str | None = None
+    aggregation_behavior: str | None = None
+    synonyms: list[str] = field(default_factory=list)
+    signal_scores: dict = field(default_factory=dict)
+    effective_from: datetime | None = None
+    effective_to: datetime | None = None
     created_by: UUID | None = None
     approved_by: UUID | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -375,6 +409,7 @@ class ReadinessReport:
     data_quality: float = 0.0
     unknown_code_count: int = 0
     pending_review_count: int = 0
+    sql_readiness: float = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -389,4 +424,13 @@ class ReadinessReport:
             "data_quality": round(self.data_quality, 2),
             "unknown_code_count": self.unknown_code_count,
             "pending_review_count": self.pending_review_count,
+            "sql_readiness": round(self.sql_readiness, 2),
+            "labels": {
+                "structural": round(self.schema_coverage, 2),
+                "semantic": round(self.semantic_mapping_coverage, 2),
+                "relationship": round(self.relationship_coverage, 2),
+                "business_definition": round(self.glossary_coverage, 2),
+                "sql": round(self.sql_readiness, 2),
+                "overall": round(self.overall, 2),
+            },
         }

@@ -31,12 +31,17 @@ def sign_drive_oauth_state(
     organization_id: UUID | str,
     connector_id: UUID | str,
     ttl_seconds: int = _STATE_TTL_SECONDS,
+    return_path: str | None = None,
 ) -> str:
     payload = {
         "organization_id": str(organization_id),
         "connector_id": str(connector_id),
         "exp": int(time.time()) + ttl_seconds,
     }
+    if return_path:
+        if not return_path.startswith("/") or return_path.startswith("//"):
+            raise DriveOAuthError("return_path must be a relative portal path")
+        payload["return_path"] = return_path[:200]
     body = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
     sig = hmac.new(_state_key(), body, hashlib.sha256).hexdigest()
     token = base64.urlsafe_b64encode(body).decode("ascii").rstrip("=")

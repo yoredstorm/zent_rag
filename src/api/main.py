@@ -46,6 +46,8 @@ from src.api.routes.billing_webhooks import router as billing_webhooks_router
 from src.api.routes.chat_insights import router as chat_insights_router
 from src.api.routes.connectors import router as connectors_router
 from src.api.routes.copilot import router as copilot_router
+from src.api.routes.data_onboarding import router as data_onboarding_router
+from src.api.routes.demo_transition import router as demo_transition_router
 from src.api.routes.deployments import router as deployments_router
 from src.api.routes.devportal import router as devportal_router
 from src.api.routes.dr import router as dr_router
@@ -63,6 +65,7 @@ from src.api.routes.ingestion import router as ingestion_router
 from src.api.routes.jobs import router as jobs_router
 from src.api.routes.knowledge_bases import router as kbs_router
 from src.api.routes.knowledge_hub import router as knowledge_hub_router
+from src.api.routes.managed_db import router as managed_db_router
 from src.api.routes.mcp_admin import router as mcp_admin_router
 from src.api.routes.migrations import router as migrations_router
 from src.api.routes.notifications import router as notifications_router
@@ -543,6 +546,7 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(migrations_router)
     new_app.include_router(feedback_router)
     new_app.include_router(onboarding_router)
+    new_app.include_router(data_onboarding_router)
     new_app.include_router(notifications_router)
     new_app.include_router(payments_webhook_router)
     new_app.include_router(public_query_router)
@@ -561,6 +565,8 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(devportal_router)
     new_app.include_router(deployments_router)
     new_app.include_router(workspaces_router)
+    new_app.include_router(demo_transition_router)
+    new_app.include_router(managed_db_router)
     new_app.include_router(training_router)
     new_app.include_router(eval_router)
     new_app.include_router(gateway_router)

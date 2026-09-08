@@ -3,6 +3,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import base64
 import time
 from typing import ClassVar
 
@@ -22,7 +23,7 @@ _AUTH_KEYS = ("bearer_token", "api_key")
 class RestApiPlugin(ConnectorPlugin):
     connector_type: ClassVar[str] = "rest_api"
     capabilities: ClassVar[frozenset[str]] = frozenset({"test"})
-    required_secret_keys: ClassVar[list[str]] = ["bearer_token"]
+    required_secret_keys: ClassVar[list[str]] = []
 
     def _url(self) -> str:
         base = str(self.config.get("base_url") or "").strip().rstrip("/")
@@ -49,6 +50,13 @@ class RestApiPlugin(ConnectorPlugin):
 
     def _headers(self) -> dict:
         headers = dict(self.config.get("headers") or {})
+        if self.secrets.get("username") is not None:
+            raw = f"{self.secrets.get('username', '')}:{self.secrets.get('password', '')}"
+            headers.setdefault(
+                "Authorization",
+                "Basic " + base64.b64encode(raw.encode()).decode(),
+            )
+            return headers
         for key in _AUTH_KEYS:
             if self.secrets.get(key):
                 headers.setdefault(
