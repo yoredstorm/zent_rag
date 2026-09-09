@@ -620,8 +620,6 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(prompt_router)
     new_app.include_router(query_router)
     new_app.include_router(sources_router)
-    from src.api.routes.intelligence import router as intelligence_router
-
     new_app.include_router(intelligence_router)
     from src.api.routes.catalog import router as catalog_router
 
