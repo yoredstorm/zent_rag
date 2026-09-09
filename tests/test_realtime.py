@@ -106,7 +106,7 @@ async def test_live_summary_and_timeseries(async_client: AsyncClient) -> None:
     org = await _create_org(async_client, "RT Summary Org")
     org["session"] = await _owner_session(org["organization_id"])
     plat = await _platform_admin(async_client, f"padmin-rt-{uuid4().hex[:8]}@zent.example")
-    await _seed_usage(async_client, org, n=5, cost=0.001)
+    await _seed_usage(async_client, org, n=12, cost=0.001)
 
     summary = await async_client.get(
         "/api/v1/platform/realtime/summary?minutes=30", headers=plat
