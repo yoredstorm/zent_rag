@@ -160,6 +160,7 @@ async def lifespan(app: FastAPI):
             _catalog_discovery_task = asyncio.create_task(_catalog_discovery_loop())
             _spider_task = asyncio.create_task(_spider_loop())
             _wf_sched_task = asyncio.create_task(_workflow_v2_scheduler_loop())
+            _wf_event_task = asyncio.create_task(_workflow_event_consumer_loop())
             yield
         finally:
             _region_health_task.cancel()
@@ -171,6 +172,7 @@ async def lifespan(app: FastAPI):
             _catalog_discovery_task.cancel()
             _spider_task.cancel()
             _wf_sched_task.cancel()
+            _wf_event_task.cancel()
             await _run_shutdown()
 
 
@@ -195,6 +197,16 @@ async def _workflow_v2_scheduler_loop() -> None:
         from src.platform.workflows.engine import workflow_v2_scheduler_loop
 
         await workflow_v2_scheduler_loop()
+    except asyncio.CancelledError:
+        pass
+
+
+async def _workflow_event_consumer_loop() -> None:
+    """Consume el bus de eventos y dispara triggers de workflow (Phase 32A)."""
+    try:
+        from src.platform.workflows.events import workflow_event_consumer_loop
+
+        await workflow_event_consumer_loop()
     except asyncio.CancelledError:
         pass
 
