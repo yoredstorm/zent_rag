@@ -360,6 +360,13 @@ async def _region_health_loop() -> None:
 
 async def _run_startup() -> None:
     global _worker_task
+    # Packs de inteligencia (Phase 32C): idempotente, registra manifiestos PUBLISHED.
+    try:
+        from src.platform.marketplace.runtime import ensure_business_packs
+
+        await ensure_business_packs()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Business packs seeding failed", error=str(exc)[:150])
     if settings.ENVIRONMENT == "development":
         try:
             from src.infrastructure.postgres.relational_db import PostgresUserRepository
@@ -571,6 +578,9 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     from src.api.routes.marketplace import router as marketplace_router
 
     new_app.include_router(marketplace_router)
+    from src.api.routes.intelligence import router as intelligence_router
+
+    new_app.include_router(intelligence_router)
     new_app.include_router(copilot_router)
     new_app.include_router(releases_router)
     new_app.include_router(migrations_router)

@@ -27,7 +27,23 @@ logger = get_logger(__name__)
 
 __all__ = ["httpx", "STEP_TYPES", "TRIGGER_TYPES"]
 
-STEP_TYPES = ("llm", "kb_query", "api_call", "condition", "notify", "marketplace_action")
+STEP_TYPES = (
+    "llm",
+    "kb_query",
+    "api_call",
+    "condition",
+    "notify",
+    "marketplace_action",
+    "query_business_data",
+    "set_variable",
+    "business_result",
+    "for_each",
+    "join",
+    "merge",
+    "filter",
+    "human_approval",
+    "stop",
+)
 TRIGGER_TYPES = ("webhook", "schedule", "event")
 
 

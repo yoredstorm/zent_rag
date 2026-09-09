@@ -141,7 +141,19 @@ async def delete_event_trigger(
 
 async def dispatch_event_to_workflows(event_type: str, payload: dict[str, Any]) -> int:
     """Empareja un evento publicado contra los triggers activos y dispara los
-    workflows (fail-soft). Retorna cuántos workflows se dispararon."""
+    workflows (fail-soft). Retorna cuántos workflows se dispararon.
+
+    Anti-loop (32C): depth máxima de encadenamiento workflow→evento→workflow
+    y dedupe por fingerprint del evento."""
+
+    # Protección de bucles recursivos: rastrear cadena en el payload.
+    chain = payload.get("_wf_chain") or []
+    if isinstance(chain, list) and len(chain) >= 4:
+        logger.info("workflow event loop guard: max depth alcanzado", depth=len(chain))
+        return 0
+    if not isinstance(chain, list):
+        chain = []
+
     from src.platform.workflows.engine import run_workflow
 
     org_raw = payload.get("organization_id")
@@ -167,18 +179,27 @@ async def dispatch_event_to_workflows(event_type: str, payload: dict[str, Any]) 
     finally:
         await session.close()
     fired = 0
+    fingerprint = f"{event_type}:{org_raw}:{str(payload.get('entity_id') or payload.get('id') or '')}"
     for row in rows:
         if not _filters_match(row.filters, payload):
             continue
         try:
+            event_id = payload.get("event_id") or payload.get("ts") or fingerprint
+            dedupe_key = f"mkt:wfevt:{row.workflow_id}:{fingerprint}"
+            deduped = await _mark_event_processed(organization_id, dedupe_key)
+            if deduped:
+                logger.info("workflow event dedupe", event_type=event_type, workflow_id=str(row.workflow_id))
+                continue
+            child_payload = {k: v for k, v in payload.items() if not k.startswith("_")}
+            child_payload["_wf_chain"] = chain + [str(row.workflow_id)]
             await run_workflow(
                 row.workflow_id,
-                payload,
+                child_payload,
                 trigger="event",
                 organization_id=organization_id,
                 workspace_id=row.workspace_id,
                 actor_type="event_dispatcher",
-                correlation_id=f"evt:{event_type}",
+                correlation_id=f"evt:{event_type}:{event_id}",
             )
             fired += 1
         except Exception as exc:  # noqa: BLE001
@@ -189,6 +210,22 @@ async def dispatch_event_to_workflows(event_type: str, payload: dict[str, Any]) 
                 error=str(exc)[:200],
             )
     return fired
+
+
+async def _mark_event_processed(organization_id: UUID, dedupe_key: str) -> bool:
+    """Dedupe best-effort con expiración corta (TTL 60s) vía Redis."""
+    try:
+        from src.infrastructure.redis.cache import _get_redis
+
+        client = await _get_redis()
+        key = f"{dedupe_key}:{organization_id.hex}"
+        seen = await client.get(key)
+        if seen:
+            return True
+        await client.set(key, "1", ex=60)
+        return False
+    except Exception:  # noqa: BLE001
+        return False
 
 
 async def workflow_event_consumer_loop() -> None:

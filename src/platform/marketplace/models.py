@@ -88,9 +88,11 @@ def validate_integration_manifest(manifest: dict) -> list[str]:
             errors.append(f"auth_modes inválido: {mode}")
     if str(manifest.get("category") or "data") not in CATEGORIES:
         errors.append("category inválida")
-    if not isinstance(manifest.get("capabilities"), list) or not manifest["capabilities"]:
-        errors.append("capabilities: se requiere al menos una capacidad")
     caps = manifest.get("capabilities") or []
+    pricing = manifest.get("pricing") or {}
+    is_pack = str(pricing.get("_pack_kind") or "") in ("workflow_template", "agent_pack")
+    if not isinstance(caps, list) or (not caps and not is_pack):
+        errors.append("capabilities: se requiere al menos una capacidad (o _pack_kind en pricing)")
     for cap in caps:
         if not isinstance(cap, dict) or not str(cap.get("slug") or ""):
             errors.append("capability sin slug")

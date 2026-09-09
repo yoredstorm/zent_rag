@@ -58,7 +58,186 @@ def _iso(dt: datetime | None) -> str | None:
 # ---------------------------------------------------------------------------
 # Instalaciones
 # ---------------------------------------------------------------------------
-async def install_integration(
+async def _install_template_pack(
+    organization_id: UUID,
+    *,
+    workspace_id: UUID | None,
+    created_by: UUID | None,
+    template_slug: str,
+    integration_slugs: list[str],
+    source_slug: str,
+) -> dict:
+    """Instala un pack: crea el workflow del template + las integraciones
+    dependientes y cablea el nodo marketplace_action al install real."""
+    from src.platform.workflows.engine import create_from_template
+
+    if not template_slug:
+        raise MarketplaceError("pack sin template_slug")
+
+    # 1. Instalar integraciones dependientes y guardar el mapa slug→install_id.
+    install_ids: dict[str, str] = {}
+    for dep_slug in integration_slugs:
+        try:
+            dep = await install_integration(
+                organization_id, dep_slug, workspace_id=workspace_id, created_by=created_by
+            )
+            install_ids[dep_slug] = dep["install_id"]
+        except Exception:  # noqa: BLE001
+            logger.warning("pack dependency install failed", slug=dep_slug)
+
+    # 2. Crear el workflow a partir de la plantilla de negocio.
+    wf = await create_from_template(
+        organization_id, template_slug, workspace_id=workspace_id
+    )
+    workflow_id = wf["workflow_id"]
+
+    # 3. Reemplazar placeholders {{_pack.<key>}} por installs reales.
+    if install_ids:
+        await _wire_pack_installs(workflow_id, install_ids)
+
+    # 4. Registrar el pack como instalación (contexto del pack).
+    session = await get_async_session()
+    try:
+        m = (
+            await session.execute(
+                text("SELECT id FROM integration_manifests WHERE slug = :slug"),
+                {"slug": source_slug},
+            )
+        ).fetchone()
+        if m is not None:
+            await session.execute(
+                text(
+                    "INSERT INTO installed_integrations "
+                    "(id, organization_id, workspace_id, integration_id, version, created_by, "
+                    "enabled_actions, auto_use_policy) "
+                    "VALUES (gen_random_uuid(), :oid, :ws, :iid, 1, :by, '[]', '{}')"
+                ),
+                {"oid": organization_id, "ws": workspace_id, "iid": m.id, "by": created_by},
+            )
+        await session.commit()
+    finally:
+        await session.close()
+    return {
+        "install_id": str(uuid4()),
+        "pack": True,
+        "workflow_id": workflow_id,
+        "integration_slug": source_slug,
+        "install_ids": install_ids,
+    }
+
+
+async def _wire_pack_installs(workflow_id: UUID, install_ids: dict[str, str]) -> None:
+    """Reemplaza placeholders del estilo {{_pack.demo_echo_install}} y
+    actualiza el grafo del workflow con los install_id reales."""
+    import json as _json
+
+    from src.platform.workflows.engine import update_workflow
+
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text("SELECT organization_id, graph FROM workflows WHERE id = :wid"),
+                {"wid": workflow_id},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+    if row is None or not row.graph:
+        return
+    graph = _json.loads(_json.dumps(row.graph))
+    changed = False
+    mapping = {f"{{{{_pack.{k}_install}}}}": v for k, v in install_ids.items()}
+    mapping.update({f"{{_pack.{k}_install}}": v for k, v in install_ids.items()})
+    # tolerar guiones vs underscores en los slugs de dependencia
+    for k, v in list(install_ids.items()):
+        mapping[f"{{{{_pack.{k.replace('-', '_')}_install}}}}"] = v
+        mapping[f"{{_pack.{k.replace('-', '_')}_install}}"] = v
+
+    def _walk(value):
+        nonlocal changed
+        if isinstance(value, str):
+            out = value
+            for ph, install_id in mapping.items():
+                if ph in out:
+                    out = out.replace(ph, install_id)
+                    changed = changed or out != value
+            return out
+        if isinstance(value, dict):
+            return {k: _walk(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_walk(v) for v in value]
+        return value
+
+    for node in graph.get("nodes") or []:
+        node["config"] = _walk(node.get("config") or {})
+    if changed:
+        await update_workflow(
+            UUID(str(row.organization_id)), workflow_id, graph=graph, workflow_version=2
+        )
+
+
+# ---------------------------------------------------------------------------
+# Packs del catálogo (Phase 32C) — plantillas de negocio con dependencias
+# ---------------------------------------------------------------------------
+async def ensure_business_packs() -> None:
+    """Registra los packs de inteligencia (idempotente) si no existen."""
+    from src.platform.marketplace.catalog import register_manifest
+    from src.platform.marketplace.models import ManifestValidationError
+
+    packs = [
+        {
+            "slug": "pack-daily-sales-brief",
+            "name": "Daily Executive Sales Brief",
+            "provider": "Zent Intelligence",
+            "version": 1,
+            "description": (
+                "Brief diario de ventas: consulta semántica, agente analista y reporte. "
+                "Incluye el workflow."
+            ),
+            "category": "operations",
+            "auth_modes": ["NONE"],
+            "pricing": {
+                "model": "FREE",
+                "_pack_kind": "workflow_template",
+                "_template_slug": "daily-executive-sales-brief",
+                "_integrations": [],
+            },
+            "rate_limits": {},
+            "data_policy": {"retention_days": 30, "purpose_required": False},
+            "support": {"level": "internal"},
+            "status": "PUBLISHED",
+            "capabilities": [],
+        },
+        {
+            "slug": "pack-customer-verification",
+            "name": "Customer Verification Pack",
+            "provider": "Zent Intelligence",
+            "version": 1,
+            "description": "Verifica contribuyentes nuevos (SUNAT/sandbox) y avisa si están inactivos.",
+            "category": "government",
+            "auth_modes": ["NONE"],
+            "pricing": {
+                "model": "FREE",
+                "_pack_kind": "workflow_template",
+                "_template_slug": "new-business-customer-verification",
+                "_integrations": ["demo-echo"],
+            },
+            "rate_limits": {},
+            "data_policy": {"retention_days": 30, "purpose_required": False},
+            "support": {"level": "internal"},
+            "status": "PUBLISHED",
+            "capabilities": [],
+        },
+    ]
+    for pack in packs:
+        try:
+            await register_manifest(pack)
+        except ManifestValidationError as exc:
+            logger.warning("pack registration failed", slug=pack["slug"], error=str(exc)[:150])
+
+
+async def install_integration(  # noqa: C901 — flujo con ramas de pack
     organization_id: UUID,
     manifest_slug: str,
     *,
@@ -72,7 +251,7 @@ async def install_integration(
         m = (
             await session.execute(
                 text(
-                    "SELECT id, slug, name, status FROM integration_manifests "
+                    "SELECT id, slug, name, status, pricing FROM integration_manifests "
                     "WHERE slug = :slug AND status IN ('PUBLISHED', 'DEPRECATED')"
                 ),
                 {"slug": manifest_slug},
@@ -93,6 +272,20 @@ async def install_integration(
         if existing is not None:
             await session.commit()
             return {"install_id": str(existing.id), "reused": True, "integration_slug": m.slug}
+
+        # PACK: el install de un pack genera el workflow + dependencias.
+        pc = dict(m.pricing or {})
+        pack_kind = str(pc.get("_pack_kind") or "") or None
+        if pack_kind == "workflow_template":
+            await session.rollback()
+            return await _install_template_pack(
+                organization_id,
+                workspace_id=workspace_id,
+                created_by=created_by,
+                template_slug=str(pc.get("_template_slug") or ""),
+                integration_slugs=list(pc.get("_integrations") or []),
+                source_slug=m.slug,
+            )
         install_id = uuid4()
         data_policy = (
             await session.execute(

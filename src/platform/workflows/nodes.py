@@ -845,6 +845,55 @@ def _is_uuid(value: str) -> bool:
     return bool(re.match(r"^[0-9a-fA-F-]{36}$", value))
 
 
+async def _exec_business_result(rctx: NodeContext) -> NodeOutcome:
+    """Persiste un BusinessResult normalizado (dashboard/inbox/email/API)."""
+    from src.platform.intelligence.results import (
+        BusinessResult,
+        BusinessResultError,
+        save_result,
+    )
+
+    cfg = rctx.node.config
+    title = str(_resolve_ref(cfg.get("title") or "Resultado", rctx) or "Resultado")
+    summary = str(_resolve_ref(cfg.get("summary") or "", rctx) or "") or None
+    section = str(cfg.get("section") or "reports")
+    importance = str(cfg.get("importance") or "INFO")
+    metrics = _resolve_ref(cfg.get("metrics") or {}, rctx)
+    insights = _resolve_ref(cfg.get("insights") or [], rctx)
+    entities = _resolve_ref(cfg.get("entities") or [], rctx)
+    if not isinstance(metrics, dict):
+        metrics = {}
+    if not isinstance(insights, list):
+        insights = [str(insights)] if insights else []
+    if not isinstance(entities, list):
+        entities = []
+    result = BusinessResult(
+        title=title,
+        summary=summary,
+        section=section,
+        importance=importance,
+        metrics=metrics,
+        insights=[str(i) for i in insights],
+        entities=entities,
+        workflow_id=rctx.execution.workflow_id,
+        workflow_run_id=rctx.execution.run_id,
+        agent_run_id=rctx.execution.actor_id,
+        correlation_id=rctx.execution.correlation_id,
+        source="workflow",
+    )
+    if rctx.simulate:
+        return NodeOutcome(
+            simulated=True,
+            planned={"kind": "business_result", "title": title, "importance": importance},
+            output={"simulated": True},
+        )
+    try:
+        saved = await save_result(rctx.organization_id, result, workspace_id=rctx.workspace_id)
+    except BusinessResultError as exc:
+        return NodeOutcome(error=str(exc))
+    return NodeOutcome(output={"result_id": str(saved["result_id"]), "importance": saved["importance"]})
+
+
 def _register_defaults() -> None:
     already = registry.get("llm")
     if already is not None:
@@ -1006,6 +1055,19 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "json"}},
         execute=_exec_marketplace_action,
+    )
+
+    # INTELLIGENCE (Phase 32C)
+    registry.register(
+        "business_result",
+        version=1,
+        label="Resultado de negocio",
+        category="output",
+        risk_level="info",
+        capabilities=frozenset({WRITE_DB}),
+        inputs={"in": {"type": "json"}},
+        outputs={"out": {"type": "json"}},
+        execute=_exec_business_result,
     )
 
     # CONTROL

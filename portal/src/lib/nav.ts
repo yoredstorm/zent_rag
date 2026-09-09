@@ -59,6 +59,7 @@ export const NAV_GROUPS: NavGroup[] = [
       { to: "/agents", label: "Agentes", icon: Robot },
       { to: "/knowledge", label: "Conocimiento", icon: Database },
       { to: "/workflows", label: "Workflows", icon: FlowArrow },
+      { to: "/intelligence", label: "Intelligence", icon: Sparkle },
     ],
   },
   {
