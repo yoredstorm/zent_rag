@@ -12,7 +12,9 @@ test.describe("Workflows Blockly", () => {
     const install = page.getByTestId("wf-install-low-stock-alert");
     if (await install.isVisible()) {
       await install.click();
-      await expect(page.getByText("Alerta de stock bajo")).toBeVisible({ timeout: 15_000 });
+      await expect(
+        page.getByRole("button", { name: "Alerta de stock bajo" }).first()
+      ).toBeVisible({ timeout: 15_000 });
     }
   });
 });

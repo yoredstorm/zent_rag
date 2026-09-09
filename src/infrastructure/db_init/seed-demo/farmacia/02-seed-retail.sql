@@ -11,6 +11,26 @@ DROP SCHEMA IF EXISTS retail CASCADE;
 CREATE SCHEMA IF NOT EXISTS farmacia;
 
 -- =============================================================================
+-- 0. WORKSPACE DEMO — el tenant demo (00000000-…-0001) ya trae datos, así que
+--    necesita su workspace de tipo 'demo'. Sin él, el onboarding gate
+--    (`needs_start_mode` en /auth/me) lo manda a /onboarding/start y rompe
+--    tanto la experiencia demo como los e2e que loguean como demo@zenttech.com.
+--    Solo corre en entornos seed (RAG_SEED_DEMO_DATA=true). Slug 'default' para
+--    que resolve_workspace / ensure_default_workspace lo reutilicen sin duplicar.
+-- =============================================================================
+INSERT INTO workspaces (id, organization_id, name, slug, description, status, kind)
+VALUES (
+    '50000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000001',
+    'Demo Workspace',
+    'default',
+    'Workspace demo con los datos de prueba de farmacia.',
+    'active',
+    'demo'
+)
+ON CONFLICT (organization_id, slug) DO NOTHING;
+
+-- =============================================================================
 -- 1. CATEGORÍAS — Jerarquía farmacéutica real
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS farmacia.categories (
