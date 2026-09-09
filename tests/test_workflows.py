@@ -260,9 +260,13 @@ async def test_templates_and_paused_guard(async_client: AsyncClient) -> None:
 
     tpls = await async_client.get("/api/v1/workflows/templates", headers=h)
     assert tpls.status_code == 200, tpls.text
-    assert len(tpls.json()["templates"]) == 5
-    assert any(t["slug"] == "kb-digest" for t in tpls.json()["templates"])
-    assert any(t["slug"] == "low-stock-alert" for t in tpls.json()["templates"])
+    templates = tpls.json()["templates"]
+    assert len(templates) >= 5
+    assert any(t["slug"] == "kb-digest" for t in templates)
+    assert any(t["slug"] == "low-stock-alert" for t in templates)
+    # Phase 32C: plantillas de negocio proactivas
+    assert any(t["slug"] == "daily-executive-sales-brief" for t in templates)
+    assert any(t["slug"] == "new-business-customer-verification" for t in templates)
 
     installed = await async_client.post(
         "/api/v1/workflows/templates/kb-digest/install", headers={**_headers(org)}
