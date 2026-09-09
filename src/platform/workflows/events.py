@@ -267,6 +267,10 @@ async def workflow_event_consumer_loop() -> None:
                     await pubsub.unsubscribe(realtime.EVENTS_CHANNEL)
                 except Exception:  # noqa: BLE001
                     pass
+                try:
+                    await pubsub.aclose()  # libera la conexión del pool en cada ciclo
+                except Exception:  # noqa: BLE001
+                    pass
         except Exception as exc:  # noqa: BLE001
             logger.warning("workflow event consumer iteration failed", error=str(exc)[:200])
             await asyncio.sleep(5)
