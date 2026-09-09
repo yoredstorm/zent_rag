@@ -59,6 +59,7 @@ export default function MarketplaceProductsPage() {
   const [installs, setInstalls] = useState<Install[]>([]);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [loaded, setLoaded] = useState(false);
   const [lastResult, setLastResult] = useState<{ product: string; result: InstallResult } | null>(null);
 
   async function load() {
@@ -77,8 +78,10 @@ export default function MarketplaceProductsPage() {
       ]);
       setProducts(catalog.products || []);
       setInstalls(mine.installs || []);
+      setLoaded(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
+      setLoaded(true);
     }
   }
 
@@ -168,41 +171,48 @@ export default function MarketplaceProductsPage() {
         ))}
       </div>
 
-      {tab === "discover" &&
-        (products.length === 0 ? (
-          <SkeletonBlock className="h-28" />
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-testid="product-catalog">
-            {products.map((p) => {
-              const Icon = TYPE_ICON[p.product_type] ?? Package;
-              const model = (p.pricing as { model?: string })?.model ?? "FREE";
-              return (
-                <div key={p.id} className="flex flex-col rounded-md border border-border bg-surface p-4">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <Icon size={16} className="text-faint" aria-hidden />
-                      <span className={`badge ${TYPE_LABEL[p.product_type] ? "badge-info" : "badge-muted"}`}>
-                        {TYPE_LABEL[p.product_type] ?? p.product_type}
-                      </span>
-                      <span className="badge badge-success">{model}</span>
+      {tab === "discover" && (
+        <div data-testid="product-catalog" className="space-y-3">
+          {!loaded ? (
+            <SkeletonBlock className="h-28" />
+          ) : products.length === 0 ? (
+            <p className="rounded-md border border-border bg-surface p-6 text-sm text-muted">
+              El catálogo aún no tiene productos publicados. El Control Center los publica desde el Marketplace Factory.
+            </p>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {products.map((p) => {
+                const Icon = TYPE_ICON[p.product_type] ?? Package;
+                const model = (p.pricing as { model?: string })?.model ?? "FREE";
+                return (
+                  <div key={p.id} className="flex flex-col rounded-md border border-border bg-surface p-4">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Icon size={16} className="text-faint" aria-hidden />
+                        <span className={`badge ${TYPE_LABEL[p.product_type] ? "badge-info" : "badge-muted"}`}>
+                          {TYPE_LABEL[p.product_type] ?? p.product_type}
+                        </span>
+                        <span className="badge badge-success">{model}</span>
+                      </div>
                     </div>
+                    <p className="mt-2 text-sm font-semibold text-text">{p.name}</p>
+                    <p className="mt-1 line-clamp-3 flex-1 text-xs text-muted">{p.short_description || "—"}</p>
+                    <button
+                      type="button"
+                      className="btn btn-primary mt-3 min-h-9 gap-1.5 text-sm"
+                      disabled={busy === p.id}
+                      onClick={() => void install(p)}
+                    >
+                      <Plus size={15} aria-hidden />
+                      {busy === p.id ? "Instalando…" : "Instalar"}
+                    </button>
                   </div>
-                  <p className="mt-2 text-sm font-semibold text-text">{p.name}</p>
-                  <p className="mt-1 line-clamp-3 flex-1 text-xs text-muted">{p.short_description || "—"}</p>
-                  <button
-                    type="button"
-                    className="btn btn-primary mt-3 min-h-9 gap-1.5 text-sm"
-                    disabled={busy === p.id}
-                    onClick={() => void install(p)}
-                  >
-                    <Plus size={15} aria-hidden />
-                    {busy === p.id ? "Instalando…" : "Instalar"}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        ))}
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {tab === "installed" && (
         <div className="space-y-3" data-testid="product-installs">

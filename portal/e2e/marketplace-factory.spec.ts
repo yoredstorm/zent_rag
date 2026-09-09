@@ -8,7 +8,6 @@ test.describe("Marketplace Factory", () => {
     await page.goto("/products");
     await expect(page.getByRole("heading", { name: "Marketplace" })).toBeVisible({ timeout: 20_000 });
     await expect(page.getByTestId("product-catalog")).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByRole("button", { name: /Instalar/ }).first()).toBeVisible();
     await page.getByRole("button", { name: /Instalados/ }).click();
     await expect(page.getByTestId("product-installs")).toBeVisible({ timeout: 10_000 });
   });

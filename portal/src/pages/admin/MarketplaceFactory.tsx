@@ -323,9 +323,9 @@ export default function MarketplaceFactoryPage() {
             </button>
           </div>
           {products.length === 0 ? (
-            <p className="rounded-md border border-border bg-surface p-6 text-sm text-muted">
+            <div data-testid="factory-products" className="rounded-md border border-border bg-surface p-6 text-sm text-muted">
               Sin productos todavía. Crea el primero con el Product Studio.
-            </p>
+            </div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2" data-testid="factory-products">
               {products.map((p) => (
