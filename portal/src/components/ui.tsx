@@ -178,6 +178,7 @@ export function SuccessInline({ message, children }: InlineProps) {
 export function Spinner({ size = 16 }: { size?: number }) {
   return (
     <span
+      role="status"
       className="inline-block animate-spin rounded-full border-2 border-border-strong border-t-accent"
       style={{ width: size, height: size }}
       aria-label="Cargando"
@@ -187,7 +188,7 @@ export function Spinner({ size = 16 }: { size?: number }) {
 
 export function LoadingDots() {
   return (
-    <span className="inline-flex items-center gap-1" aria-label="Pensando">
+    <span className="inline-flex items-center gap-1" role="status" aria-label="Pensando">
       <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-muted" />
       <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-muted [animation-delay:150ms]" />
       <span className="h-1.5 w-1.5 animate-pulse-soft rounded-full bg-muted [animation-delay:300ms]" />

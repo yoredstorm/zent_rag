@@ -147,6 +147,7 @@ function PageFallback() {
   return (
     <div className="flex justify-center py-16">
       <span
+        role="status"
         className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-border-strong border-t-accent"
         aria-label="Cargando"
       />
@@ -421,6 +422,7 @@ function ProtectedLayout() {
     return (
       <div className="flex min-h-[100dvh] items-center justify-center gap-3 text-muted">
         <span
+          role="status"
           className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-border-strong border-t-accent"
           aria-label="Cargando"
         />
