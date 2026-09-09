@@ -245,6 +245,10 @@ async def workflow_event_consumer_loop() -> None:
                         message = await asyncio.wait_for(it.__anext__(), timeout=5.0)
                     except asyncio.TimeoutError:
                         continue
+                    except StopAsyncIteration:
+                        # El pubsub perdió la conexión (idle/reconnect) → el
+                        # finally cierra y el bucle externo reconecta en silencio.
+                        break
                     if message.get("type") != "message":
                         continue
                     try:

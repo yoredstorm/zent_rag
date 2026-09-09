@@ -323,6 +323,8 @@ async def realtime_consumer_loop() -> None:
                         message = await asyncio.wait_for(it.__anext__(), timeout=5.0)
                     except asyncio.TimeoutError:
                         continue
+                    except StopAsyncIteration:
+                        break
                     if message.get("type") != "message":
                         continue
                     try:
