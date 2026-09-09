@@ -5,17 +5,17 @@ import { useAuth } from "../../auth";
 import { PageHeader } from "../../components/ui";
 
 const IMPACT = [
-  "demo documents",
-  "demo vectors",
-  "demo catalog",
-  "demo semantic mappings",
-  "demo glossary",
-  "demo verified queries",
-  "demo agents",
-  "demo entities",
-  "demo relationships",
-  "demo context graph",
-  "demo source records",
+  "documentos de demo",
+  "vectores de demo",
+  "catálogo de demo",
+  "mapeos semánticos de demo",
+  "glosario de demo",
+  "consultas verificadas de demo",
+  "agentes de demo",
+  "entidades de demo",
+  "relaciones de demo",
+  "grafo de contexto de demo",
+  "registros de fuentes de demo",
 ];
 
 export default function TransitionWizardPage() {
@@ -41,7 +41,7 @@ export default function TransitionWizardPage() {
         body: JSON.stringify({
           mode,
           confirmation: mode === "purge" ? confirm : undefined,
-          name: "My Business",
+          name: "Mi negocio",
         }),
       });
       if (data.workspace?.id) {
@@ -64,29 +64,29 @@ export default function TransitionWizardPage() {
   if (welcome) {
     return (
       <div className="mx-auto max-w-xl space-y-4 p-6">
-        <h1 className="text-2xl font-semibold">Welcome to your business workspace.</h1>
-        <p className="text-muted">How would you like to begin?</p>
+        <h1 className="text-2xl font-semibold">Bienvenido a tu espacio de negocio.</h1>
+        <p className="text-muted">¿Cómo quieres empezar?</p>
         <div className="grid gap-2">
           <Link className="btn btn-primary" to="/knowledge/add">
-            Connect Database
+            Conectar base de datos
           </Link>
           <Link className="btn btn-secondary" to="/knowledge/add">
-            Upload Files
+            Subir archivos
           </Link>
           <Link className="btn btn-secondary" to="/knowledge/add">
-            Import Spreadsheet
+            Importar hoja de cálculo
           </Link>
           <Link className="btn btn-secondary" to="/knowledge/add">
-            Connect Google Drive
+            Conectar Google Drive
           </Link>
           <Link className="btn btn-secondary" to="/knowledge/add">
-            Connect Website
+            Conectar sitio web
           </Link>
           <Link className="btn btn-secondary" to="/knowledge/add">
-            Connect API
+            Conectar API
           </Link>
           <Link className="btn btn-primary" to="/knowledge/database">
-            Create a database with Zent
+            Crear una base de datos con Zent
           </Link>
         </div>
       </div>
@@ -95,8 +95,8 @@ export default function TransitionWizardPage() {
 
   return (
     <div className="mx-auto max-w-xl space-y-4 p-6">
-      <PageHeader title="Start with My Data" />
-      <p className="text-sm text-muted">Choose transition mode</p>
+      <PageHeader title="Empezar con mis datos" />
+      <p className="text-sm text-muted">Elige cómo pasar a tus datos</p>
       <label className="flex gap-2 rounded-md border border-border p-3">
         <input
           type="radio"
@@ -104,8 +104,8 @@ export default function TransitionWizardPage() {
           onChange={() => setMode("new_workspace")}
         />
         <span>
-          <strong>Create a clean business workspace</strong>
-          <span className="block text-xs text-muted">Recommended. Demo stays for reference.</span>
+          <strong>Crear un espacio de negocio vacío</strong>
+          <span className="block text-xs text-muted">Recomendado. El demo queda para consulta.</span>
         </span>
       </label>
       <label className="flex gap-2 rounded-md border border-border p-3">
@@ -114,17 +114,17 @@ export default function TransitionWizardPage() {
           checked={mode === "purge"}
           onChange={() => setMode("purge")}
         />
-        <span>Replace demo completely</span>
+        <span>Reemplazar el demo por completo</span>
       </label>
       {mode === "purge" && (
         <div className="space-y-2 text-sm">
-          <p>Will remove:</p>
+          <p>Se eliminará:</p>
           <ul className="list-disc pl-5 text-muted">
             {IMPACT.map((item) => (
               <li key={item}>{item}</li>
             ))}
           </ul>
-          <p>Type DELETE DEMO to confirm.</p>
+          <p>Escribe DELETE DEMO para confirmar.</p>
           <input
             className="input"
             value={confirm}
@@ -139,7 +139,7 @@ export default function TransitionWizardPage() {
         disabled={busy || (mode === "purge" && confirm !== "DELETE DEMO")}
         onClick={() => void submit()}
       >
-        Continue
+        Continuar
       </button>
     </div>
   );

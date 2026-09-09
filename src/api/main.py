@@ -86,6 +86,7 @@ from src.api.routes.soc import router as soc_router
 from src.api.routes.sources import router as sources_router
 from src.api.routes.sso import router as sso_router
 from src.api.routes.training import router as training_router
+from src.api.routes.workflows import public_router as workflows_public_router
 from src.api.routes.workflows import router as workflows_router
 from src.api.routes.workspaces import router as workspaces_router
 from src.api.schemas import ErrorResponse
@@ -158,6 +159,7 @@ async def lifespan(app: FastAPI):
             _knowledge_refresh_task = asyncio.create_task(_knowledge_refresh_loop())
             _catalog_discovery_task = asyncio.create_task(_catalog_discovery_loop())
             _spider_task = asyncio.create_task(_spider_loop())
+            _wf_sched_task = asyncio.create_task(_workflow_v2_scheduler_loop())
             yield
         finally:
             _region_health_task.cancel()
@@ -168,6 +170,7 @@ async def lifespan(app: FastAPI):
             _knowledge_refresh_task.cancel()
             _catalog_discovery_task.cancel()
             _spider_task.cancel()
+            _wf_sched_task.cancel()
             await _run_shutdown()
 
 
@@ -182,6 +185,16 @@ async def _webhook_deliveries_loop() -> None:
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Webhook deliveries loop error", error=str(exc)[:150])
             await asyncio.sleep(30)
+    except asyncio.CancelledError:
+        pass
+
+
+async def _workflow_v2_scheduler_loop() -> None:
+    """Scheduler de workflows v2 (schedule every_minutes)."""
+    try:
+        from src.platform.workflows.engine import workflow_v2_scheduler_loop
+
+        await workflow_v2_scheduler_loop()
     except asyncio.CancelledError:
         pass
 
@@ -472,6 +485,7 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
             "X-Billing-Interval",
             "X-Organization-Name",
             "Idempotency-Key",
+            "X-Zent-Workflow-Secret",
         ],
         expose_headers=[
             "X-Trace-Id",
@@ -541,6 +555,7 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(knowledge_hub_router)
     new_app.include_router(chat_insights_router)
     new_app.include_router(workflows_router)
+    new_app.include_router(workflows_public_router)
     new_app.include_router(copilot_router)
     new_app.include_router(releases_router)
     new_app.include_router(migrations_router)

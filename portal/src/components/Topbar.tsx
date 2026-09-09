@@ -2,6 +2,7 @@ import {
   Bell,
   CaretDown,
   CircleNotch,
+  GraduationCap,
   MagnifyingGlass,
   Question,
   SignOut,
@@ -13,6 +14,7 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { openCommandPalette } from "./CommandPalette";
 import { ThemeToggle } from "./ThemeToggle";
+import { requestProductTourStart } from "../lib/productTour";
 
 const ROUTE_TITLES: Record<string, string> = {
   "/": "Panel general",
@@ -141,6 +143,7 @@ export function Topbar() {
           className="inline-flex h-9 items-center gap-2 rounded-sm border border-border bg-soft px-2.5 text-xs text-muted transition-colors duration-150 hover:border-border-strong hover:text-text"
           onClick={() => openCommandPalette("tenant")}
           aria-label="Buscar (Ctrl+K)"
+          data-tour="command-palette"
         >
           <MagnifyingGlass size={14} aria-hidden />
           <span className="hidden sm:inline">Buscar</span>
@@ -199,6 +202,7 @@ export function Topbar() {
             className="flex items-center gap-1.5 rounded-sm p-1 text-text transition-colors duration-150 hover:bg-soft"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
+            aria-label="Cuenta"
             onClick={() => setMenuOpen((v) => !v)}
           >
             <span className="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-soft text-xs font-semibold text-muted">
@@ -215,6 +219,18 @@ export function Topbar() {
                 <p className="truncate text-[13px] font-medium text-text">{email || "Cuenta"}</p>
                 <p className="text-[11px] text-faint">Workspace de {session?.companyName || "tu organización"}</p>
               </div>
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-muted transition-colors duration-150 hover:bg-soft hover:text-text"
+                onClick={() => {
+                  setMenuOpen(false);
+                  requestProductTourStart();
+                }}
+              >
+                <GraduationCap size={15} aria-hidden />
+                Ver tutorial
+              </button>
               <button
                 type="button"
                 role="menuitem"

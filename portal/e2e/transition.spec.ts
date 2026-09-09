@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { loginAsTenant } from "./fixtures";
+import { loginAsTenant, suppressProductTour, completeStartMode } from "./fixtures";
 
 test.describe("Phase 31C trial transition", () => {
   test("signup sees demo banner and can start with my data", async ({ page }) => {
@@ -7,6 +7,7 @@ test.describe("Phase 31C trial transition", () => {
     const email = `e2e-31c-${stamp}@example.com`;
     const password = "Onboard123!";
 
+    await suppressProductTour(page);
     await page.goto("/signup");
     await page.getByLabel("Nombre de empresa").fill(`E2E Transition ${stamp}`);
     await page.getByLabel("Email").fill(email);
@@ -14,25 +15,26 @@ test.describe("Phase 31C trial transition", () => {
     await page.getByLabel("Confirmar contraseña").fill(password);
     await page.getByRole("button", { name: "Empezar trial" }).click();
 
-    await expect(page).toHaveURL(/\/$/, { timeout: 30_000 });
+    await completeStartMode(page, "demo");
+    await expect(page.getByTestId("demo-banner")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("Estás explorando Zent con datos de prueba.")).toBeVisible();
     const keyDialog = page.getByRole("dialog", { name: "Tu API key" });
     if (await keyDialog.isVisible().catch(() => false)) {
       await page.getByRole("button", { name: "Ya la guardé" }).click();
+      await expect(keyDialog).toBeHidden();
     }
-
-    await expect(page.getByTestId("demo-banner")).toBeVisible({ timeout: 20_000 });
-    await page.getByRole("link", { name: "Start with My Data" }).click();
-    await expect(page.getByText("Create a clean business workspace")).toBeVisible();
-    await page.getByRole("button", { name: "Continue" }).click();
-    await expect(page.getByText("Welcome to your business workspace.")).toBeVisible();
-    await expect(page.getByRole("link", { name: "Create a database with Zent" })).toBeVisible();
+    await page.getByRole("link", { name: "Empezar con mis datos" }).click();
+    await expect(page.getByText("Crear un espacio de negocio vacío")).toBeVisible();
+    await page.getByRole("button", { name: "Continuar" }).click();
+    await expect(page.getByText("Bienvenido a tu espacio de negocio.")).toBeVisible();
+    await expect(page.getByRole("link", { name: "Crear una base de datos con Zent" })).toBeVisible();
   });
 
   test("logged-in tenant can open transition page", async ({ page }) => {
     await loginAsTenant(page);
     await page.goto("/onboarding/transition");
     await expect(
-      page.getByText(/Start with My Data|Welcome to your business workspace/i)
+      page.getByText(/Empezar con mis datos|Bienvenido a tu espacio de negocio/i)
     ).toBeVisible({ timeout: 15000 });
   });
 });

@@ -1,7 +1,7 @@
 import { SignIn } from "@phosphor-icons/react";
 import { FormEvent, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
-import { api } from "../api";
+import { api, afterLoginPath } from "../api";
 import { useAuth } from "../auth";
 import { usePlatformAuth } from "../platformAuth";
 import { Spinner } from "../components/ui";
@@ -17,7 +17,7 @@ export default function LoginPage() {
   const [forgotOpen, setForgotOpen] = useState(false);
   const [forgotMsg, setForgotMsg] = useState("");
 
-  if (ready && session) return <Navigate to="/" replace />;
+  if (ready && session) return <Navigate to={afterLoginPath(session)} replace />;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();

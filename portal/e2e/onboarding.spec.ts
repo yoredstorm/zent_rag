@@ -1,6 +1,7 @@
 import path from "path";
 import { fileURLToPath } from "url";
 import { expect, test } from "@playwright/test";
+import { suppressProductTour, completeStartMode } from "./fixtures";
 
 const CSV = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures", "productos.csv");
 
@@ -10,6 +11,7 @@ test.describe("Data onboarding wizard — org nueva CSV", () => {
     const email = `e2e-onb-${stamp}@example.com`;
     const password = "Onboard123!";
 
+    await suppressProductTour(page);
     await page.goto("/signup");
     await page.getByLabel("Nombre de empresa").fill(`E2E Onboarding ${stamp}`);
     await page.getByLabel("Email").fill(email);
@@ -17,7 +19,7 @@ test.describe("Data onboarding wizard — org nueva CSV", () => {
     await page.getByLabel("Confirmar contraseña").fill(password);
     await page.getByRole("button", { name: "Empezar trial" }).click();
 
-    await expect(page).toHaveURL(/\/$/, { timeout: 30_000 });
+    await completeStartMode(page, "blank");
     const keyDialog = page.getByRole("dialog", { name: "Tu API key" });
     await expect(keyDialog).toBeVisible({ timeout: 20_000 });
     await page.getByRole("button", { name: "Ya la guardé" }).click();
@@ -26,6 +28,7 @@ test.describe("Data onboarding wizard — org nueva CSV", () => {
     await expect(page.getByRole("heading", { name: "Bienvenido a Zent" })).toBeVisible({
       timeout: 20_000,
     });
+    await expect(page.getByTestId("demo-banner")).toHaveCount(0);
     await page.getByRole("link", { name: "Conectar mis datos" }).click();
     await expect(page).toHaveURL(/\/knowledge\/add/);
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { api, platformApi } from "./api";
+import { afterLoginPath, api, platformApi } from "./api";
 import { ApiError, AUTH_EXPIRED_EVENT } from "./lib/errors";
 
 function jsonResponse(
@@ -122,5 +122,28 @@ describe("api() — manejo de errores y headers", () => {
     const headers = new Headers((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].headers);
     expect(headers.get("X-Organization-Id")).toBeNull();
     expect(headers.get("Authorization")).toBe("Bearer t");
+  });
+});
+
+describe("afterLoginPath", () => {
+  it("manda al chooser cuando el trial aún no eligió modo", () => {
+    expect(
+      afterLoginPath({
+        organizationId: "org-1",
+        companyName: "Acme",
+        needsStartMode: true,
+      })
+    ).toBe("/onboarding/start");
+  });
+
+  it("manda al dashboard cuando ya hay workspace", () => {
+    expect(
+      afterLoginPath({
+        organizationId: "org-1",
+        companyName: "Acme",
+        workspaceId: "ws-1",
+        needsStartMode: false,
+      })
+    ).toBe("/");
   });
 });

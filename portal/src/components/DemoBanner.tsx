@@ -9,11 +9,11 @@ export function DemoBanner() {
       className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-accent-soft px-4 py-2 text-sm"
       data-testid="demo-banner"
     >
-      <p className="text-text">You are exploring Zent with demo data.</p>
+      <p className="text-text">Estás explorando Zent con datos de prueba.</p>
       <div className="flex gap-2">
-        <span className="btn btn-secondary min-h-9 px-3 text-xs">Continue Demo</span>
+        <span className="btn btn-secondary min-h-9 px-3 text-xs">Continuar demo</span>
         <Link to="/onboarding/transition" className="btn btn-primary min-h-9 px-3 text-xs">
-          Start with My Data
+          Empezar con mis datos
         </Link>
       </div>
     </div>

@@ -116,7 +116,52 @@ def test_farmacia_demo_schema_allows_seed_org_for_trial_tenant(monkeypatch) -> N
     monkeypatch.setattr(settings, "DEMO_SQL_SCHEMAS", "farmacia")
     trial = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
     sql = "SELECT p.name FROM farmacia.products AS p LIMIT 10"
-    out = _expert()._inject_organization_filter(sql, trial, _SOURCES)
+    expert = _expert()
+    expert._query_workspace_kind = "demo"
+    out = expert._inject_organization_filter(sql, trial, _SOURCES)
     assert str(trial) in out
     assert str(_OID) in out
     assert "OR" in out
+
+
+def test_business_workspace_does_not_or_seed_org(monkeypatch) -> None:
+    from src.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "SEED_DEMO_DATA", True)
+    monkeypatch.setattr(settings, "DEMO_SQL_SCHEMAS", "farmacia")
+    trial = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    sql = "SELECT p.name FROM farmacia.products AS p LIMIT 10"
+    expert = _expert()
+    expert._query_workspace_kind = "business"
+    out = expert._inject_organization_filter(sql, trial, _SOURCES)
+    assert str(trial) in out
+    assert str(_OID) not in out
+    assert " OR " not in out
+
+
+def test_missing_workspace_kind_does_not_or_seed_org(monkeypatch) -> None:
+    from src.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "SEED_DEMO_DATA", True)
+    monkeypatch.setattr(settings, "DEMO_SQL_SCHEMAS", "farmacia")
+    trial = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+    sql = "SELECT p.name FROM farmacia.products AS p LIMIT 10"
+    out = _expert()._inject_organization_filter(sql, trial, _SOURCES)
+    assert str(trial) in out
+    assert str(_OID) not in out
+
+
+def test_filter_demo_sql_sources_hidden_unless_demo_workspace(monkeypatch) -> None:
+    from src.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "DEMO_SQL_SCHEMAS", "farmacia")
+    expert = _expert()
+    expert._query_workspace_kind = "business"
+    hidden = expert._filter_demo_sql_sources(_SOURCES)
+    assert hidden == []
+    expert._query_workspace_kind = "demo"
+    shown = expert._filter_demo_sql_sources(_SOURCES)
+    assert shown == _SOURCES

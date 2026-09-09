@@ -20,7 +20,12 @@ export type Session = {
   permissions?: string[];
   workspaceId?: string;
   workspaceKind?: string;
+  needsStartMode?: boolean;
 };
+
+export function afterLoginPath(session: Session | null): string {
+  return session?.needsStartMode ? "/onboarding/start" : "/";
+}
 
 function readToken(): string | undefined {
   const current = sessionStorage.getItem(TOKEN_KEY);
@@ -73,7 +78,17 @@ export function loadSession(): Session | null {
   const token = readToken();
   const workspaceId = localStorage.getItem(WS_KEY) || undefined;
   const workspaceKind = localStorage.getItem(WS_KIND_KEY) || undefined;
-  return { token, organizationId, companyName, email, roles, permissions, workspaceId, workspaceKind };
+  return {
+    token,
+    organizationId,
+    companyName,
+    email,
+    roles,
+    permissions,
+    workspaceId,
+    workspaceKind,
+    needsStartMode: !workspaceId,
+  };
 }
 
 export function saveSession(session: Session) {

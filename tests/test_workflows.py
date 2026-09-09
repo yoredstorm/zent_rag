@@ -235,41 +235,21 @@ async def test_retry_and_condition_false(async_client: AsyncClient) -> None:
     )
     wid = created.json()["workflow_id"]
 
-    # Condición false → el run marca fail (on_error default fail).
+    # Condición false → skipped (no tumba el run). Notify top-level sí corre.
     result = await async_client.post(
         f"/api/v1/workflows/{wid}/run",
         headers={**_headers(org), "Idempotency-Key": f"wf-tr-{uuid4().hex}"},
         json={"payload": {"level": "3"}},
     )
     assert result.status_code == 200, result.text
-    assert result.json()["status"] == "failed"
+    assert result.json()["status"] == "succeeded"
 
     detail = await async_client.get(f"/api/v1/workflows/runs/{result.json()['run_id']}", headers=h)
     steps_detail = detail.json()["steps"]
-    # Paso 0: falló la 1ª vez y tuvo retry → succeeded con retries=1.
     assert steps_detail[0]["status"] == "succeeded"
     assert steps_detail[0]["retries"] == 1
-    # Condición falsa: el paso condition devuelve result False, no error —
-    # el paso se marca failed cuando su output.result es False.
-    assert steps_detail[1]["status"] == "failed"
-
-    # on_error continue → sigue al paso siguiente.
-    steps[1]["on_error"] = "continue"
-    updated = await async_client.patch(
-        f"/api/v1/workflows/{wid}",
-        headers={**_headers(org), "Idempotency-Key": f"wf-tu-{uuid4().hex}"},
-        json={"steps": steps},
-    )
-    assert updated.status_code == 200
-    result2 = await async_client.post(
-        f"/api/v1/workflows/{wid}/run",
-        headers={**_headers(org), "Idempotency-Key": f"wf-tr2-{uuid4().hex}"},
-        json={"payload": {"level": "3"}},
-    )
-    assert result2.json()["status"] == "succeeded"
-    detail2 = await async_client.get(f"/api/v1/workflows/runs/{result2.json()['run_id']}", headers=h)
-    assert detail2.json()["steps"][1]["status"] == "failed"  # el paso falló pero continuó
-    assert detail2.json()["steps"][2]["status"] == "succeeded"  # notify sí se ejecutó
+    assert steps_detail[1]["status"] == "skipped"
+    assert steps_detail[2]["status"] == "succeeded"
 
 
 @pytest.mark.asyncio
@@ -280,8 +260,9 @@ async def test_templates_and_paused_guard(async_client: AsyncClient) -> None:
 
     tpls = await async_client.get("/api/v1/workflows/templates", headers=h)
     assert tpls.status_code == 200, tpls.text
-    assert len(tpls.json()["templates"]) == 4
+    assert len(tpls.json()["templates"]) == 5
     assert any(t["slug"] == "kb-digest" for t in tpls.json()["templates"])
+    assert any(t["slug"] == "low-stock-alert" for t in tpls.json()["templates"])
 
     installed = await async_client.post(
         "/api/v1/workflows/templates/kb-digest/install", headers={**_headers(org)}
@@ -329,3 +310,316 @@ async def test_platform_dashboard(async_client: AsyncClient) -> None:
     assert body["avg_duration_ms"] >= 0
     assert any(t["trigger_type"] == "event" for t in body["by_trigger"])
     assert any(r["workflow"] == "Dash Flow" for r in body["recent_runs"])
+
+
+@pytest.mark.asyncio
+async def test_condition_then_else_branches(async_client: AsyncClient) -> None:
+    org = await _create_org(async_client, "WF Branch Org")
+    org["session"] = await _owner_session(async_client, org["organization_id"])
+    h = _headers(org)
+    steps = [
+        {
+            "type": "condition",
+            "config": {"field": "trigger.stock", "operator": "<", "value": "10"},
+            "then": [
+                {"type": "notify", "config": {"channel": "in_app", "title": "Stock bajo", "message": "bajo"}}
+            ],
+            "else": [
+                {"type": "notify", "config": {"channel": "in_app", "title": "Stock OK", "message": "ok"}}
+            ],
+        }
+    ]
+    created = await async_client.post(
+        "/api/v1/workflows",
+        headers={**_headers(org), "Idempotency-Key": f"wf-br-{uuid4().hex}"},
+        json={"name": "Ramas", "steps": steps},
+    )
+    wid = created.json()["workflow_id"]
+
+    low = await async_client.post(
+        f"/api/v1/workflows/{wid}/run",
+        headers={**_headers(org), "Idempotency-Key": f"wf-brl-{uuid4().hex}"},
+        json={"payload": {"stock": "3"}},
+    )
+    assert low.json()["status"] == "succeeded"
+    d1 = await async_client.get(f"/api/v1/workflows/runs/{low.json()['run_id']}", headers=h)
+    titles = [s["input"].get("title") for s in d1.json()["steps"] if s["step_type"] == "notify"]
+    assert titles == ["Stock bajo"]
+    assert d1.json()["steps"][0]["status"] == "succeeded"
+
+    ok = await async_client.post(
+        f"/api/v1/workflows/{wid}/run",
+        headers={**_headers(org), "Idempotency-Key": f"wf-bro-{uuid4().hex}"},
+        json={"payload": {"stock": "40"}},
+    )
+    assert ok.json()["status"] == "succeeded"
+    d2 = await async_client.get(f"/api/v1/workflows/runs/{ok.json()['run_id']}", headers=h)
+    cond = d2.json()["steps"][0]
+    assert cond["status"] == "skipped"
+    titles2 = [s["input"].get("title") for s in d2.json()["steps"] if s["step_type"] == "notify"]
+    assert titles2 == ["Stock OK"]
+
+
+@pytest.mark.asyncio
+async def test_api_call_allowlist_and_json_path(async_client: AsyncClient, monkeypatch) -> None:
+    org = await _create_org(async_client, "WF Api Org")
+    org["session"] = await _owner_session(async_client, org["organization_id"])
+    h = _headers(org)
+
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "UPDATE organizations SET config_json = CAST(:cfg AS jsonb) WHERE id = :oid"
+            ),
+            {
+                "oid": UUID(org["organization_id"]),
+                "cfg": '{"agent": {"api_allowlist": ["stock.example.com"]}}',
+            },
+        )
+        await session.commit()
+    finally:
+        await session.close()
+
+    class _Resp:
+        status_code = 200
+        text = '{"quantity": 3, "sku": "ABC"}'
+
+    class _Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_a):
+            return False
+
+        async def get(self, url):
+            assert "stock.example.com" in url
+            return _Resp()
+
+        async def post(self, url, json=None):
+            return _Resp()
+
+    import src.platform.workflows.engine as wf_engine
+    from src.agents.tools.tools_builtin import CallApiTool
+
+    async def _fake_org_cfg(_oid):
+        return {"agent": {"api_allowlist": ["stock.example.com"]}}
+
+    monkeypatch.setattr(wf_engine, "_org_config", _fake_org_cfg)
+    monkeypatch.setattr(CallApiTool, "_ssrf_check", classmethod(lambda cls, host: None))
+    monkeypatch.setattr(wf_engine.httpx, "AsyncClient", _Client)
+
+    created = await async_client.post(
+        "/api/v1/workflows",
+        headers={**_headers(org), "Idempotency-Key": f"wf-api-{uuid4().hex}"},
+        json={
+            "name": "API stock",
+            "steps": [
+                {
+                    "type": "api_call",
+                    "config": {
+                        "url": "https://stock.example.com/qty",
+                        "method": "GET",
+                        "json_path": "quantity",
+                    },
+                }
+            ],
+        },
+    )
+    wid = created.json()["workflow_id"]
+    result = await async_client.post(
+        f"/api/v1/workflows/{wid}/run",
+        headers={**_headers(org), "Idempotency-Key": f"wf-apir-{uuid4().hex}"},
+        json={"payload": {}},
+    )
+    assert result.json()["status"] == "succeeded", result.text
+    detail = await async_client.get(f"/api/v1/workflows/runs/{result.json()['run_id']}", headers=h)
+    out = detail.json()["steps"][0]["output"]
+    assert out["status_code"] == 200
+    assert out["extracted"] == 3
+
+    blocked = await async_client.post(
+        "/api/v1/workflows",
+        headers={**_headers(org), "Idempotency-Key": f"wf-ssrf-{uuid4().hex}"},
+        json={
+            "name": "SSRF",
+            "steps": [{"type": "api_call", "config": {"url": "http://127.0.0.1/secret"}}],
+        },
+    )
+    run_b = await async_client.post(
+        f"/api/v1/workflows/{blocked.json()['workflow_id']}/run",
+        headers={**_headers(org), "Idempotency-Key": f"wf-ssrfr-{uuid4().hex}"},
+        json={"payload": {}},
+    )
+    assert run_b.json()["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_kb_query_foreign_kb_rejected(async_client: AsyncClient) -> None:
+    org_a = await _create_org(async_client, "WF Kb A")
+    org_b = await _create_org(async_client, "WF Kb B")
+    org_a["session"] = await _owner_session(async_client, org_a["organization_id"])
+
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    foreign_id = uuid4()
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "INSERT INTO knowledge_bases (id, organization_id, name) "
+                "VALUES (:id, :oid, 'KB B')"
+            ),
+            {"id": foreign_id, "oid": UUID(org_b["organization_id"])},
+        )
+        await session.commit()
+    finally:
+        await session.close()
+
+    created = await async_client.post(
+        "/api/v1/workflows",
+        headers={**_headers(org_a), "Idempotency-Key": f"wf-kbf-{uuid4().hex}"},
+        json={
+            "name": "KB ajena",
+            "steps": [
+                {
+                    "type": "kb_query",
+                    "config": {"query": "stock", "knowledge_base_id": str(foreign_id)},
+                }
+            ],
+        },
+    )
+    run = await async_client.post(
+        f"/api/v1/workflows/{created.json()['workflow_id']}/run",
+        headers={**_headers(org_a), "Idempotency-Key": f"wf-kbfr-{uuid4().hex}"},
+        json={"payload": {}},
+    )
+    assert run.json()["status"] == "failed"
+    detail = await async_client.get(
+        f"/api/v1/workflows/runs/{run.json()['run_id']}", headers=_headers(org_a)
+    )
+    assert "no pertenece" in (detail.json()["steps"][0]["error"] or "")
+
+
+@pytest.mark.asyncio
+async def test_notify_channel_webhook_skips_in_app(async_client: AsyncClient) -> None:
+    org = await _create_org(async_client, "WF Chan Org")
+    org["session"] = await _owner_session(async_client, org["organization_id"])
+
+    created = await async_client.post(
+        "/api/v1/workflows",
+        headers={**_headers(org), "Idempotency-Key": f"wf-ch-{uuid4().hex}"},
+        json={
+            "name": "Solo webhook",
+            "steps": [
+                {
+                    "type": "notify",
+                    "config": {
+                        "channel": "webhook",
+                        "title": "WF webhook only",
+                        "message": "hola",
+                        "data": {"sku": "ABC", "stock": 3},
+                    },
+                }
+            ],
+        },
+    )
+    await async_client.post(
+        f"/api/v1/workflows/{created.json()['workflow_id']}/run",
+        headers={**_headers(org), "Idempotency-Key": f"wf-chr-{uuid4().hex}"},
+        json={"payload": {}},
+    )
+
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    session = await get_async_session()
+    try:
+        n = (
+            await session.execute(
+                text(
+                    "SELECT COUNT(*) FROM tenant_notifications "
+                    "WHERE organization_id = :oid AND title = 'WF webhook only'"
+                ),
+                {"oid": UUID(org["organization_id"])},
+            )
+        ).scalar()
+    finally:
+        await session.close()
+    assert int(n) == 0
+
+
+@pytest.mark.asyncio
+async def test_public_hook_secret_and_scheduler(async_client: AsyncClient) -> None:
+    org = await _create_org(async_client, "WF Hook Org")
+    org["session"] = await _owner_session(async_client, org["organization_id"])
+    h = _headers(org)
+
+    created = await async_client.post(
+        "/api/v1/workflows",
+        headers={**_headers(org), "Idempotency-Key": f"wf-hk-{uuid4().hex}"},
+        json={
+            "name": "Inbound",
+            "trigger_type": "webhook",
+            "steps": [
+                {"type": "notify", "config": {"channel": "in_app", "title": "hook", "message": "x"}}
+            ],
+        },
+    )
+    assert created.status_code == 200, created.text
+    body = created.json()
+    wid = body["workflow_id"]
+    secret = body["hook_secret"]
+    assert secret
+    detail = await async_client.get(f"/api/v1/workflows/{wid}", headers=h)
+    assert detail.json()["hook_url"].endswith(f"/api/v1/public/workflows/{wid}/hook")
+    assert "hook_secret" not in detail.json()
+    assert detail.json()["has_hook_secret"] is True
+
+    await async_client.post(f"/api/v1/workflows/{wid}/activate", headers={**_headers(org)})
+
+    denied = await async_client.post(
+        f"/api/v1/public/workflows/{wid}/hook", json={"sku": "ABC"}
+    )
+    assert denied.status_code == 401
+
+    ok = await async_client.post(
+        f"/api/v1/public/workflows/{wid}/hook",
+        headers={"X-Zent-Workflow-Secret": secret},
+        json={"sku": "ABC"},
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["status"] == "succeeded"
+
+    sched = await async_client.post(
+        "/api/v1/workflows",
+        headers={**_headers(org), "Idempotency-Key": f"wf-sc-{uuid4().hex}"},
+        json={
+            "name": "Cada 5",
+            "trigger_type": "schedule",
+            "trigger_config": {"every_minutes": 5},
+            "steps": [
+                {"type": "notify", "config": {"channel": "in_app", "title": "tick", "message": "t"}}
+            ],
+        },
+    )
+    swid = sched.json()["workflow_id"]
+    await async_client.post(f"/api/v1/workflows/{swid}/activate", headers={**_headers(org)})
+
+    from src.platform.workflows.engine import run_due_scheduled_workflows
+
+    n1 = await run_due_scheduled_workflows(organization_id=UUID(org["organization_id"]))
+    assert n1 >= 1
+    n2 = await run_due_scheduled_workflows(organization_id=UUID(org["organization_id"]))
+    assert n2 == 0
+

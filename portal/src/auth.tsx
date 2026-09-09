@@ -69,6 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           permissions?: string[];
           active_workspace_id?: string | null;
           workspace_kind?: string | null;
+          needs_start_mode?: boolean;
         }>("/api/v1/auth/me", {
           token: current.token,
           organizationId: current.organizationId,
@@ -81,8 +82,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           email: me.email || current.email,
           roles: me.roles || [],
           permissions: me.permissions || [],
-          workspaceId: me.active_workspace_id || current.workspaceId,
-          workspaceKind: me.workspace_kind || current.workspaceKind,
+          workspaceId: me.active_workspace_id || undefined,
+          workspaceKind: me.workspace_kind || undefined,
+          needsStartMode: Boolean(me.needs_start_mode),
         };
         saveSession(next);
         setSession(next);
@@ -116,6 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       permissions?: string[];
       active_workspace_id?: string | null;
       workspace_kind?: string | null;
+      needs_start_mode?: boolean;
     }>(
       "/api/v1/auth/me",
       {
@@ -127,6 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       permissions: [] as string[],
       active_workspace_id: null,
       workspace_kind: null,
+      needs_start_mode: false,
     }));
     const next: Session = {
       token: data.access_token,
@@ -137,6 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       permissions: me.permissions || [],
       workspaceId: me.active_workspace_id || undefined,
       workspaceKind: me.workspace_kind || undefined,
+      needsStartMode: Boolean(me.needs_start_mode),
     };
     saveSession(next);
     setSession(next);
@@ -166,6 +171,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         permissions?: string[];
         active_workspace_id?: string | null;
         workspace_kind?: string | null;
+        needs_start_mode?: boolean;
       }>("/api/v1/auth/me", {
         token: data.access_token,
         organizationId: data.organization_id,
@@ -174,6 +180,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         permissions: [] as string[],
         active_workspace_id: null,
         workspace_kind: null,
+        needs_start_mode: true,
       }));
       const next: Session = {
         token: data.access_token,
@@ -184,6 +191,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         permissions: me.permissions || [],
         workspaceId: me.active_workspace_id || undefined,
         workspaceKind: me.workspace_kind || undefined,
+        needsStartMode: Boolean(me.needs_start_mode),
       };
       saveSession(next);
       setSession(next);

@@ -2,6 +2,7 @@ import { RocketLaunch } from "@phosphor-icons/react";
 import { FormEvent, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { useAuth } from "../auth";
+import { afterLoginPath } from "../api";
 import { Spinner } from "../components/ui";
 
 function passwordStrength(pw: string): { label: string; pct: number; color: string } {
@@ -26,7 +27,7 @@ export default function SignupPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  if (ready && session) return <Navigate to="/" replace />;
+  if (ready && session) return <Navigate to={afterLoginPath(session)} replace />;
 
   const strength = passwordStrength(password);
   const mismatch = confirm.length > 0 && password !== confirm;

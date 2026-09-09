@@ -227,25 +227,6 @@ async def signup(
     except ValueError as exc:
         raise HTTPException(500, str(exc)) from exc
 
-    from src.infrastructure.postgres.relational_db import PostgresWorkspaceRepository
-    from src.platform.workspaces.context import set_active_workspace
-    from src.platform.workspaces.service import ensure_demo_workspace
-
-    demo_ws = await ensure_demo_workspace(
-        PostgresWorkspaceRepository(), organization_id, created_by=user.id
-    )
-    await set_active_workspace(organization_id, user.id, demo_ws.id)
-    try:
-        from src.verticals.demo_farmacia.provisioning import provision_demo_kb
-
-        await provision_demo_kb(organization_id, workspace_id=demo_ws.id)
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "Demo provisioning skipped on signup",
-            organization_id=str(organization_id),
-            exc_info=True,
-        )
-
     access_token = encrypt_session(user.id, organization_id)
     await clear_auth_failures(email_key, ip_key)
 
@@ -799,13 +780,29 @@ async def me(request: Request):
         "status": billing_ctx.status.value if billing_ctx else None,
         "auth_type": ctx.auth_type,
     }
-    from src.platform.workspaces.context import resolve_workspace
+    from src.infrastructure.postgres.relational_db import PostgresWorkspaceRepository
+    from src.platform.workspaces.context import (
+        ensure_workspace_schema,
+        get_active_workspace_id,
+        resolve_workspace,
+    )
 
+    await ensure_workspace_schema()
+    workspaces = await PostgresWorkspaceRepository().list_workspaces(ctx.organization_id)
+    if not workspaces:
+        payload["needs_start_mode"] = True
+        payload["active_workspace_id"] = None
+        payload["workspace_kind"] = None
+        return payload
+
+    payload["needs_start_mode"] = False
     try:
         ws = await resolve_workspace(request)
         payload["active_workspace_id"] = str(ws.id)
         payload["workspace_kind"] = getattr(ws.kind, "value", str(ws.kind))
     except HTTPException:
-        payload["active_workspace_id"] = None
-        payload["workspace_kind"] = None
+        active_id = await get_active_workspace_id(ctx.organization_id, ctx.user_id)
+        ws = next((w for w in workspaces if w.id == active_id), workspaces[0])
+        payload["active_workspace_id"] = str(ws.id)
+        payload["workspace_kind"] = getattr(ws.kind, "value", str(ws.kind))
     return payload

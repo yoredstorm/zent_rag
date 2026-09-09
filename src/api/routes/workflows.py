@@ -38,6 +38,7 @@ async def tenant_workflows_create(body: WorkflowIn, request: Request):
             body.steps,
             body.description,
             ctx.user_id,
+            body.editor_state,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -82,14 +83,18 @@ async def tenant_workflow_update(workflow_id: str, body: WorkflowUpdateIn, reque
     from src.platform.workflows.engine import update_workflow
 
     ctx = require_permission(request, "billing:write")
-    result = await update_workflow(
-        ctx.organization_id,
-        UUID(workflow_id),
-        body.name,
-        body.description,
-        body.trigger_config,
-        body.steps,
-    )
+    try:
+        result = await update_workflow(
+            ctx.organization_id,
+            UUID(workflow_id),
+            body.name,
+            body.description,
+            body.trigger_config,
+            body.steps,
+            body.editor_state,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     if result is None:
         raise HTTPException(404, "Workflow not found")
     return result
@@ -169,6 +174,7 @@ class WorkflowIn(BaseModel):
     trigger_type: str = Field(default="webhook", pattern="^(webhook|schedule|event)$")
     trigger_config: dict | None = None
     steps: list[dict] = Field(default_factory=list)
+    editor_state: dict | None = None
 
 
 class WorkflowUpdateIn(BaseModel):
@@ -176,7 +182,36 @@ class WorkflowUpdateIn(BaseModel):
     description: str | None = None
     trigger_config: dict | None = None
     steps: list[dict] | None = None
+    editor_state: dict | None = None
 
 
 class RunIn(BaseModel):
     payload: dict | None = None
+
+
+public_router = APIRouter(prefix="/api/v1/public/workflows", tags=["Workflows"])
+
+
+@public_router.post("/{workflow_id}/hook", summary="Disparar workflow por webhook inbound")
+async def public_workflow_hook(workflow_id: str, request: Request):
+    from src.platform.workflows.engine import run_workflow_from_hook
+
+    secret = request.headers.get("x-zent-workflow-secret") or ""
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    payload = body.get("payload") if isinstance(body.get("payload"), dict) else body
+    try:
+        result = await run_workflow_from_hook(UUID(workflow_id), secret, payload)
+    except ValueError:
+        raise HTTPException(404, "Workflow not found") from None
+    if result.get("error") == "not_found":
+        raise HTTPException(404, "Workflow not found")
+    if result.get("error") == "unauthorized":
+        raise HTTPException(401, "Invalid workflow secret")
+    if result.get("error") == "inactive":
+        raise HTTPException(409, "Workflow is not active")
+    return result

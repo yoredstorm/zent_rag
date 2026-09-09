@@ -111,6 +111,12 @@ async def test_invite_accept_does_not_leak_other_org_data(
         "Authorization": f"Bearer {guest['access_token']}",
         "X-Organization-Id": guest["organization_id"],
     }
+    started = await async_client.post(
+        "/api/v1/onboarding/start-mode",
+        json={"mode": "blank"},
+        headers=guest_headers,
+    )
+    assert started.status_code == 200, started.text
 
     secret = await async_client.post(
         "/api/v1/sources",

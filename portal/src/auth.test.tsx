@@ -109,6 +109,17 @@ describe("AuthProvider", () => {
     const fetchMock = fetchRouter({
       "/auth/signup": () =>
         json({ access_token: "rag_sess_su", organization_id: "org-2", company_name: "Nueva", email: "n@b.cl", api_key: "zent_sk_live_secret" }),
+      "/auth/me": () =>
+        json({
+          organization_id: "org-2",
+          company_name: "Nueva",
+          email: "n@b.cl",
+          roles: ["owner"],
+          permissions: [],
+          needs_start_mode: true,
+          active_workspace_id: null,
+          workspace_kind: null,
+        }),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -119,5 +130,6 @@ describe("AuthProvider", () => {
     await captured!.signup("Nueva", "n@b.cl", "password123");
     expect(window.sessionStorage.getItem("zent_signup_api_key")).toBe("zent_sk_live_secret");
     expect(window.sessionStorage.getItem("rag_portal_token")).toBe("rag_sess_su");
+    await waitFor(() => expect(captured!.session?.needsStartMode).toBe(true));
   });
 });

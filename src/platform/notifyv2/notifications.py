@@ -101,13 +101,18 @@ async def notify(
     title: str,
     body: str | None = None,
     data: dict | None = None,
+    channels: set[str] | None = None,
 ) -> dict:
-    """Envía por canal según preferencias: in_app (siempre), email y webhook."""
+    """Envía por canal según preferencias: in_app, email y webhook.
+
+    `channels` restringe el envío (p. ej. {"webhook"}). None = los tres.
+    """
     preferences = await get_preferences(organization_id)
     data = data or {}
     result: dict = {"in_app": False, "email": False, "webhook_deliveries": 0}
+    wanted = channels
 
-    if _channel_enabled(preferences, event_type, "in_app"):
+    if (wanted is None or "in_app" in wanted) and _channel_enabled(preferences, event_type, "in_app"):
         try:
             session = await get_async_session()
             try:
@@ -132,7 +137,7 @@ async def notify(
         except Exception as exc:  # noqa: BLE001
             logger.warning("In-app notification failed", error=str(exc)[:150])
 
-    if _channel_enabled(preferences, event_type, "email"):
+    if (wanted is None or "email" in wanted) and _channel_enabled(preferences, event_type, "email"):
         try:
             from src.platform.customer_success.customer_success import send_email
 
@@ -147,7 +152,7 @@ async def notify(
         except Exception as exc:  # noqa: BLE001
             logger.warning("Email notification failed", error=str(exc)[:150])
 
-    if _channel_enabled(preferences, event_type, "webhook"):
+    if (wanted is None or "webhook" in wanted) and _channel_enabled(preferences, event_type, "webhook"):
         try:
             result["webhook_deliveries"] = await enqueue_deliveries(
                 organization_id, event_type, {"event": event_type, "title": title, **data}

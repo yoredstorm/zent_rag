@@ -243,7 +243,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # SQL 01–80 (incl. 78-workspace-isolation / 79-managed-db) solo en volumen vacío.
-      # Volúmenes existentes: alembic upgrade head en el contenedor api (085/086).
+      # Volúmenes existentes: alembic upgrade head en el contenedor api (087 workflows studio).
       # IMPORTANTE: en volúmenes existentes los scripts .sh de db_init NO se
       # re-ejecutan. Si el rol rag_reader no existe (09-readonly-role.sh), el
       # SQL Expert falla silenciosamente y responde vía RAG. Provisionar a

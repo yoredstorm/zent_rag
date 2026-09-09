@@ -71,6 +71,46 @@ async def ensure_demo_workspace(
     )
 
 
+async def choose_trial_start_mode(
+    repo: WorkspaceRepository,
+    organization_id: UUID,
+    user_id: UUID,
+    mode: str,
+) -> tuple[Workspace, bool]:
+    """Crea el primer workspace del trial. Idempotente si ya existe alguno.
+
+    Returns (workspace, created). created=False si la org ya tenía workspace.
+    """
+    if mode not in ("demo", "blank"):
+        raise ValueError("mode must be demo or blank")
+    from src.platform.workspaces.context import (
+        ensure_workspace_schema,
+        get_active_workspace_id,
+        set_active_workspace,
+    )
+
+    await ensure_workspace_schema()
+    existing = await repo.list_workspaces(organization_id)
+    if existing:
+        active_id = await get_active_workspace_id(organization_id, user_id)
+        if active_id is not None:
+            for ws in existing:
+                if ws.id == active_id:
+                    return ws, False
+        return existing[0], False
+
+    if mode == "demo":
+        ws = await ensure_demo_workspace(
+            repo, organization_id, created_by=user_id
+        )
+    else:
+        ws = await ensure_default_workspace(
+            repo, organization_id, kind="business"
+        )
+    await set_active_workspace(organization_id, user_id, ws.id)
+    return ws, True
+
+
 async def require_own_workspace(
     repo: WorkspaceRepository,
     organization_id: UUID,

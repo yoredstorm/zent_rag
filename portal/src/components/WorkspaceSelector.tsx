@@ -66,7 +66,7 @@ export function WorkspaceSelector() {
   }
 
   return (
-    <div className="relative">
+    <div className="relative" data-tour="workspace-selector">
       <button
         type="button"
         className="group flex w-full items-center gap-2.5 rounded-md border border-border bg-soft px-2.5 py-2 text-left transition-colors duration-150 hover:border-border-strong hover:bg-raised"

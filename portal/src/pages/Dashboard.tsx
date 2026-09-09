@@ -212,9 +212,11 @@ export default function DashboardPage() {
             <Link to="/knowledge/add" className="btn btn-primary">
               Conectar mis datos
             </Link>
-            <Link to="/chat" className="btn btn-secondary">
-              Explorar demo
-            </Link>
+            {session?.workspaceKind === "demo" && (
+              <Link to="/chat" className="btn btn-secondary">
+                Explorar demo
+              </Link>
+            )}
             {resumeId && (
               <Link to={`/knowledge/add/${resumeId}`} className="btn btn-secondary">
                 Continuar donde lo dejé

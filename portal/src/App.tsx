@@ -15,10 +15,12 @@ import { IMPERSONATING_KEY } from "./platformAuth";
 import { SyncBanner, SyncJobProvider } from "./syncJob";
 import { ToastProvider } from "./Toast";
 import { NAV_GROUPS, canSeeNavItem } from "./lib/nav";
+import { tourTargetForGroup, tourTargetForPath } from "./lib/productTour";
 import { CommandPaletteRoot } from "./components/CommandPalette";
 import { IdleSessionWarning } from "./components/IdleSessionWarning";
 import { DemoBanner } from "./components/DemoBanner";
 import { TenantStepUpModal } from "./components/TenantStepUpModal";
+import { ProductTourRoot } from "./components/ProductTour";
 
 const IDLE_SESSION_MINUTES = 30;
 
@@ -53,6 +55,7 @@ const KnowledgeDatabasePage = lazy(() => import("./pages/knowledge/DatabaseBuild
 const KnowledgeManagedImportPage = lazy(() => import("./pages/knowledge/ManagedImport"));
 const KnowledgeSourceDetailPage = lazy(() => import("./pages/knowledge/SourceDetail"));
 const TransitionWizardPage = lazy(() => import("./pages/onboarding/TransitionWizard"));
+const StartModePage = lazy(() => import("./pages/onboarding/StartMode"));
 const EvaluationGapsPage = lazy(() => import("./pages/evaluation/Gaps"));
 const EvaluationImpactPage = lazy(() => import("./pages/evaluation/Impact"));
 const WorkspacesPage = lazy(() => import("./pages/Workspaces"));
@@ -232,6 +235,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                   type="button"
                   className="mb-1 flex w-full items-center justify-between rounded-xs px-2.5 py-1 text-[10px] font-semibold tracking-wider text-faint uppercase transition-colors duration-150 hover:text-muted"
                   aria-expanded={advancedOpen}
+                  data-tour={tourTargetForGroup(group.label)}
                   onClick={() => setAdvancedOpen((v) => !v)}
                 >
                   {group.label}
@@ -255,6 +259,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                               key={to}
                               to={to}
                               end={end}
+                              data-tour={tourTargetForPath(to)}
                               onClick={onNavigate}
                               className={({ isActive }) =>
                                 `group flex min-h-9 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors duration-150 ${
@@ -285,7 +290,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
             );
           }
           return (
-            <div key={group.label || "root"}>
+            <div key={group.label || "root"} data-tour={tourTargetForGroup(group.label)}>
               {group.label && (
                 <p className="mb-1 px-2.5 text-[10px] font-semibold tracking-wider text-faint uppercase">
                   {group.label}
@@ -297,6 +302,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                     key={to}
                     to={to}
                     end={end}
+                    data-tour={tourTargetForPath(to)}
                     onClick={onNavigate}
                     className={({ isActive }) =>
                       `group flex min-h-9 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors duration-150 ${
@@ -423,6 +429,7 @@ function ProtectedLayout() {
     );
   }
   if (!session) return <Navigate to="/login" replace />;
+  if (session.needsStartMode) return <Navigate to="/onboarding/start" replace />;
 
   return (
     <ToastProvider>
@@ -439,6 +446,16 @@ function ProtectedLayout() {
         <a href="#contenido" className="skip-link">
           Saltar al contenido
         </a>
+        <ProductTourRoot
+          session={session}
+          blocked={Boolean(impersonating) || Boolean(signupKey)}
+          layoutKey={drawerOpen}
+          onTourActive={(active) => {
+            if (active && !window.matchMedia("(min-width: 1024px)").matches) {
+              setDrawerOpen(true);
+            }
+          }}
+        />
         <div className="min-h-[100dvh] lg:pl-[248px]">
           <aside className="fixed inset-y-0 left-0 z-30 hidden w-[248px] border-r border-border bg-surface/70 backdrop-blur-xl lg:block">
             <SidebarContent />
@@ -536,6 +553,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<Suspense fallback={<PageFallback />}><LoginPage /></Suspense>} />
       <Route path="/signup" element={<Suspense fallback={<PageFallback />}><SignupPage /></Suspense>} />
+      <Route path="/onboarding/start" element={<Suspense fallback={<PageFallback />}><StartModePage /></Suspense>} />
         <Route path="/sso/callback" element={<Suspense fallback={<PageFallback />}><SsoCallbackPage /></Suspense>} />
         <Route path="/share/agent/:token" element={<Suspense fallback={<PageFallback />}><SharedAgentPage /></Suspense>} />
       <Route path="/admin/login" element={<Suspense fallback={<PageFallback />}><AdminLoginPage /></Suspense>} />

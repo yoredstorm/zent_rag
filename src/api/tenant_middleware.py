@@ -130,6 +130,8 @@ def _is_public(path: str, method: str) -> bool:
         return True
     if method == "POST" and path.startswith("/api/v1/payments/webhook"):
         return True
+    if method == "POST" and path.startswith("/api/v1/public/workflows/") and path.endswith("/hook"):
+        return True
     if path.startswith("/api/v1/embed/"):
         return True
     if path == "/embed.js" or path.startswith("/embed/"):

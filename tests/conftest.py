@@ -267,3 +267,22 @@ def unknown_organization_id() -> str:
 def new_organization_id() -> str:
     """UUID unico para crear un organization nuevo en cada test."""
     return str(uuid4())
+
+
+async def choose_start_mode(
+    client: AsyncClient,
+    token: str,
+    organization_id: str,
+    mode: str = "demo",
+) -> dict:
+    """Completa el chooser TRIAL. Idempotente si el workspace ya existe."""
+    resp = await client.post(
+        "/api/v1/onboarding/start-mode",
+        json={"mode": mode},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "X-Organization-Id": organization_id,
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()

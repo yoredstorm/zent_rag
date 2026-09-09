@@ -17,10 +17,7 @@ from src.platform.workspaces.context import (
     resolve_workspace,
     set_active_workspace,
 )
-from src.platform.workspaces.service import (
-    ensure_default_workspace,
-    workspace_slugify,
-)
+from src.platform.workspaces.service import workspace_slugify
 
 router = APIRouter(prefix="/api/v1/workspaces", tags=["Workspaces"])
 
@@ -58,7 +55,7 @@ class SetActiveWorkspaceRequest(BaseModel):
     workspace_id: UUID
 
 
-@router.get("", summary="Listar workspaces (auto-crea el default)")
+@router.get("", summary="Listar workspaces")
 async def list_workspaces(
     request: Request,
     repo: WorkspaceRepository = Depends(get_workspace_repo),
@@ -67,8 +64,9 @@ async def list_workspaces(
 
     ctx = require_permission(request, "workspaces:read")
     await ensure_workspace_schema()
-    await ensure_default_workspace(repo, ctx.organization_id)
     workspaces = await repo.list_workspaces(ctx.organization_id)
+    if not workspaces:
+        return {"workspaces": [], "count": 0, "active_workspace_id": None}
     counts = await repo.workspace_counts(ctx.organization_id)
     active = await resolve_workspace(request)
     return {

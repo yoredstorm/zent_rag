@@ -4,11 +4,50 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from src.infrastructure.observability.logging_config import get_logger
+from src.infrastructure.postgres.relational_db import PostgresWorkspaceRepository
+from src.platform.workspaces.service import choose_trial_start_mode
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/onboarding", tags=["Onboarding"])
+
+
+class StartModeRequest(BaseModel):
+    mode: str = Field(..., pattern="^(demo|blank)$")
+
+
+@router.post("/start-mode", summary="Elegir demo o lienzo limpio al entrar al trial")
+async def trial_start_mode(body: StartModeRequest, request: Request):
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "workspaces:write")
+    if ctx.user_id is None:
+        raise HTTPException(400, "User session required")
+    ws, created = await choose_trial_start_mode(
+        PostgresWorkspaceRepository(),
+        ctx.organization_id,
+        ctx.user_id,
+        body.mode,
+    )
+    if created and body.mode == "demo":
+        try:
+            from src.verticals.demo_farmacia.provisioning import provision_demo_kb
+
+            await provision_demo_kb(ctx.organization_id, workspace_id=ws.id)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "Demo provisioning skipped on start-mode",
+                organization_id=str(ctx.organization_id),
+                exc_info=True,
+            )
+    return {
+        "mode": body.mode,
+        "workspace_id": str(ws.id),
+        "kind": getattr(ws.kind, "value", str(ws.kind)),
+        "needs_start_mode": False,
+    }
 
 
 @router.get("", summary="Estado del onboarding (checklist + guía)")

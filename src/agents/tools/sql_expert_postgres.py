@@ -447,6 +447,7 @@ class PostgresSqlExpert(SqlExpert):
         try:
             sources = await fetch_sources(session)
             sources = self._filter_platform_sources(sources)
+            sources = self._filter_demo_sql_sources(sources)
         finally:
             await session.close()
         if self._schema_cache is not None:
@@ -463,6 +464,20 @@ class PostgresSqlExpert(SqlExpert):
         no deben llegar al prompt del LLM ni ser consultables.
         """
         return [s for s in sources if s.schema_name.lower() != "public"]
+
+    def _filter_demo_sql_sources(self, sources: list[DataSource]) -> list[DataSource]:
+        """Oculta schemas de catálogo demo cuando el workspace no es demo."""
+        if getattr(self, "_query_workspace_kind", None) == "demo":
+            return sources
+        settings = get_settings()
+        schemas = {
+            s.strip().lower()
+            for s in (settings.DEMO_SQL_SCHEMAS or "").split(",")
+            if s.strip()
+        }
+        if not schemas:
+            return sources
+        return [s for s in sources if s.schema_name.lower() not in schemas]
 
     async def _try_verified_query(
         self,
@@ -706,15 +721,23 @@ class PostgresSqlExpert(SqlExpert):
         self._permissions = permissions
         self._query_organization_id = organization_id
         self._query_workspace_id = None
+        self._query_workspace_kind = None
         if user_id is not None:
             try:
-                from src.platform.workspaces.context import get_active_workspace_id
+                from src.platform.workspaces.context import (
+                    get_active_workspace_id,
+                    get_workspace_kind,
+                )
 
                 self._query_workspace_id = await get_active_workspace_id(
                     organization_id, user_id
                 )
+                self._query_workspace_kind = await get_workspace_kind(
+                    organization_id, self._query_workspace_id
+                )
             except Exception:  # noqa: BLE001
                 self._query_workspace_id = None
+                self._query_workspace_kind = None
         all_sources = await self._discover_sources(organization_id)
         self._column_allowlist = None
         self._enum_hints: list[dict] = []
@@ -1329,7 +1352,8 @@ class PostgresSqlExpert(SqlExpert):
             snapshot = where.sql() if where is not None else ""
             extra_org = None
             if (
-                seed_org is not None
+                getattr(self, "_query_workspace_kind", None) == "demo"
+                and seed_org is not None
                 and str(seed_org) != auth
                 and self._is_demo_sql_table(schema, name, sources, demo_schemas)
             ):

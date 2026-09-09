@@ -86,7 +86,7 @@ test.describe("Customer portal — flujo smoke", () => {
     await expect(keyInput).not.toHaveValue(/^zent_sk_/);
 
     // Logout
-    await page.getByRole("button", { name: "D", exact: true }).click();
+    await page.getByRole("button", { name: "Cuenta" }).click();
     await page.getByRole("menuitem", { name: "Cerrar sesión" }).click();
     await expect(page).toHaveURL(/\/login$/);
   });

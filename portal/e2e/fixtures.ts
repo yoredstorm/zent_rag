@@ -11,7 +11,24 @@ export const DEV_API_KEY =
 
 export const AGENT_NAME = "E2E Smoke Agent";
 
-export async function loginAsTenant(page: Page) {
+export async function completeStartMode(page: Page, mode: "demo" | "blank") {
+  await expect(page).toHaveURL(/\/onboarding\/start/, { timeout: 30_000 });
+  const testId = mode === "demo" ? "start-mode-demo" : "start-mode-blank";
+  await page.getByTestId(testId).click();
+  await expect(page).toHaveURL(/\/$/, { timeout: 30_000 });
+}
+
+/** Evita que el tour auto-start tape otros e2e. Llamar antes de goto/login. */
+export async function suppressProductTour(page: Page) {
+  await page.addInitScript(() => {
+    localStorage.setItem("zent_product_tour_v2", JSON.stringify({ status: "completed" }));
+  });
+}
+
+export async function loginAsTenant(page: Page, options: { skipTour?: boolean } = {}) {
+  if (options.skipTour !== false) {
+    await suppressProductTour(page);
+  }
   await page.goto("/login");
   await page.getByLabel("Email").fill(DEV_EMAIL);
   await page.getByLabel("Contraseña").fill(DEV_PASSWORD);

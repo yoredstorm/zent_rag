@@ -138,9 +138,32 @@ async def resolve_workspace(request: Request) -> Workspace:
             request.state.workspace = ws
             return ws
 
+    existing = await repo.list_workspaces(ctx.organization_id)
+    if not existing:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": "start_mode_required",
+                "message": "Choose a trial start mode before using workspaces.",
+            },
+        )
+
     ws = await ensure_default_workspace(repo, ctx.organization_id)
     request.state.workspace = ws
     return ws
+
+
+async def get_workspace_kind(
+    organization_id: UUID, workspace_id: UUID | None
+) -> str | None:
+    if workspace_id is None:
+        return None
+    await ensure_workspace_schema()
+    repo = PostgresWorkspaceRepository()
+    ws = await repo.get_workspace(organization_id, workspace_id)
+    if ws is None:
+        return None
+    return getattr(ws.kind, "value", str(ws.kind))
 
 
 def workspace_header_or_none(request: Request) -> UUID | None:
