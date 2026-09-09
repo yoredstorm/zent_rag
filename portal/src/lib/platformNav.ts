@@ -29,6 +29,7 @@ import {
   Storefront,
   TrendUp,
   UsersThree,
+  Factory,
   type Icon,
 } from "@phosphor-icons/react";
 
@@ -112,6 +113,7 @@ export const PLATFORM_NAV: PlatformNavGroup[] = [
     label: "PLATFORM",
     items: [
       { to: `${BASE}/marketplace`, label: "Marketplace", icon: Storefront },
+      { to: `${BASE}/marketplace-factory`, label: "Marketplace Factory", icon: Factory },
       { to: `${BASE}/ecosystem`, label: "Ecosystem", icon: Storefront },
       { to: `${BASE}/notifications`, label: "Notifications", icon: BellSimple },
       { to: `${BASE}/onboarding`, label: "Onboarding", icon: RocketLaunch },

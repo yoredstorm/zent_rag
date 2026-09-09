@@ -581,6 +581,11 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     from src.api.routes.intelligence import router as intelligence_router
 
     new_app.include_router(intelligence_router)
+    from src.api.routes.marketplace_factory import cc_router as factory_cc_router
+    from src.api.routes.marketplace_factory import tenant_router as factory_tenant_router
+
+    new_app.include_router(factory_cc_router)
+    new_app.include_router(factory_tenant_router)
     new_app.include_router(copilot_router)
     new_app.include_router(releases_router)
     new_app.include_router(migrations_router)
@@ -621,6 +626,11 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(query_router)
     new_app.include_router(sources_router)
     new_app.include_router(intelligence_router)
+    from src.api.routes.marketplace_factory import cc_router as factory_cc_router
+    from src.api.routes.marketplace_factory import tenant_router as factory_tenant_router
+
+    new_app.include_router(factory_cc_router)
+    new_app.include_router(factory_tenant_router)
     from src.api.routes.catalog import router as catalog_router
 
     new_app.include_router(catalog_router)

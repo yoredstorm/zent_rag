@@ -84,6 +84,7 @@ const AdminAuditIntelligencePage = lazy(() => import("./pages/admin/AuditIntelli
 const AdminOptimizerPage = lazy(() => import("./pages/admin/Optimizer"));
 const AdminFederatedAnalyticsPage = lazy(() => import("./pages/admin/FederatedAnalytics"));
 const AdminMarketplacePage = lazy(() => import("./pages/admin/Marketplace"));
+const AdminMarketplaceFactoryPage = lazy(() => import("./pages/admin/MarketplaceFactory"));
 const SharedAgentPage = lazy(() => import("./pages/SharedAgent"));
 const AdminWorkflowsPage = lazy(() => import("./pages/admin/Workflows"));
 const ChatInsightsPage = lazy(() => import("./pages/ChatInsights"));
@@ -93,6 +94,7 @@ const AdminKnowledgeHubPage = lazy(() => import("./pages/admin/KnowledgeHub"));
 const RiskCenterPage = lazy(() => import("./pages/RiskCenter"));
 const AdminRiskCenterPage = lazy(() => import("./pages/admin/RiskCenter"));
 const EcosystemMarketplacePage = lazy(() => import("./pages/EcosystemMarketplace"));
+const MarketplaceProductsPage = lazy(() => import("./pages/MarketplaceProducts"));
 const AdminEcosystemPage = lazy(() => import("./pages/admin/Ecosystem"));
 const SecurityCenterPage = lazy(() => import("./pages/SecurityCenter"));
 const AdminSecurityCenterPage = lazy(() => import("./pages/admin/SecurityCenter"));
@@ -588,6 +590,7 @@ export default function App() {
         <Route path="optimizer" element={<Suspense fallback={<PageFallback />}><AdminOptimizerPage /></Suspense>} />
         <Route path="analytics" element={<Suspense fallback={<PageFallback />}><AdminFederatedAnalyticsPage /></Suspense>} />
         <Route path="marketplace" element={<Suspense fallback={<PageFallback />}><AdminMarketplacePage /></Suspense>} />
+        <Route path="marketplace-factory" element={<Suspense fallback={<PageFallback />}><AdminMarketplaceFactoryPage /></Suspense>} />
         <Route path="workflows" element={<Suspense fallback={<PageFallback />}><AdminWorkflowsPage /></Suspense>} />
         <Route path="chat-insights" element={<Suspense fallback={<PageFallback />}><AdminChatInsightsPage /></Suspense>} />
         <Route path="knowledge-hub" element={<Suspense fallback={<PageFallback />}><AdminKnowledgeHubPage /></Suspense>} />
@@ -689,6 +692,7 @@ export default function App() {
         <Route path="/knowledge-hub" element={<Suspense fallback={<PageFallback />}><KnowledgeHubPage /></Suspense>} />
         <Route path="/risk-center" element={<Suspense fallback={<PageFallback />}><RiskCenterPage /></Suspense>} />
         <Route path="/marketplace" element={<Suspense fallback={<PageFallback />}><EcosystemMarketplacePage /></Suspense>} />
+<Route path="/products" element={<Suspense fallback={<PageFallback />}><MarketplaceProductsPage /></Suspense>} />
         <Route path="/security-center" element={<Suspense fallback={<PageFallback />}><SecurityCenterPage /></Suspense>} />
         <Route path="/governance" element={<Suspense fallback={<PageFallback />}><GovernancePage /></Suspense>} />
         <Route path="/disaster-recovery" element={<Suspense fallback={<PageFallback />}><DisasterRecoveryPage /></Suspense>} />

@@ -125,6 +125,7 @@ export const NAV_GROUPS: NavGroup[] = [
           { to: "/chat-insights", label: "Chat Insights", icon: ChatsCircle },
           { to: "/copilot", label: "Copilot", icon: Sparkle },
           { to: "/marketplace", label: "Marketplace", icon: Storefront },
+          { to: "/products", label: "Catálogo de productos", icon: Storefront, key: "products" },
           { to: "/migrations", label: "Migraciones", icon: Swap },
           { to: "/releases", label: "Releases", icon: Rocket },
           { to: "/training", label: "Training", icon: GraduationCap },
