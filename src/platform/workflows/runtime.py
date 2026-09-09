@@ -390,6 +390,26 @@ async def execute_graph(
             run_status = "pending_approval"
             return
 
+
+        # for_each: materializa los nodos de su subgrafo (branch_of) como
+        # resueltos y propaga sus edges para que joins posteriores se liberen.
+        if node.type == "for_each" and exec_.status in ("succeeded", "simulated", "skipped"):
+            branch_ids = list((node.config or {}).get("_branch") or [])
+            for bid in branch_ids:
+                if bid in resolved or bid not in branch_of:
+                    continue
+                agg = (exec_.output or {}).get("results", {}).get(bid, [])
+                branch_exec = NodeExecution(
+                    status=exec_.status,
+                    output={"iterations": len(agg), "last": agg[-1] if agg else None},
+                    simulated=exec_.simulated,
+                    duration_ms=0,
+                )
+                executions[bid] = branch_exec
+                resolved.add(bid)
+                node_outputs_for_refs[bid] = {"output": branch_exec.output}
+                await persist(bid, node_map[bid].type, node_map[bid].config, branch_exec, False)
+                await propagate(bid)
     async def propagate(node_id: str) -> None:
         """Marca edges salientes resolubles (ejecutados o saltados); los tipos
         condition/for_each eligen puerto según resultado. No ejecuta nodos:

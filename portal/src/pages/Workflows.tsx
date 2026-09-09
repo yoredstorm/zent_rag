@@ -1,9 +1,12 @@
 import { FlowArrow, Lightning, Play, SquaresFour } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { WorkflowBlockEditor } from "../components/WorkflowBlockEditor";
+import { WorkflowCanvasEditor } from "../components/WorkflowCanvasEditor";
 import { ErrorInline, PageHeader, SkeletonBlock } from "../components/ui";
+import type { WorkflowGraph } from "../lib/workflowGraph";
+import { emptyGraph } from "../lib/workflowGraph";
 import { blocksToIr, irToBlocks, makeBlock, type BlockNode, type WorkflowStep } from "../lib/workflowIr";
 
 type WF = {
@@ -14,7 +17,6 @@ type WF = {
   status: string;
   runs: number;
   ok_runs: number;
-  created_at: string;
 };
 type Tpl = { slug: string; name: string; description: string; category: string; trigger_type: string; steps: { type: string }[] };
 type Run = { id: string; workflow_id: string; workflow_name: string; status: string; started_at: string; duration_ms: number | null; error: string | null };
@@ -30,6 +32,8 @@ const ST: Record<string, string> = {
   skipped: "badge-muted",
   draft: "badge-muted",
   active: "badge-ok",
+  simulated: "badge-info",
+  pending_approval: "badge-warning",
 };
 
 const ANDROID_PAYLOAD = `{
@@ -44,11 +48,13 @@ const ANDROID_PAYLOAD = `{
 
 export default function WorkflowsPage() {
   const { session } = useAuth();
+  const [mode, setMode] = useState<"canvas" | "blocks">("canvas");
   const [wfs, setWfs] = useState<WF[]>([]);
   const [tpls, setTpls] = useState<Tpl[]>([]);
   const [kbs, setKbs] = useState<KB[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  const [graph, setGraph] = useState<WorkflowGraph | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
   const [steps, setSteps] = useState<StepRow[] | null>(null);
   const [name, setName] = useState("");
@@ -106,29 +112,101 @@ export default function WorkflowsPage() {
     setBusy("create");
     setError("");
     try {
-      const ir = irFromUi();
-      const out = await api<{ workflow_id: string; hook_secret?: string }>("/api/v1/workflows", {
-        method: "POST",
-        token: session.token,
-        organizationId: session.organizationId,
-        body: JSON.stringify({
-          name,
-          trigger_type: ir.trigger_type,
-          trigger_config: ir.trigger_config,
-          steps: ir.steps,
-          editor_state: ir.editor_state,
-        }),
-      });
-      if (out.hook_secret) setHookSecret(out.hook_secret);
-      setHookUrl(`${origin}/api/v1/public/workflows/${out.workflow_id}/hook`);
-      setName("");
-      setRoot(makeBlock("hat_schedule", { every_minutes: "5" }));
-      await load();
+      if (mode === "canvas") {
+        // Creación en canvas: grafo v2 con trigger webhook + nodo de fin.
+        const g = emptyGraph("webhook");
+        const t = g.nodes[0];
+        g.nodes.push({
+          id: "end",
+          type: "end",
+          version: 1,
+          label: "Fin",
+          position: { x: 320, y: 90 },
+          config: {},
+          input_ports: [{ name: "in", type: "json" }],
+          output_ports: [],
+          retry_policy: { max_attempts: 1 },
+          timeout_ms: 60_000,
+          error_policy: "fail",
+          metadata: { automatic: true },
+        });
+        g.edges.push({ id: "e1", from_node: t.id, from_port: "out", to_node: "end", to_port: "in" });
+        const out = await api<{ workflow_id: string; hook_secret?: string }>("/api/v1/workflows", {
+          method: "POST",
+          token: session.token,
+          organizationId: session.organizationId,
+          body: JSON.stringify({
+            name,
+            trigger_type: "webhook",
+            trigger_config: {},
+            steps: [],
+            editor_state: { mode: "canvas" },
+            graph: g,
+            workflow_version: 2,
+          }),
+        });
+        if (out.hook_secret) setHookSecret(out.hook_secret);
+        setHookUrl(`${origin}/api/v1/public/workflows/${out.workflow_id}/hook`);
+        setName("");
+        await load();
+        setSelected(out.workflow_id);
+        await reloadWorkflow(out.workflow_id);
+      } else {
+        const ir = irFromUi();
+        const out = await api<{ workflow_id: string; hook_secret?: string }>("/api/v1/workflows", {
+          method: "POST",
+          token: session.token,
+          organizationId: session.organizationId,
+          body: JSON.stringify({
+            name,
+            trigger_type: ir.trigger_type,
+            trigger_config: ir.trigger_config,
+            steps: ir.steps,
+            editor_state: ir.editor_state,
+          }),
+        });
+        if (out.hook_secret) setHookSecret(out.hook_secret);
+        setHookUrl(`${origin}/api/v1/public/workflows/${out.workflow_id}/hook`);
+        setName("");
+        setRoot(makeBlock("hat_schedule", { every_minutes: "5" }));
+        await load();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
     } finally {
       setBusy("");
     }
+  }
+
+  async function reloadWorkflow(id: string) {
+    if (!session) return;
+    try {
+      const [r, d] = await Promise.all([
+        api<{ runs: Run[] }>(`/api/v1/workflows/${id}/runs`, { token: session.token, organizationId: session.organizationId }),
+        api<{
+          steps: WorkflowStep[];
+          trigger_type: string;
+          trigger_config: Record<string, unknown>;
+          editor_state?: { blocks?: BlockNode };
+          graph?: WorkflowGraph | null;
+          hook_url?: string;
+        }>(`/api/v1/workflows/${id}`, { token: session.token, organizationId: session.organizationId }),
+      ]);
+      setRuns(r.runs || []);
+      setSelected(id);
+      setGraph(d.graph ?? null);
+      setRoot(irToBlocks(d.trigger_type, d.trigger_config, d.steps, d.editor_state));
+      setRawJson(JSON.stringify(d.steps || [], null, 2));
+      setHookUrl(`${origin}${d.hook_url || `/api/v1/public/workflows/${id}/hook`}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    }
+  }
+
+  async function select(id: string) {
+    setSelected(id);
+    setSteps(null);
+    await reloadWorkflow(id);
   }
 
   async function install(slug: string) {
@@ -143,26 +221,6 @@ export default function WorkflowsPage() {
     } finally {
       setBusy("");
     }
-  }
-
-  async function select(id: string) {
-    setSelected(id);
-    setSteps(null);
-    if (!session) return;
-    const [r, d] = await Promise.all([
-      api<{ runs: Run[] }>(`/api/v1/workflows/${id}/runs`, { token: session.token, organizationId: session.organizationId }),
-      api<{
-        steps: WorkflowStep[];
-        trigger_type: string;
-        trigger_config: Record<string, unknown>;
-        editor_state?: { blocks?: BlockNode };
-        hook_url?: string;
-      }>(`/api/v1/workflows/${id}`, { token: session.token, organizationId: session.organizationId }),
-    ]);
-    setRuns(r.runs || []);
-    setRoot(irToBlocks(d.trigger_type, d.trigger_config, d.steps, d.editor_state));
-    setRawJson(JSON.stringify(d.steps || [], null, 2));
-    setHookUrl(`${origin}${d.hook_url || `/api/v1/public/workflows/${id}/hook`}`);
   }
 
   async function act(id: string, action: "run" | "activate" | "pause") {
@@ -193,11 +251,13 @@ export default function WorkflowsPage() {
     setSteps(d.steps || []);
   }
 
+  const selectedWf = useMemo(() => wfs.find((w) => w.id === selected) ?? null, [wfs, selected]);
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Workflow Automation"
-        subtitle="Bloques tipo Scratch: schedule, API, KB, si/si no, email y webhook. El Android se engancha al webhook saliente."
+        subtitle="Canvas visual: conecta datos, IA, eventos y acciones. El Android se engancha al webhook saliente."
       />
       {error && <ErrorInline>{error}</ErrorInline>}
       {hookSecret && (
@@ -213,49 +273,92 @@ export default function WorkflowsPage() {
       {loading ? (
         <SkeletonBlock className="h-64" />
       ) : (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          <section className="panel space-y-3 p-4 lg:col-span-3">
-            <h2 className="flex items-center gap-2 text-sm font-semibold text-text">
-              <Lightning size={14} /> Nuevo workflow
-            </h2>
-            <input
-              className="w-full max-w-md rounded-md border border-border bg-soft px-2 py-2 text-sm"
-              placeholder="nombre…"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-            <WorkflowBlockEditor root={root} onChange={setRoot} kbs={kbs} agents={agents} />
-            <label className="flex items-center gap-2 text-xs text-muted">
-              <input type="checkbox" checked={advanced} onChange={(e) => setAdvanced(e.target.checked)} />
-              JSON avanzado
-            </label>
-            {advanced && (
-              <textarea
-                className="h-36 w-full rounded-md border border-border bg-soft px-2 py-2 font-mono text-[11px]"
-                value={rawJson}
-                onChange={(e) => setRawJson(e.target.value)}
-              />
-            )}
-            <button type="button" className="btn btn-primary min-h-9 text-xs" disabled={!!busy || !name} onClick={() => void create()}>
-              Crear
-            </button>
-            <div className="rounded-md border border-border p-3 text-[11px]" data-testid="wf-android-contract">
-              <p className="font-semibold text-text">Contrato Android / webhook saliente</p>
-              <p className="mt-1 text-muted">
-                Suscríbete en Webhooks al evento workflow.run (firma X-Zent-Signature). Payload de ejemplo:
-              </p>
-              <pre className="mt-2 overflow-x-auto rounded-md bg-soft p-2 font-mono text-[10px] text-text">{ANDROID_PAYLOAD}</pre>
-              <button
-                type="button"
-                className="btn btn-ghost mt-1 min-h-7 px-2 text-[10px]"
-                onClick={() => void navigator.clipboard.writeText(ANDROID_PAYLOAD)}
-              >
-                Copiar payload
-              </button>
-              {hookUrl && <p className="mt-2 text-muted">Inbound: POST {hookUrl}</p>}
+        <>
+          {/* Selector de editor */}
+          <div className="flex items-center gap-2">
+            <div className="flex rounded-md border border-border bg-soft p-0.5">
+              {(["canvas", "blocks"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={`min-h-7 rounded px-3 text-[11px] font-medium ${mode === m ? "bg-raised text-text shadow-pop" : "text-muted hover:text-text"}`}
+                  onClick={() => setMode(m)}
+                >
+                  {m === "canvas" ? "Canvas" : "Bloques"}
+                </button>
+              ))}
             </div>
+            {selectedWf && (
+              <span className="truncate text-[11px] text-muted">
+                Editando: <span className="font-medium text-text">{selectedWf.name}</span> · {selectedWf.trigger_type} ·{" "}
+                <span className={`badge ${ST[selectedWf.status] ?? "badge-muted"}`}>{selectedWf.status}</span>
+              </span>
+            )}
+          </div>
+
+          {mode === "canvas" ? (
+            <div className="panel space-y-3 p-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-text">
+                  <Lightning size={14} /> Nuevo workflow
+                </h2>
+                <input
+                  className="w-full max-w-md rounded-md border border-border bg-soft px-2 py-2 text-sm"
+                  placeholder="nombre…"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+                <button type="button" className="btn btn-primary min-h-9 text-xs" disabled={!!busy || !name} onClick={() => void create()}>
+                  Crear
+                </button>
+              </div>
+              <WorkflowCanvasEditor
+                workflowId={selected}
+                graph={graph}
+                onChangeGraph={(g) => setGraph(structuredClone(g))}
+                kbs={kbs}
+                agents={agents}
+                onSaved={() => void load()}
+                busyToken={!!busy}
+              />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+              <section className="panel space-y-3 p-4 lg:col-span-3">
+                <h2 className="flex items-center gap-2 text-sm font-semibold text-text">
+                  <Lightning size={14} /> Nuevo workflow
+                </h2>
+                <input
+                  className="w-full max-w-md rounded-md border border-border bg-soft px-2 py-2 text-sm"
+                  placeholder="nombre…"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                />
+                <div data-testid="workflow-block-editor">
+                  <WorkflowBlockEditor root={root} onChange={setRoot} kbs={kbs} agents={agents} />
+                </div>
+                <label className="flex items-center gap-2 text-xs text-muted">
+                  <input type="checkbox" checked={advanced} onChange={(e) => setAdvanced(e.target.checked)} />
+                  JSON avanzado
+                </label>
+                {advanced && (
+                  <textarea
+                    className="h-36 w-full rounded-md border border-border bg-soft px-2 py-2 font-mono text-[11px]"
+                    value={rawJson}
+                    onChange={(e) => setRawJson(e.target.value)}
+                  />
+                )}
+                <button type="button" className="btn btn-primary min-h-9 text-xs" disabled={!!busy || !name} onClick={() => void create()}>
+                  Crear
+                </button>
+              </section>
+            </div>
+          )}
+
+          {/* Plantillas (ambos modos) */}
+          <section className="panel space-y-2 p-4">
             <h3 className="text-sm font-semibold text-text">Plantillas</h3>
-            <div className="space-y-1">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {tpls.map((t) => (
                 <div key={t.slug} className="flex items-center gap-2 rounded-md bg-soft px-3 py-2 text-xs">
                   <SquaresFour size={12} className="text-faint" />
@@ -275,7 +378,25 @@ export default function WorkflowsPage() {
             </div>
           </section>
 
-          <section className="lg:col-span-3">
+          {/* Contrato Android (ambos modos) */}
+          <div className="rounded-md border border-border p-3 text-[11px]" data-testid="wf-android-contract">
+            <p className="font-semibold text-text">Contrato Android / webhook saliente</p>
+            <p className="mt-1 text-muted">
+              Suscríbete en Webhooks al evento workflow.run (firma X-Zent-Signature). Payload de ejemplo:
+            </p>
+            <pre className="mt-2 overflow-x-auto rounded-md bg-soft p-2 font-mono text-[10px] text-text">{ANDROID_PAYLOAD}</pre>
+            <button
+              type="button"
+              className="btn btn-ghost mt-1 min-h-7 px-2 text-[10px]"
+              onClick={() => void navigator.clipboard.writeText(ANDROID_PAYLOAD)}
+            >
+              Copiar payload
+            </button>
+            {hookUrl && <p className="mt-2 text-muted">Inbound: POST {hookUrl}</p>}
+          </div>
+
+          {/* Lista de workflows */}
+          <section>
             <h2 className="mb-2 text-sm font-semibold text-text">Workflows ({wfs.length})</h2>
             <div className="panel space-y-2 p-3">
               {wfs.map((w) => (
@@ -291,9 +412,6 @@ export default function WorkflowsPage() {
                     <span className="text-[10px] text-faint">
                       {w.ok_runs}/{w.runs} ok
                     </span>
-                    <button type="button" className="btn btn-ghost min-h-7 px-2 text-[11px]" disabled={!!busy} onClick={() => void act(w.id, "run")}>
-                      <Play size={11} /> Ejecutar
-                    </button>
                     {w.status !== "active" ? (
                       <button type="button" className="btn btn-ghost min-h-7 px-2 text-[11px]" disabled={!!busy} onClick={() => void act(w.id, "activate")}>
                         Activar
@@ -304,13 +422,16 @@ export default function WorkflowsPage() {
                       </button>
                     )}
                   </div>
-                  <div className="mt-1 flex gap-2">
+                  <div className="mt-1 flex gap-2 items-center">
                     <input
                       className="flex-1 rounded-md border border-border bg-soft px-2 py-1 font-mono text-[10px]"
                       placeholder='{"stock": "3"}'
                       value={payload}
                       onChange={(e) => setPayload(e.target.value)}
                     />
+                    <button type="button" className="btn btn-ghost min-h-7 px-2 text-[11px]" disabled={!!busy} onClick={() => void act(w.id, "run")}>
+                      <Play size={11} /> Ejecutar
+                    </button>
                   </div>
                 </div>
               ))}
@@ -355,7 +476,7 @@ export default function WorkflowsPage() {
               </div>
             )}
           </section>
-        </div>
+        </>
       )}
     </div>
   );

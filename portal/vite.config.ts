@@ -8,11 +8,11 @@ export default defineConfig({
   server: {
     port: 8080,
     proxy: {
-      "/api": { target: "http://localhost:8000", changeOrigin: true },
-      "/health": { target: "http://localhost:8000", changeOrigin: true },
-      "/docs": { target: "http://localhost:8000", changeOrigin: true },
-      "/redoc": { target: "http://localhost:8000", changeOrigin: true },
-      "/openapi.json": { target: "http://localhost:8000", changeOrigin: true },
+      "/api": { target: process.env.VITE_API_PROXY || "http://localhost:8000", changeOrigin: true },
+      "/health": { target: process.env.VITE_API_PROXY || "http://localhost:8000", changeOrigin: true },
+      "/docs": { target: process.env.VITE_API_PROXY || "http://localhost:8000", changeOrigin: true },
+      "/redoc": { target: process.env.VITE_API_PROXY || "http://localhost:8000", changeOrigin: true },
+      "/openapi.json": { target: process.env.VITE_API_PROXY || "http://localhost:8000", changeOrigin: true },
     },
   },
   test: {
