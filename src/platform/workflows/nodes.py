@@ -783,6 +783,68 @@ async def _exec_end(rctx: NodeContext) -> NodeOutcome:
     return NodeOutcome(output={"end": True})
 
 
+async def _exec_marketplace_action(rctx: NodeContext) -> NodeOutcome:
+    """Acción del marketplace instalada: mismo runtime que agente/manual/API."""
+    from src.platform.marketplace import runtime as mkt
+
+    cfg = rctx.node.config
+    install_id = str(cfg.get("install_id") or "")
+    action_id = str(cfg.get("action_id") or "")
+    if not install_id or not action_id:
+        return NodeOutcome(error="marketplace_action requiere install_id y action_id")
+    raw_inputs = cfg.get("inputs") or {}
+    if not isinstance(raw_inputs, dict):
+        return NodeOutcome(error="inputs debe ser un objeto")
+    inputs: dict[str, object] = {
+        str(k): _resolve_ref(v, rctx) for k, v in raw_inputs.items()
+    }
+    purpose = str(_resolve_ref(cfg.get("purpose") or "", rctx) or "") or None
+    if rctx.simulate:
+        from src.platform.marketplace.runtime import _estimate_cost
+
+        return NodeOutcome(
+            simulated=True,
+            planned={
+                "kind": "marketplace",
+                "action_id": action_id,
+                "inputs": {k: (str(v)[:40]) for k, v in inputs.items()},
+                "estimated_cost": _estimate_cost({"cost_model": {"model": "PER_CALL"}}),
+            },
+            output={"simulated": True, "action_id": action_id},
+        )
+    outcome = await mkt.execute_action(
+        rctx.organization_id,
+        UUID(install_id) if _is_uuid(install_id) else None,
+        action_id,
+        inputs,
+        workspace_id=rctx.workspace_id,
+        purpose=purpose,
+        workflow_id=rctx.execution.workflow_id,
+        run_id=rctx.execution.run_id,
+        actor_id=rctx.execution.actor_id,
+        actor_type="workflow",
+        source="workflow",
+    )
+    if not outcome.ok:
+        return NodeOutcome(error=f"{outcome.error_code}: {outcome.error_message}")
+    return NodeOutcome(
+        output={
+            **outcome.data,
+            "evidence_id": str(outcome.evidence_id) if outcome.evidence_id else None,
+            "cached": outcome.cached,
+            "cost": outcome.customer_cost,
+            "latency_ms": round(outcome.latency_ms, 1),
+        },
+        cost_ms=outcome.customer_cost,
+    )
+
+
+def _is_uuid(value: str) -> bool:
+    import re
+
+    return bool(re.match(r"^[0-9a-fA-F-]{36}$", value))
+
+
 def _register_defaults() -> None:
     already = registry.get("llm")
     if already is not None:
@@ -931,6 +993,19 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "json"}},
         execute=_exec_notify,
+    )
+
+    # MARKETPLACE (Phase 32B)
+    registry.register(
+        "marketplace_action",
+        version=1,
+        label="Acción de integración",
+        category="integration",
+        risk_level="normal",
+        capabilities=frozenset({CALLS_EXTERNAL}),
+        inputs={"in": {"type": "json"}},
+        outputs={"out": {"type": "json"}},
+        execute=_exec_marketplace_action,
     )
 
     # CONTROL

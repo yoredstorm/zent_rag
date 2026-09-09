@@ -313,4 +313,11 @@ def register_builtin_tools(retriever, sql_expert) -> None:
     register_tool(SearchKnowledgeTool(retriever))
     register_tool(QueryDatabaseTool(sql_expert))
     register_tool(CallApiTool())
-    logger.info("Builtin agent tools registered", count=3)
+    try:
+        from src.agents.tools.marketplace_tool import MarketplaceActionTool
+
+        register_tool(MarketplaceActionTool())
+        logger.info("Marketplace agent tool registered", count=4)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Marketplace tool registration failed", error=str(exc)[:150])
+    logger.info("Builtin agent tools registered", count=4)

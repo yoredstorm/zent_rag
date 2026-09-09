@@ -29,6 +29,48 @@ export function WorkflowCanvasEditor({ workflowId, graph, onChangeGraph, kbs, ag
   const [payload, setPayload] = useState("{}");
   const [run, setRun] = useState<RunDetail | null>(null);
   const [runResult, setRunResult] = useState<{ run_id: string; status: string; planned_effects?: unknown[]; result?: unknown } | null>(null);
+  const [mxInstalls, setMxInstalls] = useState<{ id: string; integration: { slug: string; name: string } }[]>([]);
+  const [mxActions, setMxActions] = useState<Record<string, { action_id: string; display_name: string }[]>>({});
+
+  useEffect(() => {
+    if (!session) return;
+    api<{ installs: { id: string; integration: { slug: string; name: string } }[] }>(
+      "/api/v1/integrations/installs",
+      { token: session.token, organizationId: session.organizationId }
+    )
+      .then((d) => setMxInstalls(d.installs || []))
+      .catch(() => undefined);
+  }, [session, workflowId]);
+
+  const ensureActions = useCallback(
+    async (installId: string) => {
+      if (!session || !installId || mxActions[installId]) return;
+      const install = mxInstalls.find((i) => i.id === installId);
+      if (!install) return;
+      try {
+        const m = await api<{ capabilities: { actions: { action_id: string; display_name: string }[] }[] }>(
+          `/api/v1/integrations/catalog/${install.integration.slug}`,
+          { token: session.token, organizationId: session.organizationId }
+        );
+        const actions = (m.capabilities ?? []).flatMap((c) => c.actions ?? []);
+        setMxActions((prev) => ({ ...prev, [installId]: actions }));
+      } catch {
+        setMxActions((prev) => ({ ...prev, [installId]: [] }));
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [session, mxInstalls, mxActions]
+  );
+
+  useEffect(() => {
+    if (selectedNode && graph) {
+      const n = graph.nodes.find((x) => x.id === selectedNode);
+      if (n?.type === "marketplace_action" && n.config.install_id) {
+        void ensureActions(String(n.config.install_id));
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNode, graph]);
 
   useEffect(() => {
     setSelectedNode(null);
@@ -249,6 +291,8 @@ export function WorkflowCanvasEditor({ workflowId, graph, onChangeGraph, kbs, ag
             onDeleteEdge={deleteEdge}
             kbs={kbs}
             agents={agents}
+            mxInstalls={mxInstalls}
+            mxActions={mxActions}
           />
         ) : (
           <aside className="w-72 shrink-0 rounded-md border border-border bg-raised/60 p-3 text-[11px] text-faint">

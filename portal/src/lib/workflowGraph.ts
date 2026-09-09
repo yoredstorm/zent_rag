@@ -175,6 +175,22 @@ export const NODE_LIBRARY: Record<string, NodeMeta> = {
     summary: (c) => `${String(c.method || "GET")} ${String(c.url || "—").slice(0, 40)}`,
     risk: "elevated",
   },
+  marketplace_action: {
+    type: "marketplace_action",
+    category: "integration",
+    label: "Acción de integración",
+    icon: "🧩",
+    color: "bg-fuchsia-500",
+    fields: [
+      { key: "install_id", label: "Integración instalada", type: "select", options: [] },
+      { key: "action_id", label: "Acción", type: "select", options: [] },
+      { key: "inputs", label: "Inputs (JSON)", type: "json", refs: true },
+      { key: "purpose", label: "Propósito (datos personales)", type: "text", adv: true },
+    ],
+    defaults: { inputs: {} },
+    summary: (c) => `${String(c.action_id || "acción de integración").slice(0, 44)}`,
+    risk: "normal",
+  },
   kb_query: {
     type: "kb_query",
     category: "data",

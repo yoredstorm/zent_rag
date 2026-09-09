@@ -12,9 +12,11 @@ type Props = {
   onDeleteEdge: (id: string) => void;
   kbs: { id: string; name: string }[];
   agents: { id: string; name: string }[];
+  mxInstalls?: { id: string; integration: { slug: string; name: string } }[];
+  mxActions?: Record<string, { action_id: string; display_name: string }[]>;
 };
 
-export function NodeConfigPanel({ graph, node, edge, onChange, onDeleteNode, onDeleteEdge, kbs, agents }: Props) {
+export function NodeConfigPanel({ graph, node, edge, onChange, onDeleteNode, onDeleteEdge, kbs, agents, mxInstalls, mxActions }: Props) {
   const [showAdv, setShowAdv] = useState(false);
   const [refOpen, setRefOpen] = useState<string | null>(null);
 
@@ -71,6 +73,11 @@ export function NodeConfigPanel({ graph, node, edge, onChange, onDeleteNode, onD
     const field = meta.fields.find((f) => f.key === key);
     if (key === "knowledge_base_id") return kbs.map((k) => ({ value: k.id, label: k.name }));
     if (key === "agent_id") return agents.map((a) => ({ value: a.id, label: a.name }));
+    if (key === "install_id") return (mxInstalls ?? []).map((i) => ({ value: i.id, label: i.integration?.name ?? i.id }));
+    if (key === "action_id") {
+      const installId = String(n.config.install_id ?? "");
+      return (mxActions?.[installId] ?? []).map((a) => ({ value: a.action_id, label: a.display_name }));
+    }
     return field?.options ?? [];
   };
 

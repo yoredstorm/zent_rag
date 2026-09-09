@@ -568,6 +568,9 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(chat_insights_router)
     new_app.include_router(workflows_router)
     new_app.include_router(workflows_public_router)
+    from src.api.routes.marketplace import router as marketplace_router
+
+    new_app.include_router(marketplace_router)
     new_app.include_router(copilot_router)
     new_app.include_router(releases_router)
     new_app.include_router(migrations_router)
