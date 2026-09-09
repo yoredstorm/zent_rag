@@ -31,6 +31,7 @@ type Props = {
 };
 
 type Drag = { x: number; y: number; sx: number; sy: number };
+type NodeDrag = { id: string; startX: number; startY: number; posX: number; posY: number };
 type Wire = { fromNode: string; fromPort: string; x1: number; y1: number; x2: number; y2: number };
 
 export function WorkflowCanvas({
@@ -46,7 +47,7 @@ export function WorkflowCanvas({
   const [view, setView] = useState({ x: 60, y: 40, s: 1 });
   const [pan, setPan] = useState<Drag | null>(null);
   const [wire, setWire] = useState<Wire | null>(null);
-  const [dragNode, setDragNode] = useState<{ id: string; dx: number; dy: number } | null>(null);
+  const [dragNode, setDragNode] = useState<NodeDrag | null>(null);
   const [hotPort, setHotPort] = useState<{ node: string; port: string; side: "in" | "out" } | null>(null);
 
   const toWorld = useCallback(
@@ -122,7 +123,15 @@ export function WorkflowCanvas({
     ev.stopPropagation();
     onSelectNode(n.id);
     onSelectEdge(null);
-    setDragNode({ id: n.id, dx: ev.clientX, dy: ev.clientY });
+    // Arrastre RELATIVO: guardar el punto de inicio (client) y la posición
+    // inicial del nodo; el movimiento aplica solo el delta (+/- el zoom).
+    setDragNode({
+      id: n.id,
+      startX: ev.clientX,
+      startY: ev.clientY,
+      posX: n.position.x,
+      posY: n.position.y,
+    });
   }
 
   function onPortDown(ev: React.PointerEvent, n: GraphNode, port: string, side: "in" | "out") {
@@ -156,15 +165,19 @@ export function WorkflowCanvas({
       return;
     }
     if (dragNode) {
-      const w = toWorld(ev.clientX, ev.clientY);
-      const start = mapRef.current?.get(dragNode.id);
-      if (start) {
-        onChange(
-          withNodes(graph, (n) =>
-            n.id === dragNode.id ? { ...n, position: { x: w.x - start.dx, y: w.y - start.dy } } : n
-          )
-        );
-      }
+      onChange(
+        withNodes(graph, (n) =>
+          n.id === dragNode.id
+            ? {
+                ...n,
+                position: {
+                  x: dragNode.posX + (ev.clientX - dragNode.startX) / view.s,
+                  y: dragNode.posY + (ev.clientY - dragNode.startY) / view.s,
+                },
+              }
+            : n
+        )
+      );
     }
   }
 
@@ -233,13 +246,6 @@ export function WorkflowCanvas({
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedNodeId, selectedEdgeId, graph]);
-
-  const mapRef = useRef<Map<string, { dx: number; dy: number }>>(new Map());
-  useEffect(() => {
-    // Punto del nodo respecto al mouse en el nodo original
-    mapRef.current.clear();
-    for (const n of graph.nodes) mapRef.current.set(n.id, { dx: 0, dy: 0 });
-  }, [graph.nodes.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const bounds = {
     w: Math.max(800, ...graph.nodes.map((n) => n.position.x + NODE_W + 260)),
@@ -324,11 +330,7 @@ export function WorkflowCanvas({
                 selected ? "border-accent ring-1 ring-accent/40" : "border-border"
               } ${STATUS_CLS[run?.status ?? ""] ?? ""}`}
               style={{ left: n.position.x, top: n.position.y, width: NODE_W, cursor: "default" }}
-              onPointerDown={(ev) => {
-                const startW = toWorld(ev.clientX, ev.clientY);
-                mapRef.current.set(n.id, { dx: n.position.x - startW.x, dy: n.position.y - startW.y });
-                onNodePointerDown(ev, n);
-              }}
+              onPointerDown={(ev) => onNodePointerDown(ev, n)}
             >
               <div className={`flex items-center gap-2 rounded-t-md px-2 py-1 text-[11px] font-semibold text-bg ${meta.color}`}>
                 <span aria-hidden>{meta.icon}</span>
