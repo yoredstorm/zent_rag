@@ -324,12 +324,17 @@ async def install_inline(
     *,
     workspace_id: UUID | None = None,
     created_by: UUID | None = None,
+    purpose: str | None = None,
 ) -> dict:
     """Instala una integración desde el canvas (reusa instalación existente)."""
     from src.platform.marketplace.runtime import install_integration
 
     install = await install_integration(
-        organization_id, integration_slug, workspace_id=workspace_id, created_by=created_by
+        organization_id,
+        integration_slug,
+        workspace_id=workspace_id,
+        created_by=created_by,
+        purpose=purpose,
     )
     manifests = await _org_manifests(organization_id)
     manifest = manifests.get(integration_slug, {})

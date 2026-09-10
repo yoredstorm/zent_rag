@@ -385,16 +385,30 @@ async def tenant_workflow_marketplace_context(request: Request):
 
 @router.post("/marketplace/install", summary="Instalar integración inline desde el canvas")
 async def tenant_workflow_marketplace_install(body: InlineInstallIn, request: Request):
+    from src.platform.marketplace.runtime import (
+        MarketplaceError,
+        PurposeRequiredError,
+    )
     from src.platform.rbac.policy import require_permission
     from src.platform.workflows.capabilities import install_inline
 
     ctx = require_permission(request, "workflows:update")
-    return await install_inline(
-        ctx.organization_id,
-        body.integration_slug,
-        workspace_id=await _workspace_id(request),
-        created_by=ctx.user_id,
-    )
+    try:
+        return await install_inline(
+            ctx.organization_id,
+            body.integration_slug,
+            workspace_id=await _workspace_id(request),
+            created_by=ctx.user_id,
+            purpose=body.purpose,
+        )
+    except PurposeRequiredError as exc:
+        raise HTTPException(
+            422,
+            "La integración requiere un propósito de uso (datos personales). "
+            "Configúralo en Integraciones antes de usarla en workflows.",
+        ) from exc
+    except MarketplaceError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
 
 @router.get("/marketplace/ports/{action_id}", summary="Puertos tipados de una acción")
@@ -431,6 +445,7 @@ async def tenant_workflow_cost_estimate(body: EstimateIn, request: Request):
 
 class InlineInstallIn(BaseModel):
     integration_slug: str = Field(min_length=1, max_length=100)
+    purpose: str | None = Field(default=None, max_length=80)
 
 
 class RecommendIn(BaseModel):

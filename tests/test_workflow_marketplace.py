@@ -243,6 +243,29 @@ async def test_draft_marketplace_flags(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_install_purpose_required_returns_422(async_client: AsyncClient) -> None:
+    """RENIEC maneja datos personales: sin propósito → 422 claro, con propósito → 200."""
+    org = await _create_org(async_client, "Purpose Install")
+    org["session"] = await _owner_session(async_client, org["organization_id"])
+    h = _headers(org)
+
+    bad = await async_client.post(
+        "/api/v1/workflows/marketplace/install",
+        headers={**h, "Idempotency-Key": f"pu-{uuid4().hex}"},
+        json={"integration_slug": "reniec-verification"},
+    )
+    assert bad.status_code == 422, bad.text
+    assert "propósito" in bad.text.lower()
+
+    ok = await async_client.post(
+        "/api/v1/workflows/marketplace/install",
+        headers={**h, "Idempotency-Key": f"pu-{uuid4().hex}"},
+        json={"integration_slug": "reniec-verification", "purpose": "Verificación de identidad de clientes"},
+    )
+    assert ok.status_code == 200, ok.text
+
+
+@pytest.mark.asyncio
 async def test_ports_for_action(async_client: AsyncClient) -> None:
     org = await _create_org(async_client, "Ports")
     org["session"] = await _owner_session(async_client, org["organization_id"])

@@ -35,6 +35,7 @@ export function WorkflowCanvasEditor({ workflowId, graph, onChangeGraph, kbs, ag
   const [mkt, setMkt] = useState<MarketplaceContext | null>(null);
   const [shop, setShop] = useState<ShopInstall | null>(null);
   const [shopBusy, setShopBusy] = useState(false);
+  const [shopPurpose, setShopPurpose] = useState("");
   const [cost, setCost] = useState<{ per_run: number; monthly: number; calls_per_run: number; bulk_warning: boolean; currency: string } | null>(null);
   const [bulkConfirmed, setBulkConfirmed] = useState(false);
   const [emptyDismissed, setEmptyDismissed] = useState(false);
@@ -210,7 +211,7 @@ export function WorkflowCanvasEditor({ workflowId, graph, onChangeGraph, kbs, ag
         method: "POST",
         token: session.token,
         organizationId: session.organizationId,
-        body: JSON.stringify({ integration_slug: slug }),
+        body: JSON.stringify({ integration_slug: slug, purpose: shopPurpose.trim() || null }),
       });
       const fresh = await api<MarketplaceContext>("/api/v1/workflows/marketplace/context", {
         token: session.token,
@@ -219,6 +220,7 @@ export function WorkflowCanvasEditor({ workflowId, graph, onChangeGraph, kbs, ag
       setMkt(fresh);
       setError(`Integración instalada ✓ — ${r.integration.name} ya está en el canvas.`);
       setShop(null);
+      setShopPurpose("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
     } finally {
@@ -587,6 +589,17 @@ export function WorkflowCanvasEditor({ workflowId, graph, onChangeGraph, kbs, ag
                 <dd className="text-text">{shop.requires_credentials ? "Credenciales en SecretStore tras instalar" : "Sin setup"}</dd>
               </div>
             </dl>
+
+            <label className="mt-3 block text-[11px] text-muted">
+              Propósito de uso (aplica si maneja datos personales)
+              <input
+                className="input mt-1 w-full"
+                placeholder="Verificación de clientes…"
+                value={shopPurpose}
+                onChange={(e) => setShopPurpose(e.target.value)}
+                data-testid="wf-mkt-purpose"
+              />
+            </label>
 
             <button
               type="button"

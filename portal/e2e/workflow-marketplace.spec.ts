@@ -31,6 +31,18 @@ test.describe("Marketplace-native workflow canvas", () => {
       }).toPass({ timeout: 10_000 });
     }
 
+    // RENIEC (datos personales): pedir propósito y confirmar el flujo de error claro.
+    const reniec = page.getByTestId("wf-mkt-install-reniec-verification");
+    if (await reniec.count()) {
+      await reniec.click();
+      await expect(page.getByTestId("wf-mkt-drawer")).toBeVisible({ timeout: 10_000 });
+      await page.getByTestId("wf-mkt-install-confirm").click();
+      await expect(page.getByText(/propósito/i).first()).toBeVisible({ timeout: 15_000 });
+      await page.getByTestId("wf-mkt-purpose").fill("Verificación de clientes (e2e)");
+      await page.getByTestId("wf-mkt-install-confirm").click();
+      await expect(page.getByTestId("wf-mkt-action-peru.identity.verify")).toBeVisible({ timeout: 15_000 });
+    }
+
     // Sugerencia de automatización para canvas vacío.
     const hint = page.getByTestId("wf-empty-hint");
     if (await hint.count()) {
