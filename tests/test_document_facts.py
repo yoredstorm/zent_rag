@@ -93,7 +93,7 @@ class TestDateExtraction:
 class TestAmountExtraction:
     def test_clp_usd_uf_and_period_keywords(self) -> None:
         clp = _extract_amounts(
-            "El Contratante pagará un honorario mensual de CLP 1.500.000."
+            "El Contratante pagará un honorario mensual de CLP 1.500.000 a la consultora"
         )
         assert clp
         assert clp[0]["fact_type"] == "amount"
@@ -133,7 +133,7 @@ class TestIdentifierExtraction:
     def test_chilean_rut_and_email(self) -> None:
         text = (
             "Proveedor RUT 76.123.456-7 (también 12.345.678-K). "
-            "Escribir a legal@acme.cl o ops+docs@beta.cl."
+            "Escribir a legal@acme.cl o ops+docs@beta.cl para soporte"
         )
         facts = _extract_identifiers(text)
         ruts = [f["value"] for f in facts if f["key"] == "RUT"]
