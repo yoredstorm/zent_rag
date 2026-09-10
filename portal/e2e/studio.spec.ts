@@ -32,15 +32,15 @@ test.describe("Semantic Mapping Studio", () => {
     await expect(page.getByText("Zent está entendiendo tus datos")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("analyze-continue")).toBeEnabled({ timeout: 45_000 });
 
-    await page
-      .getByRole("navigation", { name: "Secciones de conocimiento" })
-      .getByRole("link", { name: "Semántica" })
-      .click();
-    await page
-      .getByRole("navigation", { name: "Subsecciones de Semántica" })
-      .getByRole("link", { name: "Entendimiento" })
-      .click();
+    // Entendimiento lives under Semántica; go directly so the wizard unload
+    // does not race the two-step rail (same URL as before the IA redesign).
+    await page.goto("/knowledge/understanding");
     await expect(page).toHaveURL(/\/knowledge\/understanding\/?$/, { timeout: 20_000 });
+    await expect(
+      page.getByRole("navigation", { name: "Subsecciones de Semántica" }).getByRole("link", {
+        name: "Entendimiento",
+      })
+    ).toBeVisible();
     await expect(page.getByTestId("studio-page")).toBeVisible({ timeout: 20_000 });
     await expect(
       page.getByTestId("studio-layout").or(page.getByText("Todavía no hay catálogo"))
