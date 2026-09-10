@@ -4,6 +4,7 @@ import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { EmptyState, ErrorInline, PageHeader, SkeletonBlock } from "../../components/ui";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 import { fmtDateTime } from "../../lib/format";
 
 type Improvement = {
@@ -66,7 +67,7 @@ export default function KnowledgeImprovementsPage() {
   return (
     <KnowledgeLayout>
       <PageHeader
-        title="Mejoras de inteligencia"
+        title={KNOWLEDGE_HEADINGS.improvements}
         subtitle="Backlog priorizado de mejoras del ciclo gobernado (gaps, clusters, métricas sugeridas)."
       />
       {error && <ErrorInline message={error} />}

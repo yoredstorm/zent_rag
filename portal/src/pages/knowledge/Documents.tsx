@@ -10,6 +10,7 @@ import {
 } from "../../components/ui";
 import { fmtDateTime } from "../../lib/format";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 
 type SourceRow = { id: string; name: string };
 type DocRow = {
@@ -60,7 +61,7 @@ export default function KnowledgeDocumentsPage() {
   return (
     <KnowledgeLayout>
       <PageHeader
-        title="Documentos"
+        title={KNOWLEDGE_HEADINGS.documents}
         subtitle="Registry de documentos indexados por fuente (solo tu organización)."
       />
       <ErrorInline message={error} />

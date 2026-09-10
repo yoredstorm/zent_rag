@@ -18,6 +18,7 @@ import {
 } from "../../components/ui";
 import { fmtDateTime } from "../../lib/format";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 
 type KB = {
   id: string;
@@ -132,7 +133,7 @@ export default function KnowledgeBasesPage() {
   return (
     <KnowledgeLayout>
       <PageHeader
-        title="Colecciones"
+        title={KNOWLEDGE_HEADINGS.collections}
         subtitle="Bases de conocimiento vectorizadas. Al eliminarlas se purgan sus vectores de Qdrant (solo los de tu organización)."
       />
       <ErrorInline message={error} />

@@ -4,6 +4,7 @@ import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { EmptyState, ErrorInline, PageHeader, SkeletonBlock } from "../../components/ui";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 
 type GlossaryTerm = {
   id: string;
@@ -63,7 +64,7 @@ export default function KnowledgeGlossaryPage() {
 
   return (
     <KnowledgeLayout>
-      <PageHeader title="Glosario de negocio" subtitle="Términos empresariales con synonyms, owner y versionado (solo lo aprobado alimenta las respuestas)." />
+      <PageHeader title={KNOWLEDGE_HEADINGS.glossary} subtitle="Términos empresariales con synonyms, owner y versionado (solo lo aprobado alimenta las respuestas)." />
       {error && <ErrorInline message={error} />}
 
       <div className="card mb-4 p-4">

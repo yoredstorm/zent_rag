@@ -12,6 +12,7 @@ import { EmptyState, ErrorInline, PageHeader, SkeletonBlock, Spinner } from "../
 import { fmtNum, timeAgo } from "../../lib/format";
 import { useSyncJob } from "../../syncJob";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 
 type TableProgress = {
   rows_indexed: number;
@@ -168,7 +169,7 @@ export default function IngestionPage() {
   return (
     <KnowledgeLayout>
       <PageHeader
-        title="Fuentes SQL"
+        title={KNOWLEDGE_HEADINGS.sql}
         subtitle="Descubre tablas y sincroniza tu información para poder hacer preguntas. Las tablas grandes se indexan solas a medida que las preguntas las necesitan."
         actions={
           <button

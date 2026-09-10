@@ -18,6 +18,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 import { KnowledgeEntityCard } from "../../components/knowledgeLearning/KnowledgeEntityCard";
 import { KnowledgeLearningOrb } from "../../components/knowledgeLearning/KnowledgeLearningOrb";
 import { KnowledgeQuestionCard } from "../../components/knowledgeLearning/KnowledgeQuestionCard";
@@ -358,7 +359,7 @@ export default function KnowledgeLearningPage() {
   if (loading) {
     return (
       <KnowledgeLayout>
-        <PageHeader title="Knowledge Intelligence" />
+        <PageHeader title={KNOWLEDGE_HEADINGS.learning} />
         <SkeletonBlock rows={6} />
       </KnowledgeLayout>
     );
@@ -368,7 +369,7 @@ export default function KnowledgeLearningPage() {
     <KnowledgeLayout>
       <div data-testid="learning-page">
         <PageHeader
-          title="Knowledge Intelligence"
+          title={KNOWLEDGE_HEADINGS.learning}
           subtitle="Zent está aprendiendo cómo funciona tu negocio: descubrimiento, semántica, relaciones, validación y readiness reales."
           actions={
             <>

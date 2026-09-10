@@ -5,6 +5,7 @@ import { useAuth } from "../../auth";
 import { ErrorInline, PageHeader, Spinner } from "../../components/ui";
 import { renderMarkdownHtml } from "../../lib/markdown";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 
 type PlaygroundSource = { content: string; score?: number };
 type PlaygroundResult = {
@@ -44,7 +45,7 @@ export default function KnowledgePlaygroundPage() {
   return (
     <KnowledgeLayout>
       <PageHeader
-        title="Playground de búsqueda"
+        title={KNOWLEDGE_HEADINGS.playground}
         subtitle="Misma API que el chat (`POST /rag/query`). Útil para probar retrieval sin el hilo de conversación."
       />
       <ErrorInline message={error} />

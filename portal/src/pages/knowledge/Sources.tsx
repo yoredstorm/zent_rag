@@ -12,6 +12,7 @@ import {
   SuccessInline,
 } from "../../components/ui";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 import { fmtDateTime, fmtNum } from "../../lib/format";
 
 const SOURCE_TYPES = [
@@ -223,7 +224,7 @@ export default function KnowledgeSourcesPage() {
   return (
     <KnowledgeLayout>
       <PageHeader
-        title="Conocimiento"
+        title={KNOWLEDGE_HEADINGS.sources}
         subtitle="Administra la información que tu IA puede usar para responder: fuentes, colecciones, documentos y sincronización."
         actions={
           <button

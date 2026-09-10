@@ -20,6 +20,7 @@ import {
   StatusBadge,
 } from "../../components/ui";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 import { fmtDateTime, fmtNum, timeAgo } from "../../lib/format";
 
 type Source = {
@@ -145,8 +146,8 @@ export default function KnowledgeOverviewPage() {
   return (
     <KnowledgeLayout>
       <PageHeader
-        title="Conocimiento"
-        subtitle="Conecta y administra toda la información que tu IA puede utilizar."
+        title={KNOWLEDGE_HEADINGS.overview}
+        subtitle="Comprende, aprueba y mide el conocimiento que tu IA puede utilizar."
         actions={
           <div className="flex flex-wrap gap-2">
             {resumeId && (
@@ -161,6 +162,32 @@ export default function KnowledgeOverviewPage() {
         }
       />
       <ErrorInline message={error} />
+      <section className="mb-6 grid gap-3 md:grid-cols-3" aria-label="Viaje de conocimiento">
+        <Link
+          to="/knowledge/glossary"
+          className="panel block p-4 transition-colors hover:border-accent/40"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">1. Comprende</p>
+          <h2 className="mt-1 font-semibold text-text">Semántica</h2>
+          <p className="mt-1 text-sm text-muted">Términos, catálogo y entendimiento de tus datos.</p>
+        </Link>
+        <Link
+          to="/knowledge/review"
+          className="panel block p-4 transition-colors hover:border-accent/40"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">2. Aprueba</p>
+          <h2 className="mt-1 font-semibold text-text">Revisión</h2>
+          <p className="mt-1 text-sm text-muted">Nada se auto-aprueba: confirma sugerencias y términos.</p>
+        </Link>
+        <Link
+          to="/knowledge/learning"
+          className="panel block p-4 transition-colors hover:border-accent/40"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted">3. Mide</p>
+          <h2 className="mt-1 font-semibold text-text">Aprendizaje</h2>
+          <p className="mt-1 text-sm text-muted">Readiness, mapa y mejoras del conocimiento aprendido.</p>
+        </Link>
+      </section>
       {hasRealData && (
         <div className="mb-4 rounded-md border border-border p-4">
           <h2 className="font-semibold">Tu conocimiento está listo.</h2>

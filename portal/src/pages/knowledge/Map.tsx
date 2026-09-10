@@ -8,6 +8,7 @@
 import { Graph, MagnifyingGlass } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 import { KnowledgeGraphCanvas } from "../../components/knowledgeLearning/KnowledgeGraphCanvas";
 import { KnowledgeNodeDetail } from "../../components/knowledgeLearning/KnowledgeNodeDetail";
 import {
@@ -165,7 +166,7 @@ export default function KnowledgeMapPage() {
     <KnowledgeLayout>
       <div data-testid="map-page">
         <PageHeader
-          title="Knowledge Map"
+          title={KNOWLEDGE_HEADINGS.map}
           subtitle="El modelo de negocio que Zent aprendió: entidades, relaciones, confianza, provenance y estado de validación."
           actions={
             <>

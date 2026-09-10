@@ -5,6 +5,7 @@ import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { EmptyState, ErrorInline, PageHeader, SkeletonBlock, StatusBadge } from "../../components/ui";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 import { FreeTextDraft, GROUP_ORDER, LexiconPanel, groupLabel, impactHint } from "./studio/panels";
 
 type CatalogSource = { id: string; engine: string; phase: string };
@@ -193,7 +194,7 @@ export default function KnowledgeUnderstandingPage() {
     <KnowledgeLayout>
       <div data-testid="studio-page">
       <PageHeader
-        title="Entendimiento"
+        title={KNOWLEDGE_HEADINGS.understanding}
         subtitle="Zent mapea nombres físicos a conceptos de negocio. Nada se auto-aprueba."
         actions={
           <div className="flex gap-2">

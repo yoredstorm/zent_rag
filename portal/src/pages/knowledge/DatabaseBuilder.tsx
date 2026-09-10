@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 import { PageHeader } from "../../components/ui";
 
 type Field = { name: string; type: string; required?: boolean; unique?: boolean };
@@ -105,7 +106,7 @@ export default function DatabaseBuilderPage() {
 
   return (
     <KnowledgeLayout>
-      <PageHeader title="Database Builder" />
+      <PageHeader title={KNOWLEDGE_HEADINGS.database} />
       {error && <p className="text-sm text-danger">{error}</p>}
       {!db ? (
         <button type="button" className="btn btn-primary" onClick={() => void createDb()}>
