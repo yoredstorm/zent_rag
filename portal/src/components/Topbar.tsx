@@ -14,6 +14,7 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { openCommandPalette } from "./CommandPalette";
 import { ThemeToggle } from "./ThemeToggle";
+import { KNOWLEDGE_ROUTE_TITLES } from "../lib/knowledgeNav";
 import { requestProductTourStart } from "../lib/productTour";
 
 const ROUTE_TITLES: Record<string, string> = {
@@ -21,13 +22,7 @@ const ROUTE_TITLES: Record<string, string> = {
   "/chat": "Playground",
   "/agents": "Agentes",
   "/agents/new": "Nuevo agente",
-  "/knowledge": "Conocimiento",
-  "/knowledge/sources": "Conocimiento",
-  "/knowledge/collections": "Colecciones",
-  "/knowledge/documents": "Documentos",
-  "/knowledge/sql": "Fuentes SQL",
-  "/knowledge/jobs": "Trabajos de sync",
-  "/knowledge/playground": "Búsqueda",
+  ...KNOWLEDGE_ROUTE_TITLES,
   "/workflows": "Workflows",
   "/data-sources": "Fuentes de datos",
   "/prompts": "Instrucciones",
@@ -54,8 +49,10 @@ const ROUTE_TITLES: Record<string, string> = {
 function routeTitle(pathname: string): string {
   if (pathname.startsWith("/agents/")) return "Agente";
   if (pathname.startsWith("/evaluation/")) return "Evaluación";
-  if (pathname.startsWith("/knowledge/")) {
-    const key = Object.keys(ROUTE_TITLES).find((k) => pathname.startsWith(k));
+  if (pathname === "/knowledge" || pathname.startsWith("/knowledge/")) {
+    const key = Object.keys(ROUTE_TITLES)
+      .filter((k) => pathname === k || pathname.startsWith(`${k}/`))
+      .sort((a, b) => b.length - a.length)[0];
     return (key && ROUTE_TITLES[key]) || "Conocimiento";
   }
   if (pathname.startsWith("/developers")) return "Centro de desarrolladores";

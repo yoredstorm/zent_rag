@@ -4,6 +4,7 @@ import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { ErrorInline, PageHeader, SkeletonBlock, Spinner } from "../../components/ui";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 import { fmtDateTime } from "../../lib/format";
 
 type CatalogSource = {
@@ -79,7 +80,7 @@ export default function KnowledgeCatalogPage() {
 
   return (
     <KnowledgeLayout>
-      <PageHeader title="Catálogo" subtitle="Descubrimiento autónomo de metadata y catálogo semántico (FASE 24)." />
+      <PageHeader title={KNOWLEDGE_HEADINGS.catalog} subtitle="Descubrimiento autónomo de metadata y catálogo semántico (FASE 24)." />
       {error && <ErrorInline message={error} />}
       {loading ? (
         <SkeletonBlock rows={4} />

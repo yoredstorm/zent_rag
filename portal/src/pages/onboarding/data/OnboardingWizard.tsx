@@ -4,6 +4,7 @@ import { api } from "../../../api";
 import { useAuth } from "../../../auth";
 import { ErrorInline, PageHeader } from "../../../components/ui";
 import { KnowledgeLayout } from "../../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../../lib/knowledgeNav";
 import { Stepper } from "../../../components/Stepper";
 import { AnalysisProgressStep } from "./AnalysisProgressStep";
 import { ApiStep } from "./ApiStep";
@@ -376,7 +377,7 @@ export default function OnboardingWizardPage() {
   return (
     <KnowledgeLayout>
       <PageHeader
-        title="Añade conocimiento a Zent"
+        title={KNOWLEDGE_HEADINGS.add}
         subtitle="Conecta tus datos. Zent los entiende contigo."
       />
       <ErrorInline message={error} />

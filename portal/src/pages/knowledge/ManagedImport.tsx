@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 import { PageHeader } from "../../components/ui";
 
 export default function ManagedImportPage() {
@@ -55,7 +56,7 @@ export default function ManagedImportPage() {
 
   return (
     <KnowledgeLayout>
-      <PageHeader title="Import CSV / Excel" />
+      <PageHeader title={KNOWLEDGE_HEADINGS.importCsv} />
       <ol className="mb-4 list-decimal pl-5 text-sm text-muted">
         <li>Upload File</li>
         <li>Detect Columns</li>

@@ -10,6 +10,7 @@ import {
 } from "../../components/ui";
 import { fmtDateTime, fmtNum } from "../../lib/format";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 
 type Job = {
   id: string;
@@ -43,7 +44,7 @@ export default function KnowledgeJobsPage() {
   return (
     <KnowledgeLayout>
       <PageHeader
-        title="Trabajos de sync"
+        title={KNOWLEDGE_HEADINGS.jobs}
         subtitle="Jobs de ingestión de tu organización. La API legacy de ingestión sigue disponible."
       />
       <ErrorInline message={error} />

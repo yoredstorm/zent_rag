@@ -4,6 +4,7 @@ import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { EmptyState, ErrorInline, PageHeader, SkeletonBlock } from "../../components/ui";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 import { fmtDateTime } from "../../lib/format";
 
 type Suggestion = {
@@ -52,7 +53,7 @@ export default function KnowledgeReviewPage() {
 
   return (
     <KnowledgeLayout>
-      <PageHeader title="Cola de revisión" subtitle="Sugerencias semánticas (OBSERVED/INFERRED) que requieren aprobación humana. Nada se auto-aprueba." />
+      <PageHeader title={KNOWLEDGE_HEADINGS.review} subtitle="Sugerencias semánticas (OBSERVED/INFERRED) que requieren aprobación humana. Nada se auto-aprueba." />
       {error && <ErrorInline message={error} />}
       {loading ? (
         <SkeletonBlock rows={4} />

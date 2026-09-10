@@ -2,7 +2,9 @@ import { BookOpen, Compass, GearSix, Lightbulb, Play, Warning } from "@phosphor-
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { KnowledgeLayout } from "../components/KnowledgeLayout";
 import { ErrorInline, PageHeader, SkeletonBlock } from "../components/ui";
+import { KNOWLEDGE_HEADINGS } from "../lib/knowledgeNav";
 
 type Source = { id: string; name: string; source_type: string; config: Record<string, unknown>; refresh_interval_h: number; last_refresh_at: string | null; next_refresh_at: string | null; status: string; documents: number };
 type Coverage = { total_documents: number; sources: { name: string; source_type: string; documents: number; avg_confidence: number; avg_freshness: number }[]; categories: { category: string; documents: number }[]; last_refreshes: { source: string; status: string; added: number; duplicated: number; started_at: string }[]; open_gaps: number; gap_occurrences: number };
@@ -99,8 +101,9 @@ export default function KnowledgeHubPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <PageHeader title="Knowledge Hub" subtitle="Auto-descubrimiento de fuentes, deduplicación semántica y curación de conocimiento." />
+    <KnowledgeLayout>
+      <div className="space-y-6">
+      <PageHeader title={KNOWLEDGE_HEADINGS.hub} subtitle="Auto-descubrimiento de fuentes, deduplicación semántica y curación de conocimiento." />
       {error && <ErrorInline>{error}</ErrorInline>}
       {loading ? (
         <SkeletonBlock className="h-64" />
@@ -193,6 +196,7 @@ export default function KnowledgeHubPage() {
           </section>
         </div>
       )}
-    </div>
+      </div>
+    </KnowledgeLayout>
   );
 }
