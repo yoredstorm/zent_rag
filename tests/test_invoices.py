@@ -134,6 +134,36 @@ async def test_invoice_csv_and_pdf(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_invoice_export_cross_tenant_is_404(async_client: AsyncClient) -> None:
+    owner = await _create_org(async_client, "Inv Owner Org")
+    owner["session"] = await _owner_session(async_client, owner["organization_id"])
+    other = await _create_org(async_client, "Inv Other Org")
+    other["session"] = await _owner_session(async_client, other["organization_id"])
+
+    gen = await async_client.post(
+        "/api/v1/billing/invoices/generate",
+        headers={**_headers(owner), "Idempotency-Key": f"inv-x-{uuid4().hex}"},
+    )
+    assert gen.status_code == 200, gen.text
+    invoice_id = gen.json()["id"]
+
+    detail = await async_client.get(
+        f"/api/v1/billing/invoices/{invoice_id}", headers=_headers(other)
+    )
+    assert detail.status_code == 404
+
+    csv_resp = await async_client.get(
+        f"/api/v1/billing/invoices/{invoice_id}/csv", headers=_headers(other)
+    )
+    assert csv_resp.status_code == 404
+
+    pdf_resp = await async_client.get(
+        f"/api/v1/billing/invoices/{invoice_id}/pdf", headers=_headers(other)
+    )
+    assert pdf_resp.status_code == 404
+
+
+@pytest.mark.asyncio
 async def test_billing_profile_upsert(async_client: AsyncClient) -> None:
     org = await _create_org(async_client, "Inv Profile Org")
     org["session"] = await _owner_session(async_client, org["organization_id"])

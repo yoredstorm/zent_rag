@@ -51,7 +51,7 @@ test.describe("Data onboarding wizard — org nueva CSV", () => {
     }
     await page.getByTestId("goto-questions").click();
 
-    await expect(page.getByRole("heading", { name: "Prueba Zent" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Prueba tus datos" })).toBeVisible();
     const question = page.getByTestId("generated-question").first();
     await expect(question).toBeVisible();
     await question.click();

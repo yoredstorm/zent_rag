@@ -32,6 +32,20 @@ PORT_TYPES = (
 
 LEGACY_STEP_TYPES = ("llm", "kb_query", "api_call", "condition", "notify")
 LEGACY_TRIGGER_TYPES = ("webhook", "schedule", "event")
+TRIGGER_NODE_TO_TYPE = {
+    "trigger_schedule": "schedule",
+    "trigger_event": "event",
+    "trigger_webhook": "webhook",
+}
+
+
+def trigger_type_from_graph(graph: WorkflowGraph) -> str:
+    """Deriva trigger_type persistido desde el nodo trigger del canvas."""
+    for node in graph.nodes:
+        mapped = TRIGGER_NODE_TO_TYPE.get(node.type)
+        if mapped is not None:
+            return mapped
+    return "webhook"
 
 # Coerciones permitidas entre tipos de puerto al conectar un edge.
 _COERCIONES: dict[str, set[str]] = {

@@ -104,7 +104,7 @@ export default function DashboardPage() {
         const healthData = await h.json().catch(() => ({ checks: {} as HealthChecks }));
         setHealth(h.ok && healthData.status === "healthy" ? "ok" : "down");
         setChecks(healthData.checks || {});
-        const [subData, usageData, lazyData, agentData, qualityData, sourceData, connData, gateData, attentionData] =
+        const [subData, usageData, lazyData, agentData, qualityData, sourceData, gateData, attentionData] =
           await Promise.all([
             api<Subscription>("/api/v1/billing/subscription", {
               token: session.token,
@@ -133,10 +133,6 @@ export default function DashboardPage() {
                 organizationId: session.organizationId,
               }
             ).catch(() => ({ sources: [] as { id: string; name: string; status: string; type: string }[] })),
-            api<{ connectors: Array<{ id: string; connector_type: string }> }>(
-              "/api/v1/connectors",
-              { token: session.token, organizationId: session.organizationId }
-            ).catch(() => ({ connectors: [] })),
             api<{ has_real_data: boolean; resume_session_id: string | null }>(
               "/api/v1/data-onboarding/gate",
               { token: session.token, organizationId: session.organizationId }
@@ -154,9 +150,7 @@ export default function DashboardPage() {
         const bad = (sourceData.sources || []).filter(
           (s) => s.status === "error" || s.status === "failed"
         );
-        const realSources = (sourceData.sources || []).filter((s) => s.type !== "sql");
-        const realConnectors = connData.connectors || [];
-        setHasRealData(realSources.length > 0 || realConnectors.length > 0);
+        setHasRealData(Boolean(gateData.has_real_data));
         setResumeId(gateData.resume_session_id);
         setAttentionSessions(attentionData.sessions || []);
         setIssues(

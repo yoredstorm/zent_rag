@@ -247,6 +247,7 @@ async def tenant_workflow_update(workflow_id: str, body: WorkflowUpdateIn, reque
             body.editor_state,
             graph=body.graph,
             workflow_version=body.workflow_version,
+            trigger_type=body.trigger_type,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -339,6 +340,7 @@ class WorkflowIn(BaseModel):
 class WorkflowUpdateIn(BaseModel):
     name: str | None = Field(default=None, max_length=150)
     description: str | None = None
+    trigger_type: str | None = Field(default=None, pattern="^(webhook|schedule|event)$")
     trigger_config: dict | None = None
     steps: list[dict] | None = None
     editor_state: dict | None = None
