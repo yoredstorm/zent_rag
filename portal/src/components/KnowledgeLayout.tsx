@@ -74,12 +74,8 @@ export function KnowledgeLayout({ children }: { children: ReactNode }) {
     if (pillar === "avanzado") setAdvanced(true);
   }, [pillar]);
 
-  const subnav =
-    pillar === "fuentes" || pillar === "semantica" || pillar === "mejora"
-      ? KNOWLEDGE_SUBNAVS[pillar]
-      : null;
-  const pillarLabel =
-    pillar === "fuentes" ? "Fuentes" : pillar === "semantica" ? "Semántica" : pillar === "mejora" ? "Mejora" : null;
+  const subnav = pillar === "semantica" || pillar === "mejora" ? KNOWLEDGE_SUBNAVS[pillar] : null;
+  const pillarLabel = pillar === "semantica" ? "Semántica" : pillar === "mejora" ? "Mejora" : null;
 
   return (
     <div>

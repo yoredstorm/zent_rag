@@ -27,30 +27,28 @@ describe("knowledge IA", () => {
     expect(primaryLabels).not.toContain("Entendimiento");
     expect(KNOWLEDGE_SUBNAVS.semantica.map((tab) => tab.label)).toEqual([
       "Términos",
-      "Catálogo",
       "Entendimiento",
+      "Catálogo",
     ]);
     expect(KNOWLEDGE_SUBNAVS.mejora.map((tab) => tab.label)).toEqual([
       "Aprendizaje",
+      "Mejoras",
       "Mapa",
       "Revisión",
-      "Mejoras",
     ]);
-    expect(KNOWLEDGE_SUBNAVS.fuentes.map((tab) => tab.to)).toEqual([
-      "/knowledge/sources",
-      "/knowledge/database",
-      "/knowledge/sql",
-      "/knowledge/collections",
-      "/knowledge/documents",
-    ]);
+    expect(KNOWLEDGE_SUBNAVS).not.toHaveProperty("fuentes");
   });
 
   it("mantiene herramientas avanzadas fuera del rail visible", () => {
     expect(KNOWLEDGE_ADVANCED_TABS.map((tab) => tab.to)).toEqual([
       "/knowledge/jobs",
+      "/knowledge/sql",
+      "/knowledge/database",
+      "/connectors",
+      "/knowledge/collections",
+      "/knowledge/documents",
       "/knowledge/playground",
       "/knowledge-hub",
-      "/connectors",
     ]);
   });
 
@@ -60,14 +58,17 @@ describe("knowledge IA", () => {
     expect(knowledgePillarForPath("/knowledge/sources")).toBe("fuentes");
     expect(knowledgePillarForPath("/knowledge/sources/abc")).toBe("fuentes");
     expect(knowledgePillarForPath("/knowledge/add")).toBe("fuentes");
-    expect(knowledgePillarForPath("/knowledge/database/import")).toBe("fuentes");
+    expect(knowledgePillarForPath("/knowledge/database/import")).toBe("avanzado");
+    expect(knowledgePillarForPath("/knowledge/sql")).toBe("avanzado");
+    expect(knowledgePillarForPath("/knowledge/collections")).toBe("avanzado");
+    expect(knowledgePillarForPath("/knowledge/documents")).toBe("avanzado");
     expect(knowledgePillarForPath("/knowledge/glossary")).toBe("semantica");
     expect(knowledgePillarForPath("/knowledge/catalog")).toBe("semantica");
     expect(knowledgePillarForPath("/knowledge/understanding")).toBe("semantica");
     expect(knowledgePillarForPath("/knowledge/learning")).toBe("mejora");
+    expect(knowledgePillarForPath("/knowledge/improvements")).toBe("mejora");
     expect(knowledgePillarForPath("/knowledge/map")).toBe("mejora");
     expect(knowledgePillarForPath("/knowledge/review")).toBe("mejora");
-    expect(knowledgePillarForPath("/knowledge/improvements")).toBe("mejora");
     expect(knowledgePillarForPath("/knowledge/jobs")).toBe("avanzado");
     expect(knowledgePillarForPath("/knowledge/playground")).toBe("avanzado");
     expect(knowledgePillarForPath("/knowledge-hub")).toBe("avanzado");

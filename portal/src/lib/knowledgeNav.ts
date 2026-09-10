@@ -34,24 +34,17 @@ export const KNOWLEDGE_PILLARS: (KnowledgeTab & { id: Exclude<KnowledgePillarId,
   { id: "mejora", to: "/knowledge/learning", label: "Mejora" },
 ];
 
-export const KNOWLEDGE_SUBNAVS: Record<"fuentes" | "semantica" | "mejora", KnowledgeTab[]> = {
-  fuentes: [
-    { to: "/knowledge/sources", label: "Orígenes" },
-    { to: "/knowledge/database", label: "Base" },
-    { to: "/knowledge/sql", label: "SQL" },
-    { to: "/knowledge/collections", label: "Colecciones" },
-    { to: "/knowledge/documents", label: "Documentos" },
-  ],
+export const KNOWLEDGE_SUBNAVS: Record<"semantica" | "mejora", KnowledgeTab[]> = {
   semantica: [
     { to: "/knowledge/glossary", label: "Términos" },
-    { to: "/knowledge/catalog", label: "Catálogo" },
     { to: "/knowledge/understanding", label: "Entendimiento" },
+    { to: "/knowledge/catalog", label: "Catálogo" },
   ],
   mejora: [
     { to: "/knowledge/learning", label: "Aprendizaje" },
+    { to: "/knowledge/improvements", label: "Mejoras" },
     { to: "/knowledge/map", label: "Mapa" },
     { to: "/knowledge/review", label: "Revisión" },
-    { to: "/knowledge/improvements", label: "Mejoras" },
   ],
 };
 
@@ -77,39 +70,45 @@ export const KNOWLEDGE_ROUTE_TITLES: Record<string, string> = {
 
 export const KNOWLEDGE_ADVANCED_TABS: KnowledgeTab[] = [
   { to: "/knowledge/jobs", label: "Sincronización" },
+  { to: "/knowledge/sql", label: "SQL" },
+  { to: "/knowledge/database", label: "Base" },
+  { to: "/connectors", label: "Conectores" },
+  { to: "/knowledge/collections", label: "Colecciones" },
+  { to: "/knowledge/documents", label: "Documentos" },
   { to: "/knowledge/playground", label: "Búsqueda" },
   { to: "/knowledge-hub", label: "Knowledge Hub" },
-  { to: "/connectors", label: "Conectores" },
 ];
 
 const PREFIX_GROUPS: { id: KnowledgePillarId; prefixes: string[] }[] = [
   {
     id: "fuentes",
-    prefixes: [
-      "/knowledge/sources",
-      "/knowledge/database",
-      "/knowledge/sql",
-      "/knowledge/collections",
-      "/knowledge/documents",
-      "/knowledge/add",
-    ],
+    prefixes: ["/knowledge/sources", "/knowledge/add"],
   },
   {
     id: "semantica",
-    prefixes: ["/knowledge/glossary", "/knowledge/catalog", "/knowledge/understanding"],
+    prefixes: ["/knowledge/glossary", "/knowledge/understanding", "/knowledge/catalog"],
   },
   {
     id: "mejora",
     prefixes: [
       "/knowledge/learning",
+      "/knowledge/improvements",
       "/knowledge/map",
       "/knowledge/review",
-      "/knowledge/improvements",
     ],
   },
   {
     id: "avanzado",
-    prefixes: ["/knowledge/jobs", "/knowledge/playground", "/knowledge-hub", "/connectors"],
+    prefixes: [
+      "/knowledge/jobs",
+      "/knowledge/sql",
+      "/knowledge/database",
+      "/knowledge/collections",
+      "/knowledge/documents",
+      "/knowledge/playground",
+      "/knowledge-hub",
+      "/connectors",
+    ],
   },
 ];
 
