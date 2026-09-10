@@ -38,9 +38,17 @@ test.describe("Customer portal — flujo smoke", () => {
 
     // Knowledge
     await page.goto("/knowledge");
-    await expect(page.getByRole("heading", { name: "Conocimiento" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Resumen", exact: true })).toBeVisible();
+    const knowledgeNav = page.getByRole("navigation", { name: "Secciones de conocimiento" });
+    await expect(knowledgeNav.getByRole("link", { name: "Resumen" })).toBeVisible();
+    await expect(knowledgeNav.getByRole("link", { name: "Fuentes" })).toBeVisible();
+    await expect(knowledgeNav.getByRole("link", { name: "Semántica" })).toBeVisible();
+    await expect(knowledgeNav.getByRole("link", { name: "Mejora" })).toBeVisible();
+    await expect(knowledgeNav.getByRole("button", { name: "Avanzado" })).toBeVisible();
+    await expect(knowledgeNav.getByRole("link")).toHaveCount(4);
     await page.goto("/knowledge/sources");
-    await expect(page.getByRole("link", { name: "Fuentes" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Fuentes", exact: true })).toBeVisible();
+    await expect(knowledgeNav.getByRole("link", { name: "Fuentes" })).toBeVisible();
 
     // Playground (chat): sin LLM el stream falla con elegancia, la UI no debe romperse
     await page.goto("/chat");

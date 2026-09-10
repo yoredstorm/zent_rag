@@ -34,6 +34,10 @@ test.describe("Semantic Mapping Studio", () => {
 
     await page
       .getByRole("navigation", { name: "Secciones de conocimiento" })
+      .getByRole("link", { name: "Semántica" })
+      .click();
+    await page
+      .getByRole("navigation", { name: "Subsecciones de Semántica" })
       .getByRole("link", { name: "Entendimiento" })
       .click();
     await expect(page).toHaveURL(/\/knowledge\/understanding\/?$/, { timeout: 20_000 });
