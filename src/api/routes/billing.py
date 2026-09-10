@@ -845,10 +845,13 @@ async def tenant_invoice_detail(invoice_id: str, request: Request):
 
 @router.get("/invoices/{invoice_id}/csv", summary="Descargar CSV")
 async def tenant_invoice_csv(invoice_id: str, request: Request):
-    from src.platform.billing.invoices import invoice_csv
+    from src.platform.billing.invoices import get_invoice, invoice_csv
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "billing:read")
+    invoice = await get_invoice(UUID(invoice_id))
+    if invoice is None or UUID(invoice["organization_id"]) != ctx.organization_id:
+        raise HTTPException(404, "Invoice not found")
     content = await invoice_csv(UUID(invoice_id))
     if content is None:
         raise HTTPException(404, "Invoice not found")
@@ -859,10 +862,13 @@ async def tenant_invoice_csv(invoice_id: str, request: Request):
 
 @router.get("/invoices/{invoice_id}/pdf", summary="Descargar PDF")
 async def tenant_invoice_pdf(invoice_id: str, request: Request):
-    from src.platform.billing.invoices import invoice_pdf
+    from src.platform.billing.invoices import get_invoice, invoice_pdf
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "billing:read")
+    invoice = await get_invoice(UUID(invoice_id))
+    if invoice is None or UUID(invoice["organization_id"]) != ctx.organization_id:
+        raise HTTPException(404, "Invoice not found")
     content = await invoice_pdf(UUID(invoice_id))
     if content is None:
         raise HTTPException(404, "Invoice not found")

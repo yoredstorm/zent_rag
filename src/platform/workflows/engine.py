@@ -587,6 +587,7 @@ async def update_workflow(
     *,
     graph: dict | None = None,
     workflow_version: int | None = None,
+    trigger_type: str | None = None,
 ) -> dict | None:
     session = await get_async_session()
     try:
@@ -632,7 +633,11 @@ async def update_workflow(
             sets.append("editor_state = CAST(:estate AS jsonb)")
             params["estate"] = json.dumps(editor_state)
         if graph is not None:
-            from src.platform.workflows.ir import WorkflowGraph, validate_graph
+            from src.platform.workflows.ir import (
+                WorkflowGraph,
+                trigger_type_from_graph,
+                validate_graph,
+            )
 
             parsed = WorkflowGraph.from_dict(dict(graph))
             validate_graph(parsed)
@@ -641,7 +646,17 @@ async def update_workflow(
             sets.append("workflow_version = :gver")
             params["graph"] = json.dumps(parsed.to_dict())
             params["gver"] = max(2, int(workflow_version or 2))
-        elif steps is not None and graph is None:
+            resolved_type = trigger_type or trigger_type_from_graph(parsed)
+            if resolved_type not in TRIGGER_TYPES:
+                raise ValueError(f"trigger_type debe ser uno de {TRIGGER_TYPES}")
+            sets.append("trigger_type = :ttype")
+            params["ttype"] = resolved_type
+        elif trigger_type is not None:
+            if trigger_type not in TRIGGER_TYPES:
+                raise ValueError(f"trigger_type debe ser uno de {TRIGGER_TYPES}")
+            sets.append("trigger_type = :ttype")
+            params["ttype"] = trigger_type
+        if steps is not None and graph is None:
             # Re-adaptar el grafo legacy (fuente de verdad: steps).
             from src.platform.workflows.ir import LegacyWorkflowAdapter
 

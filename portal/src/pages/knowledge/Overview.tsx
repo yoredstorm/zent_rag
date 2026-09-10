@@ -104,10 +104,7 @@ export default function KnowledgeOverviewPage() {
         setKbs(kb.knowledge_bases || []);
         setVectorPoints(st?.vector_points ?? null);
         setSql(ing);
-        setHasRealData(
-          Boolean(gate.has_real_data) ||
-            (s.sources || []).some((src) => src.type !== "sql")
-        );
+        setHasRealData(Boolean(gate.has_real_data));
         setResumeId(gate.resume_session_id);
         setAttention(attentionData.sessions?.[0] || null);
       } catch (err) {

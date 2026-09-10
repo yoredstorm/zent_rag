@@ -247,7 +247,12 @@ export function WorkflowCanvasEditor({ workflowId, graph, onChangeGraph, kbs, ag
         method: "PATCH",
         token: session.token,
         organizationId: session.organizationId,
-        body: JSON.stringify({ graph: g, workflow_version: 2, trigger_config: tcfg }),
+        body: JSON.stringify({
+          graph: g,
+          workflow_version: 2,
+          trigger_type: ttype,
+          trigger_config: tcfg,
+        }),
       });
       if (ttype === "event" && tcfg.event_type) {
         await api("/api/v1/workflows/triggers", {

@@ -12,6 +12,35 @@ from httpx import AsyncClient
 from tests.test_workflows import _create_org, _headers, _owner_session
 
 
+def test_trigger_type_from_graph_maps_canvas_nodes() -> None:
+    from src.platform.workflows.ir import WorkflowGraph, trigger_type_from_graph
+
+    schedule = WorkflowGraph.from_dict(
+        {
+            "nodes": [{"id": "t", "type": "trigger_schedule", "config": {"every_minutes": 5}}],
+            "edges": [],
+            "entrypoints": ["t"],
+        }
+    )
+    event = WorkflowGraph.from_dict(
+        {
+            "nodes": [{"id": "t", "type": "trigger_event", "config": {"event_type": "order.created"}}],
+            "edges": [],
+            "entrypoints": ["t"],
+        }
+    )
+    webhook = WorkflowGraph.from_dict(
+        {
+            "nodes": [{"id": "t", "type": "trigger_webhook", "config": {}}],
+            "edges": [],
+            "entrypoints": ["t"],
+        }
+    )
+    assert trigger_type_from_graph(schedule) == "schedule"
+    assert trigger_type_from_graph(event) == "event"
+    assert trigger_type_from_graph(webhook) == "webhook"
+
+
 # ---------------------------------------------------------------------------
 # Helpers de grafo
 # ---------------------------------------------------------------------------
@@ -517,6 +546,52 @@ async def test_event_trigger_dispatches_workflow(async_client: AsyncClient) -> N
 
     listed = await async_client.get("/api/v1/workflows/triggers", headers=h)
     assert any(t["event_type"] == "invoice.detected" for t in listed.json()["triggers"])
+
+
+@pytest.mark.asyncio
+async def test_patch_canvas_graph_persists_schedule_trigger_type(
+    async_client: AsyncClient,
+) -> None:
+    """Canvas save sends graph + trigger_config but historically omitted
+    trigger_type. The API must derive it from the trigger node so the
+    scheduler can pick the workflow up."""
+    org = await _create_org(async_client, "WF Canvas Trigger Org")
+    org["session"] = await _owner_session(async_client, org["organization_id"])
+    h = _headers(org)
+
+    created = await async_client.post(
+        "/api/v1/workflows",
+        headers={**_headers(org), "Idempotency-Key": f"cv-c-{uuid4().hex}"},
+        json={"name": "Canvas Schedule", "trigger_type": "webhook", "steps": []},
+    )
+    assert created.status_code == 200, created.text
+    wid = created.json()["workflow_id"]
+    before = await async_client.get(f"/api/v1/workflows/{wid}", headers=h)
+    assert before.json()["trigger_type"] == "webhook"
+
+    graph = _graph(
+        [
+            _node("trigger", "trigger_schedule", {"every_minutes": 15}),
+            _notify_node("n1", "tick"),
+        ],
+        [_edge("e1", "trigger", "n1")],
+        ["trigger"],
+    )
+    patched = await async_client.patch(
+        f"/api/v1/workflows/{wid}",
+        headers={**_headers(org), "Idempotency-Key": f"cv-p-{uuid4().hex}"},
+        json={
+            "graph": graph,
+            "workflow_version": 2,
+            "trigger_config": {"every_minutes": 15},
+        },
+    )
+    assert patched.status_code == 200, patched.text
+
+    detail = await async_client.get(f"/api/v1/workflows/{wid}", headers=h)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["trigger_type"] == "schedule"
+    assert detail.json()["trigger_config"].get("every_minutes") == 15
 
 
 # ---------------------------------------------------------------------------

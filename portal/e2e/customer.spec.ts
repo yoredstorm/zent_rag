@@ -38,7 +38,7 @@ test.describe("Customer portal — flujo smoke", () => {
 
     // Knowledge
     await page.goto("/knowledge");
-    await expect(page.getByRole("heading", { name: "Conocimiento" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Conocimiento", exact: true })).toBeVisible();
     await page.goto("/knowledge/sources");
     await expect(page.getByRole("link", { name: "Fuentes" })).toBeVisible();
 
