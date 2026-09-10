@@ -834,6 +834,7 @@ async def _exec_marketplace_action(rctx: NodeContext) -> NodeOutcome:
             "cached": outcome.cached,
             "cost": outcome.customer_cost,
             "latency_ms": round(outcome.latency_ms, 1),
+            "renderer": str(cfg.get("renderer") or "") or None,
         },
         cost_ms=outcome.customer_cost,
     )
@@ -843,6 +844,124 @@ def _is_uuid(value: str) -> bool:
     import re
 
     return bool(re.match(r"^[0-9a-fA-F-]{36}$", value))
+
+
+async def _exec_business_node(rctx: NodeContext) -> NodeOutcome:
+    """Nodo de alto nivel de un Business Pack: valida, llama capacidades,
+    normaliza, crea evidencia y produce un BusinessResult. Oculta el grafo
+    interno; la UI puede "expandir" para revelarlo."""
+    from src.platform.marketplace import runtime as mkt
+
+    cfg = rctx.node.config
+    title = str(cfg.get("title") or "Operación de negocio")
+    actions = cfg.get("actions") or []
+    if not isinstance(actions, list):
+        return NodeOutcome(error="business_node requiere actions[]")
+
+    outputs: dict[str, object] = {"title": title}
+    evidence_ids: list[str] = []
+    total_cost = 0.0
+    planned: list[dict] = []
+
+    for idx, act in enumerate(actions):
+        if not isinstance(act, dict):
+            continue
+        action_id = str(act.get("action_id") or "")
+        install_id = str(act.get("install_id") or "")
+        if not action_id:
+            return NodeOutcome(error=f"action {idx} sin action_id")
+        raw_inputs = act.get("inputs") or {}
+        inputs = {
+            str(k): _resolve_ref(v, rctx) for k, v in raw_inputs.items()
+        }
+        if rctx.simulate:
+            from src.platform.marketplace.runtime import _estimate_cost
+
+            price = _estimate_cost((act.get("cost_model") or {"cost_model": {"model": "PER_CALL"}}))
+            planned.append({"action_id": action_id, "estimated_cost": price})
+            outputs[f"action_{idx}"] = {"simulated": True, "action_id": action_id}
+            continue
+        outcome = await mkt.execute_action(
+            rctx.organization_id,
+            UUID(install_id) if _is_uuid(install_id) else None,
+            action_id,
+            inputs,
+            workspace_id=rctx.workspace_id,
+            purpose=str(act.get("purpose") or "") or None,
+            workflow_id=rctx.execution.workflow_id,
+            run_id=rctx.execution.run_id,
+            actor_id=rctx.execution.actor_id,
+            actor_type="workflow",
+            source="workflow",
+        )
+        if not outcome.ok:
+            return NodeOutcome(
+                error=f"{outcome.error_code}: {outcome.error_message}",
+                partial=dict(outputs),
+            )
+        normalized: dict[str, object] = dict(outcome.data or {})
+        output_map = act.get("output_map") or {}
+        if isinstance(output_map, dict):
+            mapped: dict[str, object] = {}
+            for field, path in output_map.items():
+                cur: Any = outcome.data
+                for part in str(path).split("."):
+                    if isinstance(cur, dict):
+                        cur = cur.get(part)
+                    else:
+                        cur = None
+                        break
+                if cur is not None:
+                    mapped[str(field)] = cur
+            normalized = mapped or normalized
+        outputs[f"action_{idx}"] = {
+            **normalized,
+            "evidence_id": str(outcome.evidence_id) if outcome.evidence_id else None,
+            "cost": outcome.customer_cost,
+        }
+        if outcome.evidence_id:
+            evidence_ids.append(str(outcome.evidence_id))
+        total_cost += outcome.customer_cost or 0.0
+
+    if rctx.simulate:
+        return NodeOutcome(
+            simulated=True,
+            planned={
+                "kind": "business",
+                "title": title,
+                "actions": planned,
+                "has_business_result": bool(cfg.get("business_result")),
+            },
+            output=outputs,
+        )
+
+    br = cfg.get("business_result") or {}
+    if br:
+        from src.platform.intelligence.results import BusinessResult, BusinessResultError, save_result
+
+        result = BusinessResult(
+            title=str(_resolve_ref(br.get("title") or title, rctx) or title),
+            summary=str(_resolve_ref(br.get("summary") or "", rctx) or "") or None,
+            section=str(br.get("section") or "reports"),
+            importance=str(br.get("importance") or "INFO"),
+            metrics=_resolve_ref(br.get("metrics") or {}, rctx),
+            insights=_resolve_ref(br.get("insights") or [], rctx),
+            entities=_resolve_ref(br.get("entities") or [], rctx),
+            workflow_id=rctx.execution.workflow_id,
+            workflow_run_id=rctx.execution.run_id,
+            agent_run_id=rctx.execution.actor_id,
+            correlation_id=rctx.execution.correlation_id,
+            source="workflow",
+        )
+        try:
+            saved = await save_result(rctx.organization_id, result, workspace_id=rctx.workspace_id)
+            outputs["result_id"] = saved["result_id"]
+        except BusinessResultError as exc:
+            return NodeOutcome(error=str(exc), partial=dict(outputs))
+
+    outputs["evidence_ids"] = evidence_ids
+    outputs["total_cost"] = total_cost
+    return NodeOutcome(output=outputs, cost_ms=total_cost)
 
 
 async def _exec_business_result(rctx: NodeContext) -> NodeOutcome:
@@ -1068,6 +1187,19 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "json"}},
         execute=_exec_business_result,
+    )
+
+    # BUSINESS / PACKS (Phase 33B) — nodo compuesto de alto nivel.
+    registry.register(
+        "business_node",
+        version=1,
+        label="Operación de negocio",
+        category="business",
+        risk_level="normal",
+        capabilities=frozenset({CALLS_EXTERNAL, WRITE_DB}),
+        inputs={"in": {"type": "json"}},
+        outputs={"out": {"type": "json"}},
+        execute=_exec_business_node,
     )
 
     # CONTROL

@@ -51,7 +51,7 @@ export function newEdgeId(): string {
 // ---------------------------------------------------------------------------
 // Catálogo visual de nodos (portal-side registry; espejo del backend)
 // ---------------------------------------------------------------------------
-export type NodeCategory = "trigger" | "data" | "ai" | "integration" | "logic" | "control" | "output";
+export type NodeCategory = "trigger" | "data" | "ai" | "integration" | "logic" | "business" | "control" | "output";
 
 export type FieldDef = {
   key: string;
@@ -79,12 +79,13 @@ export type NodeMeta = {
 
 export const CATEGORY_META: Record<NodeCategory, { label: string; color: string }> = {
   trigger: { label: "Triggers", color: "text-info" },
-  data: { label: "Datos", color: "text-accent" },
-  ai: { label: "IA", color: "text-purple-400" },
+  data: { label: "My Data", color: "text-accent" },
+  ai: { label: "AI & Agents", color: "text-purple-400" },
   integration: { label: "Integraciones", color: "text-fuchsia-400" },
-  logic: { label: "Lógica", color: "text-warn" },
+  logic: { label: "Business Logic", color: "text-warn" },
+  business: { label: "Business", color: "text-emerald-400" },
   control: { label: "Control", color: "text-danger" },
-  output: { label: "Salida", color: "text-ok" },
+  output: { label: "Output", color: "text-ok" },
 };
 
 const COND_OPS = [
@@ -189,6 +190,21 @@ export const NODE_LIBRARY: Record<string, NodeMeta> = {
     ],
     defaults: { inputs: {} },
     summary: (c) => `${String(c.action_id || "acción de integración").slice(0, 44)}`,
+    risk: "normal",
+  },
+  business_node: {
+    type: "business_node",
+    category: "business",
+    label: "Operación de negocio",
+    icon: "🎯",
+    color: "bg-emerald-500",
+    fields: [
+      { key: "title", label: "Título (outcome)", type: "text", placeholder: "Verify Business" },
+      { key: "actions", label: "Acciones (JSON)", type: "json", adv: true },
+      { key: "business_result", label: "Resultado de negocio (JSON)", type: "json", adv: true },
+    ],
+    defaults: { title: "Operación de negocio", actions: [], business_result: {} },
+    summary: (c) => `${String(c.title || "operación de negocio").slice(0, 44)}`,
     risk: "normal",
   },
   kb_query: {
@@ -576,6 +592,8 @@ const OUTPUT_FIELDS: Record<string, string[]> = {
   set_variable: ["variable", "value"],
   condition: ["result"],
   human_approval: ["approval_id", "status"],
+  marketplace_action: ["evidence_id", "cached", "cost", "latency_ms"],
+  business_node: ["result_id", "evidence_ids", "total_cost", "action_0"],
   trigger_schedule: [],
   trigger_webhook: [],
   trigger_event: [],

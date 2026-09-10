@@ -57,6 +57,7 @@ export default function IntelligencePage() {
   const [draft, setDraft] = useState<{
     name: string; trigger_type: string; trigger_config: Record<string, unknown>;
     steps: unknown[]; questions: string[]; integration_hint?: string | null; draft: boolean;
+    marketplace?: { missing: { action_id: string; install_slug: string | null }[]; wired: { action_id: string; install_id: string }[] } | null;
   } | null>(null);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -98,6 +99,25 @@ export default function IntelligencePage() {
         body: JSON.stringify({ prompt }),
       });
       setDraft(d);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function installMissing(slug: string) {
+    if (!session) return;
+    setBusy("missing");
+    setError("");
+    try {
+      await api(`/api/v1/workflows/marketplace/install`, {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify({ integration_slug: slug }),
+      });
+      await generateDraft();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
     } finally {
@@ -173,6 +193,28 @@ export default function IntelligencePage() {
               </ul>
             )}
             <p className="mt-2 text-[10px] text-info">Borrador — revisa costos y permisos antes de activar.</p>
+            {(draft.marketplace?.missing?.length ?? 0) > 0 && (
+              <div className="mt-2 rounded-md border border-warning/40 bg-warning/10 p-2" data-testid="draft-missing">
+                <p className="text-[11px] font-medium text-warning">
+                  Dependencias faltantes — el borrador se creó igual, pero estos nodos necesitan instalación:
+                </p>
+                <ul className="mt-1 space-y-1">
+                  {draft.marketplace!.missing!.map((m) => (
+                    <li key={m.action_id} className="flex flex-wrap items-center gap-2 text-[11px] text-text">
+                      <code className="font-mono">{m.action_id}</code>
+                      <button
+                        type="button"
+                        className="btn btn-ghost min-h-6 px-2 text-[10px] text-accent"
+                        data-testid={`draft-install-${m.action_id}`}
+                        onClick={() => void installMissing(m.install_slug ?? m.action_id.split(".")[0])}
+                      >
+                        Instalar {m.install_slug ?? "integración"}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <Link to="/workflows" className="btn btn-secondary mt-2 inline-flex min-h-7 px-2 text-[10px]">
               Abrir Workflows para revisarlo
             </Link>

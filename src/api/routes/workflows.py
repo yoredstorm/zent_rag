@@ -370,6 +370,78 @@ class ValidateIn(BaseModel):
     trigger_config: dict | None = None
 
 
+# ---------------------------------------------------------------------------
+# Phase 33B — Marketplace-native workflow UX (canvas context, costos,
+# install inline, recomendaciones, puertos tipados).
+# ---------------------------------------------------------------------------
+@router.get("/marketplace/context", summary="Contexto de marketplace para el canvas")
+async def tenant_workflow_marketplace_context(request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.capabilities import canvas_context
+
+    ctx = require_permission(request, "workflows:read")
+    return await canvas_context(ctx.organization_id, await _workspace_id(request))
+
+
+@router.post("/marketplace/install", summary="Instalar integración inline desde el canvas")
+async def tenant_workflow_marketplace_install(body: InlineInstallIn, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.capabilities import install_inline
+
+    ctx = require_permission(request, "workflows:update")
+    return await install_inline(
+        ctx.organization_id,
+        body.integration_slug,
+        workspace_id=await _workspace_id(request),
+        created_by=ctx.user_id,
+    )
+
+
+@router.get("/marketplace/ports/{action_id}", summary="Puertos tipados de una acción")
+async def tenant_workflow_marketplace_ports(action_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.capabilities import ports_for_action
+
+    require_permission(request, "workflows:read")
+    result = await ports_for_action(action_id)
+    if result is None:
+        raise HTTPException(404, "Acción no encontrada")
+    return result
+
+
+@router.post("/marketplace/recommend", summary="Recomendaciones para el grafo actual")
+async def tenant_workflow_marketplace_recommend(body: RecommendIn, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.capabilities import recommend_for_graph
+
+    ctx = require_permission(request, "workflows:read")
+    return await recommend_for_graph(
+        ctx.organization_id, body.graph or {}, await _workspace_id(request)
+    )
+
+
+@router.post("/cost-estimate", summary="Costo estimado por run y mensual")
+async def tenant_workflow_cost_estimate(body: EstimateIn, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.capabilities import cost_estimate
+
+    ctx = require_permission(request, "workflows:read")
+    return await cost_estimate(ctx.organization_id, body.graph or {}, body.trigger_config)
+
+
+class InlineInstallIn(BaseModel):
+    integration_slug: str = Field(min_length=1, max_length=100)
+
+
+class RecommendIn(BaseModel):
+    graph: dict | None = None
+
+
+class EstimateIn(BaseModel):
+    graph: dict | None = None
+    trigger_config: dict | None = None
+
+
 public_router = APIRouter(prefix="/api/v1/public/workflows", tags=["Workflows"])
 
 

@@ -562,6 +562,11 @@ async def intelligence_workflow_draft(body: DraftIn, request: Request):
     if len(prompt) < 8:
         raise HTTPException(400, "describe qué quieres automatizar")
     plan = build_draft(prompt)
+    from src.platform.workflows.capabilities import draft_marketplace_flags
+
+    marketplace = await draft_marketplace_flags(
+        ctx.organization_id, plan.steps, workspace_id=await _workspace_id(request)
+    )
     return {
         "name": plan.name,
         "trigger_type": plan.trigger_type,
@@ -570,6 +575,7 @@ async def intelligence_workflow_draft(body: DraftIn, request: Request):
         "questions": plan.questions,
         "source_hint": plan.source_hint,
         "integration_hint": plan.integration_hint,
+        "marketplace": marketplace,
         "draft": True,
         "must_review": True,
     }
