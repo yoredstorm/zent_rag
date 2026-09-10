@@ -190,3 +190,61 @@ def _qualified(table_name: str, default_schema: str) -> str:
     if "." in table_name:
         return table_name
     return f"{default_schema}.{table_name}"
+
+
+async def publish_relationship_suggestions(
+    *,
+    store: PostgresCatalogStore,
+    organization_id: UUID,
+    catalog_source_id: UUID,
+) -> int:
+    """Envía a Review Queue las relaciones sugeridas pendientes (idempotente).
+
+    Reutilizable por el Discovery Engine y por el Knowledge Learning Engine:
+    una FK física no es una relación de negocio aprobada hasta revisión.
+    """
+    from src.core.domain.catalog import CatalogSuggestion, SuggestionType
+
+    stored_rels = await store.list_relationships(
+        organization_id, catalog_source_id, status="suggested", limit=1000
+    )
+    pending = await store.list_suggestions(
+        organization_id,
+        status="pending",
+        type="relationship_candidate",
+        limit=1000,
+    )
+    already = {
+        str((s.get("payload") or {}).get("relationship_id")) for s in pending
+    }
+    created = 0
+    for rel in stored_rels:
+        if rel["id"] in already:
+            continue
+        await store.create_suggestion(
+            CatalogSuggestion(
+                organization_id=organization_id,
+                type=SuggestionType.RELATIONSHIP_CANDIDATE,
+                title=(
+                    f"Relación de negocio candidata: "
+                    f"{rel['from_column']} → {rel['to_column']}"
+                ),
+                description=(
+                    "FK físico no equivale a relación de negocio aprobada. "
+                    "Confirmar o rechazar."
+                ),
+                evidence=rel.get("evidence") or ["inferred relationship"],
+                confidence=rel.get("confidence") or "medium",
+                payload={
+                    "relationship_id": rel["id"],
+                    "from_table_id": rel["from_table_id"],
+                    "to_table_id": rel["to_table_id"],
+                    "from_column": rel["from_column"],
+                    "to_column": rel["to_column"],
+                    "business_verb": "REFERENCES",
+                },
+                affected_sources=[str(catalog_source_id)],
+            )
+        )
+        created += 1
+    return created

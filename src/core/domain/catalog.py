@@ -46,6 +46,15 @@ class RelationshipStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class RelationshipProvenance(StrEnum):
+    """Provenance de una relación (nunca INFERRED presentada como verdad)."""
+
+    OBSERVED = "OBSERVED"  # FK física declarada: verificable sin interpretación
+    INFERRED = "INFERRED"  # hipótesis (nombres, tipos, LLM): requiere revisión
+    APPROVED = "APPROVED"  # validada por una persona
+    REJECTED = "REJECTED"  # descartada por una persona
+
+
 class SuggestionType(StrEnum):
     ENTITY_IDENTIFICATION = "entity_identification"
     TABLE_IDENTIFICATION = "table_identification"
@@ -55,6 +64,7 @@ class SuggestionType(StrEnum):
     METRIC_PROPOSAL = "metric_proposal"
     GLOSSARY_TERM = "glossary_term"
     DOCUMENT_FACT = "document_fact"
+    BUSINESS_RULE = "business_rule"
 
 
 class SuggestionStatus(StrEnum):
@@ -235,12 +245,19 @@ class CatalogRelationship:
     to_table_id: UUID
     to_column: str
     relation_type: str = "foreign_key"  # foreign_key | inferred
-    confidence: str = "high"  # high | medium | low
+    confidence: str = "high"  # high | medium | low (compatibilidad legacy)
+    confidence_score: float = 0.0  # 0..1 (FASE 33C)
+    semantic_similarity: float = 0.0  # 0..1 naming similarity (FASE 33C)
+    cardinality: str | None = None  # 1:1 | N:1 | 1:N | N:M
+    provenance: RelationshipProvenance = RelationshipProvenance.INFERRED
     status: RelationshipStatus = RelationshipStatus.SUGGESTED
     evidence: list[str] = field(default_factory=list)
+    evidence_detail: list[dict] = field(default_factory=list)
     business_from: str | None = None
     business_to: str | None = None
     business_verb: str | None = None
+    learned_run_id: UUID | None = None
+    last_learned_at: datetime | None = None
     reviewed_by: UUID | None = None
     reviewed_at: datetime | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))

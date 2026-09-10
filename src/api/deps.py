@@ -94,6 +94,12 @@ _embedding_provider: EmbeddingProvider | None = None
 _cache_provider: CacheProvider | None = None
 _orchestrator: RAGOrchestrator | None = None
 _knowledge_engine = None
+_knowledge_learning_repo = None
+_knowledge_learning_engine = None
+_knowledge_score_service = None
+_knowledge_graph_service = None
+_knowledge_validation_engine = None
+_knowledge_evaluation_service = None
 
 
 def get_organization_repo() -> OrganizationRepository:
@@ -466,6 +472,101 @@ def get_catalog_discovery_engine():
             llm_provider=get_llm_provider(),
         )
     return _catalog_discovery_engine
+
+
+def get_knowledge_learning_repo():
+    """Store del Knowledge Learning Engine (FASE 33)."""
+    global _knowledge_learning_repo
+    if _knowledge_learning_repo is None:
+        from src.platform.knowledge_learning.repository import (
+            PostgresKnowledgeLearningRepository,
+        )
+
+        _knowledge_learning_repo = PostgresKnowledgeLearningRepository()
+    return _knowledge_learning_repo
+
+
+def get_knowledge_score_service():
+    """Score de Knowledge Readiness (FASE 33A)."""
+    global _knowledge_score_service
+    if _knowledge_score_service is None:
+        from src.platform.knowledge_learning.knowledge_score import (
+            KnowledgeScoreService,
+        )
+
+        _knowledge_score_service = KnowledgeScoreService(
+            get_catalog_store(), repository=get_knowledge_learning_repo()
+        )
+    return _knowledge_score_service
+
+
+def get_knowledge_graph_service():
+    """Knowledge Map, entidades aprendidas y gaps (FASE 33C)."""
+    global _knowledge_graph_service
+    if _knowledge_graph_service is None:
+        from src.platform.knowledge_learning.knowledge_graph import (
+            KnowledgeGraphService,
+        )
+
+        _knowledge_graph_service = KnowledgeGraphService(
+            get_catalog_store(),
+            intelligence_store=get_intelligence_store(),
+            repository=get_knowledge_learning_repo(),
+        )
+    return _knowledge_graph_service
+
+
+def get_knowledge_evaluation_service():
+    """Auto-evaluación RAG del conocimiento aprendido (FASE 33G)."""
+    global _knowledge_evaluation_service
+    if _knowledge_evaluation_service is None:
+        from src.platform.knowledge_learning.evaluation import (
+            KnowledgeEvaluationService,
+        )
+
+        _knowledge_evaluation_service = KnowledgeEvaluationService(
+            get_catalog_store(), get_knowledge_learning_repo()
+        )
+    return _knowledge_evaluation_service
+
+
+def get_knowledge_validation_engine():
+    """Validación humana: respuestas -> conocimiento (FASE 33D)."""
+    global _knowledge_validation_engine
+    if _knowledge_validation_engine is None:
+        from src.platform.knowledge_learning.validation_engine import (
+            KnowledgeValidationEngine,
+        )
+
+        _knowledge_validation_engine = KnowledgeValidationEngine(
+            get_catalog_store(),
+            get_knowledge_learning_repo(),
+            score_service=get_knowledge_score_service(),
+            intelligence_store=get_intelligence_store(),
+        )
+    return _knowledge_validation_engine
+
+
+def get_knowledge_learning_engine():
+    """Motor de aprendizaje (jobs durables 'knowledge_learning:*')."""
+    global _knowledge_learning_engine
+    if _knowledge_learning_engine is None:
+        from src.infrastructure.secrets.secret_store_resolver import get_secret_store
+        from src.platform.knowledge_learning.orchestrator import (
+            KnowledgeLearningEngine,
+        )
+
+        _knowledge_learning_engine = KnowledgeLearningEngine(
+            job_repo=get_job_repo(),
+            connector_repo=get_connector_repo(),
+            catalog_store=get_catalog_store(),
+            intelligence_store=get_intelligence_store(),
+            secret_store=get_secret_store(),
+            llm_provider=get_llm_provider(),
+            repository=get_knowledge_learning_repo(),
+            score_service=get_knowledge_score_service(),
+        )
+    return _knowledge_learning_engine
 
 
 def get_semantic_schema_linking():

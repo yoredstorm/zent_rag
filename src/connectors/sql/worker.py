@@ -372,6 +372,7 @@ async def _process_knowledge_job(job_id: str) -> None:
         from src.infrastructure.postgres.knowledge_repos import (
             PostgresIngestionJobRepository,
         )
+        from src.platform.knowledge_learning.orchestrator import LEARNING_JOB_PREFIX
 
         job_repo = PostgresIngestionJobRepository()
         job = await job_repo.get_job(None, jid)
@@ -415,6 +416,18 @@ async def _process_knowledge_job(job_id: str) -> None:
                 "Evaluation replay job finished",
                 job_id=job_id,
                 replay_id=replay_id,
+            )
+            return
+        if job is not None and (job.job_type or "").startswith(LEARNING_JOB_PREFIX):
+            from src.api.deps import get_knowledge_learning_engine
+
+            engine = get_knowledge_learning_engine()
+            job = await engine.execute_job(jid)
+            logger.info(
+                "Knowledge learning job finished",
+                job_id=job_id,
+                status=job.status.value,
+                attempts=job.attempts,
             )
             return
         if job is not None and (job.job_type or "").startswith("spider"):

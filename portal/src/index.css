@@ -336,6 +336,42 @@
     @apply h-full rounded-full bg-accent transition-[width] duration-400;
   }
 
+  /* Knowledge Learning Orb (FASE 33E): órbitas reales de etapas */
+  .kl-orb {
+    position: relative;
+    display: inline-block;
+  }
+  .kl-orbit {
+    position: absolute;
+    inset: 0;
+    animation: kl-orbit-spin var(--kl-duration, 10s) linear infinite;
+  }
+  .kl-orbit-reverse {
+    animation-direction: reverse;
+  }
+  .kl-core {
+    animation: kl-breathe 3.4s ease-in-out infinite;
+  }
+  .kl-particle {
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    transition: opacity 200ms ease, box-shadow 200ms ease;
+  }
+  .kl-particle[data-active="true"] {
+    box-shadow: 0 0 0 3px var(--color-accent-soft);
+  }
+
+  @keyframes kl-orbit-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  @keyframes kl-breathe {
+    0%, 100% { transform: scale(1); opacity: 0.92; }
+    50% { transform: scale(1.05); opacity: 1; }
+  }
+
   .bubble {
     @apply max-w-[85%] rounded-lg px-4 py-2.5 text-[14.5px] leading-relaxed;
   }

@@ -1,9 +1,11 @@
-import { BookOpen, Database, MagnifyingGlass, PencilLine, Binoculars, Wrench, CaretDown } from "@phosphor-icons/react";
+import { BookOpen, Database, MagnifyingGlass, PencilLine, Binoculars, Wrench, CaretDown, Sparkle, Graph } from "@phosphor-icons/react";
 import { NavLink } from "react-router-dom";
 import { useState, type ReactNode } from "react";
 
 const DEFAULT_TABS: { to: string; label: string; icon: typeof Database; end?: boolean }[] = [
   { to: "/knowledge", label: "Resumen", icon: BookOpen, end: true },
+  { to: "/knowledge/learning", label: "Aprendizaje", icon: Sparkle },
+  { to: "/knowledge/map", label: "Mapa", icon: Graph },
   { to: "/knowledge/sources", label: "Fuentes", icon: Database },
   { to: "/knowledge/database", label: "Base", icon: Database },
   { to: "/knowledge/understanding", label: "Entendimiento", icon: BookOpen },

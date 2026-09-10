@@ -294,6 +294,83 @@ rag_knowledge_invalidations_total = Counter(
     labelnames=["organization_id"],
 )
 
+# -----------------------------------------------------------------------------
+# Knowledge Learning Engine (FASE 33)
+# -----------------------------------------------------------------------------
+knowledge_learning_runs_total = Counter(
+    "knowledge_learning_runs_total",
+    "Runs de aprendizaje de conocimiento",
+    labelnames=["organization_id", "trigger", "status"],
+)
+
+knowledge_learning_duration_seconds = Histogram(
+    "knowledge_learning_duration_seconds",
+    "Duración de runs de aprendizaje",
+    labelnames=["organization_id"],
+    buckets=(1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 900.0),
+)
+
+knowledge_learning_failures_total = Counter(
+    "knowledge_learning_failures_total",
+    "Fallos de runs de aprendizaje",
+    labelnames=["organization_id"],
+)
+
+knowledge_entities_discovered_total = Counter(
+    "knowledge_entities_discovered_total",
+    "Entidades de negocio detectadas por el Learning Engine",
+    labelnames=["organization_id"],
+)
+
+knowledge_relationships_discovered_total = Counter(
+    "knowledge_relationships_discovered_total",
+    "Relaciones detectadas por el Learning Engine",
+    labelnames=["organization_id"],
+)
+
+knowledge_readiness_score = Gauge(
+    "knowledge_readiness_score",
+    "Knowledge Readiness (último cálculo, 0-100)",
+    labelnames=["organization_id", "scope"],
+)
+
+knowledge_learning_fingerprints_updated_total = Counter(
+    "knowledge_learning_fingerprints_updated_total",
+    "Fingerprints de schema actualizados (posible invalidación de cache LLM)",
+    labelnames=["organization_id"],
+)
+
+knowledge_llm_requests_total = Counter(
+    "knowledge_llm_requests_total",
+    "Llamadas LLM del Learning Engine (completed|cached|failed|skipped)",
+    labelnames=["organization_id", "status"],
+)
+
+knowledge_llm_tokens_total = Counter(
+    "knowledge_llm_tokens_total",
+    "Tokens consumidos por el Learning Engine",
+    labelnames=["organization_id", "token_type"],
+)
+
+knowledge_llm_latency_seconds = Histogram(
+    "knowledge_llm_latency_seconds",
+    "Latencia de llamadas LLM del Learning Engine",
+    labelnames=["organization_id"],
+    buckets=(0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0),
+)
+
+knowledge_evaluation_runs_total = Counter(
+    "knowledge_evaluation_runs_total",
+    "Auto-evaluaciones RAG del Learning Engine",
+    labelnames=["organization_id", "status"],
+)
+
+knowledge_evaluation_composite = Gauge(
+    "knowledge_evaluation_composite",
+    "Score compuesto de la última auto-evaluación (0-1)",
+    labelnames=["organization_id"],
+)
+
 
 def setup_metrics(app: FastAPI) -> Instrumentator:
     """Configura y expone /metrics para Prometheus scraping.

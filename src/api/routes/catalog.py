@@ -660,7 +660,11 @@ async def confirm_relationship(
     require_permission(request, "catalog:write")
     org = _org(request)
     ok = await catalog_store.update_relationship_status(
-        org, rel_id, status="confirmed", reviewed_by=_user(request)
+        org,
+        rel_id,
+        status="confirmed",
+        provenance="APPROVED",
+        reviewed_by=_user(request),
     )
     if not ok:
         raise HTTPException(404, "Relationship not found")

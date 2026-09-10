@@ -58,7 +58,15 @@ _ALTER_COLUMNS = [
     "ALTER TABLE catalog_relationships ADD COLUMN IF NOT EXISTS business_from VARCHAR(160)",
     "ALTER TABLE catalog_relationships ADD COLUMN IF NOT EXISTS business_to VARCHAR(160)",
     "ALTER TABLE catalog_relationships ADD COLUMN IF NOT EXISTS business_verb VARCHAR(40)",
+    "ALTER TABLE catalog_relationships ADD COLUMN IF NOT EXISTS provenance VARCHAR(20) NOT NULL DEFAULT 'INFERRED'",
+    "ALTER TABLE catalog_relationships ADD COLUMN IF NOT EXISTS confidence_score DOUBLE PRECISION NOT NULL DEFAULT 0",
+    "ALTER TABLE catalog_relationships ADD COLUMN IF NOT EXISTS semantic_similarity DOUBLE PRECISION NOT NULL DEFAULT 0",
+    "ALTER TABLE catalog_relationships ADD COLUMN IF NOT EXISTS cardinality VARCHAR(10)",
+    "ALTER TABLE catalog_relationships ADD COLUMN IF NOT EXISTS evidence_detail JSONB NOT NULL DEFAULT '[]'::jsonb",
+    "ALTER TABLE catalog_relationships ADD COLUMN IF NOT EXISTS last_learned_at TIMESTAMPTZ",
+    "ALTER TABLE catalog_relationships ADD COLUMN IF NOT EXISTS learned_run_id UUID",
     "ALTER TABLE catalog_sources ADD COLUMN IF NOT EXISTS workspace_id UUID",
+    "ALTER TABLE catalog_tables ADD COLUMN IF NOT EXISTS schema_fingerprint VARCHAR(64)",
 ]
 
 
@@ -465,7 +473,7 @@ class PostgresCatalogStore:
                     text(
                         "SELECT id, organization_id, source_id, schema_name, "
                         "table_name, is_view, row_count_approx, table_comment, "
-                        "indexes, content_hash, detected_at, removed_at "
+                        "indexes, content_hash, schema_fingerprint, detected_at, removed_at "
                         "FROM catalog_tables WHERE organization_id = :oid AND id = :id"
                     ),
                     {"oid": organization_id, "id": table_id},
@@ -488,9 +496,137 @@ class PostgresCatalogStore:
             "table_comment": row.table_comment,
             "indexes": row.indexes or [],
             "content_hash": row.content_hash,
+            "schema_fingerprint": getattr(row, "schema_fingerprint", None),
             "detected_at": row.detected_at.isoformat() if row.detected_at else None,
             "removed_at": row.removed_at.isoformat() if row.removed_at else None,
         }
+
+    async def update_table_fingerprint(
+        self,
+        organization_id: UUID,
+        table_id: UUID,
+        fingerprint: str,
+        *,
+        previous: str | None = None,
+    ) -> bool:
+        """Persiste el fingerprint de schema si cambió; retorna True si cambió."""
+        if previous == fingerprint:
+            return False
+        session: AsyncSession = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "UPDATE catalog_tables SET schema_fingerprint = :fp "
+                    "WHERE organization_id = :oid AND id = :id"
+                ),
+                {"fp": fingerprint, "oid": organization_id, "id": table_id},
+            )
+            await session.commit()
+            return (result.rowcount or 0) > 0
+        except Exception as exc:  # noqa: BLE001
+            await session.rollback()
+            logger.warning("Table fingerprint update failed", error=str(exc)[:200])
+            raise
+        finally:
+            await session.close()
+
+    async def update_entity_semantics(
+        self,
+        organization_id: UUID,
+        entity_id: UUID,
+        *,
+        display_name: str | None = None,
+        description: str | None = None,
+        confidence: str | None = None,
+        evidence: list[str] | None = None,
+    ) -> bool:
+        """Enriquecimiento semántico (FASE 33B) sin tocar entidades APPROVED."""
+        sets: list[str] = []
+        params: dict = {"oid": organization_id, "id": entity_id}
+        if display_name is not None:
+            sets.append("display_name = :display")
+            params["display"] = display_name[:160]
+        if description is not None:
+            sets.append("description = :description")
+            params["description"] = description[:4000]
+        if confidence is not None:
+            sets.append("confidence = :confidence")
+            params["confidence"] = confidence
+        if evidence:
+            sets.append("evidence = CAST(:evidence AS jsonb)")
+            params["evidence"] = json.dumps(evidence[:40])
+        if not sets:
+            return False
+        sets.append("updated_at = now()")
+        session: AsyncSession = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    f"UPDATE catalog_entities SET {', '.join(sets)} "
+                    "WHERE organization_id = :oid AND id = :id "
+                    "AND status <> 'approved'"  # noqa: S608 — sets whitelisted
+                ),
+                params,
+            )
+            await session.commit()
+            return (result.rowcount or 0) > 0
+        except Exception as exc:  # noqa: BLE001
+            await session.rollback()
+            logger.warning("Entity semantics update failed", error=str(exc)[:200])
+            return False
+        finally:
+            await session.close()
+
+    async def update_field_semantics(
+        self,
+        organization_id: UUID,
+        field_id: UUID,
+        *,
+        description: str | None = None,
+        role: str | None = None,
+        confidence: str | None = None,
+        synonyms: list[str] | None = None,
+        signal_scores: dict | None = None,
+    ) -> bool:
+        """Enriquecimiento de campo (FASE 33B) sin tocar campos APPROVED."""
+        sets: list[str] = []
+        params: dict = {"oid": organization_id, "id": field_id}
+        if description is not None:
+            sets.append("description = :description")
+            params["description"] = description[:4000]
+        if role is not None:
+            sets.append("role = :role")
+            params["role"] = role[:40]
+        if confidence is not None:
+            sets.append("confidence = :confidence")
+            params["confidence"] = confidence
+        if synonyms is not None:
+            sets.append("synonyms = CAST(:synonyms AS jsonb)")
+            params["synonyms"] = json.dumps(synonyms[:40])
+        if signal_scores is not None:
+            sets.append("signal_scores = CAST(:scores AS jsonb)")
+            params["scores"] = json.dumps(signal_scores)
+        if not sets:
+            return False
+        sets.append("updated_at = now()")
+        session: AsyncSession = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    f"UPDATE catalog_fields SET {', '.join(sets)} "
+                    "WHERE organization_id = :oid AND id = :id "
+                    "AND status <> 'approved'"  # noqa: S608 — sets whitelisted
+                ),
+                params,
+            )
+            await session.commit()
+            return (result.rowcount or 0) > 0
+        except Exception as exc:  # noqa: BLE001
+            await session.rollback()
+            logger.warning("Field semantics update failed", error=str(exc)[:200])
+            return False
+        finally:
+            await session.close()
 
     async def list_tables(
         self,
@@ -506,7 +642,7 @@ class PostgresCatalogStore:
             query = (
                 "SELECT id, organization_id, source_id, schema_name, table_name, "
                 "is_view, row_count_approx, table_comment, indexes, content_hash, "
-                "detected_at, removed_at FROM catalog_tables "
+                "schema_fingerprint, detected_at, removed_at FROM catalog_tables "
                 "WHERE organization_id = :oid AND source_id = :source "
             )
             if not include_removed:
@@ -761,23 +897,53 @@ class PostgresCatalogStore:
         to_column: str,
         relation_type: str = "foreign_key",
         confidence: str = "high",
+        confidence_score: float | None = None,
+        semantic_similarity: float = 0.0,
+        cardinality: str | None = None,
+        provenance: str | None = None,
         status: RelationshipStatus = RelationshipStatus.SUGGESTED,
         evidence: list[str] | None = None,
+        evidence_detail: list[dict] | None = None,
+        learned_run_id: UUID | None = None,
     ) -> UUID:
         rel_id = uuid4()
+        resolved_provenance = provenance or (
+            "OBSERVED"
+            if relation_type == "foreign_key"
+            else ("APPROVED" if status == RelationshipStatus.CONFIRMED else "INFERRED")
+        )
+        resolved_score = (
+            float(confidence_score)
+            if confidence_score is not None
+            else {"high": 0.9, "medium": 0.65, "low": 0.4}.get(confidence, 0.4)
+        )
         session: AsyncSession = await get_async_session()
         try:
             await session.execute(
                 text(
                     "INSERT INTO catalog_relationships "
                     "(id, organization_id, source_id, from_table_id, from_column, "
-                    "to_table_id, to_column, relation_type, confidence, status, evidence) "
+                    "to_table_id, to_column, relation_type, confidence, "
+                    "confidence_score, semantic_similarity, cardinality, provenance, "
+                    "status, evidence, evidence_detail, learned_run_id, last_learned_at) "
                     "VALUES (:id, :oid, :source, :from_table, :from_col, :to_table, "
-                    ":to_col, :rtype, :confidence, :status, CAST(:evidence AS jsonb)) "
+                    ":to_col, :rtype, :confidence, :score, :similarity, :cardinality, "
+                    ":provenance, :status, CAST(:evidence AS jsonb), "
+                    "CAST(:evidence_detail AS jsonb), :run_id, now()) "
                     "ON CONFLICT (organization_id, from_table_id, from_column, "
                     "to_table_id, to_column, relation_type) DO UPDATE SET "
                     "confidence = EXCLUDED.confidence, "
+                    "confidence_score = EXCLUDED.confidence_score, "
+                    "semantic_similarity = EXCLUDED.semantic_similarity, "
+                    "cardinality = COALESCE(EXCLUDED.cardinality, catalog_relationships.cardinality), "
                     "evidence = EXCLUDED.evidence, "
+                    "evidence_detail = EXCLUDED.evidence_detail, "
+                    "learned_run_id = EXCLUDED.learned_run_id, "
+                    "last_learned_at = now(), "
+                    "provenance = CASE "
+                    "  WHEN catalog_relationships.provenance = 'APPROVED' THEN 'APPROVED' "
+                    "  WHEN catalog_relationships.provenance = 'REJECTED' THEN 'REJECTED' "
+                    "  ELSE EXCLUDED.provenance END, "
                     "status = CASE WHEN catalog_relationships.status = 'confirmed' "
                     "THEN catalog_relationships.status ELSE EXCLUDED.status END"
                 ),
@@ -791,8 +957,14 @@ class PostgresCatalogStore:
                     "to_col": to_column,
                     "rtype": relation_type,
                     "confidence": confidence,
+                    "score": round(max(0.0, min(1.0, resolved_score)), 4),
+                    "similarity": round(max(0.0, min(1.0, semantic_similarity)), 4),
+                    "cardinality": cardinality,
+                    "provenance": resolved_provenance,
                     "status": status.value,
                     "evidence": json.dumps(evidence or []),
+                    "evidence_detail": json.dumps(evidence_detail or []),
+                    "run_id": learned_run_id,
                 },
             )
             existing = (
@@ -829,6 +1001,7 @@ class PostgresCatalogStore:
         source_id: UUID,
         *,
         status: str | None = None,
+        provenance: str | None = None,
         limit: int = 200,
         offset: int = 0,
     ) -> list[dict]:
@@ -836,39 +1009,89 @@ class PostgresCatalogStore:
         try:
             query = (
                 "SELECT id, source_id, from_table_id, from_column, to_table_id, "
-                "to_column, relation_type, confidence, status, evidence, "
-                "reviewed_by, reviewed_at, created_at, business_from, business_to, "
-                "business_verb FROM catalog_relationships "
+                "to_column, relation_type, confidence, confidence_score, "
+                "semantic_similarity, cardinality, provenance, status, evidence, "
+                "evidence_detail, reviewed_by, reviewed_at, created_at, "
+                "business_from, business_to, business_verb, learned_run_id, "
+                "last_learned_at FROM catalog_relationships "
                 "WHERE organization_id = :oid AND source_id = :source "
             )
             params: dict = {"oid": organization_id, "source": source_id, "limit": limit, "offset": offset}
             if status:
                 query += "AND status = :status "
                 params["status"] = status
+            if provenance:
+                query += "AND provenance = :provenance "
+                params["provenance"] = provenance
             query += "ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
             rows = (
                 await session.execute(text(query), params)
             ).fetchall()
-            return [
-                {
-                    "id": str(r.id),
-                    "source_id": str(r.source_id),
-                    "from_table_id": str(r.from_table_id),
-                    "from_column": r.from_column,
-                    "to_table_id": str(r.to_table_id),
-                    "to_column": r.to_column,
-                    "relation_type": r.relation_type,
-                    "confidence": r.confidence,
-                    "status": r.status,
-                    "evidence": r.evidence or [],
-                    "reviewed_by": str(r.reviewed_by) if r.reviewed_by else None,
-                    "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
-                    "business_from": getattr(r, "business_from", None),
-                    "business_to": getattr(r, "business_to", None),
-                    "business_verb": getattr(r, "business_verb", None),
-                }
-                for r in rows
-            ]
+            return [self._relationship_row(r) for r in rows]
+        finally:
+            await session.close()
+
+    @staticmethod
+    def _relationship_row(r) -> dict:
+        evidence_detail = getattr(r, "evidence_detail", None) or []
+        if isinstance(evidence_detail, str):
+            try:
+                evidence_detail = json.loads(evidence_detail)
+            except (TypeError, ValueError):
+                evidence_detail = []
+        return {
+            "id": str(r.id),
+            "source_id": str(r.source_id),
+            "from_table_id": str(r.from_table_id),
+            "from_column": r.from_column,
+            "to_table_id": str(r.to_table_id),
+            "to_column": r.to_column,
+            "relation_type": r.relation_type,
+            "confidence": r.confidence,
+            "confidence_score": round(float(getattr(r, "confidence_score", 0) or 0), 4),
+            "semantic_similarity": round(
+                float(getattr(r, "semantic_similarity", 0) or 0), 4
+            ),
+            "cardinality": getattr(r, "cardinality", None),
+            "provenance": getattr(r, "provenance", None) or "INFERRED",
+            "status": r.status,
+            "evidence": r.evidence or [],
+            "evidence_detail": evidence_detail,
+            "reviewed_by": str(r.reviewed_by) if r.reviewed_by else None,
+            "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
+            "business_from": getattr(r, "business_from", None),
+            "business_to": getattr(r, "business_to", None),
+            "business_verb": getattr(r, "business_verb", None),
+            "learned_run_id": (
+                str(r.learned_run_id) if getattr(r, "learned_run_id", None) else None
+            ),
+            "last_learned_at": (
+                r.last_learned_at.isoformat()
+                if getattr(r, "last_learned_at", None)
+                else None
+            ),
+        }
+
+    async def get_relationship(
+        self, organization_id: UUID, rel_id: UUID
+    ) -> dict | None:
+        session: AsyncSession = await get_async_session()
+        try:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT id, source_id, from_table_id, from_column, to_table_id, "
+                        "to_column, relation_type, confidence, confidence_score, "
+                        "semantic_similarity, cardinality, provenance, status, evidence, "
+                        "evidence_detail, reviewed_by, reviewed_at, created_at, "
+                        "business_from, business_to, business_verb, learned_run_id, "
+                        "last_learned_at FROM catalog_relationships "
+                        "WHERE organization_id = :oid AND id = :id"
+                    ),
+                    {"oid": organization_id, "id": rel_id},
+                )
+            ).fetchone()
+            return self._relationship_row(row) if row else None
         finally:
             await session.close()
 
@@ -878,23 +1101,138 @@ class PostgresCatalogStore:
         rel_id: UUID,
         *,
         status: str,
+        provenance: str | None = None,
         reviewed_by: UUID | None = None,
     ) -> bool:
+        resolved_provenance = provenance or (
+            "REJECTED" if status == "rejected" else None
+        )
+        sets = ["status = :status", "reviewed_by = :reviewed", "reviewed_at = now()"]
+        params: dict = {
+            "status": status,
+            "reviewed": reviewed_by,
+            "oid": organization_id,
+            "id": rel_id,
+        }
+        if resolved_provenance:
+            sets.append("provenance = :provenance")
+            params["provenance"] = resolved_provenance
         session: AsyncSession = await get_async_session()
         try:
             result = await session.execute(
                 text(
-                    "UPDATE catalog_relationships SET status = :status, "
-                    "reviewed_by = :reviewed, reviewed_at = now() "
-                    "WHERE organization_id = :oid AND id = :id"
+                    f"UPDATE catalog_relationships SET {', '.join(sets)} "
+                    "WHERE organization_id = :oid AND id = :id"  # noqa: S608
                 ),
-                {"status": status, "reviewed": reviewed_by, "oid": organization_id, "id": rel_id},
+                params,
             )
             await session.commit()
             return (result.rowcount or 0) > 0
         except Exception as exc:  # noqa: BLE001
             await session.rollback()
             logger.warning("Catalog relationship update failed", error=str(exc))
+            return False
+        finally:
+            await session.close()
+
+    async def update_relationship_business(
+        self,
+        organization_id: UUID,
+        rel_id: UUID,
+        *,
+        business_from: str | None = None,
+        business_to: str | None = None,
+        business_verb: str | None = None,
+    ) -> bool:
+        """Verbo/roles de negocio confirmados por humano (FASE 33D)."""
+        sets: list[str] = []
+        params: dict = {"oid": organization_id, "id": rel_id}
+        if business_from is not None:
+            sets.append("business_from = :bfrom")
+            params["bfrom"] = business_from[:160]
+        if business_to is not None:
+            sets.append("business_to = :bto")
+            params["bto"] = business_to[:160]
+        if business_verb is not None:
+            sets.append("business_verb = :bverb")
+            params["bverb"] = business_verb[:40]
+        if not sets:
+            return False
+        session: AsyncSession = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    f"UPDATE catalog_relationships SET {', '.join(sets)}, "
+                    "last_learned_at = now() "
+                    "WHERE organization_id = :oid AND id = :id"  # noqa: S608
+                ),
+                params,
+            )
+            await session.commit()
+            return (result.rowcount or 0) > 0
+        except Exception as exc:  # noqa: BLE001
+            await session.rollback()
+            logger.warning("Relationship business update failed", error=str(exc)[:200])
+            return False
+        finally:
+            await session.close()
+
+    async def update_relationship_intelligence(
+        self,
+        organization_id: UUID,
+        rel_id: UUID,
+        *,
+        provenance: str,
+        confidence_score: float,
+        evidence: list[str] | None = None,
+        evidence_detail: list[dict] | None = None,
+        cardinality: str | None = None,
+        semantic_similarity: float | None = None,
+        learned_run_id: UUID | None = None,
+    ) -> bool:
+        """Enriquecimiento FASE 33C (nunca degrada APPROVED/REJECTED humanos)."""
+        session: AsyncSession = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    "UPDATE catalog_relationships SET "
+                    "provenance = CASE "
+                    "  WHEN provenance = 'APPROVED' THEN 'APPROVED' "
+                    "  WHEN provenance = 'REJECTED' THEN 'REJECTED' "
+                    "  ELSE :provenance END, "
+                    "confidence_score = GREATEST(confidence_score, :score), "
+                    "semantic_similarity = GREATEST(semantic_similarity, :similarity), "
+                    "cardinality = COALESCE(:cardinality, cardinality), "
+                    "evidence = CAST(:evidence AS jsonb), "
+                    "evidence_detail = CAST(:evidence_detail AS jsonb), "
+                    "learned_run_id = COALESCE(:run_id, learned_run_id), "
+                    "last_learned_at = now(), "
+                    "status = CASE "
+                    "  WHEN status = 'confirmed' THEN status "
+                    "  WHEN provenance = 'REJECTED' THEN status "
+                    "  WHEN :provenance = 'OBSERVED' THEN 'confirmed' "
+                    "  ELSE status END "
+                    "WHERE organization_id = :oid AND id = :id"
+                ),
+                {
+                    "provenance": provenance,
+                    "score": round(max(0.0, min(1.0, confidence_score)), 4),
+                    "similarity": round(
+                        max(0.0, min(1.0, semantic_similarity or 0.0)), 4
+                    ),
+                    "cardinality": cardinality,
+                    "evidence": json.dumps(evidence or []),
+                    "evidence_detail": json.dumps(evidence_detail or []),
+                    "run_id": learned_run_id,
+                    "oid": organization_id,
+                    "id": rel_id,
+                },
+            )
+            await session.commit()
+            return (result.rowcount or 0) > 0
+        except Exception as exc:  # noqa: BLE001
+            await session.rollback()
+            logger.warning("Relationship intelligence update failed", error=str(exc))
             return False
         finally:
             await session.close()
@@ -1671,6 +2009,43 @@ class PostgresCatalogStore:
                 }
                 for r in rows
             ]
+        finally:
+            await session.close()
+
+    async def list_enum_values_for_table(
+        self, organization_id: UUID, table_id: UUID
+    ) -> dict[str, list[dict]]:
+        """Valores categóricos de todas las columnas de una tabla (una query)."""
+        session: AsyncSession = await get_async_session()
+        try:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT e.id, e.column_id, c.column_name, e.value, "
+                        "e.occurrence_count, e.documented_meaning, e.provenance, "
+                        "e.confidence, e.status FROM catalog_enum_values e "
+                        "JOIN catalog_columns c ON e.column_id = c.id "
+                        "WHERE e.organization_id = :oid AND c.table_id = :table "
+                        "ORDER BY c.column_name, e.value"
+                    ),
+                    {"oid": organization_id, "table": table_id},
+                )
+            ).fetchall()
+            out: dict[str, list[dict]] = {}
+            for r in rows:
+                out.setdefault(r.column_name, []).append(
+                    {
+                        "id": str(r.id),
+                        "column_id": str(r.column_id),
+                        "value": r.value,
+                        "occurrence_count": r.occurrence_count,
+                        "documented_meaning": r.documented_meaning,
+                        "provenance": r.provenance,
+                        "confidence": r.confidence,
+                        "status": r.status,
+                    }
+                )
+            return out
         finally:
             await session.close()
 

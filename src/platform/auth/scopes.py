@@ -17,6 +17,7 @@ PUBLIC_API_KEY_SCOPES: frozenset[str] = frozenset(
         "connectors:write",
         "usage:read",
         "knowledge:read",
+        "knowledge:write",
         "analytics:read",
     }
 )
@@ -33,8 +34,9 @@ _SCOPE_EQUIVALENTS: dict[str, frozenset[str]] = {
     "rag:read": frozenset({"rag:read", "rag:query", "knowledge:read"}),
     "rag:query": frozenset({"rag:read", "rag:query", "knowledge:read"}),
     "knowledge:read": frozenset({"rag:read", "rag:query", "knowledge:read"}),
-    "rag:write": frozenset({"rag:write", "rag:ingest"}),
-    "rag:ingest": frozenset({"rag:write", "rag:ingest"}),
+    "rag:write": frozenset({"rag:write", "rag:ingest", "knowledge:write"}),
+    "rag:ingest": frozenset({"rag:write", "rag:ingest", "knowledge:write"}),
+    "knowledge:write": frozenset({"rag:write", "rag:ingest", "knowledge:write"}),
     "usage:read": frozenset({"usage:read", "billing:read", "analytics:read"}),
     "billing:read": frozenset({"usage:read", "billing:read", "analytics:read"}),
     "analytics:read": frozenset({"usage:read", "billing:read", "analytics:read"}),
@@ -43,12 +45,26 @@ _SCOPE_EQUIVALENTS: dict[str, frozenset[str]] = {
 _SCOPE_TO_PERMISSIONS: dict[str, frozenset[str]] = {
     "rag:read": frozenset({"rag:read", "rag:query"}),
     "rag:query": frozenset({"rag:read", "rag:query"}),
-    "rag:write": frozenset({"rag:write", "rag:ingest", "kbs:write", "sources:write"}),
-    "rag:ingest": frozenset({"rag:write", "rag:ingest", "kbs:write", "sources:write"}),
+    "rag:write": frozenset(
+        {"rag:write", "rag:ingest", "kbs:write", "sources:write", "knowledge:write"}
+    ),
+    "rag:ingest": frozenset(
+        {"rag:write", "rag:ingest", "kbs:write", "sources:write", "knowledge:write"}
+    ),
     "agents:execute": frozenset({"agents:execute"}),
     "agents:read": frozenset({"agents:read"}),
     "knowledge:read": frozenset(
         {"rag:read", "rag:query", "sources:read", "kbs:read", "knowledge:read"}
+    ),
+    "knowledge:write": frozenset(
+        {
+            "rag:write",
+            "rag:ingest",
+            "kbs:write",
+            "sources:write",
+            "catalog:write",
+            "knowledge:write",
+        }
     ),
     "connectors:read": frozenset({"connectors:read"}),
     "connectors:write": frozenset({"connectors:read", "connectors:write"}),

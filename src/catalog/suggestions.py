@@ -153,6 +153,25 @@ class ReviewQueueService:
                     status="rejected",
                     reviewed_by=reviewed_by,
                 )
+        if stype == SuggestionType.BUSINESS_RULE.value:
+            rule_name = suggestion["payload"].get("rule") or suggestion["payload"].get("name")
+            definition = suggestion["payload"].get("definition")
+            if rule_name and definition:
+                from src.platform.knowledge_learning.repository import (
+                    PostgresKnowledgeLearningRepository,
+                )
+
+                await PostgresKnowledgeLearningRepository().upsert_business_rule(
+                    organization_id,
+                    name=rule_name,
+                    definition=definition,
+                    applies_to=suggestion["payload"].get("applies_to") or [],
+                    provenance="REJECTED",
+                    confidence=suggestion.get("confidence") or "low",
+                    source=suggestion["payload"].get("source") or "llm",
+                    suggestion_id=UUID(str(suggestion["id"])),
+                    created_by=reviewed_by,
+                )
         await self._store.update_suggestion_status(
             organization_id,
             suggestion_id,
@@ -286,7 +305,11 @@ class ReviewQueueService:
             rel_id = payload.get("relationship_id")
             if rel_id:
                 await self._store.update_relationship_status(
-                    organization_id, UUID(rel_id), status="confirmed", reviewed_by=reviewed_by
+                    organization_id,
+                    UUID(rel_id),
+                    status="confirmed",
+                    provenance="APPROVED",
+                    reviewed_by=reviewed_by,
                 )
 
         elif stype == SuggestionType.ENUM_DEFINITION.value:
@@ -360,6 +383,27 @@ class ReviewQueueService:
                     owner=payload.get("owner"),
                     status="approved",
                     created_by=reviewed_by,
+                )
+
+        elif stype == SuggestionType.BUSINESS_RULE.value:
+            rule_name = payload.get("rule") or payload.get("name")
+            definition = payload.get("definition")
+            if rule_name and definition:
+                from src.platform.knowledge_learning.repository import (
+                    PostgresKnowledgeLearningRepository,
+                )
+
+                await PostgresKnowledgeLearningRepository().upsert_business_rule(
+                    organization_id,
+                    name=rule_name,
+                    definition=definition,
+                    applies_to=payload.get("applies_to") or [],
+                    provenance="APPROVED",
+                    confidence=suggestion.get("confidence") or "medium",
+                    source=payload.get("source") or "llm",
+                    suggestion_id=UUID(str(suggestion["id"])),
+                    created_by=reviewed_by,
+                    learned_run_id=None,
                 )
 
     async def _ensure_field_from_payload(

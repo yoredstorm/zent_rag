@@ -162,6 +162,17 @@ ignore = [
 "src/verticals/**/*.py" = ["E501"]  # prompt string constants de verticals
 "sdk/python/tests/**/*.py" = ["S101", "S105"]
 "src/scripts/**/*.py" = ["T201"]  # CLI scripts use print for stdout
+"src/platform/knowledge_learning/repository.py" = ["S608", "E501", "B008"]
+"src/platform/knowledge_learning/knowledge_score.py" = ["S608", "E501"]
+"src/platform/knowledge_learning/orchestrator.py" = ["E501"]
+"src/platform/knowledge_learning/llm_analyzer.py" = ["E501"]
+"src/platform/knowledge_learning/business_analyzer.py" = ["E501"]
+"src/platform/knowledge_learning/relationship_analyzer.py" = ["E501"]
+"src/platform/knowledge_learning/knowledge_graph.py" = ["E501"]
+"src/platform/knowledge_learning/question_generator.py" = ["E501"]
+"src/platform/knowledge_learning/validation_engine.py" = ["E501"]
+"src/platform/knowledge_learning/evaluation.py" = ["E501"]
+"src/api/routes/knowledge_learning.py" = ["E501"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["src"]

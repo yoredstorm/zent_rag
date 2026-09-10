@@ -6,6 +6,9 @@
 # la Review Queue. NUNCA promover INFERRED -> APPROVED automáticamente.
 # El LLM (opcional) enriquece las inferencias heurísticas; si falla, queda la
 # heurística determinista.
+#
+# FASE 33A: la inferencia se separa en dos etapas observables del Learning
+# Engine (run_entities / run_fields). run() conserva el contrato original.
 # =============================================================================
 from __future__ import annotations
 
@@ -125,9 +128,33 @@ class SemanticInference:
         deep: DeepSchemaDiscovery,
         tables_meta: list[dict],
     ) -> list[dict]:
-        """Crea entidades/campos INFERRED y sugerencias; retorna resumen."""
+        """Contrato original: entidades + campos + templates en una sola pasada."""
+        entity_suggestions, state = await self.run_entities(
+            organization_id=organization_id,
+            catalog_source_id=catalog_source_id,
+            deep=deep,
+            tables_meta=tables_meta,
+        )
+        field_suggestions = await self.run_fields(
+            organization_id=organization_id,
+            catalog_source_id=catalog_source_id,
+            deep=deep,
+            state=state,
+        )
+        return entity_suggestions + field_suggestions
+
+    async def run_entities(
+        self,
+        *,
+        organization_id: UUID,
+        catalog_source_id: UUID,
+        deep: DeepSchemaDiscovery,
+        tables_meta: list[dict],
+    ) -> tuple[list[dict], dict[str, dict]]:
+        """Crea entidades INFERRED. Retorna (sugerencias, estado por tabla)."""
         await self._store.ensure_tables()
         suggestions: list[dict] = []
+        state: dict[str, dict] = {}
         existing_entities = await self._store.list_entities(organization_id, limit=1000)
         existing_names = {e["name"].lower() for e in existing_entities}
 
@@ -149,6 +176,7 @@ class SemanticInference:
                 None,
             )
             table_id = UUID(table_meta["id"]) if table_meta else None
+            qualified = f"{table.schema}.{table.table_name}"
 
             if entity_name.lower() not in existing_names:
                 entity = CatalogEntity(
@@ -168,7 +196,11 @@ class SemanticInference:
                     {
                         "type": "entity_identification",
                         "entity": entity_name,
-                        "table": f"{table.schema}.{table.table_name}",
+                        "table": qualified,
+                        "entity_id": str(entity.id),
+                        "table_id": str(table_id) if table_id else None,
+                        "confidence": entity_conf,
+                        "evidence": list(entity_evidence or []),
                     }
                 )
                 await self._store.create_suggestion(
@@ -187,17 +219,46 @@ class SemanticInference:
                             "entity_id": str(entity.id),
                             "entity_name": entity_name,
                             "table_id": str(table_id) if table_id else None,
-                            "qualified": f"{table.schema}.{table.table_name}",
+                            "qualified": qualified,
                         },
                         affected_sources=[str(catalog_source_id)],
                     )
                 )
 
-            # Campos del negocio (mapping físico -> semántico).
             entity_row = await self._get_entity_by_name(organization_id, entity_name)
             if entity_row is None:
                 continue
-            entity_id = UUID(entity_row["id"])
+            state[qualified] = {
+                "entity_name": entity_name,
+                "entity_id": entity_row["id"],
+                "table_id": str(table_id) if table_id else None,
+                "confidence": entity_row.get("confidence") or entity_conf,
+                "evidence": entity_row.get("evidence") or list(entity_evidence or []),
+            }
+
+        return suggestions, state
+
+    async def run_fields(
+        self,
+        *,
+        organization_id: UUID,
+        catalog_source_id: UUID,
+        deep: DeepSchemaDiscovery,
+        state: dict[str, dict],
+    ) -> list[dict]:
+        """Crea Business Fields INFERRED para las entidades detectadas."""
+        suggestions: list[dict] = []
+        if not state:
+            return suggestions
+
+        for table in deep.tables:
+            info = state.get(f"{table.schema}.{table.table_name}")
+            if info is None or not info.get("table_id"):
+                continue
+            entity_id = UUID(info["entity_id"])
+            entity_name = info["entity_name"]
+            table_id = UUID(info["table_id"])
+
             existing_fields = await self._store.list_fields(organization_id, entity_id)
             existing_field_names = {f["name"].lower() for f in existing_fields}
             columns = await self._store.list_columns(organization_id, table_id)
@@ -251,6 +312,13 @@ class SemanticInference:
                         "entity": entity_name,
                         "field": field_name,
                         "column": col.name,
+                        "entity_id": str(entity_id),
+                        "field_id": str(field.id),
+                        "column_id": mapped_col["id"] if mapped_col else None,
+                        "confidence": inferred.confidence,
+                        "role": inferred.role,
+                        "conflicting": inferred.conflicting,
+                        "evidence": list(inferred.evidence),
                     }
                 )
                 if mapped_col:

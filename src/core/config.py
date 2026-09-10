@@ -410,6 +410,108 @@ class Settings(BaseSettings):
         description="Zent Spider: discovery continuo autorizado (políticas org-scoped).",
     )
     # -------------------------------------------------------------------------
+    # Knowledge Learning Engine (FASE 33)
+    # -------------------------------------------------------------------------
+    RAG_KNOWLEDGE_LEARNING_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Activa el pipeline explícito de aprendizaje de conocimiento "
+            "(discovery -> semántica -> relaciones -> score de readiness)."
+        ),
+    )
+    RAG_KNOWLEDGE_LLM_ANALYSIS_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "FASE 33B: análisis semántico con LLM sobre metadata sanitizada. "
+            "Si está OFF, el pipeline usa heurísticas deterministas."
+        ),
+    )
+    RAG_KNOWLEDGE_AI_QUESTIONS_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "FASE 33D: generación de preguntas de negocio ante ambigüedad real. "
+            "Nunca usa el LLM como única fuente de verdad."
+        ),
+    )
+    RAG_KNOWLEDGE_GRAPH_ENABLED: bool = Field(
+        default=True,
+        description="FASE 33F: Knowledge Map (entidades/relaciones) habilitado.",
+    )
+    RAG_KNOWLEDGE_LIVE_EVENTS_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Publica eventos de aprendizaje en el bus realtime (SSE). "
+            "Si está OFF, los eventos siguen durables en knowledge_events."
+        ),
+    )
+    RAG_KNOWLEDGE_LLM_MODEL: str = Field(
+        default="",
+        description=(
+            "Modelo para análisis semántico (vacío = RAG_LITELLM_DEFAULT_MODEL / "
+            "router zent-default)."
+        ),
+    )
+    RAG_KNOWLEDGE_LLM_MAX_TOKENS: int = Field(
+        default=2500,
+        ge=256,
+        le=16_000,
+        description="Máximo de tokens de salida por tabla analizada (JSON).",
+    )
+    RAG_KNOWLEDGE_LLM_TEMPERATURE: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="Temperatura baja para JSON estructurado y determinista.",
+    )
+    RAG_KNOWLEDGE_LLM_MAX_TABLES_PER_RUN: int = Field(
+        default=50,
+        ge=1,
+        le=500,
+        description=(
+            "Presupuesto de llamadas LLM por run (1 llamada por tabla; nunca "
+            "una por columna)."
+        ),
+    )
+    RAG_KNOWLEDGE_LLM_MAX_SAMPLES: int = Field(
+        default=10,
+        ge=0,
+        le=50,
+        description=(
+            "Valores categóricos seguros incluidos en el contexto (solo columnas "
+            "no sensibles con cardinalidad baja)."
+        ),
+    )
+    RAG_KNOWLEDGE_QUESTIONS_MAX_PER_RUN: int = Field(
+        default=50,
+        ge=1,
+        le=500,
+        description=(
+            "Máximo de preguntas de negocio persistidas por run (priorizadas; "
+            "no se bombardea al cliente)."
+        ),
+    )
+    RAG_KNOWLEDGE_EVALUATION_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "FASE 33G: auto-evaluación RAG al final del aprendizaje "
+            "(preguntas sintéticas justificadas por el catálogo). Gradual: "
+            "actívalo cuando la fuente esté indexada para que el score sea real."
+        ),
+    )
+    RAG_KNOWLEDGE_EVALUATION_MAX_QUESTIONS: int = Field(
+        default=10,
+        ge=1,
+        le=60,
+        description="Presupuesto de preguntas sintéticas por evaluación.",
+    )
+    RAG_KNOWLEDGE_EVALUATION_JUDGE: bool = Field(
+        default=False,
+        description=(
+            "Usa el LLM-judge en la auto-evaluación (context_relevance, "
+            "answer_relevance, faithfulness). Más costo, más precisión."
+        ),
+    )
+    # -------------------------------------------------------------------------
     # Agent Runtime
     # -------------------------------------------------------------------------
     RAG_AGENT_MODEL: str = Field(default="")

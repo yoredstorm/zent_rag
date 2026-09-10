@@ -16,18 +16,19 @@ from uuid import UUID
 from src.catalog.discovery import DiscoveryAdapter, MetadataScanner, content_signature
 from src.catalog.enums import EnumDiscovery
 from src.catalog.inference import SemanticInference
-from src.catalog.relationships import RelationshipDetector
+from src.catalog.relationships import (
+    RelationshipDetector,
+    publish_relationship_suggestions,
+)
 from src.catalog.store import PostgresCatalogStore
 from src.connectors.plugin.base import ConnectorError
 from src.connectors.plugin.registry import get_plugin
 from src.core.config import get_settings
 from src.core.domain.catalog import (
-    CatalogSuggestion,
     DiscoveryBudgets,
     DiscoveryPhase,
     ScanBudget,
     ScanType,
-    SuggestionType,
 )
 from src.core.domain.entities import IngestionJobStatus
 from src.infrastructure.observability.logging_config import get_logger
@@ -56,6 +57,131 @@ def _object_counter(organization_id: str, object_type: str) -> None:
     rag_catalog_objects_total.labels(
         organization_id=organization_id, object_type=object_type
     ).inc()
+
+
+def _budgets_from_source(settings: Any, catalog_source: dict) -> DiscoveryBudgets:
+    """Budgets de discovery desde settings + overrides por fuente."""
+    budgets = DiscoveryBudgets(
+        max_tables_per_scan=settings.RAG_CATALOG_MAX_TABLES_PER_SCAN,
+        max_columns_per_table=settings.RAG_CATALOG_MAX_COLUMNS_PER_TABLE,
+        max_samples=settings.RAG_CATALOG_MAX_SAMPLES,
+        max_query_seconds=settings.RAG_CATALOG_MAX_QUERY_SECONDS,
+        max_scan_cost=settings.RAG_CATALOG_MAX_SCAN_COST,
+        max_parallelism=settings.RAG_CATALOG_MAX_PARALLELISM,
+    )
+    stored_budgets = catalog_source.get("budgets") or {}
+    if stored_budgets:
+        for k, v in stored_budgets.items():
+            if hasattr(budgets, k) and isinstance(v, (int, float)):
+                setattr(budgets, k, int(v))
+    return budgets
+
+
+async def resolve_source_runtime(
+    *,
+    connector_repo: Any,
+    secret_store: Any | None,
+    store: PostgresCatalogStore,
+    organization_id: UUID,
+    catalog_source_id: UUID,
+) -> tuple[dict, Any, Any, DiscoveryBudgets]:
+    """Resuelve source + connector + plugin conectado + budgets.
+
+    Reutilizable por el Discovery Engine y el Knowledge Learning Engine:
+    una sola política de secretos, conectividad y presupuestos.
+    """
+    settings = get_settings()
+    catalog_source = await store.get_source(organization_id, catalog_source_id)
+    if catalog_source is None:
+        raise ConnectorError("Catalog source not found for this organization")
+
+    connector = await connector_repo.get_connector(
+        organization_id, UUID(catalog_source["connector_id"])
+    )
+    if connector is None:
+        raise ConnectorError("Connector not found for this organization")
+
+    secrets: dict = {}
+    if secret_store is not None:
+        try:
+            secrets = await secret_store.get(organization_id, connector.id) or {}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Connector secrets lookup failed", error=str(exc)[:200])
+
+    plugin = get_plugin(connector.type, connector.config_json or {}, secrets)
+    await plugin.connect()
+    await plugin.validate()
+    return catalog_source, connector, plugin, _budgets_from_source(settings, catalog_source)
+
+
+async def run_physical_discovery(
+    *,
+    store: PostgresCatalogStore,
+    intelligence_store: PostgresIntelligenceStore,
+    organization_id: UUID,
+    catalog_source_id: UUID,
+    connector_id: UUID,
+    plugin: Any,
+    budgets: DiscoveryBudgets,
+    scan_type: str = ScanType.INITIAL.value,
+    profiling_enabled: bool = True,
+    drift_check_enabled: bool = True,
+) -> dict:
+    """SCANNING + PROFILING: metadata + enums. Retorna artefactos reutilizables.
+
+    No actualiza la fase final de la fuente: eso lo decide el caller (catálogo
+    o learning run) según su propio flujo.
+    """
+    adapter = DiscoveryAdapter(plugin, budgets, connector_id)
+    scan_id = await store.create_scan(
+        organization_id=organization_id,
+        source_id=catalog_source_id,
+        scan_type=scan_type,
+    )
+    scan_budget = ScanBudget(budget=budgets)
+    await store.update_source(
+        organization_id,
+        catalog_source_id,
+        phase=DiscoveryPhase.SCANNING.value,
+        scan_error=None,
+    )
+    scanner = MetadataScanner(
+        store,
+        budgets=budgets,
+        profiling_enabled=profiling_enabled,
+        drift_check_enabled=drift_check_enabled,
+        intelligence_store=intelligence_store,
+    )
+    outcome = await scanner.scan(
+        organization_id=organization_id,
+        catalog_source_id=catalog_source_id,
+        adapter=adapter,
+        scan_budget=scan_budget,
+    )
+    _object_counter(str(organization_id), "table")
+
+    # PROFILING -> enums (UNDEFINED_ENUM + sugerencias).
+    await store.update_source(
+        organization_id,
+        catalog_source_id,
+        phase=DiscoveryPhase.PROFILING.value,
+    )
+    enum_processor = EnumDiscovery(store, intelligence_store=intelligence_store)
+    enum_processed = await enum_processor.process(
+        organization_id=organization_id,
+        catalog_source_id=catalog_source_id,
+        enum_columns=outcome.enum_columns,
+    )
+    for _ in enum_processed:
+        _object_counter(str(organization_id), "enum_value")
+
+    return {
+        "scan_id": scan_id,
+        "outcome": outcome,
+        "enum_processed": enum_processed,
+        "adapter": adapter,
+        "scan_budget": scan_budget,
+    }
 
 
 class CatalogDiscoveryEngine:
@@ -166,88 +292,32 @@ class CatalogDiscoveryEngine:
         if not catalog_source_id:
             raise ConnectorError("Discovery job missing catalog_source_id in cursor")
 
-        catalog_source = await self._store.get_source(
-            job.organization_id, UUID(catalog_source_id)
+        catalog_source, connector, plugin, budgets = await resolve_source_runtime(
+            connector_repo=self._connectors,
+            secret_store=self._secrets,
+            store=self._store,
+            organization_id=job.organization_id,
+            catalog_source_id=UUID(catalog_source_id),
         )
-        if catalog_source is None:
-            raise ConnectorError("Catalog source not found for this organization")
-
-        connector = await self._connectors.get_connector(
-            job.organization_id, UUID(catalog_source["connector_id"])
-        )
-        if connector is None:
-            raise ConnectorError("Connector not found for this organization")
-
-        secrets: dict = {}
-        if self._secrets is not None:
-            try:
-                secrets = await self._secrets.get(job.organization_id, connector.id) or {}
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Connector secrets lookup failed", error=str(exc)[:200])
-
-        plugin = get_plugin(connector.type, connector.config_json or {}, secrets)
-        await plugin.connect()
-        await plugin.validate()
-
-        budgets = DiscoveryBudgets(
-            max_tables_per_scan=settings.RAG_CATALOG_MAX_TABLES_PER_SCAN,
-            max_columns_per_table=settings.RAG_CATALOG_MAX_COLUMNS_PER_TABLE,
-            max_samples=settings.RAG_CATALOG_MAX_SAMPLES,
-            max_query_seconds=settings.RAG_CATALOG_MAX_QUERY_SECONDS,
-            max_scan_cost=settings.RAG_CATALOG_MAX_SCAN_COST,
-            max_parallelism=settings.RAG_CATALOG_MAX_PARALLELISM,
-        )
-        stored_budgets = catalog_source.get("budgets") or {}
-        if stored_budgets:
-            for k, v in stored_budgets.items():
-                if hasattr(budgets, k) and isinstance(v, (int, float)):
-                    setattr(budgets, k, int(v))
 
         scan_type = cursor.get("scan_type") or ScanType.INITIAL.value
-        scan_id = await self._store.create_scan(
+        physical = await run_physical_discovery(
+            store=self._store,
+            intelligence_store=self._intel,
             organization_id=job.organization_id,
-            source_id=UUID(catalog_source_id),
-            scan_type=scan_type,
-        )
-        scan_budget = ScanBudget(budget=budgets)
-
-        await self._store.update_source(
-            job.organization_id,
-            UUID(catalog_source_id),
-            phase=DiscoveryPhase.SCANNING.value,
-            scan_error=None,
-        )
-
-        adapter = DiscoveryAdapter(plugin, budgets, connector.id)
-        scanner = MetadataScanner(
-            self._store,
+            catalog_source_id=UUID(catalog_source_id),
+            connector_id=connector.id,
+            plugin=plugin,
             budgets=budgets,
+            scan_type=scan_type,
             profiling_enabled=settings.RAG_CATALOG_PROFILING_ENABLED,
             drift_check_enabled=settings.RAG_CATALOG_DRIFT_CHECK_ENABLED,
-            intelligence_store=self._intel,
         )
-        outcome = await scanner.scan(
-            organization_id=job.organization_id,
-            catalog_source_id=UUID(catalog_source_id),
-            adapter=adapter,
-            scan_budget=scan_budget,
-        )
-        _object_counter(str(job.organization_id), "table")
-
-        # PROFILING -> enums (UNDEFINED_ENUM + sugerencias).
-        await self._store.update_source(
-            job.organization_id,
-            UUID(catalog_source_id),
-            phase=DiscoveryPhase.PROFILING.value,
-        )
-        enum_processor = EnumDiscovery(self._store, intelligence_store=self._intel)
-        enum_processed = await enum_processor.process(
-            organization_id=job.organization_id,
-            catalog_source_id=UUID(catalog_source_id),
-            enum_columns=outcome.enum_columns,
-        )
-        for e in enum_processed:
-            _object_counter(str(job.organization_id), "enum_value")
+        adapter = physical["adapter"]
+        outcome = physical["outcome"]
+        enum_processed = physical["enum_processed"]
+        scan_budget = physical["scan_budget"]
+        scan_id = physical["scan_id"]
 
         # INFERRING -> relaciones (físicas + candidatas) y semántica.
         await self._store.update_source(
@@ -267,42 +337,11 @@ class CatalogDiscoveryEngine:
         )
         for r in relationships:
             _object_counter(str(job.organization_id), "relationship")
-
-        stored_rels = await self._store.list_relationships(
-            job.organization_id, UUID(catalog_source_id), status="suggested", limit=500
+        await publish_relationship_suggestions(
+            store=self._store,
+            organization_id=job.organization_id,
+            catalog_source_id=UUID(catalog_source_id),
         )
-        pending_rel = await self._store.list_suggestions(
-            job.organization_id, status="pending", type="relationship_candidate", limit=500
-        )
-        already = {str((s.get("payload") or {}).get("relationship_id")) for s in pending_rel}
-        for rel in stored_rels:
-            if rel["id"] in already:
-                continue
-            await self._store.create_suggestion(
-                CatalogSuggestion(
-                    organization_id=job.organization_id,
-                    type=SuggestionType.RELATIONSHIP_CANDIDATE,
-                    title=(
-                        f"Relación de negocio candidata: "
-                        f"{rel['from_column']} → {rel['to_column']}"
-                    ),
-                    description=(
-                        "FK físico no equivale a relación de negocio aprobada. "
-                        "Confirmar o rechazar."
-                    ),
-                    evidence=rel.get("evidence") or ["inferred relationship"],
-                    confidence=rel.get("confidence") or "medium",
-                    payload={
-                        "relationship_id": rel["id"],
-                        "from_table_id": rel["from_table_id"],
-                        "to_table_id": rel["to_table_id"],
-                        "from_column": rel["from_column"],
-                        "to_column": rel["to_column"],
-                        "business_verb": "REFERENCES",
-                    },
-                    affected_sources=[catalog_source_id],
-                )
-            )
 
         inference = SemanticInference(
             self._store,
