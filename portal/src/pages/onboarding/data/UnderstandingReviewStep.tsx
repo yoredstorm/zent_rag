@@ -1,6 +1,187 @@
 import { useState } from "react";
 import type { Suggestion, Understanding } from "./types";
 
+function FactCard({
+  item,
+  editing,
+  business,
+  setEditing,
+  setBusiness,
+  onReview,
+  busy,
+}: {
+  item: Suggestion;
+  editing: boolean;
+  business: string;
+  setEditing: (id: string | null) => void;
+  setBusiness: (v: string) => void;
+  onReview: (id: string, action: "confirm" | "change" | "ignore", payload?: Record<string, unknown>) => void;
+  busy: string;
+}) {
+  const payload = item.payload || {};
+  const value = String(payload.value ?? item.description ?? "");
+  const page = payload.page;
+  const evidence = Array.isArray(item.evidence) ? item.evidence[0] : undefined;
+  return (
+    <div key={item.id} className="panel p-4">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm font-medium">{item.title}</p>
+        {item.confidence && (
+          <span className="rounded bg-soft px-2 py-0.5 text-[11px] text-faint">
+            {item.confidence}
+          </span>
+        )}
+      </div>
+      <p className="mt-1 text-base font-semibold text-text">{value}</p>
+      {evidence && (
+        <p className="mt-2 border-l-2 border-accent/40 pl-3 text-[13px] italic text-muted">
+          “{evidence}”
+        </p>
+      )}
+      {page != null && <p className="mt-1 text-xs text-faint">Página {String(page)}</p>}
+      {editing ? (
+        <form
+          className="mt-3 flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onReview(item.id, "change", {
+              ...payload,
+              value: business.trim(),
+            });
+            setEditing(null);
+          }}
+        >
+          <input
+            className="input flex-1"
+            placeholder="Valor correcto"
+            value={business}
+            onChange={(e) => setBusiness(e.target.value)}
+          />
+          <button type="submit" className="btn btn-primary">
+            Guardar
+          </button>
+        </form>
+      ) : (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy === item.id}
+            onClick={() => onReview(item.id, "confirm")}
+          >
+            Confirmar
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => {
+              setEditing(item.id);
+              setBusiness(value);
+            }}
+          >
+            Corregir
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={busy === item.id}
+            onClick={() => onReview(item.id, "ignore")}
+          >
+            Ignorar
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MappingCard({
+  item,
+  editing,
+  business,
+  setEditing,
+  setBusiness,
+  onReview,
+  busy,
+}: {
+  item: Suggestion;
+  editing: boolean;
+  business: string;
+  setEditing: (id: string | null) => void;
+  setBusiness: (v: string) => void;
+  onReview: (id: string, action: "confirm" | "change" | "ignore", payload?: Record<string, unknown>) => void;
+  busy: string;
+}) {
+  return (
+    <div key={item.id} className="panel p-4">
+      <p className="text-sm font-medium">{item.title}</p>
+      <p className="text-[13px] text-muted">{item.description}</p>
+      {item.confidence && (
+        <p className="mt-1 text-xs text-faint">Confianza: {item.confidence}</p>
+      )}
+      {Array.isArray(item.evidence) && item.evidence.length > 1 && (
+        <p className="mt-1 text-xs text-muted">
+          Zent no está seguro. Opciones: {item.evidence.join(" · ")}
+        </p>
+      )}
+      {editing ? (
+        <form
+          className="mt-3 flex gap-2"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onReview(item.id, "change", {
+              ...item.payload,
+              business_name: business,
+              display_name: business,
+            });
+            setEditing(null);
+          }}
+        >
+          <input
+            className="input flex-1"
+            placeholder="Nombre de negocio"
+            value={business}
+            onChange={(e) => setBusiness(e.target.value)}
+          />
+          <button type="submit" className="btn btn-primary">
+            Guardar
+          </button>
+        </form>
+      ) : (
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="btn btn-primary"
+            data-testid="review-confirm"
+            disabled={busy === item.id}
+            onClick={() => onReview(item.id, "confirm")}
+          >
+            Confirmar
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => {
+              setEditing(item.id);
+              setBusiness(String(item.payload.business_name || item.title));
+            }}
+          >
+            Cambiar
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={busy === item.id}
+            onClick={() => onReview(item.id, "ignore")}
+          >
+            Ignorar
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function UnderstandingReviewStep({
   understanding,
   suggestions,
@@ -20,9 +201,13 @@ export function UnderstandingReviewStep({
   const [business, setBusiness] = useState("");
   const [note, setNote] = useState("");
 
+  const isDocument = understanding.flow === "documents" || understanding.kind === "document";
+
   return (
     <div className="space-y-5">
-      <h2 className="text-lg font-semibold text-text">Qué entendió Zent</h2>
+      <h2 className="text-lg font-semibold text-text">
+        {isDocument ? "Qué datos clave encontró Zent" : "Qué entendió Zent"}
+      </h2>
       {understanding.likely_entity && (
         <p className="text-sm">
           Entidad probable: <strong>{understanding.likely_entity}</strong>
@@ -31,6 +216,9 @@ export function UnderstandingReviewStep({
       )}
       {understanding.document_type && (
         <p className="text-sm">Tipo de documento: {understanding.document_type}</p>
+      )}
+      {understanding.pages != null && (
+        <p className="text-sm text-muted">{understanding.pages} páginas</p>
       )}
       {understanding.topics && understanding.topics.length > 0 && (
         <p className="text-sm text-muted">Temas: {understanding.topics.join(", ")}</p>
@@ -71,74 +259,39 @@ export function UnderstandingReviewStep({
           </table>
         </div>
       )}
-      <div className="space-y-3">
-        {suggestions.map((item) => (
-          <div key={item.id} className="panel p-4">
-            <p className="text-sm font-medium">{item.title}</p>
-            <p className="text-[13px] text-muted">{item.description}</p>
-            {item.confidence && (
-              <p className="mt-1 text-xs text-faint">Confianza: {item.confidence}</p>
-            )}
-            {Array.isArray(item.evidence) && item.evidence.length > 1 && (
-              <p className="mt-1 text-xs text-muted">Zent no está seguro. Opciones: {item.evidence.join(" · ")}</p>
-            )}
-            {editing === item.id ? (
-              <form
-                className="mt-3 flex gap-2"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  onReview(item.id, "change", {
-                    ...item.payload,
-                    business_name: business,
-                    display_name: business,
-                  });
-                  setEditing(null);
-                }}
-              >
-                <input
-                  className="input flex-1"
-                  placeholder="Nombre de negocio"
-                  value={business}
-                  onChange={(e) => setBusiness(e.target.value)}
-                />
-                <button type="submit" className="btn btn-primary">
-                  Guardar
-                </button>
-              </form>
+      {suggestions.length === 0 ? (
+        <p className="text-sm text-muted">
+          Sin elementos para revisar. Puedes añadir una nota o continuar.
+        </p>
+      ) : (
+        <div className="space-y-3">
+          {suggestions.map((item) =>
+            item.type === "document_fact" ? (
+              <FactCard
+                key={item.id}
+                item={item}
+                editing={editing === item.id}
+                business={business}
+                setEditing={setEditing}
+                setBusiness={setBusiness}
+                onReview={onReview}
+                busy={busy}
+              />
             ) : (
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  data-testid="review-confirm"
-                  disabled={busy === item.id}
-                  onClick={() => onReview(item.id, "confirm")}
-                >
-                  Confirmar
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  onClick={() => {
-                    setEditing(item.id);
-                    setBusiness(String(item.payload.business_name || item.title));
-                  }}
-                >
-                  Cambiar
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-secondary"
-                  disabled={busy === item.id}
-                  onClick={() => onReview(item.id, "ignore")}
-                >
-                  Ignorar
-                </button>
-              </div>
-            )}
-          </div>
-        ))}
-      </div>
+              <MappingCard
+                key={item.id}
+                item={item}
+                editing={editing === item.id}
+                business={business}
+                setEditing={setEditing}
+                setBusiness={setBusiness}
+                onReview={onReview}
+                busy={busy}
+              />
+            )
+          )}
+        </div>
+      )}
       <form
         className="flex gap-2"
         onSubmit={(e) => {
@@ -151,7 +304,7 @@ export function UnderstandingReviewStep({
       >
         <input
           className="input flex-1"
-          placeholder="Este campo es la tarifa publicada sin impuesto…"
+          placeholder="Este dato significa…"
           value={note}
           onChange={(e) => setNote(e.target.value)}
         />

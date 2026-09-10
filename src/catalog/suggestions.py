@@ -142,6 +142,17 @@ class ReviewQueueService:
                 await self._store.update_relationship_status(
                     organization_id, UUID(rel_id), status="rejected", reviewed_by=reviewed_by
                 )
+        if stype == SuggestionType.DOCUMENT_FACT.value:
+            insight_id = suggestion["payload"].get("insight_id")
+            if insight_id:
+                from src.platform.data_onboarding.document_insights import DocumentInsightsStore
+
+                await DocumentInsightsStore().update_status(
+                    organization_id,
+                    UUID(str(insight_id)),
+                    status="rejected",
+                    reviewed_by=reviewed_by,
+                )
         await self._store.update_suggestion_status(
             organization_id,
             suggestion_id,
@@ -308,6 +319,25 @@ class ReviewQueueService:
                     owner=payload.get("owner"),
                     approved_by=reviewed_by,
                     provenance="APPROVED",
+                )
+
+        elif stype == SuggestionType.DOCUMENT_FACT.value:
+            from src.platform.data_onboarding.document_insights import DocumentInsightsStore
+
+            insight_id = payload.get("insight_id")
+            if insight_id:
+                await DocumentInsightsStore().update_status(
+                    organization_id,
+                    UUID(str(insight_id)),
+                    status=(
+                        "edited"
+                        if status == SuggestionStatus.EDITED_APPROVED.value
+                        else "approved"
+                    ),
+                    value=payload.get("value") or payload.get("business_name"),
+                    normalized_value=payload.get("normalized_value"),
+                    key=payload.get("key"),
+                    reviewed_by=reviewed_by,
                 )
 
         elif stype == SuggestionType.METRIC_PROPOSAL.value:

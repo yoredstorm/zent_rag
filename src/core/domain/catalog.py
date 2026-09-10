@@ -54,6 +54,7 @@ class SuggestionType(StrEnum):
     FIELD_MAPPING = "field_mapping"
     METRIC_PROPOSAL = "metric_proposal"
     GLOSSARY_TERM = "glossary_term"
+    DOCUMENT_FACT = "document_fact"
 
 
 class SuggestionStatus(StrEnum):

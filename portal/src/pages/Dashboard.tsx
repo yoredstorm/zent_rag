@@ -195,7 +195,7 @@ export default function DashboardPage() {
       {!loading && attentionSessions.length > 0 && (
         <div className="mb-4 rounded-md border border-warn/40 bg-warn/10 px-4 py-3 text-sm">
           {attentionSessions[0].warning ||
-            "Tu fuente es usable, pero la precisión mejora si revisas los mappings pendientes."}{" "}
+            "Zent tiene datos sin revisar de tu última fuente."}{" "}
           <Link className="text-accent underline" to={`/knowledge/add/${attentionSessions[0].id}`}>
             Revisar ahora
           </Link>

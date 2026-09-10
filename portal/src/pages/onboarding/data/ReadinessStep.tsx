@@ -1,4 +1,11 @@
 import { Link } from "react-router-dom";
+import type { ReadyAction } from "./types";
+
+const DEFAULT_ACTIONS: ReadyAction[] = [
+  { label: "Pregúntale a Zent", to: "/chat" },
+  { label: "Crear agente", to: "/agents/new" },
+  { label: "Revisar mejoras", to: "/knowledge/improvements" },
+];
 
 export function ReadinessStep({
   overall,
@@ -6,19 +13,28 @@ export function ReadinessStep({
   labels,
   improvements,
   warning,
+  readyHeadline,
+  readySubtitle,
+  readyActions,
 }: {
   overall: number;
   scores: Record<string, number>;
   labels: Record<string, string>;
   improvements: string[];
   warning: string | null;
+  readyHeadline?: string;
+  readySubtitle?: string;
+  readyActions?: ReadyAction[];
 }) {
+  const actions = readyActions && readyActions.length > 0 ? readyActions : DEFAULT_ACTIONS;
   return (
     <div className="max-w-xl space-y-4">
       <h2 className="text-lg font-semibold text-text" data-testid="ready-heading">
-        Your business knowledge is ready.
+        {readyHeadline || "Tu conocimiento está listo."}
       </h2>
-      <p className="text-sm text-muted">Connected sources, understood coverage and review items.</p>
+      <p className="text-sm text-muted">
+        {readySubtitle || "Conectado, entendido y listo para preguntar."}
+      </p>
       <p className="text-3xl font-semibold">{Math.round(overall)}%</p>
       <ul className="space-y-2 text-sm">
         {Object.entries(labels).map(([key, label]) => (
@@ -28,7 +44,7 @@ export function ReadinessStep({
           </li>
         ))}
       </ul>
-      {warning && <p className="text-sm text-muted">{warning}</p>}
+      {warning && <p className="text-sm text-warn">{warning}</p>}
       {improvements.length > 0 && (
         <ul className="text-sm text-muted">
           {improvements.map((item) => (
@@ -37,15 +53,11 @@ export function ReadinessStep({
         </ul>
       )}
       <div className="flex flex-wrap gap-2 pt-2">
-        <Link to="/chat" className="btn btn-primary">
-          Ask Zent
-        </Link>
-        <Link to="/agents/new" className="btn btn-secondary">
-          Build Agent
-        </Link>
-        <Link to="/knowledge/improvements" className="btn btn-secondary">
-          Review Improvements
-        </Link>
+        {actions.map((action) => (
+          <Link key={action.to + action.label} to={action.to} className="btn btn-primary">
+            {action.label}
+          </Link>
+        ))}
       </div>
     </div>
   );

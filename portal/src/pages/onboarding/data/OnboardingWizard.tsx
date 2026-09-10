@@ -17,10 +17,12 @@ import { UnderstandingReviewStep } from "./UnderstandingReviewStep";
 import { WebsiteStep } from "./WebsiteStep";
 import {
   API,
+  FLOW_QUESTION_HEADING,
   WIZARD_STEPS,
   type OnboardingKind,
   type OnboardingSession,
   type ProgressPayload,
+  type ReadinessPayload,
   type Suggestion,
   type Understanding,
   type WizardStep,
@@ -40,12 +42,7 @@ export default function OnboardingWizardPage() {
   const [understanding, setUnderstanding] = useState<Understanding>({});
   const [questions, setQuestions] = useState<Array<{ id: string; text: string }>>([]);
   const [answer, setAnswer] = useState<Record<string, unknown> | null>(null);
-  const [readiness, setReadiness] = useState<{
-    overall: number;
-    scores: Record<string, number>;
-    labels: Record<string, string>;
-    improvements: string[];
-  } | null>(null);
+  const [readiness, setReadiness] = useState<ReadinessPayload | null>(null);
   const [folders, setFolders] = useState<Array<{ id: string; name: string }>>([]);
   const [authUrl, setAuthorizationUrl] = useState("");
   const [webPreview, setWebPreview] = useState<{ url?: string; host?: string; pages_detected?: number }>();
@@ -98,12 +95,7 @@ export default function OnboardingWizardPage() {
         setQuestions(pack.questions || []);
       }
       if (step === "ready") {
-        const ready = await api<{
-          overall: number;
-          scores: Record<string, number>;
-          labels: Record<string, string>;
-          improvements: string[];
-        }>(`${API}/sessions/${id}/readiness`, {
+        const ready = await api<ReadinessPayload>(`${API}/sessions/${id}/readiness`, {
           token: session.token,
           organizationId: session.organizationId,
         });
@@ -338,12 +330,7 @@ export default function OnboardingWizardPage() {
       token: session.token,
       organizationId: session.organizationId,
     });
-    const data = await api<{
-      overall: number;
-      scores: Record<string, number>;
-      labels: Record<string, string>;
-      improvements: string[];
-    }>(`${API}/sessions/${current.id}/readiness`, {
+    const data = await api<ReadinessPayload>(`${API}/sessions/${current.id}/readiness`, {
       token: session.token,
       organizationId: session.organizationId,
     });
@@ -537,6 +524,7 @@ export default function OnboardingWizardPage() {
           onFeedback={feedback}
           onSkip={() => skip("test")}
           busy={busy}
+          heading={current ? FLOW_QUESTION_HEADING[current.kind] ?? FLOW_QUESTION_HEADING.default : undefined}
         />
       )}
       {uiStep === "test" && (
@@ -551,6 +539,9 @@ export default function OnboardingWizardPage() {
           labels={readiness.labels}
           improvements={readiness.improvements}
           warning={current?.warning || null}
+          readyHeadline={readiness.ready_headline}
+          readySubtitle={readiness.ready_subtitle}
+          readyActions={readiness.ready_actions}
         />
       )}
     </KnowledgeLayout>

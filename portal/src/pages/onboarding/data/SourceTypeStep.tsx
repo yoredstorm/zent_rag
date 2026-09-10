@@ -29,13 +29,13 @@ const CARDS: Array<{
     kind: "documents",
     icon: FileText,
     title: "Documentos",
-    body: "Sube políticas, manuales, contratos y documentos.",
+    body: "Contratos, políticas y manuales. Zent extrae partes, fechas, montos y obligaciones.",
   },
   {
     kind: "spreadsheets",
     icon: Table,
     title: "Hojas de cálculo",
-    body: "Importa Excel o CSV.",
+    body: "Importa Excel o CSV. Zent mapea columnas a conceptos de negocio.",
   },
   {
     kind: "drive",

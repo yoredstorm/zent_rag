@@ -1483,6 +1483,7 @@ class PostgresCatalogStore:
         *,
         status: str | None = None,
         type: str | None = None,  # noqa: A002
+        source_id: UUID | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict]:
@@ -1500,6 +1501,9 @@ class PostgresCatalogStore:
             if type:
                 query += "AND type = :type "
                 params["type"] = type
+            if source_id is not None:
+                query += "AND affected_sources @> CAST(:src_json AS jsonb) "
+                params["src_json"] = json.dumps([str(source_id)])
             query += "ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
             rows = (await session.execute(text(query), params)).fetchall()
             return [

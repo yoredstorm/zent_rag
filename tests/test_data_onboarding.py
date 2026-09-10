@@ -148,9 +148,17 @@ async def test_skip_review_marks_needs_attention(async_client: AsyncClient) -> N
     org = await _create_org(async_client, "Skip Co")
     headers = await _owner_headers(org)
     created = await async_client.post(
-        f"{PREFIX}/sessions", headers=headers, json={"kind": "documents"}
+        f"{PREFIX}/sessions", headers=headers, json={"kind": "spreadsheets"}
     )
     sid = created.json()["id"]
+    csv_bytes = b"codigo,descripcion,precio\nA1,Widget,12.5\nA2,Gadget,9.0\n"
+    await async_client.post(
+        f"{PREFIX}/sessions/{sid}/connect/upload",
+        headers={k: v for k, v in headers.items() if k != "Content-Type"},
+        files={"file": ("productos.csv", BytesIO(csv_bytes), "text/csv")},
+    )
+    analyzed = await async_client.post(f"{PREFIX}/sessions/{sid}/analyze", headers=headers)
+    assert analyzed.status_code == 200, analyzed.text
     skipped = await async_client.post(
         f"{PREFIX}/sessions/{sid}/skip/review", headers=headers
     )
@@ -159,9 +167,212 @@ async def test_skip_review_marks_needs_attention(async_client: AsyncClient) -> N
     assert body["status"] == "NEEDS_ATTENTION"
     assert body["skipped_review"] is True
     assert body["usable"] is True
-    assert "mappings" in (body.get("warning") or "").lower() or "revis" in (
-        body.get("warning") or ""
-    ).lower()
+    warning = (body.get("warning") or "").lower()
+    assert "campos" in warning, warning
+
+
+_CONTRACT_TXT = """\
+CONTRATO DE PRESTACIÓN DE SERVICIOS
+
+Entre Acme SpA, RUT 76.123.456-7, en adelante "el Contratante", por una parte, \
+y Consultora Beta Limitada, por la otra parte, se celebra el presente contrato.
+
+PRIMERO: El presente contrato tiene vigencia desde el 15 de marzo de 2025 hasta el 14 de marzo de 2026.
+
+SEGUNDO: El Contratante pagará un honorario mensual de CLP 1.500.000 a Consultora Beta Limitada.
+
+TERCERO: Renovación. El contrato se renovará automáticamente por períodos de 12 meses salvo aviso de terminación con 30 días de anticipación.
+
+CUARTO: Confidencialidad. Ambas partes mantendrán confidencial la información intercambiada durante la vigencia del contrato.
+"""
+
+
+def _tiny_pdf(text: str) -> bytes:
+    """PDF mínimo de una página con texto (FlateDecode) para tests."""
+    import zlib
+
+    payload = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode("latin-1")
+    stream = zlib.compress(payload)
+    objs = [
+        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj",
+        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj",
+        (
+            b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj"
+        ),
+        b"4 0 obj << /Length %d /Filter /FlateDecode >> stream\n" % len(stream)
+        + stream
+        + b"\nendstream endobj",
+        b"5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj",
+    ]
+    head = b"%PDF-1.4\n"
+    body = b""
+    offsets: list[int] = []
+    pos = len(head)
+    for obj in objs:
+        offsets.append(pos)
+        body += obj + b"\n"
+        pos += len(obj) + 1
+    xref_pos = pos
+    xref = (
+        b"xref\n0 6\n0000000000 65535 f \n"
+        + b"".join(f"{off:010d} 00000 n \n".encode() for off in offsets)
+    )
+    trailer = (
+        b"trailer << /Size 6 /Root 1 0 R >>\nstartxref\n"
+        + str(xref_pos).encode()
+        + b"\n%%EOF\n"
+    )
+    return head + body + xref + trailer
+
+
+@pytest.mark.asyncio
+async def test_document_flow_extracts_facts_and_readiness(
+    async_client: AsyncClient,
+) -> None:
+    org = await _create_org(async_client, "Doc Co")
+    headers = await _owner_headers(org)
+    created = await async_client.post(
+        f"{PREFIX}/sessions", headers=headers, json={"kind": "documents"}
+    )
+    sid = created.json()["id"]
+    uploaded = await async_client.post(
+        f"{PREFIX}/sessions/{sid}/connect/upload",
+        headers={k: v for k, v in headers.items() if k != "Content-Type"},
+        files={"file": ("contrato.txt", BytesIO(_CONTRACT_TXT.encode("utf-8")), "text/plain")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    analyzed = await async_client.post(f"{PREFIX}/sessions/{sid}/analyze", headers=headers)
+    assert analyzed.status_code == 200, analyzed.text
+
+    understanding = await async_client.get(
+        f"{PREFIX}/sessions/{sid}/understanding", headers=headers
+    )
+    assert understanding.status_code == 200, understanding.text
+    body = understanding.json()
+    facts = body.get("facts") or []
+    assert facts, "document should produce extracted facts"
+    types = {f.get("fact_type") for f in facts}
+    assert "party" in types
+    assert "date" in types
+    assert "amount" in types
+    suggestions = body.get("suggestions") or []
+    assert suggestions, "facts should be reviewable"
+    assert all(s["type"] == "document_fact" for s in suggestions)
+
+    readiness = await async_client.get(
+        f"{PREFIX}/sessions/{sid}/readiness", headers=headers
+    )
+    assert readiness.status_code == 200, readiness.text
+    rbody = readiness.json()
+    assert "Datos clave" in rbody["labels"].values()
+    assert "Contenido extraído" in rbody["labels"].values()
+    assert rbody["overall"] > 0
+    assert rbody["pending_review_count"] == len(suggestions)
+
+    first = suggestions[0]
+    confirmed = await async_client.post(
+        f"{PREFIX}/sessions/{sid}/review/{first['id']}",
+        headers=headers,
+        json={"action": "confirm"},
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    readiness2 = await async_client.get(
+        f"{PREFIX}/sessions/{sid}/readiness", headers=headers
+    )
+    r2 = readiness2.json()
+    assert r2["pending_review_count"] == len(suggestions) - 1
+    assert r2["scores"]["key_facts"] > 0
+
+
+@pytest.mark.asyncio
+async def test_document_pdf_extracts_pages_and_facts(
+    async_client: AsyncClient,
+) -> None:
+    org = await _create_org(async_client, "Doc PDF Co")
+    headers = await _owner_headers(org)
+    created = await async_client.post(
+        f"{PREFIX}/sessions", headers=headers, json={"kind": "documents"}
+    )
+    sid = created.json()["id"]
+    contract = (
+        "Entre Acme SpA por una parte y Consultora Beta por la otra parte. "
+        "Vigencia desde el 15 de marzo de 2025 hasta el 14 de marzo de 2026."
+    )
+    uploaded = await async_client.post(
+        f"{PREFIX}/sessions/{sid}/connect/upload",
+        headers={k: v for k, v in headers.items() if k != "Content-Type"},
+        files={"file": ("contrato.pdf", BytesIO(_tiny_pdf(contract)), "application/pdf")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    analyzed = await async_client.post(f"{PREFIX}/sessions/{sid}/analyze", headers=headers)
+    assert analyzed.status_code == 200, analyzed.text
+    understanding = await async_client.get(
+        f"{PREFIX}/sessions/{sid}/understanding", headers=headers
+    )
+    assert understanding.status_code == 200, understanding.text
+    body = understanding.json()
+    assert body.get("pages") == 1
+    fact_types = {f.get("fact_type") for f in (body.get("facts") or [])}
+    assert "date" in fact_types
+
+
+@pytest.mark.asyncio
+async def test_document_flow_does_not_create_fake_connector(
+    async_client: AsyncClient,
+) -> None:
+    org = await _create_org(async_client, "Doc NoFake")
+    headers = await _owner_headers(org)
+    created = await async_client.post(
+        f"{PREFIX}/sessions", headers=headers, json={"kind": "documents"}
+    )
+    sid = created.json()["id"]
+    await async_client.post(
+        f"{PREFIX}/sessions/{sid}/connect/upload",
+        headers={k: v for k, v in headers.items() if k != "Content-Type"},
+        files={"file": ("contrato.txt", BytesIO(_CONTRACT_TXT.encode("utf-8")), "text/plain")},
+    )
+    analyzed = await async_client.post(f"{PREFIX}/sessions/{sid}/analyze", headers=headers)
+    assert analyzed.status_code == 200, analyzed.text
+    connectors = await async_client.get("/api/v1/connectors", headers=headers)
+    assert connectors.status_code == 200, connectors.text
+    names = [c.get("name", "") for c in connectors.json().get("connectors", [])]
+    assert not any(name.startswith("file-") for name in names), names
+
+
+@pytest.mark.asyncio
+async def test_pending_review_scoped_to_session(async_client: AsyncClient) -> None:
+    org = await _create_org(async_client, "Scoped Co")
+    headers = await _owner_headers(org)
+
+    async def _upload_analyze(kind: str, filename: str, content: bytes) -> str:
+        created = await async_client.post(
+            f"{PREFIX}/sessions", headers=headers, json={"kind": kind}
+        )
+        sid = created.json()["id"]
+        await async_client.post(
+            f"{PREFIX}/sessions/{sid}/connect/upload",
+            headers={k: v for k, v in headers.items() if k != "Content-Type"},
+            files={"file": (filename, BytesIO(content), "text/csv")},
+        )
+        analyzed = await async_client.post(
+            f"{PREFIX}/sessions/{sid}/analyze", headers=headers
+        )
+        assert analyzed.status_code == 200, analyzed.text
+        return sid
+
+    sid_a = await _upload_analyze("spreadsheets", "a.csv", b"sku,name\n1,Alpha\n")
+    sid_b = await _upload_analyze("spreadsheets", "b.csv", b"fecha,venta\n2025-01-01,10\n")
+
+    und_a = (await async_client.get(f"{PREFIX}/sessions/{sid_a}/understanding", headers=headers)).json()
+    und_b = (await async_client.get(f"{PREFIX}/sessions/{sid_b}/understanding", headers=headers)).json()
+    ids_a = {s["id"] for s in und_a.get("suggestions", [])}
+    ids_b = {s["id"] for s in und_b.get("suggestions", [])}
+    assert ids_a and ids_b
+    assert ids_a.isdisjoint(ids_b)
+
+    warning_a = (await async_client.get(f"{PREFIX}/sessions/{sid_a}", headers=headers)).json()
+    assert warning_a["status"] in ("REVIEW_REQUIRED", "TESTING", "READY", "NEEDS_ATTENTION")
 
 
 @pytest.mark.asyncio

@@ -22,6 +22,9 @@ from src.core.domain.catalog import (
 )
 from src.infrastructure.observability.logging_config import get_logger
 from src.platform.data_onboarding.constants import SQL_ENGINES
+from src.platform.data_onboarding.document_facts import extract_document_facts
+from src.platform.data_onboarding.document_insights import DocumentInsightsStore
+from src.platform.data_onboarding.flows import get_flow, readiness_labels
 from src.platform.data_onboarding.mime import MimeRejected, detect_source_type
 from src.platform.data_onboarding.profile import profile_upload
 from src.platform.data_onboarding.questions import build_question_pack
@@ -33,15 +36,6 @@ logger = get_logger(__name__)
 def _workspace_uuid(row: dict) -> UUID | None:
     raw = row.get("workspace_id")
     return UUID(str(raw)) if raw else None
-
-_FRIENDLY_PHASES = [
-    ("connection", "Conexión verificada"),
-    ("structure", "Estructura descubierta"),
-    ("content", "Contenido analizado"),
-    ("meaning", "Significado de negocio"),
-    ("relationships", "Relaciones"),
-    ("quality", "Revisión de calidad"),
-]
 
 
 class DataOnboardingError(Exception):
@@ -136,12 +130,9 @@ class DataOnboardingService:
         usable = row["status"] in ("READY", "NEEDS_ATTENTION")
         pending = int((row.get("state") or {}).get("pending_review_count") or 0)
         warning = None
-        if row["status"] == "NEEDS_ATTENTION" or row.get("skipped_review"):
-            n = pending or 4
-            warning = (
-                f"Tu fuente es usable, pero la precisión puede mejorar si revisas "
-                f"{n} mappings."
-            )
+        if (row["status"] == "NEEDS_ATTENTION" or row.get("skipped_review")) and pending > 0:
+            flow = get_flow(row["kind"])
+            warning = flow.warning_template.format(n=pending, term=flow.review_term)
         state = dict(row.get("state") or {})
         for secret_key in ("password", "secrets", "bearer_token", "api_key", "refresh_token"):
             state.pop(secret_key, None)
@@ -625,8 +616,9 @@ class DataOnboardingService:
             "NEEDS_ATTENTION": 5,
             "FAILED": 0,
         }.get(row["status"], 0)
+        flow = get_flow(row["kind"])
         phases = []
-        for i, (key, label) in enumerate(_FRIENDLY_PHASES):
+        for i, phase in enumerate(flow.analyze_phases):
             if i <= done_through:
                 state = "done"
             elif i == done_through + 1 and row["status"] in (
@@ -636,7 +628,7 @@ class DataOnboardingService:
                 state = "active"
             else:
                 state = "pending"
-            phases.append({"id": key, "label": label, "state": state})
+            phases.append({"id": phase.key, "label": phase.label, "state": state})
         technical = {
             "status": row["status"],
             "step": row["step"],
@@ -644,7 +636,22 @@ class DataOnboardingService:
             "catalog_source_id": row.get("catalog_source_id"),
             "kb_source_id": row.get("kb_source_id"),
             "job_id": (row.get("state") or {}).get("job_id"),
+            "pages": (row.get("state") or {}).get("understanding", {}).get("pages"),
         }
+        job_id = (row.get("state") or {}).get("job_id")
+        if job_id:
+            from src.api.deps import get_job_repo
+
+            try:
+                job = await get_job_repo().get_job(
+                    organization_id, UUID(str(job_id))
+                )
+                if job is not None:
+                    technical["job_status"] = getattr(job.status, "value", str(job.status))
+                    technical["job_progress"] = job.progress
+                    technical["records_processed"] = job.records_processed
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("onboarding job lookup failed", error=str(exc)[:200])
         if row.get("catalog_source_id"):
             source = await self._catalog.get_source(
                 organization_id, UUID(row["catalog_source_id"])
@@ -654,7 +661,7 @@ class DataOnboardingService:
         return {
             "session": self.public(row),
             "phases": phases,
-            "headline": "Zent está entendiendo tus datos",
+            "headline": flow.analyze_headline,
             "technical_details": technical,
         }
 
@@ -662,10 +669,15 @@ class DataOnboardingService:
         row = await self._require(organization_id, session_id)
         state = row.get("state") or {}
         summary = dict(state.get("understanding") or {})
+        summary["flow"] = row["kind"]
         suggestions = []
-        if row.get("catalog_source_id") or True:
+        source_id = row.get("catalog_source_id") or row.get("kb_source_id")
+        if source_id:
             raw = await self._catalog.list_suggestions(
-                organization_id, status="pending", limit=100
+                organization_id,
+                status="pending",
+                source_id=UUID(str(source_id)),
+                limit=100,
             )
             suggestions = [
                 {
@@ -697,6 +709,11 @@ class DataOnboardingService:
                     for r in rels
                 ],
             )
+        if row["kind"] == "documents":
+            insights = await DocumentInsightsStore().list_by_session(
+                organization_id, session_id
+            )
+            summary["insights"] = insights
         summary["suggestions"] = suggestions
         return summary
 
@@ -867,6 +884,8 @@ class DataOnboardingService:
         from src.intelligence.store import PostgresIntelligenceStore
 
         row = await self._require(organization_id, session_id)
+        if row["kind"] == "documents":
+            return await self._document_readiness(organization_id, session_id, row)
         composition = {
             "data_connected": 100.0 if row["status"] not in ("NOT_STARTED", "FAILED") else 0.0,
             "structure_understood": 0.0,
@@ -899,25 +918,108 @@ class DataOnboardingService:
                 / 3,
                 2,
             )
-            pending = len(await self._catalog.list_suggestions(organization_id, status="pending", limit=50))
+            source_id = row.get("catalog_source_id") or row.get("kb_source_id")
+            if source_id:
+                suggestions = await self._catalog.list_suggestions(
+                    organization_id, status="pending", source_id=UUID(str(source_id)), limit=50
+                )
+                pending = len(suggestions)
+            else:
+                pending = 0
         if (row.get("state") or {}).get("question_pack"):
             composition["test_questions_passed"] = 90.0 if not row.get("skipped_test") else 0.0
         improvements = []
+        flow = get_flow(row["kind"])
         if pending:
-            improvements.append(f"{pending} campos por aclarar")
+            improvements.append(f"{pending} {flow.review_term} por aclarar")
         return {
-            "labels": {
-                "data_connected": "Datos conectados",
-                "structure_understood": "Estructura entendida",
-                "business_mappings": "Significado de negocio",
-                "relationships": "Relaciones",
-                "test_questions_passed": "Preguntas de prueba",
-            },
+            "labels": readiness_labels(flow),
             "scores": composition,
             "overall": composition["overall"],
             "improvements": improvements,
             "pending_review_count": pending,
+            "ready_headline": flow.ready_headline,
+            "ready_subtitle": flow.ready_subtitle,
+            "ready_actions": [
+                {"label": action.label, "to": action.to} for action in flow.ready_actions
+            ],
+            "flow": row["kind"],
         }
+
+    async def _document_readiness(self, organization_id: UUID, session_id: UUID, row: dict) -> dict:
+        state = row.get("state") or {}
+        understanding = state.get("understanding") or {}
+        facts = understanding.get("facts") or []
+        text_ok = bool(understanding.get("text_ok")) or bool(
+            (understanding.get("excerpt") or "").strip()
+        )
+        insights = await DocumentInsightsStore().list_by_session(organization_id, session_id)
+        approved = sum(1 for i in insights if i["status"] in ("approved", "edited"))
+        detected = max(len(insights), len(facts))
+        scores = {
+            "content_extracted": 100.0 if text_ok else 0.0,
+            "metadata": self._document_metadata_score(understanding),
+            "key_facts": (
+                round(approved / max(detected, 1) * 100, 2) if detected else 100.0
+            ),
+            "indexing": await self._indexing_score(organization_id, state.get("job_id")),
+            "test_questions": (
+                90.0 if state.get("question_pack") and not row.get("skipped_test") else 0.0
+            ),
+        }
+        overall = round(sum(scores.values()) / max(len(scores), 1), 2)
+        flow = get_flow("documents")
+        pending = detected - approved
+        improvements = []
+        if pending > 0:
+            improvements.append(f"{pending} datos clave sin confirmar")
+        if not text_ok:
+            improvements.append("El documento no tiene texto extraíble")
+        if scores["indexing"] < 100:
+            improvements.append("Indexación pendiente")
+        return {
+            "labels": readiness_labels(flow),
+            "scores": scores,
+            "overall": overall,
+            "improvements": improvements,
+            "pending_review_count": max(pending, 0),
+            "ready_headline": flow.ready_headline,
+            "ready_subtitle": flow.ready_subtitle,
+            "ready_actions": [
+                {"label": action.label, "to": action.to} for action in flow.ready_actions
+            ],
+            "flow": "documents",
+        }
+
+    @staticmethod
+    def _document_metadata_score(understanding: dict) -> float:
+        values = [
+            bool(understanding.get("title")),
+            bool(understanding.get("document_type")),
+            understanding.get("pages") is not None,
+        ]
+        if not values:
+            return 0.0
+        return round(sum(values) / len(values) * 100, 2)
+
+    async def _indexing_score(self, organization_id: UUID, job_id: str | None) -> float:
+        if not job_id:
+            return 0.0
+        try:
+            from src.api.deps import get_job_repo
+
+            job = await get_job_repo().get_job(organization_id, UUID(str(job_id)))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("onboarding indexing score failed", error=str(exc)[:200])
+            return 0.0
+        if job is None:
+            return 0.0
+        status = getattr(job.status, "value", str(job.status))
+        if status == "completed":
+            return 100.0 if (job.records_processed or 0) > 0 else 50.0
+        if status in ("failed", "dead"):
+            return 0.0
+        return 50.0
 
     async def _analyze_database(
         self, organization_id: UUID, session_id: UUID, row: dict
@@ -968,12 +1070,42 @@ class DataOnboardingService:
             source.type,
             str(cfg.get("filename") or source.name),
         )
-        await self._suggestions_from_profile(
-            organization_id, session_id, understanding, row
-        )
-        pending = await self._catalog.list_suggestions(
-            organization_id, status="pending", limit=50
-        )
+        if understanding.get("kind") == "document":
+            raw = b""
+            try:
+                from src.knowledge.storage import resolve_path
+
+                path = resolve_path(organization_id, str(cfg.get("object_key") or ""))
+                if path.exists():
+                    raw = path.read_bytes()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("onboarding read document failed", error=str(exc)[:200])
+            extracted = await extract_document_facts(
+                raw, str(cfg.get("filename") or source.name)
+            )
+            understanding["pages"] = extracted.get("pages")
+            understanding["text_ok"] = extracted.get("text_ok")
+            if not understanding.get("headings"):
+                understanding["headings"] = extracted.get("headings") or []
+            understanding["facts"] = extracted.get("facts") or []
+            await self._persist_document_facts(
+                organization_id, session_id, row, understanding
+            )
+        elif understanding.get("kind") == "spreadsheet":
+            await self._suggestions_from_profile(
+                organization_id, session_id, understanding, row
+            )
+        # _suggestions_from_profile pudo setear catalog_source_id; refresh.
+        row = await self._require(organization_id, session_id)
+        scope_source_id = row.get("catalog_source_id") or row.get("kb_source_id")
+        pending = []
+        if scope_source_id:
+            pending = await self._catalog.list_suggestions(
+                organization_id,
+                status="pending",
+                source_id=UUID(str(scope_source_id)),
+                limit=50,
+            )
         state = merge_state(
             row.get("state") or {},
             {
@@ -1004,6 +1136,52 @@ class DataOnboardingService:
         public = self.public(updated or row)
         public["understanding"] = understanding
         return public
+
+    async def _persist_document_facts(
+        self,
+        organization_id: UUID,
+        session_id: UUID,
+        row: dict,
+        understanding: dict,
+    ) -> None:
+        await self._catalog.ensure_tables()
+        facts = understanding.get("facts") or []
+        source_id = row.get("kb_source_id")
+        if not facts or not source_id:
+            return
+        store = DocumentInsightsStore()
+        affected = [str(source_id)]
+        for fact in facts:
+            insight = await store.create(
+                organization_id,
+                fact,
+                session_id=session_id,
+                source_id=UUID(str(source_id)),
+            )
+            evidence = [str(fact.get("evidence") or "")]
+            if fact.get("page"):
+                evidence.append(f"página {fact['page']}")
+            suggestion = CatalogSuggestion(
+                organization_id=organization_id,
+                type=SuggestionType.DOCUMENT_FACT,
+                title=str(fact.get("key") or "Dato clave")[:300],
+                description=str(fact.get("value") or "")[:2000],
+                evidence=evidence,
+                confidence=fact.get("confidence") or "medium",
+                payload={
+                    "insight_id": str(insight["id"]),
+                    "fact_type": fact.get("fact_type") or "fact",
+                    "key": fact.get("key"),
+                    "value": fact.get("value"),
+                    "normalized_value": fact.get("normalized_value"),
+                    "page": fact.get("page"),
+                    "evidence": fact.get("evidence"),
+                    "session_id": str(session_id),
+                },
+                status=SuggestionStatus.PENDING,
+                affected_sources=affected,
+            )
+            await self._catalog.create_suggestion(suggestion)
 
     async def _suggestions_from_profile(
         self,

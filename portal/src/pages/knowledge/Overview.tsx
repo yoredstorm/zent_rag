@@ -163,21 +163,21 @@ export default function KnowledgeOverviewPage() {
       <ErrorInline message={error} />
       {hasRealData && (
         <div className="mb-4 rounded-md border border-border p-4">
-          <h2 className="font-semibold">Your business knowledge is ready.</h2>
+          <h2 className="font-semibold">Tu conocimiento está listo.</h2>
           <p className="text-sm text-muted">
-            Connected: {sources.length} sources. Needs Review: {broken.length} items.
+            Conectado: {sources.length} fuentes. Pendientes de revisión: {broken.length} items.
           </p>
           <div className="mt-2 flex flex-wrap gap-2">
-            <Link to="/chat" className="btn btn-primary">Ask Zent</Link>
-            <Link to="/agents/new" className="btn btn-secondary">Build Agent</Link>
-            <Link to="/knowledge/improvements" className="btn btn-secondary">Review Improvements</Link>
+            <Link to="/chat" className="btn btn-primary">Pregúntale a Zent</Link>
+            <Link to="/agents/new" className="btn btn-secondary">Crear agente</Link>
+            <Link to="/knowledge/improvements" className="btn btn-secondary">Revisar mejoras</Link>
           </div>
         </div>
       )}
       {attention && (
         <div className="mb-4 rounded-md border border-warn/40 bg-warn/10 px-4 py-3 text-sm">
           {attention.warning ||
-            "Tu fuente es usable, pero la precisión mejora si revisas los mappings pendientes."}{" "}
+            "Zent tiene datos sin revisar de tu última fuente."}{" "}
           <Link className="text-accent underline" to={`/knowledge/add/${attention.id}`}>
             Revisar ahora
           </Link>

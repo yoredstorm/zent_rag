@@ -5,6 +5,8 @@ export function QuestionValidationStep({
   onFeedback,
   onSkip,
   busy,
+  heading,
+  subtitle,
 }: {
   questions: Array<{ id: string; text: string }>;
   answer: {
@@ -21,11 +23,15 @@ export function QuestionValidationStep({
   onFeedback: (verdict: string, reason?: string) => void;
   onSkip: () => void;
   busy: boolean;
+  heading?: string;
+  subtitle?: string;
 }) {
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-text">Prueba Zent</h2>
-      <p className="text-sm text-muted">Preguntas generadas a partir de tus datos.</p>
+      <h2 className="text-lg font-semibold text-text">{heading || "Prueba Zent"}</h2>
+      <p className="text-sm text-muted">
+        {subtitle || "Preguntas generadas a partir de tu fuente."}
+      </p>
       <div className="flex flex-col gap-2">
         {questions.map((q) => (
           <button
@@ -42,7 +48,9 @@ export function QuestionValidationStep({
       </div>
       {answer && (
         <div className="panel space-y-2 p-4 text-sm">
-          <p className="font-medium">{answer.understood === false ? "Pendiente de indexar" : "Pregunta entendida"}</p>
+          <p className="font-medium">
+            {answer.understood === false ? "Pendiente de indexar" : "Pregunta entendida"}
+          </p>
           <p>{answer.answer}</p>
           {answer.method && <p className="text-xs text-faint">Método: {answer.method}</p>}
           {answer.sql && (
@@ -62,10 +70,18 @@ export function QuestionValidationStep({
             <button type="button" className="btn btn-primary" onClick={() => onFeedback("correct")}>
               Sí
             </button>
-            <button type="button" className="btn btn-secondary" onClick={() => onFeedback("incorrect", "wrong_field")}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => onFeedback("incorrect", "wrong_field")}
+            >
               No
             </button>
-            <button type="button" className="btn btn-secondary" onClick={() => onFeedback("needs_adjustment")}>
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => onFeedback("needs_adjustment")}
+            >
               Necesita ajuste
             </button>
           </div>
