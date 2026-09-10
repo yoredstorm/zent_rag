@@ -178,7 +178,7 @@ class Settings(BaseSettings):
     LITELLM_API_BASE: str | None = None
     LITELLM_API_KEY: SecretStr | None = None
     LITELLM_DEFAULT_MODEL: str = "gpt-4o-mini"
-    LITELLM_TIMEOUT_SECONDS: int = Field(default=120, ge=1, le=300)
+    LITELLM_TIMEOUT_SECONDS: int = Field(default=300, ge=1, le=600)
     LITELLM_MAX_RETRIES: int = Field(default=2, ge=0, le=5)
     GATEWAY_FALLBACK_MODEL: str = Field(
         default="",
