@@ -12,6 +12,7 @@ export type ShopInstall = {
   name: string;
   description: string;
   requires_credentials: boolean;
+  requires_purpose?: boolean;
   actions: ShopAction[];
 };
 

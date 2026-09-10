@@ -16,6 +16,7 @@ export type MxAvailable = {
   name: string;
   description: string | null;
   requires_credentials: boolean;
+  requires_purpose?: boolean;
   actions: MxInstall["actions"];
 };
 

@@ -192,6 +192,7 @@ export function WorkflowCanvasEditor({ workflowId, graph, onChangeGraph, kbs, ag
           name: available.name,
           description: available.description ?? "",
           requires_credentials: Boolean(available.requires_credentials),
+          requires_purpose: Boolean(available.requires_purpose),
           actions: [want],
         });
         return;
@@ -505,7 +506,7 @@ export function WorkflowCanvasEditor({ workflowId, graph, onChangeGraph, kbs, ag
           onInstall={(slug) => {
             const a = mkt?.available.find((x) => x.slug === slug);
             if (a) {
-              setShop({ slug: a.slug, name: a.name, description: a.description ?? "", requires_credentials: a.requires_credentials, actions: a.actions });
+              setShop({ slug: a.slug, name: a.name, description: a.description ?? "", requires_credentials: a.requires_credentials, requires_purpose: a.requires_purpose, actions: a.actions });
             }
           }}
         />
@@ -591,7 +592,13 @@ export function WorkflowCanvasEditor({ workflowId, graph, onChangeGraph, kbs, ag
             </dl>
 
             <label className="mt-3 block text-[11px] text-muted">
-              Propósito de uso (aplica si maneja datos personales)
+              {shop.requires_purpose ? (
+                <span className="font-medium text-text">
+                  Propósito de uso <span className="text-danger">*</span> — maneja datos personales
+                </span>
+              ) : (
+                "Propósito de uso (opcional)"
+              )}
               <input
                 className="input mt-1 w-full"
                 placeholder="Verificación de clientes…"
@@ -600,11 +607,16 @@ export function WorkflowCanvasEditor({ workflowId, graph, onChangeGraph, kbs, ag
                 data-testid="wf-mkt-purpose"
               />
             </label>
+            {shop.requires_purpose && !shopPurpose.trim() && (
+              <p className="mt-1 text-[10px] text-danger" data-testid="wf-mkt-purpose-hint">
+                Indica el propósito para habilitar la instalación.
+              </p>
+            )}
 
             <button
               type="button"
               className="btn btn-primary mt-5 w-full gap-1.5 text-sm"
-              disabled={shopBusy}
+              disabled={shopBusy || (Boolean(shop.requires_purpose) && !shopPurpose.trim())}
               data-testid="wf-mkt-install-confirm"
               onClick={() => void installFromDrawer(shop.slug)}
             >

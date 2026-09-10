@@ -73,6 +73,7 @@ async def _org_manifests(organization_id: UUID) -> dict[str, dict]:
     for r in rows:
         modes = [str(x) for x in (r.auth_modes or [])]
         auth_modes = [m for m in modes if m.upper() != "NONE"]
+        data_policy = r.data_policy or {}
         by_slug[str(r.slug)] = {
             "id": r.id,
             "slug": r.slug,
@@ -80,8 +81,9 @@ async def _org_manifests(organization_id: UUID) -> dict[str, dict]:
             "description": r.description,
             "category": r.category,
             "status": r.status,
-            "data_policy": r.data_policy or {},
+            "data_policy": data_policy,
             "requires_credentials": bool(auth_modes),
+            "requires_purpose": bool(data_policy.get("purpose_required")),
             "auth_modes": modes,
             "actions": [],
         }
@@ -185,6 +187,7 @@ async def canvas_context(
                 "description": m["description"],
                 "category": m["category"],
                 "requires_credentials": m["requires_credentials"],
+                "requires_purpose": m["requires_purpose"],
                 "actions": m["actions"],
             }
         )
