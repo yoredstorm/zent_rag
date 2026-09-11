@@ -209,7 +209,9 @@ export default function KnowledgeLearningPage() {
 
   useEffect(() => {
     if (!selectedSourceId) return;
-    void refreshForSource(selectedSourceId);
+    void refreshForSource(selectedSourceId).catch((err) => {
+      if (isUnauthorized(err)) return;
+    });
     const source = sources.find((item) => item.source_id === selectedSourceId);
     if (source?.active_run?.id) {
       void loadRun(source.active_run.id);
