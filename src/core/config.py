@@ -512,6 +512,20 @@ class Settings(BaseSettings):
         ),
     )
     # -------------------------------------------------------------------------
+    # Knowledge V2 (Enterprise Knowledge Engine) — Phase A stub
+    # -------------------------------------------------------------------------
+    # Field name omits the extra RAG_ so the env var is RAG_KNOWLEDGE_V2_ENABLED
+    # (unlike RAG_KNOWLEDGE_LEARNING_* which become RAG_RAG_KNOWLEDGE_*).
+    KNOWLEDGE_V2_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Phase A stub: parallel Knowledge V2 pipeline (StructuredDocument "
+            "+ KnowledgeCorpus). Off by default. Does not change V1 ingestion, "
+            "APIs, or portal. Do not enable in production until Phase F shadow "
+            "metrics exist (see docs/architecture/enterprise-knowledge-refactor.md)."
+        ),
+    )
+    # -------------------------------------------------------------------------
     # Agent Runtime
     # -------------------------------------------------------------------------
     RAG_AGENT_MODEL: str = Field(default="")

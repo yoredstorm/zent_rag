@@ -32,6 +32,9 @@ uploads/
 
 # Construction / internal docs (producto: solo README.md raíz)
 docs/
+# Architecture ADRs are product artifacts (Enterprise Knowledge Engine Phase A+)
+!docs/architecture/
+!docs/architecture/**
 
 # Portal
 portal/node_modules/
