@@ -1,11 +1,11 @@
-# Enterprise Knowledge Engine — Architecture Refactor (Phase A)
+# Enterprise Knowledge Engine — Architecture Refactor (Phase A + B)
 
-> **Status:** Phase A ADR (audit + contracts). Default runtime remains V1.
+> **Status:** Phase A ADR (audit + contracts) **and Phase B parsing** (flag-off adapters). Default runtime remains V1.
 > **Date:** 2026-09-11
-> **Base:** `master` @ `5269ffe` (Knowledge IA: Resumen · Fuentes · Semántica · Mejora)
-> **Scope of this document:** CURRENT → TARGET → GAPS → keep / modify / deprecate → migration → file lists → roadmap A–H.
-> **Product lock (Ideas buenas / Tester):** Phase G sources-first workspace (not a pixel-clone of NotebookLM). Phase A does **not** change UI e2e ACs, tenant isolation, or workspace isolation.
-> **Out of scope here:** Phases B–H implementation, Phase G UI, V2 ingestion cutover, new vector DB, new LLM gateway, Neo4j.
+> **Base:** `master` @ `789a46f` (Phase A #6) for Phase B; Phase A itself audited `5269ffe`.
+> **Scope of this document:** CURRENT → TARGET → GAPS → keep / modify / deprecate → migration → file lists → roadmap A–H. **§12 records Phase B files.**
+> **Product lock (Ideas buenas / Tester):** Phase G sources-first workspace (not a pixel-clone of NotebookLM). Phases A–B do **not** change UI e2e ACs, tenant isolation, or workspace isolation.
+> **Out of scope here:** Phases C–H implementation, Phase G UI, V2 ingestion cutover, new vector DB, new LLM gateway, Neo4j.
 
 This is **not** a greenfield MVP. Zent already runs a production RAG stack (FastAPI, Postgres, Qdrant, Redis, LiteLLM/Novita, RBAC, org/workspace isolation, ACL pre-LLM, Knowledge Learning Engine, Knowledge Score, SSE, catalog, audit, usage, observability, evaluation, workers, connectors, hybrid dense+sparse, human-in-the-loop). Phase A records what exists and draws the V2 boundary so later phases evolve that stack instead of replacing it.
 
@@ -622,7 +622,7 @@ Aligned to SOURCE→…→CONTINUOUS LEARNING. Each phase is a PR train, not a r
 | Phase | Name | Pipeline slice | What ships | What does **not** |
 |---|---|---|---|---|
 | **A** | Architecture + contracts | — | This ADR (incl. Phase G product lock); optional domain types; `RAG_KNOWLEDGE_V2_ENABLED=false` | Ingestion/API/portal/e2e behavior; isolation changes |
-| **B** | Structured sources | SOURCE → STRUCTURED | Parallel normalizers → `StructuredDocument`; persist when flag on; V1 Markdown still default | Cutover; all formats at once |
+| **B** | Structured sources | SOURCE → STRUCTURED | Parallel `parse_structured` → `StructuredDocument` with page/section/block locators; V1 Markdown still default; flag off | Cutover; engine dual-write; Alembic `structured_*` tables (deferred to D); all formats first-class |
 | **C** | Semantic unification | STRUCTURED → SEMANTIC | File facts + SQL inference share provenance APIs; insights feed Review Queue / KLE | New LLM vendor |
 | **D** | Org Knowledge + corpus | SEMANTIC → ORG KNOWLEDGE | `KnowledgeCorpus` persisted; workspace default corpus; attach sources; KB = profile | Force-migrate all orgs |
 | **E** | Multi-level index | ORG KNOWLEDGE → INDEX | Additive Qdrant payload; section/entity points; same collection + ACL | Second vector DB |
@@ -677,9 +677,55 @@ Aligned to SOURCE→…→CONTINUOUS LEARNING. Each phase is a PR train, not a r
 | Hub (legacy) | `src/platform/knowledgehub/hub.py` |
 | Portal IA (bridge) | `portal/src/lib/knowledgeNav.ts`, `KnowledgeLayout.tsx`, `portal/e2e/customer.spec.ts` |
 | Source conflicts | `src/intelligence/source_conflict.py` |
-| Flags | `src/core/config.py` (FASE 33 block), `.env.example` L149–172 |
+| Flags | `src/core/config.py` (FASE 33 block + `KNOWLEDGE_V2_ENABLED`), `.env.example` L149–175 |
 | Migrations | `src/infrastructure/db_init/versions/080`, `083`, `093`–`097` |
+| V2 parse API (Phase B) | `src/knowledge/v2/parsing/api.py` (`parse_structured`, `parse_structured_if_enabled`) |
+| V2 PDF adapter | `src/knowledge/v2/parsing/adapters/pdf.py` |
 
 ---
 
-*Zent Enterprise Knowledge Engine — Phase A ADR. Product chrome for Phase G is locked in §2.2–2.3 (Ideas buenas / Tester). Next implementer: Phase B only after this document is accepted; do not implement Phase G UI in A–F; do not enable `RAG_KNOWLEDGE_V2_ENABLED` in production until Phase F shadow metrics exist.*
+## 12. Phase B status (Document Parsing V2)
+
+**Shipped:** SOURCE → STRUCTURED as a **library API**, default-off. V1 `Normalizer.normalize() → str` is unchanged and remains the production path (`KnowledgeIngestionEngine` and file/gdrive/s3 connectors do not import V2).
+
+**How provenance feeds Phase G citations:** each `StructuredBlock` carries a `citation_locator()` with `block_id`, `page_number` (or `page_absent_reason`), `section_path`, `block_index`, optional `char_start`/`char_end`, `content_hash`, `content_type`, and `content`. Phase G’s `[1]` → viewer highlight joins that locator to `StructuredDocument.id` / `source_id` / `organization_id` / `workspace_id`. Retrieval V2 (Phase E/F) should copy these fields onto Qdrant payload; this PR does not.
+
+**Flag:** `RAG_KNOWLEDGE_V2_ENABLED=false`. `parse_structured_if_enabled(...)` returns `None` while off. Tests and later phases may call `parse_structured` directly (pure parse, no I/O beyond the bytes).
+
+**Persistence:** no Alembic in this phase (head remains `097`). `structured_documents` / `structured_blocks` stay a Phase D item (corpus persistence) unless a follow-up B PR dual-writes under the flag.
+
+### 12.1 FILES CREATED (Phase B)
+
+| File | Responsibility |
+|---|---|
+| `src/knowledge/v2/parsing/api.py` | `parse_structured` / `parse_structured_if_enabled` |
+| `src/knowledge/v2/parsing/registry.py` | extension → adapter |
+| `src/knowledge/v2/parsing/blocks.py` | `make_block` (null page requires a reason) + heading stack |
+| `src/knowledge/v2/parsing/context.py` | `ParseContext` + `assemble_document` |
+| `src/knowledge/v2/parsing/adapters/pdf.py` | First-class PDF (pdfminer layout: pages, reading order, font-size headings, table heuristic; MarkItDown textual fallback) |
+| `src/knowledge/v2/parsing/adapters/docx.py` | DOCX `word/document.xml` paragraphs + tables |
+| `src/knowledge/v2/parsing/adapters/markdown.py` | ATX headings, lists, tables, fences; source `char_*` offsets |
+| `src/knowledge/v2/parsing/adapters/html.py` | headings / p / lists / tables |
+| `src/knowledge/v2/parsing/adapters/text.py` | TXT paragraphs; page null + `format_has_no_pages` |
+| `src/knowledge/v2/parsing/adapters/tabular.py` | CSV, XLSX (openpyxl), JSON |
+| `src/knowledge/v2/parsing/adapters/stub.py` | pptx/rtf/images/… hooks with `stub_format_not_parsed` |
+| `src/knowledge/v2/parsing/adapters/fallback.py` | MarkItDown → markdown blocks when first-class parse fails or type is unknown |
+| `tests/test_knowledge_v2_parsing.py` | Provenance page/section/block assertions (or explicit null + reason) |
+
+### 12.2 FILES MODIFIED (Phase B)
+
+| File | Change |
+|---|---|
+| `src/core/domain/knowledge_v2.py` | Locator aliases (`page_number`, `section_path`, `block_index`, `content`, `content_type`) + `char_*` / `content_hash` / `page_absent_reason` + `citation_locator()` |
+| `src/core/config.py` | Flag description: Phase B parsers exist; engine still unwired |
+| `src/knowledge/v2/__init__.py` | Comment only (domain re-exports; parse API is `knowledge.v2.parsing`) |
+| `tests/test_knowledge_v2_domain.py` | Locator alias tests |
+| `README.md` | ADR row mentions Phase B |
+
+**Not modified:** V1 `src/knowledge/normalize/**`, engine, connectors, portal, e2e, tenant/workspace isolation, Qdrant, Alembic.
+
+**Phase B Tester:** CI green; tenant isolation tests untouched; every V2 adapter either sets `page`/`section_path`/`block_index` or sets an explicit `page_absent_reason` / `section_absent_reason`.
+
+---
+
+*Zent Enterprise Knowledge Engine — Phase A ADR + Phase B parsing. Product chrome for Phase G is locked in §2.2–2.3. Do not implement Phase G UI in B–F; do not enable `RAG_KNOWLEDGE_V2_ENABLED` in production until Phase F shadow metrics exist.*

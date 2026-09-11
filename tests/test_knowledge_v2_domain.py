@@ -11,6 +11,7 @@ import pytest
 from src.core.config import Settings, get_settings
 from src.core.domain.catalog import CatalogProvenance
 from src.core.domain.knowledge_v2 import (
+    PAGE_ABSENT_FORMAT_HAS_NO_PAGES,
     KnowledgeCorpus,
     KnowledgeObjectStatus,
     StructuredBlock,
@@ -84,6 +85,46 @@ def test_structured_document_as_markdown_is_derived_view() -> None:
     assert "# Refunds" in md
     assert "30 days." in md
     assert doc.provenance is CatalogProvenance.OBSERVED
+
+
+def test_structured_block_citation_locator_aliases_phase_a_fields() -> None:
+    block = StructuredBlock(
+        kind=StructuredBlockKind.PARAGRAPH,
+        text="30 days.",
+        order=4,
+        page=2,
+        heading_path=("Handbook", "Refunds"),
+        char_start=10,
+        char_end=18,
+        content_hash="abc",
+    )
+    assert block.page_number == 2
+    assert block.section_path == ("Handbook", "Refunds")
+    assert block.block_index == 4
+    assert block.content == "30 days."
+    assert block.content_type == "paragraph"
+    locator = block.citation_locator()
+    assert locator["page_number"] == 2
+    assert locator["section_path"] == ["Handbook", "Refunds"]
+    assert locator["block_index"] == 4
+    assert locator["content"] == "30 days."
+    assert locator["content_type"] == "paragraph"
+    assert locator["char_start"] == 10
+    assert locator["char_end"] == 18
+    assert locator["content_hash"] == "abc"
+    assert locator["page_absent_reason"] is None
+
+
+def test_structured_block_page_null_exposes_reason() -> None:
+    block = StructuredBlock(
+        kind=StructuredBlockKind.PARAGRAPH,
+        text="plain",
+        order=0,
+        page=None,
+        page_absent_reason=PAGE_ABSENT_FORMAT_HAS_NO_PAGES,
+    )
+    assert block.page_number is None
+    assert block.citation_locator()["page_absent_reason"] == PAGE_ABSENT_FORMAT_HAS_NO_PAGES
 
 
 def test_v1_ingestion_engine_does_not_import_v2() -> None:

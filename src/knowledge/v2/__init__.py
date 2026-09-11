@@ -1,5 +1,5 @@
 # =============================================================================
-# Knowledge V2 — Phase A re-exports (not wired into the ingestion engine)
+# Knowledge V2 — domain types + Phase B parse API (not wired into the engine)
 # =============================================================================
 from src.core.domain.knowledge_v2 import (
     KnowledgeCorpus,

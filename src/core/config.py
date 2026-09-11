@@ -512,17 +512,19 @@ class Settings(BaseSettings):
         ),
     )
     # -------------------------------------------------------------------------
-    # Knowledge V2 (Enterprise Knowledge Engine) — Phase A stub
+    # Knowledge V2 (Enterprise Knowledge Engine) — Phase B parsers, flag off
     # -------------------------------------------------------------------------
     # Field name omits the extra RAG_ so the env var is RAG_KNOWLEDGE_V2_ENABLED
     # (unlike RAG_KNOWLEDGE_LEARNING_* which become RAG_RAG_KNOWLEDGE_*).
     KNOWLEDGE_V2_ENABLED: bool = Field(
         default=False,
         description=(
-            "Phase A stub: parallel Knowledge V2 pipeline (StructuredDocument "
-            "+ KnowledgeCorpus). Off by default. Does not change V1 ingestion, "
-            "APIs, or portal. Do not enable in production until Phase F shadow "
-            "metrics exist (see docs/architecture/enterprise-knowledge-refactor.md)."
+            "Parallel Knowledge V2 pipeline (StructuredDocument + parse_structured). "
+            "Off by default. V1 Markdown normalizers remain the production path; "
+            "the ingestion engine does not call V2. parse_structured_if_enabled "
+            "returns None while this flag is false. Do not enable in production "
+            "until Phase F shadow metrics exist "
+            "(see docs/architecture/enterprise-knowledge-refactor.md)."
         ),
     )
     # -------------------------------------------------------------------------

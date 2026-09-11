@@ -827,7 +827,7 @@ El plan SaaS evoluciona el core existente (Customer Portal, Control Center, enti
 | [sdk/python/README.md](sdk/python/README.md) | SDK Python |
 | [sdk/node/README.md](sdk/node/README.md) | SDK Node |
 | [`.env.example`](.env.example) | Catálogo de variables |
-| [docs/architecture/enterprise-knowledge-refactor.md](docs/architecture/enterprise-knowledge-refactor.md) | Phase A ADR: CURRENT→TARGET Knowledge Engine (V2 flag-off) |
+| [docs/architecture/enterprise-knowledge-refactor.md](docs/architecture/enterprise-knowledge-refactor.md) | Knowledge Engine ADR: Phase A contracts + Phase B V2 parsers (flag-off) |
 | OpenAPI | `/docs`, `/redoc`, `/api/v1/openapi.json` |
 
 ---
