@@ -20,6 +20,7 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { useToast } from "../Toast";
+import { KnowledgePillarLinks } from "../components/KnowledgePillarLinks";
 import { ErrorInline, LoadingDots } from "../components/ui";
 import SqlRunnerModal from "../components/SqlRunnerModal";
 import { fmtLatency, timeAgo } from "../lib/format";
@@ -539,6 +540,10 @@ export default function ChatPage() {
         </div>
 
         <ErrorInline message={error} />
+        <KnowledgePillarLinks
+          title="Mejora las respuestas con conocimiento"
+          subtitle="Conecta fuentes, revisa semántica y mide el aprendizaje."
+        />
 
         <div className="panel flex flex-col overflow-hidden">
           <div

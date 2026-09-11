@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { Suggestion, Understanding } from "./types";
+import { Link } from "react-router-dom";
+import { WIZARD_STEP_HEADINGS, type Suggestion, type Understanding } from "./types";
 
 function FactCard({
   item,
@@ -205,9 +206,10 @@ export function UnderstandingReviewStep({
 
   return (
     <div className="space-y-5">
-      <h2 className="text-lg font-semibold text-text">
+      <h2 className="text-lg font-semibold text-text">{WIZARD_STEP_HEADINGS.review}</h2>
+      <p className="text-sm text-muted">
         {isDocument ? "Qué datos clave encontró Zent" : "Qué entendió Zent"}
-      </h2>
+      </p>
       {understanding.likely_entity && (
         <p className="text-sm">
           Entidad probable: <strong>{understanding.likely_entity}</strong>
@@ -315,6 +317,12 @@ export function UnderstandingReviewStep({
       <button type="button" className="text-xs text-muted" onClick={onSkip}>
         Saltar revisión
       </button>
+      <p className="text-sm text-muted">
+        Los términos confirmados viven en Semántica.{" "}
+        <Link to="/knowledge/glossary" className="text-accent underline">
+          Abrir Semántica
+        </Link>
+      </p>
     </div>
   );
 }

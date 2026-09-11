@@ -6,6 +6,19 @@
 // /entities y /score. Nunca se inventa progreso ni confianza.
 // =============================================================================
 import { api, loadSession } from "../api";
+import { emitAuthExpired } from "./errors";
+
+function withSession<T>(
+  path: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const session = loadSession();
+  return api<T>(path, {
+    ...options,
+    token: session?.token,
+    organizationId: session?.organizationId,
+  });
+}
 
 export type KnowledgeGate =
   | "NOT_READY"
@@ -239,15 +252,15 @@ export function gateTone(gate: KnowledgeGate | null | undefined): string {
 // ---------------------------------------------------------------------------
 
 export function fetchLearningStatus(): Promise<LearningStatus> {
-  return api<LearningStatus>("/api/v1/knowledge/learning/status");
+  return withSession<LearningStatus>("/api/v1/knowledge/learning/status");
 }
 
 export function fetchLearningSources(): Promise<SourceLearning[]> {
-  return api<SourceLearning[]>("/api/v1/knowledge/learning/sources");
+  return withSession<SourceLearning[]>("/api/v1/knowledge/learning/sources");
 }
 
 export function fetchLearningRun(runId: string): Promise<LearningRun> {
-  return api<LearningRun>(`/api/v1/knowledge/learning/runs/${runId}`);
+  return withSession<LearningRun>(`/api/v1/knowledge/learning/runs/${runId}`);
 }
 
 export function fetchRunEvents(
@@ -255,7 +268,7 @@ export function fetchRunEvents(
   sinceSeq = 0,
   limit = 500
 ): Promise<{ events: LearningEvent[]; count: number }> {
-  return api<{ events: LearningEvent[]; count: number }>(
+  return withSession<{ events: LearningEvent[]; count: number }>(
     `/api/v1/knowledge/learning/runs/${runId}/events?since_seq=${sinceSeq}&limit=${limit}`
   );
 }
@@ -267,7 +280,7 @@ export function fetchEvents(
   if (params.category) query.set("category", params.category);
   if (params.source_id) query.set("source_id", params.source_id);
   query.set("limit", String(params.limit ?? 80));
-  return api<{ events: LearningEvent[]; count: number }>(
+  return withSession<{ events: LearningEvent[]; count: number }>(
     `/api/v1/knowledge/learning/events?${query.toString()}`
   );
 }
@@ -285,7 +298,7 @@ export function fetchQuestions(
   if (params.entity_id) query.set("entity_id", params.entity_id);
   query.set("status", params.status ?? "pending");
   query.set("limit", String(params.limit ?? 100));
-  return api(`/api/v1/knowledge/learning/questions?${query.toString()}`);
+  return withSession(`/api/v1/knowledge/learning/questions?${query.toString()}`);
 }
 
 export function fetchLearnedEntities(
@@ -295,28 +308,28 @@ export function fetchLearnedEntities(
   const query = new URLSearchParams();
   if (sourceId) query.set("source_id", sourceId);
   query.set("limit", String(limit));
-  return api<{ entities: LearnedEntity[]; count: number }>(
+  return withSession<{ entities: LearnedEntity[]; count: number }>(
     `/api/v1/knowledge/learning/entities?${query.toString()}`
   );
 }
 
 export function fetchKnowledgeScore(sourceId?: string): Promise<KnowledgeScore> {
   const query = sourceId ? `?source_id=${sourceId}` : "";
-  return api<KnowledgeScore>(`/api/v1/knowledge/learning/score${query}`);
+  return withSession<KnowledgeScore>(`/api/v1/knowledge/learning/score${query}`);
 }
 
 export function startLearning(catalogSourceId: string): Promise<{
   run: LearningRun;
   job_id: string;
 }> {
-  return api("/api/v1/knowledge/learning/start", {
+  return withSession("/api/v1/knowledge/learning/start", {
     method: "POST",
     body: JSON.stringify({ catalog_source_id: catalogSourceId }),
   });
 }
 
 export function cancelLearning(runId: string): Promise<{ cancelled: string }> {
-  return api(`/api/v1/knowledge/learning/runs/${runId}/cancel`, {
+  return withSession(`/api/v1/knowledge/learning/runs/${runId}/cancel`, {
     method: "POST",
   });
 }
@@ -325,7 +338,7 @@ export function answerQuestion(
   questionId: string,
   payload: { answer?: string; structured_answer?: Record<string, unknown>; choice?: string }
 ): Promise<{ question: KnowledgeQuestion; applied_to: Array<Record<string, unknown>> }> {
-  return api(`/api/v1/knowledge/learning/questions/${questionId}/answer`, {
+  return withSession(`/api/v1/knowledge/learning/questions/${questionId}/answer`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
@@ -335,14 +348,14 @@ export function skipQuestion(
   questionId: string,
   reason?: string
 ): Promise<{ question: KnowledgeQuestion }> {
-  return api(`/api/v1/knowledge/learning/questions/${questionId}/skip`, {
+  return withSession(`/api/v1/knowledge/learning/questions/${questionId}/skip`, {
     method: "POST",
     body: JSON.stringify({ reason: reason ?? null }),
   });
 }
 
 export function deferQuestion(questionId: string): Promise<{ question: KnowledgeQuestion }> {
-  return api(`/api/v1/knowledge/learning/questions/${questionId}/defer`, {
+  return withSession(`/api/v1/knowledge/learning/questions/${questionId}/defer`, {
     method: "POST",
     body: JSON.stringify({}),
   });
@@ -377,6 +390,11 @@ export function streamRunEvents(options: {
         }`,
         { headers, signal: controller.signal, credentials: "same-origin" }
       );
+      if (response.status === 401) {
+        emitAuthExpired("tenant");
+        options.onError?.("stream_http_401");
+        return;
+      }
       if (!response.ok || !response.body) {
         options.onError?.(`stream_http_${response.status}`);
         return;

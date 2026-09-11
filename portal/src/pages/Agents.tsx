@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { KnowledgePillarLinks } from "../components/KnowledgePillarLinks";
 import {
   EmptyState,
   ErrorInline,
@@ -92,6 +93,10 @@ export default function AgentsPage() {
       />
       <ErrorInline message={error} />
       <SuccessInline message={msg} />
+      <KnowledgePillarLinks
+        title="Conocimiento de tus agentes"
+        subtitle="Los agentes responden con Fuentes, Semántica y Mejora."
+      />
 
       {atLimit && (
         <div

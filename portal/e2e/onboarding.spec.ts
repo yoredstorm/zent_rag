@@ -36,22 +36,25 @@ test.describe("Data onboarding wizard — org nueva CSV", () => {
     await expect(page.getByText("Sube tus archivos")).toBeVisible();
     await page.getByTestId("onboarding-file").setInputFiles(CSV);
 
-    await expect(page.getByText("Zent está entendiendo tus datos")).toBeVisible({
+    await expect(page.getByRole("heading", { name: "Analizar", exact: true })).toBeVisible({
       timeout: 30_000,
     });
+    await expect(page.getByText("Zent está entendiendo tus datos")).toBeVisible();
     await expect(page.getByTestId("analyze-continue")).toBeEnabled({ timeout: 45_000 });
     await page.getByTestId("analyze-continue").click();
 
-    await expect(page.getByRole("heading", { name: "Qué entendió Zent" })).toBeVisible({
+    await expect(page.getByRole("heading", { name: "Revisar", exact: true })).toBeVisible({
       timeout: 20_000,
     });
+    await expect(page.getByRole("link", { name: "Abrir Semántica" })).toBeVisible();
     const confirm = page.getByTestId("review-confirm").first();
     if (await confirm.isVisible().catch(() => false)) {
       await confirm.click();
     }
     await page.getByTestId("goto-questions").click();
 
-    await expect(page.getByRole("heading", { name: "Prueba tus datos" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Probar", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Abrir Mejora" })).toBeVisible();
     const question = page.getByTestId("generated-question").first();
     await expect(question).toBeVisible();
     await question.click();
@@ -60,6 +63,8 @@ test.describe("Data onboarding wizard — org nueva CSV", () => {
     });
 
     await page.getByTestId("finish-wizard").click();
-    await expect(page.getByTestId("ready-heading")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId("ready-heading")).toHaveText("Listo", { timeout: 20_000 });
+    await expect(page.getByRole("link", { name: "Abrir Semántica" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Abrir Mejora" })).toBeVisible();
   });
 });

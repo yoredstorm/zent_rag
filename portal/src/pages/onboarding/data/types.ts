@@ -139,6 +139,25 @@ export const WIZARD_STEPS: { id: WizardStep; label: string }[] = [
   { id: "ready", label: "Listo" },
 ];
 
+/** Headings exactos de los pasos 3–6. No usar copy del API aquí. */
+export const WIZARD_STEP_HEADINGS = {
+  analyze: "Analizar",
+  review: "Revisar",
+  test: "Probar",
+  ready: "Listo",
+} as const;
+
+const ANALYZE_CONTINUE_STATUSES: SessionStatus[] = [
+  "REVIEW_REQUIRED",
+  "TESTING",
+  "READY",
+  "NEEDS_ATTENTION",
+];
+
+export function canContinueAnalyze(status?: SessionStatus | null): boolean {
+  return Boolean(status && ANALYZE_CONTINUE_STATUSES.includes(status));
+}
+
 export const FLOW_QUESTION_HEADING: Record<string, string> = {
   documents: "Prueba el documento",
   spreadsheets: "Prueba tus datos",

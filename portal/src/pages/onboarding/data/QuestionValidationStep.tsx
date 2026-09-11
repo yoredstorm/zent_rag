@@ -1,3 +1,6 @@
+import { Link } from "react-router-dom";
+import { WIZARD_STEP_HEADINGS } from "./types";
+
 export function QuestionValidationStep({
   questions,
   answer,
@@ -28,10 +31,13 @@ export function QuestionValidationStep({
 }) {
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-text">{heading || "Prueba Zent"}</h2>
+      <h2 className="text-lg font-semibold text-text">{WIZARD_STEP_HEADINGS.test}</h2>
       <p className="text-sm text-muted">
-        {subtitle || "Preguntas generadas a partir de tu fuente."}
+        {heading || subtitle || "Preguntas generadas a partir de tu fuente."}
       </p>
+      {heading && subtitle && (
+        <p className="text-sm text-muted">{subtitle}</p>
+      )}
       <div className="flex flex-col gap-2">
         {questions.map((q) => (
           <button
@@ -90,6 +96,12 @@ export function QuestionValidationStep({
       <button type="button" className="text-xs text-muted" onClick={onSkip}>
         Saltar preguntas
       </button>
+      <p className="text-sm text-muted">
+        Sigue midiendo el conocimiento en Mejora.{" "}
+        <Link to="/knowledge/learning" className="text-accent underline">
+          Abrir Mejora
+        </Link>
+      </p>
     </div>
   );
 }

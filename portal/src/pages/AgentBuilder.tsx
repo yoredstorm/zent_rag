@@ -775,7 +775,17 @@ export default function AgentBuilderPage() {
             <EmptyState
               icon={Robot}
               title="Sin colecciones"
-              body="Crea una knowledge base en Conocimiento para asignarla a este agente."
+              body="Crea una knowledge base en Fuentes o revisa Semántica para asignarla a este agente."
+              action={
+                <div className="flex flex-wrap gap-2">
+                  <Link to="/knowledge/sources" className="btn btn-secondary min-h-9">
+                    Ir a Fuentes
+                  </Link>
+                  <Link to="/knowledge/glossary" className="btn btn-secondary min-h-9">
+                    Ir a Semántica
+                  </Link>
+                </div>
+              }
             />
           ) : (
             <fieldset>

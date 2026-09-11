@@ -277,6 +277,7 @@ async function renderLearning(options: Parameters<typeof setupFetch>[0] = {}) {
 afterEach(() => {
   vi.unstubAllGlobals();
   window.localStorage.clear();
+  window.sessionStorage.clear();
 });
 
 describe("Knowledge Learning Studio", () => {
@@ -356,6 +357,49 @@ describe("Knowledge Learning Studio", () => {
     await renderLearning({ run: failed, sources: [sourceWithRun(failed)] });
     expect((await screen.findAllByText("El aprendizaje falló")).length).toBeGreaterThan(0);
     expect(screen.getByText(/no se pudo conectar/)).toBeInTheDocument();
+  });
+
+  it("un 401 no deja el Studio a medias con ErrorInline y limpia la sesión", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/auth/me")) {
+        return Promise.resolve(
+          json({
+            organization_id: "org-1",
+            company_name: "Acme",
+            email: "a@b.cl",
+            roles: ["owner"],
+            permissions: [],
+          })
+        );
+      }
+      if (url.includes("/knowledge/learning/")) {
+        return Promise.resolve(json({ detail: "expired" }, 401));
+      }
+      return Promise.resolve(json({ detail: `not mocked: ${url}` }, 500));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    window.localStorage.setItem("rag_portal_token", "rag_sess_t");
+    window.localStorage.setItem("rag_portal_org", "org-1");
+    window.localStorage.setItem("rag_portal_company", "Acme");
+
+    render(
+      <MemoryRouter initialEntries={["/knowledge/learning"]}>
+        <AuthProvider>
+          <ToastProvider>
+            <KnowledgeLearningPage />
+          </ToastProvider>
+        </AuthProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(window.localStorage.getItem("rag_portal_org")).toBeNull();
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("learning-page")).not.toBeInTheDocument();
+    expect(screen.queryByText(/No se pudo cargar/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Sin fuentes conectadas")).not.toBeInTheDocument();
   });
 
   it("cancela un run en curso", async () => {

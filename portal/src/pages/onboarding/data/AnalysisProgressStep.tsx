@@ -1,3 +1,5 @@
+import { WIZARD_STEP_HEADINGS } from "./types";
+
 export function AnalysisProgressStep({
   headline,
   phases,
@@ -22,9 +24,15 @@ export function AnalysisProgressStep({
 
   return (
     <div className="max-w-xl">
-      <h2 className="text-lg font-semibold text-text">
+      <h2 className="text-lg font-semibold text-text">{WIZARD_STEP_HEADINGS.analyze}</h2>
+      <p className="mt-1 text-sm text-muted">
         {headline || "Zent está entendiendo tu fuente"}
-      </h2>
+      </p>
+      <p className="mt-2 text-sm text-muted">
+        {ready
+          ? "Análisis listo. Continúa para revisar lo que entendió Zent."
+          : "Zent sigue analizando. Continuar no avanza hasta que termine."}
+      </p>
       <ul className="mt-5 space-y-2">
         {phases.map((phase) => {
           const label =
@@ -66,7 +74,10 @@ export function AnalysisProgressStep({
         className="btn btn-primary mt-5"
         data-testid="analyze-continue"
         disabled={!ready}
-        onClick={onContinue}
+        onClick={() => {
+          if (!ready) return;
+          onContinue();
+        }}
       >
         Continuar
       </button>
