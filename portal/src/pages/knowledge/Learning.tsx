@@ -37,6 +37,7 @@ import {
 } from "../../components/ui";
 import { useToast } from "../../Toast";
 import { useAuth } from "../../auth";
+import { isUnauthorized } from "../../lib/errors";
 import { fmtNum, timeAgo } from "../../lib/format";
 import {
   answerQuestion,
@@ -133,15 +134,21 @@ export default function KnowledgeLearningPage() {
 
   const refreshForSource = useCallback(
     async (sourceId: string) => {
+      const swallowUnlessAuth = <T,>(fallback: T) => (err: unknown) => {
+        if (isUnauthorized(err)) throw err;
+        return fallback;
+      };
       const [questionsData, entitiesData, scoreData] = await Promise.all([
-        fetchQuestions({ source_id: sourceId }).catch(() => ({
-          questions: [],
-          count: 0,
-          pending: 0,
-          blocking: 0,
-        })),
-        fetchLearnedEntities(sourceId).catch(() => ({ entities: [], count: 0 })),
-        fetchKnowledgeScore(sourceId).catch(() => null),
+        fetchQuestions({ source_id: sourceId }).catch(
+          swallowUnlessAuth({
+            questions: [] as KnowledgeQuestion[],
+            count: 0,
+            pending: 0,
+            blocking: 0,
+          })
+        ),
+        fetchLearnedEntities(sourceId).catch(swallowUnlessAuth({ entities: [], count: 0 })),
+        fetchKnowledgeScore(sourceId).catch(swallowUnlessAuth(null)),
       ]);
       setQuestions(questionsData.questions || []);
       setBlocking(questionsData.blocking || 0);
@@ -153,6 +160,7 @@ export default function KnowledgeLearningPage() {
 
   const refreshAll = useCallback(
     async (sourceId?: string) => {
+      let expired = false;
       try {
         const [statusData, sourcesData] = await Promise.all([
           fetchLearningStatus(),
@@ -177,13 +185,17 @@ export default function KnowledgeLearningPage() {
         }
         setFeedRefresh((value) => value + 1);
       } catch (err) {
+        if (isUnauthorized(err)) {
+          expired = true;
+          return;
+        }
         setError(
           err instanceof Error
             ? err.message
             : "No se pudo cargar el aprendizaje de conocimiento"
         );
       } finally {
-        setLoading(false);
+        if (!expired) setLoading(false);
       }
     },
     [loadRun, refreshForSource, selectedSourceId]
@@ -197,7 +209,9 @@ export default function KnowledgeLearningPage() {
 
   useEffect(() => {
     if (!selectedSourceId) return;
-    void refreshForSource(selectedSourceId);
+    void refreshForSource(selectedSourceId).catch((err) => {
+      if (isUnauthorized(err)) return;
+    });
     const source = sources.find((item) => item.source_id === selectedSourceId);
     if (source?.active_run?.id) {
       void loadRun(source.active_run.id);
@@ -269,6 +283,7 @@ export default function KnowledgeLearningPage() {
       pushToast("info", "Aprendizaje iniciado", "Zent está analizando tu fuente.");
       await refreshAll(selectedSourceId);
     } catch (err) {
+      if (isUnauthorized(err)) return;
       const message = err instanceof Error ? err.message : "No se pudo iniciar";
       if (message.includes("409") || message.toLowerCase().includes("activo")) {
         pushToast("warn", "Ya hay un aprendizaje en curso", "Mostrando el run activo.");
@@ -298,6 +313,7 @@ export default function KnowledgeLearningPage() {
       );
       await refreshAll(selectedSourceId);
     } catch (err) {
+      if (isUnauthorized(err)) return;
       setError(err instanceof Error ? err.message : "No se pudo guardar la respuesta");
     } finally {
       setAnswerBusyId(null);
@@ -314,6 +330,7 @@ export default function KnowledgeLearningPage() {
       setSteps([]);
       await refreshAll(selectedSourceId);
     } catch (err) {
+      if (isUnauthorized(err)) return;
       const message = err instanceof Error ? err.message : "No se pudo cancelar";
       if (message.includes("409") || message.toLowerCase().includes("estado")) {
         pushToast("warn", "El run ya terminó", "Refrescando estado actual.");
@@ -333,6 +350,7 @@ export default function KnowledgeLearningPage() {
       pushToast("info", "Pregunta descartada", "Puedes retomarla más adelante.");
       await refreshAll(selectedSourceId);
     } catch (err) {
+      if (isUnauthorized(err)) return;
       setError(err instanceof Error ? err.message : "No se pudo descartar");
     } finally {
       setAnswerBusyId(null);
@@ -346,6 +364,7 @@ export default function KnowledgeLearningPage() {
       pushToast("info", "Pregunta diferida", "Te la mostraremos de nuevo luego.");
       await refreshAll(selectedSourceId);
     } catch (err) {
+      if (isUnauthorized(err)) return;
       setError(err instanceof Error ? err.message : "No se pudo diferir");
     } finally {
       setAnswerBusyId(null);

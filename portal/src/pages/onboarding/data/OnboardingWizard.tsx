@@ -20,6 +20,7 @@ import {
   API,
   FLOW_QUESTION_HEADING,
   WIZARD_STEPS,
+  canContinueAnalyze,
   type OnboardingKind,
   type OnboardingSession,
   type ProgressPayload,
@@ -234,6 +235,7 @@ export default function OnboardingWizardPage() {
 
   async function goReview() {
     if (!session || !current) return;
+    if (!canContinueAnalyze(current.status)) return;
     const und = await api<Understanding>(`${API}/sessions/${current.id}/understanding`, {
       token: session.token,
       organizationId: session.organizationId,
@@ -369,10 +371,7 @@ export default function OnboardingWizardPage() {
 
   const kind = current?.kind;
   const suggestions = (understanding.suggestions || []) as Suggestion[];
-  const analyzeReady = Boolean(
-    current &&
-      ["REVIEW_REQUIRED", "TESTING", "READY", "NEEDS_ATTENTION"].includes(current.status)
-  );
+  const analyzeReady = canContinueAnalyze(current?.status);
 
   return (
     <KnowledgeLayout>

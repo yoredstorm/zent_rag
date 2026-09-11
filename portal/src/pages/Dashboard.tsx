@@ -17,6 +17,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { AttentionList } from "../components/AttentionList";
+import { KnowledgePillarLinks } from "../components/KnowledgePillarLinks";
 import { EmptyState, ErrorInline, PageHeader, SkeletonBlock, StatCard } from "../components/ui";
 import { fmtDateTime, fmtLatency, fmtNum, timeAgo } from "../lib/format";
 
@@ -191,6 +192,10 @@ export default function DashboardPage() {
       />
 
       <ErrorInline message={error} />
+      <KnowledgePillarLinks
+        title="Conocimiento"
+        subtitle="Resumen, fuentes, semántica y mejora — el viaje de tus datos."
+      />
 
       {!loading && attentionSessions.length > 0 && (
         <div className="mb-4 rounded-md border border-warn/40 bg-warn/10 px-4 py-3 text-sm">

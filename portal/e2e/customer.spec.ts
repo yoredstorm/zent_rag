@@ -24,10 +24,32 @@ test.describe("Customer portal — flujo smoke", () => {
     // Login
     await loginAsTenant(page);
     await expect(page.getByRole("heading", { name: "Panel general" })).toBeVisible();
+    const dashboardKnowledge = page.getByTestId("knowledge-pillar-links");
+    await expect(dashboardKnowledge.getByRole("link", { name: "Resumen" })).toHaveAttribute(
+      "href",
+      "/knowledge"
+    );
+    await expect(dashboardKnowledge.getByRole("link", { name: "Fuentes" })).toHaveAttribute(
+      "href",
+      "/knowledge/sources"
+    );
+    await expect(dashboardKnowledge.getByRole("link", { name: "Semántica" })).toHaveAttribute(
+      "href",
+      "/knowledge/glossary"
+    );
+    await expect(dashboardKnowledge.getByRole("link", { name: "Mejora" })).toHaveAttribute(
+      "href",
+      "/knowledge/learning"
+    );
     await expectNoA11yViolations(page);
 
     // Crear agente (UI)
     await page.goto("/agents");
+    const agentsKnowledge = page.getByTestId("knowledge-pillar-links");
+    await expect(agentsKnowledge.getByRole("link", { name: "Semántica" })).toHaveAttribute(
+      "href",
+      "/knowledge/glossary"
+    );
     await page.getByRole("link", { name: "Crear agente" }).first().click();
     await page.getByLabel("Nombre").fill(AGENT_NAME);
     await page.getByRole("button", { name: "Crear agente" }).click();
@@ -53,6 +75,15 @@ test.describe("Customer portal — flujo smoke", () => {
     // Playground (chat): sin LLM el stream falla con elegancia, la UI no debe romperse
     await page.goto("/chat");
     await expect(page.getByRole("heading", { name: "Playground" })).toBeVisible();
+    const chatKnowledge = page.getByTestId("knowledge-pillar-links");
+    await expect(chatKnowledge.getByRole("link", { name: "Fuentes" })).toHaveAttribute(
+      "href",
+      "/knowledge/sources"
+    );
+    await expect(chatKnowledge.getByRole("link", { name: "Mejora" })).toHaveAttribute(
+      "href",
+      "/knowledge/learning"
+    );
     const composer = page.getByRole("textbox");
     await composer.fill("¿Qué es Zent?");
     await composer.press("Enter");

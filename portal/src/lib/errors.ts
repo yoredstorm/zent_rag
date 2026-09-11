@@ -21,6 +21,11 @@ export class ApiError extends Error {
 
 export const isApiError = (err: unknown): err is ApiError => err instanceof ApiError;
 
+/** 401: la sesión caducó o fue revocada; no pintar ErrorInline genérico. */
+export function isUnauthorized(err: unknown): boolean {
+  return isApiError(err) && err.status === 401;
+}
+
 /** Estados HTTP que justifican reintento seguro (GET/HEAD idempotente).
  *  429 NO: "slow down" — reintentar inmediatamente empeora la carga. */
 export const RETRYABLE_STATUS = [408, 500, 502, 503, 504];

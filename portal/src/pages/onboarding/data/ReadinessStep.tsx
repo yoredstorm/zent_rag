@@ -1,10 +1,14 @@
 import { Link } from "react-router-dom";
-import type { ReadyAction } from "./types";
+import { WIZARD_STEP_HEADINGS, type ReadyAction } from "./types";
+
+const PILLAR_ACTIONS: ReadyAction[] = [
+  { label: "Abrir Semántica", to: "/knowledge/glossary" },
+  { label: "Abrir Mejora", to: "/knowledge/learning" },
+];
 
 const DEFAULT_ACTIONS: ReadyAction[] = [
   { label: "Pregúntale a Zent", to: "/chat" },
   { label: "Crear agente", to: "/agents/new" },
-  { label: "Revisar mejoras", to: "/knowledge/improvements" },
 ];
 
 export function ReadinessStep({
@@ -26,12 +30,22 @@ export function ReadinessStep({
   readySubtitle?: string;
   readyActions?: ReadyAction[];
 }) {
-  const actions = readyActions && readyActions.length > 0 ? readyActions : DEFAULT_ACTIONS;
+  const extras = readyActions && readyActions.length > 0 ? readyActions : DEFAULT_ACTIONS;
+  const seen = new Set<string>();
+  const actions = [...PILLAR_ACTIONS, ...extras].filter((action) => {
+    const key = `${action.to}|${action.label}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   return (
     <div className="max-w-xl space-y-4">
       <h2 className="text-lg font-semibold text-text" data-testid="ready-heading">
-        {readyHeadline || "Tu conocimiento está listo."}
+        {WIZARD_STEP_HEADINGS.ready}
       </h2>
+      <p className="text-sm text-muted">
+        {readyHeadline || "Tu conocimiento está listo."}
+      </p>
       <p className="text-sm text-muted">
         {readySubtitle || "Conectado, entendido y listo para preguntar."}
       </p>
