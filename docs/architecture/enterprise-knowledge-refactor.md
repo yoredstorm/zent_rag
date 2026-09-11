@@ -4,7 +4,8 @@
 > **Date:** 2026-09-11
 > **Base:** `master` @ `5269ffe` (Knowledge IA: Resumen · Fuentes · Semántica · Mejora)
 > **Scope of this document:** CURRENT → TARGET → GAPS → keep / modify / deprecate → migration → file lists → roadmap A–H.
-> **Out of scope here:** Phases B–H implementation, portal NotebookLM layout, V2 ingestion cutover, new vector DB, new LLM gateway, Neo4j.
+> **Product lock (Ideas buenas / Tester):** Phase G sources-first workspace (not a pixel-clone of NotebookLM). Phase A does **not** change UI e2e ACs, tenant isolation, or workspace isolation.
+> **Out of scope here:** Phases B–H implementation, Phase G UI, V2 ingestion cutover, new vector DB, new LLM gateway, Neo4j.
 
 This is **not** a greenfield MVP. Zent already runs a production RAG stack (FastAPI, Postgres, Qdrant, Redis, LiteLLM/Novita, RBAC, org/workspace isolation, ACL pre-LLM, Knowledge Learning Engine, Knowledge Score, SSE, catalog, audit, usage, observability, evaluation, workers, connectors, hybrid dense+sparse, human-in-the-loop). Phase A records what exists and draws the V2 boundary so later phases evolve that stack instead of replacing it.
 
@@ -20,10 +21,11 @@ This is **not** a greenfield MVP. Zent already runs a production RAG stack (Fast
 | Redis (queues, SSE pub/sub, conversation TTL) | Neo4j (graph stays in Postgres) |
 | LiteLLM / Novita (`src/infrastructure/llm/`) | Auto-promoting `INFERRED` → `APPROVED` |
 | RBAC + org/workspace isolation | Changing default ingestion in Phase A |
-| ACL filter **before** LLM (`visibility` / `acl_users` / `acl_groups`) | Switching portal to NotebookLM in Phase A |
+| ACL filter **before retrieval / pre-LLM** (`visibility` / `acl_users` / `acl_groups`) | Switching portal layout in Phase A (4-pillar IA stays until G) |
 | Knowledge Learning Engine (FASE 33) | Migrating all normalizers to V2 in Phase A |
 | Knowledge Score (explicable, not “% of embeddings”) | Productive mocks in tests |
-| SSE (RAG, jobs, learning, platform realtime) | |
+| SSE (RAG, jobs, learning, platform realtime) | Changing portal e2e acceptance in Phase A |
+| Zent visual identity (tokens, type, chrome) | Pixel-cloning NotebookLM |
 | Semantic Catalog + Review Queue | |
 | Audit, usage, observability, evaluation | |
 | Workers + connectors (SQL + Knowledge Platform) | |
@@ -259,9 +261,9 @@ Comment in code: “AI Knowledge Hub v2 — Auto-Discovery & Curation”. This i
 **Pages:** `portal/src/pages/knowledge/`  
 **KLE widgets:** `portal/src/components/knowledgeLearning/`
 
-Four pillars (PR #4): **Resumen · Fuentes · Semántica · Mejora**.
+Four pillars from **PR #4 / #5** (`KNOWLEDGE_PILLARS` in `knowledgeNav.ts`): **Resumen · Fuentes · Semántica · Mejora**, plus collapsed **Avanzado**. Portal e2e (`portal/e2e/customer.spec.ts`) asserts those four links. **This IA is a temporary bridge.** Phase G replaces it with a sources-first knowledge workspace (see §2.2 / §9 Phase G). Phase A must **not** change those e2e acceptance criteria.
 
-| Pillar | Routes |
+| Pillar (bridge) | Routes today |
 |---|---|
 | Resumen | `/knowledge` (`Overview.tsx`) — sources, jobs, KBs, vector points, onboarding gate |
 | Fuentes | `/knowledge/sources`, `/knowledge/sources/:id`, `/knowledge/add` |
@@ -269,7 +271,7 @@ Four pillars (PR #4): **Resumen · Fuentes · Semántica · Mejora**.
 | Mejora | `/knowledge/learning` (KLE studio 33E), `/improvements`, `/map` (33F graph), `/review` |
 | Avanzado | jobs, SQL, database builder, collections (KBs), documents, playground, connectors, Knowledge Hub |
 
-This is **operator IA** (catalog + learning studio + jobs). It is **not** a sources-first NotebookLM reader (document canvas + citations + corpus browser).
+This is **operator IA** (catalog + learning studio + jobs). It is **not** yet the sources-first workspace (LEFT Sources · CENTER Chat\|Viewer · RIGHT Studio).
 
 ### 1.11 Isolation, ACL, SSE, eval, workers — already in production
 
@@ -289,7 +291,7 @@ This is **operator IA** (catalog + learning studio + jobs). It is **not** a sour
 
 ### 1.12 What CURRENT does *not* have
 
-There is **no** `KnowledgeCorpus`, **no** `StructuredDocument` (until Phase A scaffolding), **no** multi-level index (document / section / entity / chunk), **no** org-level knowledge object distinct from “a KB plus a catalog”, **no** single pipeline that runs SOURCE→…→CITATIONS, and **no** sources-first reading UX. Documents become Markdown blobs; SQL becomes catalog rows; the two meet only at retrieval time and in the KLE score.
+There is **no** `KnowledgeCorpus`, **no** `StructuredDocument` (until Phase A scaffolding), **no** multi-level index (document / section / entity / chunk), **no** org-level knowledge object distinct from “a KB plus a catalog”, **no** single pipeline that runs SOURCE→…→CITATIONS, and **no** sources-first workspace (LEFT Sources · CENTER Chat|Viewer · RIGHT Studio). The 4-pillar IA is a **temporary** operator console. Documents become Markdown blobs; SQL becomes catalog rows; the two meet only at retrieval time and in the KLE score.
 
 ---
 
@@ -328,18 +330,55 @@ Rules:
 3. Retrieval default filter: `organization_id` + `workspace_id` + corpus→`knowledge_base_id`(s) + ACL.
 4. Catalog / KLE continue to key off `catalog_sources` / `kb_sources`; corpus is an **overlay**, not a third physical source table in Phase A.
 
-### 2.2 Sources-first UX (later phases — not Phase A)
+### 2.2 Sources-first knowledge workspace (Phase G product — not Phase A UI)
 
-TARGET portal is a **reader + librarian**, not only an operator console:
+**Bridge:** the current 4-pillar IA (PR #4 / #5: Resumen · Fuentes · Semántica · Mejora) stays in production through Phases A–F. Phase G **replaces** that chrome with a sources-first workspace. Do not pixel-clone NotebookLM: keep **Zent visual identity** (existing portal tokens, type, density, RBAC chrome).
 
-1. **Fuentes** — add, sync, see structured preview and pending insights (evolve `/knowledge/sources` + `/knowledge/add`).
-2. **Documento / tabla** — open the source; see sections, extracted facts, provenance badges.
-3. **Preguntar al corpus** — chat grounded in that corpus with citations that deep-link to the block/page (evolve playground + main Chat).
-4. **Semántica / Mejora** — keep current pillars for glossary, review, KLE, map.
+**Home (Phase G):** a list of **knowledge workspaces** (org-isolated, `workspace_id` unchanged). Each card shows **coverage** (Knowledge Score / source coverage) and **conflicts** (reuse `src/intelligence/source_conflict.py` + catalog authority — not a new conflict engine). Opening a workspace is the product, not “open the catalog”.
 
-Phase A **does not** change `KnowledgeLayout` or implement NotebookLM chrome.
+**Workspace chrome — three panes + tabs:**
 
-### 2.3 Provenance (unchanged law)
+```
+┌──────────────────────────────────────────────────────────────┐
+│  Tabs:  Chat  |  Sources  |  Studio  |  Advanced             │
+├──────────────┬─────────────────────────────┬─────────────────┤
+│ LEFT         │ CENTER                      │ RIGHT           │
+│ Sources      │ Chat  ⟷  Viewer             │ Studio          │
+│ (corpus      │ (ask the corpus)            │ (artifacts)     │
+│  list)       │ (highlight cited span)      │                 │
+└──────────────┴─────────────────────────────┴─────────────────┘
+```
+
+| Region | Role | Maps from CURRENT (do not rewrite in A) |
+|---|---|---|
+| **LEFT · Sources** | Corpus source list; add/sync; select to open viewer | `/knowledge/sources`, `SourceDetail.tsx` |
+| **CENTER · Chat \| Viewer** | Ask the corpus **or** read the selected source. Clicking an inline citation `[1]` **highlights** the span/page/block in the viewer | Chat + `/knowledge/playground` + structured locators from Phase F |
+| **RIGHT · Studio** | Generated artifacts over the **same corpus** (HITL: INFERRED until approved) | KLE studio widgets + `portal/src/pages/knowledge/studio/panels.tsx` + map |
+| **Advanced** | Operator surfaces that do not belong on the happy path | Today’s Avanzado + Semántica/Mejora leftovers (glossary, catalog, review, jobs, SQL, Hub shim) |
+
+**Tabs:** `Chat` / `Sources` / `Studio` (+ `Advanced`). The 4 pillars are **not** the Phase G tabs.
+
+Phase A **does not** change `KnowledgeLayout`, `knowledgeNav.ts`, or `portal/e2e/*`.
+
+### 2.3 Phase G must-have product (Ideas buenas / Tester)
+
+Ship these in Phase G. Audio/video studio and a NotebookLM lookalike are **out**.
+
+| Must-have | Meaning | Reuse |
+|---|---|---|
+| **Inline citations `[1]` → highlight in viewer** | Grounded answer emits numbered cites; click selects LEFT source + scrolls/highlights the block/page in CENTER Viewer. Not only a footnote list. Compat: keep `[Doc: N]` in eval until metrics move | Phase F locators; `src/rag/evaluation/metrics.py` today parses `[Doc: N]` |
+| **Learning events reales in the workspace** | Activity in the workspace is `knowledge_events` / SSE (`src/platform/knowledge_learning/events.py`) — no fake timers or simulated stages | KLE event bus; `LearningActivityFeed` |
+| **Studio MVP first** | **Summary, FAQ, Timeline, Comparison, Key Facts, Risks, Map.** Each artifact is INFERRED until Review/approve. **Audio / video later** (not G) | Document insights + KLE graph (`/knowledge/map`) + IntelligenceEngine; do not invent a second LLM stack |
+| **Suggested questions from corpus** | Questions justified by catalog / approved facts / KLE `question_generator` + eval synthetics — not a random FAQ | `src/platform/knowledge_learning/question_generator.py`, `evaluation.generate_synthetic_questions` |
+| **Source details = coverage + Open / Relearn** | Source row/detail shows coverage (Score dimensions / last learned) and two actions: **Open** (viewer) and **Relearn** (KLE start / re-sync). Internals stay in Advanced | `SourceDetail.tsx`, `POST /api/v1/knowledge/learning/start`, Knowledge Score |
+
+**Hard constraints (all phases, including G):**
+
+1. **`INFERRED != APPROVED`** — Studio artifacts, suggested questions, and facts never auto-promote.
+2. **ACL pre-retrieval** — viewer, chat, studio, and suggested questions only see chunks/sources that already passed Qdrant ACL (`visibility` / `acl_users` / `acl_groups`) + org/workspace filters. No “show then hide”.
+3. **Zent look, not a clone** — layout *pattern* (sources / chat+viewer / studio) is the product constraint; visual system stays Zent.
+
+### 2.4 Provenance (unchanged law)
 
 `OBSERVED` (measurable) / `INFERRED` (hypothesis) / `APPROVED` (human) / `REJECTED`.
 
@@ -347,7 +386,7 @@ Phase A **does not** change `KnowledgeLayout` or implement NotebookLM chrome.
 - Review Queue, KLE questions, Document Insights review, FASE 25 approvals: the **only** promotion path.
 - Retrieval may use INFERRED for ranking hints; **answers that assert business truth** must cite APPROVED or OBSERVED evidence, else IntelligenceEngine abstains / asks.
 
-### 2.4 Multi-level index (later)
+### 2.5 Multi-level index (later)
 
 | Level | Store | Built from |
 |---|---|---|
@@ -374,7 +413,11 @@ Still **one Qdrant collection**, same named vectors, same ACL fields.
 | Document insights isolated | `document_insights` not in Knowledge Score / graph | Contracts never become Org Knowledge |
 | Citations are prompt-level | `[Doc: N]` over retrieved chunks, not stable source locators | Cannot jump to page/section; eval only checks index in context |
 | Hub permissions | Knowledge Hub uses `billing:read/write` | Wrong ACL surface |
-| Portal is operator-first | Pillars Resumen/Fuentes/Semántica/Mejora | No sources-first reading loop |
+| Portal is operator-first (temporary) | 4 pillars PR #4/#5; e2e locks Resumen/Fuentes/Semántica/Mejora | Phase G must replace chrome — but Phase A must **not** change those e2e ACs |
+| No workspace home with coverage/conflicts | Overview is jobs + KB counts | Users cannot pick “which knowledge to work in” |
+| Citations do not highlight the source | `[Doc: N]` is prompt-level | Cannot click `[1]` into the viewer |
+| Studio is not corpus-native | KLE Learning + Map + `studio/panels.tsx` (lexicon) are separate pages | No Summary/FAQ/Timeline/Comparison/Key Facts/Risks/Map pane |
+| Suggested questions not corpus-scoped | KLE questions are SQL-ambiguity HITL | Chat has no “ask these next” from the corpus |
 | Double env prefix on KLE flags | Field `RAG_KNOWLEDGE_*` + prefix `RAG_` | Ops confusion (`RAG_RAG_KNOWLEDGE_*`) |
 | `ensure_tables` + Alembic | Catalog/insights/KLE recreate schema in code | Drift vs `097` head |
 | Markdown-only V1 path | Recursive chunker *wants* headings that PDF flatten often loses | Hybrid retrieval quality ceiling |
@@ -401,7 +444,7 @@ Reuse as-is (call them; do not reimplement):
 - **Document Insights HITL + data onboarding flows.**
 - **IntelligenceEngine** (answerability / abstention).
 - **FASE 25 learning loop** (improvements, replay, spider).
-- **Portal pillars and KLE studio widgets** (evolve, do not scrap).
+- **Portal 4-pillar IA and KLE studio widgets** through Phase F (bridge). Phase G **replaces the chrome**, not the widgets’ data (Score, events, graph, review).
 - **Workers** (`worker_entry.py` / SQL worker dual-queue).
 
 ---
@@ -415,12 +458,15 @@ Reuse as-is (call them; do not reimplement):
 | `KbSource` / sources API | D | `corpus_id`; keep `knowledge_base_id` |
 | `KnowledgeBase` | D | Become retrieval profile of a corpus |
 | Qdrant payload | E | `corpus_id`, `document_id`, `block_id`, `heading_path`, `page` — additive |
-| `RAGOrchestrator` / query schema | F/G | Filter by corpus; emit structured citations |
-| `src/rag/evaluation/metrics.py` | G | Citation = source+locator, keep `[Doc: N]` compat |
+| `RAGOrchestrator` / query schema | F/G | Filter by corpus; emit numbered cites `[1]` with locators |
+| `src/rag/evaluation/metrics.py` | G | Citation = source+locator; keep `[Doc: N]` compat during dual-read |
 | KLE orchestrator | C/H | Ingest approved document insights; run doc stages for file sources |
-| Knowledge Score | C/H | Add document-coverage dimension (do not drop existing seven) |
-| IntelligenceEngine | F | Prefer structured locators + approved org knowledge |
-| Portal Fuentes / Overview / Playground | G | Sources-first reader; **do not** drop Semántica/Mejora |
+| Knowledge Score | C/H | Add document-coverage dimension (do not drop existing seven); feed workspace home |
+| IntelligenceEngine | F | Prefer structured locators + approved org knowledge; conflicts on home |
+| Portal `KnowledgeLayout` / `knowledgeNav.ts` / Overview | G | Replace 4 pillars with workspace home + Chat/Sources/Studio/Advanced; LEFT/CENTER/RIGHT panes. **Update e2e ACs in G, not A** |
+| `SourceDetail.tsx` | G | Coverage + **Open** / **Relearn**; extras stay Advanced |
+| KLE events + `LearningActivityFeed` | G | Real events visible **inside** the workspace (not only `/knowledge/learning`) |
+| Studio pages / `studio/panels.tsx` | G | Studio MVP: Summary, FAQ, Timeline, Comparison, Key Facts, Risks, Map |
 | Knowledge Hub routes | H | Proxy or redirect onto `kb_sources` + corpus |
 | Settings | A (stub only) | `KNOWLEDGE_V2_ENABLED` |
 
@@ -434,7 +480,8 @@ Reuse as-is (call them; do not reimplement):
 | Portal `/knowledge-hub` and `/knowledge/documents` if they only wrap Hub | Duplicate of Fuentes | Redirect |
 | Catalog-only readiness as the **user-facing** % | Conflicts with Knowledge Score | Keep API; UI shows Score + reasons |
 | Markdown as the **canonical** document | Lossy | Keep as derived view (`StructuredDocument.as_markdown()`) |
-| Prompt-only `[Doc: N]` as the only citation | Fragile | Compat layer in eval |
+| Prompt-only `[Doc: N]` as the only citation | Fragile | Compat layer in eval; Phase G UI uses `[1]` + highlight |
+| 4-pillar nav as the **product** IA | Operator-first bridge (PR #4/#5) | Phase G; keep routes as Advanced/shims; **do not change e2e in Phase A** |
 | `ensure_tables` as schema source of truth | Drift | Alembic-only after V2 tables exist |
 | Field names `RAG_KNOWLEDGE_*` (double prefix) | Ops hazard | New flags without the extra `RAG_` in the field name |
 
@@ -503,6 +550,8 @@ All of:
 - `src/infrastructure/qdrant/**`, `src/infrastructure/llm/**`
 - `src/api/routes/query.py`, `sources.py`, `knowledge_bases.py`, `knowledge_learning.py`, `catalog.py`, `data_onboarding.py`, `evaluation.py`, `learning.py`
 - `portal/src/pages/knowledge/**`, `portal/src/components/KnowledgeLayout.tsx`, `knowledgeLearning/**`
+- `portal/e2e/customer.spec.ts` and other knowledge e2e ACs (4-pillar assertions — **do not edit in Phase A**)
+- Tenant / workspace isolation: `src/api` tenant middleware, `src/platform/workspaces/`, `src/platform/acl/groups.py`, Qdrant org/workspace filters
 - Alembic `001`–`097` as history (do not squash)
 
 ### 8.2 FILES TO MODIFY (Phase A only)
@@ -548,9 +597,21 @@ Later (not this PR):
 | Double-prefix confusion | Field name is `KNOWLEDGE_V2_ENABLED` so env is `RAG_KNOWLEDGE_V2_ENABLED` (not `RAG_RAG_…`) |
 | Importing V2 from the engine by accident | Engine must not import `src.knowledge.v2` in Phase A; test that default path is unchanged |
 | Treating Hub “v2” as this V2 | This ADR names it **Knowledge Hub (legacy)** vs **Knowledge V2 (corpus)** |
-| Portal / API drift | No route or React file changes in Phase A |
+| Portal / API / e2e drift | No route, React, or `portal/e2e/*` AC changes in Phase A (Tester: 4-pillar e2e stays) |
+| Tenant / workspace isolation | Phase A must not touch `TenantMiddleware`, `resolve_workspace`, Qdrant `organization_id` / `workspace_id` filters, or ACL groups |
 | Test suite using fake LLM/Qdrant as “product” | Domain tests are pure dataclasses + Settings; no stubbed RAG answers |
-| Future flag-on without ACL | V2 payload **must** copy `visibility` / `acl_*` / `organization_id` (Phase E checklist) |
+| Future flag-on without ACL | V2 payload **must** copy `visibility` / `acl_*` / `organization_id` (Phase E checklist). Chat/viewer/studio in G are **post-ACL** only |
+
+### 8.7 Phase A Tester contract
+
+Phase A is **docs + inert types**. Tester acceptance is **not** a new UI e2e:
+
+| Check | Pass if |
+|---|---|
+| CI | Existing workflow stays green (lint, pytest, portal, e2e). This PR does not add/change knowledge e2e ACs |
+| Isolation | No edits under tenant middleware, workspace resolver, ACL groups, or Qdrant `organization_id` / `workspace_id` filters |
+| Portal | `KnowledgeLayout` / `knowledgeNav.ts` / `portal/e2e/customer.spec.ts` unchanged (4 pillars still asserted) |
+| Runtime | `RAG_KNOWLEDGE_V2_ENABLED` default false; V1 ingestion and `/rag/query` unchanged |
 
 ---
 
@@ -560,21 +621,23 @@ Aligned to SOURCE→…→CONTINUOUS LEARNING. Each phase is a PR train, not a r
 
 | Phase | Name | Pipeline slice | What ships | What does **not** |
 |---|---|---|---|---|
-| **A** | Architecture + contracts | — | This ADR; optional domain types; `RAG_KNOWLEDGE_V2_ENABLED=false` | Ingestion/API/portal behavior |
+| **A** | Architecture + contracts | — | This ADR (incl. Phase G product lock); optional domain types; `RAG_KNOWLEDGE_V2_ENABLED=false` | Ingestion/API/portal/e2e behavior; isolation changes |
 | **B** | Structured sources | SOURCE → STRUCTURED | Parallel normalizers → `StructuredDocument`; persist when flag on; V1 Markdown still default | Cutover; all formats at once |
 | **C** | Semantic unification | STRUCTURED → SEMANTIC | File facts + SQL inference share provenance APIs; insights feed Review Queue / KLE | New LLM vendor |
 | **D** | Org Knowledge + corpus | SEMANTIC → ORG KNOWLEDGE | `KnowledgeCorpus` persisted; workspace default corpus; attach sources; KB = profile | Force-migrate all orgs |
 | **E** | Multi-level index | ORG KNOWLEDGE → INDEX | Additive Qdrant payload; section/entity points; same collection + ACL | Second vector DB |
-| **F** | Retrieval + reasoning | INDEX → RETRIEVAL → REASONING | Hybrid + IntelligenceEngine consume locators / corpus filter; shadow compare | Change default answers |
-| **G** | Grounded UX | REASONING → ANSWER → CITATIONS | Citation objects; sources-first portal (reader); playground/chat deep-links | Rip out Semántica/Mejora |
+| **F** | Retrieval + reasoning | INDEX → RETRIEVAL → REASONING | Hybrid + IntelligenceEngine consume locators / corpus filter; shadow compare | Change default answers or portal chrome |
+| **G** | Grounded workspace UX | REASONING → ANSWER → CITATIONS | See §2.2–2.3: home = workspaces (coverage/conflicts); LEFT Sources · CENTER Chat\|Viewer · RIGHT Studio; tabs Chat/Sources/Studio + Advanced; `[1]`→highlight; real learning events; Studio MVP (Summary/FAQ/Timeline/Comparison/Key Facts/Risks/Map); suggested questions; source coverage + Open/Relearn. **Then** update portal e2e ACs | Pixel-clone NotebookLM; audio/video studio; auto-APPROVED artifacts |
 | **H** | Continuous learning + cutover | CITATIONS → LEARNING | Unify Score + FASE 25 + KLE events; Hub shim; flag default true for **new** orgs; deprecations | Neo4j; drop V1 overnight |
 
-**Phase A exit criteria (this PR):**
+**Phase A exit criteria (this PR) — Tester cares about these:**
 
-- [x] ADR at `docs/architecture/enterprise-knowledge-refactor.md` with CURRENT / TARGET / GAPS / keep-modify-deprecate / migration / file lists / A–H
+- [x] ADR at `docs/architecture/enterprise-knowledge-refactor.md` with CURRENT / TARGET / GAPS / keep-modify-deprecate / migration / file lists / A–H **and** Phase G product lock
 - [x] V2 types do not alter `/api/v1/sources`, `/rag/query`, or portal routes
 - [x] Flag off by default
-- [x] Tests/lint green without productive mocks
+- [x] **CI intact** (lint + existing tests); no productive mocks
+- [x] **Tenant / workspace isolation untouched** (no middleware, ACL, or Qdrant filter edits)
+- [x] **No portal e2e AC changes** (`portal/e2e/customer.spec.ts` 4-pillar assertions stay)
 
 ---
 
@@ -584,11 +647,13 @@ Aligned to SOURCE→…→CONTINUOUS LEARNING. Each phase is a PR train, not a r
 2. **Corpus ≠ KB ≠ Workspace.** Workspace isolates; corpus groups sources; KB configures retrieval.
 3. **StructuredDocument is the canonical file representation**; Markdown is a derived view.
 4. **Postgres remains the knowledge graph.** `KnowledgeGraphService` stays. No Neo4j.
-5. **ACL stays pre-LLM in Qdrant.** V2 points inherit the same payload contract.
-6. **HITL stays.** Any V2 semantic object starts `OBSERVED`/`INFERRED`.
+5. **ACL stays pre-retrieval** (Qdrant filter before chunks exist for Chat, Viewer, Studio, or suggested questions). V2 points inherit the same payload contract.
+6. **HITL stays.** Any V2 semantic object — including Studio MVP artifacts — starts `OBSERVED`/`INFERRED`.
 7. **KLE and FASE 25 both stay**; Phase H unifies UX/score, not a deletion of either in A–G.
 8. **Knowledge Hub is legacy**, not “V2”.
 9. **Phase A code is inert** unless someone imports types in new tests or later phases.
+10. **4-pillar IA is a temporary bridge (PR #4/#5).** Phase G replaces it with the workspace chrome in §2.2. Phase A does not change e2e ACs.
+11. **Zent visual identity** over any NotebookLM pixel clone. The product constraint is the **layout pattern** (Sources / Chat+Viewer / Studio), not the look.
 
 ---
 
@@ -610,10 +675,11 @@ Aligned to SOURCE→…→CONTINUOUS LEARNING. Each phase is a PR train, not a r
 | Intelligence | `src/intelligence/engine.py` |
 | FASE 25 | `src/learning/improvements.py` |
 | Hub (legacy) | `src/platform/knowledgehub/hub.py` |
-| Portal IA | `portal/src/lib/knowledgeNav.ts` |
+| Portal IA (bridge) | `portal/src/lib/knowledgeNav.ts`, `KnowledgeLayout.tsx`, `portal/e2e/customer.spec.ts` |
+| Source conflicts | `src/intelligence/source_conflict.py` |
 | Flags | `src/core/config.py` (FASE 33 block), `.env.example` L149–172 |
 | Migrations | `src/infrastructure/db_init/versions/080`, `083`, `093`–`097` |
 
 ---
 
-*Zent Enterprise Knowledge Engine — Phase A ADR. Next implementer: Phase B only after this document is accepted; do not enable `RAG_KNOWLEDGE_V2_ENABLED` in production until Phase F shadow metrics exist.*
+*Zent Enterprise Knowledge Engine — Phase A ADR. Product chrome for Phase G is locked in §2.2–2.3 (Ideas buenas / Tester). Next implementer: Phase B only after this document is accepted; do not implement Phase G UI in A–F; do not enable `RAG_KNOWLEDGE_V2_ENABLED` in production until Phase F shadow metrics exist.*
