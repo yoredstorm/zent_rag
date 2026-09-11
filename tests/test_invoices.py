@@ -68,7 +68,7 @@ async def test_generate_invoice_with_items_idempotent(async_client: AsyncClient)
                 "INSERT INTO usage_events (request_id, event_type, organization_id, "
                 "model, status, estimated_cost, actual_cost, cost_tags, created_at) "
                 "VALUES (gen_random_uuid(), 'agent_run', :oid, 'gpt-4o-mini', "
-                "'completed', 1.5, 1.5, '{}', NOW() - interval '10 days')"
+                "'completed', 1.5, 1.5, '{}', date_trunc('month', NOW()) - interval '5 days')"
             ),
             {"oid": UUID(org["organization_id"])},
         )
