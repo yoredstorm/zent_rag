@@ -623,6 +623,8 @@ Also shipped as part of F2/F13 groundwork: V2 payload now carries `chunk_id` and
 - Prompt-injection defense (brief §60): evidence excerpts are scanned with the existing `has_injection_indicators`; hostile excerpts are replaced by `[excerpt omitido: posible prompt injection]` before any LLM prompt, counted in `injection_suspected` (execution result, run metrics). Documents remain untrusted data, never instructions.
 - **Verification:** 2 hardening tests + execution suite (8 passed) including poisoned-document neutralization and budget `failure_mode`. Combined cognitive + architecture regression → **40 passed**; `ruff check src tests` clean. Migrations applied locally: `105 → 108`.
 
+**Docker / operations:** `RAG_COGNITIVE_OS_ENABLED` is exposed in both `docker-compose.yml` (`x-common-env`) and `docker-compose.prod.yml` (`x-prod-env`, default `off`). Migrations `102`–`108` ship in the API image and apply automatically at container start (`alembic upgrade head` in the `Dockerfile.api` CMD); phases 1–10 added no new Python dependencies. Enable with `RAG_COGNITIVE_OS_ENABLED=shadow|limited|active` in `.env` and `docker compose up --build api ingestion-worker`. Compose config validated for both files.
+
 ## 27. VERIFICATION PENDING
 
 | Item | How to confirm |
