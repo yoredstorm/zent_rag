@@ -75,6 +75,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           organizationId: current.organizationId,
         });
         if (cancelled) return;
+        // A parallel 401 (Learning, catalog, etc.) may have already emitted
+        // AUTH_EXPIRED and cleared storage. Do not resurrect that session from
+        // a stale in-flight /auth/me — the 5s auth-expired throttle would then
+        // block a second logout and leave rag_portal_org behind.
+        const still = loadSession();
+        if (!still || still.token !== current.token) return;
         const next: Session = {
           token: current.token,
           organizationId: me.organization_id,

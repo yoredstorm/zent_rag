@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
+import { resetAuthExpiredThrottle } from "../api";
 
 Object.defineProperty(window, "matchMedia", {
   writable: true,
@@ -26,5 +27,6 @@ afterEach(() => {
   cleanup();
   window.localStorage.clear();
   window.sessionStorage.clear();
+  resetAuthExpiredThrottle();
   vi.restoreAllMocks();
 });

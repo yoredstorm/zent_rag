@@ -175,6 +175,11 @@ function emitAuthExpiredThrottled(platform: boolean) {
   emitAuthExpired(platform ? "platform" : "tenant");
 }
 
+/** Test hook: module-level throttle must not leak across cases in the same file. */
+export function resetAuthExpiredThrottle() {
+  _lastAuthExpiredAt = 0;
+}
+
 async function request<T>(
   path: string,
   options: RequestInit & { token?: string; organizationId?: string; workspaceId?: string } = {},
