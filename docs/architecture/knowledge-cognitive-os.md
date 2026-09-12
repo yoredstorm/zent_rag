@@ -1,6 +1,6 @@
 # Zent Knowledge Cognitive OS — Architecture Audit & Canonical Knowledge Model (Phase 0 + Phase 1)
 
-> **Status:** Phase 0 audit + Phase 1 canonical model + Phase 2 evidence/claim ledger + P1 remediation + Phase 3 cognitive planning + Phase 4 first specialists — shipped (branch `feat/knowledge-cognitive-os`). Migrations 102–105; canonical/ledger/cognitive layers flag-gated or inert by default; retrieval/agent fixes are productive.
+> **Status:** Phase 0 audit + Phase 1 canonical model + Phase 2 evidence/claim ledger + P1 remediation + Phase 3 cognitive planning + Phase 4 first specialists + Phase 5 temporal/conflict intelligence — shipped (branch `feat/knowledge-cognitive-os`). Migrations 102–105; canonical/ledger/cognitive layers flag-gated or inert by default; retrieval/agent fixes are productive.
 > **Date:** 2026-09-11
 > **Base:** `master` @ `1a42c20` (Knowledge Workspaces UX, grounding, Knowledge V2 slices A–H in production-flag `false`).
 > **Relation to prior ADR:** `docs/architecture/enterprise-knowledge-refactor.md` is the Knowledge Engine V2 program (SOURCE → STRUCTURED → SEMANTIC → INDEX → RETRIEVAL → GROUNDING). This document is the **Cognitive OS program** built on top of it (agents, evidence, claims, temporal/conflict intelligence, learning governance). Where this document and the code disagree, **the code wins**.
@@ -542,7 +542,34 @@ Also shipped as part of F2/F13 groundwork: V2 payload now carries `chunk_id` and
 
 **Not in this slice:** temporal/policy/relationship/critic handlers and conflict resolution by authority (Phase 5–6), debate protocol (Phase 6), `sql_executor` productive wiring, `runs/{id}/stream` SSE, background workers, cognitive UI (Phase 9).
 
-## 21. VERIFICATION PENDING
+## 21. PHASE 5 — TEMPORAL + CONFLICT INTELLIGENCE (slice 1, shipped)
+
+**Goal:** stop mixing versions and stop hiding contradictions. Temporal state and conflict classification are deterministic; resolution is only ever a proposal with human review.
+
+| Deliverable | File |
+|---|---|
+| Temporal/conflict domain | `src/core/domain/temporal_conflict.py` |
+| Executor integration | `src/platform/cognitive/executor.py` |
+| Tests | `tests/test_temporal_conflict.py`, `tests/test_cognitive_execution.py` |
+
+**Temporal:**
+- `parse_temporal_window()` (ES/EN): `"2024"`, `"enero 2025"`, `"2025-03"`, `"2024-2026"`, `"desde 2023"`, `"hasta 2024"`; `None` when there is no signal (never invents).
+- `claim_temporal_state()` → `CURRENT | HISTORICAL | UNKNOWN` at run time.
+- `document_analyst` now extracts optional `temporal_scope` from findings into `ClaimRecord.temporal_scope`.
+- `temporal_analyst` handler (deterministic): annotates every claim State and emits counts; no LLM.
+
+**Conflict:**
+- `classify_conflict()` → `DIRECT_CONFLICT | TEMPORAL_UPDATE | SOURCE_DISAGREEMENT | AMBIGUITY | DUPLICATE_DIFFERENCE` (SEMANTIC_CONFLICT reserved for a similarity step).
+- `propose_resolution()`: `TEMPORAL_UPDATE` → later window wins; `SOURCE_DISAGREEMENT` → higher authority wins (authoritative > approved > informational > external), ties → no winner. **`requires_review=True` always**: nothing is auto-resolved or silently hidden.
+- `conflict_detector` handler now classifies each pair, proposes a resolution and persists both in `run.plan.conflicts` and in the CONFLICT message metadata; both claims stay `CONFLICTED`.
+- `fact_checker`: expired temporal windows → `OUTDATED` (verification states now include outdated), and CONFLICTED claims are never downgraded.
+- `authority_resolver` hook exists in `SpecialistDeps`; productive wiring to `catalog_authority.authority_level` is pending (the current service returns `source_name`, not the level).
+
+**Verification:** `pytest tests/test_temporal_conflict.py` → **4 passed** (window parsing, temporal states, classification matrix, resolution proposals). `pytest tests/test_cognitive_execution.py` → **6 passed**, including the temporal/conflict integration test (historical claim → OUTDATED, 2024 vs 2099 → `temporal_update` with proposed winner and `requires_review=True`, authority resolver hook). Cognitive + architecture/workspaces regression → **26 passed**; `ruff check src tests` clean.
+
+**Not in this slice:** authority resolver wiring to catalog levels, policy/relationship specialists, semantic conflict similarity, conflict review UI (Review Queue), debate/challenge protocol (Phase 6).
+
+## 22. VERIFICATION PENDING
 
 | Item | How to confirm |
 |---|---|
