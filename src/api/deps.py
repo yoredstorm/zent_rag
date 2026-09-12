@@ -244,6 +244,36 @@ def get_canonical_repo():
     return _canonical_repo
 
 
+_evidence_ledger_repo: object | None = None
+
+
+def get_evidence_ledger_repo():
+    """Repo del ledger de evidencia (Phase 2) — append-only, org-scoped."""
+    global _evidence_ledger_repo
+    if _evidence_ledger_repo is None:
+        from src.infrastructure.postgres.evidence_ledger import (
+            PostgresEvidenceLedgerRepository,
+        )
+
+        _evidence_ledger_repo = PostgresEvidenceLedgerRepository()
+    return _evidence_ledger_repo
+
+
+_claim_ledger_repo: object | None = None
+
+
+def get_claim_ledger_repo():
+    """Repo del ledger de claims (Phase 2) — verificación + conflicto, org-scoped."""
+    global _claim_ledger_repo
+    if _claim_ledger_repo is None:
+        from src.infrastructure.postgres.evidence_ledger import (
+            PostgresClaimLedgerRepository,
+        )
+
+        _claim_ledger_repo = PostgresClaimLedgerRepository()
+    return _claim_ledger_repo
+
+
 def get_knowledge_engine():
     """Inyecta el motor de ingestion de la Knowledge Platform.
 
