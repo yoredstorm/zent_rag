@@ -229,6 +229,21 @@ def get_corpus_repo():
     return _corpus_repo
 
 
+_canonical_repo: object | None = None
+
+
+def get_canonical_repo():
+    """Repo de identidad canónica (Phase 1) — org-scoped, sin consumidores aún."""
+    global _canonical_repo
+    if _canonical_repo is None:
+        from src.infrastructure.postgres.canonical import (
+            PostgresCanonicalKnowledgeRepository,
+        )
+
+        _canonical_repo = PostgresCanonicalKnowledgeRepository()
+    return _canonical_repo
+
+
 def get_knowledge_engine():
     """Inyecta el motor de ingestion de la Knowledge Platform.
 

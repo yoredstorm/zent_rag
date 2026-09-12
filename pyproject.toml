@@ -156,6 +156,7 @@ ignore = [
 "src/infrastructure/postgres/knowledge_repos.py" = ["S608"]  # identifiers de constantes internas
 "src/infrastructure/postgres/structured_documents.py" = ["S608"]  # columnas constantes del módulo
 "src/infrastructure/postgres/knowledge_corpora.py" = ["S608"]  # columnas constantes del módulo
+"src/infrastructure/postgres/canonical.py" = ["S608"]  # columnas constantes del módulo
 "src/infrastructure/db_init/versions/*.py" = ["S608", "E501"]  # identifiers de constantes internas
 "src/catalog/store.py" = ["E501", "S608"]  # DDL single-line + set_clause whitelisted
 "src/catalog/jobs.py" = ["B007", "E501"]  # loops de conteo de métricas
