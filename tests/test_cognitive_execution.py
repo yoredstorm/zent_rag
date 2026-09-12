@@ -246,6 +246,15 @@ _TEMPORAL_FINDINGS_JSON = """{
   ]
 }"""
 
+_DEBATE_FINDINGS_JSON = """{
+  "findings": [
+    {"subject": "penalidad contrato acme", "predicate": "es", "object": "5%",
+     "text": "La penalidad del contrato ACME es 5%.", "evidence_indexes": [0]},
+    {"subject": "plazo de pago", "predicate": "es", "object": "30 dias",
+     "text": "El plazo de pago es 30 días.", "evidence_indexes": []}
+  ]
+}"""
+
 
 class FakeLLM:
     def __init__(self, contents: list[str]) -> None:
@@ -422,7 +431,8 @@ async def test_execute_l4_detects_conflicts_verifies_and_skips_unimplemented() -
     assert statuses["detect_conflicts"] == "completed"
     assert statuses["verify"] == "completed"
     assert statuses["resolve_temporal"] == "completed"
-    for key in ("analyze_policy", "analyze_relationships", "critique"):
+    assert statuses["critique"] == "completed"
+    for key in ("analyze_policy", "analyze_relationships"):
         assert statuses[key] == "skipped"
     assert any(
         c.status is ClaimVerificationStatus.CONFLICTED for c in claim_repo.claims.values()
@@ -502,6 +512,7 @@ async def test_execute_temporal_conflict_intelligence() -> None:
     statuses = {t["task_key"]: t["status"] for t in result["tasks"]}
     assert statuses["resolve_temporal"] == "completed"
     assert statuses["detect_conflicts"] == "completed"
+    assert statuses["critique"] == "completed"
     assert statuses["verify"] == "completed"
 
     temporal_exec = next(
@@ -522,6 +533,50 @@ async def test_execute_temporal_conflict_intelligence() -> None:
         c.status is ClaimVerificationStatus.OUTDATED
         for c in claim_repo.claims.values()
     )
+
+
+@pytest.mark.asyncio
+async def test_execute_bounded_debate_round() -> None:
+    repo = FakeCognitiveRepository()
+    evidence_repo = FakeEvidenceRepo()
+    claim_repo = FakeClaimRepo()
+    budget = replace(CognitiveBudget(), max_debate_rounds=1, max_agents=11)
+    plan = KnowledgeCognitiveOrchestrator().plan(
+        query=(
+            "Analiza todos los contratos de proveedores, identifica riesgos, "
+            "contradicciones y cambios en los últimos tres años."
+        ),
+        scope=CognitiveScope(organization_id=uuid4()),
+        budget=budget,
+    )
+    seed_run(repo, plan)
+    executor = make_executor(
+        repo,
+        llm=FakeLLM([_DEBATE_FINDINGS_JSON, "Respuesta final tras debate."]),
+        retriever=FakeRetriever(),
+        evidence_repo=evidence_repo,
+        claim_repo=claim_repo,
+    )
+
+    result = await executor.execute_run(
+        organization_id=plan.run.organization_id,
+        run_id=plan.run.id,
+        scope=CognitiveScope(organization_id=plan.run.organization_id),
+    )
+
+    assert result["run"]["status"] == CognitiveRunStatus.COMPLETED.value
+    report = result["run"]["plan"]["critique"]
+    assert report["issues"]
+    outcomes = result["run"]["plan"]["debate"]
+    assert {outcome["kind"] for outcome in outcomes} == {"defended", "upheld"}
+    # un challenge sin evidencia queda UPHELD → claim degradado con revisión
+    upheld = next(o for o in outcomes if o["kind"] == "upheld")
+    assert upheld["requires_review"] is True
+    degraded = claim_repo.claims[UUID(upheld["claim_id"])]
+    assert degraded.status is ClaimVerificationStatus.UNSUPPORTED
+    message_types = [m["message_type"] for m in result["messages"]]
+    assert "challenge" in message_types
+    assert "response" in message_types
 
 
 @pytest.mark.asyncio

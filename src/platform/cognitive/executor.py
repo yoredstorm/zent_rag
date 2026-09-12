@@ -39,6 +39,12 @@ from src.core.domain.cognitive import (
     CognitiveTaskStatus,
     ExecutionStatus,
 )
+from src.core.domain.debate import (
+    DebateOutcomeKind,
+    build_critique,
+    evidence_support_ratio,
+    run_debate_round,
+)
 from src.core.domain.evidence import (
     ClaimRecord,
     ClaimVerificationStatus,
@@ -98,6 +104,8 @@ class _RunState:
     claims: dict[UUID, ClaimRecord] = field(default_factory=dict)
     temporal: dict[UUID, ClaimTemporalState] = field(default_factory=dict)
     conflicts: list[dict] = field(default_factory=list)
+    critique: dict | None = None
+    debate: list[dict] = field(default_factory=list)
     answer: str | None = None
 
 
@@ -147,6 +155,7 @@ class CognitiveExecutor:
             "data_analyst": self._handle_data_analyst,
             "temporal_analyst": self._handle_temporal_analyst,
             "conflict_detector": self._handle_conflict_detector,
+            "critic": self._handle_critic,
             "fact_checker": self._handle_fact_checker,
             "synthesizer": self._handle_synthesizer,
         }
@@ -318,6 +327,10 @@ class CognitiveExecutor:
             plan_patch["error"] = failure_reason
         if state.conflicts:
             plan_patch["conflicts"] = state.conflicts
+        if state.critique is not None:
+            plan_patch["critique"] = state.critique
+        if state.debate:
+            plan_patch["debate"] = state.debate
         await self._repo.update_run_status(
             organization_id, run_id, final_status, plan_patch=plan_patch
         )
@@ -716,6 +729,99 @@ class CognitiveExecutor:
             messages=tuple(messages), result={"conflicts": conflicts}
         )
 
+    async def _handle_critic(
+        self, task: dict, state: _RunState
+    ) -> SpecialistResult:
+        report = build_critique(
+            claims=list(state.claims.values()),
+            evidence=list(state.evidence.values()),
+            temporal=state.temporal,
+            conflicts=state.conflicts,
+            now=self._now(),
+        )
+        state.critique = report.to_dict()
+
+        messages: list[AgentMessage] = []
+        if report.issues:
+            challenged_ids = tuple(
+                dict.fromkeys(
+                    issue.claim_id
+                    for issue in report.issues
+                    if issue.claim_id is not None
+                )
+            )
+            messages.append(
+                AgentMessage(
+                    run_id=state.run_id,
+                    type=AgentMessageType.CHALLENGE,
+                    from_agent="critic",
+                    to_agent="synthesizer",
+                    task_key=str(task.get("task_key") or ""),
+                    text=report.summary,
+                    claim_ids=challenged_ids,
+                )
+            )
+
+        # Debate acotado: 0 rondas por defecto (max_debate_rounds).
+        outcomes = ()
+        if (
+            report.issues
+            and state.budget.max_debate_rounds >= 1
+            and self._deps.claim_repo is not None
+        ):
+            outcomes = run_debate_round(
+                report=report,
+                claims=state.claims,
+                evidence=list(state.evidence.values()),
+                max_rounds=state.budget.max_debate_rounds,
+            )
+            for outcome in outcomes:
+                state.debate.append(outcome.to_dict())
+                claim = state.claims.get(outcome.claim_id)
+                if (
+                    outcome.kind is DebateOutcomeKind.UPHELD
+                    and claim is not None
+                ):
+                    try:
+                        updated = await self._deps.claim_repo.upsert(
+                            replace(
+                                claim,
+                                status=ClaimVerificationStatus.UNSUPPORTED,
+                                confidence=min(claim.confidence, 0.2),
+                            )
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("debate resolution upsert failed", error=str(exc))
+                        updated = replace(
+                            claim,
+                            status=ClaimVerificationStatus.UNSUPPORTED,
+                            confidence=min(claim.confidence, 0.2),
+                        )
+                    state.claims[updated.id] = updated
+                messages.append(
+                    AgentMessage(
+                        run_id=state.run_id,
+                        type=AgentMessageType.RESPONSE,
+                        from_agent="critic",
+                        to_agent="fact_checker",
+                        task_key=str(task.get("task_key") or ""),
+                        text=(
+                            f"[{outcome.kind.value}] "
+                            f"{outcome.challenge.kind.value}: "
+                            f"{outcome.resolution_note}"
+                        ),
+                        claim_ids=(outcome.claim_id,),
+                    )
+                )
+
+        return SpecialistResult(
+            messages=tuple(messages),
+            result={
+                "issues": len(report.issues),
+                "debate_outcomes": len(outcomes),
+            },
+        )
+
     async def _handle_fact_checker(
         self, task: dict, state: _RunState
     ) -> SpecialistResult:
@@ -746,7 +852,7 @@ class CognitiveExecutor:
                 )
             else:
                 ratio = max(
-                    (_overlap_ratio(claim.text, excerpt) for excerpt in excerpts),
+                    (evidence_support_ratio(claim.text, excerpt) for excerpt in excerpts),
                     default=0.0,
                 )
                 if ratio >= 0.6:
@@ -851,14 +957,6 @@ def _source_label(claim: ClaimRecord) -> str | None:
 
 def _normalize(value) -> str:
     return " ".join(str(value or "").strip().lower().split())
-
-
-def _overlap_ratio(claim_text: str, excerpt: str) -> float:
-    claim_tokens = {token for token in re.findall(r"\w+", _normalize(claim_text)) if len(token) > 2}
-    if not claim_tokens:
-        return 0.0
-    excerpt_tokens = set(re.findall(r"\w+", _normalize(excerpt)))
-    return len(claim_tokens & excerpt_tokens) / len(claim_tokens)
 
 
 def _parse_json_object(content: str) -> dict:
