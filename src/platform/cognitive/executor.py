@@ -342,6 +342,12 @@ class CognitiveExecutor:
             "executions": await self._repo.list_executions(
                 organization_id, run_id
             ),
+            "metrics": _build_metrics(
+                state=state,
+                ledger=ledger,
+                started=started,
+                task_count=len(task_rows),
+            ),
         }
 
     async def _resolve_authority(self, claim: ClaimRecord) -> str | None:
@@ -934,6 +940,42 @@ def _budget_from_row(value) -> CognitiveBudget:
         max_tool_calls=int(data.get("max_tool_calls", 20)),
         max_debate_rounds=int(data.get("max_debate_rounds", 0)),
     )
+
+
+def _build_metrics(
+    *, state: _RunState, ledger: dict, started: float, task_count: int
+) -> dict:
+    claims = list(state.claims.values())
+    return {
+        "tasks": task_count,
+        "evidence_count": len(state.evidence),
+        "claims": len(claims),
+        "supported": sum(
+            1 for c in claims if c.status is ClaimVerificationStatus.SUPPORTED
+        ),
+        "partial": sum(
+            1
+            for c in claims
+            if c.status is ClaimVerificationStatus.PARTIALLY_SUPPORTED
+        ),
+        "unsupported": sum(
+            1 for c in claims if c.status is ClaimVerificationStatus.UNSUPPORTED
+        ),
+        "outdated": sum(
+            1 for c in claims if c.status is ClaimVerificationStatus.OUTDATED
+        ),
+        "conflicted": sum(
+            1 for c in claims if c.status is ClaimVerificationStatus.CONFLICTED
+        ),
+        "conflicts": len(state.conflicts),
+        "critique_issues": len((state.critique or {}).get("issues") or []),
+        "debate_outcomes": len(state.debate),
+        "llm_calls": ledger["llm_calls"],
+        "tokens": ledger["tokens"],
+        "cost_usd": ledger["cost_usd"],
+        "latency_ms": (time.perf_counter() - started) * 1000,
+        "has_answer": bool(state.answer),
+    }
 
 
 def _budget_exceeded(ledger: dict, budget: CognitiveBudget) -> str | None:
