@@ -117,6 +117,19 @@ x-common-env: &common-env
   RAG_TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
   RAG_UPLOAD_DIR: /app/uploads
   OLLAMA_API_BASE: http://ollama:11434
+  # =========================================================================
+  # Knowledge V2 (Enterprise Knowledge Engine) — Flags de runtime
+  # =========================================================================
+  # Defaults productivos OFF (ADR: habilitar solo tras shadow metrics).
+  # Para probar localmente activa en tu .env/shell:
+  #   RAG_KNOWLEDGE_V2_ENABLED=true RAG_KNOWLEDGE_V2_PROMOTE=true
+  RAG_KNOWLEDGE_V2_ENABLED: ${RAG_KNOWLEDGE_V2_ENABLED:-false}
+  RAG_KNOWLEDGE_V2_PROMOTE: ${RAG_KNOWLEDGE_V2_PROMOTE:-false}
+  RAG_KNOWLEDGE_V2_SHADOW: ${RAG_KNOWLEDGE_V2_SHADOW:-false}
+  RAG_KNOWLEDGE_SUMMARY_MODE: ${RAG_KNOWLEDGE_SUMMARY_MODE:-off}
+  RAG_KNOWLEDGE_SUMMARY_MODEL: ${RAG_KNOWLEDGE_SUMMARY_MODEL:-}
+  RAG_KNOWLEDGE_LOCATE_LLM_ENABLED: ${RAG_KNOWLEDGE_LOCATE_LLM_ENABLED:-false}
+  RAG_KNOWLEDGE_LOCATE_MODEL: ${RAG_KNOWLEDGE_LOCATE_MODEL:-}
 
 services:
   # ===========================================================================
