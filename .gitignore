@@ -31,7 +31,7 @@ docker-compose.override.yml
 uploads/
 
 # Construction / internal docs (producto: solo README.md raíz)
-docs/
+docs/*
 # Architecture ADRs are product artifacts (Enterprise Knowledge Engine Phase A+)
 !docs/architecture/
 !docs/architecture/**
@@ -49,6 +49,9 @@ sdk/python/.pytest_cache/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# tgrep local index (microsoft/tgrep, installed under .agents/tools/tgrep)
+.tgrep/
 htmlcov/
 .coverage
 coverage.xml
