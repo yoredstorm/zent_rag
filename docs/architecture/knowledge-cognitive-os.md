@@ -1,10 +1,10 @@
 # Zent Knowledge Cognitive OS — Architecture Audit & Canonical Knowledge Model (Phase 0 + Phase 1)
 
-> **Status:** Phase 0 audit + Phase 1 canonical model — slice 1 shipped (branch `feat/knowledge-cognitive-os`): domain + port + migration 102 + Postgres adapter + 11 tests. No productive wiring, no data migration.
+> **Status:** Phase 0 audit + Phase 1 canonical model + Phase 2 evidence/claim ledger — slices shipped (branch `feat/knowledge-cognitive-os`): domains + ports + migrations 102–103 + Postgres adapters + 19 tests. No productive wiring, no data migration.
 > **Date:** 2026-09-11
 > **Base:** `master` @ `1a42c20` (Knowledge Workspaces UX, grounding, Knowledge V2 slices A–H in production-flag `false`).
 > **Relation to prior ADR:** `docs/architecture/enterprise-knowledge-refactor.md` is the Knowledge Engine V2 program (SOURCE → STRUCTURED → SEMANTIC → INDEX → RETRIEVAL → GROUNDING). This document is the **Cognitive OS program** built on top of it (agents, evidence, claims, temporal/conflict intelligence, learning governance). Where this document and the code disagree, **the code wins**.
-> **Scope:** Phase 0 (this audit) + Phase 1 (Canonical Knowledge Model, slice 1 only). Phases 2–10 are designed as contracts here but not implemented.
+> **Scope:** Phase 0 (this audit) + Phase 1 (Canonical Knowledge Model, slice 1) + Phase 2 (Evidence + Claim Ledger, slice 1) shipped. Phases 3–10 are designed as contracts here but not implemented.
 
 ---
 
@@ -260,7 +260,9 @@ Later only; nothing is deleted in Phase 0/1.
 - `knowledge_canonical_objects` — canonical identity registry.
 - `knowledge_canonical_links` — mapping physical objects (per system/type) to canonical ids.
 
-**Create (Phase 2+):** `evidence_ledger`, `claim_ledger`, `cognitive_runs`, `cognitive_tasks`, `agent_messages`, `knowledge_snapshots` (design in later phases; do not create ahead of their consumers).
+**Create (shipped):** `knowledge_canonical_objects` + `knowledge_canonical_links` (migration `102`), `evidence_ledger` + `claim_ledger` (migration `103`).
+
+**Create (Phase 3+):** `cognitive_runs`, `cognitive_tasks`, `agent_messages`, `knowledge_snapshots` (design in later phases; do not create ahead of their consumers).
 
 ### 9.1 Canonical schema (migration 102)
 
@@ -409,7 +411,39 @@ No physical rows are moved, merged, or deleted in Phase 1. Mapping is **additive
 
 ---
 
-## 17. VERIFICATION PENDING
+## 17. PHASE 2 — EVIDENCE + CLAIM LEDGER (slice 1)
+
+**Goal:** make evidence and claims first-class persisted objects before any multi-agent layer, so every assertion can be audited and structurally compared.
+
+**In scope (shipped):**
+
+| Deliverable | File |
+|---|---|
+| Domain (evidence + claims) | `src/core/domain/evidence.py` |
+| Ports (both ledgers) | `src/core/ports/evidence.py` |
+| Migration 103 | `src/infrastructure/db_init/versions/103_evidence_claim_ledger.py` |
+| Postgres adapter | `src/infrastructure/postgres/evidence_ledger.py` |
+| Lazy DI getters | `src/api/deps.py` (`get_evidence_ledger_repo`, `get_claim_ledger_repo`) |
+| Tests | `tests/test_evidence_claim_ledger.py` |
+
+- `EvidenceRecord` (brief §27): locators (`document_id`, `section_id`, `block_id`, `chunk_id`, `page`, `section_path`, `table_reference`, `row_reference`, `database_reference`), `excerpt`, `content_hash`, `version`, `effective_date`, `authority`, `retrieval_score`, `reranker_score`, `agent_id`, `task_id`, nullable `canonical_id` to the Phase 1 registry.
+- `ClaimRecord` (brief §28): `text`, `normalized_subject/predicate/object`, `ClaimVerificationStatus` (`proposed/supported/partially_supported/unsupported/conflicted/outdated`), `confidence`, `evidence_ids`, `provenance`, `agent_id`, `task_id`, `temporal_scope`, nullable `canonical_id`.
+- Ports: `EvidenceLedgerRepository` (append/get/list_for_document), `ClaimLedgerRepository` (upsert/get/list_by_subject/find_conflicting/attach_evidence).
+- Migration `103`: `evidence_ledger` (append-only, indexes by org/created, org/document, org/hash) + `claim_ledger` (status CHECK, confidence CHECK, `evidence_ids UUID[]`, indexes by org/subject and org/subject/predicate).
+
+**Decisions:**
+
+1. **Evidence is immutable.** The ledger has no update path; corrections add new evidence.
+2. **Claim upsert never overwrites `evidence_ids`.** `attach_evidence` is the only mutation path, idempotent and org-validated on both claim and evidence.
+3. **Conflict detection is structural:** same normalized subject+predicate, different normalized object (`NULL` participates as a distinct value, `IS DISTINCT FROM`). Resolution by authority/temporal validity is Phase 5; the ledger only surfaces candidates.
+4. **Verification status ≠ provenance.** `supported` means evidence sustains the claim; `provenance` (`INFERRED` default) is the governance axis. Nothing auto-promotes to truth.
+5. **Canonical integration is optional at this stage:** `canonical_id` FKs are nullable; Phase 2.1 wires producers to register/link canonical objects.
+
+**Verification:** `pytest tests/test_evidence_claim_ledger.py` → **8 passed** (domain invariants, append/get/list + cross-tenant isolation, claim upsert semantics, evidence preservation on upsert, structural conflict detection, attach idempotency/cross-tenant rejection). Combined regression (architecture + canonical + ledger + workspaces API) → **25 passed**. `ruff check` clean. Migration applied locally: `102 → 103`; downgrade drops both tables.
+
+**Out of scope (slice 2+):** productive producers (retrieval/grounding/agents writing ledger rows), claim extraction from grounded answers, consensus/verdict engine, cognitive API endpoints.
+
+## 18. VERIFICATION PENDING
 
 | Item | How to confirm |
 |---|---|
