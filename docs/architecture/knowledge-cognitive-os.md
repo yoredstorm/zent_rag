@@ -1,6 +1,6 @@
 # Zent Knowledge Cognitive OS — Architecture Audit & Canonical Knowledge Model (Phase 0 + Phase 1)
 
-> **Status:** Phase 0 audit + Phase 1 canonical model + Phase 2 evidence/claim ledger + P1 remediation + Phase 3 cognitive planning + Phase 4 first specialists + Phase 5 temporal/conflict intelligence + Phase 6 critique/bounded debate — shipped (branch `feat/knowledge-cognitive-os`). Migrations 102–105; canonical/ledger/cognitive layers flag-gated or inert by default; retrieval/agent fixes are productive.
+> **Status:** Phases 0–10 shipped (branch `feat/knowledge-cognitive-os`): audit, canonical model, evidence/claim ledger, P1 remediation, cognitive planning, first specialists, temporal/conflict intelligence, critique/bounded debate, governed curator, shadow evaluation, inspector backend and hardening slice. Migrations 102–108; canonical/ledger/cognitive layers flag-gated or inert by default; retrieval/agent fixes are productive.
 > **Date:** 2026-09-11
 > **Base:** `master` @ `1a42c20` (Knowledge Workspaces UX, grounding, Knowledge V2 slices A–H in production-flag `false`).
 > **Relation to prior ADR:** `docs/architecture/enterprise-knowledge-refactor.md` is the Knowledge Engine V2 program (SOURCE → STRUCTURED → SEMANTIC → INDEX → RETRIEVAL → GROUNDING). This document is the **Cognitive OS program** built on top of it (agents, evidence, claims, temporal/conflict intelligence, learning governance). Where this document and the code disagree, **the code wins**.
@@ -594,7 +594,36 @@ Also shipped as part of F2/F13 groundwork: V2 payload now carries `chunk_id` and
 
 **Not in this slice:** consensus engine weighting by authority/specialization (brief §51), parallel task execution (brief §55), semantic conflict similarity, escalation UI/Review Queue for `requires_review` outcomes, multi-round debate with new evidence.
 
-## 23. VERIFICATION PENDING
+## 23. PHASE 7 — KNOWLEDGE CURATOR, GOVERNED SUGGESTIONS (shipped)
+
+- `KnowledgeSuggestion` domain (`proposed/approved/rejected`): APPROVED requires `decided_by`; suggestions are INFERRED and never auto-promote (brief §48/§49).
+- Curator service turns run observations into suggestions: unresolved conflicts → `concept_review`, upheld debate claims → `concept_review`, defended claims → `fact_candidate`, low coverage (`missing_evidence ≥ 3`) → coverage review.
+- Migration `106` `knowledge_curator_suggestions` (approval-law CHECK in DB) + Postgres repo + API: `POST /runs/{id}/curate`, `GET /suggestions`, `POST /suggestions/{id}/decide` (human `user_id` mandatory; 409 otherwise).
+- **Verification:** 4 passed (law, service rules, repo roundtrip/decision/isolation, API flow). Ruff clean.
+
+## 24. PHASE 8 — SHADOW EVALUATION (shipped)
+
+- Executor returns deterministic `metrics` (evidence, claims by status, conflicts, critique issues, debate outcomes, llm_calls, tokens, cost, latency, has_answer, injection_suspected).
+- `compare_shadow()` rules: grounding margin → winner; equal grounding + more conflicts detected → cognitive; equal grounding/conflicts + ≥2× latency → baseline; otherwise tie. Verdict is a **promotion signal**, visible answers unchanged (brief §79).
+- `ShadowEvaluator` runs the same query twice (baseline single-specialist plan vs full cognitive plan), persists comparison in migration `107` `cognitive_shadow_runs`; API `POST/GET /api/v1/cognitive/shadow`.
+- **Verification:** 3 passed (verdict matrix, evaluator runs both and persists, repo roundtrip/isolation). Ruff clean.
+
+## 25. PHASE 9 — COGNITIVE INSPECTOR, BACKEND (shipped)
+
+- `build_inspector()` aggregates a run for the Agent Inspector / Evidence View: specialists with status/latency/tokens/cost, tasks, evidence and claim ids (from structured messages), conflicts, critique, debate, final answer, totals.
+- Explicit contract: `chain_of_thought_exposed: false` (brief §57/§68).
+- Endpoint `GET /api/v1/cognitive/runs/{id}/inspector`; cross-tenant 404.
+- **Verification:** 3 passed (builder aggregation + API incl. isolation). Ruff clean.
+- Portal panel remains pending (documented; routes/API are UI-ready).
+
+## 26. PHASE 10 — ENTERPRISE HARDENING SLICE (shipped)
+
+- Failure taxonomy `CognitiveFailureMode` (brief §52): `agent_timeout`, `model_failure`, `tool_failure`, `budget_limit`, `invalid_output`, `permission_failure`, `retrieval_empty`, `unknown`; migration `108` adds `agent_executions.failure_mode`; budget failures also set `run.plan.failure_mode`.
+- `_classify_failure()` maps exceptions deterministically (Timeout → agent_timeout; Connection/OSError → model_failure; ValueError/KeyError/TypeError → invalid_output).
+- Prompt-injection defense (brief §60): evidence excerpts are scanned with the existing `has_injection_indicators`; hostile excerpts are replaced by `[excerpt omitido: posible prompt injection]` before any LLM prompt, counted in `injection_suspected` (execution result, run metrics). Documents remain untrusted data, never instructions.
+- **Verification:** 2 hardening tests + execution suite (8 passed) including poisoned-document neutralization and budget `failure_mode`. Combined cognitive + architecture regression → **40 passed**; `ruff check src tests` clean. Migrations applied locally: `105 → 108`.
+
+## 27. VERIFICATION PENDING
 
 | Item | How to confirm |
 |---|---|
