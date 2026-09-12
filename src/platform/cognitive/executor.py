@@ -44,6 +44,13 @@ from src.core.domain.evidence import (
     ClaimVerificationStatus,
     EvidenceRecord,
 )
+from src.core.domain.temporal_conflict import (
+    ClaimTemporalState,
+    claim_temporal_state,
+    claim_window,
+    classify_conflict,
+    propose_resolution,
+)
 from src.core.ports.cognitive import CognitiveRepository
 from src.core.ports.evidence import ClaimLedgerRepository, EvidenceLedgerRepository
 from src.core.ports.rag_ports import EmbeddingProvider, LLMProvider
@@ -52,6 +59,7 @@ from src.infrastructure.observability.logging_config import get_logger
 logger = get_logger(__name__)
 
 SqlExecutor = Callable[[str, CognitiveScope], Awaitable[dict]]
+AuthorityResolver = Callable[[UUID, str], Awaitable[str | None]]
 
 
 @dataclass(frozen=True)
@@ -64,6 +72,7 @@ class SpecialistDeps:
     evidence_repo: EvidenceLedgerRepository | None = None
     claim_repo: ClaimLedgerRepository | None = None
     sql_executor: SqlExecutor | None = None
+    authority_resolver: AuthorityResolver | None = None
 
 
 @dataclass
@@ -87,6 +96,7 @@ class _RunState:
     budget: CognitiveBudget
     evidence: dict[UUID, EvidenceRecord] = field(default_factory=dict)
     claims: dict[UUID, ClaimRecord] = field(default_factory=dict)
+    temporal: dict[UUID, ClaimTemporalState] = field(default_factory=dict)
     conflicts: list[dict] = field(default_factory=list)
     answer: str | None = None
 
@@ -135,6 +145,7 @@ class CognitiveExecutor:
             "retrieval_strategist": self._handle_retrieval,
             "document_analyst": self._handle_document_analyst,
             "data_analyst": self._handle_data_analyst,
+            "temporal_analyst": self._handle_temporal_analyst,
             "conflict_detector": self._handle_conflict_detector,
             "fact_checker": self._handle_fact_checker,
             "synthesizer": self._handle_synthesizer,
@@ -305,6 +316,8 @@ class CognitiveExecutor:
         }
         if failure_reason:
             plan_patch["error"] = failure_reason
+        if state.conflicts:
+            plan_patch["conflicts"] = state.conflicts
         await self._repo.update_run_status(
             organization_id, run_id, final_status, plan_patch=plan_patch
         )
@@ -317,6 +330,22 @@ class CognitiveExecutor:
                 organization_id, run_id
             ),
         }
+
+    async def _resolve_authority(self, claim: ClaimRecord) -> str | None:
+        """Hook opcional: autoridad (catalog_authority) por concepto."""
+        if self._deps.authority_resolver is None:
+            return None
+        concept = f"{claim.normalized_subject} {claim.normalized_predicate}".strip()
+        try:
+            return await self._deps.authority_resolver(
+                claim.organization_id, concept
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("authority resolver failed", error=str(exc))
+            return None
+
+    def _now(self) -> datetime:
+        return _utcnow()
 
     async def _mark_skipped(
         self,
@@ -492,6 +521,11 @@ class CognitiveExecutor:
                 normalized_subject=subject[:512],
                 normalized_predicate=predicate[:512],
                 normalized_object=(object_value[:1024] if object_value else None),
+                temporal_scope=(
+                    str(item.get("temporal_scope")).strip()[:128]
+                    if item.get("temporal_scope")
+                    else None
+                ),
                 workspace_id=state.scope.workspace_id,
                 agent_id="document_analyst",
                 task_id=UUID(str(task["id"])),
@@ -574,6 +608,30 @@ class CognitiveExecutor:
     # ------------------------------------------------------------------
     # Handlers deterministas (claims)
     # ------------------------------------------------------------------
+    async def _handle_temporal_analyst(
+        self, task: dict, state: _RunState
+    ) -> SpecialistResult:
+        counts = {"current": 0, "historical": 0, "unknown": 0}
+        now = self._now()
+        for claim in state.claims.values():
+            temporal = claim_temporal_state(claim, now=now)
+            state.temporal[claim.id] = temporal
+            counts[temporal.value] += 1
+        message = AgentMessage(
+            run_id=state.run_id,
+            type=AgentMessageType.RESPONSE,
+            from_agent="temporal_analyst",
+            to_agent="conflict_detector",
+            task_key=str(task.get("task_key") or ""),
+            text=(
+                "Temporal state: "
+                f"{counts['current']} current, "
+                f"{counts['historical']} historical, "
+                f"{counts['unknown']} unknown"
+            ),
+        )
+        return SpecialistResult(messages=(message,), result=counts)
+
     async def _handle_conflict_detector(
         self, task: dict, state: _RunState
     ) -> SpecialistResult:
@@ -596,6 +654,25 @@ class CognitiveExecutor:
             if not live:
                 continue
             conflicts += 1
+            window_a = claim_window(claim)
+            window_b = claim_window(live[0])
+            conflict_type = classify_conflict(
+                a=claim,
+                b=live[0],
+                window_a=window_a,
+                window_b=window_b,
+                source_a=_source_label(claim),
+                source_b=_source_label(live[0]),
+            )
+            resolution = propose_resolution(
+                conflict_type=conflict_type,
+                claim_a_id=claim.id,
+                claim_b_id=live[0].id,
+                window_a=window_a,
+                window_b=window_b,
+                authority_a=await self._resolve_authority(claim),
+                authority_b=await self._resolve_authority(live[0]),
+            )
             for candidate in (claim, *live):
                 current = state.claims.get(candidate.id, candidate)
                 try:
@@ -607,6 +684,7 @@ class CognitiveExecutor:
                     marked = replace(current, status=ClaimVerificationStatus.CONFLICTED)
                 state.claims[marked.id] = marked
             reason = (
+                f"[{conflict_type.value}] "
                 f"'{claim.normalized_subject} {claim.normalized_predicate}' "
                 f"tiene valores distintos: "
                 f"{claim.normalized_object} vs {live[0].normalized_object}"
@@ -615,6 +693,8 @@ class CognitiveExecutor:
                 {
                     "claims": [str(claim.id), *[str(o.id) for o in live]],
                     "reason": reason,
+                    "conflict_type": conflict_type.value,
+                    "resolution": resolution.to_dict(),
                 }
             )
             messages.append(
@@ -626,6 +706,10 @@ class CognitiveExecutor:
                     task_key=str(task.get("task_key") or ""),
                     text=reason,
                     claim_ids=(claim.id, *[o.id for o in live]),
+                    metadata={
+                        "conflict_type": conflict_type.value,
+                        "resolution": resolution.to_dict(),
+                    },
                 )
             )
         return SpecialistResult(
@@ -637,7 +721,8 @@ class CognitiveExecutor:
     ) -> SpecialistResult:
         if self._deps.claim_repo is None:
             return SpecialistResult(skipped=True, skip_reason="claim_repo not configured")
-        counters = {"supported": 0, "partial": 0, "unsupported": 0, "conflicted": 0}
+        counters = {"supported": 0, "partial": 0, "unsupported": 0, "conflicted": 0, "outdated": 0}
+        now = self._now()
         for claim in list(state.claims.values()):
             if claim.status is ClaimVerificationStatus.CONFLICTED:
                 counters["conflicted"] += 1
@@ -654,22 +739,28 @@ class CognitiveExecutor:
                         record = None
                 if record is not None:
                     excerpts.append(record.excerpt)
-            ratio = max(
-                (_overlap_ratio(claim.text, excerpt) for excerpt in excerpts),
-                default=0.0,
-            )
-            if ratio >= 0.6:
+            window = claim_window(claim)
+            if window is not None and window.is_expired(now):
                 status, confidence, bucket = (
-                    ClaimVerificationStatus.SUPPORTED, 0.9, "supported"
-                )
-            elif ratio >= 0.25:
-                status, confidence, bucket = (
-                    ClaimVerificationStatus.PARTIALLY_SUPPORTED, 0.6, "partial"
+                    ClaimVerificationStatus.OUTDATED, 0.5, "outdated"
                 )
             else:
-                status, confidence, bucket = (
-                    ClaimVerificationStatus.UNSUPPORTED, 0.2, "unsupported"
+                ratio = max(
+                    (_overlap_ratio(claim.text, excerpt) for excerpt in excerpts),
+                    default=0.0,
                 )
+                if ratio >= 0.6:
+                    status, confidence, bucket = (
+                        ClaimVerificationStatus.SUPPORTED, 0.9, "supported"
+                    )
+                elif ratio >= 0.25:
+                    status, confidence, bucket = (
+                        ClaimVerificationStatus.PARTIALLY_SUPPORTED, 0.6, "partial"
+                    )
+                else:
+                    status, confidence, bucket = (
+                        ClaimVerificationStatus.UNSUPPORTED, 0.2, "unsupported"
+                    )
             counters[bucket] += 1
             try:
                 updated = await self._deps.claim_repo.upsert(
@@ -690,7 +781,8 @@ class CognitiveExecutor:
                 f"{counters['supported']} supported, "
                 f"{counters['partial']} partial, "
                 f"{counters['unsupported']} unsupported, "
-                f"{counters['conflicted']} conflicted"
+                f"{counters['conflicted']} conflicted, "
+                f"{counters['outdated']} outdated"
             ),
         )
         return SpecialistResult(messages=(message,), result=counters)
@@ -748,6 +840,13 @@ def _budget_exceeded(ledger: dict, budget: CognitiveBudget) -> str | None:
     if ledger["tool_calls"] > budget.max_tool_calls:
         return "budget exceeded: max_tool_calls"
     return None
+
+
+def _source_label(claim: ClaimRecord) -> str | None:
+    metadata = claim.metadata or {}
+    label = metadata.get("source_name") or metadata.get("source") or ""
+    text = str(label).strip()
+    return text or None
 
 
 def _normalize(value) -> str:

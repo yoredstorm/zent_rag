@@ -232,6 +232,20 @@ _L4_FINDINGS_JSON = """{
   ]
 }"""
 
+_TEMPORAL_FINDINGS_JSON = """{
+  "findings": [
+    {"subject": "penalidad contrato ACME", "predicate": "es", "object": "5%",
+     "text": "La penalidad del contrato ACME es 5%.", "evidence_indexes": [0],
+     "temporal_scope": "2024"},
+    {"subject": "penalidad contrato ACME", "predicate": "es", "object": "7%",
+     "text": "La adenda 2025 cambia la penalidad a 7%.", "evidence_indexes": [1],
+     "temporal_scope": "2099"},
+    {"subject": "clausula de penalidad", "predicate": "aplica", "object": "contrato acme",
+     "text": "La penalidad del contrato ACME es 5%.", "evidence_indexes": [0],
+     "temporal_scope": "2024"}
+  ]
+}"""
+
 
 class FakeLLM:
     def __init__(self, contents: list[str]) -> None:
@@ -302,6 +316,7 @@ def make_executor(repo, **deps_overrides):
         evidence_repo=deps_overrides.get("evidence_repo"),
         claim_repo=deps_overrides.get("claim_repo"),
         sql_executor=deps_overrides.get("sql_executor"),
+        authority_resolver=deps_overrides.get("authority_resolver"),
     )
     return CognitiveExecutor(repository=repo, deps=deps, task_timeout_seconds=10)
 
@@ -406,7 +421,8 @@ async def test_execute_l4_detects_conflicts_verifies_and_skips_unimplemented() -
     statuses = {t["task_key"]: t["status"] for t in result["tasks"]}
     assert statuses["detect_conflicts"] == "completed"
     assert statuses["verify"] == "completed"
-    for key in ("resolve_temporal", "analyze_policy", "analyze_relationships", "critique"):
+    assert statuses["resolve_temporal"] == "completed"
+    for key in ("analyze_policy", "analyze_relationships", "critique"):
         assert statuses[key] == "skipped"
     assert any(
         c.status is ClaimVerificationStatus.CONFLICTED for c in claim_repo.claims.values()
@@ -448,6 +464,64 @@ async def test_execute_fails_run_when_budget_exceeded() -> None:
 
     assert result["run"]["status"] == CognitiveRunStatus.FAILED.value
     assert "budget" in (result["run"]["plan"].get("error") or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_execute_temporal_conflict_intelligence() -> None:
+    repo = FakeCognitiveRepository()
+    evidence_repo = FakeEvidenceRepo()
+    claim_repo = FakeClaimRepo()
+    plan = KnowledgeCognitiveOrchestrator().plan(
+        query=(
+            "Analiza todos los contratos de proveedores, identifica riesgos, "
+            "contradicciones y cambios en los últimos tres años."
+        ),
+        scope=CognitiveScope(organization_id=uuid4()),
+    )
+    seed_run(repo, plan)
+
+    async def authority_resolver(organization_id, concept):
+        return "authoritative"
+
+    executor = make_executor(
+        repo,
+        llm=FakeLLM([_TEMPORAL_FINDINGS_JSON, "Respuesta final temporal."]),
+        retriever=FakeRetriever(),
+        evidence_repo=evidence_repo,
+        claim_repo=claim_repo,
+        authority_resolver=authority_resolver,
+    )
+
+    result = await executor.execute_run(
+        organization_id=plan.run.organization_id,
+        run_id=plan.run.id,
+        scope=CognitiveScope(organization_id=plan.run.organization_id),
+    )
+
+    assert result["run"]["status"] == CognitiveRunStatus.COMPLETED.value
+    statuses = {t["task_key"]: t["status"] for t in result["tasks"]}
+    assert statuses["resolve_temporal"] == "completed"
+    assert statuses["detect_conflicts"] == "completed"
+    assert statuses["verify"] == "completed"
+
+    temporal_exec = next(
+        e for e in result["executions"] if e["agent_id"] == "temporal_analyst"
+    )
+    assert temporal_exec["status"] == "completed"
+    assert temporal_exec["result"]["historical"] == 2
+    assert temporal_exec["result"]["current"] == 1
+
+    conflicts = result["run"]["plan"]["conflicts"]
+    assert conflicts
+    assert conflicts[0]["conflict_type"] == "temporal_update"
+    assert conflicts[0]["resolution"]["winning_claim_id"]
+    assert conflicts[0]["resolution"]["requires_review"] is True
+
+    # el claim histórico sin conflicto queda OUTDATED (no mezcla versiones)
+    assert any(
+        c.status is ClaimVerificationStatus.OUTDATED
+        for c in claim_repo.claims.values()
+    )
 
 
 @pytest.mark.asyncio
