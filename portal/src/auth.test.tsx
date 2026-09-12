@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider, useAuth } from "./auth";
+import { AUTH_EXPIRED_EVENT } from "./lib/errors";
 import type { ReactNode } from "react";
 
 function fetchRouter(routes: Record<string, (_init: RequestInit) => Response>) {
@@ -50,6 +51,40 @@ describe("AuthProvider", () => {
     render(wrap(<Probe onReady={() => {}} />));
     await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("a@b.cl"));
     expect(window.localStorage.getItem("rag_portal_roles")).toContain("owner");
+  });
+
+  it("no restaura rag_portal_org si AUTH_EXPIRED llega mientras /me está en vuelo", async () => {
+    window.localStorage.setItem("rag_portal_token", "rag_sess_t");
+    window.localStorage.setItem("rag_portal_org", "org-1");
+    window.localStorage.setItem("rag_portal_company", "Acme");
+
+    let resolveMe: ((value: Response) => void) | undefined;
+    const mePromise = new Promise<Response>((resolve) => {
+      resolveMe = resolve;
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      if (String(input).includes("/auth/me")) return mePromise;
+      return Promise.resolve(json({ detail: "not mocked" }, 500));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(wrap(<Probe onReady={() => {}} />));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { scope: "tenant" } }));
+    await waitFor(() => expect(window.localStorage.getItem("rag_portal_org")).toBeNull());
+
+    resolveMe?.(
+      json({
+        organization_id: "org-1",
+        company_name: "Acme",
+        email: "a@b.cl",
+        roles: ["owner"],
+        permissions: [],
+      })
+    );
+    await waitFor(() => expect(screen.getByTestId("session").textContent).toBe("none"));
+    expect(window.localStorage.getItem("rag_portal_org")).toBeNull();
   });
 
   it("borra la sesión cuando /me falla (token inválido o revocado)", async () => {
