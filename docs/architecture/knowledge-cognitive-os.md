@@ -1,6 +1,6 @@
 # Zent Knowledge Cognitive OS — Architecture Audit & Canonical Knowledge Model (Phase 0 + Phase 1)
 
-> **Status:** Phase 0 audit + Phase 1 canonical model + Phase 2 evidence/claim ledger + P1 remediation + Phase 3 cognitive planning — shipped (branch `feat/knowledge-cognitive-os`). Migrations 102–104; canonical/ledger/cognitive layers inert by default (flags off); retrieval/agent fixes are productive.
+> **Status:** Phase 0 audit + Phase 1 canonical model + Phase 2 evidence/claim ledger + P1 remediation + Phase 3 cognitive planning + Phase 4 first specialists — shipped (branch `feat/knowledge-cognitive-os`). Migrations 102–105; canonical/ledger/cognitive layers flag-gated or inert by default; retrieval/agent fixes are productive.
 > **Date:** 2026-09-11
 > **Base:** `master` @ `1a42c20` (Knowledge Workspaces UX, grounding, Knowledge V2 slices A–H in production-flag `false`).
 > **Relation to prior ADR:** `docs/architecture/enterprise-knowledge-refactor.md` is the Knowledge Engine V2 program (SOURCE → STRUCTURED → SEMANTIC → INDEX → RETRIEVAL → GROUNDING). This document is the **Cognitive OS program** built on top of it (agents, evidence, claims, temporal/conflict intelligence, learning governance). Where this document and the code disagree, **the code wins**.
@@ -506,7 +506,43 @@ Also shipped as part of F2/F13 groundwork: V2 payload now carries `chunk_id` and
 
 **Not in this slice (per brief phase order):** specialist execution and LLM calls (Phase 4), multi-hop/temporal/conflict intelligence (Phase 5), challenge/debate protocol (Phase 6), `cognitive.runs/{id}/stream` SSE and `AgentExecution` rows (Phase 4–6), cognitive UI (Phase 9).
 
-## 20. VERIFICATION PENDING
+## 20. PHASE 4 — FIRST SPECIALISTS, REAL EXECUTION (slice 1, shipped)
+
+**Goal:** execute the planned DAG with real specialists. Deterministic work stays in code; LLM only where reasoning adds value (brief §24).
+
+| Deliverable | File |
+|---|---|
+| Executor + handlers | `src/platform/cognitive/executor.py` |
+| `AgentExecution` domain | `src/core/domain/cognitive.py` |
+| Port + adapter methods | `src/core/ports/cognitive.py`, `src/infrastructure/postgres/cognitive.py` |
+| Migration 105 | `src/infrastructure/db_init/versions/105_agent_executions.py` |
+| API execute | `POST /api/v1/cognitive/runs/{id}/execute` |
+| DI wiring | `src/api/deps.py` (`get_cognitive_executor`) |
+
+**Handlers shipped:**
+
+| Specialist | Kind | Behavior |
+|---|---|---|
+| `librarian` | deterministic | source-set handoff (scope/KB), no LLM |
+| `retrieval_strategist` | deterministic + retriever | embeds query, retrieves via injected retriever, persists `EvidenceRecord`s (locators/scores/hash) and an EVIDENCE message |
+| `document_analyst` | LLM JSON | strict findings JSON → `ClaimRecord`s (INFERRED) with evidence attached; parse failures fail the task, never invent data |
+| `conflict_detector` | deterministic | `find_conflicting` per claim; marks both sides `CONFLICTED`; CONFLICT messages |
+| `fact_checker` | deterministic | token-overlap claim↔evidence → SUPPORTED/PARTIALLY_SUPPORTED/UNSUPPORTED; never overwrites CONFLICTED |
+| `synthesizer` | LLM | grounded answer only from findings/verification/conflicts; FINAL_CANDIDATE message; stored in `run.plan.final_answer` |
+| `data_analyst` | hook | `sql_executor` inyectable; sin hook → `skipped` (sin datos falsos) |
+
+**Semantics:**
+- Budget enforced across the run (llm_calls/tokens/cost/tool_calls/seconds); exceeding it fails the run with `budget exceeded: ...` in `run.plan.error`.
+- Dependency policy: a `skipped` branch does not block downstream (it contributes no data); a `failed` task blocks the run.
+- Unknown specialists (temporal, policy, relationship, critic) → `skipped` with `handler_not_implemented (phase 5-6)`; explicit, not fabricated.
+- Every task gets an `agent_executions` row (completed/failed/skipped) with latency/tokens/cost/error.
+- No chain-of-thought persisted: messages carry text summaries, claim ids and evidence ids only.
+
+**Verification:** `pytest tests/test_cognitive_execution.py` → **5 passed** (L1 librarian+retrieval with evidence; L2 claims + final answer; L4 conflicts + verification + skips; budget exceeded fails the run; missing deps skip gracefully). Cognitive suite with repo/API/domain → **14 passed**; combined regression with architecture/workspaces → **21 passed**; `ruff check src tests` clean. Migration applied locally: `104 → 105`.
+
+**Not in this slice:** temporal/policy/relationship/critic handlers and conflict resolution by authority (Phase 5–6), debate protocol (Phase 6), `sql_executor` productive wiring, `runs/{id}/stream` SSE, background workers, cognitive UI (Phase 9).
+
+## 21. VERIFICATION PENDING
 
 | Item | How to confirm |
 |---|---|
