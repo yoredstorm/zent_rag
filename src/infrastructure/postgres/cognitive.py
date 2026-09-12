@@ -13,12 +13,15 @@ from uuid import UUID
 from sqlalchemy import text
 
 from src.core.domain.cognitive import (
+    AgentExecution,
     AgentMessage,
     AgentMessageType,
     CognitiveRun,
     CognitiveRunStatus,
     CognitiveTask,
+    CognitiveTaskStatus,
     ComplexityLevel,
+    ExecutionStatus,
 )
 from src.core.ports.cognitive import CognitiveRepository
 from src.infrastructure.postgres.session import get_async_session
@@ -37,6 +40,12 @@ _TASK_COLUMNS = (
 _MESSAGE_COLUMNS = (
     "id, run_id, organization_id, message_type, from_agent, to_agent, task_key, "
     "text, claim_ids, evidence_ids, confidence, metadata, created_at"
+)
+
+_EXECUTION_COLUMNS = (
+    "id, run_id, task_id, organization_id, agent_id, status, latency_ms, "
+    "llm_calls, tokens, cost_usd, error, result, started_at, finished_at, "
+    "created_at"
 )
 
 
@@ -232,6 +241,147 @@ class PostgresCognitiveRepository(CognitiveRepository):
         finally:
             await session.close()
 
+    async def update_run_status(
+        self,
+        organization_id: UUID,
+        run_id: UUID,
+        status: CognitiveRunStatus,
+        *,
+        plan_patch: dict | None = None,
+    ) -> None:
+        session = await get_async_session()
+        try:
+            await session.execute(
+                text(
+                    "UPDATE cognitive_runs SET "
+                    "status = :status, "
+                    "plan = COALESCE(plan, '{}'::jsonb) || CAST(:patch AS jsonb), "
+                    "updated_at = now() "
+                    "WHERE id = :id AND organization_id = :oid"
+                ),
+                {
+                    "status": status.value,
+                    "patch": json.dumps(plan_patch or {}, default=str),
+                    "id": str(run_id),
+                    "oid": str(organization_id),
+                },
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    async def update_task_status(
+        self,
+        organization_id: UUID,
+        task_id: UUID,
+        status: CognitiveTaskStatus,
+        *,
+        result: dict | None = None,
+        error: str | None = None,
+    ) -> None:
+        session = await get_async_session()
+        try:
+            await session.execute(
+                text(
+                    "UPDATE cognitive_tasks SET "
+                    "status = :status, result = CAST(:result AS jsonb), "
+                    "error = :error, updated_at = now() "
+                    "WHERE id = :id AND organization_id = :oid"
+                ),
+                {
+                    "status": status.value,
+                    "result": (
+                        json.dumps(result, default=str) if result is not None else None
+                    ),
+                    "error": error,
+                    "id": str(task_id),
+                    "oid": str(organization_id),
+                },
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    async def save_execution(
+        self, organization_id: UUID, execution: AgentExecution
+    ) -> AgentExecution:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    f"""
+                    INSERT INTO agent_executions ({_EXECUTION_COLUMNS})
+                    VALUES (
+                        :id, :run_id, :task_id, :organization_id, :agent_id,
+                        :status, :latency_ms, :llm_calls, :tokens, :cost_usd,
+                        :error, CAST(:result AS jsonb), :started_at,
+                        :finished_at, now()
+                    )
+                    ON CONFLICT (id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        latency_ms = EXCLUDED.latency_ms,
+                        llm_calls = EXCLUDED.llm_calls,
+                        tokens = EXCLUDED.tokens,
+                        cost_usd = EXCLUDED.cost_usd,
+                        error = EXCLUDED.error,
+                        result = EXCLUDED.result,
+                        finished_at = EXCLUDED.finished_at
+                    RETURNING {_EXECUTION_COLUMNS}
+                    """
+                ),
+                {
+                    "id": str(execution.id),
+                    "run_id": str(execution.run_id),
+                    "task_id": str(execution.task_id),
+                    "organization_id": str(organization_id),
+                    "agent_id": execution.agent_id,
+                    "status": execution.status.value,
+                    "latency_ms": execution.latency_ms,
+                    "llm_calls": execution.llm_calls,
+                    "tokens": execution.tokens,
+                    "cost_usd": execution.cost_usd,
+                    "error": execution.error,
+                    "result": (
+                        json.dumps(execution.result, default=str)
+                        if execution.result
+                        else None
+                    ),
+                    "started_at": execution.started_at,
+                    "finished_at": execution.finished_at,
+                },
+            )
+            row = result.fetchone()
+            await session.commit()
+            return _row_to_execution(row)
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    async def list_executions(
+        self, organization_id: UUID, run_id: UUID
+    ) -> list[dict]:
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    f"SELECT {_EXECUTION_COLUMNS} FROM agent_executions "
+                    "WHERE organization_id = :oid AND run_id = :rid "
+                    "ORDER BY started_at, id"
+                ),
+                {"oid": str(organization_id), "rid": str(run_id)},
+            )
+            return [_row_to_dict(row) for row in result.fetchall()]
+        finally:
+            await session.close()
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -260,6 +410,24 @@ def _row_to_run(row) -> CognitiveRun:
         created_by=row.created_by,
         created_at=row.created_at,
         updated_at=row.updated_at,
+    )
+
+
+def _row_to_execution(row) -> AgentExecution:
+    return AgentExecution(
+        id=row.id,
+        run_id=row.run_id,
+        task_id=row.task_id,
+        agent_id=row.agent_id,
+        status=ExecutionStatus(row.status),
+        started_at=row.started_at,
+        finished_at=row.finished_at,
+        latency_ms=float(row.latency_ms or 0.0),
+        llm_calls=int(row.llm_calls or 0),
+        tokens=int(row.tokens or 0),
+        cost_usd=float(row.cost_usd or 0.0),
+        error=row.error,
+        result=row.result if isinstance(row.result, dict) else {},
     )
 
 

@@ -77,6 +77,26 @@ async def _resolve_scope(request: Request, ctx) -> CognitiveScope:
     )
 
 
+def _scope_from_run(run: dict, fallback_org: UUID, fallback_user) -> CognitiveScope:
+    scope = run.get("scope") or {}
+    return CognitiveScope(
+        organization_id=UUID(str(scope.get("organization_id") or fallback_org)),
+        workspace_id=_uuid_or_none(scope.get("workspace_id")),
+        user_id=_uuid_or_none(scope.get("user_id")) or fallback_user,
+        role=str(scope.get("role") or "admin"),
+        groups=tuple(str(g) for g in (scope.get("groups") or [])),
+    )
+
+
+def _uuid_or_none(value) -> UUID | None:
+    if value in (None, ""):
+        return None
+    try:
+        return UUID(str(value))
+    except (ValueError, TypeError):
+        return None
+
+
 @router.post("/runs", status_code=201, summary="Planificar un cognitive run")
 async def create_cognitive_run(body: CognitiveRunRequest, request: Request) -> dict:
     _require_cognitive_enabled()
@@ -95,6 +115,36 @@ async def create_cognitive_run(body: CognitiveRunRequest, request: Request) -> d
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+@router.post(
+    "/runs/{run_id}/execute",
+    summary="Ejecutar un cognitive run planificado (fase 4)",
+)
+async def execute_cognitive_run(run_id: UUID, request: Request) -> dict:
+    _require_cognitive_enabled()
+    from src.api.deps import get_cognitive_executor, get_cognitive_service
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "knowledge:write")
+    service = get_cognitive_service()
+    current = await service.get_run(ctx.organization_id, run_id)
+    if current is None:
+        raise HTTPException(404, "Cognitive run not found")
+    if current["run"]["status"] != "planned":
+        raise HTTPException(
+            409,
+            f"cognitive run status '{current['run']['status']}' cannot execute",
+        )
+    scope = _scope_from_run(
+        current["run"], ctx.organization_id, getattr(ctx, "user_id", None)
+    )
+    try:
+        return await get_cognitive_executor().execute_run(
+            organization_id=ctx.organization_id, run_id=run_id, scope=scope
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.get("/runs/{run_id}", summary="Detalle de un cognitive run")

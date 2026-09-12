@@ -302,6 +302,31 @@ def get_cognitive_service():
     return _cognitive_service
 
 
+_cognitive_executor: object | None = None
+
+
+def get_cognitive_executor():
+    """Executor de especialistas (Phase 4) — retrieval + LLM + ledgers."""
+    global _cognitive_executor
+    if _cognitive_executor is None:
+        from src.platform.cognitive.executor import (
+            CognitiveExecutor,
+            SpecialistDeps,
+        )
+
+        _cognitive_executor = CognitiveExecutor(
+            get_cognitive_repo(),
+            SpecialistDeps(
+                llm=get_llm_provider(),
+                embedding=get_embedding_provider(),
+                retriever=get_retriever(),
+                evidence_repo=get_evidence_ledger_repo(),
+                claim_repo=get_claim_ledger_repo(),
+            ),
+        )
+    return _cognitive_executor
+
+
 def get_knowledge_engine():
     """Inyecta el motor de ingestion de la Knowledge Platform.
 

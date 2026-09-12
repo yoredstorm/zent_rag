@@ -56,6 +56,15 @@ class CognitiveTaskStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class ExecutionStatus(StrEnum):
+    """Estado de una ejecución de especialista (brief §56)."""
+
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
 class AgentMessageType(StrEnum):
     """Brief §25: structured agent-to-agent messages (no free chat)."""
 
@@ -421,6 +430,36 @@ class AgentMessage:
             )
         if self.confidence is not None and not 0.0 <= self.confidence <= 1.0:
             raise ValueError("AgentMessage.confidence must be within [0, 1]")
+
+
+@dataclass(frozen=True, kw_only=True)
+class AgentExecution:
+    """Una ejecución de especialista dentro de un run (brief §56).
+
+    Métricas de presupuesto por tarea: llamadas LLM, tokens, costo y latencia.
+    """
+
+    run_id: UUID
+    task_id: UUID
+    agent_id: str
+    id: UUID = field(default_factory=uuid4)
+    status: ExecutionStatus = ExecutionStatus.RUNNING
+    started_at: datetime = field(default_factory=_utcnow)
+    finished_at: datetime | None = None
+    latency_ms: float = 0.0
+    llm_calls: int = 0
+    tokens: int = 0
+    cost_usd: float = 0.0
+    error: str | None = None
+    result: dict = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.agent_id.strip():
+            raise ValueError("AgentExecution.agent_id must not be empty")
+        if self.latency_ms < 0 or self.llm_calls < 0 or self.tokens < 0:
+            raise ValueError("AgentExecution metrics must be >= 0")
+        if self.cost_usd < 0:
+            raise ValueError("AgentExecution.cost_usd must be >= 0")
 
 
 class EvidenceBlackboard:
