@@ -172,6 +172,8 @@ class RAGOrchestrator:
         sql_router: object | None = None,
         intelligence: object | None = None,
         learning: object | None = None,
+        structured_retriever: object | None = None,
+        promote_v2: bool = False,
     ) -> None:
         self._organization_repo = organization_repo
         self._vector_store = vector_store
@@ -191,6 +193,12 @@ class RAGOrchestrator:
         self._sql_router = sql_router
         self._intelligence = intelligence
         self._learning = learning
+        # Phase F (conocimiento V2): retriever estructural en shadow. Solo se
+        # inyecta cuando los flags lo permiten; su presencia NUNCA cambia la
+        # respuesta visible (solo registra overlap/calidad contra V1).
+        self._structured_retriever = structured_retriever
+        # Phase G: override productivo del retriever (contexto real = V2).
+        self._promote_v2 = promote_v2
         # Align anti-hallucination gate with configured score threshold (min 0.1 when threshold is 0)
         self._min_meaningful_score = max(score_threshold, 0.1) if score_threshold > 0 else 0.1
 
@@ -202,6 +210,164 @@ class RAGOrchestrator:
             return await user_group_names(organization_id, user_id)
         except Exception:  # noqa: BLE001
             return []
+
+    async def _maybe_v2_shadow(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        query: str,
+        role: str,
+        query_embedding: list[float],
+        retrieval_context: RetrievalContext,
+        metadata_filters: dict[str, str] | None,
+        language: str | None,
+    ) -> None:
+        """Phase F: StructuredRetriever en sombra (comparación V1 vs V2).
+
+        Ejecuta el retrieval V2 en paralelo al productivo, registra overlap de
+        content_hash, intent y latencia, y NO modifica la respuesta. Fallos =
+        warn; la respuesta visible queda intacta.
+        """
+        if self._structured_retriever is None:
+            return
+        from src.rag.retrieval.models import RetrievalQuery
+        from src.rag.retrieval.structured import V2RetrievalOptions
+
+        settings = get_settings()
+        if not settings.KNOWLEDGE_V2_SHADOW:
+            return
+
+        async with trace_span("knowledge.retrieve.v2"):
+            started = time.perf_counter()
+            try:
+                from src.infrastructure.observability.metrics import (
+                    knowledge_shadow_latency,
+                    knowledge_shadow_overlap,
+                    knowledge_shadow_retrievals_total,
+                )
+                from src.rag.query_intelligence import build_query_plan
+
+                plan = build_query_plan(query)
+                rquery = RetrievalQuery(
+                    query=query,
+                    organization_id=organization_id,
+                    role=role,
+                    user_id=user_id,
+                    groups=(
+                        list(await self._resolve_user_groups(organization_id, user_id))
+                        if user_id
+                        else []
+                    ),
+                    top_k=min(settings.RAG_TOP_K, 100),
+                    rerank_top_k=12,
+                    score_threshold=settings.RAG_SCORE_THRESHOLD,
+                    strategy=settings.RAG_RETRIEVAL_STRATEGY,
+                    fusion=settings.RAG_HYBRID_FUSION,
+                    rrf_k=settings.RAG_RRF_K,
+                    lexical_weight=settings.RAG_HYBRID_LEXICAL_WEIGHT,
+                    language=language,
+                    filters=metadata_filters or {},
+                    query_embedding=list(query_embedding),
+                )
+                assembled = await self._structured_retriever.retrieve(
+                    rquery, V2RetrievalOptions()
+                )
+                latency_s = time.perf_counter() - started
+
+                v1_hashes = {
+                    c.metadata.get("content_hash")
+                    for c in retrieval_context.chunks[:50]
+                    if c.metadata.get("content_hash")
+                }
+                v2_hashes = {
+                    c.metadata.get("content_hash")
+                    for c in assembled.children
+                    if c.metadata.get("content_hash")
+                }
+                overlap = len(v1_hashes & v2_hashes)
+                v1_count = len(retrieval_context.chunks)
+                v2_count = len(assembled.children)
+                knowledge_shadow_retrievals_total.labels(
+                    organization_id=str(organization_id),
+                    intent=plan.normalized_intent,
+                ).inc()
+                knowledge_shadow_overlap.labels(
+                    organization_id=str(organization_id)
+                ).set(overlap)
+                knowledge_shadow_latency.labels(
+                    organization_id=str(organization_id)
+                ).observe(latency_s)
+                logger.info(
+                    "V2 shadow retrieval completed",
+                    organization_id=str(organization_id),
+                    intent=plan.intent,
+                    v1_chunks=v1_count,
+                    v2_chunks=v2_count,
+                    content_hash_overlap=overlap,
+                    latency_ms=round(latency_s * 1000, 2),
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "V2 shadow retrieval failed (answering stays on V1)",
+                    organization_id=str(organization_id),
+                    error=str(exc)[:300],
+                )
+
+    async def _run_v2_retrieve(
+        self,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        query: str,
+        role: str,
+        query_embedding: list[float],
+        metadata_filters: dict[str, str] | None,
+        language: str | None,
+        retrieval_config,
+    ) -> RetrievalContext:
+        """Phase G (promote): retrieval productivo con StructuredRetriever.
+
+        Devuelve un RetrievalContext estándar (children + parents ensamblados
+        con parent expansion + dedupe + diversidad + token budget) para que el
+        resto del pipeline (prompt, [Doc: N], answerability) no cambie.
+        """
+        from src.rag.retrieval.models import RetrievalQuery
+        from src.rag.retrieval.structured import V2RetrievalOptions
+
+        rquery = RetrievalQuery(
+            query=query,
+            organization_id=organization_id,
+            role=role,
+            user_id=user_id,
+            groups=(
+                list(await self._resolve_user_groups(organization_id, user_id))
+                if user_id
+                else []
+            ),
+            top_k=100,
+            effective_top_k=100,
+            rerank_top_k=retrieval_config.rerank_top_k,
+            score_threshold=retrieval_config.score_threshold,
+            strategy=retrieval_config.strategy,
+            fusion=retrieval_config.fusion,
+            rrf_k=retrieval_config.rrf_k,
+            lexical_weight=retrieval_config.lexical_weight,
+            language=language,
+            filters=metadata_filters or {},
+            query_embedding=list(query_embedding),
+        )
+        assembled = await self._structured_retriever.retrieve(  # type: ignore[union-attr]
+            rquery, V2RetrievalOptions()
+        )
+        chunks = list(assembled.context) or (
+            list(assembled.children) + list(assembled.parents)
+        )
+        return RetrievalContext(
+            chunks=chunks,
+            query_embedding=list(query_embedding),
+            retrieval_latency_ms=assembled.retrieval_latency_ms,
+        )
 
     async def execute(
         self,
@@ -552,6 +718,17 @@ class RAGOrchestrator:
                 return await self._retriever.retrieve(rquery)  # type: ignore[union-attr]
 
             async def _vector_search_full() -> RetrievalContext:
+                if self._structured_retriever is not None and self._promote_v2:
+                    return await self._run_v2_retrieve(
+                        organization_id=organization_id,
+                        user_id=user_id,
+                        query=query,
+                        role=role,
+                        query_embedding=list(query_embedding),  # type: ignore[arg-type]
+                        metadata_filters=metadata_filters,
+                        language=language,
+                        retrieval_config=retrieval_config,
+                    )
                 if self._retriever is not None:
                     return await _run_retriever_query()
 
@@ -662,6 +839,20 @@ class RAGOrchestrator:
             rag_vector_search_latency.labels(organization_id=str(organization_id)).observe(
                 retrieval_context.retrieval_latency_ms / 1000
             )
+
+            # Phase F: retrieval V2 en sombra — NUNCA altera la respuesta visible.
+            # Con promote (Phase G) el contexto productivo YA es V2 → no duplicar.
+            if not self._promote_v2:
+                await self._maybe_v2_shadow(
+                    organization_id=organization_id,
+                    user_id=user_id,
+                    query=query,
+                    role=role,
+                    query_embedding=list(query_embedding),  # type: ignore[arg-type]
+                    retrieval_context=retrieval_context,
+                    metadata_filters=metadata_filters,
+                    language=language,
+                )
 
             # -----------------------------------------------------------------
             # Paso 5: Ensamblar prompt — SQL-first si hay datos, o RAG estándar

@@ -27,11 +27,18 @@ class ConnectorError(Exception):
 
 @dataclass(kw_only=True, frozen=True)
 class Record:
-    """Registro normalizado (Markdown) listo para chunking."""
+    """Registro normalizado (Markdown) listo para chunking.
+
+    Phase B: cuando el conector dispone de los bytes originales (file), se
+    exponen raw_data + format para que el pipeline V2 (StructuredDocument)
+    pueda operar en paralelo sin quebrar el camino V1.
+    """
 
     external_id: str
     content: str
     metadata: dict = field(default_factory=dict)
+    raw_data: bytes | None = None
+    format: str | None = None
 
 
 @dataclass(kw_only=True)

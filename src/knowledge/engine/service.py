@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import hashlib
-import logging
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid5
 
@@ -33,14 +32,20 @@ from src.core.ports import (
     SyncStateRepository,
     VectorStore,
 )
+from src.core.ports.structured import StructuredDocumentRepository
+from src.infrastructure.observability.logging_config import get_logger
 from src.knowledge.connectors.base import ConnectorError, Record
 from src.knowledge.connectors.registry import build_connector
 from src.rag.chunking.registry import get_chunker
 
-logger = logging.getLogger(__name__)
+# structlog (kwargs-safe). El stdlib logger revienta con logging(key=value).
+logger = get_logger(__name__)
 
 # Namespace determinista para IDs de documentos (uuid5)
 _DOC_NS = UUID("6f9e0d4a-8a7b-4c3e-9f1e-2b5c8d7a6f90")
+# Namespace V2 (Phase C): separado del ns V1 para que los IDs de chunk V2
+# nunca colisionen con los chunks V1 (misma colección Qdrant).
+_V2_CHUNK_NS = UUID("c7a2e5d9-4b3f-4a1c-9d8e-6f5b2a4e8c10")
 
 # Chunking por defecto si la fuente no pertenece a una KB
 DEFAULT_CHUNK_STRATEGY = "fixed"
@@ -58,6 +63,10 @@ def compute_retry_delay(attempt: int, base_seconds: int = 10, cap_seconds: int =
 
 def _chunk_document_id(source_id: UUID, external_id: str, chunk_index: int) -> UUID:
     return uuid5(_DOC_NS, f"{source_id}:{external_id}:{chunk_index}")
+
+
+def _v2_chunk_id(source_id: UUID, external_id: str, chunk_index: int) -> UUID:
+    return uuid5(_V2_CHUNK_NS, f"v2:{source_id}:{external_id}:{chunk_index}")
 
 
 def _content_hash(content: str) -> str:
@@ -112,6 +121,9 @@ class KnowledgeIngestionEngine:
         *,
         backoff_base_seconds: int = 10,
         max_attempts_default: int = 3,
+        structured_doc_repo: StructuredDocumentRepository | None = None,
+        summarizer: object | None = None,
+        usage_tracker: object | None = None,
     ) -> None:
         self._jobs = job_repo
         self._state = sync_state_repo
@@ -122,6 +134,14 @@ class KnowledgeIngestionEngine:
         self._embeddings = embedding_provider
         self._backoff_base = backoff_base_seconds
         self._max_attempts_default = max_attempts_default
+        # Knowledge V2 (Phase B): paralelo, opcional, nunca rompe el camino V1.
+        self._structured_v2 = structured_doc_repo
+        # Phase C3: summarizer shadow (mode=shadow) — calcula, NO persiste.
+        self._summarizer = summarizer
+        # Phase G (brief §41): registro de costos por corpus/source.
+        self._usage_tracker = usage_tracker
+        self.v2_parsed = 0
+        self.v2_failed = 0
 
     # ------------------------------------------------------------------
     # Entry point del worker
@@ -216,7 +236,7 @@ class KnowledgeIngestionEngine:
                 success=not outcome.errors,
             )
         else:
-            await self._run_record_mode(job, source.id, connector, kb, cursor)
+            await self._run_record_mode(job, source, connector, kb, cursor)
 
         await self._jobs.update_job(
             job.id,
@@ -225,7 +245,8 @@ class KnowledgeIngestionEngine:
             completed_at=datetime.now(timezone.utc),
         )
 
-    async def _run_record_mode(self, job, source_id: UUID, connector, kb, cursor) -> None:
+    async def _run_record_mode(self, job, source, connector, kb, cursor) -> None:
+        source_id = source.id
         chunker = get_chunker(
             kb.chunking_strategy if kb else DEFAULT_CHUNK_STRATEGY,
             chunk_size=kb.chunk_size if kb else DEFAULT_CHUNK_SIZE,
@@ -289,6 +310,7 @@ class KnowledgeIngestionEngine:
             if error:
                 records_failed += 1
                 continue
+            await self._maybe_structured_v2(job, source, record)
             chunks = chunker.chunk(record.content)
             if not chunks:
                 records_failed += 1
@@ -330,6 +352,203 @@ class KnowledgeIngestionEngine:
             records_failed=records_failed,
             progress=100,
         )
+
+    async def _maybe_structured_v2(self, job, source, record: Record) -> None:
+        """Phase B: parsea a StructuredDocument y persiste EN PARALELO a V1.
+
+        Nunca interrumpe el camino V1: errores de parseo/persistencia son warn
+        y se contabilizan (v2_failed). Requiere que el conector entregue los
+        bytes originales (record.raw_data + record.format).
+        """
+        if self._structured_v2 is None:
+            return
+        raw_data = record.raw_data
+        record_format = record.format
+        if raw_data is None or not record_format:
+            return
+
+        from src.knowledge.structure import get_parser
+
+        parser = get_parser(record_format)
+        if parser is None:
+            return
+
+        import time
+
+        from src.infrastructure.observability.metrics import (
+            knowledge_parse_latency,
+            knowledge_parse_total,
+        )
+
+        started = time.perf_counter()
+        outcome = "parse_error"
+        try:
+            document = parser.parse(
+                raw_data,
+                organization_id=job.organization_id,
+                external_id=record.external_id,
+                source_id=source.id,
+                workspace_id=source.workspace_id,
+                source_name=str(record.metadata.get("filename") or record.external_id),
+            )
+            document.check_consistency()
+            outcome = "persist_error"
+            change_kind = await self._structured_v2.upsert_document(document)
+            logger.info(
+                "Knowledge V2 document upserted",
+                document_id=str(document.id),
+                external_id=document.external_id,
+                change_kind=change_kind or "unknown",
+            )
+            outcome = "chunk_index"
+            await self._index_v2_chunks(job, source, document, change_kind=change_kind)
+            outcome = "summarize"
+            await self._shadow_summarize(document, change_kind=change_kind)
+            outcome = "ok"
+            self.v2_parsed += 1
+        except Exception as exc:
+            self.v2_failed += 1
+            logger.warning(
+                "Knowledge V2 structured pipeline failed",
+                external_id=record.external_id,
+                stage=outcome,
+                error=str(exc)[:500],
+            )
+        finally:
+            knowledge_parse_total.labels(
+                organization_id=str(job.organization_id),
+                format=record_format,
+                outcome=outcome,
+            ).inc()
+            knowledge_parse_latency.labels(
+                organization_id=str(job.organization_id),
+                format=record_format,
+            ).observe(time.perf_counter() - started)
+
+    async def _index_v2_chunks(
+        self, job, source, document, *, change_kind: str | None = None
+    ) -> None:
+        """Phase C: embebe los child chunks V2 y los upserta en Qdrant.
+
+        Dual-write aditivo: misma colección rag_documents y MISMO contrato ACL
+        (organization_id en payload). Los chunk_ids usan el namespace V2 para
+        no colisionar con los de V1. Fallos aquí son warn (v2_failed); el
+        documento estructurado ya quedó persistido en Postgres.
+
+        Fingerprinting (§41): contenido sin cambios (change_kind=unchanged) →
+        chunks idénticos → se SKIPEA el re-embed y se registra la decisión.
+        """
+        from src.knowledge.structure import (
+            ChunkingConfig as _ChunkingConfig,
+        )
+        from src.knowledge.structure import (
+            ChunkType as _ChunkType,
+        )
+        from src.knowledge.structure import (
+            chunk_structured_document as _chunk_structured_document,
+        )
+
+        chunks = _chunk_structured_document(document, config=_ChunkingConfig())
+        children = [c for c in chunks if c.chunk_type is _ChunkType.PARENT_CHILD]
+        if not children:
+            return
+        if change_kind == "unchanged":
+            logger.info(
+                "Knowledge V2 chunks skipped (content unchanged — fingerprint)",
+                document_id=str(document.id),
+                chunks=len(children),
+            )
+            return
+
+        knowledge_base_id = job.knowledge_base_id
+        for start in range(0, len(children), _EMBED_BATCH):
+            batch_chunks = children[start : start + _EMBED_BATCH]
+            embeddings = await self._embeddings.embed(
+                [c.content for c in batch_chunks]
+            )
+            if embeddings and not isinstance(embeddings[0], list):
+                embeddings = [embeddings]
+            if self._usage_tracker is not None:
+                try:
+                    batch_tokens = sum(c.token_count for c in batch_chunks)
+                    await self._usage_tracker.record_embedding_tokens(
+                        job.organization_id,
+                        batch_tokens,
+                        workspace_id=source.workspace_id,
+                        source_id=source.id,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Knowledge V2 usage tracking failed",
+                        error=str(exc)[:200],
+                    )
+            points: list[tuple[UUID, list[float], str, dict | None]] = []
+            for chunk, vector in zip(batch_chunks, embeddings):
+                # Campos estructurales DENTRO de metadata (contrato del adapter:
+                # RetrievalChunk.metadata = payload["metadata"]; ACL por defecto
+                # org-wide igual que los chunks V1).
+                chunk_metadata: dict = {
+                    "source_id": str(source.id),
+                    "external_id": document.external_id,
+                    "content_hash": chunk.content_hash,
+                    "chunking_strategy": "document_structure+parent_child",
+                    "chunk_type": chunk.chunk_type.value,
+                    "workspace_id": (
+                        str(source.workspace_id) if source.workspace_id else None
+                    ),
+                    "knowledge_base_id": (
+                        str(knowledge_base_id) if knowledge_base_id else None
+                    ),
+                    "document_id": str(document.id),
+                    "section_id": str(chunk.section_id) if chunk.section_id else None,
+                    "parent_id": str(chunk.parent_id) if chunk.parent_id else None,
+                    "page_start": chunk.page_start,
+                    "page_end": chunk.page_end,
+                    "v2_chunk": "true",
+                }
+                points.append(
+                    (
+                        _v2_chunk_id(source.id, document.external_id, chunk.chunk_index),
+                        list(vector),
+                        chunk.content,
+                        chunk_metadata,
+                    )
+                )
+            await self._vectors.upsert_batch(
+                job.organization_id, points, knowledge_base_id=knowledge_base_id
+            )
+
+    async def _shadow_summarize(self, document, *, change_kind: str | None = None) -> None:
+        """Phase C3 shadow: calcula SectionSummary/DocumentSummary (INFERRED).
+
+        No persiste nada; sirve de calibración (métricas + logs). Si el
+        summarizer no está inyectado o falla, el camino V1/V2 sigue intacto.
+        Con change_kind=unchanged se SKIPEA (mismo contenido → mismo resumen).
+        """
+        if self._summarizer is None:
+            return
+        if change_kind == "unchanged":
+            logger.info(
+                "Knowledge V2 summaries skipped (content unchanged)",
+                document_id=str(document.id),
+            )
+            return
+        try:
+            output = await self._summarizer.summarize(document)
+            summary = getattr(output, "document_summary", None)
+            summary_text = getattr(summary, "summary", "") if summary else ""
+            logger.info(
+                "Knowledge V2 summary shadow computed",
+                document_id=str(document.id),
+                summary_chars=len(summary_text[:2000]),
+                mode=getattr(output, "mode", "unknown"),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Knowledge V2 summary shadow failed",
+                document_id=str(document.id),
+                error=str(exc)[:500],
+            )
 
 
 async def _set_source_status(organization_id: UUID, source_id: UUID, status: str) -> None:

@@ -214,11 +214,58 @@ def get_doc_registry_repo() -> DocumentRegistryRepository:
     return _doc_registry_repo
 
 
+_corpus_repo: object | None = None
+
+
+def get_corpus_repo():
+    """Repo de KnowledgeCorpus (Phase D slice 2) — workspace-scoped."""
+    global _corpus_repo
+    if _corpus_repo is None:
+        from src.infrastructure.postgres.knowledge_corpora import (
+            PostgresKnowledgeCorpusRepository,
+        )
+
+        _corpus_repo = PostgresKnowledgeCorpusRepository()
+    return _corpus_repo
+
+
 def get_knowledge_engine():
-    """Inyecta el motor de ingestion de la Knowledge Platform."""
+    """Inyecta el motor de ingestion de la Knowledge Platform.
+
+    El repo de documentos estructurados (Knowledge V2) se activa SOLO con
+    RAG_KNOWLEDGE_V2_ENABLED=true; en su ausencia el motor queda idéntico a V1.
+    """
     global _knowledge_engine
     if _knowledge_engine is None:
         from src.knowledge.engine.service import KnowledgeIngestionEngine
+
+        structured_repo = None
+        summarizer = None
+        settings = get_settings()
+        if settings.KNOWLEDGE_V2_ENABLED:
+            from src.infrastructure.postgres.structured_documents import (
+                PostgresStructuredDocumentRepository,
+            )
+
+            structured_repo = PostgresStructuredDocumentRepository()
+        if settings.KNOWLEDGE_V2_ENABLED and settings.KNOWLEDGE_SUMMARY_MODE == "shadow":
+            from src.knowledge.summarize.service import (
+                DocumentSummarizer,
+                SummarizerConfig,
+            )
+
+            summarizer = DocumentSummarizer(
+                llm=get_llm_provider(),
+                config=SummarizerConfig(
+                    model=settings.KNOWLEDGE_SUMMARY_MODEL or None
+                ),
+            )
+
+        usage_tracker = None
+        if settings.KNOWLEDGE_V2_ENABLED:
+            from src.knowledge.cost import KnowledgeUsageTracker
+
+            usage_tracker = KnowledgeUsageTracker()
 
         _knowledge_engine = KnowledgeIngestionEngine(
             job_repo=get_job_repo(),
@@ -228,6 +275,9 @@ def get_knowledge_engine():
             source_repo=get_source_repo(),
             vector_store=get_vector_store(),
             embedding_provider=get_embedding_provider(),
+            structured_doc_repo=structured_repo,
+            summarizer=summarizer,
+            usage_tracker=usage_tracker,
         )
     return _knowledge_engine
 
@@ -265,6 +315,40 @@ def get_cache_provider() -> CacheProvider:
 
 
 _retriever: object | None = None
+_structured_retriever: object | None = None
+
+
+def get_structured_retriever():
+    """Retriever V2 (Knowledge V2, Phase F) — solo lectura, mismo collection.
+
+    Reutiliza el vector/lexical/hybrid store + reranker existentes y el
+    ContextBuilder con presupuesto de contexto V2.
+    """
+    global _structured_retriever
+    if _structured_retriever is None:
+        from src.rag.retrieval.builders import ContextBuilder
+        from src.rag.retrieval.structured import StructuredRetriever
+
+        settings = get_settings()
+        vector_store = get_vector_store()
+        reranker = None
+        if settings.RAG_RERANK_ENABLED:
+            from src.rag.reranking import base as rerank_base
+            from src.rag.reranking.cross_encoder import CrossEncoderReranker  # noqa: F401 (register)
+            from src.rag.reranking.reranker import LLMReranker  # noqa: F401 (register)
+
+            reranker = rerank_base.get_reranker(
+                settings.RAG_RERANKER or "llm",
+                llm_provider=get_llm_provider(),
+            )
+        _structured_retriever = StructuredRetriever(
+            vector_store=vector_store,
+            lexical_store=vector_store,
+            hybrid_store=vector_store,
+            reranker=reranker,
+            context_builder=ContextBuilder(max_context_tokens=8000),
+        )
+    return _structured_retriever
 
 
 def get_retriever():
@@ -724,6 +808,17 @@ def get_rag_orchestrator() -> RAGOrchestrator:
                 get_context_gap_analyzer()
                 if settings.RAG_LEARNING_ENABLED
                 else None
+            ),
+            structured_retriever=(
+                get_structured_retriever()
+                if settings.KNOWLEDGE_V2_ENABLED
+                and (settings.KNOWLEDGE_V2_SHADOW or settings.KNOWLEDGE_V2_PROMOTE)
+                else None
+            ),
+            promote_v2=(
+                settings.KNOWLEDGE_V2_PROMOTE
+                if settings.KNOWLEDGE_V2_ENABLED
+                else False
             ),
         )
     return _orchestrator

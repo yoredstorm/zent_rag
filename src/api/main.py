@@ -640,6 +640,9 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     from src.api.routes.knowledge_learning import router as knowledge_learning_router
 
     new_app.include_router(knowledge_learning_router)
+    from src.api.routes.knowledge_workspaces import router as knowledge_workspaces_router
+
+    new_app.include_router(knowledge_workspaces_router)
 
     # -------------------------------------------------------------------------
     # MCP Server — montado como sub-app: TODOS los middleware de la API

@@ -525,6 +525,48 @@ class Settings(BaseSettings):
             "metrics exist (see docs/architecture/enterprise-knowledge-refactor.md)."
         ),
     )
+    KNOWLEDGE_SUMMARY_MODE: str = Field(
+        default="off",
+        description=(
+            "Resúmenes multi-nivel V2 (Phase C3): off | shadow. shadow calcula "
+            "DocumentSummary/SectionSummary (siempre INFERRED) sin persistirlos; "
+            "sirve de calibración antes del rollout ASSISTED/ACTIVE."
+        ),
+    )
+    KNOWLEDGE_SUMMARY_MODEL: str = Field(
+        default="",
+        description=(
+            "Modelo para resúmenes V2 (vacío = LITELLM_DEFAULT_MODEL / zent-default)."
+        ),
+    )
+    KNOWLEDGE_V2_SHADOW: bool = Field(
+        default=False,
+        description=(
+            "Phase F: retrieval V2 en sombra dentro del orchestrator. Requiere "
+            "RAG_KNOWLEDGE_V2_ENABLED. Ejecuta StructuredRetriever en paralelo, "
+            "registra overlap/top-k/latencia vs V1 y NO cambia la respuesta visible."
+        ),
+    )
+    KNOWLEDGE_V2_PROMOTE: bool = Field(
+        default=False,
+        description=(
+            "Phase G: override productivo del retriever. Con RAG_KNOWLEDGE_V2_ENABLED, "
+            "el contexto real de la respuesta usa StructuredRetriever (children+parents). "
+            "Solo tras calibrar shadow. Nunca promueve INFERRED a APPROVED."
+        ),
+    )
+    KNOWLEDGE_LOCATE_LLM_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Phase G: asistencia LLM para resolver anchor texto→página en el Source "
+            "Viewer (citas [1]). El LLM solo puede elegir entre candidatos reales "
+            "(nunca inventa páginas); si falla cae a heurística determinista."
+        ),
+    )
+    KNOWLEDGE_LOCATE_MODEL: str = Field(
+        default="",
+        description="Modelo para locate (vacío = LITELLM_DEFAULT_MODEL / zent-default).",
+    )
     # -------------------------------------------------------------------------
     # Agent Runtime
     # -------------------------------------------------------------------------

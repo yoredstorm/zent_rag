@@ -113,6 +113,40 @@ rag_lazy_ingestion_latency = Histogram(
     buckets=(0.1, 0.25, 0.5, 1.0, 2.5, 4.0, 8.0, 15.0, 30.0),
 )
 
+# Knowledge V2 (Phase B+): parseo de documentos estructurados
+knowledge_parse_total = Counter(
+    "knowledge_parse_total",
+    "Documentos parseados por Knowledge V2",
+    labelnames=["organization_id", "format", "outcome"],
+)
+
+knowledge_parse_latency = Histogram(
+    "knowledge_parse_latency_seconds",
+    "Latencia de parseo estructurado (Knowledge V2)",
+    labelnames=["organization_id", "format"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
+)
+
+# Phase F: retrieval V2 en sombra (comparar contra V1 sin cambiar la respuesta)
+knowledge_shadow_retrievals_total = Counter(
+    "knowledge_shadow_retrievals_total",
+    "Retrievals V2 en sombra ejecutados (orchestrator)",
+    labelnames=["organization_id", "intent"],
+)
+
+knowledge_shadow_overlap = Gauge(
+    "knowledge_shadow_overlap",
+    "Overlap de content_hash V1 vs V2 en el top-k (último shadow)",
+    labelnames=["organization_id"],
+)
+
+knowledge_shadow_latency = Histogram(
+    "knowledge_shadow_latency_seconds",
+    "Latencia del retrieval V2 en sombra",
+    labelnames=["organization_id"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+)
+
 # -----------------------------------------------------------------------------
 # Zent Intelligence Layer — Answerability Engine (PHASE 23)
 # Baja cardinalidad: organization_id (+ reason = 10 estados formales).

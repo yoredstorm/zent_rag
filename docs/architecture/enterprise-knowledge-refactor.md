@@ -568,13 +568,111 @@ All of:
 | File | Responsibility |
 |---|---|
 | `docs/architecture/enterprise-knowledge-refactor.md` | This ADR (primary artifact) |
-| `src/core/domain/knowledge_v2.py` | `StructuredDocument`, `StructuredBlock`, `KnowledgeCorpus` — pure domain, no I/O |
+| `src/core/domain/knowledge_v2.py` | `StructuredDocument` (+ pages/sections/tables/figures/summary tree), `StructuredBlock`, `DocumentChunk`, `KnowledgeEntity`/`Fact`/`Relationship`, multi-level summaries, `KnowledgeCorpus` — pure domain, no I/O |
 | `src/knowledge/v2/__init__.py` | Re-export domain types; **not** wired into the engine |
 | `tests/test_knowledge_v2_domain.py` | Flag default + provenance / corpus invariants (no mocks of prod services) |
 
 ### 8.4 FILES TO DEPRECATE (Phase A)
 
 **None.** Deprecation is documented in §6 only. Do not delete Hub, Documents page, or catalog readiness.
+
+### 8.3a Phase A extension (A2) — full document tree contracts
+
+The initial Phase A slice shipped `StructuredDocument` (blocks only) + `KnowledgeCorpus`. The A2 slice extends the **same inert module** (`src/core/domain/knowledge_v2.py`) with the brief §3 document model. Nothing new is persisted (still **no Alembic**, head remains `097`) and nothing is wired into V1 ingestion, APIs, or the portal.
+
+New contracts (all `frozen` + `kw_only`, all carrying `provenance`):
+
+| Type | Role | Key invariants |
+|---|---|---|
+| `DocumentPage` | One page; keeps reading order via `block_ids` | `page_number >= 1`, unique across the document |
+| `DocumentSection` | Tree node with stable `section_path` (citation locator, e.g. `("5","5.2")`) | non-empty path; `parent_id != self`; single root; no orphan parents |
+| `DocumentTable` / `DocumentFigure` | Lossless tables/figures (not flattened to text) | page >= 1; owned document |
+| `DocumentChunk` | Retrieval unit with parent/section/page + `chunk_type` (brief §8) | non-empty content; `page_start <= page_end`; valid `CharRange` |
+| `KnowledgeEntity` / `KnowledgeFact` / `KnowledgeRelationship` | Semantic layer (brief §3, §19) | provenance law; confidence in [0,1]; **relationships never cross `organization_id`** (tenant invariant) |
+| `SectionSummary` / `DocumentSummary` / `KnowledgeEvidence` | Multi-level summarization (§7) + grounding locators | summaries default `INFERRED`; every semantic object carries evidence |
+
+Shared law enforced at construction (`_assert_approval_law`): **a knowledge object may only be `APPROVED` when its provenance is `APPROVED`** — human review is the only promotion path. `StructuredDocument.check_consistency()` is the explicit full-tree validation (unknown block refs, mismatched `document_id`, orphan parents / multiple roots) that Phase B parsers will call before persisting; construction stays permissive so parsers can assemble incrementally.
+
+**Compatibility:** `StructuredDocument` grew **additively** (new optional fields: `pages`, `sections`, `tables`, `figures`, `summary`, `document_type`); blocks-only callers and the original 7 Phase A tests pass unchanged.
+
+### 8.5a Phase B slice 1 — structured parsing + parallel persistence (shipped 2026-09-11)
+
+Fase B tajada 1 en producción **paralela** (flag `RAG_KNOWLEDGE_V2_ENABLED` sigue `false`; sin cambio en V1 ni en la API/portal):
+
+| Pieza | Archivo | Rol |
+|---|---|---|
+| Parsers V2 | `src/knowledge/structure/` (base, text_parser, pdf_parser) | bytes → árbol `StructuredDocument` con páginas/bloques+bbox/headings/tablas/secciones. PDF via pdfplumber (ciudadano de primera clase: reading order top→bottom, left→right, tablas con `find_tables`, bbox). Markdown/TXT via heurística de headings + tablas `\|` + árbol de secciones |
+| Registro | `structure/__init__.py` | `pdf`, `txt`, `md`, `markdown`. DOCX/HTML llegan en la tajada 2 de Phase B |
+| Port | `src/core/ports/structured.py` | `StructuredDocumentRepository` (upsert/get/list/delete scoped por org) |
+| Postgres | `src/infrastructure/postgres/structured_documents.py` | Upsert idempotente (replace por `organization_id+source_id+external_id`), árbol en `structured_blocks` con `node_type` block/page/section/table/figure |
+| Migración | `098_structured_documents.py` | `structured_documents` + `structured_blocks` (org FK + workspace/source + JSONB) |
+| Record | `src/knowledge/connectors/base.py` + `file_source.py` | `raw_data` + `format` opcionales (backward compatible); el conector file los puebla |
+| Engine hook | `src/knowledge/engine/service.py` | `structured_doc_repo` opcional (`None` = motor idéntico a V1). Si está presente y el record trae bytes, parsea → `check_consistency()` → persiste; errores solo `warn` (`v2_failed`), nunca rompen V1 |
+| Wiring | `src/api/deps.py` + `pyproject.toml` | Repo inyectado solo con flag on; `pdfplumber>=0.11.0` añadido a prod deps |
+| Tests | `test_structure_parsers.py`, `test_knowledge_v2_ingestion.py`, `test_structured_documents_repo.py` | Parsers (MD/TXT/PDF, bbox, reading order), hook V2 paralelo (V1 sigue indexando), roundtrip + aislamiento cross-tenant del repo |
+
+**Reglas del slice:** V1 sigue siendo el único camino productivo de lectura; V2 solo escribe estructura cuando el flag está activo; ningún cambio en tenant middleware, ACL, Qdrant filters o portal e2e.
+
+### 8.5b Phase B slice 2 + Phase C slice 1 (shipped 2026-09-11)
+
+**Phase B slice 2 — DOCX + HTML + observabilidad.** `src/knowledge/structure/docx_parser.py` (python-docx; body en orden real, headings por estilo, tablas, title) y `html_parser.py` (BeautifulSoup; headings h1–h6 → secciones, tablas, listas, `img` → figures, `lang` + `<title>`). Registrados `docx`/`html`/`htm`; `python-docx>=1.1.0` en prod deps. Métricas Prometheus `knowledge_parse_total` (outcome: parse_error/persist_error/ok) + `knowledge_parse_latency_seconds` registradas en el hook del engine (span `knowledge.parse`).
+
+**Phase C slice 1 — chunking jerárquico (document_structure + parent_child).** `src/knowledge/structure/chunker.py`:
+- `assign_blocks_to_sections(...)`: atribuye bloques de cuerpo a la sección activa (in-order) — los parsers anclan solo el heading.
+- `chunk_structured_document(...)`: chunk padre (`ChunkType.DOCUMENT_STRUCTURE`, `section_id`) por sección hoja; hijos (`ChunkType.PARENT_CHILD`) por presupuesto de caracteres con `parent_id`; bloques fuera de secciones → root implícito; `page_start/page_end` desde secciones/páginas; `char_range` recomputado; `chunk_index` secuencial. Puro, sin LLM.
+
+Aún **pendiente** en C (slices siguientes): `DocumentChunk` → embeddings + Qdrant payload (corpus/section/heading metadata, mismo collection + ACL), `SectionSummary`/`DocumentSummary`, y punto V1 de override en retrieval (Phase D/F).
+
+**Phase C slice 2 — chunks V2 → Qdrant (dual-write aditivo).** En el hook del engine, tras persistir el `StructuredDocument`, se corre `chunk_structured_document` y los **child chunks** se embeben y upsertan a la MISMA colección `rag_documents` con payload estructural: `document_id`, `section_id`, `parent_id`, `page_start/page_end`, `chunk_type`, `chunking_strategy="document_structure+parent_child"`, `v2_chunk=true` + `organization_id`/`workspace_id`/`knowledge_base_id` (contrato ACL pre-LLM intacto). IDs de chunk V2 con namespace `_V2_CHUNK_NS` (nunca colisionan con los chunks V1). Fallos = `warn` (`v2_failed`), nunca rompen el camino V1. Retrieval sigue V1-only hasta Phase D.
+
+**Pendiente en C:** summaries multi-nivel (LLM INFERRED) y `SectionSummary`/`DocumentSummary` persistidos; segmentación de payload `content_dense/summary_dense/sparse` (Phase E).
+
+**Phase C slice 3 — resúmenes multi-nivel (shadow).** `src/knowledge/summarize/service.py` (`DocumentSummarizer`, inyecta `LLMProvider` vía LiteLLM/Novita): genera `SectionSummary` por sección + `DocumentSummary`; **siempre `INFERRED`**; JSON estricto con fallback **extractivo determinista** (primeras frases + topics=headings, `mode="extractive"`) cuando el LLM falla. Config: `RAG_KNOWLEDGE_SUMMARY_MODE=off|shadow` (default `off`) + `RAG_KNOWLEDGE_SUMMARY_MODEL`. El engine acepta un `summarizer` inyectable (duck-typed, sin acoplar el módulo) y en mode **shadow** calcula y **no persiste** (calibración; rollout ASSISTED/ACTIVE en Phase E con la capa de persistencia).
+
+**Phase D slice 1 — StructuredRetriever + AssembledContext.** `src/rag/retrieval/structured.py`: retrieval sobre chunks V2 (`filters={"metadata.v2_chunk":"true"}`, payload estructural **anidado en `metadata`** — el adapter expone `payload["metadata"]` como `RetrievalChunk.metadata`; `organization_id`/ACL los inyecta el adapter top-level, igual que V1) con dense + sparse opcional + fusión RRF + **rerank existente** + **parent expansion** (`get_documents` verificado por tenant; caveat ACL users/groups punto-a-punto se cierra en Phase E con backfill ACL) + dedupe + diversidad por documento + token budget → `AssembledContext(children, parents, context, deduped_count, latency)`. `V2RetrievalOptions(candidate_k=40, rerank_k=12, final_context_k=8, ...)` (brief §13). **Inerte**: no conectado al orchestrator (Phase F).
+
+**Phase D slice 2 — KnowledgeCorpus persistido.** Migración **`099_knowledge_corpora.py`**: tabla `knowledge_corpora` (org FK + `workspace_id` NOT NULL → `workspaces`, unique `(org, workspace, slug)`) + `kb_sources.corpus_id` y `knowledge_bases.corpus_id` nullable (FK ON DELETE SET NULL; **overlay** — V1 sigue funcionando con corpus_id NULL). `src/core/ports/knowledge_corpus.py` + `PostgresKnowledgeCorpusRepository` (create idempotente por slug, get/get_by_slug/list con filtro workspace, attach/detach source). Inerte: sin ruta API ni wiring en el engine; el default corpus por workspace y la anexión automática llegan con el flujo de fuentes (Phase E/F) y la UI (Phase G).
+
+**Phase F slice 1 — Query Intelligence + shadow retrieval (sin cambiar la respuesta visible).**
+- `src/rag/query_intelligence/intents.py`: clasificación determinista de intención (`FACTUAL/SUMMARY/COMPARISON/MULTI_DOCUMENT/TEMPORAL/EXPLANATION/LIST/DEFINITION/ANALYTICAL/NAVIGATION`, brief §11) con reglas ordenadas por prioridad (ajustado: `cambios` sólo como comparación con `(?<!por )qué cambió` para no robar `EXPLANATION`); `QueryPlan` estructurado (intent, search_queries, entities, date_filters, required_evidence=page/section_path; brief §12). Expansión LLM controlada: slice posterior (nunca cambia la intención ni ejecuta queries inventadas).
+- `RAG_KNOWLEDGE_V2_SHADOW=false` (nuevo): con `RAG_KNOWLEDGE_V2_ENABLED`, el orchestrator inyecta `StructuredRetriever` y tras la retrieval productiva ejecuta **V2 en sombra** (`trace_span knowledge.retrieve.v2`): loops sobre `candidate_k/rerank_k/final_context_k` V2, compara **overlap de content_hash V1 top-50 vs V2**, registra métricas `knowledge_shadow_retrievals_total/overlap/latency` (org + intent) y logs. **La respuesta visible sigue siendo 100% V1**; los fallos de shadow son `warn`. Paso previo al switch: calibrar con los registros y luego promover (Phase H).
+
+**Phase G slice 1 (backend) — Grounding / Citations / Claim Verification (brief §16–18).**
+- `src/rag/grounding/models.py`: `Citation` (source/document/name/page/section_path/block/chunk/excerpt/char_range/relevance + `locator` legible "Manual Operaciones.pdf · página 43 · Sección 5.2"), `GroundedClaim` con `ClaimStatus` (SUPPORTED/PARTIALLY_SUPPORTED/UNSUPPORTED/CONFLICTED), `GroundedAnswer` (answer/claims/citations/confidence/missing_information/conflicts/sources_used + `to_dict`).
+- `src/rag/grounding/citations.py`: `citation_from_chunk` (metadata estructural V2 → Citation), `build_citations` (dedupe + relevancia, límite configurable), `instrument_answer` (numera `[N]` + bloque Referencias; no toca el contenido).
+- `src/rag/grounding/service.py`: `ClaimVerifier` determinista (overlap de tokens por oración; thresholds config; **UNSUPPORTED nunca lleva citation**; LLM-judge en slice posterior) y `GroundingService.ground(answer, AssembledContext)` → `GroundedAnswer` con confidence/unsupported/missing/conflicts/sources.
+- **Inerte**: no conectado al orchestrator; el wiring productivo (respuesta grounded con claims/citas en la respuesta real) llega con el override de retriever + Source Viewer (Phase G UI/H).
+
+**Phase G slice 2 (backend) — override productivo (promote) + DocumentVersion (brief §40).**
+- `RAG_KNOWLEDGE_V2_PROMOTE=false` (nuevo): con V2 habilitado, `_vector_search_full` usa `StructuredRetriever` como **retrieval productivo** (contexto = children+parents con parent expansion, dedupe, diversidad, budget) vía `_run_v2_retrieve`; el resto del pipeline (prompt, `[Doc: N]`, answerability) no cambia. Con promote, el shadow no se duplica. Deps construye el retriever con `V2_ENABLED and (SHADOW or PROMOTE)`.
+- `DocumentVersion` + `DocumentChangeKind` (created/unchanged/updated/replaced): `upsert_document` ahora **detecta el cambio por content_hash** y retorna el change_kind; migración **`100_structured_document_versions`** registra por documento `(version, content_hash, change_kind, previous_version_id)` — base para la invalidación de embeddings/summaries/facts dependientes (change_kind != unchanged).
+- Inertes: nada promueve `INFERRED`; el promote está apagado por defecto y la invalidación dependiente se implementa en slices posteriores.
+
+**Operación (local, flags V2 ON):** `src/scripts/knowledge_v2_backfill.py` — `--dry-run` lista fuentes tipo `file` sin `structured_documents`; sin `--dry-run` encola jobs (`sync_source:file`) + wakeup Redis para que el worker re-procese con V2 y genere documentos estructurados + chunks `v2_chunk=true`. Los flags del runtime local viven en `.env` (gitignored); el default de código y `.env.example`/`docker-compose.yml` permanecen `false` (ADR: OFF hasta shadow metrics).
+
+**Docker (probando el stack):** `Dockerfile.api` pasó a instalar `pdfplumber` + `python-docx` (deps nuevas V2); `docker-compose.yml` expone los flags V2 en `x-common-env` con default `false`, interpolados desde el `.env` raíz (si `RAG_KNOWLEDGE_V2_ENABLED/PROMOTE/SHADOW=true` en `.env`, api + ingestion-worker corren V2). API corre `alembic upgrade head` al arrancar → aplica `098`–`101`. Portal: `npm ci` con lockfile (incluye `pdfjs-dist`) + build; nginx sirve el workspace UI. `docker compose up --build` para probar.
+
+**Phase G slice 4 — Studio MVP funcional (sin fake).** `src/platform/studio/service.py` + `POST /knowledge/workspaces/{id}/studio` (gated: 503 sin `RAG_KNOWLEDGE_V2_ENABLED`; corpus verificado por tenant/workspace): artefactos construidos de datos REALES en Postgres — `executive_summary` (estructural: título/tipo/páginas/secciones/blocks, observed), `key_facts` (filas de `structured_blocks` node_type=table + figures, observed), `timeline` (fechas ISO/cortas extraídas de bloques, observed), `faq` (preguntas sugeridas planteadas sobre títulos reales, **INFERRED**), `risks` (candidatos por señales léxicas riesgo/penalización/incumplimiento, **INFERRED**). Todo item con `document_id`/`page`/`kind`/`source` (provenance). Panel Studio del portal ahora dispara artefactos on-demand y renderiza sin inventar (Comparison/Knowledge Map siguen "próximamente").
+
+**Phase G slice 5 — Cost control + suggested questions reales (§41, §35).**
+- **Costos:** migración `101_knowledge_usage` (org/workspace/corpus/source + categoría embedding|llm|rerank|storage|query + tokens + cost_usd). `src/knowledge/cost/tracker.py` (`KnowledgeUsageTracker`): tokens de embedding **estimados** desde token_count (documentado), LLM reales; registrado en el engine (por batch) y en chat (tokens del provider + query con latencia) — el tracking nunca rompe el flujo. Resumen agregado por org/corpus (`tracker.summary`).
+- **Fingerprinting (§41):** con `change_kind=unchanged` (mismo content_hash) el engine **SKIPEA el re-embed** de chunks V2 y los resúmenes shadow (mismo contenido → mismo resultado; 0 tokens desperdiciados) y lo registra en logs.
+- **Suggested questions (§35):** `src/rag/suggestions/service.py` (`QuestionSuggestionService`) genera preguntas SOLO con soporte real (reusa Studio como fuente de verdad): obligaciones del título ↔ list, fechas críticas si hay fechas, riesgos si hay cues, contradicciones si hay ≥2 docs, cifras de tablas si hay tablas; cada una con `intent` + `basis` (conteos reales). `GET /knowledge/workspaces/{id}/suggestions` (503 sin V2). El portal carga las sugerencias reales en el estado vacío del chat (si no hay datos → hint honesto, sin preguntas estáticas inventadas).
+
+**Phase G slice 6 — PDF highlight real `[1]` → página (con LLM assist).**
+- `src/knowledge/locate/service.py` (`CitationLocator`): ancla un snippet (excerpt de la cita) a la **página + bbox real** del bloque usando `structured_blocks` (node_type=block, bbox JSONB). Determinista por overlap de tokens (aggregate por página + señal suave de `page_hint`); **LLM opcional** (`RAG_KNOWLEDGE_LOCATE_LLM_ENABLED=false`): solo elige entre las candidatas reales (valida `page ∈ candidatas`, nunca inventa; fallback heurístico siempre).
+- API: `POST /knowledge/workspaces/{id}/sources/{sid}/locate` (page/confidence/method/bbox/excerpt/candidates) y `GET .../file` (FileResponse del archivo original, scoped por org/workspace + RBAC, path-traversal guardado).
+- Parser PDF: decoder `(cid:NNN)` → latin-1 (mejora el texto extraído, p. ej. `ó`).
+- Portal: `pdfjs-dist` (v6) + `components/PdfViewer.tsx` — render de la página real vía canvas (fetch authed con bearer, escala 1.6×DPR), paginación, banner de evidencia y **overlay del bbox** escalado sobre la página; `cite([1])` abre el PDF en la página objetivo + resuelve bbox vía locate (llamada async). Fuentes no-PDF mantienen el viewer de documentos.
+
+**Phase H — judge LLM opcional + readiness/cutover.**
+- **Judge LLM (eval, opcional):** `src/rag/evaluation/judge_v2.py` (`make_llm_judge`, `JudgeVerdict`, `judge_groundedness`): el evaluador determinista sigue siendo la base; el judge es señal ADICIONAL. Verdicts validados contra el enum `ClaimStatus` (normalización UPPERCASE; lowercase del LLM se acepta), JSON inválido/límites → `None` (fallback determinista). `V2Evaluator.evaluate_answers(..., judge=...)` y `AnswerEvaluation.judge_groundedness` (None si no hay judge; presente en `to_dict`).
+- **Cutover (Phase H):** `src/knowledge/cutover/readiness.py` (`assess_v2_readiness`) → flags efectivos + conteos reales scoped (documentos/bloques/corpora/fuentes con docs) + `ready` (V2 on + chunks + corpus + fuente) + mensaje de gate (recuerda validar shadow metrics antes del switch en prod). `src/scripts/knowledge_v2_status.py` reporta por org (o todas). Deprecaciones siguen documentadas en §6 (Hub → shim en fase final; `[Doc:N]` → citas V2; Markdown canónico → derivado; 4-pilares → workspace G); nada se elimina aún.
+
+**Phase G slice 3 — Enterprise Evaluation + Knowledge Workspaces UI (backend).**
+- **Evaluación (§27):** `src/rag/evaluation/v2_metrics.py` (Recall@K, MRR, nDCG@K, precision/context precision, reranker lift, groundedness, citation precision/recall, abstention correctness, conflict detection), `golden_v2.py` (GoldenSet JSON/YAML + `build_corpus_golden_set`) y `v2_evaluator.py` (`V2Evaluator.evaluate_retrieval`/`evaluate_answers`/`evaluate_retrieval_with_rerank`, determinista, judge LLM opcional posterior). Separación Retrieval / Answer / Knowledge (score V1).
+- **Workspaces API (UI backend):** `src/api/routes/knowledge_workspaces.py` → `GET/POST /knowledge/workspaces`, `GET /knowledge/workspaces/{id}` (corpus + sources), `GET .../sources/{source_id}/documents` (documentos estructurados), `POST .../chat` (**grounded**: StructuredRetriever + GroundingService + LLM; 503 honesto si retina V2 apagada; source_ids: filtro `metadata.source_id` cuando se selecciona 1). `get_corpus_repo` en deps + router registrado en main.py.
+- **Portal (Phase G UI slice 1):** `/knowledge/workspaces` (home con cards: sources/knowledge/conflictos + crear) y `/knowledge/workspaces/:corpusId` (layout 3 paneles — LEFT Sources con checkbox/search/filtro tipo; CENTER Chat con citas `[1]` clickeables → Viewer que resalta la evidencia + docs por fuente; RIGHT Studio placeholder honesto "próximamente"). Rutas en App.tsx + enlace en Overview. NO se toca el rail 4-pilares ni e2e (nav test intacto).
 
 ### 8.5 DATABASE MIGRATIONS (Phase A)
 
@@ -584,8 +682,8 @@ Later (not this PR):
 
 | Phase | Likely tables / columns |
 |---|---|
-| B | `structured_documents`, `structured_blocks` (org + workspace + source + content_hash) |
-| D | `knowledge_corpora`; `kb_sources.corpus_id`; `knowledge_bases.corpus_id` |
+| B | ~~`structured_documents`, `structured_blocks`~~ → **shipped in `098_structured_documents.py`** (node_type: block/page/section/table/figure; org+workspace+source scoped) |
+| D/G | ~~`knowledge_corpora`; `kb_sources.corpus_id`; `knowledge_bases.corpus_id`~~ → **shipped in `099_knowledge_corpora.py`** (workspace-scoped, org FK; overlay `corpus_id` nullable). **Versioning → `100_structured_document_versions.py`** (version/change_kind/hash/previous) |
 | E | Qdrant payload backfill (script, like `migrate_qdrant_hybrid.py`) — not a new collection |
 | H | Drop or archive `knowledge_sources` / Hub `documents` after migrate |
 
@@ -622,13 +720,15 @@ Aligned to SOURCE→…→CONTINUOUS LEARNING. Each phase is a PR train, not a r
 | Phase | Name | Pipeline slice | What ships | What does **not** |
 |---|---|---|---|---|
 | **A** | Architecture + contracts | — | This ADR (incl. Phase G product lock); optional domain types; `RAG_KNOWLEDGE_V2_ENABLED=false` | Ingestion/API/portal/e2e behavior; isolation changes |
-| **B** | Structured sources | SOURCE → STRUCTURED | Parallel normalizers → `StructuredDocument`; persist when flag on; V1 Markdown still default | Cutover; all formats at once |
+| **B** | Structured sources | SOURCE → STRUCTURED | **Shipped**: parsers PDF + Markdown/TXT (slice 1) y DOCX + HTML (slice 2) → `StructuredDocument`; `098` tables; engine hook paralelo + métricas `knowledge.parse` (flag-off) | Cutover; all formats at once |
+| **C** | Semantic unification / index | STRUCTURED → SEMANTIC | **Shipped**: chunker jerárquico (parent/child + secciones) + dual-write child chunks → Qdrant (payload estructural en `metadata`, ACL intacta) + resúmenes multi-nivel shadow (INFERRED, fallback extractivo) | New LLM vendor |
+| **D** | Org Knowledge + corpus | SEMANTIC → ORG KNOWLEDGE | **Shipped (brief Phase D — Retrieval V2)**: `StructuredRetriever` + `AssembledContext` (v2 filter, RRF, rerank, parent expansion, diversidad, budget) — inerte. Siguientes: `KnowledgeCorpus` persistido + workspace default corpus + KB=profile; retriever → orchestrator (Phase F) | Force-migrate all orgs |
 | **C** | Semantic unification | STRUCTURED → SEMANTIC | File facts + SQL inference share provenance APIs; insights feed Review Queue / KLE | New LLM vendor |
 | **D** | Org Knowledge + corpus | SEMANTIC → ORG KNOWLEDGE | `KnowledgeCorpus` persisted; workspace default corpus; attach sources; KB = profile | Force-migrate all orgs |
 | **E** | Multi-level index | ORG KNOWLEDGE → INDEX | Additive Qdrant payload; section/entity points; same collection + ACL | Second vector DB |
-| **F** | Retrieval + reasoning | INDEX → RETRIEVAL → REASONING | Hybrid + IntelligenceEngine consume locators / corpus filter; shadow compare | Change default answers or portal chrome |
-| **G** | Grounded workspace UX | REASONING → ANSWER → CITATIONS | See §2.2–2.3: home = workspaces (coverage/conflicts); LEFT Sources · CENTER Chat\|Viewer · RIGHT Studio; tabs Chat/Sources/Studio + Advanced; `[1]`→highlight; real learning events; Studio MVP (Summary/FAQ/Timeline/Comparison/Key Facts/Risks/Map); suggested questions; source coverage + Open/Relearn. **Then** update portal e2e ACs | Pixel-clone NotebookLM; audio/video studio; auto-APPROVED artifacts |
-| **H** | Continuous learning + cutover | CITATIONS → LEARNING | Unify Score + FASE 25 + KLE events; Hub shim; flag default true for **new** orgs; deprecations | Neo4j; drop V1 overnight |
+| **F** | Retrieval + reasoning | INDEX → RETRIEVAL → REASONING | **Shipped**: Query Intelligence + shadow retrieval V2 en el orchestrator (`RAG_KNOWLEDGE_V2_SHADOW`, overlap/latencia, respuesta=100% V1) + **Grounding backend** (`GroundedAnswer`/`Citation`/`ClaimStatus`, verifier determinista, instrumentación `[N]`). Siguientes: override productivo del retriever (flag promote) | Change default answers |
+| **G** | Grounded workspace UX | REASONING → ANSWER → CITATIONS | **Slice 1–3 shipped (backend + portal slice 1)**: grounding (`GroundedAnswer`/`Citation`/verifier) + promote (`RAG_KNOWLEDGE_V2_PROMOTE`) + versioning (`DocumentVersion`, `100`) + enterprise eval (`v2_*`) + Workspaces UI (`/knowledge/workspaces*`: source-first 3 panes, citas `[1]` → viewer, chat grounded flag-gated). Pendientes: colaboración `[1]` → PDF highlight real, Studio MVP funcional, suggested questions | Auto-APPROVED artifacts |
+| **H** | Continuous learning + cutover | CITATIONS → LEARNING | **Parcial**: judge LLM opcional (eval) + readiness/cutover (`assess_v2_readiness` + status script) + `101` cost registry. Pendientes: unificar Score + FASE 25 + KLE events, Hub shim, flag default on para orgs nuevas, deprecaciones §6 | Neo4j; drop V1 overnight |
 
 **Phase A exit criteria (this PR) — Tester cares about these:**
 

@@ -57,5 +57,11 @@ class FileSourceConnector(SourceConnector):
         yield Record(
             external_id=self.config.get("object_key", path.name),
             content=markdown,
-            metadata={"filename": path.name, "format": extension.lstrip(".")},
+            metadata={
+                "filename": path.name,
+                "format": extension.lstrip("."),
+                "size_bytes": path.stat().st_size,
+            },
+            raw_data=data,
+            format=extension.lstrip("."),
         )
