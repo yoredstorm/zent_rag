@@ -4,7 +4,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetAuthExpiredThrottle } from "../../api";
 import { AuthProvider } from "../../auth";
 import { ToastProvider } from "../../Toast";
 import KnowledgeLearningPage from "./Learning";
@@ -273,6 +274,11 @@ async function renderLearning(options: Parameters<typeof setupFetch>[0] = {}) {
   );
   return { user, ...harness };
 }
+
+beforeEach(() => {
+  // Determinismo: el dedupe de auth-expired es por token; cada test arranca limpio.
+  resetAuthExpiredThrottle();
+});
 
 afterEach(() => {
   vi.unstubAllGlobals();

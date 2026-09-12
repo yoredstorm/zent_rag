@@ -75,6 +75,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           organizationId: current.organizationId,
         });
         if (cancelled) return;
+        // Si un 401 forzó logout mientras este fetch estaba en vuelo, NO
+        // rehidratar la sesión (evita "revivir" una sesión revocada).
+        if (!loadSession()) return;
         const next: Session = {
           token: current.token,
           organizationId: me.organization_id,
