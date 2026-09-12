@@ -274,6 +274,34 @@ def get_claim_ledger_repo():
     return _claim_ledger_repo
 
 
+_cognitive_repo: object | None = None
+
+
+def get_cognitive_repo():
+    """Repo del Cognitive OS (Phase 3) — runs/tasks/mensajes, org-scoped."""
+    global _cognitive_repo
+    if _cognitive_repo is None:
+        from src.infrastructure.postgres.cognitive import (
+            PostgresCognitiveRepository,
+        )
+
+        _cognitive_repo = PostgresCognitiveRepository()
+    return _cognitive_repo
+
+
+_cognitive_service: object | None = None
+
+
+def get_cognitive_service():
+    """Servicio de planificación cognitiva (Phase 3) — sin ejecución aún."""
+    global _cognitive_service
+    if _cognitive_service is None:
+        from src.platform.cognitive.service import CognitivePlanningService
+
+        _cognitive_service = CognitivePlanningService(get_cognitive_repo())
+    return _cognitive_service
+
+
 def get_knowledge_engine():
     """Inyecta el motor de ingestion de la Knowledge Platform.
 

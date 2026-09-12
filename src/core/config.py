@@ -568,6 +568,17 @@ class Settings(BaseSettings):
         description="Modelo para locate (vacío = LITELLM_DEFAULT_MODEL / zent-default).",
     )
     # -------------------------------------------------------------------------
+    # Cognitive OS (Phase 3)
+    # -------------------------------------------------------------------------
+    COGNITIVE_OS_ENABLED: str = Field(
+        default="off",
+        description=(
+            "Cutover del Cognitive OS: off | shadow | limited | active. En 'off' "
+            "los endpoints /api/v1/cognitive/* responden 503. Phase 3 solo "
+            "planifica (task graph + especialistas + presupuesto); sin ejecución."
+        ),
+    )
+    # -------------------------------------------------------------------------
     # Agent Runtime
     # -------------------------------------------------------------------------
     RAG_AGENT_MODEL: str = Field(default="")

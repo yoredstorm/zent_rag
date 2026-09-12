@@ -644,6 +644,10 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
 
     new_app.include_router(knowledge_workspaces_router)
 
+    from src.api.routes.cognitive import router as cognitive_router
+
+    new_app.include_router(cognitive_router)
+
     # -------------------------------------------------------------------------
     # MCP Server — montado como sub-app: TODOS los middleware de la API
     # (Trace, Tenant, RateLimit, Idempotency, BodyLimit) aplican antes de
