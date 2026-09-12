@@ -44,8 +44,8 @@ _MESSAGE_COLUMNS = (
 
 _EXECUTION_COLUMNS = (
     "id, run_id, task_id, organization_id, agent_id, status, latency_ms, "
-    "llm_calls, tokens, cost_usd, error, result, started_at, finished_at, "
-    "created_at"
+    "llm_calls, tokens, cost_usd, error, failure_mode, result, started_at, "
+    "finished_at, created_at"
 )
 
 
@@ -320,8 +320,8 @@ class PostgresCognitiveRepository(CognitiveRepository):
                     VALUES (
                         :id, :run_id, :task_id, :organization_id, :agent_id,
                         :status, :latency_ms, :llm_calls, :tokens, :cost_usd,
-                        :error, CAST(:result AS jsonb), :started_at,
-                        :finished_at, now()
+                        :error, :failure_mode, CAST(:result AS jsonb),
+                        :started_at, :finished_at, now()
                     )
                     ON CONFLICT (id) DO UPDATE SET
                         status = EXCLUDED.status,
@@ -330,6 +330,7 @@ class PostgresCognitiveRepository(CognitiveRepository):
                         tokens = EXCLUDED.tokens,
                         cost_usd = EXCLUDED.cost_usd,
                         error = EXCLUDED.error,
+                        failure_mode = EXCLUDED.failure_mode,
                         result = EXCLUDED.result,
                         finished_at = EXCLUDED.finished_at
                     RETURNING {_EXECUTION_COLUMNS}
@@ -347,6 +348,7 @@ class PostgresCognitiveRepository(CognitiveRepository):
                     "tokens": execution.tokens,
                     "cost_usd": execution.cost_usd,
                     "error": execution.error,
+                    "failure_mode": execution.failure_mode,
                     "result": (
                         json.dumps(execution.result, default=str)
                         if execution.result
@@ -427,6 +429,7 @@ def _row_to_execution(row) -> AgentExecution:
         tokens=int(row.tokens or 0),
         cost_usd=float(row.cost_usd or 0.0),
         error=row.error,
+        failure_mode=row.failure_mode,
         result=row.result if isinstance(row.result, dict) else {},
     )
 

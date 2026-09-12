@@ -34,6 +34,7 @@ from src.core.domain.cognitive import (
     AgentMessage,
     AgentMessageType,
     CognitiveBudget,
+    CognitiveFailureMode,
     CognitiveRunStatus,
     CognitiveScope,
     CognitiveTaskStatus,
@@ -106,6 +107,7 @@ class _RunState:
     conflicts: list[dict] = field(default_factory=list)
     critique: dict | None = None
     debate: list[dict] = field(default_factory=list)
+    injection_suspected: int = 0
     answer: str | None = None
 
 
@@ -258,12 +260,14 @@ class CognitiveExecutor:
                     timeout=max(1.0, min(self._task_timeout, remaining)),
                 )
             except Exception as exc:  # noqa: BLE001 - el runner decide
+                failure_mode = _classify_failure(exc)
                 execution = replace(
                     execution,
                     status=ExecutionStatus.FAILED,
                     finished_at=_utcnow(),
                     latency_ms=(time.perf_counter() - task_started) * 1000,
                     error=str(exc)[:500],
+                    failure_mode=failure_mode.value,
                 )
                 await self._repo.save_execution(organization_id, execution)
                 await self._repo.update_task_status(
@@ -325,6 +329,10 @@ class CognitiveExecutor:
         }
         if failure_reason:
             plan_patch["error"] = failure_reason
+        if failure_reason.startswith("budget"):
+            plan_patch["failure_mode"] = CognitiveFailureMode.BUDGET_LIMIT.value
+        elif failure_reason:
+            plan_patch["failure_mode"] = CognitiveFailureMode.UNKNOWN.value
         if state.conflicts:
             plan_patch["conflicts"] = state.conflicts
         if state.critique is not None:
@@ -512,10 +520,15 @@ class CognitiveExecutor:
         if self._deps.llm is None:
             return SpecialistResult(skipped=True, skip_reason="llm not configured")
         evidence_items = list(state.evidence.values())[:12]
-        context_block = "\n".join(
-            f"[{index}] {record.excerpt}"
-            for index, record in enumerate(evidence_items)
-        ) or "(no evidence retrieved)"
+        context_parts: list[str] = []
+        injected = 0
+        for index, record in enumerate(evidence_items):
+            safe_excerpt, suspicious = _sanitize_excerpt(record.excerpt)
+            if suspicious:
+                injected += 1
+            context_parts.append(f"[{index}] {safe_excerpt}")
+        state.injection_suspected += injected
+        context_block = "\n".join(context_parts) or "(no evidence retrieved)"
         response = await self._deps.llm.generate(
             _ANALYST_PROMPT.format(context=context_block),
             system_prompt=_ANALYST_SYSTEM,
@@ -583,7 +596,7 @@ class CognitiveExecutor:
             messages=(message,),
             llm_calls=1,
             tokens=int(response.total_tokens or 0),
-            result={"claims": len(claim_ids)},
+            result={"claims": len(claim_ids), "injection_suspected": injected},
         )
 
     async def _handle_synthesizer(
@@ -975,7 +988,35 @@ def _build_metrics(
         "cost_usd": ledger["cost_usd"],
         "latency_ms": (time.perf_counter() - started) * 1000,
         "has_answer": bool(state.answer),
+        "injection_suspected": state.injection_suspected,
     }
+
+
+_SANITIZED_EXCERPT = "[excerpt omitido: posible prompt injection]"
+
+
+def _sanitize_excerpt(excerpt: str) -> tuple[str, bool]:
+    """Neutraliza excerpt con instrucciones embebidas (brief §60).
+
+    Los documentos son datos, nunca instrucciones. Si el heurístico de
+    inyección dispara, el contenido se reemplaza antes de llegar al LLM."""
+    from src.agents.policies.authorization import has_injection_indicators
+
+    text = excerpt or ""
+    if has_injection_indicators(text):
+        return _SANITIZED_EXCERPT, True
+    return text, False
+
+
+def _classify_failure(exc: BaseException) -> CognitiveFailureMode:
+    """Taxonomía explícita de fallos (brief §52)."""
+    if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
+        return CognitiveFailureMode.AGENT_TIMEOUT
+    if isinstance(exc, (ConnectionError, OSError)):
+        return CognitiveFailureMode.MODEL_FAILURE
+    if isinstance(exc, (ValueError, KeyError, TypeError)):
+        return CognitiveFailureMode.INVALID_OUTPUT
+    return CognitiveFailureMode.UNKNOWN
 
 
 def _budget_exceeded(ledger: dict, budget: CognitiveBudget) -> str | None:

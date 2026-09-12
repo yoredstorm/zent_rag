@@ -65,6 +65,19 @@ class ExecutionStatus(StrEnum):
     SKIPPED = "skipped"
 
 
+class CognitiveFailureMode(StrEnum):
+    """Taxonomía explícita de fallos del Cognitive OS (brief §52)."""
+
+    AGENT_TIMEOUT = "agent_timeout"
+    MODEL_FAILURE = "model_failure"
+    TOOL_FAILURE = "tool_failure"
+    BUDGET_LIMIT = "budget_limit"
+    INVALID_OUTPUT = "invalid_output"
+    PERMISSION_FAILURE = "permission_failure"
+    RETRIEVAL_EMPTY = "retrieval_empty"
+    UNKNOWN = "unknown"
+
+
 class AgentMessageType(StrEnum):
     """Brief §25: structured agent-to-agent messages (no free chat)."""
 
@@ -451,6 +464,7 @@ class AgentExecution:
     tokens: int = 0
     cost_usd: float = 0.0
     error: str | None = None
+    failure_mode: str | None = None
     result: dict = field(default_factory=dict)
 
     def __post_init__(self) -> None:
