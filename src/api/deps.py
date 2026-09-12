@@ -327,6 +327,62 @@ def get_cognitive_executor():
     return _cognitive_executor
 
 
+_curator_repo: object | None = None
+
+
+def get_curator_repo():
+    """Repo de sugerencias del Knowledge Curator (Phase 7) — org-scoped."""
+    global _curator_repo
+    if _curator_repo is None:
+        from src.infrastructure.postgres.curator import PostgresCuratorRepository
+
+        _curator_repo = PostgresCuratorRepository()
+    return _curator_repo
+
+
+_knowledge_curator: object | None = None
+
+
+def get_knowledge_curator():
+    """Knowledge Curator (Phase 7): observaciones → sugerencias PROPOSED."""
+    global _knowledge_curator
+    if _knowledge_curator is None:
+        from src.platform.cognitive.curator import KnowledgeCurator
+
+        _knowledge_curator = KnowledgeCurator(
+            get_curator_repo(), get_cognitive_repo()
+        )
+    return _knowledge_curator
+
+
+_shadow_repo: object | None = None
+
+
+def get_shadow_repo():
+    """Repo de comparaciones shadow (Phase 8) — org-scoped."""
+    global _shadow_repo
+    if _shadow_repo is None:
+        from src.infrastructure.postgres.shadow import PostgresShadowRepository
+
+        _shadow_repo = PostgresShadowRepository()
+    return _shadow_repo
+
+
+_shadow_evaluator: object | None = None
+
+
+def get_shadow_evaluator():
+    """Evaluador shadow baseline vs cognitive (Phase 8)."""
+    global _shadow_evaluator
+    if _shadow_evaluator is None:
+        from src.platform.cognitive.shadow import ShadowEvaluator
+
+        _shadow_evaluator = ShadowEvaluator(
+            get_shadow_repo(), get_cognitive_repo(), get_cognitive_executor()
+        )
+    return _shadow_evaluator
+
+
 def get_knowledge_engine():
     """Inyecta el motor de ingestion de la Knowledge Platform.
 

@@ -36,6 +36,31 @@ class CognitiveRunRequest(BaseModel):
     budget: CognitiveBudgetRequest | None = None
 
 
+class SuggestionDecisionRequest(BaseModel):
+    decision: str = Field(pattern="^(approve|reject)$")
+    reason: str = Field(default="", max_length=2000)
+
+
+class ShadowRunRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=4000)
+
+
+def _suggestion_to_dict(suggestion) -> dict:
+    return {
+        "id": str(suggestion.id),
+        "kind": suggestion.kind.value,
+        "status": suggestion.status.value,
+        "title": suggestion.title,
+        "reasoning": suggestion.reasoning,
+        "run_id": str(suggestion.run_id) if suggestion.run_id else None,
+        "claim_ids": [str(c) for c in suggestion.claim_ids],
+        "provenance": suggestion.provenance.value,
+        "confidence": suggestion.confidence,
+        "decided_by": str(suggestion.decided_by) if suggestion.decided_by else None,
+        "created_at": suggestion.created_at.isoformat(),
+    }
+
+
 def _require_cognitive_enabled() -> None:
     mode = str(get_settings().COGNITIVE_OS_ENABLED or "off").strip().lower()
     if mode not in _ENABLED_MODES:
@@ -145,6 +170,111 @@ async def execute_cognitive_run(run_id: UUID, request: Request) -> dict:
         )
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+@router.post(
+    "/runs/{run_id}/curate",
+    summary="Generar sugerencias gobernadas desde un run (fase 7)",
+)
+async def curate_cognitive_run(run_id: UUID, request: Request) -> dict:
+    _require_cognitive_enabled()
+    from src.api.deps import get_knowledge_curator
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "knowledge:write")
+    try:
+        suggestions = await get_knowledge_curator().propose_from_run(
+            ctx.organization_id, run_id, created_by=getattr(ctx, "user_id", None)
+        )
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {"suggestions": [_suggestion_to_dict(s) for s in suggestions]}
+
+
+@router.get("/suggestions", summary="Listar sugerencias gobernadas")
+async def list_suggestions(
+    request: Request,
+    status: str | None = None,
+    run_id: UUID | None = None,
+) -> dict:
+    _require_cognitive_enabled()
+    from src.api.deps import get_curator_repo
+    from src.core.domain.curator import SuggestionStatus
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "knowledge:read")
+    parsed_status = None
+    if status is not None:
+        try:
+            parsed_status = SuggestionStatus(status)
+        except ValueError as exc:
+            raise HTTPException(422, f"invalid suggestion status '{status}'") from exc
+    suggestions = await get_curator_repo().list(
+        ctx.organization_id, status=parsed_status, run_id=run_id
+    )
+    return {"suggestions": [_suggestion_to_dict(s) for s in suggestions]}
+
+
+@router.post(
+    "/suggestions/{suggestion_id}/decide",
+    summary="Aprobar/rechazar una sugerencia (revisión humana)",
+)
+async def decide_suggestion(
+    suggestion_id: UUID, body: SuggestionDecisionRequest, request: Request
+) -> dict:
+    _require_cognitive_enabled()
+    from src.api.deps import get_curator_repo
+    from src.core.domain.curator import SuggestionStatus
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "knowledge:write")
+    decided_by = getattr(ctx, "user_id", None)
+    if decided_by is None:
+        raise HTTPException(
+            409, "human reviewer required: authenticated user_id missing"
+        )
+    target = (
+        SuggestionStatus.APPROVED
+        if body.decision == "approve"
+        else SuggestionStatus.REJECTED
+    )
+    updated = await get_curator_repo().decide(
+        ctx.organization_id,
+        suggestion_id,
+        status=target,
+        decided_by=decided_by,
+        reason=body.reason,
+    )
+    if updated is None:
+        raise HTTPException(404, "Suggestion not found")
+    return {"suggestion": _suggestion_to_dict(updated)}
+
+
+@router.post(
+    "/shadow", status_code=201, summary="Comparar baseline vs cognitive (fase 8)"
+)
+async def run_shadow_comparison(body: ShadowRunRequest, request: Request) -> dict:
+    _require_cognitive_enabled()
+    from src.api.deps import get_shadow_evaluator
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "knowledge:write")
+    scope = await _resolve_scope(request, ctx)
+    comparison = await get_shadow_evaluator().evaluate(
+        organization_id=ctx.organization_id, query=body.query, scope=scope
+    )
+    return {"comparison": comparison.to_dict()}
+
+
+@router.get("/shadow", summary="Listar comparaciones shadow")
+async def list_shadow_comparisons(request: Request) -> dict:
+    _require_cognitive_enabled()
+    from src.api.deps import get_shadow_repo
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "knowledge:read")
+    comparisons = await get_shadow_repo().list(ctx.organization_id)
+    return {"comparisons": [c.to_dict() for c in comparisons]}
 
 
 @router.get("/runs/{run_id}", summary="Detalle de un cognitive run")
