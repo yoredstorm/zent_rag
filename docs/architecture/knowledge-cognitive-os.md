@@ -1,6 +1,6 @@
 # Zent Knowledge Cognitive OS — Architecture Audit & Canonical Knowledge Model (Phase 0 + Phase 1)
 
-> **Status:** Phase 0 audit + Phase 1 canonical model + Phase 2 evidence/claim ledger + P1 remediation + Phase 3 cognitive planning + Phase 4 first specialists + Phase 5 temporal/conflict intelligence — shipped (branch `feat/knowledge-cognitive-os`). Migrations 102–105; canonical/ledger/cognitive layers flag-gated or inert by default; retrieval/agent fixes are productive.
+> **Status:** Phase 0 audit + Phase 1 canonical model + Phase 2 evidence/claim ledger + P1 remediation + Phase 3 cognitive planning + Phase 4 first specialists + Phase 5 temporal/conflict intelligence + Phase 6 critique/bounded debate — shipped (branch `feat/knowledge-cognitive-os`). Migrations 102–105; canonical/ledger/cognitive layers flag-gated or inert by default; retrieval/agent fixes are productive.
 > **Date:** 2026-09-11
 > **Base:** `master` @ `1a42c20` (Knowledge Workspaces UX, grounding, Knowledge V2 slices A–H in production-flag `false`).
 > **Relation to prior ADR:** `docs/architecture/enterprise-knowledge-refactor.md` is the Knowledge Engine V2 program (SOURCE → STRUCTURED → SEMANTIC → INDEX → RETRIEVAL → GROUNDING). This document is the **Cognitive OS program** built on top of it (agents, evidence, claims, temporal/conflict intelligence, learning governance). Where this document and the code disagree, **the code wins**.
@@ -569,7 +569,32 @@ Also shipped as part of F2/F13 groundwork: V2 payload now carries `chunk_id` and
 
 **Not in this slice:** authority resolver wiring to catalog levels, policy/relationship specialists, semantic conflict similarity, conflict review UI (Review Queue), debate/challenge protocol (Phase 6).
 
-## 22. VERIFICATION PENDING
+## 22. PHASE 6 — CRITIQUE + BOUNDED DEBATE (slice 1, shipped)
+
+**Goal (brief §50):** PROPOSAL → CHALLENGE → RESPONSE + EVIDENCE CHECK → RESOLUTION, with a hard round cap and no free agent chat. The Critic never writes the answer.
+
+| Deliverable | File |
+|---|---|
+| Critique/debate domain | `src/core/domain/debate.py` |
+| Executor integration | `src/platform/cognitive/executor.py` |
+| Tests | `tests/test_cognitive_debate.py`, `tests/test_cognitive_execution.py` |
+
+**Critique (deterministic, no LLM):**
+- `build_critique()` flags concrete issues: `UNSUPPORTED_CLAIM`, `MISSING_EVIDENCE`, `WEAK_CITATION` (excerpt < 80 chars or retrieval score < 0.3), `TEMPORAL_ASSUMPTION` (historical claims), `UNRESOLVED_CONFLICT` (from the conflict detector). CONFLICTED claims are reported via the conflict issue, not re-diagnosed.
+- `CritiqueReport` persists in `run.plan.critique`; the Critic emits one `CHALLENGE` message with the challenged claim ids.
+
+**Bounded debate:**
+- `run_debate_round()` gives each challenged claim exactly ONE response (no ping-pong): evidence check → `DEFENDED` (ratio ≥ 0.25) or `UPHELD` (insufficient evidence).
+- Rounds capped by `CognitiveBudget.max_debate_rounds` (**default 0 = no debate**: critique report only). Slice runs one round per run; repeating rounds would require new evidence (later phase).
+- `UPHELD` degrades the claim to `UNSUPPORTED` (confidence ≤ 0.2) with `requires_review=True`; nothing is auto-resolved. `DEFENDED` keeps the claim intact.
+- Outcomes persist in `run.plan.debate` and as `RESPONSE` messages.
+- `fact_checker` and the debate share the same `evidence_support_ratio()` (no divergent scoring).
+
+**Verification:** `pytest tests/test_cognitive_debate.py` → **3 passed** (critique flags, deterministic ratio, defended/upheld with round cap and one-response-per-challenge). Execution suite → **7 passed**, including the bounded-debate test (challenge → upheld → claim degraded with review; defended claim intact). Cognitive + architecture regression → **29 passed**; `ruff check src tests` clean.
+
+**Not in this slice:** consensus engine weighting by authority/specialization (brief §51), parallel task execution (brief §55), semantic conflict similarity, escalation UI/Review Queue for `requires_review` outcomes, multi-round debate with new evidence.
+
+## 23. VERIFICATION PENDING
 
 | Item | How to confirm |
 |---|---|
