@@ -320,6 +320,23 @@ async def workspace_chat(
     payload = grounded.to_dict()
     payload["raw_answer"] = llm_response.content
 
+    # Phase 2 slice 2: la respuesta grounded deja evidencia append-only con
+    # locators reales (nunca rompe la respuesta si el ledger falla).
+    try:
+        from src.api.deps import get_evidence_ledger_repo
+        from src.rag.grounding.recorder import GroundingLedgerRecorder
+
+        evidence_ids = await GroundingLedgerRecorder(
+            get_evidence_ledger_repo()
+        ).record_evidence(
+            organization_id=ctx.organization_id,
+            answer=grounded,
+            workspace_id=ws.id,
+        )
+        payload["evidence_ids"] = [str(eid) for eid in evidence_ids]
+    except Exception:  # noqa: BLE001 - el ledger nunca rompe el chat
+        logger.warning("Failed to record grounded evidence", corpus_id=str(corpus_id))
+
     # Costo por query (§41): tokens LLM reales + categoría query.
     try:
         from src.knowledge.cost import KnowledgeUsageTracker

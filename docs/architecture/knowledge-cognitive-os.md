@@ -443,7 +443,21 @@ No physical rows are moved, merged, or deleted in Phase 1. Mapping is **additive
 
 **Verification:** `pytest tests/test_evidence_claim_ledger.py` → **8 passed** (domain invariants, append/get/list + cross-tenant isolation, claim upsert semantics, evidence preservation on upsert, structural conflict detection, attach idempotency/cross-tenant rejection). Combined regression (architecture + canonical + ledger + workspaces API) → **25 passed**. `ruff check` clean. Migration applied locally: `102 → 103`; downgrade drops both tables.
 
-**Out of scope (slice 2+):** productive producers (retrieval/grounding/agents writing ledger rows), claim extraction from grounded answers, consensus/verdict engine, cognitive API endpoints.
+**Slice 2 shipped — evidence producer (grounded answers):**
+
+| Deliverable | File |
+|---|---|
+| Grounding recorder | `src/rag/grounding/recorder.py` (`GroundingLedgerRecorder`) |
+| Wiring | `src/api/routes/knowledge_workspaces.py` (after `GroundingService.ground`) |
+| Tests | `tests/test_grounding_ledger.py` |
+
+- Every grounded citation with a non-empty excerpt becomes an `EvidenceRecord` (document/page/section/block/chunk locators, sha256 content hash, relevance as retrieval score, workspace, optional agent/task).
+- `workspace_chat` returns `evidence_ids` in the grounded payload; ledger failures are warnings and never break the answer.
+- **Claim producer deliberately pending:** claims require real normalized subject/predicate/object, which only the Phase 4–5 specialists (Document/Temporal/Data analysts, Fact Checker) produce. The claim ledger + conflict query are already live; no heuristic s/p/o extraction is invented here.
+
+**Verification slice 2:** `pytest tests/test_grounding_ledger.py tests/test_grounding.py tests/test_knowledge_workspaces_api.py` → **9 passed**; `ruff` clean.
+
+**Out of scope (slice 2+):** claim producers, consensus/verdict engine, cognitive API endpoints.
 
 ## 18. P1 REMEDIATION — F1/F2/F3/F4/F5/F6/F18 (shipped)
 
