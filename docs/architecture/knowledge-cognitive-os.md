@@ -1,6 +1,6 @@
 # Zent Knowledge Cognitive OS — Architecture Audit & Canonical Knowledge Model (Phase 0 + Phase 1)
 
-> **Status:** Phase 0 audit + Phase 1 canonical model + Phase 2 evidence/claim ledger + P1 remediation — shipped (branch `feat/knowledge-cognitive-os`): domains + ports + migrations 102–103 + Postgres adapters + retrieval/agent fixes + 30+ tests. No productive wiring for the canonical/ledger layers; retrieval/agent fixes are productive.
+> **Status:** Phase 0 audit + Phase 1 canonical model + Phase 2 evidence/claim ledger + P1 remediation + Phase 3 cognitive planning — shipped (branch `feat/knowledge-cognitive-os`). Migrations 102–104; canonical/ledger/cognitive layers inert by default (flags off); retrieval/agent fixes are productive.
 > **Date:** 2026-09-11
 > **Base:** `master` @ `1a42c20` (Knowledge Workspaces UX, grounding, Knowledge V2 slices A–H in production-flag `false`).
 > **Relation to prior ADR:** `docs/architecture/enterprise-knowledge-refactor.md` is the Knowledge Engine V2 program (SOURCE → STRUCTURED → SEMANTIC → INDEX → RETRIEVAL → GROUNDING). This document is the **Cognitive OS program** built on top of it (agents, evidence, claims, temporal/conflict intelligence, learning governance). Where this document and the code disagree, **the code wins**.
@@ -479,7 +479,34 @@ Also shipped as part of F2/F13 groundwork: V2 payload now carries `chunk_id` and
 
 **Not in this slice (P2+):** stable canonical refs persisted on `structured_blocks` (F7), block-level citation ids (F13 deeper), evidence/claim producers (Phase 2 slice 2).
 
-## 19. VERIFICATION PENDING
+## 19. PHASE 3 — COGNITIVE PLANNING / DELEGATION (slice 1, shipped)
+
+**Goal (brief §85):** Phase 3 is planning/delegation only — a deterministic supervisor that classifies complexity, selects declarative specialists, builds a validated DAG and enforces budgets. Execution of specialists is Phase 4.
+
+| Deliverable | File |
+|---|---|
+| Domain (complexity, budget, scope, task, graph, run, message, blackboard) | `src/core/domain/cognitive.py` |
+| Declarative registry (11 specialists) | `src/platform/cognitive/registry.py` |
+| Planner / supervisor | `src/platform/cognitive/orchestrator.py` |
+| Planning service | `src/platform/cognitive/service.py` |
+| Port + Postgres adapter | `src/core/ports/cognitive.py`, `src/infrastructure/postgres/cognitive.py` |
+| Migration 104 | `src/infrastructure/db_init/versions/104_cognitive_runs.py` |
+| API | `src/api/routes/cognitive.py` |
+| Flag | `RAG_COGNITIVE_OS_ENABLED` (`off` default; `shadow/limited/active` enable) |
+
+- `classify_complexity()` maps ES/EN requests to L0–L5 with deterministic markers (definition → L0; weighted markers → L2–L5). Least sufficient level is the rule.
+- `CognitiveTaskGraph` validates duplicates, unknown dependencies and cycles at construction; `ready_keys()`/`topological_order()` drive delegation.
+- `CognitiveBudget` (max_agents/llm_calls/tokens/cost/seconds/tool_calls/debate_rounds) is validated; the planner refuses levels whose specialist count exceeds `max_agents`.
+- 11 declarative `KnowledgeAgentDefinition`s (librarian, retrieval_strategist, document_analyst, data_analyst, temporal_analyst, policy_analyst, relationship_analyst, conflict_detector, critic, fact_checker, synthesizer) with capabilities, allowed tools (existing `search_knowledge`/`query_database`), permissions, model roles and limits.
+- `AgentMessage` types (task/finding/evidence/question/challenge/response/conflict/handoff/final_candidate) and `EvidenceBlackboard` (messages, findings, questions, conflicts, evidence ids). No chain-of-thought by construction.
+- Persistence: `cognitive_runs` + `cognitive_tasks` + `agent_messages` (org FKs, CHECKs, unique `(run_id, task_key)`); messages append-only and org-scoped.
+- API: `POST /api/v1/cognitive/runs` (creates the planned run), `GET /runs/{id}`, `GET /runs/{id}/tasks`, `GET /runs/{id}/messages`. Flag `off` → 503; `knowledge:write`/`knowledge:read` gates; workspace scoped only via `X-Workspace-Id`.
+
+**Verification:** `pytest tests/test_cognitive_domain.py tests/test_cognitive_repo.py tests/test_cognitive_api.py` → **9 passed** (classifier examples, graph invariants/cycles, budget limits, registry selection, planner shapes + budget refusal, tenant-scoped repo roundtrip, run/message persistence, API flag-off 503, plan creation, cross-tenant 404). Combined regression with architecture/workspaces/rag-query → **26 passed**; `ruff check src tests` clean. Migration applied locally: `103 → 104`.
+
+**Not in this slice (per brief phase order):** specialist execution and LLM calls (Phase 4), multi-hop/temporal/conflict intelligence (Phase 5), challenge/debate protocol (Phase 6), `cognitive.runs/{id}/stream` SSE and `AgentExecution` rows (Phase 4–6), cognitive UI (Phase 9).
+
+## 20. VERIFICATION PENDING
 
 | Item | How to confirm |
 |---|---|
