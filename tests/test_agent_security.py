@@ -138,6 +138,35 @@ class TestAllowlistMisuse:
         steps = [s for s in result.steps if s["type"] == "tool_call"]
         assert steps[0]["error"] == "unknown tool"
 
+    @pytest.mark.asyncio
+    async def test_execution_blocks_tool_denied_by_rbac_despite_listing(self) -> None:
+        class _SecretTool(Tool):
+            name: ClassVar[str] = "secret_tool"
+            description: ClassVar[str] = "Requiere permiso especial."
+            input_schema: ClassVar[dict] = {"type": "object", "properties": {}}
+            permission: ClassVar[str] = "tool:secret"
+
+            def __init__(self) -> None:
+                self.executions = 0
+
+            async def execute(self, ctx: ToolContext, arguments: dict) -> ToolResult:
+                self.executions += 1
+                return ToolResult(output="secret")
+
+        secret = _SecretTool()
+        register_tool(secret)
+        llm = _FakeLLM(
+            ['{"tool": "secret_tool", "arguments": {}}', '{"answer": "ok"}']
+        )
+        agent = _agent(tools=["secret_tool"])
+        runtime = AgentRuntime(llm_provider=llm)
+        result = await runtime.run(
+            _request(agent, "usa la tool", permissions=frozenset())
+        )
+        assert secret.executions == 0
+        steps = [s for s in result.steps if s["type"] == "tool_call"]
+        assert "not permitted" in steps[0]["error"]
+
     def test_rbac_permission_gate(self) -> None:
         class _PermTool(Tool):
             name: ClassVar[str] = "perm_tool"

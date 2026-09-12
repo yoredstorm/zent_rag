@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 from src.agents.policies.authorization import has_injection_indicators
 from src.agents.tools.base import ToolContext
 from src.agents.tools.guards import ToolRateLimiter, execute_tool_guarded
-from src.agents.tools.registry import get_tool, resolve_allowed_tools
+from src.agents.tools.registry import get_tool, resolve_allowed_tools, tool_allowed
 from src.core.config import get_settings
 from src.core.domain.entities import Agent
 from src.core.domain.intelligence import ToolFingerprint
@@ -788,6 +788,23 @@ class AgentRuntime:
                         "type": "tool_call",
                         "tool": tool_name,
                         "error": "not in agent allowlist",
+                    }
+                )
+                continue
+
+            # F3 (P1): el triple gate se re-evalúa EN EJECUCIÓN (no solo al
+            # construir el prompt). Un tool listado por el agente pero sin
+            # permiso RBAC del caller o sin grant del agente no se ejecuta.
+            if not tool_allowed(tool, effective_tools, ctx):
+                history.append(
+                    f"OBSERVATION: error: tool '{tool_name}' is not permitted "
+                    f"for this user or agent."
+                )
+                result.steps.append(
+                    {
+                        "type": "tool_call",
+                        "tool": tool_name,
+                        "error": "not permitted (RBAC/agent grants)",
                     }
                 )
                 continue
