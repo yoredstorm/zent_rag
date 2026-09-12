@@ -73,6 +73,22 @@ def _content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
+def _acl_payload(metadata: dict) -> dict:
+    """Copia los campos ACL del record al payload de Qdrant (filtro pre-LLM).
+
+    Solo incluye claves presentes; `upsert_batch` aplica defaults org-wide
+    cuando faltan (mismo contrato para V1 y V2)."""
+    acl: dict = {}
+    visibility = metadata.get("visibility")
+    if visibility:
+        acl["visibility"] = str(visibility)
+    for key in ("acl_users", "acl_groups"):
+        values = metadata.get(key)
+        if values:
+            acl[key] = [str(v) for v in values]
+    return acl
+
+
 def _validate_metadata(
     metadata: dict, schema: dict | None
 ) -> tuple[dict, str | None]:
@@ -288,6 +304,7 @@ class KnowledgeIngestionEngine:
                             "chunking_strategy": chunker.__class__.__name__,
                             "organization_id": str(job.organization_id),
                             **({"knowledge_base_id": str(job.knowledge_base_id)} if job.knowledge_base_id else {}),
+                            **_acl_payload(record.metadata),
                         },
                     )
                 )
@@ -338,6 +355,23 @@ class KnowledgeIngestionEngine:
         if deleted:
             ids = [str(d) for d in deleted]
             await self._vectors.delete_points(job.organization_id, ids)
+
+        # F5: purga V2 (Qdrant + Postgres) de documentos que ya no existen en
+        # la fuente. La lista `seen_external_ids` define qué queda vivo.
+        if self._structured_v2 is not None:
+            try:
+                await self._vectors.delete_stale_v2_documents(
+                    job.organization_id, source_id, seen_external_ids
+                )
+                await self._structured_v2.delete_missing_documents(
+                    job.organization_id, source_id, seen_external_ids
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Knowledge V2 stale purge failed",
+                    source_id=str(source_id),
+                    error=str(exc)[:300],
+                )
 
         final_cursor = getattr(connector, "_last_cursor", None)
         await self._state.save_state(
@@ -401,7 +435,10 @@ class KnowledgeIngestionEngine:
                 change_kind=change_kind or "unknown",
             )
             outcome = "chunk_index"
-            await self._index_v2_chunks(job, source, document, change_kind=change_kind)
+            await self._index_v2_chunks(
+                job, source, document, change_kind=change_kind,
+                acl=_acl_payload(record.metadata),
+            )
             outcome = "summarize"
             await self._shadow_summarize(document, change_kind=change_kind)
             outcome = "ok"
@@ -426,14 +463,20 @@ class KnowledgeIngestionEngine:
             ).observe(time.perf_counter() - started)
 
     async def _index_v2_chunks(
-        self, job, source, document, *, change_kind: str | None = None
+        self, job, source, document, *, change_kind: str | None = None,
+        acl: dict | None = None,
     ) -> None:
-        """Phase C: embebe los child chunks V2 y los upserta en Qdrant.
+        """Phase C: embebe los chunks V2 (children + parents) y los upserta.
 
         Dual-write aditivo: misma colección rag_documents y MISMO contrato ACL
-        (organization_id en payload). Los chunk_ids usan el namespace V2 para
-        no colisionar con los de V1. Fallos aquí son warn (v2_failed); el
+        (organization_id en payload + visibility/acl_users/acl_groups del
+        record cuando existan). Los chunk_ids usan el namespace V2 para no
+        colisionar con los de V1. Fallos aquí son warn (v2_failed); el
         documento estructurado ya quedó persistido en Postgres.
+
+        Los PARENT chunks (document_structure) se indexan para parent
+        expansion (contexto de sección) con `v2_parent=true`; los candidates
+        de retrieval siguen siendo solo children (`v2_chunk=true`).
 
         Fingerprinting (§41): contenido sin cambios (change_kind=unchanged) →
         chunks idénticos → se SKIPEA el re-embed y se registra la decisión.
@@ -449,20 +492,26 @@ class KnowledgeIngestionEngine:
         )
 
         chunks = _chunk_structured_document(document, config=_ChunkingConfig())
-        children = [c for c in chunks if c.chunk_type is _ChunkType.PARENT_CHILD]
-        if not children:
+        if not chunks:
             return
         if change_kind == "unchanged":
             logger.info(
                 "Knowledge V2 chunks skipped (content unchanged — fingerprint)",
                 document_id=str(document.id),
-                chunks=len(children),
+                chunks=len(chunks),
             )
             return
 
+        # F5: limpia puntos V2 previos del documento (re-ingesta con menos
+        # chunks, secciones movidas o documento eliminado) antes de reindexar.
+        await self._vectors.delete_v2_document(job.organization_id, document.id)
+
+        section_paths = {
+            section.id: section.section_path for section in document.sections
+        }
         knowledge_base_id = job.knowledge_base_id
-        for start in range(0, len(children), _EMBED_BATCH):
-            batch_chunks = children[start : start + _EMBED_BATCH]
+        for start in range(0, len(chunks), _EMBED_BATCH):
+            batch_chunks = chunks[start : start + _EMBED_BATCH]
             embeddings = await self._embeddings.embed(
                 [c.content for c in batch_chunks]
             )
@@ -485,14 +534,17 @@ class KnowledgeIngestionEngine:
             points: list[tuple[UUID, list[float], str, dict | None]] = []
             for chunk, vector in zip(batch_chunks, embeddings):
                 # Campos estructurales DENTRO de metadata (contrato del adapter:
-                # RetrievalChunk.metadata = payload["metadata"]; ACL por defecto
-                # org-wide igual que los chunks V1).
+                # RetrievalChunk.metadata = payload["metadata"]; ACL top-level
+                # la inyecta upsert_batch desde visibility/acl_*).
+                is_parent = chunk.chunk_type is _ChunkType.DOCUMENT_STRUCTURE
                 chunk_metadata: dict = {
                     "source_id": str(source.id),
                     "external_id": document.external_id,
                     "content_hash": chunk.content_hash,
                     "chunking_strategy": "document_structure+parent_child",
                     "chunk_type": chunk.chunk_type.value,
+                    "chunk_id": str(chunk.id),
+                    "section_path": list(section_paths.get(chunk.section_id, ())),
                     "workspace_id": (
                         str(source.workspace_id) if source.workspace_id else None
                     ),
@@ -504,7 +556,10 @@ class KnowledgeIngestionEngine:
                     "parent_id": str(chunk.parent_id) if chunk.parent_id else None,
                     "page_start": chunk.page_start,
                     "page_end": chunk.page_end,
-                    "v2_chunk": "true",
+                    "v2_chunk": "false" if is_parent else "true",
+                    "v2_parent": "true" if is_parent else "false",
+                    "v2_doc": "true",
+                    **(acl or {}),
                 }
                 points.append(
                     (
@@ -515,7 +570,9 @@ class KnowledgeIngestionEngine:
                     )
                 )
             await self._vectors.upsert_batch(
-                job.organization_id, points, knowledge_base_id=knowledge_base_id
+                job.organization_id, points,
+                knowledge_base_id=knowledge_base_id,
+                workspace_id=source.workspace_id,
             )
 
     async def _shadow_summarize(self, document, *, change_kind: str | None = None) -> None:

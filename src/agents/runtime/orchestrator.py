@@ -222,6 +222,7 @@ class RAGOrchestrator:
         retrieval_context: RetrievalContext,
         metadata_filters: dict[str, str] | None,
         language: str | None,
+        workspace_id: UUID | None = None,
     ) -> None:
         """Phase F: StructuredRetriever en sombra (comparación V1 vs V2).
 
@@ -268,6 +269,7 @@ class RAGOrchestrator:
                     lexical_weight=settings.RAG_HYBRID_LEXICAL_WEIGHT,
                     language=language,
                     filters=metadata_filters or {},
+                    workspace_id=workspace_id,
                     query_embedding=list(query_embedding),
                 )
                 assembled = await self._structured_retriever.retrieve(
@@ -325,6 +327,7 @@ class RAGOrchestrator:
         metadata_filters: dict[str, str] | None,
         language: str | None,
         retrieval_config,
+        workspace_id: UUID | None = None,
     ) -> RetrievalContext:
         """Phase G (promote): retrieval productivo con StructuredRetriever.
 
@@ -355,6 +358,7 @@ class RAGOrchestrator:
             lexical_weight=retrieval_config.lexical_weight,
             language=language,
             filters=metadata_filters or {},
+            workspace_id=workspace_id,
             query_embedding=list(query_embedding),
         )
         assembled = await self._structured_retriever.retrieve(  # type: ignore[union-attr]
@@ -389,6 +393,7 @@ class RAGOrchestrator:
         retrieval_strategy: str | None = None,
         language: str | None = None,
         api_key_id: UUID | None = None,
+        workspace_id: UUID | None = None,
     ) -> RAGQueryResult:
         """Ejecuta el flujo RAG completo de extremo a extremo.
 
@@ -713,6 +718,7 @@ class RAGOrchestrator:
                     lexical_weight=retrieval_config.lexical_weight,
                     language=retrieval_config.language or language,
                     filters=metadata_filters or {},
+                    workspace_id=workspace_id,
                     query_embedding=list(query_embedding),  # type: ignore[arg-type]
                 )
                 return await self._retriever.retrieve(rquery)  # type: ignore[union-attr]
@@ -728,6 +734,7 @@ class RAGOrchestrator:
                         metadata_filters=metadata_filters,
                         language=language,
                         retrieval_config=retrieval_config,
+                        workspace_id=workspace_id,
                     )
                 if self._retriever is not None:
                     return await _run_retriever_query()
@@ -739,6 +746,7 @@ class RAGOrchestrator:
                     filters={"metadata.doc_type": "aggregated"},
                     score_threshold=self._score_threshold,
                     role=role,
+                    **({"workspace_id": workspace_id} if workspace_id else {}),
                 )
                 agg_ids_set = {chunk.document_id for chunk in agg_ctx.chunks}
                 remaining = max(effective_top_k - len(agg_ctx.chunks), 0)
@@ -749,6 +757,7 @@ class RAGOrchestrator:
                     exclude_filters={"metadata.doc_type": "aggregated"},
                     score_threshold=self._score_threshold,
                     role=role,
+                    **({"workspace_id": workspace_id} if workspace_id else {}),
                 )
                 merged = list(agg_ctx.chunks)
                 seen = set(agg_ids_set)
@@ -852,6 +861,7 @@ class RAGOrchestrator:
                     retrieval_context=retrieval_context,
                     metadata_filters=metadata_filters,
                     language=language,
+                    workspace_id=workspace_id,
                 )
 
             # -----------------------------------------------------------------

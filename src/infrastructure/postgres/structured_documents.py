@@ -236,6 +236,43 @@ class PostgresStructuredDocumentRepository(StructuredDocumentRepository):
         finally:
             await session.close()
 
+    async def delete_missing_documents(
+        self,
+        organization_id: UUID,
+        source_id: UUID,
+        keep_external_ids: set[str],
+    ) -> int:
+        session = await get_async_session()
+        try:
+            if keep_external_ids:
+                result = await session.execute(
+                    text(
+                        "DELETE FROM structured_documents "
+                        "WHERE organization_id = :oid AND source_id = :sid "
+                        "AND external_id <> ALL(:keep)"
+                    ),
+                    {
+                        "oid": str(organization_id),
+                        "sid": str(source_id),
+                        "keep": sorted(str(e) for e in keep_external_ids),
+                    },
+                )
+            else:
+                result = await session.execute(
+                    text(
+                        "DELETE FROM structured_documents "
+                        "WHERE organization_id = :oid AND source_id = :sid"
+                    ),
+                    {"oid": str(organization_id), "sid": str(source_id)},
+                )
+            await session.commit()
+            return int(result.rowcount or 0)
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
 
 # ---------------------------------------------------------------------------
 # Helpers de mapeo (domain → rows)

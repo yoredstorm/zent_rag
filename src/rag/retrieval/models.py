@@ -33,6 +33,10 @@ class RetrievalQuery:
     organization_id: UUID
     role: str = "admin"
     knowledge_base_id: UUID | None = None
+    # Aislamiento por workspace (opcional): cuando viene, el store filtra
+    # `workspace_id` en el payload ANTES del LLM. Los llamadores legacy no lo
+    # pasan y mantienen el comportamiento org-wide.
+    workspace_id: UUID | None = None
     # FASE 15: identidad del usuario para filtro ACL por chunk (pre-LLM).
     user_id: UUID | None = None
     groups: list[str] = field(default_factory=list)

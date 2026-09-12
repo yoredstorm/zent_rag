@@ -268,6 +268,7 @@ async def workspace_chat(
         role=role,
         user_id=user_id,
         groups=groups,
+        workspace_id=ws.id,
         top_k=100,
         rerank_top_k=12,
         score_threshold=max(settings.RAG_SCORE_THRESHOLD, 0.1),
@@ -275,6 +276,7 @@ async def workspace_chat(
         fusion=settings.RAG_HYBRID_FUSION,
         filters={
             "metadata.v2_chunk": "true",
+            "workspace_id": str(ws.id),
             **(
                 {"metadata.source_id": str(body.source_ids[0])}
                 if len(body.source_ids) == 1

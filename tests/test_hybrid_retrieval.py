@@ -179,3 +179,156 @@ async def test_sparse_tenant_isolation_real_qdrant() -> None:
             await store.delete_by_organization(org_b)
         except Exception:
             pass
+
+
+def _dev_qdrant_stack() -> bool:
+    from src.core.config import get_settings
+
+    return get_settings().ENVIRONMENT == "development"
+
+
+def _vec(value: float) -> list[float]:
+    from src.core.config import get_settings
+
+    v = [0.0] * get_settings().VECTOR_DIMENSION
+    v[0] = value
+    return v
+
+
+@pytest.mark.asyncio
+async def test_search_filters_by_workspace_real_qdrant() -> None:
+    """F4: workspace_id filtra el retrieval en Qdrant (pre-LLM)."""
+    if not _dev_qdrant_stack():
+        pytest.skip("Requiere Qdrant real (stack docker)")
+
+    from src.infrastructure.qdrant.vector_store import QdrantVectorStore
+
+    store = QdrantVectorStore()
+    org = uuid4()
+    workspace_a = uuid4()
+    workspace_b = uuid4()
+    try:
+        await store.upsert(
+            org,
+            uuid4(),
+            _vec(0.9),
+            "Documento dentro del workspace A",
+            metadata={"visibility": "public"},
+            workspace_id=workspace_a,
+        )
+        await store.upsert(
+            org,
+            uuid4(),
+            _vec(0.9),
+            "Documento dentro del workspace B",
+            metadata={"visibility": "public"},
+            workspace_id=workspace_b,
+        )
+        ctx = await store.search(
+            org, _vec(0.9), top_k=10, score_threshold=0.0,
+            workspace_id=workspace_a,
+        )
+        contents = [c.content for c in ctx.chunks]
+        assert "Documento dentro del workspace A" in contents
+        assert "Documento dentro del workspace B" not in contents
+    finally:
+        try:
+            await store.delete_by_organization(org)
+        except Exception:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_get_documents_respects_acl_real_qdrant() -> None:
+    """F18: fetch por ID aplica visibility/acl_groups sin filtrar post-LLM."""
+    if not _dev_qdrant_stack():
+        pytest.skip("Requiere Qdrant real (stack docker)")
+
+    from src.infrastructure.qdrant.vector_store import QdrantVectorStore
+
+    store = QdrantVectorStore()
+    org = uuid4()
+    point_id = uuid4()
+    try:
+        await store.upsert(
+            org,
+            point_id,
+            _vec(0.9),
+            "Contrato confidencial del área legal",
+            metadata={
+                "visibility": "admin",
+                "acl_groups": ["legal"],
+            },
+        )
+        denied = await store.get_documents(org, [point_id], role="viewer")
+        assert denied.chunks == []
+        allowed = await store.get_documents(
+            org, [point_id], role="viewer", groups=["legal"]
+        )
+        assert len(allowed.chunks) == 1
+        admin = await store.get_documents(org, [point_id], role="admin")
+        assert len(admin.chunks) == 1
+    finally:
+        try:
+            await store.delete_by_organization(org)
+        except Exception:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_delete_stale_v2_documents_keeps_v1_and_live_real_qdrant() -> None:
+    """F5: purga V2 huérfana sin tocar chunks V1 ni documentos vivos."""
+    if not _dev_qdrant_stack():
+        pytest.skip("Requiere Qdrant real (stack docker)")
+
+    from src.infrastructure.qdrant.vector_store import QdrantVectorStore
+
+    store = QdrantVectorStore()
+    org = uuid4()
+    source_id = uuid4()
+    v1_id, keep_id, gone_id = uuid4(), uuid4(), uuid4()
+    try:
+        await store.upsert(
+            org,
+            v1_id,
+            _vec(0.9),
+            "Chunk legacy V1 que debe sobrevivir",
+            metadata={"visibility": "public"},
+        )
+        await store.upsert(
+            org,
+            keep_id,
+            _vec(0.9),
+            "Documento V2 vivo durante el sync",
+            metadata={
+                "visibility": "public",
+                "v2_doc": "true",
+                "source_id": str(source_id),
+                "external_id": "keep.md",
+            },
+        )
+        await store.upsert(
+            org,
+            gone_id,
+            _vec(0.9),
+            "Documento V2 eliminado de la fuente",
+            metadata={
+                "visibility": "public",
+                "v2_doc": "true",
+                "source_id": str(source_id),
+                "external_id": "gone.md",
+            },
+        )
+        await store.delete_stale_v2_documents(org, source_id, {"keep.md"})
+        ctx = await store.get_documents(
+            org, [v1_id, keep_id, gone_id], role="admin"
+        )
+        contents = {c.content for c in ctx.chunks}
+        assert "Chunk legacy V1 que debe sobrevivir" in contents
+        assert "Documento V2 vivo durante el sync" in contents
+        assert "Documento V2 eliminado de la fuente" not in contents
+    finally:
+        try:
+            await store.delete_by_organization(org)
+        except Exception:
+            pass

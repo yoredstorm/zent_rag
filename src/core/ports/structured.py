@@ -48,3 +48,16 @@ class StructuredDocumentRepository(ABC):
     async def delete_for_source(self, organization_id: UUID, source_id: UUID) -> None:
         """Elimina documentos y blocks de la fuente (scoped, cascade)."""
         ...
+
+    async def delete_missing_documents(
+        self,
+        organization_id: UUID,
+        source_id: UUID,
+        keep_external_ids: set[str],
+    ) -> int:
+        """Elimina los documentos de la fuente cuyo external_id ya no existe.
+
+        Default sin soporte (adaptadores que persisten estructura lo
+        sobreescriben). Retorna cuántos documentos eliminó.
+        """
+        return 0

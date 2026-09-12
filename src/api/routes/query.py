@@ -57,6 +57,22 @@ def _token_id(request: Request) -> UUID | None:
     return getattr(ctx, "token_id", None)
 
 
+async def _resolve_workspace_filter(request: Request) -> UUID | None:
+    """Workspace opcional para retrieval: solo filtra si X-Workspace-Id vino.
+
+    Sin header se preserva el comportamiento org-wide legacy (los chunks V1
+    pueden no llevar workspace_id en el payload)."""
+    from src.platform.workspaces.context import (
+        resolve_workspace,
+        workspace_header_or_none,
+    )
+
+    if workspace_header_or_none(request) is None:
+        return None
+    workspace = await resolve_workspace(request)
+    return workspace.id
+
+
 def _record_metrics(result, organization_id: UUID) -> None:
     """Registra métricas Prometheus para una consulta finalizada."""
     rag_queries_total.labels(
@@ -136,6 +152,7 @@ async def rag_query(
 
     requested_role = body.role if body.role else x_user_role
     role = await resolve_effective_role(request, requested_role)
+    workspace_id = await _resolve_workspace_filter(request)
 
     # ---------------------------------------------------------------
     # Registro de advertencia de seguridad (prompt injection detection)
@@ -170,6 +187,7 @@ async def rag_query(
             retrieval_strategy=body.retrieval_strategy,
             language=body.language,
             api_key_id=_token_id(request),
+            workspace_id=workspace_id,
         )
     except Exception as exc:
         logger.error(
@@ -316,6 +334,7 @@ async def rag_query_stream(
 
     requested_role = body.role if body.role else x_user_role
     role = await resolve_effective_role(request, requested_role)
+    workspace_id = await _resolve_workspace_filter(request)
 
     queue: asyncio.Queue[tuple[str, object]] = asyncio.Queue()
     await queue.put(("status", {"phase": "searching"}))
@@ -347,6 +366,7 @@ async def rag_query_stream(
                 retrieval_strategy=body.retrieval_strategy,
                 language=body.language,
                 api_key_id=_token_id(request),
+                workspace_id=workspace_id,
             )
             _record_metrics(result, organization_id)
 

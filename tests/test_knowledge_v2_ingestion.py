@@ -75,7 +75,12 @@ class V2MarkdownConnector(SourceConnector):
         yield Record(
             external_id="manual.md",
             content=content,
-            metadata={"filename": "manual.md", "format": "md"},
+            metadata={
+                "filename": "manual.md",
+                "format": "md",
+                "visibility": "admin",
+                "acl_groups": ["legal"],
+            },
             raw_data=content.encode("utf-8"),
             format="md",
         )
@@ -126,6 +131,8 @@ class FakeVectorStore:
     def __init__(self) -> None:
         self.upserted: list = []
         self.deleted_points: list[str] = []
+        self.deleted_v2_documents: list = []
+        self.deleted_stale_v2: list = []
 
     async def search(self, *args, **kwargs):
         raise NotImplementedError
@@ -133,7 +140,9 @@ class FakeVectorStore:
     async def upsert(self, *args, **kwargs) -> None:
         self.upserted.append(args)
 
-    async def upsert_batch(self, organization_id, points, knowledge_base_id=None) -> None:
+    async def upsert_batch(
+        self, organization_id, points, knowledge_base_id=None, workspace_id=None
+    ) -> None:
         self.upserted.extend((organization_id, p, knowledge_base_id) for p in points)
 
     async def delete_by_organization(self, organization_id) -> None:
@@ -144,6 +153,14 @@ class FakeVectorStore:
 
     async def delete_points(self, organization_id, point_ids) -> None:
         self.deleted_points.extend(point_ids)
+
+    async def delete_v2_document(self, organization_id, document_id) -> None:
+        self.deleted_v2_documents.append(document_id)
+
+    async def delete_stale_v2_documents(
+        self, organization_id, source_id, keep_external_ids
+    ) -> None:
+        self.deleted_stale_v2.append((source_id, set(keep_external_ids)))
 
 
 class FakeEmbedding:
@@ -200,6 +217,38 @@ async def test_engine_with_v2_repo_runs_v2_and_v1_in_parallel(context) -> None:
     assert v2_points[0][3]["chunking_strategy"] == "document_structure+parent_child"
     # el adapter inyecta organization_id en el PAYLOAD top-level (no en metadata)
     assert v2_points[0][3]["source_id"] == str(context["source"].id)
+
+    # F2: ACL del record copiada al payload V2 (filtro pre-LLM)
+    assert all(p[3]["visibility"] == "admin" for p in v2_points)
+    assert all(p[3]["acl_groups"] == ["legal"] for p in v2_points)
+
+    # F1: parent chunks (contexto de sección) también indexados
+    parent_points = [
+        p
+        for (_, p, _) in vectors.upserted
+        if p[3] and p[3].get("v2_parent") == "true"
+    ]
+    assert parent_points
+    assert all(p[3].get("v2_chunk") == "false" for p in parent_points)
+    assert all(
+        p[3].get("chunk_type") == "document_structure" for p in parent_points
+    )
+
+    # F5: stale V2 points del documento se limpian antes de reindexar
+    assert vectors.deleted_v2_documents == [doc.id]
+    # F5: purga V2 de documentos que ya no existen en la fuente
+    assert vectors.deleted_stale_v2 == [
+        (context["source"].id, {"manual.md"})
+    ]
+    assert all(
+        p[3].get("v2_doc") == "true"
+        for (_, p, _) in vectors.upserted
+        if p[3] and (p[3].get("v2_chunk") == "true" or p[3].get("v2_parent") == "true")
+    )
+
+    # F13: locators de cita en payload (chunk_id + section_path)
+    assert v2_points[0][3]["chunk_id"]
+    assert v2_points[0][3]["section_path"]
 
 
 @pytest.mark.asyncio
