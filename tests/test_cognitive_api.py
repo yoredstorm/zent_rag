@@ -83,11 +83,25 @@ async def test_cognitive_plan_created_and_tenant_scoped(
         assert messages.status_code == 200
         assert messages.json()["messages"] == []
 
+        inspector = await async_client.get(
+            f"/api/v1/cognitive/runs/{run_id}/inspector", headers=headers
+        )
+        assert inspector.status_code == 200, inspector.text
+        view = inspector.json()
+        assert view["chain_of_thought_exposed"] is False
+        assert view["run"]["id"] == run_id
+        assert view["specialists"] == []
+        assert len(view["tasks"]) >= 8
+
         # cross-tenant: otro token no ve el run
         other = await _trial_headers(async_client)
         foreign = await async_client.get(
             f"/api/v1/cognitive/runs/{run_id}", headers=other
         )
         assert foreign.status_code == 404
+        foreign_inspector = await async_client.get(
+            f"/api/v1/cognitive/runs/{run_id}/inspector", headers=other
+        )
+        assert foreign_inspector.status_code == 404
     finally:
         get_settings.cache_clear()

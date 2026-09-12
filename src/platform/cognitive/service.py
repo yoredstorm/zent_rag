@@ -99,3 +99,19 @@ class CognitivePlanningService:
         if run is None:
             return None
         return await self._repo.list_messages(organization_id, run_id)
+
+    async def get_inspector(
+        self, organization_id: UUID, run_id: UUID
+    ) -> dict | None:
+        """Vista agregada del run (fase 9): sin chain-of-thought."""
+        from src.platform.cognitive.inspector import build_inspector
+
+        run = await self._repo.get_run(organization_id, run_id)
+        if run is None:
+            return None
+        return build_inspector(
+            run=run,
+            tasks=await self._repo.list_tasks(organization_id, run_id),
+            executions=await self._repo.list_executions(organization_id, run_id),
+            messages=await self._repo.list_messages(organization_id, run_id),
+        )

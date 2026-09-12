@@ -290,6 +290,24 @@ async def get_cognitive_run(run_id: UUID, request: Request) -> dict:
     return result
 
 
+@router.get(
+    "/runs/{run_id}/inspector",
+    summary="Inspector del run: especialistas/evidencia/conflictos (sin CoT)",
+)
+async def get_cognitive_inspector(run_id: UUID, request: Request) -> dict:
+    _require_cognitive_enabled()
+    from src.api.deps import get_cognitive_service
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "knowledge:read")
+    view = await get_cognitive_service().get_inspector(
+        ctx.organization_id, run_id
+    )
+    if view is None:
+        raise HTTPException(404, "Cognitive run not found")
+    return view
+
+
 @router.get("/runs/{run_id}/tasks", summary="Tareas del cognitive run")
 async def list_cognitive_tasks(run_id: UUID, request: Request) -> dict:
     _require_cognitive_enabled()
