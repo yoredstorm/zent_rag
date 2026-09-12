@@ -1,6 +1,6 @@
 # Zent Knowledge Cognitive OS — Architecture Audit & Canonical Knowledge Model (Phase 0 + Phase 1)
 
-> **Status:** Phase 0 audit + Phase 1 canonical model + Phase 2 evidence/claim ledger — slices shipped (branch `feat/knowledge-cognitive-os`): domains + ports + migrations 102–103 + Postgres adapters + 19 tests. No productive wiring, no data migration.
+> **Status:** Phase 0 audit + Phase 1 canonical model + Phase 2 evidence/claim ledger + P1 remediation — shipped (branch `feat/knowledge-cognitive-os`): domains + ports + migrations 102–103 + Postgres adapters + retrieval/agent fixes + 30+ tests. No productive wiring for the canonical/ledger layers; retrieval/agent fixes are productive.
 > **Date:** 2026-09-11
 > **Base:** `master` @ `1a42c20` (Knowledge Workspaces UX, grounding, Knowledge V2 slices A–H in production-flag `false`).
 > **Relation to prior ADR:** `docs/architecture/enterprise-knowledge-refactor.md` is the Knowledge Engine V2 program (SOURCE → STRUCTURED → SEMANTIC → INDEX → RETRIEVAL → GROUNDING). This document is the **Cognitive OS program** built on top of it (agents, evidence, claims, temporal/conflict intelligence, learning governance). Where this document and the code disagree, **the code wins**.
@@ -92,6 +92,8 @@ Four-pillar operator IA (`Resumen · Fuentes · Semántica · Mejora`) plus Know
 ---
 
 ## 2. ARCHITECTURE FINDINGS (verified)
+
+> **P1 status:** F1–F6 and F18 are **fixed** by the P1 remediation slice (section 18). The table below records the findings as discovered.
 
 Severity: **P1** = correctness/security impact today (flag-on or main path), **P2** = blocks the cognitive roadmap, **P3** = debt/duplication.
 
@@ -443,7 +445,27 @@ No physical rows are moved, merged, or deleted in Phase 1. Mapping is **additive
 
 **Out of scope (slice 2+):** productive producers (retrieval/grounding/agents writing ledger rows), claim extraction from grounded answers, consensus/verdict engine, cognitive API endpoints.
 
-## 18. VERIFICATION PENDING
+## 18. P1 REMEDIATION — F1/F2/F3/F4/F5/F6/F18 (shipped)
+
+**Goal:** close the correctness/security findings before any further cognitive work or V2 promotion.
+
+| Finding | Fix | Evidence |
+|---|---|---|
+| **F1** parents never indexed | Engine embeds and upserts parent chunks (`v2_parent=true`, `v2_chunk=false`) alongside children; `_expand_parents` now finds real points | `src/knowledge/engine/service.py` (`_index_v2_chunks`); tests: `test_knowledge_v2_ingestion.py`, `test_structured_retriever.py` |
+| **F2** ACL not propagated to V2 | `_acl_payload()` copies `visibility`/`acl_users`/`acl_groups` from the connector record into **both V1 and V2** payloads; `upsert_batch` keeps its org-wide default when absent | `service.py` (`flush`, `_index_v2_chunks`); test asserts payload ACL |
+| **F3** tool RBAC not re-checked at execution | `tool_allowed(tool, effective_tools, ctx)` is enforced in the runtime loop before `execute_tool_guarded`; denied calls become `not permitted (RBAC/agent grants)` observations | `src/agents/runtime/agent_runtime.py`; `tests/test_agent_security.py` |
+| **F4** `workspace_id` never reached retrieval | `RetrievalQuery.workspace_id` + port signatures + all retrievers forward it; `/rag/query` filters only when `X-Workspace-Id` is present (legacy org-wide untouched); workspace chat always passes its corpus workspace | `src/rag/retrieval/*`, `src/api/routes/query.py`, `knowledge_workspaces.py`; real-Qdrant test `test_search_filters_by_workspace_real_qdrant` |
+| **F5** stale V2 points | `delete_v2_document()` purges children+parents before re-index (shrink/update); `delete_stale_v2_documents()` + `delete_missing_documents()` purge Qdrant and Postgres for files removed from the source (`v2_doc` marker; never touches V1) | `service.py`, `vector_store.py`, `structured_documents.py`; real-Qdrant test `test_delete_stale_v2_documents_keeps_v1_and_live_real_qdrant` |
+| **F6** RRF scores vs cosine threshold | Client-side fusion has priority when a `LexicalStore` exists (scores comparable); server-side RRF remains only as fallback and its scores bypass `filter_by_threshold` (legs already thresholded by the store) | `src/rag/retrieval/hybrid.py`; `tests/test_p1_retrieval_fixes.py` |
+| **F18** `get_documents` ACL gap | `payload_visible()` mirrors the Qdrant filter rules (public / `acl_users` / `acl_groups`, admin bypass) and is applied on every by-id fetch; parent expansion forwards `role`/`user_id`/`groups` | `vector_store.py`, `structured.py`; real-Qdrant test `test_get_documents_respects_acl_real_qdrant` |
+
+Also shipped as part of F2/F13 groundwork: V2 payload now carries `chunk_id` and `section_path`, so grounded citations have real locators instead of empty tuples.
+
+**Verification:** `ruff check src tests` clean; targeted regression (P1 suite + retrieval engine + structured retriever + V2 ingestion + rag query + agent security + hybrid/Qdrant + tenant/workspace/RBAC + workspaces API + shadow + cost + lazy + jobs) → **all green** (70 + 65 + 9 + 7 + 22 tests across runs). Residual (documented, not fixed here): `acl_users`/`acl_groups` population depends on connectors providing them in `record.metadata`; `get_documents` ACL only sees fields present in the payload.
+
+**Not in this slice (P2+):** stable canonical refs persisted on `structured_blocks` (F7), block-level citation ids (F13 deeper), evidence/claim producers (Phase 2 slice 2).
+
+## 19. VERIFICATION PENDING
 
 | Item | How to confirm |
 |---|---|
