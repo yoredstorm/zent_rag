@@ -21,7 +21,7 @@ import {
 } from "../../components/ui";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
-import { fmtDateTime, fmtNum, timeAgo } from "../../lib/format";
+import { fmtDateTime, fmtNum, formatErrorSummary, timeAgo } from "../../lib/format";
 
 type Source = {
   id: string;
@@ -41,7 +41,7 @@ type Job = {
   progress: number;
   records_processed: number;
   records_failed: number;
-  error_summary: string | null;
+  error_summary: string | { error?: unknown; message?: unknown } | null;
   created_at: string;
 };
 
@@ -138,7 +138,7 @@ export default function KnowledgeOverviewPage() {
     })),
     ...failedJobs.slice(0, 5).map((j) => ({
       id: `job-${j.id}`,
-      label: `El job de ${j.job_type} falló.${j.error_summary ? ` ${j.error_summary.slice(0, 120)}` : ""}`,
+      label: `El job de ${j.job_type} falló.${j.error_summary ? ` ${formatErrorSummary(j.error_summary).slice(0, 120)}` : ""}`,
       to: "/knowledge/jobs",
     })),
   ];
@@ -150,6 +150,9 @@ export default function KnowledgeOverviewPage() {
         subtitle="Comprende, aprueba y mide el conocimiento que tu IA puede utilizar."
         actions={
           <div className="flex flex-wrap gap-2">
+            <Link to="/knowledge/workspaces" className="btn btn-secondary">
+              Knowledge Workspaces
+            </Link>
             {resumeId && (
               <Link to={`/knowledge/add/${resumeId}`} className="btn btn-secondary">
                 Continuar
@@ -162,7 +165,23 @@ export default function KnowledgeOverviewPage() {
         }
       />
       <ErrorInline message={error} />
-      <section className="mb-6 grid gap-3 md:grid-cols-3" aria-label="Viaje de conocimiento">
+      <section className="mb-6 grid gap-3 md:grid-cols-4" aria-label="Viaje de conocimiento">
+        <Link
+          to="/knowledge/workspaces"
+          className="panel col-span-3 block bg-gradient-to-br from-indigo-50 to-white p-4 transition-colors hover:border-accent/40 md:col-span-2"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide text-indigo-500">
+            El centro del conocimiento
+          </p>
+          <h2 className="mt-1 text-lg font-semibold text-text">Knowledge Workspaces</h2>
+          <p className="mt-1 text-sm text-muted">
+            Universos por proyecto: busca sobre tus fuentes con citas verificables,
+            estudia tu corpus y genera artefactos. Aquí se carga todo tu conocimiento.
+          </p>
+          <span className="mt-2 inline-block text-sm font-medium text-indigo-600">
+            Abrir Workspaces →
+          </span>
+        </Link>
         <Link
           to="/knowledge/glossary"
           className="panel block p-4 transition-colors hover:border-accent/40"

@@ -61,3 +61,19 @@ export function timeAgo(iso: string | null | undefined): string {
   if (s < 86400) return `hace ${Math.floor(s / 3600)} h`;
   return `hace ${Math.floor(s / 86400)} d`;
 }
+
+/** error_summary puede ser string (jobs V1) u objeto JSONB (dead-letter/KLE).
+ *  Devuelve siempre texto legible, nunca crashea el render. */
+export function formatErrorSummary(
+  value: string | { error?: unknown; message?: unknown; detail?: unknown } | null | undefined,
+): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  const candidate = value.error ?? value.message ?? value.detail;
+  if (typeof candidate === "string" && candidate.trim()) return candidate;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return "Error desconocido";
+  }
+}

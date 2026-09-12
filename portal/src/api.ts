@@ -165,6 +165,16 @@ async function toApiError(res: Response): Promise<ApiError> {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// Throttle de auth-expired: evita la estampida de logout/loop cuando N
+// requests fallan a la vez con 401 (ej. páginas que cargan en paralelo).
+let _lastAuthExpiredAt = 0;
+function emitAuthExpiredThrottled(platform: boolean) {
+  const now = Date.now();
+  if (now - _lastAuthExpiredAt < 5000) return;
+  _lastAuthExpiredAt = now;
+  emitAuthExpired(platform ? "platform" : "tenant");
+}
+
 async function request<T>(
   path: string,
   options: RequestInit & { token?: string; organizationId?: string; workspaceId?: string } = {},
@@ -200,7 +210,7 @@ async function request<T>(
       return res.json() as Promise<T>;
     }
     const err = await toApiError(res);
-    if (err.status === 401) emitAuthExpired(platform ? "platform" : "tenant");
+    if (err.status === 401) emitAuthExpiredThrottled(platform);
     if (err.status === 403 && err.code === "step_up_required") emitStepUpRequired();
     const canRetry =
       opts.safeRetry === true &&

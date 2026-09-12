@@ -19,7 +19,7 @@ type Job = {
   progress: number;
   records_processed: number;
   records_failed: number;
-  error_summary: string | null;
+  error_summary: string | { error?: unknown; message?: unknown } | null;
   created_at: string;
 };
 

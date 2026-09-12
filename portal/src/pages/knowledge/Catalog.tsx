@@ -42,14 +42,20 @@ export default function KnowledgeCatalogPage() {
   const load = useCallback(() => {
     if (!session) return;
     setLoading(true);
-    api<CatalogSource[]>("/api/v1/catalog/sources")
+    api<CatalogSource[]>("/api/v1/catalog/sources", {
+      token: session?.token,
+      organizationId: session?.organizationId,
+    })
       .then(async (rows) => {
         setSources(rows);
         const ready: Record<string, Readiness> = {};
         await Promise.all(
           rows.map(async (s) => {
             try {
-              ready[s.id] = await api<Readiness>(`/api/v1/catalog/sources/${s.id}/readiness`);
+              ready[s.id] = await api<Readiness>(`/api/v1/catalog/sources/${s.id}/readiness`, {
+                token: session?.token,
+                organizationId: session?.organizationId,
+              });
             } catch {
               /* sin readiness */
             }
@@ -68,6 +74,8 @@ export default function KnowledgeCatalogPage() {
     try {
       await api<{ job_id: string }>(`/api/v1/catalog/sources/${sourceId}/rescan`, {
         method: "POST",
+        token: session?.token,
+        organizationId: session?.organizationId,
         body: JSON.stringify({}),
       });
       setScanning("");

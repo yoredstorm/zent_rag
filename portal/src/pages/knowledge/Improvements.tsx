@@ -41,7 +41,10 @@ export default function KnowledgeImprovementsPage() {
   const load = useCallback(() => {
     if (!session) return;
     setLoading(true);
-    api<Improvement[]>("/api/v1/learning/improvements")
+    api<Improvement[]>("/api/v1/learning/improvements", {
+      token: session?.token,
+      organizationId: session?.organizationId,
+    })
       .then(setItems)
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));

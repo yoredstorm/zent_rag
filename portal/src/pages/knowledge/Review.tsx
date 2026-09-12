@@ -28,7 +28,10 @@ export default function KnowledgeReviewPage() {
   const load = useCallback(() => {
     if (!session) return;
     setLoading(true);
-    api<Suggestion[]>("/api/v1/catalog/suggestions?status=pending")
+    api<Suggestion[]>("/api/v1/catalog/suggestions?status=pending", {
+      token: session?.token,
+      organizationId: session?.organizationId,
+    })
       .then(setItems)
       .catch((e) => setError(String(e)))
       .finally(() => setLoading(false));

@@ -9,6 +9,7 @@ import {
   SkeletonBlock,
   StatusBadge,
 } from "../components/ui";
+import { formatErrorSummary } from "../lib/format";
 
 type KB = { id: string; name: string };
 type Run = {
@@ -20,7 +21,7 @@ type Run = {
   rows_processed: number;
   vectors_upserted: number;
   errors: number;
-  error_summary: string | null;
+  error_summary: string | { error?: unknown; message?: unknown } | null;
   created_at: string | null;
   finished_at: string | null;
 };
@@ -180,8 +181,8 @@ export default function Training() {
                 })}
               </ol>
               {run.error_summary && (
-                <p className="mt-2 truncate text-xs text-danger" title={run.error_summary}>
-                  {run.error_summary}
+                <p className="mt-2 truncate text-xs text-danger" title={formatErrorSummary(run.error_summary)}>
+                  {formatErrorSummary(run.error_summary)}
                 </p>
               )}
               <p className="mt-2 text-xs text-faint">

@@ -23,6 +23,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "dompurify": "^3.4.13",
     "marked": "^18.0.9",
+    "pdfjs-dist": "^6.3.289",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-router-dom": "^7.1.0",

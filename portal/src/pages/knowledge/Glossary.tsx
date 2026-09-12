@@ -1,9 +1,10 @@
 import { BookOpen, Plus } from "@phosphor-icons/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { EmptyState, ErrorInline, PageHeader, SkeletonBlock } from "../../components/ui";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { isApiError } from "../../lib/errors";
 import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 
 type GlossaryTerm = {
@@ -26,24 +27,45 @@ export default function KnowledgeGlossaryPage() {
   const [definition, setDefinition] = useState("");
   const [synonyms, setSynonyms] = useState("");
   const [saving, setSaving] = useState(false);
+  const inflight = useRef(false);
 
   const load = useCallback(() => {
-    if (!session) return;
+    if (!session || inflight.current) return;
+    inflight.current = true;
     setLoading(true);
-    api<GlossaryTerm[]>("/api/v1/catalog/glossary")
+    api<GlossaryTerm[]>("/api/v1/catalog/glossary", {
+      token: session.token,
+      organizationId: session.organizationId,
+    })
       .then(setTerms)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (isApiError(e)) {
+          setError(
+            e.status === 401 || e.status === 403
+              ? "Sin permiso para el glosario de catálogo (catalog:read). Habla con el admin de tu organización."
+              : e.message,
+          );
+        } else {
+          setError(String(e));
+        }
+      })
+      .finally(() => {
+        inflight.current = false;
+        setLoading(false);
+      });
   }, [session]);
 
+  // Dep estable (session puede ser un objeto nuevo en cada render → evita loop)
   useEffect(() => load(), [load]);
 
   const save = async () => {
-    if (!concept.trim() || !definition.trim()) return;
+    if (!session || !concept.trim() || !definition.trim()) return;
     setSaving(true);
     try {
       await api("/api/v1/catalog/glossary", {
         method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
         body: JSON.stringify({
           concept,
           definition,
