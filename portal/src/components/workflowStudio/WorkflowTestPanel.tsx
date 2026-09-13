@@ -1,7 +1,9 @@
-import { ArrowUp, Lightning, Warning } from "@phosphor-icons/react";
+import { ArrowUp, Lightning, MagicWand, Warning } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
+import type { WorkflowGraph } from "../../lib/workflowGraph";
+import { humanizeWorkflowError } from "../../lib/workflowErrors";
 import type { GraphIssue } from "../../lib/workflowGraph";
 import { ErrorInline, Spinner } from "../ui";
 import { WorkflowRunInspector, type RunDetail } from "../WorkflowRunInspector";
@@ -24,6 +26,8 @@ type Props = {
    * sin esto el usuario prueba lo que hay en el servidor, no lo que ve.
    */
   onSaveBeforeRun?: () => Promise<boolean>;
+  /** Grafo actual: genera ejemplos de prueba coherentes con el flujo. */
+  graph?: WorkflowGraph | null;
 };
 
 type RunOut = {
@@ -48,6 +52,7 @@ export function WorkflowTestPanel({
   onSelectNode,
   onRan,
   onSaveBeforeRun,
+  graph,
 }: Props) {
   const { session } = useAuth();
   const [raw, setRaw] = useState("");
@@ -90,6 +95,36 @@ export function WorkflowTestPanel({
     setMessages((prev) => [...prev, msg]);
   }
 
+  function generateSample() {
+    const conversational = graph?.nodes.some(
+      (n) => n.type === "llm" || n.type === "kb_query" || n.type === "query_business_data",
+    );
+    setRaw(
+      JSON.stringify(
+        conversational ? { message: "¿Cuál es el stock actual?" } : { message: "ejemplo" },
+      ),
+    );
+  }
+
+  async function loadLastSample() {
+    if (!session) return;
+    setError("");
+    try {
+      const data = await api<{ run_id?: string | null; trigger_payload?: Record<string, unknown> }>(
+        `/api/v1/workflows/${workflowId}/sample-outputs`,
+        { token: session.token, organizationId: session.organizationId },
+      );
+      const payload = data.trigger_payload ?? {};
+      if (data.run_id && Object.keys(payload).length > 0) {
+        setRaw(JSON.stringify(payload));
+      } else {
+        setError("Todavía no hay una prueba anterior con datos; usa «Generar ejemplo».");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    }
+  }
+
   async function execute(simulate: boolean) {
     if (!session || busy) return;
     if (!simulate && effectLabels.length > 0) {
@@ -130,14 +165,14 @@ export function WorkflowTestPanel({
       onRun(detail);
       const answer = answerFromSteps(detail.steps);
       if (answer?.error) {
-        push({ role: "system", text: answer.error, tone: "danger" });
+        push({ role: "system", text: humanizeWorkflowError(answer.error), tone: "danger" });
       } else if (answer) {
         push({ role: "agent", text: answer.text, echo: answer.echo, node_id: answer.node_id });
       } else {
         push({
           role: "system",
           text:
-            detail.error ||
+            humanizeWorkflowError(detail.error) ||
             `El flujo terminó en ${out.status} sin texto de respuesta. Conecta un nodo “Preguntar a un agente” al trigger.`,
           tone: "info",
         });
@@ -173,7 +208,7 @@ export function WorkflowTestPanel({
       aria-label="Probar el workflow"
     >
       <header className="flex items-center gap-2 border-b border-border px-3 py-2.5">
-        <h2 className="flex-1 text-[13px] font-semibold text-text">Probar</h2>
+        <h2 className="flex-1 text-[13px] font-semibold text-text">Probar automatización</h2>
         {dirty && (
           <span className="badge badge-pending" title="El motor corre la versión guardada">
             se guarda al probar
@@ -299,6 +334,25 @@ export function WorkflowTestPanel({
 
       <footer className="space-y-2 border-t border-border p-3">
         <ErrorInline message={error} />
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            className="btn btn-ghost min-h-7 gap-1 px-1.5 text-[10px]"
+            data-testid="wf-sample-generate"
+            onClick={generateSample}
+          >
+            <MagicWand size={11} aria-hidden /> Generar ejemplo
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost min-h-7 gap-1 px-1.5 text-[10px]"
+            data-testid="wf-sample-last"
+            onClick={() => void loadLastSample()}
+          >
+            Usar último
+          </button>
+          <span className="text-[9px] text-faint">o edita los valores abajo</span>
+        </div>
         <div className="flex items-end gap-2">
           <textarea
             className="min-h-11 w-full flex-1 resize-none rounded-md border border-border bg-soft px-2.5 py-2.5 text-[12px]"

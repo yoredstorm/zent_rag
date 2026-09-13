@@ -41,6 +41,8 @@ export type WorkflowDetail = {
   workflow_version?: number;
   status: string;
   editor_state?: { mode?: string; config_level?: string };
+  created_at?: string;
+  updated_at?: string;
   hook_url?: string;
   has_hook_secret?: boolean;
 };

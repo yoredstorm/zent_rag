@@ -9,6 +9,7 @@ import { WorkflowCanvasEditor } from "../components/WorkflowCanvasEditor";
 import type { RunOverlay } from "../components/WorkflowCanvas";
 import type { RunDetail } from "../components/WorkflowRunInspector";
 import { WorkflowApiPanel } from "../components/workflowStudio/WorkflowApiPanel";
+import { WorkflowHealthBar } from "../components/workflowStudio/WorkflowHealthBar";
 import { WorkflowPatchPanel } from "../components/workflowStudio/WorkflowPatchPanel";
 import { WorkflowTestPanel } from "../components/workflowStudio/WorkflowTestPanel";
 import { WorkflowVersionsPanel } from "../components/workflowStudio/WorkflowVersionsPanel";
@@ -459,6 +460,8 @@ export default function WorkflowStudioPage() {
         </div>
       )}
 
+      {id && <WorkflowHealthBar workflowId={id} refreshKey={detail?.updated_at ?? ""} />}
+
       <div className="flex min-h-0 flex-1 gap-3">
         <div className="min-w-0 flex-1">
           <WorkflowCanvasEditor
@@ -487,6 +490,7 @@ export default function WorkflowStudioPage() {
               onSelectNode={setSelectedNode}
               onRan={() => void load(true)}
               onSaveBeforeRun={save}
+              graph={graph}
             />
           </aside>
         )}
@@ -511,6 +515,7 @@ export default function WorkflowStudioPage() {
                 onSelectNode={selectFromDock}
                 onRan={() => void load(true)}
                 onSaveBeforeRun={save}
+              graph={graph}
               />
             </div>
           </div>

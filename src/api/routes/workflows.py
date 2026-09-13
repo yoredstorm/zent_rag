@@ -440,6 +440,32 @@ async def tenant_workflow_sample_outputs(workflow_id: str, request: Request, run
     return result
 
 
+@router.get("/{workflow_id}/readiness", summary="Checklist de negocio antes de publicar")
+async def tenant_workflow_readiness(workflow_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.readiness import workflow_readiness
+
+    ctx = require_permission(request, "workflows:read")
+    result = await workflow_readiness(
+        ctx.organization_id, UUID(workflow_id), workspace_id=await _workspace_id(request)
+    )
+    if result is None:
+        raise HTTPException(404, "Workflow not found")
+    return result
+
+
+@router.get("/{workflow_id}/summary", summary="Resumen legible del workflow")
+async def tenant_workflow_summary(workflow_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.readiness import workflow_summary
+
+    ctx = require_permission(request, "workflows:read")
+    result = await workflow_summary(ctx.organization_id, UUID(workflow_id))
+    if result is None:
+        raise HTTPException(404, "Workflow not found")
+    return result
+
+
 @router.post("/{workflow_id}/hook-secret/rotate", summary="Rotar secret inbound")
 async def tenant_workflow_rotate_hook_secret(workflow_id: str, request: Request):
     from src.platform.rbac.policy import require_permission
