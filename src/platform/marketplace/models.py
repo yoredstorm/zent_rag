@@ -15,9 +15,11 @@ AUTO_USE_POLICY = ("NEVER_AUTO", "AUTO_READ_ONLY", "REQUIRE_APPROVAL", "WORKFLOW
 COST_MODELS = ("FREE", "PER_CALL", "MONTHLY", "TIERED", "USAGE_PLUS_BASE", "BYOC_NO_MARKUP", "ZENT_MANAGED_MARKUP")
 CATEGORIES = (
     "government", "sales", "finance", "communication", "commerce",
-    "operations", "data", "productivity", "other",
+    "operations", "data", "productivity", "demo", "other",
 )
 RISK_LEVELS = ("info", "normal", "elevated", "critical")
+PROVIDER_KINDS = ("rest", "demo_echo", "public_rest")
+EVENT_DELIVERY_MODES = ("webhook", "polling", "internal")
 
 
 class ManifestValidationError(ValueError):
@@ -33,15 +35,22 @@ def _is_json_schema(schema: Any) -> bool:
     return isinstance(schema, dict) and schema.get("type") == "object"
 
 
-def validate_action_manifest(action: dict, integration_slug: str) -> list[str]:
+def validate_action_manifest(
+    action: dict, integration_slug: str, capability_slug: str | None = None
+) -> list[str]:
     """Valida una action de manifest. Devuelve lista de errores (vacía = ok)."""
     errors: list[str] = []
     action_id = str(action.get("action_id") or "")
     label = action_id or "action"
     if not action_id:
         errors.append("action_id requerido")
-    if not action_id.startswith((f"{integration_slug}.",)) and not action_id.startswith("demo."):
-        errors.append(f"{label}: action_id debe empezar por '{integration_slug}.'")
+    prefixes = {f"{integration_slug}.", "demo."}
+    if capability_slug:
+        prefixes.add(f"{capability_slug}.")
+    if not action_id.startswith(tuple(prefixes)):
+        errors.append(
+            f"{label}: action_id debe empezar por '{integration_slug}.' o '{capability_slug}.'"
+        )
     if len(action_id) > 120:
         errors.append(f"{label}: action_id demasiado largo")
     if not str(action.get("display_name") or "").strip():
@@ -53,7 +62,7 @@ def validate_action_manifest(action: dict, integration_slug: str) -> list[str]:
     if str(action.get("risk_level") or "info") not in RISK_LEVELS:
         errors.append(f"{label}: risk_level inválido")
     try:
-        timeout = int(action.get("timeout_ms") or 0)
+        timeout = int(action.get("timeout_ms") or 5000)
         if not 100 <= timeout <= 120_000:
             errors.append(f"{label}: timeout_ms fuera de rango")
     except (TypeError, ValueError):
@@ -63,10 +72,35 @@ def validate_action_manifest(action: dict, integration_slug: str) -> list[str]:
         errors.append(f"{label}: cost_model.model inválido")
     if isinstance(action.get("provider_config"), dict):
         kind = action["provider_config"].get("kind")
-        if kind not in ("rest", "demo_echo"):
-            errors.append(f"{label}: provider_config.kind debe ser rest|demo_echo")
+        if kind not in PROVIDER_KINDS:
+            errors.append(f"{label}: provider_config.kind debe ser {'|'.join(PROVIDER_KINDS)}")
         if kind == "rest" and not str(action["provider_config"].get("path_template") or ""):
             errors.append(f"{label}: provider_config.path_template requerido para rest")
+        if kind == "public_rest":
+            base_url = str(action["provider_config"].get("base_url") or "")
+            if not base_url.startswith("https://"):
+                errors.append(f"{label}: public_rest requiere base_url https")
+            if not str(action["provider_config"].get("path_template") or ""):
+                errors.append(f"{label}: provider_config.path_template requerido para public_rest")
+    return errors
+
+
+def validate_event_manifest(event: dict, integration_slug: str) -> list[str]:
+    """Valida un connector event del manifest v2 (misión §8 y §19)."""
+    errors: list[str] = []
+    event_id = str(event.get("id") or "")
+    label = event_id or "event"
+    if not event_id:
+        errors.append("event id requerido")
+    elif not event_id.startswith(f"{integration_slug}.") and not event_id.startswith("demo."):
+        errors.append(f"{label}: event id debe empezar por '{integration_slug}.'")
+    if not str(event.get("business_name") or "").strip():
+        errors.append(f"{label}: business_name requerido")
+    if not _is_json_schema(event.get("event_schema")):
+        errors.append(f"{label}: event_schema debe ser JSON Schema object")
+    mode = str(event.get("delivery_mode") or "webhook")
+    if mode not in EVENT_DELIVERY_MODES:
+        errors.append(f"{label}: delivery_mode debe ser {'|'.join(EVENT_DELIVERY_MODES)}")
     return errors
 
 
@@ -97,7 +131,15 @@ def validate_integration_manifest(manifest: dict) -> list[str]:
         if not isinstance(cap, dict) or not str(cap.get("slug") or ""):
             errors.append("capability sin slug")
         for action in cap.get("actions") or []:
-            errors.extend(f"[{cap.get('slug')}] {e}" for e in validate_action_manifest(action, slug))
+            errors.extend(
+                f"[{cap.get('slug')}] {e}"
+                for e in validate_action_manifest(action, slug, cap.get("slug"))
+            )
+    for event in manifest.get("events") or []:
+        if not isinstance(event, dict):
+            errors.append("event inválido")
+            continue
+        errors.extend(f"[event:{event.get('id')}] {e}" for e in validate_event_manifest(event, slug))
     pricing = manifest.get("pricing") or {}
     if pricing.get("model") and pricing["model"] not in COST_MODELS:
         errors.append(f"pricing.model inválido: {pricing['model']}")

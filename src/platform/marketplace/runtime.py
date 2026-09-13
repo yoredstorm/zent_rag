@@ -909,6 +909,22 @@ async def list_evidence(
 # ---------------------------------------------------------------------------
 # Providers (adapter seguro — sin ejecución de código arbitrario)
 # ---------------------------------------------------------------------------
+async def _org_config_json(organization_id: UUID) -> dict[str, Any]:
+    """config_json de la organización (allowlist de API, etc.)."""
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text("SELECT config_json FROM organizations WHERE id = :oid"),
+                {"oid": organization_id},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+    raw = row.config_json if row else {}
+    return raw if isinstance(raw, dict) else {}
+
+
 async def _execute_rest(
     action: dict, credentials: dict[str, Any], inputs: dict[str, Any], organization_id: UUID
 ) -> dict:
@@ -918,7 +934,6 @@ async def _execute_rest(
 
     from src.agents.tools.base import ToolError
     from src.agents.tools.tools_builtin import CallApiTool
-    from src.platform.workflows.engine import _org_config
 
     cfg = action.get("provider_config") or {}
     base_url = str(credentials.get("endpoint_base_url") or credentials.get("base_url") or "")
@@ -930,7 +945,7 @@ async def _execute_rest(
     if not parsed.hostname:
         raise CredentialsMissingError("URL sin host")
     # SSRF: bloquear localhost/metadata; allowlist del tenant (si configurada).
-    org_cfg = await _org_config(organization_id)
+    org_cfg = await _org_config_json(organization_id)
     allowlist = ((org_cfg.get("agent") or {}).get("api_allowlist") or [])
     if allowlist and parsed.hostname not in allowlist:
         raise CredentialsMissingError(f"host '{parsed.hostname}' no está en la api_allowlist del tenant")
@@ -997,9 +1012,99 @@ async def _execute_demo_echo(
     }
 
 
+_MAX_RESPONSE_CHARS = 500_000
+_PUBLIC_METHODS = ("GET", "POST", "PUT", "PATCH")
+
+
+def _normalize_public_data(data: Any, output_map: dict, host: str) -> dict[str, Any]:
+    if isinstance(data, dict) and output_map:
+        normalized: dict[str, Any] = {}
+        for field, source_path in output_map.items():
+            cur: Any = data
+            for part in str(source_path).split("."):
+                if isinstance(cur, dict):
+                    cur = cur.get(part)
+                else:
+                    cur = None
+                    break
+            if cur is not None:
+                normalized[field] = cur
+        base = normalized
+    else:
+        base = dict(data) if isinstance(data, dict) else {"raw": data}
+    base.setdefault("source", host)
+    base.setdefault("retrieved_at", _iso(datetime.now(timezone.utc)))
+    return base
+
+
+async def _execute_public_rest(
+    action: dict, credentials: dict[str, Any], inputs: dict[str, Any], organization_id: UUID
+) -> dict:
+    """APIs públicas demo (sin credenciales): base_url declarada en el manifest.
+
+    Mantiene los guardrails del executor existente: HTTPS, SSRF check,
+    allowlist del tenant, timeout acotado, sin redirects y tamaño máximo.
+    """
+    from urllib.parse import urlparse
+
+    import httpx
+
+    from src.agents.tools.base import ToolError
+    from src.agents.tools.tools_builtin import CallApiTool
+
+    cfg = action.get("provider_config") or {}
+    base_url = str(cfg.get("base_url") or credentials.get("endpoint_base_url") or "")
+    if not base_url:
+        raise CredentialsMissingError("base_url no configurada para esta integración")
+    parsed = urlparse(base_url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise CredentialsMissingError("base_url debe ser https con host")
+    org_cfg = await _org_config_json(organization_id)
+    allowlist = ((org_cfg.get("agent") or {}).get("api_allowlist") or [])
+    if allowlist and parsed.hostname not in allowlist:
+        raise CredentialsMissingError(f"host '{parsed.hostname}' no está en la api_allowlist del tenant")
+    try:
+        CallApiTool._ssrf_check(parsed.hostname)
+    except ToolError as exc:
+        raise CredentialsMissingError(str(exc)) from exc
+
+    path = str(cfg.get("path_template") or "/")
+    for key, value in (inputs or {}).items():
+        path = path.replace("{" + key + "}", str(value))
+    url = base_url.rstrip("/") + path
+    method = str(cfg.get("method") or "GET").upper()
+    if method not in _PUBLIC_METHODS:
+        raise CredentialsMissingError(f"method no permitido: {method}")
+    timeout = min(float(action.get("timeout_ms") or 5000) / 1000.0, 30.0)
+    async with httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client:
+        if method == "POST":
+            resp = await client.post(url, json=inputs)
+        elif method == "PUT":
+            resp = await client.put(url, json=inputs)
+        elif method == "PATCH":
+            resp = await client.patch(url, json=inputs)
+        else:
+            query = {
+                **{str(k): v for k, v in (cfg.get("query") or {}).items()},
+                **{k: v for k, v in (inputs or {}).items() if k not in path},
+            }
+            resp = await client.get(url, params=query)
+    if len(resp.text) > _MAX_RESPONSE_CHARS:
+        return {"_http_error": True, "_status_code": 413, "_body": "respuesta demasiado grande"}
+    try:
+        data = resp.json()
+    except Exception:  # noqa: BLE001
+        data = {"raw": resp.text[:2000], "status_code": resp.status_code}
+    normalized = _normalize_public_data(data, cfg.get("output_map") or {}, parsed.hostname)
+    if resp.status_code >= 400:
+        return {"_http_error": True, "_status_code": resp.status_code, "_body": str(data)[:500]}
+    return {"status_code": resp.status_code, "ok": True, "data": normalized, "_raw": data}
+
+
 PROVIDER_EXECUTORS = {
     "rest": _execute_rest,
     "demo_echo": _execute_demo_echo,
+    "public_rest": _execute_public_rest,
 }
 
 

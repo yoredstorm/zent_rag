@@ -826,15 +826,28 @@ async def create_from_template(
     if tpl is None:
         raise ValueError("plantilla no encontrada")
     tcfg = tpl.trigger_config if isinstance(getattr(tpl, "trigger_config", None), dict) else {}
-    return await create_workflow(
+    steps = list(tpl.steps or [])
+    missing: list[dict] = []
+    try:
+        from src.platform.workflows.capabilities import wire_template_installs
+
+        steps, missing = await wire_template_installs(
+            organization_id, steps, workspace_id=workspace_id
+        )
+    except Exception as exc:  # noqa: BLE001 — la plantilla se crea igual
+        logger.warning("template install wiring failed", slug=slug, error=str(exc)[:200])
+    out = await create_workflow(
         organization_id,
         name or tpl.name,
         tpl.trigger_type,
         tcfg,
-        tpl.steps,
+        steps,
         tpl.description,
         workspace_id=workspace_id,
     )
+    if missing:
+        out["missing_integrations"] = missing
+    return out
 
 
 # ---------------------------------------------------------------------------

@@ -389,6 +389,67 @@ async def ports_for_action(action_id: str) -> dict | None:
     }
 
 
+async def wire_template_installs(
+    organization_id: UUID,
+    steps: list[dict],
+    *,
+    workspace_id: UUID | None = None,
+    created_by: UUID | None = None,
+) -> tuple[list[dict], list[dict]]:
+    """Resuelve `{{_pack.<slug>_install}}` de una plantilla instalando la
+    integración si es posible (demos públicas sin credenciales).
+
+    Devuelve (steps_reemplazados, missing). Nunca falla la instalación de la
+    plantilla por una integración que requiere credenciales: deja el
+    placeholder y reporta `missing` para que la UI pida conexión.
+    """
+    import copy
+    import re
+
+    from src.platform.marketplace import runtime as mkt_runtime
+
+    placeholder_re = re.compile(r"\{\{_pack\.([a-z0-9-]+)_install\}\}")
+    slugs: set[str] = set()
+
+    def _collect(value: object) -> None:
+        if isinstance(value, str):
+            for match in placeholder_re.finditer(value):
+                slugs.add(match.group(1))
+        elif isinstance(value, list):
+            for item in value:
+                _collect(item)
+        elif isinstance(value, dict):
+            for item in value.values():
+                _collect(item)
+
+    _collect(steps)
+    installs: dict[str, str] = {}
+    missing: list[dict] = []
+    for slug in sorted(slugs):
+        try:
+            install = await mkt_runtime.install_integration(
+                organization_id, slug, workspace_id=workspace_id, created_by=created_by
+            )
+            installs[slug] = str(install["install_id"])
+        except Exception as exc:  # noqa: BLE001 — credenciales/purpose: se reporta
+            missing.append({"slug": slug, "error": str(exc)[:200]})
+
+    def _replace(value: object) -> object:
+        if isinstance(value, str):
+            def repl(match: re.Match) -> str:
+                slug = match.group(1)
+                return installs.get(slug, match.group(0))
+
+            return placeholder_re.sub(repl, value)
+        if isinstance(value, list):
+            return [_replace(item) for item in value]
+        if isinstance(value, dict):
+            return {key: _replace(item) for key, item in value.items()}
+        return value
+
+    return _replace(copy.deepcopy(steps)), missing  # type: ignore[return-value]
+
+
 async def draft_marketplace_flags(
     organization_id: UUID,
     steps: list[dict],

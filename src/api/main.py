@@ -379,6 +379,17 @@ async def _run_startup() -> None:
         await ensure_business_packs()
     except Exception as exc:  # noqa: BLE001
         logger.warning("Business packs seeding failed", error=str(exc)[:150])
+    # Integraciones demo (PokéAPI, Open-Meteo, Demo Records): idempotente.
+    try:
+        from src.platform.marketplace.demo_integrations import (
+            ensure_demo_integrations,
+            ensure_demo_recipes,
+        )
+
+        await ensure_demo_integrations()
+        await ensure_demo_recipes()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Demo integrations seeding failed", error=str(exc)[:150])
     if settings.ENVIRONMENT == "development":
         try:
             from src.infrastructure.postgres.relational_db import PostgresUserRepository
