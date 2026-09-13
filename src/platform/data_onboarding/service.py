@@ -21,10 +21,15 @@ from src.core.domain.catalog import (
     SuggestionType,
 )
 from src.infrastructure.observability.logging_config import get_logger
+from src.platform.data_onboarding.ask_evidence import format_ask_evidence
 from src.platform.data_onboarding.constants import SQL_ENGINES
-from src.platform.data_onboarding.document_facts import extract_document_facts
+from src.platform.data_onboarding.document_facts import (
+    complete_document_facts,
+    extract_document_facts_rules,
+)
 from src.platform.data_onboarding.document_insights import DocumentInsightsStore
 from src.platform.data_onboarding.flows import get_flow, readiness_labels
+from src.platform.data_onboarding.glimpses import analyze_percent, build_glimpses
 from src.platform.data_onboarding.mime import MimeRejected, detect_source_type
 from src.platform.data_onboarding.profile import profile_upload
 from src.platform.data_onboarding.questions import build_question_pack
@@ -658,11 +663,18 @@ class DataOnboardingService:
             )
             if source:
                 technical["catalog_phase"] = source.get("phase")
+        understanding = (row.get("state") or {}).get("understanding") or {}
         return {
             "session": self.public(row),
             "phases": phases,
             "headline": flow.analyze_headline,
             "technical_details": technical,
+            "percent": analyze_percent(
+                phases,
+                row["status"],
+                technical.get("job_progress"),
+            ),
+            "glimpses": build_glimpses(understanding),
         }
 
     async def understanding(self, organization_id: UUID, session_id: UUID) -> dict:
@@ -751,6 +763,43 @@ class DataOnboardingService:
             raise DataOnboardingError("Suggestion not found or not pending", 404)
         return result
 
+    async def accept_review(
+        self,
+        organization_id: UUID,
+        session_id: UUID,
+        reviewed_by: UUID | None,
+    ) -> dict:
+        row = await self._require(organization_id, session_id)
+        source_id = row.get("catalog_source_id") or row.get("kb_source_id")
+        pending: list[dict] = []
+        if source_id:
+            pending = await self._catalog.list_suggestions(
+                organization_id,
+                status="pending",
+                source_id=UUID(str(source_id)),
+                limit=100,
+            )
+        queue = ReviewQueueService(self._catalog)
+        approved = 0
+        errors: list[dict] = []
+        for item in pending:
+            try:
+                result = await queue.approve(
+                    organization_id, UUID(str(item["id"])), reviewed_by=reviewed_by
+                )
+                if result is None:
+                    errors.append({"id": item["id"], "error": "not found or not pending"})
+                else:
+                    approved += 1
+            except Exception as exc:  # noqa: BLE001
+                errors.append({"id": item["id"], "error": str(exc)[:200]})
+        refreshed = await self._require(organization_id, session_id)
+        return {
+            "approved": approved,
+            "errors": errors,
+            "session": self.public(refreshed),
+        }
+
     async def free_text(
         self, organization_id: UUID, session_id: UUID, text_value: str
     ) -> dict:
@@ -836,7 +885,7 @@ class DataOnboardingService:
             "method": getattr(result, "method", "rag"),
             "sql": result.sql_query if getattr(result, "method", "") == "sql" else None,
             "confidence": (answerability or {}).get("confidence"),
-            "evidence": (answerability or {}).get("evidence") or [],
+            "evidence": format_ask_evidence((answerability or {}).get("evidence") or []),
             "answerability": answerability,
             "sources": [
                 {"id": str(getattr(s, "id", "")), "title": getattr(s, "title", None)}
@@ -1050,6 +1099,23 @@ class DataOnboardingService:
         public["job"] = result
         return public
 
+    async def _checkpoint_understanding(
+        self,
+        organization_id: UUID,
+        session_id: UUID,
+        row: dict,
+        understanding: dict,
+    ) -> dict:
+        state = merge_state(row.get("state") or {}, {"understanding": understanding})
+        updated = await self._store.update(
+            organization_id,
+            session_id,
+            status="ANALYZING",
+            step="analyze",
+            state_json=state,
+        )
+        return updated or await self._require(organization_id, session_id)
+
     async def _analyze_files(
         self, organization_id: UUID, session_id: UUID, row: dict
     ) -> dict:
@@ -1070,6 +1136,7 @@ class DataOnboardingService:
             source.type,
             str(cfg.get("filename") or source.name),
         )
+        extracted: dict[str, Any] | None = None
         if understanding.get("kind") == "document":
             raw = b""
             try:
@@ -1080,14 +1147,20 @@ class DataOnboardingService:
                     raw = path.read_bytes()
             except Exception as exc:  # noqa: BLE001
                 logger.warning("onboarding read document failed", error=str(exc)[:200])
-            extracted = await extract_document_facts(
+            extracted = extract_document_facts_rules(
                 raw, str(cfg.get("filename") or source.name)
             )
             understanding["pages"] = extracted.get("pages")
             understanding["text_ok"] = extracted.get("text_ok")
             if not understanding.get("headings"):
                 understanding["headings"] = extracted.get("headings") or []
-            understanding["facts"] = extracted.get("facts") or []
+            understanding["facts"] = list(extracted.get("facts") or [])
+        row = await self._checkpoint_understanding(
+            organization_id, session_id, row, understanding
+        )
+        if understanding.get("kind") == "document" and extracted is not None:
+            completed = await complete_document_facts(extracted)
+            understanding["facts"] = completed.get("facts") or []
             await self._persist_document_facts(
                 organization_id, session_id, row, understanding
             )

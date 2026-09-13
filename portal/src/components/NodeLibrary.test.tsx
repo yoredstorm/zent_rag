@@ -31,6 +31,15 @@ const MKT: MarketplaceContext = {
   costs: [],
 };
 
+describe("NodeLibrary", () => {
+  it("pone AI primero y el nodo de agente al tope de su grupo", () => {
+    render(<NodeLibrary onAdd={() => undefined} usedTypes={[]} />);
+    const buttons = screen.getAllByRole("button");
+    const labels = buttons.map((b) => b.getAttribute("data-testid")).filter(Boolean);
+    expect(labels[0]).toBe("wf-add-llm");
+  });
+});
+
 describe("NodeLibrary marketplace", () => {
   it("muestra Installed con estado, costo y versión disponible", () => {
     render(<NodeLibrary onAdd={() => undefined} usedTypes={[]} marketplace={MKT} />);
@@ -68,7 +77,7 @@ describe("NodeLibrary marketplace", () => {
     render(<NodeLibrary onAdd={() => undefined} usedTypes={[]} marketplace={MKT} onAddMarketplaceAction={onAddMx} />);
     expect(screen.getByTestId("wf-add-business_node")).toBeInTheDocument();
     const user = userEvent.setup();
-    await user.type(screen.getByPlaceholderText("Buscar nodo, RUC, SUNAT…"), "taxpayer");
+    await user.type(screen.getByLabelText("Buscar nodo"), "taxpayer");
     expect(screen.getByTestId("wf-mkt-section")).toBeInTheDocument();
     await user.click(screen.getByTestId("wf-mkt-action-peru.taxpayer.lookup"));
     expect(onAddMx).toHaveBeenCalled();

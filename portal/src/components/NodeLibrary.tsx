@@ -41,9 +41,13 @@ type Props = {
   onAddMarketplaceAction?: (installId: string, action: MxInstall["actions"][number]) => void;
   onAddRecommendation?: (rec: MxRecommendation) => void;
   onInstall?: (slug: string) => void;
+  /** Alto del rail; el estudio lo estira al viewport. */
+  className?: string;
 };
 
-const ORDER: NodeCategory[] = ["trigger", "data", "ai", "integration", "logic", "business", "control", "output"];
+// AI primero: "Preguntar a un agente" es el nodo que la gente busca.
+const ORDER: NodeCategory[] = ["ai", "data", "logic", "integration", "business", "control", "output", "trigger"];
+const FIRST_IN_CATEGORY = ["llm"];
 
 const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
   connected: { text: "conectado", cls: "badge-success" },
@@ -56,7 +60,7 @@ const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
   disabled: { text: "deshabilitada", cls: "badge-muted" },
 };
 
-export function NodeLibrary({ onAdd, usedTypes, marketplace, onAddMarketplaceAction, onAddRecommendation, onInstall }: Props) {
+export function NodeLibrary({ onAdd, usedTypes, marketplace, onAddMarketplaceAction, onAddRecommendation, onInstall, className = "h-[560px]" }: Props) {
   const [q, setQ] = useState("");
   const items = useMemo(() => Object.values(NODE_LIBRARY).filter((m) => !m.type.startsWith("trigger_") || usedTypes.length === 0), [usedTypes]);
   const filtered = items.filter(
@@ -77,22 +81,26 @@ export function NodeLibrary({ onAdd, usedTypes, marketplace, onAddMarketplaceAct
       (marketplace.recommendations ?? []).some((r) => r.action_id.includes(ql)));
 
   return (
-    <aside className="flex h-[560px] w-56 shrink-0 flex-col overflow-hidden rounded-md border border-border bg-raised/60" data-testid="wf-node-library">
+    <aside className={`flex w-44 shrink-0 flex-col overflow-hidden rounded-lg border border-border bg-surface xl:w-52 ${className}`} data-testid="wf-node-library">
       <div className="border-b border-border p-2">
         <h3 className="text-[11px] font-semibold tracking-wide text-faint uppercase">Nodos</h3>
         <div className="relative mt-1.5">
           <MagnifyingGlass size={12} className="absolute top-1/2 left-2 -translate-y-1/2 text-faint" aria-hidden />
           <input
-            className="w-full rounded-md border border-border bg-bg py-1 pl-6 pr-2 text-[11px]"
-            placeholder="Buscar nodo, RUC, SUNAT…"
+            className="w-full rounded-md border border-border bg-bg py-1.5 pl-6 pr-2 text-[11px]"
+            placeholder="Buscar nodo…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
+            aria-label="Buscar nodo"
+            data-testid="wf-node-search"
           />
         </div>
       </div>
       <div className="flex-1 space-y-2 overflow-y-auto p-2">
         {ORDER.map((cat) => {
-          const group = filtered.filter((m) => m.category === cat);
+          const group = filtered
+            .filter((m) => m.category === cat)
+            .sort((a, b) => Number(FIRST_IN_CATEGORY.includes(b.type)) - Number(FIRST_IN_CATEGORY.includes(a.type)));
           if (group.length === 0 && !(cat === "business" && ql)) return null;
           if (group.length === 0) return null;
           return (
@@ -114,7 +122,9 @@ export function NodeLibrary({ onAdd, usedTypes, marketplace, onAddMarketplaceAct
                     </span>
                     <span className="min-w-0">
                       <span className="block truncate text-[11px] font-medium text-text">{m.label}</span>
-                      <span className="block truncate text-[9px] text-faint">{m.risk && m.risk !== "normal" ? `riesgo ${m.risk}` : "—"}</span>
+                      {m.risk === "elevated" || m.risk === "critical" ? (
+                        <span className="block truncate text-[9px] text-warn">riesgo {m.risk}</span>
+                      ) : null}
                     </span>
                   </button>
                 ))}

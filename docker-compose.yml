@@ -130,6 +130,10 @@ x-common-env: &common-env
   RAG_KNOWLEDGE_SUMMARY_MODEL: ${RAG_KNOWLEDGE_SUMMARY_MODEL:-}
   RAG_KNOWLEDGE_LOCATE_LLM_ENABLED: ${RAG_KNOWLEDGE_LOCATE_LLM_ENABLED:-false}
   RAG_KNOWLEDGE_LOCATE_MODEL: ${RAG_KNOWLEDGE_LOCATE_MODEL:-}
+  # Cognitive OS (fases 1-10): off | shadow | limited | active.
+  # off bloquea /api/v1/cognitive/* (503). Requiere las migraciones 102-108
+  # (el API las aplica al arrancar: alembic upgrade head).
+  RAG_COGNITIVE_OS_ENABLED: ${RAG_COGNITIVE_OS_ENABLED:-off}
 
 services:
   # ===========================================================================

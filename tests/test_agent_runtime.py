@@ -201,3 +201,42 @@ class TestReActLoop:
         result = await runtime.run(_request(agent))
         assert result.status == "limit_reached"
         assert any(s.get("detail") == "max_cost exceeded" for s in result.steps)
+
+    @pytest.mark.asyncio
+    async def test_identical_tool_call_blocked_then_answers(self) -> None:
+        echo = _EchoTool()
+        register_tool(echo)
+        llm = _FakeLLM(
+            [
+                '{"tool": "echo", "arguments": {"text": "x"}}',
+                '{"tool": "echo", "arguments": {"text": "x"}}',
+                '{"answer": "El gerente es Miguel"}',
+            ]
+        )
+        runtime = AgentRuntime(llm_provider=llm)
+        result = await runtime.run(_request(_agent(), "quien es el gerente"))
+        assert result.status == "completed"
+        assert result.answer == "El gerente es Miguel"
+        assert len(echo.calls) == 1
+        assert any(
+            s.get("detail") == "loop prevention: duplicate tool call without new information"
+            for s in result.steps
+        )
+
+    @pytest.mark.asyncio
+    async def test_max_tokens_with_observations_still_answers(self) -> None:
+        register_tool(_EchoTool())
+        llm = _FakeLLM(
+            [
+                '{"tool": "echo", "arguments": {"text": "Miguel Angel Pezzia, Gerente General"}}',
+                '{"tool": "echo", "arguments": {"text": "mas contratos"}}',
+                '{"answer": "El gerente es Miguel Angel Pezzia"}',
+            ],
+            tokens=30,
+        )
+        agent = _agent(config_json={"max_tokens": 80})
+        runtime = AgentRuntime(llm_provider=llm)
+        result = await runtime.run(_request(agent, "quien es el gerente"))
+        assert result.status == "completed"
+        assert "Miguel" in result.answer
+        assert any(s.get("detail") == "max_tokens exceeded" for s in result.steps)

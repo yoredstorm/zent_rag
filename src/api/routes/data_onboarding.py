@@ -348,6 +348,22 @@ async def review(
     return result
 
 
+@router.post("/sessions/{session_id}/accept-review")
+async def accept_review(session_id: UUID, request: Request):
+    ctx = require_permission(request, "catalog:write")
+    try:
+        result = await _svc.accept_review(
+            ctx.organization_id, session_id, ctx.user_id
+        )
+    except DataOnboardingError as exc:
+        _handle(exc)
+    await _audit().write(
+        ctx, "data_onboarding.reviewed", "data_onboarding_session", session_id,
+        metadata={"action": "accept_review", "approved": result.get("approved")},
+    )
+    return result
+
+
 @router.post("/sessions/{session_id}/free-text")
 async def free_text(session_id: UUID, body: FreeTextBody, request: Request):
     ctx = require_permission(request, "catalog:write")
@@ -378,7 +394,7 @@ async def ask(
     request: Request,
     orchestrator=Depends(get_rag_orchestrator),
 ):
-    ctx = require_permission(request, "rag:read")
+    ctx = _require_any(request, (*READ_PERMS, "rag:read"))
     try:
         return await _svc.ask(
             ctx.organization_id,

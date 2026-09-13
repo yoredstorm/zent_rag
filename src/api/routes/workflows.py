@@ -247,6 +247,7 @@ async def tenant_workflow_update(workflow_id: str, body: WorkflowUpdateIn, reque
             body.editor_state,
             graph=body.graph,
             workflow_version=body.workflow_version,
+            trigger_type=body.trigger_type,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -324,6 +325,114 @@ async def tenant_workflow_runs(workflow_id: str, request: Request, limit: int = 
     return await list_runs(ctx.organization_id, UUID(workflow_id), limit)
 
 
+@router.post("/{workflow_id}/hook-secret/rotate", summary="Rotar secret inbound")
+async def tenant_workflow_rotate_hook_secret(workflow_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.engine import rotate_hook_secret
+
+    ctx = require_permission(request, "workflow_secrets:manage")
+    result = await rotate_hook_secret(ctx.organization_id, UUID(workflow_id))
+    if result is None:
+        raise HTTPException(404, "Workflow not found")
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Versiones publicables (snapshot / promote / rollback)
+# ---------------------------------------------------------------------------
+@router.get("/{workflow_id}/versions", summary="Versiones del workflow")
+async def tenant_workflow_versions(workflow_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.versions import list_versions
+
+    ctx = require_permission(request, "workflows:read")
+    return await list_versions(ctx.organization_id, UUID(workflow_id))
+
+
+@router.post("/{workflow_id}/versions", summary="Crear snapshot del workflow")
+async def tenant_workflow_version_create(
+    workflow_id: str, request: Request, body: VersionIn | None = None
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.versions import create_version
+
+    ctx = require_permission(request, "workflows:update")
+    try:
+        result = await create_version(
+            ctx.organization_id,
+            UUID(workflow_id),
+            notes=body.notes if body else None,
+            created_by=ctx.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if result is None:
+        raise HTTPException(404, "Workflow not found")
+    return result
+
+
+@router.post("/{workflow_id}/versions/{version_id}/promote", summary="Promover versión")
+async def tenant_workflow_version_promote(
+    workflow_id: str, version_id: str, body: PromoteIn, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.versions import promote_version
+
+    ctx = require_permission(request, "workflows:activate")
+    try:
+        result = await promote_version(
+            ctx.organization_id, UUID(workflow_id), UUID(version_id), body.status
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if result is None:
+        raise HTTPException(404, "Version not found")
+    return result
+
+
+@router.post(
+    "/{workflow_id}/versions/{version_id}/restore", summary="Restaurar versión (rollback)"
+)
+async def tenant_workflow_version_restore(
+    workflow_id: str, version_id: str, request: Request
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.versions import restore_version
+
+    ctx = require_permission(request, "workflows:update")
+    try:
+        result = await restore_version(
+            ctx.organization_id, UUID(workflow_id), UUID(version_id)
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if result is None:
+        raise HTTPException(404, "Version not found")
+    return result
+
+
+@router.post("/{workflow_id}/publish", summary="Publicar workflow (snapshot + activar)")
+async def tenant_workflow_publish(
+    workflow_id: str, request: Request, body: VersionIn | None = None
+):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.versions import publish_workflow
+
+    ctx = require_permission(request, "workflows:activate")
+    try:
+        result = await publish_workflow(
+            ctx.organization_id,
+            UUID(workflow_id),
+            notes=body.notes if body else None,
+            created_by=ctx.user_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if result is None:
+        raise HTTPException(404, "Workflow not found")
+    return result
+
+
 class WorkflowIn(BaseModel):
     name: str = Field(min_length=1, max_length=150)
     description: str | None = None
@@ -339,6 +448,7 @@ class WorkflowIn(BaseModel):
 class WorkflowUpdateIn(BaseModel):
     name: str | None = Field(default=None, max_length=150)
     description: str | None = None
+    trigger_type: str | None = Field(default=None, pattern="^(webhook|schedule|event)$")
     trigger_config: dict | None = None
     steps: list[dict] | None = None
     editor_state: dict | None = None
@@ -349,6 +459,14 @@ class WorkflowUpdateIn(BaseModel):
 class RunIn(BaseModel):
     payload: dict | None = None
     simulate: bool = False
+
+
+class VersionIn(BaseModel):
+    notes: str | None = Field(default=None, max_length=500)
+
+
+class PromoteIn(BaseModel):
+    status: str = Field(pattern="^(draft|ready|production|archived)$")
 
 
 class ApprovalIn(BaseModel):
@@ -465,6 +583,7 @@ async def public_workflow_hook(workflow_id: str, request: Request):
     from src.platform.workflows.engine import run_workflow_from_hook
 
     secret = request.headers.get("x-zent-workflow-secret") or ""
+    secret_in_query = any(k.lower() == "x-zent-workflow-secret" for k in request.query_params)
     try:
         body = await request.json()
     except Exception:
@@ -479,6 +598,17 @@ async def public_workflow_hook(workflow_id: str, request: Request):
     if result.get("error") == "not_found":
         raise HTTPException(404, "Workflow not found")
     if result.get("error") == "unauthorized":
+        if secret_in_query and not secret:
+            raise HTTPException(
+                401,
+                "Invalid workflow secret. Send it as HTTP header X-Zent-Workflow-Secret, "
+                "not as a query parameter.",
+            )
+        if not secret:
+            raise HTTPException(
+                401,
+                "Invalid workflow secret. Send header X-Zent-Workflow-Secret.",
+            )
         raise HTTPException(401, "Invalid workflow secret")
     if result.get("error") == "inactive":
         raise HTTPException(409, "Workflow is not active")

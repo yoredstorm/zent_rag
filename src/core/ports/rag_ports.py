@@ -33,6 +33,8 @@ class VectorStore(ABC):
         score_threshold: float = 0.1,
         role: str = "admin",
         knowledge_base_id: UUID | None = None,
+        workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> RetrievalContext: ...
 
     @abstractmethod
@@ -53,6 +55,7 @@ class VectorStore(ABC):
         points: list[tuple[UUID, list[float], str, dict[str, str] | None]],
         knowledge_base_id: UUID | None = None,
         sparse_vectors: list[dict[str, float]] | None = None,
+        workspace_id: UUID | None = None,
     ) -> None:
         """Inserta puntos densos; opcionalmente sus vectores sparse (BM25).
 
@@ -77,12 +80,37 @@ class VectorStore(ABC):
         organization_id); borrar por ID exacto es seguro por construcción.
         """
 
+    async def delete_v2_document(
+        self, organization_id: UUID, document_id: UUID
+    ) -> None:
+        """Elimina todos los puntos V2 (children+parents) de un documento.
+
+        Default sin soporte: los adaptadores que indexan estructura V2 lo
+        sobreescriben. organization_id es obligatorio (tenant isolation).
+        """
+        return None
+
+    async def delete_stale_v2_documents(
+        self,
+        organization_id: UUID,
+        source_id: UUID,
+        keep_external_ids: set[str],
+    ) -> None:
+        """Elimina los puntos V2 de la fuente cuyo external_id ya no existe.
+
+        Default sin soporte. `keep_external_ids` es la lista observada en el
+        sync actual; solo toca puntos con `metadata.v2_doc=true`.
+        """
+        return None
+
     @abstractmethod
     async def get_documents(
         self,
         organization_id: UUID,
         document_ids: list[UUID],
         role: str = "admin",
+        user_id: UUID | None = None,
+        groups: list[str] | None = None,
     ) -> RetrievalContext:
         """Recupera documentos por ID con verificación obligatoria de tenant.
 
@@ -110,6 +138,8 @@ class LexicalStore(ABC):
         score_threshold: float = 0.1,
         role: str = "admin",
         knowledge_base_id: UUID | None = None,
+        workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> RetrievalContext: ...
 
 
@@ -134,6 +164,8 @@ class HybridStore(ABC):
         role: str = "admin",
         knowledge_base_id: UUID | None = None,
         fusion_weights: dict[str, float] | None = None,
+        workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> RetrievalContext: ...
 
 

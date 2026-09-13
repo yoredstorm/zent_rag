@@ -40,9 +40,11 @@ class VectorRetriever(Retriever):
                 filters={"metadata.doc_type": doc_type},
                 score_threshold=query.score_threshold,
                 role=query.role,
-        user_id=query.user_id,
-        groups=query.groups,
+                user_id=query.user_id,
+                groups=query.groups,
                 knowledge_base_id=query.knowledge_base_id,
+                workspace_id=query.workspace_id,
+                source_ids=query.source_ids or None,
             )
             total_latency += ctx.retrieval_latency_ms
             for chunk in ctx.chunks:
@@ -69,9 +71,11 @@ class VectorRetriever(Retriever):
                 exclude_filters=exclude,
                 score_threshold=query.score_threshold,
                 role=query.role,
-        user_id=query.user_id,
-        groups=query.groups,
+                user_id=query.user_id,
+                groups=query.groups,
                 knowledge_base_id=query.knowledge_base_id,
+                workspace_id=query.workspace_id,
+                source_ids=query.source_ids or None,
             )
             total_latency += ctx.retrieval_latency_ms
             for chunk in ctx.chunks:

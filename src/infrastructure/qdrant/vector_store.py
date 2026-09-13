@@ -188,6 +188,35 @@ def _sparse_index_params() -> qdrant_models.SparseVectorParams:
     return qdrant_models.SparseVectorParams(**kwargs)  # type: ignore[arg-type]
 
 
+def payload_visible(
+    payload: dict,
+    *,
+    role: str,
+    user_id: UUID | None = None,
+    groups: list[str] | None = None,
+) -> bool:
+    """ACL pre-LLM para fetch por ID (Qdrant retrieve no acepta filtros).
+
+    Espeja `_build_qdrant_filter`: admin ve todo; el resto necesita
+    `visibility == "public"` o `acl_users` con el usuario o `acl_groups`
+    intersectando sus grupos. Payloads legacy sin visibility = public (mismo
+    default que upsert_batch)."""
+    if role == "admin":
+        return True
+    metadata = payload.get("metadata") or {}
+    visibility = payload.get("visibility") or metadata.get("visibility") or "public"
+    if visibility == "public":
+        return True
+    acl_users = payload.get("acl_users") or metadata.get("acl_users") or []
+    if user_id is not None and str(user_id) in {str(u) for u in acl_users}:
+        return True
+    acl_groups = payload.get("acl_groups") or metadata.get("acl_groups") or []
+    user_groups = {str(g) for g in (groups or []) if g}
+    if user_groups and user_groups & {str(g) for g in acl_groups}:
+        return True
+    return False
+
+
 class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
     """Implementación de VectorStore con colección única compartida.
 
@@ -246,6 +275,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         user_id: UUID | None = None,
         groups: list[str] | None = None,
         workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> qdrant_models.Filter:
         must_conditions = [
             qdrant_models.FieldCondition(
@@ -259,6 +289,13 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
                 qdrant_models.FieldCondition(
                     key="knowledge_base_id",
                     match=qdrant_models.MatchValue(value=str(knowledge_base_id)),
+                )
+            )
+        if source_ids:
+            must_conditions.append(
+                qdrant_models.FieldCondition(
+                    key="metadata.source_id",
+                    match=qdrant_models.MatchAny(any=[str(sid) for sid in source_ids]),
                 )
             )
         if workspace_id is not None:
@@ -360,6 +397,8 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         knowledge_base_id: UUID | None = None,
         user_id: UUID | None = None,
         groups: list[str] | None = None,
+        workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> RetrievalContext:
         if organization_id is None:
             raise ValueError("search() requires organization_id (tenant isolation)")
@@ -370,7 +409,8 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         start = time.perf_counter()
 
         qdrant_filter = self._build_qdrant_filter(
-            organization_id, filters, exclude_filters, role, knowledge_base_id, user_id, groups)
+            organization_id, filters, exclude_filters, role, knowledge_base_id,
+            user_id, groups, workspace_id, source_ids)
 
         kwargs: dict[str, object] = {
             "collection_name": RAG_DOCUMENTS_COLLECTION,
@@ -419,6 +459,8 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         knowledge_base_id: UUID | None = None,
         user_id: UUID | None = None,
         groups: list[str] | None = None,
+        workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> RetrievalContext:
         if organization_id is None:
             raise ValueError("search_sparse() requires organization_id (tenant isolation)")
@@ -430,7 +472,8 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         start = time.perf_counter()
 
         qdrant_filter = self._build_qdrant_filter(
-            organization_id, filters, exclude_filters, role, knowledge_base_id, user_id, groups)
+            organization_id, filters, exclude_filters, role, knowledge_base_id,
+            user_id, groups, workspace_id, source_ids)
 
         sparse_vector = encode_sparse(query_text)
         if not sparse_vector:
@@ -479,6 +522,8 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         fusion_weights: dict[str, float] | None = None,
         user_id: UUID | None = None,
         groups: list[str] | None = None,
+        workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> RetrievalContext:
         """Fusión RRF server-side (un solo round-trip).
 
@@ -497,7 +542,8 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         start = time.perf_counter()
 
         qdrant_filter = self._build_qdrant_filter(
-            organization_id, filters, exclude_filters, role, knowledge_base_id, user_id, groups)
+            organization_id, filters, exclude_filters, role, knowledge_base_id,
+            user_id, groups, workspace_id, source_ids)
 
         sparse_vector = encode_sparse(query_text)
         if not sparse_vector:
@@ -719,15 +765,84 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
                 points_count=len(point_ids),
             )
 
+    async def delete_v2_document(self, organization_id: UUID, document_id: UUID) -> None:
+        """Borra los puntos V2 (children+parents) de un documento por filtro.
+
+        Los puntos V2 llevan `metadata.document_id`; los chunks V1 no, así que
+        el filtro nunca toca la indexación legacy. Scoped por organización."""
+        organization_id = bind_organization_id(organization_id)
+        await self._delete_with_filter(
+            must=[
+                qdrant_models.FieldCondition(
+                    key="organization_id",
+                    match=qdrant_models.MatchValue(value=str(organization_id)),
+                ),
+                qdrant_models.FieldCondition(
+                    key="metadata.document_id",
+                    match=qdrant_models.MatchValue(value=str(document_id)),
+                ),
+            ],
+            log_message=(
+                f"Deleted V2 document {document_id} points "
+                f"(organization {organization_id})"
+            ),
+        )
+
+    async def delete_stale_v2_documents(
+        self,
+        organization_id: UUID,
+        source_id: UUID,
+        keep_external_ids: set[str],
+    ) -> None:
+        """Borra puntos V2 de la fuente cuyo external_id ya no existe.
+
+        Solo toca puntos V2 (`metadata.v2_doc=true`), nunca chunks V1, y
+        siempre scoped por organización + fuente."""
+        organization_id = bind_organization_id(organization_id)
+        must = [
+            qdrant_models.FieldCondition(
+                key="organization_id",
+                match=qdrant_models.MatchValue(value=str(organization_id)),
+            ),
+            qdrant_models.FieldCondition(
+                key="metadata.source_id",
+                match=qdrant_models.MatchValue(value=str(source_id)),
+            ),
+            qdrant_models.FieldCondition(
+                key="metadata.v2_doc",
+                match=qdrant_models.MatchValue(value="true"),
+            ),
+        ]
+        must_not = []
+        if keep_external_ids:
+            must_not.append(
+                qdrant_models.FieldCondition(
+                    key="metadata.external_id",
+                    match=qdrant_models.MatchAny(
+                        any=sorted(str(e) for e in keep_external_ids)
+                    ),
+                )
+            )
+        await self._delete_with_filter(
+            must=must,
+            must_not=must_not,
+            log_message=(
+                f"Deleted stale V2 documents from source {source_id} "
+                f"(organization {organization_id})"
+            ),
+        )
+
     async def get_documents(
         self,
         organization_id: UUID,
         document_ids: list[UUID],
         role: str = "admin",
+        user_id: UUID | None = None,
+        groups: list[str] | None = None,
     ) -> RetrievalContext:
         """Fetch por ID con verificación post-hoc de tenant (Qdrant retrieve
         no acepta filtros): cualquier punto cuyo payload no pertenezca a la
-        organización (o no sea visible para el rol) se descarta."""
+        organización o no sea visible para el rol/ACL se descarta."""
         if organization_id is None:
             raise ValueError("get_documents() requires organization_id (tenant isolation)")
         organization_id = bind_organization_id(organization_id)
@@ -757,7 +872,9 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
                     requested_by=str(organization_id),
                 )
                 continue
-            if role == "customer" and payload.get("metadata", {}).get("visibility") != "public":
+            if not payload_visible(
+                payload, role=role, user_id=user_id, groups=groups
+            ):
                 continue
             chunks.append(
                 RetrievalChunk(
@@ -780,7 +897,9 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
             retrieval_latency_ms=latency_ms,
         )
 
-    async def _delete_with_filter(self, *, must: list, log_message: str) -> None:
+    async def _delete_with_filter(
+        self, *, must: list, log_message: str, must_not: list | None = None
+    ) -> None:
         async with _upsert_semaphore():
             client = await _get_client()
             await self._ensure_collection()
@@ -790,7 +909,9 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
                 await c.delete(
                     collection_name=RAG_DOCUMENTS_COLLECTION,
                     points_selector=qdrant_models.FilterSelector(
-                        filter=qdrant_models.Filter(must=must)
+                        filter=qdrant_models.Filter(
+                            must=must, must_not=must_not or None
+                        )
                     ),
                 )
 

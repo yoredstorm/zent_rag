@@ -1,15 +1,26 @@
 import { Plus, Minus, Crosshair, Trash } from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GraphEdge, GraphNode, WorkflowGraph } from "../lib/workflowGraph";
-import { nodeMeta, portCompatible } from "../lib/workflowGraph";
+import { CATEGORY_META, nodeMeta, portCompatible } from "../lib/workflowGraph";
+
+const CATEGORY_LABEL: Record<string, string> = Object.fromEntries(
+  Object.entries(CATEGORY_META).map(([k, v]) => [k, v.label]),
+);
 
 export type RunOverlay = Record<
   string,
-  { status: string; duration_ms?: number | null; error?: string | null; simulated?: boolean }
+  {
+    status: string;
+    duration_ms?: number | null;
+    error?: string | null;
+    simulated?: boolean;
+    /** `output.text` del paso: se muestra como snippet dentro del nodo. */
+    text?: string | null;
+  }
 >;
 
-const NODE_W = 232;
-const NODE_H = 86;
+const NODE_W = 248;
+const NODE_H = 112;
 const STATUS_CLS: Record<string, string> = {
   succeeded: "border-ok/70",
   simulated: "border-info/70",
@@ -18,6 +29,13 @@ const STATUS_CLS: Record<string, string> = {
   denied: "border-danger/80",
   pending_approval: "border-warn/80",
   paused: "border-warn/60",
+};
+const WIRE_CLS: Record<string, string> = {
+  succeeded: "stroke-ok",
+  simulated: "stroke-info",
+  failed: "stroke-danger",
+  denied: "stroke-danger",
+  skipped: "stroke-faint/30",
 };
 
 type Props = {
@@ -28,6 +46,12 @@ type Props = {
   selectedEdgeId: string | null;
   onSelectEdge: (id: string | null) => void;
   overlay?: RunOverlay;
+  /** Nombres reales de agentes: el nodo `llm` no debe mostrar un UUID. */
+  agents?: { id: string; name: string }[];
+  /** Alto del lienzo; el estudio lo pone a viewport. */
+  className?: string;
+  /** Ancho tapado a la derecha por el inspector: el nodo elegido se aparta. */
+  rightInset?: number;
 };
 
 type Drag = { x: number; y: number; sx: number; sy: number };
@@ -42,9 +66,16 @@ export function WorkflowCanvas({
   selectedEdgeId,
   onSelectEdge,
   overlay,
+  agents,
+  className = "h-[560px]",
+  rightInset = 0,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ x: 60, y: 40, s: 1 });
+  const fitted = useRef(false);
+  /** Evita que el auto-pan por selección pelee con el arrastre: al soltar el
+   * nodo el lienzo no salta (el usuario decide dónde queda). */
+  const draggingRef = useRef(false);
   const [pan, setPan] = useState<Drag | null>(null);
   const [wire, setWire] = useState<Wire | null>(null);
   const [dragNode, setDragNode] = useState<NodeDrag | null>(null);
@@ -92,6 +123,58 @@ export function WorkflowCanvas({
     };
   }
 
+  /** Encuadra el grafo en el lienzo (respeta el zoom máximo 1). */
+  const fitToView = useCallback(() => {
+    const host = hostRef.current;
+    if (!host || graph.nodes.length === 0) return;
+    const xs = graph.nodes.map((n) => n.position.x);
+    const ys = graph.nodes.map((n) => n.position.y);
+    const minX = Math.min(...xs);
+    const minY = Math.min(...ys);
+    const w = Math.max(...xs) + NODE_W - minX;
+    const h = Math.max(...ys) + NODE_H - minY;
+    const pad = 48;
+    const s = Math.min(1, (host.clientWidth - pad * 2) / w, (host.clientHeight - pad * 2) / h);
+    setView({
+      x: (host.clientWidth - w * s) / 2 - minX * s,
+      y: (host.clientHeight - h * s) / 2 - minY * s,
+      s,
+    });
+  }, [graph.nodes]);
+
+  // Primer encuadre cuando llega el grafo (no vuelve a mover la vista después).
+  useEffect(() => {
+    if (fitted.current || graph.nodes.length === 0) return;
+    fitted.current = true;
+    fitToView();
+  }, [fitToView, graph.nodes.length]);
+
+  // El inspector se abre encima del lienzo: si tapa el nodo seleccionado,
+  // desplazamos la vista lo justo para dejarlo visible.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host || !selectedNodeId || draggingRef.current) return;
+    const node = graph.nodes.find((n) => n.id === selectedNodeId);
+    if (!node) return;
+    const margin = 16;
+    setView((v) => {
+      const left = v.x + node.position.x * v.s;
+      const top = v.y + node.position.y * v.s;
+      const right = left + NODE_W * v.s;
+      const bottom = top + NODE_H * v.s;
+      const usableW = host.clientWidth - rightInset;
+      let x = v.x;
+      let y = v.y;
+      if (right > usableW - margin) x = v.x - (right - (usableW - margin));
+      else if (left < margin) x = v.x + (margin - left);
+      if (bottom > host.clientHeight - margin) y = v.y - (bottom - (host.clientHeight - margin));
+      else if (top < margin) y = v.y + (margin - top);
+      return x === v.x && y === v.y ? v : { ...v, x, y };
+    });
+    // El grafo se omite a propósito: arrastrar un nodo no debe reencuadrar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedNodeId, rightInset]);
+
   // Zoom con rueda hacia el cursor; pan con drag del fondo.
   useEffect(() => {
     const el = hostRef.current;
@@ -121,6 +204,10 @@ export function WorkflowCanvas({
   function onNodePointerDown(ev: React.PointerEvent, n: GraphNode) {
     if (ev.button !== 0 || wire) return;
     ev.stopPropagation();
+    // Captura: con el arrastre activo, el inspector que aparece al seleccionar
+    // no debe robar el pointermove (dispararía pointerleave y cancelaría el drag).
+    (ev.currentTarget as HTMLElement).setPointerCapture?.(ev.pointerId);
+    draggingRef.current = true;
     onSelectNode(n.id);
     onSelectEdge(null);
     // Arrastre RELATIVO: guardar el punto de inicio (client) y la posición
@@ -182,6 +269,7 @@ export function WorkflowCanvas({
   }
 
   function endDrag() {
+    draggingRef.current = false;
     if (wire && hotPort && hotPort.side === "in") {
       const from = nodeById(wire.fromNode);
       const target = nodeById(hotPort.node);
@@ -254,17 +342,19 @@ export function WorkflowCanvas({
 
   const edgeExecuted = (e: GraphEdge) => {
     const s = overlay?.[e.from_node];
-    return s && s.status !== "skipped" && s.status !== "failed" ? "stroke-ok/60" : "stroke-faint/40";
+    if (!s) return "stroke-border-strong";
+    return WIRE_CLS[s.status] ?? "stroke-warn";
   };
 
   return (
     <div
       ref={hostRef}
       data-testid="workflow-canvas"
-      className="relative h-[560px] w-full overflow-hidden rounded-md border border-border bg-soft/40"
+      className={`relative w-full overflow-hidden rounded-lg border border-border bg-bg ${className}`}
       style={{
-        backgroundImage: "radial-gradient(circle, var(--color-border) 1px, transparent 1px)",
-        backgroundSize: "24px 24px",
+        backgroundImage:
+          "radial-gradient(circle, color-mix(in srgb, var(--color-border) 70%, transparent) 1px, transparent 1px)",
+        backgroundSize: "22px 22px",
       }}
       onPointerDown={onBackgroundDown}
       onPointerMove={onPointerMove}
@@ -279,7 +369,7 @@ export function WorkflowCanvas({
         <button type="button" className="btn btn-ghost min-h-7 px-2" onClick={() => setView((v) => ({ ...v, s: Math.max(0.45, v.s / 1.2) }))} aria-label="Alejar">
           <Minus size={13} />
         </button>
-        <button type="button" className="btn btn-ghost min-h-7 px-2" onClick={() => setView({ x: 60, y: 40, s: 1 })} aria-label="Centrar">
+        <button type="button" className="btn btn-ghost min-h-7 px-2" onClick={fitToView} aria-label="Encuadrar el grafo">
           <Crosshair size={13} />
           <span className="ml-1 text-[10px]">{Math.round(view.s * 100)}%</span>
         </button>
@@ -298,10 +388,20 @@ export function WorkflowCanvas({
           {graph.edges.map((e) => {
             const selected = selectedEdgeId === e.id;
             const d = edgePath(e);
+            const ran = overlay?.[e.from_node];
             return (
               <g key={e.id} className="cursor-pointer" onClick={(ev) => { ev.stopPropagation(); onSelectEdge(selected ? null : e.id); }}>
-                <path d={d} fill="none" className={edgeExecuted(e)} strokeWidth={selected ? 3 : 2} strokeLinecap="round" />
-                <path d={d} fill="none" className="stroke-transparent" strokeWidth={12} />
+                {ran && ran.status !== "skipped" && (
+                  <path d={d} fill="none" className={`${edgeExecuted(e)} opacity-25`} strokeWidth={10} strokeLinecap="round" />
+                )}
+                <path
+                  d={d}
+                  fill="none"
+                  className={selected ? "stroke-accent" : edgeExecuted(e)}
+                  strokeWidth={selected ? 4 : 3}
+                  strokeLinecap="round"
+                />
+                <path d={d} fill="none" className="stroke-transparent" strokeWidth={14} />
               </g>
             );
           })}
@@ -321,32 +421,71 @@ export function WorkflowCanvas({
           const run = overlay?.[n.id];
           const selected = selectedNodeId === n.id;
           const isHot = hotPort?.node === n.id;
+          const agentName =
+            n.type === "llm" && n.config.agent_id
+              ? agents?.find((a) => a.id === String(n.config.agent_id))?.name
+              : undefined;
+          const needsAgent = n.type === "llm" && !n.config.agent_id;
+          const subtitle =
+            n.type === "llm"
+              ? agentName
+                ? `Agente: ${agentName}`
+                : needsAgent
+                  ? "Falta elegir agente"
+                  : "Agente configurado"
+              : CATEGORY_LABEL[meta.category];
+          const detail =
+            n.type === "llm"
+              ? String(n.config.prompt ?? "").trim() || "sin pregunta"
+              : (meta.summary?.(n.config) ?? "sin configurar");
           return (
             <div
               key={n.id}
               data-testid="wf-canvas-node"
               data-node-id={n.id}
-              className={`absolute select-none rounded-md border bg-raised shadow-pop transition-colors ${
-                selected ? "border-accent ring-1 ring-accent/40" : "border-border"
+              className={`absolute flex select-none flex-col rounded-lg border bg-raised shadow-pop transition-colors ${
+                selected ? "border-accent ring-2 ring-accent/30" : "border-border"
               } ${STATUS_CLS[run?.status ?? ""] ?? ""}`}
-              style={{ left: n.position.x, top: n.position.y, width: NODE_W, cursor: "default" }}
+              style={{ left: n.position.x, top: n.position.y, width: NODE_W, minHeight: NODE_H, cursor: "default" }}
               onPointerDown={(ev) => onNodePointerDown(ev, n)}
             >
-              <div className={`flex items-center gap-2 rounded-t-md px-2 py-1 text-[11px] font-semibold text-bg ${meta.color}`}>
-                <span aria-hidden>{meta.icon}</span>
-                <span className="flex-1 truncate">{meta.label}</span>
+              <div className="flex items-center gap-2 border-b border-border px-2.5 py-2">
+                <span
+                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[13px] ${meta.color} bg-opacity-20`}
+                  aria-hidden
+                >
+                  {meta.icon}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[12px] font-semibold text-text">{meta.label}</span>
+                  <span
+                    className={`block truncate text-[10px] ${needsAgent ? "text-warn" : "text-faint"}`}
+                    data-testid={needsAgent ? "wf-node-needs-agent" : undefined}
+                  >
+                    {subtitle}
+                  </span>
+                </span>
                 {run && (
-                  <span className={`badge ${run.status === "succeeded" ? "badge-ok" : run.status === "failed" ? "badge-danger" : run.status === "skipped" ? "badge-muted" : run.simulated ? "badge-info" : "badge-warning"}`}>
+                  <span className={`badge shrink-0 ${run.status === "succeeded" ? "badge-ok" : run.status === "failed" || run.status === "denied" ? "badge-danger" : run.status === "skipped" ? "badge-muted" : "badge-pending"}`}>
                     {run.status}
                   </span>
                 )}
               </div>
-              <div className="px-2 py-1">
-                <p className="truncate text-[11px] text-muted">{meta.summary?.(n.config) ?? meta.label}</p>
-                <p className="mt-0.5 flex items-center justify-between text-[9px] text-faint">
-                  <span className="truncate">{n.id}</span>
-                  {run?.duration_ms != null && <span>{run.duration_ms}ms</span>}
-                </p>
+              <div className="min-h-0 flex-1 px-2.5 py-1.5">
+                {run?.error ? (
+                  <p className="line-clamp-2 text-[10px] text-danger" data-testid="wf-node-error">
+                    {run.error}
+                  </p>
+                ) : run?.text ? (
+                  <p className="line-clamp-2 text-[10px] text-muted" data-testid="wf-node-answer">
+                    “{run.text}”
+                  </p>
+                ) : (
+                  <p className="line-clamp-2 text-[10px] text-faint">{detail}</p>
+                )}
+                {run?.duration_ms != null && (
+                  <p className="mt-0.5 text-[9px] text-faint">{run.duration_ms}ms</p>
+                )}
               </div>
               {/* Puertos de entrada */}
               {n.input_ports.map((p, i) => (

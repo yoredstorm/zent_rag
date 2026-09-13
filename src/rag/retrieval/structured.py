@@ -176,6 +176,7 @@ class StructuredRetriever:
                 user_id=query.user_id,
                 groups=query.groups,
                 knowledge_base_id=query.knowledge_base_id,
+                workspace_id=query.workspace_id,
             )
             return ctx.chunks
 
@@ -194,6 +195,7 @@ class StructuredRetriever:
                 user_id=query.user_id,
                 groups=query.groups,
                 knowledge_base_id=query.knowledge_base_id,
+                workspace_id=query.workspace_id,
             )
         )
         if self._lexical is not None and query.query:
@@ -209,6 +211,7 @@ class StructuredRetriever:
                     user_id=query.user_id,
                     groups=query.groups,
                     knowledge_base_id=query.knowledge_base_id,
+                    workspace_id=query.workspace_id,
                 )
             )
             dense_ctx, lexical_ctx = await asyncio.gather(dense_task, lexical_task)
@@ -248,6 +251,8 @@ class StructuredRetriever:
                 query.organization_id,
                 parent_ids[:16],
                 role=query.role,
+                user_id=query.user_id,
+                groups=query.groups or None,
             )
         except Exception as exc:
             logger.warning(

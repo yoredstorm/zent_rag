@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { fmtCurrency, fmtCurrencyCents, fmtDate, fmtDateTime, fmtLatency, fmtNum, timeAgo } from "./format";
+import {
+  fmtCurrency,
+  fmtCurrencyCents,
+  fmtDate,
+  fmtDateTime,
+  fmtLatency,
+  fmtNum,
+  formatErrorSummary,
+  timeAgo,
+} from "./format";
 
 describe("fmtNum", () => {
   it("formatea números con el locale canónico", () => {
@@ -61,5 +70,25 @@ describe("timeAgo", () => {
   it("devuelve — para entradas inválidas", () => {
     expect(timeAgo(null)).toBe("—");
     expect(timeAgo("basura")).toBe("—");
+  });
+});
+
+describe("formatErrorSummary", () => {
+  it("devuelve el error crudo cuando no es rate limit", () => {
+    expect(formatErrorSummary({ error: "ConnectorError: boom" })).toBe(
+      "ConnectorError: boom",
+    );
+  });
+
+  it("traduce 429 / RateLimitError a copy humano", () => {
+    const human =
+      "El proveedor de embeddings está saturado (429). Reintenta el trabajo en unos minutos.";
+    expect(
+      formatErrorSummary({
+        error:
+          "RateLimitError: litellm.RateLimitError: RateLimitError: OpenAIException - Error code: 429 - {'message': 'server overload'}",
+      }),
+    ).toBe(human);
+    expect(formatErrorSummary("Error code: 429 - server overload")).toBe(human);
   });
 });

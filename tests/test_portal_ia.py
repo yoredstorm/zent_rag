@@ -43,17 +43,27 @@ def test_portal_knowledge_center_routes_and_redirects() -> None:
 
 def test_portal_agent_builder_has_tabs_and_playground() -> None:
     builder = (PORTAL / "pages" / "AgentBuilder.tsx").read_text(encoding="utf-8")
-    for stage in ("Configure", "Context", "Capabilities", "Test", "Release"):
-        assert stage in builder, f"missing stage {stage}"
-    for tab in ("Playground", "Readiness", "Versiones", "Deployments", "Embed"):
-        assert tab in builder, f"missing tab {tab}"
-    assert "/api/v1/agents/${id}/run/stream" in builder or "/run/stream" in builder
-    assert "search_knowledge" in builder
-    assert "/api/v1/gateway/routes" in builder
-    assert "zent-default" in builder
-    assert "query_database" in builder
-    assert "Cambios sin guardar" in builder
-    assert "ReadinessScore" in builder
+    assert 'export { default } from "./AgentStudio"' in builder
+    studio = (PORTAL / "pages" / "AgentStudio.tsx").read_text(encoding="utf-8")
+    for panel in ("Configurar", "Probar"):
+        assert panel in studio, f"missing panel {panel}"
+    for piece in ("AgentPurposeForm", "AgentSourcePicker", "AgentTestChat", "AgentAdvancedPanel"):
+        assert piece in studio, f"missing piece {piece}"
+    assert "/api/v1/agents/${id}/run/stream" in studio
+    assert "/api/v1/gateway/routes" in studio
+    assert "zent-default" in studio
+    assert "Cambios sin guardar" in studio
+
+    types = (PORTAL / "components" / "agentStudio" / "types.ts").read_text(encoding="utf-8")
+    assert "search_knowledge" in types
+    assert "query_database" in types
+    for tab in ("Readiness", "Versiones", "Despliegues", "Embed"):
+        assert tab in types, f"missing tab {tab}"
+
+    advanced = (PORTAL / "components" / "agentStudio" / "AgentAdvancedPanel.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "ReadinessScore" in advanced
 
     overview = (PORTAL / "pages" / "AgentOverview.tsx").read_text(encoding="utf-8")
     assert "/api/v1/billing/usage/agents" in overview

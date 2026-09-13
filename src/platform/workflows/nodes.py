@@ -68,6 +68,7 @@ class NodeOutcome:
     planned: dict[str, Any] = field(default_factory=dict)
     control: str | None = None  # None | "stop_success" | "stop_fail" | "wait_approval"
     cost_ms: float = 0.0
+    partial: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -332,9 +333,23 @@ async def _exec_kb_query(rctx: NodeContext) -> NodeOutcome:
     return NodeOutcome(output={"documents": docs, "count": len(docs)})
 
 
+def _resolve_dep(getter: Callable[[], Any]) -> Any:
+    """Respeta `app.dependency_overrides`: el nodo se ejecuta fuera de FastAPI."""
+    try:
+        from src.api.main import app
+
+        override = app.dependency_overrides.get(getter)
+        if override is not None:
+            return override()
+    except Exception:  # noqa: BLE001
+        pass
+    return getter()
+
+
 async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
     cfg = rctx.node.config
-    prompt = str(_resolve_ref(cfg.get("prompt") or cfg.get("message") or "", rctx) or "")
+    raw_prompt = str(cfg.get("prompt") or cfg.get("message") or "")
+    prompt = str(_resolve_ref(raw_prompt, rctx) or "")
     agent_id_raw = cfg.get("agent_id")
     agent_id: UUID | None = None
     if agent_id_raw:
@@ -358,7 +373,7 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
                 await session.execute(
                     text(
                         "SELECT id FROM agents WHERE id = :aid AND organization_id = :oid "
-                        "AND status IN ('configured', 'ready', 'deployed')"
+                        "AND (status IN ('configured', 'ready', 'deployed') OR is_active = true)"
                     ),
                     {"aid": agent_id, "oid": rctx.organization_id},
                 )
@@ -370,11 +385,11 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
         from src.agents.runtime.agent_runtime import AgentRunRequest
         from src.api.deps import get_agent_repo, get_agent_runtime
 
-        agent = await get_agent_repo().get_agent(agent_id)
+        agent = await get_agent_repo().get_agent(rctx.organization_id, agent_id)
         if agent is None:
             raise LookupError()
         org_config = await _org_config_json(rctx.organization_id)
-        result = await get_agent_runtime().run(
+        result = await _resolve_dep(get_agent_runtime).run(
             AgentRunRequest(
                 agent=agent,
                 message=prompt,
@@ -397,22 +412,42 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
 
     async def _echo() -> NodeOutcome:
         model = cfg.get("model", "gpt-4o-mini")
-        return NodeOutcome(output={"text": f"[{model}] {prompt[:300]}", "model": model})
-
-    if rctx.simulate:
         return NodeOutcome(
-            simulated=True,
-            planned={"kind": "llm", "agent_id": str(agent_id) if agent_id else None, "prompt_preview": prompt[:120]},
-            output={"simulated": True},
+            output={
+                "text": f"[{model}] {prompt[:300]}",
+                "model": model,
+                "echo": True,
+                "warning": "El nodo no tiene agente asignado: esto es un eco, no la respuesta de un agente.",
+            }
         )
+
+    # Nodo de lectura: se ejecuta de verdad incluso en dry-run (`simulate`).
     if "agents:execute" not in rctx.permissions:
         return _deny(NodeOutcome(), "agents:execute", "llm")
     if agent_id is None:
         return await _echo()
+    if not prompt.strip():
+        if not raw_prompt.strip():
+            return NodeOutcome(
+                error="El nodo no tiene prompt: usa {{trigger.message}} para pasar la pregunta del trigger."
+            )
+        return NodeOutcome(
+            error=(
+                f'El prompt "{raw_prompt[:80]}" quedó vacío: el trigger no trae esos datos. '
+                'Escribe la pregunta en el dock de Probar o manda {"message": "..."} en el payload.'
+            )
+        )
     try:
         return await _agent_run()
-    except Exception:  # noqa: BLE001
-        return await _echo()
+    except LookupError:
+        return NodeOutcome(
+            error=(
+                f"El agente {agent_id} no está disponible para este workflow: "
+                "no existe en la organización o está inactivo."
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return NodeOutcome(error=f"el agente falló: {str(exc)[:280]}")
 
 
 async def _org_config_json(organization_id: UUID) -> dict:
@@ -521,12 +556,6 @@ async def _exec_query_business_data(rctx: NodeContext) -> NodeOutcome:
     ask = str(_resolve_ref(cfg.get("ask") or cfg.get("question") or "", rctx) or "")
     if not ask:
         return NodeOutcome(error="query_business_data requiere ask")
-    if rctx.simulate:
-        return NodeOutcome(
-            simulated=False,
-            planned={"kind": "business_query", "question": ask[:160]},
-            output={"simulated": False},
-        )
 
     def _get_orchestrator():
         from src.api.deps import get_rag_orchestrator

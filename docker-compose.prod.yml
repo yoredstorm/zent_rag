@@ -41,6 +41,8 @@ x-prod-env: &prod-env
   RAG_MANAGED_DB_PROVIDER: ${RAG_MANAGED_DB_PROVIDER:-local}
   RAG_METRICS_TOKEN: ${RAG_METRICS_TOKEN:?set RAG_METRICS_TOKEN}
   RAG_UPLOAD_DIR: /app/uploads
+  # Cognitive OS (fases 1-10): off | shadow | limited | active (default off).
+  RAG_COGNITIVE_OS_ENABLED: ${RAG_COGNITIVE_OS_ENABLED:-off}
 
 services:
   api:

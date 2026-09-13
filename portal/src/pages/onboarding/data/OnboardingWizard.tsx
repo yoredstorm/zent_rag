@@ -44,6 +44,8 @@ export default function OnboardingWizardPage() {
   const [understanding, setUnderstanding] = useState<Understanding>({});
   const [questions, setQuestions] = useState<Array<{ id: string; text: string }>>([]);
   const [answer, setAnswer] = useState<Record<string, unknown> | null>(null);
+  const [askError, setAskError] = useState("");
+  const [activeQuestion, setActiveQuestion] = useState<string | null>(null);
   const [readiness, setReadiness] = useState<ReadinessPayload | null>(null);
   const [folders, setFolders] = useState<Array<{ id: string; name: string }>>([]);
   const [authUrl, setAuthorizationUrl] = useState("");
@@ -203,32 +205,54 @@ export default function OnboardingWizardPage() {
     if (!session || !current) return;
     setBusy(true);
     setError("");
-    try {
-      await api(`${API}/sessions/${current.id}/analyze`, {
-        method: "POST",
-        token: session.token,
-        organizationId: session.organizationId,
+    const token = session.token;
+    const organizationId = session.organizationId;
+    const id = current.id;
+    const done = new Set(["REVIEW_REQUIRED", "TESTING", "READY", "NEEDS_ATTENTION", "FAILED"]);
+    let stopPoll = false;
+
+    const pollOnce = async () => {
+      const prog = await api<ProgressPayload>(`${API}/sessions/${id}/progress`, {
+        token,
+        organizationId,
       });
-      const done = new Set(["REVIEW_REQUIRED", "TESTING", "READY", "NEEDS_ATTENTION", "FAILED"]);
+      setProgress(prog);
+      setCurrent(prog.session);
+      return prog;
+    };
+
+    void (async () => {
       for (let i = 0; i < 40; i++) {
-        const prog = await api<ProgressPayload>(`${API}/sessions/${current.id}/progress`, {
-          token: session.token,
-          organizationId: session.organizationId,
-        });
-        setProgress(prog);
-        setCurrent(prog.session);
-        if (done.has(prog.session.status)) break;
-        await new Promise((resolve) => setTimeout(resolve, 1500));
+        if (stopPoll) return;
+        try {
+          const prog = await pollOnce();
+          if (done.has(prog.session.status)) return;
+        } catch {
+          /* progress optional during analyze */
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1200));
       }
-      const und = await api<Understanding>(`${API}/sessions/${current.id}/understanding`, {
-        token: session.token,
-        organizationId: session.organizationId,
+    })();
+
+    try {
+      await api(`${API}/sessions/${id}/analyze`, {
+        method: "POST",
+        token,
+        organizationId,
+      });
+      stopPoll = true;
+      await pollOnce();
+      const und = await api<Understanding>(`${API}/sessions/${id}/understanding`, {
+        token,
+        organizationId,
       });
       setUnderstanding(und);
       setUiStep("analyze");
     } catch (e) {
+      stopPoll = true;
       setError(e instanceof Error ? e.message : "Error");
     } finally {
+      stopPoll = true;
       setBusy(false);
     }
   }
@@ -278,17 +302,41 @@ export default function OnboardingWizardPage() {
 
   async function loadQuestions() {
     if (!session || !current) return;
-    const data = await api<{ questions: Array<{ id: string; text: string }> }>(
-      `${API}/sessions/${current.id}/questions`,
-      { token: session.token, organizationId: session.organizationId }
-    );
-    setQuestions(data.questions || []);
-    setUiStep("test");
+    try {
+      const data = await api<{ questions: Array<{ id: string; text: string }> }>(
+        `${API}/sessions/${current.id}/questions`,
+        { token: session.token, organizationId: session.organizationId }
+      );
+      setQuestions(data.questions || []);
+      setUiStep("test");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    }
+  }
+
+  async function acceptReview() {
+    if (!session || !current) return;
+    setBusyId("accept-all");
+    setError("");
+    try {
+      await api(`${API}/sessions/${current.id}/accept-review`, {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      await loadQuestions();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    } finally {
+      setBusyId("");
+    }
   }
 
   async function ask(text: string) {
     if (!session || !current) return;
     setBusy(true);
+    setAskError("");
+    setActiveQuestion(text);
     try {
       const data = await api<Record<string, unknown>>(`${API}/sessions/${current.id}/ask`, {
         method: "POST",
@@ -298,7 +346,8 @@ export default function OnboardingWizardPage() {
       });
       setAnswer(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Error");
+      setAnswer(null);
+      setAskError(e instanceof Error ? e.message : "Error");
     } finally {
       setBusy(false);
     }
@@ -339,6 +388,15 @@ export default function OnboardingWizardPage() {
     });
     setReadiness(data);
     setUiStep("ready");
+  }
+
+  function selectStep(id: string) {
+    const step = id as WizardStep;
+    if (step === "test" && questions.length === 0) {
+      void loadQuestions();
+      return;
+    }
+    setUiStep(step);
   }
 
   async function startDrive() {
@@ -389,7 +447,7 @@ export default function OnboardingWizardPage() {
         <Stepper
           steps={WIZARD_STEPS}
           active={uiStep === "confirm" ? "review" : uiStep}
-          onSelect={(id) => setUiStep(id as WizardStep)}
+          onSelect={selectStep}
         />
       )}
       {uiStep === "choose" && <SourceTypeStep onSelect={startKind} />}
@@ -499,38 +557,39 @@ export default function OnboardingWizardPage() {
           onToggleTech={() => setTech((v) => !v)}
           onContinue={goReview}
           ready={analyzeReady}
+          percent={progress?.percent}
+          glimpses={progress?.glimpses}
+          status={current?.status}
         />
       )}
       {uiStep === "review" && (
-        <>
-          <UnderstandingReviewStep
-            understanding={understanding}
-            suggestions={suggestions}
-            onReview={review}
-            onFreeText={freeText}
-            onSkip={() => skip("review")}
-            busy={busyId}
-          />
-          <button type="button" className="btn btn-primary mt-4" data-testid="goto-questions" onClick={loadQuestions}>
-            Continuar a preguntas
-          </button>
-        </>
-      )}
-      {uiStep === "test" && (
-        <QuestionValidationStep
-          questions={questions}
-          answer={answer as { question?: string; answer?: string; method?: string; sql?: string | null; confidence?: string; evidence?: string[] } | null}
-          onAsk={ask}
-          onFeedback={feedback}
-          onSkip={() => skip("test")}
-          busy={busy}
-          heading={current ? FLOW_QUESTION_HEADING[current.kind] ?? FLOW_QUESTION_HEADING.default : undefined}
+        <UnderstandingReviewStep
+          understanding={understanding}
+          suggestions={suggestions}
+          onReview={review}
+          onFreeText={freeText}
+          onSkip={() => skip("review")}
+          onAcceptAll={acceptReview}
+          busy={busyId}
         />
       )}
       {uiStep === "test" && (
-        <button type="button" className="btn btn-primary mt-4" data-testid="finish-wizard" onClick={finish}>
-          Terminar
-        </button>
+        <>
+          <QuestionValidationStep
+            questions={questions}
+            answer={answer}
+            onAsk={ask}
+            onFeedback={feedback}
+            onSkip={() => skip("test")}
+            busy={busy}
+            heading={current ? FLOW_QUESTION_HEADING[current.kind] ?? FLOW_QUESTION_HEADING.default : undefined}
+            askError={askError || null}
+            activeQuestion={activeQuestion}
+          />
+          <button type="button" className="btn btn-primary mt-4" data-testid="finish-wizard" onClick={finish}>
+            Terminar
+          </button>
+        </>
       )}
       {uiStep === "ready" && readiness && (
         <ReadinessStep

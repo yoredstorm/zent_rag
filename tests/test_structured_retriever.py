@@ -54,9 +54,12 @@ class FakeVectorStore:
         knowledge_base_id=None,
         user_id=None,
         groups=None,
+        workspace_id=None,
+        source_ids=None,
     ):
         self.last_filters = filters
         self.last_acl = {"role": role, "user_id": user_id, "groups": groups}
+        self.last_workspace_id = workspace_id
         return RetrievalContext(chunks=[c for c in self.dense[:top_k]])
 
     async def search_sparse(
@@ -71,10 +74,16 @@ class FakeVectorStore:
         knowledge_base_id=None,
         user_id=None,
         groups=None,
+        workspace_id=None,
+        source_ids=None,
     ):
+        self.last_workspace_id = workspace_id
         return RetrievalContext(chunks=[c for c in self.sparse[:top_k]])
 
-    async def get_documents(self, organization_id, document_ids, role="admin"):
+    async def get_documents(
+        self, organization_id, document_ids, role="admin", user_id=None, groups=None
+    ):
+        self.last_parent_acl = {"role": role, "user_id": user_id, "groups": groups}
         ids = {str(i) for i in document_ids}
         return RetrievalContext(
             chunks=[p for p in self.parents if str(p.document_id) in ids]

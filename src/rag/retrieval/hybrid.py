@@ -67,8 +67,9 @@ class HybridRetriever(Retriever):
         normalized = normalize_query(query.query)
 
         context: RetrievalContext
+        server_fused = False
         if query.strategy == STRATEGY_HYBRID:
-            context = await self._retrieve_hybrid(query, normalized, classification)
+            context, server_fused = await self._retrieve_hybrid(query, normalized)
         elif query.strategy == STRATEGY_LEXICAL:
             context = await self._retrieve_lexical(query, normalized)
         elif query.strategy == STRATEGY_VECTOR:
@@ -78,7 +79,13 @@ class HybridRetriever(Retriever):
 
         chunks = dedupe_chunks(context.chunks)
         chunks = apply_doc_type_priority(chunks, query.doc_type_priority)
-        chunks = filter_by_threshold(chunks, query.score_threshold)
+        if not server_fused:
+            # La fusión client-side conserva los scores por pata (coseno /
+            # dot-product), comparables con el umbral anti-alucinación. La
+            # fusión server-side devuelve scores RRF (~1/(k+rank)); aplicarles
+            # el umbral coseno descartaría hits válidos, así que se omiten
+            # (las patas ya fueron filtradas por el store).
+            chunks = filter_by_threshold(chunks, query.score_threshold)
 
         if self._reranker is not None and chunks:
             try:
@@ -122,11 +129,39 @@ class HybridRetriever(Retriever):
         self,
         query: RetrievalQuery,
         normalized: str,
-        classification,
-    ) -> RetrievalContext:
-        # Server-side fusion (un solo round-trip) si el adaptador lo soporta.
+    ) -> tuple[RetrievalContext, bool]:
+        """Retorna (contexto, fusion_server_side).
+
+        La fusión client-side tiene prioridad cuando hay LexicalStore: conserva
+        los scores por pata para el umbral anti-alucinación. La fusión
+        server-side (un solo round-trip) queda como fallback cuando no hay
+        pata lexical local; sus scores son RRF y el umbral coseno se omite.
+        """
+        if self._lexical is not None:
+            vector_task = asyncio.ensure_future(self._vector.retrieve(query))
+            lexical_task = asyncio.ensure_future(self._lexical.retrieve(query))
+            vector_ctx, lexical_ctx = await asyncio.gather(vector_task, lexical_task)
+
+            if query.fusion == FUSION_RRF:
+                fused = rrf_fusion([vector_ctx.chunks, lexical_ctx.chunks], k=query.rrf_k)
+            else:
+                fused = weighted_fusion(
+                    [vector_ctx.chunks, lexical_ctx.chunks],
+                    weights=[1.0 - query.lexical_weight, query.lexical_weight],
+                )
+            return (
+                RetrievalContext(
+                    chunks=fused,
+                    query_embedding=query.query_embedding,
+                    retrieval_latency_ms=vector_ctx.retrieval_latency_ms
+                    + lexical_ctx.retrieval_latency_ms,
+                ),
+                False,
+            )
+
+        # Sin pata lexical local: fusión server-side si el adaptador la soporta.
         if self._hybrid_store is not None and query.query_embedding is not None:
-            return await self._hybrid_store.search_hybrid(
+            ctx = await self._hybrid_store.search_hybrid(
                 organization_id=query.organization_id,
                 query_text=normalized,
                 query_embedding=query.query_embedding,
@@ -135,33 +170,12 @@ class HybridRetriever(Retriever):
                 exclude_filters=query.exclude_filters or None,
                 score_threshold=query.score_threshold,
                 role=query.role,
-        user_id=query.user_id,
-        groups=query.groups,
+                user_id=query.user_id,
+                groups=query.groups,
                 knowledge_base_id=query.knowledge_base_id,
-                fusion_weights={
-                    "dense": 1.0 - classification.lexical_ratio,
-                    "sparse": classification.lexical_ratio,
-                },
+                workspace_id=query.workspace_id,
+                source_ids=query.source_ids or None,
             )
+            return ctx, True
 
-        # Fallback client-side: ambas patas en paralelo + fusión local.
-        if self._lexical is None:
-            return await self._vector.retrieve(query)
-
-        vector_task = asyncio.ensure_future(self._vector.retrieve(query))
-        lexical_task = asyncio.ensure_future(self._lexical.retrieve(query))
-        vector_ctx, lexical_ctx = await asyncio.gather(vector_task, lexical_task)
-
-        if query.fusion == FUSION_RRF:
-            fused = rrf_fusion([vector_ctx.chunks, lexical_ctx.chunks], k=query.rrf_k)
-        else:
-            fused = weighted_fusion(
-                [vector_ctx.chunks, lexical_ctx.chunks],
-                weights=[1.0 - query.lexical_weight, query.lexical_weight],
-            )
-        return RetrievalContext(
-            chunks=fused,
-            query_embedding=query.query_embedding,
-            retrieval_latency_ms=vector_ctx.retrieval_latency_ms
-            + lexical_ctx.retrieval_latency_ms,
-        )
+        return await self._vector.retrieve(query), False

@@ -44,6 +44,8 @@ class _FakeVectorStore:
         role="admin",
         user_id=None,
         groups=None,
+        workspace_id=None,
+        source_ids=None,
     ):
         self.calls.append((str(knowledge_base_id), top_k))
         return _Ctx(self.kb_chunks.get(str(knowledge_base_id), []))

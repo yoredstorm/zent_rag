@@ -241,11 +241,16 @@ export const NODE_LIBRARY: Record<string, NodeMeta> = {
     color: "bg-purple-500",
     fields: [
       { key: "agent_id", label: "Agente", type: "select", options: [] },
-      { key: "prompt", label: "Prompt", type: "textarea", placeholder: "Resume {{nodes…}}", refs: true },
-      { key: "model", label: "Modelo (fallback)", type: "text", default: "gpt-4o-mini", adv: true },
+      { key: "prompt", label: "Pregunta al agente", type: "textarea", placeholder: "{{trigger.message}}", refs: true },
+      { key: "model", label: "Modelo (fallback sin agente)", type: "text", default: "gpt-4o-mini", adv: true },
     ],
-    defaults: { model: "gpt-4o-mini" },
-    summary: (c) => String(c.prompt || "consulta a agente").slice(0, 44),
+    defaults: { model: "gpt-4o-mini", prompt: "{{trigger.message}}" },
+    summary: (c) =>
+      c.agent_name
+        ? `Agente: ${String(c.agent_name).slice(0, 34)}`
+        : c.agent_id
+          ? "Agente configurado"
+          : "Falta elegir agente",
   },
   condition: {
     type: "condition",
@@ -599,8 +604,14 @@ const OUTPUT_FIELDS: Record<string, string[]> = {
   trigger_event: [],
 };
 
+/** Campos del payload del trigger que el dock de prueba siempre rellena. */
+export const TRIGGER_REFS: RefOption[] = [
+  { label: "Trigger → message", ref: "{{trigger.message}}" },
+  { label: "Trigger → query", ref: "{{trigger.query}}" },
+];
+
 export function referenceOptions(graph: WorkflowGraph, excludeNodeId?: string): RefOption[] {
-  const out: RefOption[] = [];
+  const out: RefOption[] = [...TRIGGER_REFS];
   for (const n of graph.nodes) {
     if (n.id === excludeNodeId) continue;
     const fields = OUTPUT_FIELDS[n.type] ?? [];
@@ -619,4 +630,79 @@ export function findNodeByRef(ref: string, graph: WorkflowGraph): string | undef
   const m = /nodes\.([A-Za-z0-9_-]+)/.exec(ref);
   if (!m) return undefined;
   return graph.nodes.find((n) => n.id === m[1])?.id;
+}
+
+// ---------------------------------------------------------------------------
+// Validación y clasificación de nodos
+// ---------------------------------------------------------------------------
+
+/**
+ * Nodos con efectos de lado: el backend los simula en `Probar` y solo los
+ * ejecuta de verdad en `Ejecutar`.
+ */
+export const EFFECT_NODE_TYPES = [
+  "notify",
+  "api_call",
+  "marketplace_action",
+  "human_approval",
+  "business_node",
+  "business_result",
+] as const;
+
+export function effectNodes(graph: WorkflowGraph): GraphNode[] {
+  return graph.nodes.filter((n) => (EFFECT_NODE_TYPES as readonly string[]).includes(n.type));
+}
+
+export type GraphIssue = { node_id: string; label: string; message: string };
+
+/**
+ * Problemas que impiden que el flujo responda: sobre todo nodos `llm` sin
+ * agente (el runtime cae a un eco) o sin prompt.
+ */
+export function graphIssues(graph: WorkflowGraph | null): GraphIssue[] {
+  if (!graph) return [];
+  const issues: GraphIssue[] = [];
+  for (const n of graph.nodes) {
+    const label = n.label || nodeMeta(n.type).label;
+    if (n.type === "llm") {
+      if (!n.config.agent_id) {
+        issues.push({
+          node_id: n.id,
+          label,
+          message: "Elige un agente: sin agente el nodo solo devuelve un eco del prompt.",
+        });
+      } else if (!String(n.config.prompt ?? "").trim()) {
+        issues.push({
+          node_id: n.id,
+          label,
+          message: "Escribe la pregunta al agente, por ejemplo {{trigger.message}}.",
+        });
+      }
+    }
+    if (n.type === "kb_query" && !String(n.config.query ?? "").trim()) {
+      issues.push({ node_id: n.id, label, message: "Falta la pregunta a la knowledge base." });
+    }
+  }
+  const reachable = new Set<string>(graph.entrypoints);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const e of graph.edges) {
+      if (reachable.has(e.from_node) && !reachable.has(e.to_node)) {
+        reachable.add(e.to_node);
+        grew = true;
+      }
+    }
+  }
+  for (const n of graph.nodes) {
+    if (n.type === "end" || n.type.startsWith("trigger_")) continue;
+    if (!reachable.has(n.id)) {
+      issues.push({
+        node_id: n.id,
+        label: n.label || nodeMeta(n.type).label,
+        message: "No está conectado al trigger: nunca se va a ejecutar.",
+      });
+    }
+  }
+  return issues;
 }

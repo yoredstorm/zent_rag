@@ -229,6 +229,160 @@ def get_corpus_repo():
     return _corpus_repo
 
 
+_canonical_repo: object | None = None
+
+
+def get_canonical_repo():
+    """Repo de identidad canónica (Phase 1) — org-scoped, sin consumidores aún."""
+    global _canonical_repo
+    if _canonical_repo is None:
+        from src.infrastructure.postgres.canonical import (
+            PostgresCanonicalKnowledgeRepository,
+        )
+
+        _canonical_repo = PostgresCanonicalKnowledgeRepository()
+    return _canonical_repo
+
+
+_evidence_ledger_repo: object | None = None
+
+
+def get_evidence_ledger_repo():
+    """Repo del ledger de evidencia (Phase 2) — append-only, org-scoped."""
+    global _evidence_ledger_repo
+    if _evidence_ledger_repo is None:
+        from src.infrastructure.postgres.evidence_ledger import (
+            PostgresEvidenceLedgerRepository,
+        )
+
+        _evidence_ledger_repo = PostgresEvidenceLedgerRepository()
+    return _evidence_ledger_repo
+
+
+_claim_ledger_repo: object | None = None
+
+
+def get_claim_ledger_repo():
+    """Repo del ledger de claims (Phase 2) — verificación + conflicto, org-scoped."""
+    global _claim_ledger_repo
+    if _claim_ledger_repo is None:
+        from src.infrastructure.postgres.evidence_ledger import (
+            PostgresClaimLedgerRepository,
+        )
+
+        _claim_ledger_repo = PostgresClaimLedgerRepository()
+    return _claim_ledger_repo
+
+
+_cognitive_repo: object | None = None
+
+
+def get_cognitive_repo():
+    """Repo del Cognitive OS (Phase 3) — runs/tasks/mensajes, org-scoped."""
+    global _cognitive_repo
+    if _cognitive_repo is None:
+        from src.infrastructure.postgres.cognitive import (
+            PostgresCognitiveRepository,
+        )
+
+        _cognitive_repo = PostgresCognitiveRepository()
+    return _cognitive_repo
+
+
+_cognitive_service: object | None = None
+
+
+def get_cognitive_service():
+    """Servicio de planificación cognitiva (Phase 3) — sin ejecución aún."""
+    global _cognitive_service
+    if _cognitive_service is None:
+        from src.platform.cognitive.service import CognitivePlanningService
+
+        _cognitive_service = CognitivePlanningService(get_cognitive_repo())
+    return _cognitive_service
+
+
+_cognitive_executor: object | None = None
+
+
+def get_cognitive_executor():
+    """Executor de especialistas (Phase 4) — retrieval + LLM + ledgers."""
+    global _cognitive_executor
+    if _cognitive_executor is None:
+        from src.platform.cognitive.executor import (
+            CognitiveExecutor,
+            SpecialistDeps,
+        )
+
+        _cognitive_executor = CognitiveExecutor(
+            get_cognitive_repo(),
+            SpecialistDeps(
+                llm=get_llm_provider(),
+                embedding=get_embedding_provider(),
+                retriever=get_retriever(),
+                evidence_repo=get_evidence_ledger_repo(),
+                claim_repo=get_claim_ledger_repo(),
+            ),
+        )
+    return _cognitive_executor
+
+
+_curator_repo: object | None = None
+
+
+def get_curator_repo():
+    """Repo de sugerencias del Knowledge Curator (Phase 7) — org-scoped."""
+    global _curator_repo
+    if _curator_repo is None:
+        from src.infrastructure.postgres.curator import PostgresCuratorRepository
+
+        _curator_repo = PostgresCuratorRepository()
+    return _curator_repo
+
+
+_knowledge_curator: object | None = None
+
+
+def get_knowledge_curator():
+    """Knowledge Curator (Phase 7): observaciones → sugerencias PROPOSED."""
+    global _knowledge_curator
+    if _knowledge_curator is None:
+        from src.platform.cognitive.curator import KnowledgeCurator
+
+        _knowledge_curator = KnowledgeCurator(
+            get_curator_repo(), get_cognitive_repo()
+        )
+    return _knowledge_curator
+
+
+_shadow_repo: object | None = None
+
+
+def get_shadow_repo():
+    """Repo de comparaciones shadow (Phase 8) — org-scoped."""
+    global _shadow_repo
+    if _shadow_repo is None:
+        from src.infrastructure.postgres.shadow import PostgresShadowRepository
+
+        _shadow_repo = PostgresShadowRepository()
+    return _shadow_repo
+
+
+_shadow_evaluator: object | None = None
+
+
+def get_shadow_evaluator():
+    """Evaluador shadow baseline vs cognitive (Phase 8)."""
+    global _shadow_evaluator
+    if _shadow_evaluator is None:
+        from src.platform.cognitive.shadow import ShadowEvaluator
+
+        _shadow_evaluator = ShadowEvaluator(
+            get_shadow_repo(), get_cognitive_repo(), get_cognitive_executor()
+        )
+    return _shadow_evaluator
+
+
 def get_knowledge_engine():
     """Inyecta el motor de ingestion de la Knowledge Platform.
 
@@ -876,6 +1030,7 @@ def get_agent_runtime():
         register_builtin_tools(
             retriever=get_retriever(),
             sql_expert=get_sql_expert(),
+            embedder=get_embedding_provider(),
         )
         load_tool_modules()
         _agent_runtime = AgentRuntime(

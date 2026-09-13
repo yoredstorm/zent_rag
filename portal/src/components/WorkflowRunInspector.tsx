@@ -27,25 +27,56 @@ export type RunDetail = {
   result?: { notifications?: unknown[]; errors?: unknown[]; cost_ms?: number };
 };
 
-function Tip({ s }: { s: RunStep }) {
+const STATUS_BADGE: Record<string, string> = {
+  succeeded: "badge-ok",
+  simulated: "badge-muted",
+  skipped: "badge-muted",
+  failed: "badge-danger",
+  denied: "badge-danger",
+  pending: "badge-pending",
+  pending_approval: "badge-pending",
+  running: "badge-pending",
+  approved: "badge-ok",
+};
+
+function Step({ s, onSelectNode }: { s: RunStep; onSelectNode?: (id: string) => void }) {
   const [open, setOpen] = useState(false);
-  const label = (s.node_id || s.node_type || s.step_type) as string;
+  const label = (s.node_type || s.step_type || s.node_id) as string;
+  const text = typeof (s.output ?? {})?.text === "string" ? String((s.output ?? {}).text) : "";
   return (
-    <div className={`rounded-md border px-2 py-1.5 text-[10px] ${s.status === "failed" ? "border-danger/40" : "border-border"}`}>
-      <button type="button" className="flex w-full items-center gap-2 text-left" onClick={() => setOpen((v) => !v)}>
-        <span className={`badge ${STATUS_BADGE[s.status] ?? "badge-muted"}`}>{s.status}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-text">{label}</span>
-        <span className="text-faint">
+    <div className={`rounded-md border ${s.status === "failed" || s.status === "denied" ? "border-danger/40" : "border-border"}`}>
+      <div className="flex items-center gap-2 px-2 py-1.5">
+        <span className={`badge shrink-0 ${STATUS_BADGE[s.status] ?? "badge-muted"}`}>{s.status}</span>
+        <button
+          type="button"
+          className="min-w-0 flex-1 truncate text-left text-[11px] text-text hover:text-accent"
+          title={s.node_id ? `Ver ${label} en el lienzo` : label}
+          data-testid="wf-step-jump"
+          onClick={() => s.node_id && onSelectNode?.(s.node_id)}
+        >
+          {label}
+        </button>
+        <span className="shrink-0 text-[10px] text-faint">
           {s.duration_ms != null && `${s.duration_ms}ms`}
           {s.retries != null && s.retries > 0 && ` · ${s.retries} reintentos`}
         </span>
-        {open ? <CaretUp size={11} /> : <CaretDown size={11} />}
-      </button>
+        <button
+          type="button"
+          className="btn btn-ghost min-h-6 shrink-0 px-1"
+          aria-label={open ? "Ocultar detalle" : "Ver detalle"}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {open ? <CaretUp size={11} /> : <CaretDown size={11} />}
+        </button>
+      </div>
+      {s.error && <p className="border-t border-danger/30 px-2 py-1 text-[10px] text-danger">{s.error}</p>}
+      {!s.error && text && !open && (
+        <p className="border-t border-border px-2 py-1 text-[10px] text-muted line-clamp-2">{text}</p>
+      )}
       {open && (
-        <div className="mt-1 space-y-1 border-t border-border pt-1 font-mono text-[9px] text-muted">
-          {s.error && <p className="text-danger">error: {s.error}</p>}
+        <div className="space-y-1 border-t border-border px-2 py-1 font-mono text-[9px] text-muted">
           <p className="text-faint">input: {JSON.stringify(s.input ?? {})}</p>
-          <p>output: {JSON.stringify(s.output ?? {})}</p>
+          <p className="break-all">output: {JSON.stringify(s.output ?? {})}</p>
           {s.idempotency_key && <p className="text-faint">idem: {s.idempotency_key}</p>}
         </div>
       )}
@@ -53,62 +84,46 @@ function Tip({ s }: { s: RunStep }) {
   );
 }
 
-const STATUS_BADGE: Record<string, string> = {
-  succeeded: "badge-ok",
-  simulated: "badge-info",
-  skipped: "badge-muted",
-  failed: "badge-danger",
-  denied: "badge-danger",
-  pending: "badge-warning",
-  pending_approval: "badge-warning",
-  running: "badge-warning",
-  approved: "badge-ok",
-};
-
+/** Lista de pasos del run: inline en el dock, cada paso salta al nodo. */
 export function WorkflowRunInspector({
   run,
   plannedEffects,
-  onClose,
-  onHoverNode,
+  onSelectNode,
 }: {
   run: RunDetail | null;
   plannedEffects?: { node_id: string; node_type: string; planned: Record<string, unknown> }[];
-  onClose: () => void;
-  onHoverNode?: (id: string | null) => void;
+  onSelectNode?: (id: string) => void;
 }) {
   if (!run) return null;
   const steps = run.steps ?? [];
   return (
-    <div className="fixed right-8 bottom-24 z-40 w-[min(560px,90vw)] rounded-md border border-border bg-raised shadow-pop" data-testid="wf-run-inspector">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+    <div className="space-y-1.5" data-testid="wf-run-inspector">
+      <div className="flex items-center gap-2">
         <span className={`badge ${STATUS_BADGE[run.status] ?? "badge-muted"}`}>{run.status}</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-faint">{run.id}</span>
         {run.duration_ms != null && <span className="text-[10px] text-faint">{run.duration_ms}ms</span>}
-        {run.correlation_id && <span className="hidden truncate text-[9px] text-faint sm:block">{run.correlation_id}</span>}
-        <button type="button" className="btn btn-ghost min-h-6 px-1.5 text-[10px]" onClick={onClose}>cerrar</button>
       </div>
-      {run.error && <p className="border-b border-danger/30 bg-danger-soft px-3 py-1 text-[10px] text-danger">run error: {run.error}</p>}
+      {run.error && (
+        <p className="rounded-md border border-danger/30 bg-danger-soft px-2 py-1 text-[10px] text-danger">
+          {run.error}
+        </p>
+      )}
       {plannedEffects && plannedEffects.length > 0 && (
-        <div className="border-b border-info/30 bg-info/5 px-3 py-2">
-          <p className="text-[10px] font-semibold text-info">Dry-run — efectos planeados (no ejecutados)</p>
+        <div className="rounded-md border border-border bg-soft px-2 py-1.5">
+          <p className="text-[10px] font-semibold text-muted">Efectos no ejecutados en la prueba</p>
           <ul className="mt-1 space-y-0.5">
             {plannedEffects.map((p) => (
-              <li key={p.node_id} className="flex items-start gap-1 text-[9px] text-muted">
-                <span className="font-mono">{p.node_type}</span>
-                <span className="truncate font-mono text-faint">= {JSON.stringify(p.planned).slice(0, 140)}</span>
+              <li key={p.node_id} className="truncate text-[10px] text-faint">
+                {p.node_type} — {JSON.stringify(p.planned).slice(0, 90)}
               </li>
             ))}
           </ul>
         </div>
       )}
-      <div className="max-h-64 space-y-1 overflow-y-auto p-2">
-        {steps.map((s) => (
-          <div key={`${s.node_id ?? s.step_index}`} onMouseEnter={() => onHoverNode?.(s.node_id ?? null)} onMouseLeave={() => onHoverNode?.(null)}>
-            <Tip s={s} />
-          </div>
-        ))}
-        {steps.length === 0 && <p className="p-2 text-[10px] text-faint">Sin pasos registrados.</p>}
-      </div>
+      {steps.map((s) => (
+        <Step key={`${s.node_id ?? s.step_index}`} s={s} onSelectNode={onSelectNode} />
+      ))}
+      {steps.length === 0 && <p className="text-[10px] text-faint">Sin pasos registrados.</p>}
     </div>
   );
 }

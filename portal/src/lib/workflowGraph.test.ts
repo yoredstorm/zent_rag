@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  effectNodes,
   emptyGraph,
+  graphIssues,
   layoutGraph,
   makeNode,
+  nodeMeta,
   portCompatible,
   prepareGraphForSave,
   referenceOptions,
@@ -88,6 +91,70 @@ describe("workflowGraph — IR del canvas", () => {
     const refs = referenceOptions(g);
     expect(refs.some((r) => r.ref === "{{nodes.n_llm.output.text}}")).toBe(true);
     expect(refs.some((r) => r.ref.includes("steps."))).toBe(false);
-    for (const r of refs) expect(r.ref).toMatch(/^\{\{nodes\.[A-Za-z0-9_-]+\./);
+    for (const r of refs) expect(r.ref).toMatch(/^\{\{(nodes\.[A-Za-z0-9_-]+|trigger)\./);
+  });
+
+  it("referenceOptions ofrece el payload del trigger primero", () => {
+    const refs = referenceOptions(emptyGraph("webhook"));
+    expect(refs[0].ref).toBe("{{trigger.message}}");
+    expect(refs.some((r) => r.ref === "{{trigger.query}}")).toBe(true);
+  });
+});
+
+describe("workflowGraph — nodo llm", () => {
+  it("nace preguntando lo que llega por el trigger", () => {
+    const n = makeNode("llm");
+    expect(n.config.prompt).toBe("{{trigger.message}}");
+  });
+
+  it("el resumen avisa cuando falta el agente y muestra su nombre cuando está", () => {
+    expect(nodeMeta("llm").summary!({})).toMatch(/Falta elegir agente/);
+    expect(nodeMeta("llm").summary!({ agent_id: "a1", agent_name: "Giannina" })).toBe("Agente: Giannina");
+  });
+});
+
+describe("graphIssues", () => {
+  function withLlm(config: Record<string, unknown>) {
+    const g = emptyGraph("webhook");
+    const llm = makeNode("llm", { x: 300, y: 0 });
+    llm.id = "n_llm";
+    llm.config = { ...llm.config, ...config };
+    g.nodes.push(llm);
+    g.edges.push({ id: "e1", from_node: g.nodes[0].id, from_port: "out", to_node: "n_llm", to_port: "in" });
+    return g;
+  }
+
+  it("reclama el agente de un nodo llm", () => {
+    const issues = graphIssues(withLlm({}));
+    expect(issues).toHaveLength(1);
+    expect(issues[0].node_id).toBe("n_llm");
+    expect(issues[0].message).toMatch(/agente/i);
+  });
+
+  it("reclama el prompt cuando hay agente pero no pregunta", () => {
+    const issues = graphIssues(withLlm({ agent_id: "a1", prompt: "  " }));
+    expect(issues[0].message).toMatch(/trigger\.message/);
+  });
+
+  it("un llm bien configurado y conectado no genera avisos", () => {
+    expect(graphIssues(withLlm({ agent_id: "a1" }))).toEqual([]);
+  });
+
+  it("detecta nodos huérfanos que nunca se ejecutan", () => {
+    const g = emptyGraph("webhook");
+    const orphan = makeNode("notify", { x: 400, y: 0 });
+    orphan.id = "huerfano";
+    g.nodes.push(orphan);
+    expect(graphIssues(g).map((i) => i.node_id)).toEqual(["huerfano"]);
+  });
+
+  it("effectNodes lista solo los nodos con efectos reales", () => {
+    const g = emptyGraph("webhook");
+    g.nodes.push(makeNode("notify"), makeNode("kb_query"), makeNode("api_call"));
+    expect(effectNodes(g).map((n) => n.type)).toEqual(["notify", "api_call"]);
+  });
+
+  it("sin grafo no hay avisos", () => {
+    expect(graphIssues(null)).toEqual([]);
   });
 });

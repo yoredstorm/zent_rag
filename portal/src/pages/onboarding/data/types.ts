@@ -109,11 +109,15 @@ export type Understanding = {
   suggestions?: Suggestion[];
 };
 
+export type AnalyzeGlimpse = { id: string; text: string };
+
 export type ProgressPayload = {
   session: OnboardingSession;
   phases: Array<{ id: string; label: string; state: string }>;
   headline: string;
   technical_details: Record<string, unknown>;
+  percent?: number;
+  glimpses?: AnalyzeGlimpse[];
 };
 
 export type ReadyAction = { label: string; to: string };

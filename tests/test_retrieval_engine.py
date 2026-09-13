@@ -221,6 +221,8 @@ class FakeVectorStore(VectorStore):
         knowledge_base_id: UUID | None = None,
         user_id: UUID | None = None,
         groups: list[str] | None = None,
+        workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> RetrievalContext:
         self.calls.append(
             {"top_k": top_k, "filters": filters, "exclude": exclude_filters}
@@ -242,6 +244,8 @@ class FakeVectorStore(VectorStore):
         organization_id: UUID,
         document_ids: list[UUID],
         role: str = "admin",
+        user_id: UUID | None = None,
+        groups: list[str] | None = None,
     ) -> RetrievalContext:
         return RetrievalContext(chunks=[], retrieval_latency_ms=0.0)
 
@@ -262,6 +266,8 @@ class FakeLexicalStore(LexicalStore):
         knowledge_base_id: UUID | None = None,
         user_id: UUID | None = None,
         groups: list[str] | None = None,
+        workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> RetrievalContext:
         chunks = self._results.get(("sparse",), [])
         return RetrievalContext(

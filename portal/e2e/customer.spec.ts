@@ -45,18 +45,35 @@ test.describe("Customer portal — flujo smoke", () => {
 
     // Crear agente (UI)
     await page.goto("/agents");
-    const agentsKnowledge = page.getByTestId("knowledge-pillar-links");
-    await expect(agentsKnowledge.getByRole("link", { name: "Semántica" })).toHaveAttribute(
-      "href",
-      "/knowledge/glossary"
-    );
+    await expect(page.getByRole("heading", { name: "Agentes" })).toBeVisible();
+    await expect(page.getByTestId("knowledge-pillar-links")).toHaveCount(0);
     await page.getByRole("link", { name: "Crear agente" }).first().click();
     await page.getByLabel("Nombre").fill(AGENT_NAME);
     await page.getByRole("button", { name: "Crear agente" }).click();
-    await expect(page).toHaveURL(/\/agents\/[^/]+\/builder\?tab=playground/);
+    await expect(page).toHaveURL(/\/agents\/[0-9a-f-]{36}(?:\?.*)?$/);
     const agentUrl = page.url();
-    const agentId = agentUrl.match(/\/agents\/([^/]+)\/builder/)?.[1];
+    const agentId = agentUrl.match(/\/agents\/([^/?]+)/)?.[1];
     expect(agentId).toBeTruthy();
+    await expect(page.getByRole("heading", { name: "Probar" })).toBeVisible();
+    await page.getByLabel("Propósito").fill("Responder dudas internas");
+    const sourceBox = page.getByRole("checkbox", { name: /docs/i }).first();
+    if (await sourceBox.count()) {
+      await sourceBox.check();
+    }
+    await page.getByRole("button", { name: "Guardar" }).click();
+    await expect(page.getByText("Cambios guardados.")).toBeVisible();
+    await page.getByPlaceholder("Pregunta al agente…").fill("¿Cuál es la política?");
+    await page.getByRole("button", { name: "Probar" }).click();
+    await expect(page.getByPlaceholder("Pregunta al agente…")).toBeEnabled({ timeout: 25_000 });
+    await page.getByRole("button", { name: "Volver" }).click();
+    await expect(page.getByRole("heading", { name: "Agentes" })).toBeVisible();
+    await expect(page.getByText(AGENT_NAME)).toBeVisible();
+    await page
+      .locator(".panel", { hasText: AGENT_NAME })
+      .getByRole("link", { name: "Editar" })
+      .click();
+    await expect(page).toHaveURL(new RegExp(`/agents/${agentId}`));
+    await expect(page.getByLabel("Nombre")).toHaveValue(AGENT_NAME);
 
     // Knowledge
     await page.goto("/knowledge");

@@ -587,7 +587,10 @@ async def update_workflow(
     *,
     graph: dict | None = None,
     workflow_version: int | None = None,
+    trigger_type: str | None = None,
 ) -> dict | None:
+    if trigger_type is not None and trigger_type not in TRIGGER_TYPES:
+        raise ValueError(f"trigger_type debe ser uno de {TRIGGER_TYPES}")
     session = await get_async_session()
     try:
         exists = (
@@ -607,6 +610,9 @@ async def update_workflow(
         if description is not None:
             sets.append("description = :desc")
             params["desc"] = description
+        if trigger_type is not None:
+            sets.append("trigger_type = :ttype")
+            params["ttype"] = trigger_type
         if trigger_config is not None:
             existing_cfg = (
                 await session.execute(
@@ -652,7 +658,9 @@ async def update_workflow(
                 )
             ).fetchone()
             adapted = LegacyWorkflowAdapter.steps_to_graph(
-                cleaned, ttype_row.trigger_type, ttype_row.trigger_config
+                cleaned,
+                trigger_type or ttype_row.trigger_type,
+                ttype_row.trigger_config,
             )
             sets.append("graph = CAST(:graph AS jsonb)")
             sets.append("graph_source = 'legacy'")
@@ -701,6 +709,44 @@ async def set_workflow_status(organization_id: UUID, workflow_id: UUID, status: 
     if row is None:
         return None
     return {"workflow_id": str(workflow_id), "status": row.status}
+
+
+async def rotate_hook_secret(organization_id: UUID, workflow_id: UUID) -> dict | None:
+    """Emite un secret inbound nuevo; el anterior deja de servir al instante.
+
+    Solo se guarda el hash: el plaintext se devuelve una única vez.
+    """
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT trigger_config FROM workflows "
+                    "WHERE id = :wid AND organization_id = :oid"
+                ),
+                {"wid": workflow_id, "oid": organization_id},
+            )
+        ).fetchone()
+        if row is None:
+            return None
+        tcfg = dict(row.trigger_config or {}) if isinstance(row.trigger_config, dict) else {}
+        plain_secret = secrets.token_urlsafe(24)
+        tcfg["hook_secret_hash"] = _hash_hook_secret(plain_secret)
+        await session.execute(
+            text(
+                "UPDATE workflows SET trigger_config = CAST(:tcfg AS jsonb), "
+                "updated_at = NOW() WHERE id = :wid AND organization_id = :oid"
+            ),
+            {"tcfg": json.dumps(tcfg), "wid": workflow_id, "oid": organization_id},
+        )
+        await session.commit()
+    finally:
+        await session.close()
+    return {
+        "workflow_id": str(workflow_id),
+        "hook_secret": plain_secret,
+        "hook_url": f"/api/v1/public/workflows/{workflow_id}/hook",
+    }
 
 
 # ---------------------------------------------------------------------------

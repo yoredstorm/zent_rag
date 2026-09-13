@@ -1,9 +1,8 @@
-import { Plus, Robot, Trash } from "@phosphor-icons/react";
+import { PencilSimple, Play, Plus, Robot, Trash } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import { KnowledgePillarLinks } from "../components/KnowledgePillarLinks";
 import {
   EmptyState,
   ErrorInline,
@@ -21,12 +20,14 @@ type Agent = {
   model: string | null;
   is_active: boolean;
   created_at: string;
+  config?: { purpose?: string | null; source_ids?: string[] };
 };
 
 type Entitlements = { max_agents?: number | null };
 
 export default function AgentsPage() {
   const { session } = useAuth();
+  const navigate = useNavigate();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [maxAgents, setMaxAgents] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -81,7 +82,7 @@ export default function AgentsPage() {
     <div>
       <PageHeader
         title="Agentes"
-        subtitle="Crea asistentes con instrucciones, conocimiento, tools y playground."
+        subtitle="Diles qué hacer, elige fuentes y pruébalos. Siempre puedes volver a editar."
         actions={
           atLimit ? undefined : (
             <Link to="/agents/new" className="btn btn-primary min-h-11">
@@ -93,10 +94,6 @@ export default function AgentsPage() {
       />
       <ErrorInline message={error} />
       <SuccessInline message={msg} />
-      <KnowledgePillarLinks
-        title="Conocimiento de tus agentes"
-        subtitle="Los agentes responden con Fuentes, Semántica y Mejora."
-      />
 
       {atLimit && (
         <div
@@ -118,7 +115,7 @@ export default function AgentsPage() {
           <EmptyState
             icon={Robot}
             title="Sin agentes"
-            body="Crea tu primer agente con instrucciones, knowledge bases y tools."
+            body="Crea tu primer agente: propósito, fuentes y una prueba en el mismo sitio."
             action={
               atLimit ? undefined : (
                 <Link to="/agents/new" className="btn btn-primary min-h-11">
@@ -131,36 +128,59 @@ export default function AgentsPage() {
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
-          {agents.map((a) => (
-            <div key={a.id} className="panel p-5">
-              <div className="mb-2 flex items-start justify-between gap-2">
-                <Link
-                  to={`/agents/${a.id}`}
-                  className="flex items-center gap-2 font-semibold text-text hover:text-accent"
-                >
-                  <Robot size={16} className="text-accent" aria-hidden />
-                  {a.name}
-                </Link>
-                <button
-                  type="button"
-                  className="btn btn-ghost min-h-11 px-2 py-1.5 text-xs text-danger"
-                  aria-label={`Eliminar ${a.name}`}
-                  onClick={() => void remove(a.id, a.name)}
-                >
-                  <Trash size={14} aria-hidden />
-                </button>
+          {agents.map((a) => {
+            const purpose = a.config?.purpose || a.description;
+            const sourceCount = a.config?.source_ids?.length ?? 0;
+            return (
+              <div
+                key={a.id}
+                className="panel cursor-pointer p-5"
+                onClick={(event) => {
+                  if ((event.target as HTMLElement).closest("a, button")) return;
+                  navigate(`/agents/${a.id}`);
+                }}
+              >
+                <div className="mb-2 flex items-start justify-between gap-2">
+                  <Link
+                    to={`/agents/${a.id}`}
+                    className="flex items-center gap-2 font-semibold text-text hover:text-accent"
+                  >
+                    <Robot size={16} className="text-accent" aria-hidden />
+                    {a.name}
+                  </Link>
+                  <button
+                    type="button"
+                    className="btn btn-ghost min-h-11 px-2 py-1.5 text-xs text-danger"
+                    aria-label={`Eliminar ${a.name}`}
+                    onClick={() => void remove(a.id, a.name)}
+                  >
+                    <Trash size={14} aria-hidden />
+                  </button>
+                </div>
+                <p className="mb-3 text-sm text-muted">{purpose || "Sin propósito aún"}</p>
+                <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-faint">
+                  <span className={`badge ${a.is_active ? "badge-ok" : "badge-muted"}`}>
+                    {a.is_active ? "activo" : "inactivo"}
+                  </span>
+                  <span>
+                    {sourceCount === 1 ? "1 fuente" : `${sourceCount} fuentes`}
+                  </span>
+                  {a.model && <span className="mono">{a.model}</span>}
+                  <span>Creado {fmtDateTime(a.created_at)}</span>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Link to={`/agents/${a.id}`} className="btn btn-secondary min-h-11">
+                    <PencilSimple size={14} aria-hidden />
+                    Editar
+                  </Link>
+                  <Link to={`/agents/${a.id}?panel=test`} className="btn btn-secondary min-h-11">
+                    <Play size={14} aria-hidden />
+                    Probar
+                  </Link>
+                </div>
               </div>
-              <p className="mb-3 text-sm text-muted">{a.description || "—"}</p>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-faint">
-                <span className={`badge ${a.is_active ? "badge-ok" : "badge-muted"}`}>
-                  {a.is_active ? "activo" : "inactivo"}
-                </span>
-                {a.model && <span className="mono">{a.model}</span>}
-                <span className="mono">tools: {a.tools.join(", ") || "—"}</span>
-                <span>Creado {fmtDateTime(a.created_at)}</span>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

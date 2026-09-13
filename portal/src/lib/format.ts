@@ -62,17 +62,29 @@ export function timeAgo(iso: string | null | undefined): string {
   return `hace ${Math.floor(s / 86400)} d`;
 }
 
+const RATE_LIMIT_COPY =
+  "El proveedor de embeddings está saturado (429). Reintenta el trabajo en unos minutos.";
+
+const RATE_LIMIT_RE =
+  /ratelimiterror|error code:\s*429|status(?:\s*code)?:\s*429|server overload|too many requests/i;
+
+function humanizeErrorText(raw: string): string {
+  return RATE_LIMIT_RE.test(raw) ? RATE_LIMIT_COPY : raw;
+}
+
 /** error_summary puede ser string (jobs V1) u objeto JSONB (dead-letter/KLE).
  *  Devuelve siempre texto legible, nunca crashea el render. */
 export function formatErrorSummary(
   value: string | { error?: unknown; message?: unknown; detail?: unknown } | null | undefined,
 ): string {
   if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
+  if (typeof value === "string") return humanizeErrorText(value);
   const candidate = value.error ?? value.message ?? value.detail;
-  if (typeof candidate === "string" && candidate.trim()) return candidate;
+  if (typeof candidate === "string" && candidate.trim()) {
+    return humanizeErrorText(candidate);
+  }
   try {
-    return JSON.stringify(value);
+    return humanizeErrorText(JSON.stringify(value));
   } catch {
     return "Error desconocido";
   }
