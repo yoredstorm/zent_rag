@@ -2,6 +2,7 @@ import { ChartLineUp, Plus, WarningOctagon, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import type { NodeBusinessSchema, NodeSchemasPayload, ParameterLevel } from "../lib/businessSchema";
 import type { MarketRec, ShopInstall } from "../lib/marketplaceCanvas";
 import type { GraphNode, WorkflowGraph } from "../lib/workflowGraph";
 import { makeNode, newEdgeId, prepareGraphForSave, triggerConfigOf, triggerTypeOf } from "../lib/workflowGraph";
@@ -21,6 +22,9 @@ type Props = {
   /** Selección controlada: el dock de prueba también selecciona nodos. */
   selectedNodeId: string | null;
   onSelectNode: (id: string | null) => void;
+  /** Nivel de configuración (Simple/Guided/Advanced), compartido con el estudio. */
+  configLevel?: ParameterLevel;
+  onConfigLevelChange?: (level: ParameterLevel) => void;
   /** Alto del lienzo y del rail (el estudio lo pone a viewport). */
   heightClass?: string;
 };
@@ -39,11 +43,14 @@ export function WorkflowCanvasEditor({
   overlay,
   selectedNodeId,
   onSelectNode,
+  configLevel,
+  onConfigLevelChange,
   heightClass = "h-[560px]",
 }: Props) {
   const { session } = useAuth();
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [nodeSchemas, setNodeSchemas] = useState<Record<string, NodeBusinessSchema> | null>(null);
   const [mxInstalls, setMxInstalls] = useState<{ id: string; integration: { slug: string; name: string } }[]>([]);
   const [mxActions, setMxActions] = useState<Record<string, { action_id: string; display_name: string }[]>>({});
   const [mkt, setMkt] = useState<MarketplaceContext | null>(null);
@@ -67,6 +74,17 @@ export function WorkflowCanvasEditor({
       organizationId: session.organizationId,
     })
       .then((d) => setMkt(d))
+      .catch(() => undefined);
+
+    api<NodeSchemasPayload>("/api/v1/workflows/node-schemas", {
+      token: session.token,
+      organizationId: session.organizationId,
+    })
+      .then((d) => {
+        const map: Record<string, NodeBusinessSchema> = {};
+        for (const schema of d.schemas ?? []) map[schema.node_type] = schema;
+        setNodeSchemas(map);
+      })
       .catch(() => undefined);
   }, [session, workflowId]);
 
@@ -469,6 +487,9 @@ export function WorkflowCanvasEditor({
               agents={agents}
               mxInstalls={mxInstalls}
               mxActions={mxActions}
+              nodeSchemas={nodeSchemas}
+              configLevel={configLevel}
+              onConfigLevelChange={onConfigLevelChange}
             />
           </div>
         )}

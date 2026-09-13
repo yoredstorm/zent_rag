@@ -20,6 +20,7 @@ import {
   type StudioDrawer,
   type WorkflowDetail,
 } from "../components/workflowStudio/types";
+import type { ParameterLevel } from "../lib/businessSchema";
 import type { WorkflowGraph } from "../lib/workflowGraph";
 import {
   effectNodes,
@@ -80,6 +81,7 @@ export default function WorkflowStudioPage() {
   const [secret, setSecret] = useState((location.state as StudioState | null)?.hookSecret || "");
   const [savedSignature, setSavedSignature] = useState("");
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [configLevel, setConfigLevel] = useState<ParameterLevel>("simple");
   const [run, setRun] = useState<RunDetail | null>(null);
   const [dockOpen, setDockOpen] = useState(panel === "test");
 
@@ -145,6 +147,8 @@ export default function WorkflowStudioPage() {
     setDetail(d);
     setName(d.name);
     setDescription(d.description || "");
+    const storedLevel = d.editor_state?.config_level;
+    setConfigLevel(storedLevel === "guided" || storedLevel === "advanced" ? storedLevel : "simple");
     const g = d.graph ?? starterGraph();
     setGraph(g);
     setSavedSignature(
@@ -208,7 +212,7 @@ export default function WorkflowStudioPage() {
           trigger_type: "webhook",
           trigger_config: {},
           steps: [],
-          editor_state: { mode: "canvas" },
+          editor_state: { mode: "canvas", config_level: configLevel },
           graph: starterGraph(),
           workflow_version: 2,
         }),
@@ -245,7 +249,7 @@ export default function WorkflowStudioPage() {
           workflow_version: 2,
           trigger_type: ttype,
           trigger_config: tcfg,
-          editor_state: { ...(detail?.editor_state ?? {}), mode: "canvas" },
+          editor_state: { ...(detail?.editor_state ?? {}), mode: "canvas", config_level: configLevel },
         }),
       });
       // Trigger de evento: la suscripción vive en su propia tabla.
@@ -457,6 +461,8 @@ export default function WorkflowStudioPage() {
             overlay={overlay}
             selectedNodeId={selectedNode}
             onSelectNode={setSelectedNode}
+            configLevel={configLevel}
+            onConfigLevelChange={setConfigLevel}
           />
         </div>
         {id && (

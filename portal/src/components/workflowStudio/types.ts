@@ -40,7 +40,7 @@ export type WorkflowDetail = {
   graph_source?: string;
   workflow_version?: number;
   status: string;
-  editor_state?: { mode?: string };
+  editor_state?: { mode?: string; config_level?: string };
   hook_url?: string;
   has_hook_secret?: boolean;
 };

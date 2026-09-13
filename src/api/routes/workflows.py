@@ -107,6 +107,18 @@ async def tenant_workflow_validate(body: ValidateIn, request: Request):
         raise HTTPException(400, f"grafo inválido: {exc}") from exc
 
 
+@router.get("/node-schemas", summary="Schemas de negocio por nodo (Simple/Guided/Advanced)")
+async def tenant_workflow_node_schemas(request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.parameters import all_node_schemas, output_contracts
+
+    require_permission(request, "workflows:read")
+    return {
+        "schemas": [schema.model_dump(mode="json") for schema in all_node_schemas()],
+        "output_contracts": output_contracts(),
+    }
+
+
 @router.get("/templates", summary="Plantillas de workflows")
 async def tenant_workflow_templates(request: Request):
     from src.platform.rbac.policy import require_permission

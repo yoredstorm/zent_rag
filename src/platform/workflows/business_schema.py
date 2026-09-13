@@ -46,9 +46,15 @@ ParameterType = Literal[
     "condition",
     "secret",
     "data_reference",
+    "json",
 ]
 
 PARAMETER_TYPES: tuple[ParameterType, ...] = get_args(ParameterType)
+
+# Tipos de salida IR que no son parámetros editables (contratos de salida).
+OUTPUT_ONLY_TYPES = ("record", "record_list", "document", "evidence", "binary")
+
+OutputFieldType = ParameterType | Literal["record", "record_list", "document", "evidence", "binary"]
 
 # Etiquetas de respaldo para la UI (la UI puede sobreescribirlas por i18n).
 PARAMETER_TYPE_LABELS: dict[str, str] = {
@@ -80,6 +86,12 @@ PARAMETER_TYPE_LABELS: dict[str, str] = {
     "condition": "Condición",
     "secret": "Secreto",
     "data_reference": "Dato de otro paso",
+    "json": "Datos (JSON)",
+    "record": "Registro",
+    "record_list": "Lista de registros",
+    "document": "Documento",
+    "evidence": "Evidencia",
+    "binary": "Archivo",
 }
 
 # Tipos cuyas opciones vienen del backend (agents, kbs, instalaciones...).
@@ -184,7 +196,7 @@ class BusinessOutputField(BaseModel):
 
     key: str = Field(min_length=1, max_length=80)
     label: str = Field(min_length=1, max_length=160)
-    type: ParameterType = "text"
+    type: OutputFieldType = "text"
     description: str | None = Field(default=None, max_length=600)
     example: Any = None
     sample: Any = None
@@ -237,6 +249,8 @@ __all__ = [
     "LEVEL_RANK",
     "NodeBusinessSchema",
     "NodeOutputContract",
+    "OUTPUT_ONLY_TYPES",
+    "OutputFieldType",
     "PARAMETER_TYPE_LABELS",
     "PARAMETER_TYPES",
     "ParameterType",

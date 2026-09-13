@@ -355,6 +355,8 @@ async def install_inline(
 
 async def ports_for_action(action_id: str) -> dict | None:
     """Puertos tipados de una acción (schemas + renderer) — sin JSONPath manual."""
+    from src.platform.workflows.parameters import parameters_from_json_schema
+
     session = await get_async_session()
     try:
         row = (
@@ -372,6 +374,7 @@ async def ports_for_action(action_id: str) -> dict | None:
         await session.close()
     if row is None:
         return None
+    input_parameters = parameters_from_json_schema(row.input_schema, prefix="inputs.")
     return {
         "action_id": action_id,
         "display_name": row.display_name,
@@ -382,6 +385,7 @@ async def ports_for_action(action_id: str) -> dict | None:
         "cost": _cost_of(row.cost_model),
         "inputs": (row.input_schema or {}).get("properties", {}),
         "outputs": (row.output_schema or {}).get("properties", {}),
+        "input_parameters": [p.model_dump(mode="json") for p in input_parameters],
     }
 
 
