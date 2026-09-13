@@ -73,6 +73,9 @@ export function WorkflowCanvas({
   const hostRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState({ x: 60, y: 40, s: 1 });
   const fitted = useRef(false);
+  /** Evita que el auto-pan por selección pelee con el arrastre: al soltar el
+   * nodo el lienzo no salta (el usuario decide dónde queda). */
+  const draggingRef = useRef(false);
   const [pan, setPan] = useState<Drag | null>(null);
   const [wire, setWire] = useState<Wire | null>(null);
   const [dragNode, setDragNode] = useState<NodeDrag | null>(null);
@@ -150,7 +153,7 @@ export function WorkflowCanvas({
   // desplazamos la vista lo justo para dejarlo visible.
   useEffect(() => {
     const host = hostRef.current;
-    if (!host || !selectedNodeId) return;
+    if (!host || !selectedNodeId || draggingRef.current) return;
     const node = graph.nodes.find((n) => n.id === selectedNodeId);
     if (!node) return;
     const margin = 16;
@@ -201,6 +204,10 @@ export function WorkflowCanvas({
   function onNodePointerDown(ev: React.PointerEvent, n: GraphNode) {
     if (ev.button !== 0 || wire) return;
     ev.stopPropagation();
+    // Captura: con el arrastre activo, el inspector que aparece al seleccionar
+    // no debe robar el pointermove (dispararía pointerleave y cancelaría el drag).
+    (ev.currentTarget as HTMLElement).setPointerCapture?.(ev.pointerId);
+    draggingRef.current = true;
     onSelectNode(n.id);
     onSelectEdge(null);
     // Arrastre RELATIVO: guardar el punto de inicio (client) y la posición
@@ -262,6 +269,7 @@ export function WorkflowCanvas({
   }
 
   function endDrag() {
+    draggingRef.current = false;
     if (wire && hotPort && hotPort.side === "in") {
       const from = nodeById(wire.fromNode);
       const target = nodeById(hotPort.node);

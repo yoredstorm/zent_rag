@@ -9,10 +9,12 @@ test.describe("Canvas drag", () => {
     await suppressProductTour(page);
     await loginAsTenant(page);
     await page.goto("/workflows");
+
+    await page.getByTestId("wf-new").click();
+    await page.getByTestId("wf-new-name").fill("Drag Probe");
+    await page.getByTestId("wf-create").click();
     await expect(page.getByTestId("workflow-canvas-editor")).toBeVisible({ timeout: 20_000 });
 
-    await page.getByPlaceholder("nombre…").fill("Drag Probe");
-    await page.getByRole("button", { name: "Crear", exact: true }).click();
     await expect(async () => {
       const n = await page.getByTestId("wf-canvas-node").count();
       expect(n).toBeGreaterThanOrEqual(2);
