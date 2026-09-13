@@ -3,6 +3,8 @@
  *  metadatos locales (NODE_LIBRARY) y se persisten tal cual (v2+).
  */
 
+import { triggerConfigFromSchedule, type FriendlySchedule } from "./scheduleBuilder";
+
 export type PortDef = { name: string; type: string };
 
 export type GraphNode = {
@@ -555,6 +557,10 @@ export function triggerConfigOf(graph: WorkflowGraph): Record<string, unknown> {
     return { event_type: c.event_type, filters: c.filters ?? {}, subscription: true };
   }
   if (t.type === "trigger_schedule") {
+    const stored = c.schedule as FriendlySchedule | undefined;
+    if (stored && typeof stored === "object" && stored.mode) {
+      return triggerConfigFromSchedule(stored);
+    }
     const daily = String(c.daily ?? "");
     const weekly = String(c.weekly ?? "");
     const out: Record<string, unknown> = {};

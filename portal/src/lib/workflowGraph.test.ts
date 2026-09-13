@@ -35,6 +35,16 @@ describe("workflowGraph — IR del canvas", () => {
     expect(triggerConfigOf(gw)).toEqual({});
   });
 
+  it("triggerConfigOf prefiere config.schedule del ScheduleBuilder", () => {
+    const g = emptyGraph("schedule");
+    g.nodes[0].config = {
+      schedule: { mode: "weekly", days: [0, 1, 2, 3, 4], time: "09:00", timezone: "America/Lima" },
+    };
+    const cfg = triggerConfigOf(g);
+    expect(cfg.weekly).toEqual({ days: [0, 1, 2, 3, 4], time: "09:00" });
+    expect(cfg.timezone).toBe("America/Lima");
+  });
+
   it("layoutGraph coloca nodos por niveles topológicos", () => {
     const g = emptyGraph("webhook");
     const b = makeNode("llm", { x: 0, y: 0 });

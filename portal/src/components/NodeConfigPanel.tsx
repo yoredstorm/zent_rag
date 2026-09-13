@@ -16,6 +16,8 @@ import { buildDataSources, type NodeSamples } from "../lib/dataPicker";
 import type { ConditionGroupNode } from "../lib/conditionTree";
 import { BusinessParameterForm } from "./workflowStudio/BusinessParameterForm";
 import { ConditionBuilder } from "./workflowStudio/ConditionBuilder";
+import { NotificationBuilder } from "./workflowStudio/NotificationBuilder";
+import { ScheduleBuilder } from "./workflowStudio/ScheduleBuilder";
 
 type Props = {
   graph: WorkflowGraph;
@@ -41,6 +43,9 @@ type Props = {
 };
 
 const LEVELS: ParameterLevel[] = ["simple", "guided", "advanced"];
+
+/** Claves que el NotificationBuilder edita; el resto las cubre el schema. */
+const NOTIFY_BUILDER_KEYS = new Set(["channel", "title", "message"]);
 
 export function NodeConfigPanel({
   graph,
@@ -280,6 +285,27 @@ export function NodeConfigPanel({
                 replaceConfig(next);
               }}
             />
+          ) : current.type === "notify" ? (
+            <>
+              <NotificationBuilder
+                config={current.config}
+                dataSources={dataSources}
+                onChange={patchConfig}
+              />
+              {business.parameters.some((p) => !NOTIFY_BUILDER_KEYS.has(p.key)) && (
+                <BusinessParameterForm
+                  parameters={business.parameters.filter((p) => !NOTIFY_BUILDER_KEYS.has(p.key))}
+                  level={level}
+                  values={current.config}
+                  onChange={(key, value) => setField(key, value)}
+                  optionsFor={dynamicOptions}
+                  referenceOptions={referenceSelectOptions}
+                  dataSources={dataSources}
+                />
+              )}
+            </>
+          ) : current.type === "trigger_schedule" ? (
+            <ScheduleBuilder config={current.config} onChange={patchConfig} />
           ) : (
             <>
               <BusinessParameterForm

@@ -119,6 +119,15 @@ async def tenant_workflow_node_schemas(request: Request):
     }
 
 
+@router.get("/notification-targets", summary="Canales y destinatarios disponibles para Avisar")
+async def tenant_workflow_notification_targets(request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.notifications import notification_targets
+
+    ctx = require_permission(request, "workflows:read")
+    return await notification_targets(ctx.organization_id, await _workspace_id(request))
+
+
 @router.get("/templates", summary="Plantillas de workflows")
 async def tenant_workflow_templates(request: Request):
     from src.platform.rbac.policy import require_permission

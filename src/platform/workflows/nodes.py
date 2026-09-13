@@ -544,14 +544,85 @@ async def _exec_notify(rctx: NodeContext) -> NodeOutcome:
     from src.platform.notifyv2.notifications import notify
 
     channel = str(cfg.get("channel") or "in_app")
+    recipients_raw = cfg.get("recipients")
+    recipients = (
+        [r for r in recipients_raw if isinstance(r, dict)] if isinstance(recipients_raw, list) else []
+    )
+    if channel not in ("in_app", "email", "webhook", "all"):
+        label = {"slack": "Slack", "teams": "Microsoft Teams", "whatsapp": "WhatsApp"}.get(channel, channel)
+        return NodeOutcome(error=f"Necesitas conectar {label} para usar esta acción.")
+
     wanted = None if channel == "all" else {str(channel)}
     data = dict(cfg.get("data") or {}) if isinstance(cfg.get("data"), dict) else {}
     data = _resolve_ref(data, rctx)
     if isinstance(data, dict):
         data.setdefault("workflow_id", str(rctx.execution.workflow_id))
         data.setdefault("run_id", str(rctx.execution.run_id))
+        if recipients:
+            data.setdefault(
+                "recipients",
+                [str(r.get("label") or r.get("value") or "") for r in recipients if r.get("label") or r.get("value")],
+            )
     title = str(_resolve_ref(cfg.get("title") or "Workflow", rctx) or "Workflow")
     message = str(_resolve_ref(cfg.get("message") or "Notificación de workflow", rctx) or "")
+
+    # Correo con destinatarios explícitos (Persona/Equipo/Correo).
+    if channel == "email" and recipients:
+        from src.platform.workflows.notifications import resolve_notify_recipient_emails
+
+        emails = await resolve_notify_recipient_emails(rctx.organization_id, recipients)
+        if rctx.simulate:
+            return NodeOutcome(
+                simulated=True,
+                planned={"kind": "notification", "channel": "email", "title": title, "recipients": emails},
+                output={"simulated": True, "channel": "email", "recipients": emails},
+            )
+        if not emails:
+            return NodeOutcome(error="No encontramos correos para los destinatarios elegidos.")
+        from src.platform.customer_success.customer_success import send_email
+
+        delivered = 0
+        for to in emails:
+            try:
+                if await send_email(to, title, f"<p>{message}</p>"):
+                    delivered += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("notify recipient failed", to=to, error=str(exc)[:150])
+        return NodeOutcome(
+            output={
+                "sent": delivered > 0,
+                "channel": "email",
+                "recipients": emails,
+                "delivered": delivered,
+                "count": len(emails),
+            }
+        )
+
+    # Webhook con URLs explícitas.
+    if channel == "webhook" and recipients:
+        urls = [str(r.get("value")) for r in recipients if r.get("kind") == "webhook" and r.get("value")]
+        if urls:
+            if rctx.simulate:
+                return NodeOutcome(
+                    simulated=True,
+                    planned={"kind": "notification", "channel": "webhook", "title": title, "recipients": urls},
+                    output={"simulated": True, "channel": "webhook", "recipients": urls},
+                )
+            from src.platform.workflows import engine as wf_engine
+
+            delivered = 0
+            for url in urls:
+                try:
+                    async with wf_engine.httpx.AsyncClient(timeout=10.0) as client:
+                        resp = await client.post(url, json={"title": title, "message": message, "data": data})
+                    if 200 <= resp.status_code < 300:
+                        delivered += 1
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("notify webhook failed", url=url, error=str(exc)[:150])
+            return NodeOutcome(
+                output={"sent": delivered > 0, "channel": "webhook", "deliveries": delivered, "count": len(urls)}
+            )
+
     if rctx.simulate:
         return NodeOutcome(
             simulated=True,
