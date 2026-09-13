@@ -231,6 +231,22 @@ async def get_agent(
     return _agent_response(agent)
 
 
+@router.get("/{agent_id}/automations", summary="Living assistant: automatizaciones del agente")
+async def agent_automations_endpoint(agent_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.assistants import agent_automations
+
+    ctx = require_permission(request, "agents:read")
+    try:
+        aid = UUID(agent_id)
+    except ValueError:
+        raise HTTPException(400, "agent_id must be a valid UUID")
+    result = await agent_automations(ctx.organization_id, aid)
+    if result is None:
+        raise HTTPException(404, "Agent not found")
+    return result
+
+
 @router.put("/{agent_id}", summary="Actualizar agente")
 async def update_agent(
     agent_id: str,

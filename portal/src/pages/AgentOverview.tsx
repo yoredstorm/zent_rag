@@ -63,6 +63,23 @@ type UsageRow = {
 type KB = { id: string; name: string };
 type Workspace = { id: string; name: string };
 
+type AssistantAutomation = {
+  workflow_id: string;
+  name: string;
+  status: string;
+  when: string;
+  runs_7d: number;
+  failed_runs: number;
+  success_rate: number | null;
+  last_activity: string | null;
+};
+
+type AssistantAutomations = {
+  assistant: { id: string; name: string; status: string };
+  summary: { automations: number; active: number; actions_today: number; last_activity: string | null; health: string };
+  automations: AssistantAutomation[];
+};
+
 export default function AgentOverviewPage() {
   const { id } = useParams<{ id: string }>();
   const { session } = useAuth();
@@ -76,6 +93,7 @@ export default function AgentOverviewPage() {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [assistant, setAssistant] = useState<AssistantAutomations | null>(null);
 
   useEffect(() => {
     if (!session || !id) return;
@@ -131,6 +149,16 @@ export default function AgentOverviewPage() {
         setLoading(false);
       }
     })();
+  }, [session, id]);
+
+  useEffect(() => {
+    if (!session || !id) return;
+    api<AssistantAutomations>(`/api/v1/agents/${id}/automations`, {
+      token: session.token,
+      organizationId: session.organizationId,
+    })
+      .then(setAssistant)
+      .catch(() => setAssistant(null));
   }, [session, id]);
 
   if (loading) {
@@ -201,6 +229,58 @@ export default function AgentOverviewPage() {
         }
       />
       <ErrorInline message={error} />
+
+      {assistant && (
+        <section className="panel mb-4 space-y-3 p-4" data-testid="agent-automations">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-sm font-semibold text-text">Asistente activo</h2>
+            <span
+              className={`badge ${
+                assistant.summary.health === "healthy"
+                  ? "badge-ok"
+                  : assistant.summary.health === "needs_attention"
+                    ? "badge-danger"
+                    : "badge-muted"
+              }`}
+            >
+              {assistant.summary.health === "healthy"
+                ? "Saludable"
+                : assistant.summary.health === "needs_attention"
+                  ? "Necesita atención"
+                  : assistant.summary.health === "paused"
+                    ? "Pausado"
+                    : "Sin automatizaciones"}
+            </span>
+            <span className="text-[11px] text-faint">
+              {assistant.summary.active} activas · {assistant.summary.actions_today} ejecuciones hoy
+              {assistant.summary.last_activity ? ` · última actividad ${new Date(assistant.summary.last_activity).toLocaleString()}` : ""}
+            </span>
+            <Link to="/workflows/new/ask" className="btn btn-secondary ml-auto min-h-8 px-2 text-[11px]">
+              Agregar automatización
+            </Link>
+          </div>
+          {assistant.automations.length === 0 ? (
+            <p className="text-xs text-muted">
+              Este agente todavía no tiene automatizaciones. Cuéntale a Zent qué debe vigilar y quedará asociado.
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {assistant.automations.map((automation) => (
+                <li key={automation.workflow_id} className="flex flex-wrap items-center gap-2 rounded-md bg-soft px-2.5 py-1.5 text-[11px]">
+                  <Link to={`/workflows/${automation.workflow_id}`} className="font-medium text-text hover:text-accent">
+                    {automation.name}
+                  </Link>
+                  <span className="badge badge-muted">{automation.status}</span>
+                  <span className="text-muted">Cuando {automation.when.toLowerCase()}</span>
+                  <span className="ml-auto text-faint">
+                    {automation.runs_7d} ejecuciones · {automation.success_rate ?? "—"}% éxito
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
         <StatCard
