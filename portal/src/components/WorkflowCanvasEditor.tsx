@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import type { NodeBusinessSchema, NodeSchemasPayload, ParameterLevel } from "../lib/businessSchema";
+import type { NodeSamples } from "../lib/dataPicker";
 import type { MarketRec, ShopInstall } from "../lib/marketplaceCanvas";
 import type { GraphNode, WorkflowGraph } from "../lib/workflowGraph";
 import { makeNode, newEdgeId, prepareGraphForSave, triggerConfigOf, triggerTypeOf } from "../lib/workflowGraph";
@@ -51,6 +52,7 @@ export function WorkflowCanvasEditor({
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [nodeSchemas, setNodeSchemas] = useState<Record<string, NodeBusinessSchema> | null>(null);
+  const [samples, setSamples] = useState<NodeSamples | null>(null);
   const [mxInstalls, setMxInstalls] = useState<{ id: string; integration: { slug: string; name: string } }[]>([]);
   const [mxActions, setMxActions] = useState<Record<string, { action_id: string; display_name: string }[]>>({});
   const [mkt, setMkt] = useState<MarketplaceContext | null>(null);
@@ -87,6 +89,29 @@ export function WorkflowCanvasEditor({
       })
       .catch(() => undefined);
   }, [session, workflowId]);
+
+  // Live Preview / Data Picker: outputs reales del último run (se refresca
+  // cuando el estudio pinta un nuevo overlay).
+  useEffect(() => {
+    if (!session || !workflowId) {
+      setSamples(null);
+      return;
+    }
+    let alive = true;
+    api<NodeSamples>(`/api/v1/workflows/${workflowId}/sample-outputs`, {
+      token: session.token,
+      organizationId: session.organizationId,
+    })
+      .then((d) => {
+        if (alive) setSamples(d);
+      })
+      .catch(() => {
+        if (alive) setSamples(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [session, workflowId, overlay]);
 
   // Recomendaciones y costo según el grafo actual (debounce ligero).
   useEffect(() => {
@@ -488,6 +513,7 @@ export function WorkflowCanvasEditor({
               mxInstalls={mxInstalls}
               mxActions={mxActions}
               nodeSchemas={nodeSchemas}
+              samples={samples}
               configLevel={configLevel}
               onConfigLevelChange={onConfigLevelChange}
             />

@@ -9,6 +9,8 @@ import { Code, LockSimple, WarningCircle } from "@phosphor-icons/react";
 import { useState } from "react";
 import type { BusinessParameter, ParameterLevel, SelectOption } from "../../lib/businessSchema";
 import { fromInputValue, staticOptions, toInputValue, visibleParameters } from "../../lib/businessSchema";
+import type { DataSourceOption } from "../../lib/dataPicker";
+import { DataPicker } from "./DataPicker";
 
 type Props = {
   parameters: BusinessParameter[];
@@ -20,6 +22,8 @@ type Props = {
   /** Referencias a datos de otros pasos (label visible + ref técnica). El
    *  formulario inserta la ref, pero Simple Mode no la muestra como tal. */
   referenceOptions?: SelectOption[];
+  /** Fuentes del Data Picker (contratos + samples reales). Tiene prioridad. */
+  dataSources?: DataSourceOption[];
   /** Clase del contenedor; el panel controla el layout. */
   className?: string;
   emptyHint?: string;
@@ -50,6 +54,7 @@ export function BusinessParameterForm({
   optionsFor,
   includeSecret = false,
   referenceOptions,
+  dataSources,
   className = "",
   emptyHint = "Este paso no tiene parámetros configurables.",
 }: Props) {
@@ -82,32 +87,45 @@ export function BusinessParameterForm({
               </span>
               {param.secret && <LockSimple size={11} className="text-warn" aria-label="Secreto" />}
               {param.unit && <span className="text-faint">({param.unit})</span>}
-              {referenceOptions && referenceOptions.length > 0 && acceptsReferences(param) && (
-                <span className="relative ml-auto">
-                  <button
-                    type="button"
-                    className="btn btn-ghost min-h-5 gap-0.5 px-1 text-[9px]"
-                    data-testid={`wf-param-${param.key}-refs`}
-                    aria-label={`Insertar dato en ${param.label}`}
-                    onClick={() => setRefOpen(refOpen === param.key ? null : param.key)}
-                  >
-                    <Code size={10} aria-hidden /> dato
-                  </button>
-                  {refOpen === param.key && (
-                    <span className="absolute top-5 right-0 z-30 max-h-48 w-52 overflow-y-auto rounded-md border border-border bg-raised p-1 shadow-pop">
-                      {referenceOptions.map((r) => (
-                        <button
-                          key={r.value}
-                          type="button"
-                          className="block w-full truncate rounded px-2 py-1 text-left text-[10px] text-text hover:bg-soft"
-                          onClick={() => appendRef(param, r.value)}
-                        >
-                          {r.label}
-                        </button>
-                      ))}
-                    </span>
-                  )}
+              {dataSources && dataSources.length > 0 && acceptsReferences(param) ? (
+                <span className="ml-auto">
+                  <DataPicker
+                    sources={dataSources}
+                    label="dato"
+                    testId={`wf-param-${param.key}-refs`}
+                    onPick={(field) => appendRef(param, field.ref)}
+                  />
                 </span>
+              ) : (
+                referenceOptions &&
+                referenceOptions.length > 0 &&
+                acceptsReferences(param) && (
+                  <span className="relative ml-auto">
+                    <button
+                      type="button"
+                      className="btn btn-ghost min-h-5 gap-0.5 px-1 text-[9px]"
+                      data-testid={`wf-param-${param.key}-refs`}
+                      aria-label={`Insertar dato en ${param.label}`}
+                      onClick={() => setRefOpen(refOpen === param.key ? null : param.key)}
+                    >
+                      <Code size={10} aria-hidden /> dato
+                    </button>
+                    {refOpen === param.key && (
+                      <span className="absolute top-5 right-0 z-30 max-h-48 w-52 overflow-y-auto rounded-md border border-border bg-raised p-1 shadow-pop">
+                        {referenceOptions.map((r) => (
+                          <button
+                            key={r.value}
+                            type="button"
+                            className="block w-full truncate rounded px-2 py-1 text-left text-[10px] text-text hover:bg-soft"
+                            onClick={() => appendRef(param, r.value)}
+                          >
+                            {r.label}
+                          </button>
+                        ))}
+                      </span>
+                    )}
+                  </span>
+                )
               )}
             </span>
 

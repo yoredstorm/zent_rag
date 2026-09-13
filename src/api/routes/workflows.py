@@ -337,6 +337,25 @@ async def tenant_workflow_runs(workflow_id: str, request: Request, limit: int = 
     return await list_runs(ctx.organization_id, UUID(workflow_id), limit)
 
 
+@router.get(
+    "/{workflow_id}/sample-outputs",
+    summary="Últimos outputs reales por nodo (Data Picker / Live Preview)",
+)
+async def tenant_workflow_sample_outputs(workflow_id: str, request: Request, run_id: str | None = None):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.samples import latest_node_outputs
+
+    ctx = require_permission(request, "workflow_runs:read")
+    result = await latest_node_outputs(
+        ctx.organization_id,
+        UUID(workflow_id),
+        run_id=UUID(run_id) if run_id else None,
+    )
+    if result is None:
+        raise HTTPException(404, "Workflow not found")
+    return result
+
+
 @router.post("/{workflow_id}/hook-secret/rotate", summary="Rotar secret inbound")
 async def tenant_workflow_rotate_hook_secret(workflow_id: str, request: Request):
     from src.platform.rbac.policy import require_permission

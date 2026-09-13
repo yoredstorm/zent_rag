@@ -71,14 +71,37 @@ def _extract_json_path(data, path: str):
 
 
 def _eval_condition(actual, operator: str, value) -> bool:
+    """Evaluador de operadores de negocio. Compatible con el formato legacy
+    (==, !=, >, >=, <, <=, contains) y con los operadores del Condition Builder
+    (misión §9): not_contains, starts_with, ends_with, is_empty, not_empty,
+    changed."""
     actual_s = str(actual if actual is not None else "")
-    value_s = str(value)
+    value_s = str(value if value is not None else "")
     if operator == "==":
         return actual_s == value_s
     if operator == "!=":
         return actual_s != value_s
     if operator == "contains":
         return value_s in actual_s
+    if operator == "not_contains":
+        return value_s not in actual_s
+    if operator == "starts_with":
+        return actual_s.startswith(value_s)
+    if operator == "ends_with":
+        return actual_s.endswith(value_s)
+    if operator == "is_empty":
+        if actual is None:
+            return True
+        if isinstance(actual, (list, dict, str)):
+            return len(actual) == 0 or (isinstance(actual, str) and not actual.strip())
+        return actual_s.strip() == ""
+    if operator == "not_empty":
+        return not _eval_condition(actual, "is_empty", None)
+    if operator == "changed":
+        # `value` es el valor anterior conocido; sin él no se puede afirmar.
+        if value is None:
+            return False
+        return actual_s != value_s
     try:
         left = float(actual_s)
         right = float(value_s)

@@ -471,22 +471,44 @@ async def _org_config_json(organization_id: UUID) -> dict:
 
 async def _exec_condition(rctx: NodeContext) -> NodeOutcome:
     cfg = rctx.node.config
+    from src.platform.workflows.conditions import (
+        describe_condition_tree,
+        evaluate_condition_tree,
+        normalize_rules,
+    )
     from src.platform.workflows.engine import _eval_condition as _eval
 
+    rules = normalize_rules(cfg)
+    if rules is not None and rules.get("kind") == "group":
+        result = evaluate_condition_tree(
+            rules, lambda field: _resolve_condition_field(field, rctx), _eval
+        )
+        return NodeOutcome(output={"condition": describe_condition_tree(rules), "result": result})
+
+    # Formato legacy / condición única: mismo shape de salida que siempre.
     field = str(cfg.get("field", ""))
     operator = str(cfg.get("operator", "=="))
     value = _resolve_ref(cfg.get("value", ""), rctx)
-    field = str(field)
+    actual = _resolve_condition_field(field, rctx)
+    result = _eval(actual, operator, value)
+    return NodeOutcome(output={"condition": f"{field} {operator} {value}", "result": result})
 
+
+def _resolve_condition_field(field: str, rctx: NodeContext) -> Any:
+    """Resuelve el campo de una condición: referencias estables, trigger, legacy
+    steps.N y literales. Antes, `{{nodes...}}` no se resolvía y comparaba el
+    literal: el Condition Builder depende de esta resolución."""
+    field = str(field or "")
+    if field.startswith("{{") and field.endswith("}}"):
+        resolved = _resolve_ref(field, rctx)
+        return None if isinstance(resolved, str) and "{{" in resolved else resolved
     if field.startswith("trigger."):
-        # {{trigger.<path>}} → lookup directo sobre el payload.
         actual = _trigger_field(field, rctx.trigger)
-        if actual is None:
-            actual = ""
-    elif field.startswith("nodes."):
+        return "" if actual is None else actual
+    if field.startswith("nodes."):
         resolved = _resolve_ref("{{" + field + "}}", rctx)
-        actual = None if "{{" in str(resolved) else resolved
-    elif field.startswith("steps."):
+        return None if "{{" in str(resolved) else resolved
+    if field.startswith("steps."):
         import re as _re
 
         m = _re.match(r"steps\.(\d+)\.output\.(.*)", field)
@@ -503,10 +525,8 @@ async def _exec_condition(rctx: NodeContext) -> NodeOutcome:
                         cur = None
                         break
                 actual = cur
-    else:
-        actual = str(field)
-    result = _eval(actual, operator, value)
-    return NodeOutcome(output={"condition": f"{field} {operator} {value}", "result": result})
+        return actual
+    return str(field)
 
 
 def _trigger_field(field: str, trigger: dict) -> Any:

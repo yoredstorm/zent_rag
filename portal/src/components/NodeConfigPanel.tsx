@@ -12,7 +12,10 @@ import type {
   SelectOption,
 } from "../lib/businessSchema";
 import { LEVEL_LABELS, setByPath } from "../lib/businessSchema";
+import { buildDataSources, type NodeSamples } from "../lib/dataPicker";
+import type { ConditionGroupNode } from "../lib/conditionTree";
 import { BusinessParameterForm } from "./workflowStudio/BusinessParameterForm";
+import { ConditionBuilder } from "./workflowStudio/ConditionBuilder";
 
 type Props = {
   graph: WorkflowGraph;
@@ -27,6 +30,8 @@ type Props = {
   mxActions?: Record<string, { action_id: string; display_name: string }[]>;
   /** Schemas de negocio por node_type (GET /workflows/node-schemas). */
   nodeSchemas?: Record<string, NodeBusinessSchema> | null;
+  /** Últimos outputs reales por nodo (Live Preview / Data Picker). */
+  samples?: NodeSamples | null;
   /** Nivel de configuración controlado por el estudio. */
   configLevel?: ParameterLevel;
   onConfigLevelChange?: (level: ParameterLevel) => void;
@@ -49,6 +54,7 @@ export function NodeConfigPanel({
   mxInstalls,
   mxActions,
   nodeSchemas,
+  samples,
   configLevel,
   onConfigLevelChange,
   className = "w-72 shrink-0",
@@ -63,6 +69,10 @@ export function NodeConfigPanel({
   const level = configLevel ?? localLevel;
   const n = node;
   const actionId = n?.type === "marketplace_action" ? String(n.config.action_id ?? "") : "";
+  const dataSources = useMemo(
+    () => buildDataSources(graph, nodeSchemas ?? null, samples ?? null, n?.id ?? null),
+    [graph, nodeSchemas, samples, n?.id],
+  );
 
   // Formulario de la acción del marketplace según su input_schema (misión §17).
   useEffect(() => {
@@ -139,6 +149,12 @@ export function NodeConfigPanel({
     onChange({
       ...graph,
       nodes: graph.nodes.map((x) => (x.id === current.id ? { ...x, config: setByPath(x.config, path, value) } : x)),
+    });
+  }
+  function replaceConfig(next: Record<string, unknown>) {
+    onChange({
+      ...graph,
+      nodes: graph.nodes.map((x) => (x.id === current.id ? { ...x, config: next } : x)),
     });
   }
   function setPolicy(key: "retry_policy" | "timeout_ms" | "error_policy", value: unknown) {
@@ -251,36 +267,53 @@ export function NodeConfigPanel({
         )}
 
         {business ? (
-          <>
-            <BusinessParameterForm
-              parameters={business.parameters}
-              level={level}
-              values={current.config}
-              onChange={(key, value) => setField(key, value)}
-              optionsFor={dynamicOptions}
-              referenceOptions={referenceSelectOptions}
+          current.type === "condition" ? (
+            <ConditionBuilder
+              config={current.config}
+              sources={dataSources}
+              onChange={(tree: ConditionGroupNode) => {
+                const next = { ...current.config };
+                delete next.field;
+                delete next.operator;
+                delete next.value;
+                next.rules = tree;
+                replaceConfig(next);
+              }}
             />
-            {current.type === "marketplace_action" && actionId && (
-              <div className="space-y-2 rounded-md border border-border bg-soft/40 p-2" data-testid="wf-action-params">
-                <p className="text-[10px] font-medium text-text">Parámetros de la acción</p>
-                {portsError ? (
-                  <p className="text-[10px] text-danger">{portsError}</p>
-                ) : actionPorts === null ? (
-                  <p className="text-[10px] text-faint">Cargando parámetros…</p>
-                ) : (
-                  <BusinessParameterForm
-                    parameters={actionPorts}
-                    level={level}
-                    values={(current.config.inputs as Record<string, unknown>) ?? {}}
-                    onChange={(key, value) => setConfigPath(`inputs.${key}`, value)}
-                    optionsFor={dynamicOptions}
-                    referenceOptions={referenceSelectOptions}
-                    emptyHint="Esta acción no declara parámetros."
-                  />
-                )}
-              </div>
-            )}
-          </>
+          ) : (
+            <>
+              <BusinessParameterForm
+                parameters={business.parameters}
+                level={level}
+                values={current.config}
+                onChange={(key, value) => setField(key, value)}
+                optionsFor={dynamicOptions}
+                referenceOptions={referenceSelectOptions}
+                dataSources={dataSources}
+              />
+              {current.type === "marketplace_action" && actionId && (
+                <div className="space-y-2 rounded-md border border-border bg-soft/40 p-2" data-testid="wf-action-params">
+                  <p className="text-[10px] font-medium text-text">Parámetros de la acción</p>
+                  {portsError ? (
+                    <p className="text-[10px] text-danger">{portsError}</p>
+                  ) : actionPorts === null ? (
+                    <p className="text-[10px] text-faint">Cargando parámetros…</p>
+                  ) : (
+                    <BusinessParameterForm
+                      parameters={actionPorts}
+                      level={level}
+                      values={(current.config.inputs as Record<string, unknown>) ?? {}}
+                      onChange={(key, value) => setConfigPath(`inputs.${key}`, value)}
+                      optionsFor={dynamicOptions}
+                      referenceOptions={referenceSelectOptions}
+                      dataSources={dataSources}
+                      emptyHint="Esta acción no declara parámetros."
+                    />
+                  )}
+                </div>
+              )}
+            </>
+          )
         ) : (
           legacyFields.map((f) => {
             const value = current.config[f.key];
