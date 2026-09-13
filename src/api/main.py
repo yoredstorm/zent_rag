@@ -161,6 +161,7 @@ async def lifespan(app: FastAPI):
             _spider_task = asyncio.create_task(_spider_loop())
             _wf_sched_task = asyncio.create_task(_workflow_v2_scheduler_loop())
             _wf_event_task = asyncio.create_task(_workflow_event_consumer_loop())
+            _wf_watchers_task = asyncio.create_task(_workflow_watchers_loop())
             yield
         finally:
             _region_health_task.cancel()
@@ -173,6 +174,7 @@ async def lifespan(app: FastAPI):
             _spider_task.cancel()
             _wf_sched_task.cancel()
             _wf_event_task.cancel()
+            _wf_watchers_task.cancel()
             await _run_shutdown()
 
 
@@ -207,6 +209,16 @@ async def _workflow_event_consumer_loop() -> None:
         from src.platform.workflows.events import workflow_event_consumer_loop
 
         await workflow_event_consumer_loop()
+    except asyncio.CancelledError:
+        pass
+
+
+async def _workflow_watchers_loop() -> None:
+    """Data watchers (Living Workflows): revisa cambios incrementales."""
+    try:
+        from src.platform.workflows.watchers import watcher_scheduler_loop
+
+        await watcher_scheduler_loop()
     except asyncio.CancelledError:
         pass
 

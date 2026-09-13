@@ -91,9 +91,19 @@ async def create_event_trigger(
     event_type: str,
     filters: dict[str, Any] | None = None,
 ) -> dict:
-    if event_type not in STANDARD_EVENTS and "custom." not in event_type:
-        # Permitimos eventos del catálogo estándar o custom.* de integraciones.
-        raise ValueError("event_type debe pertenecer al catálogo o empezar por custom.")
+    from src.platform.workflows.business_events import split_event_type
+    from src.platform.workflows.event_registry import is_registered
+
+    base_type, _version = split_event_type(event_type)
+    allowed = (
+        base_type in STANDARD_EVENTS
+        or base_type.startswith("custom.")
+        or base_type.startswith("watcher.")
+        or is_registered(base_type)
+    )
+    if not allowed:
+        # Catálogo estándar, catálogo de negocio o custom.*/watcher.*.
+        raise ValueError("event_type debe pertenecer al catálogo o empezar por custom./watcher.")
     session = await get_async_session()
     try:
         row = (
@@ -163,6 +173,16 @@ async def dispatch_event_to_workflows(event_type: str, payload: dict[str, Any]) 
         organization_id = UUID(str(org_raw))
     except ValueError:
         return 0
+    obs = _load_observability()
+    if obs is not None:
+        try:
+            counter = obs.workflow_events_received_total
+            if counter is not None:
+                counter.labels(source=str(payload.get("source") or "external")).inc()
+        except Exception:  # noqa: BLE001
+            pass
+    # Eventos versionados (`inventory.stock.low@v2`) matchean triggers base.
+    match_type = str(event_type).split("@v", 1)[0]
     session = await get_async_session()
     try:
         rows = (
@@ -173,7 +193,7 @@ async def dispatch_event_to_workflows(event_type: str, payload: dict[str, Any]) 
                     "WHERE organization_id = :oid AND event_type = :etype "
                     "AND status = 'active'"
                 ),
-                {"oid": organization_id, "etype": event_type},
+                {"oid": organization_id, "etype": match_type},
             )
         ).fetchall()
     finally:
@@ -189,6 +209,13 @@ async def dispatch_event_to_workflows(event_type: str, payload: dict[str, Any]) 
             deduped = await _mark_event_processed(organization_id, dedupe_key)
             if deduped:
                 logger.info("workflow event dedupe", event_type=event_type, workflow_id=str(row.workflow_id))
+                if obs is not None:
+                    try:
+                        counter = obs.workflow_event_deduplicated_total
+                        if counter is not None:
+                            counter.inc()
+                    except Exception:  # noqa: BLE001
+                        pass
                 continue
             child_payload = {k: v for k, v in payload.items() if not k.startswith("_")}
             child_payload["_wf_chain"] = chain + [str(row.workflow_id)]
@@ -209,7 +236,30 @@ async def dispatch_event_to_workflows(event_type: str, payload: dict[str, Any]) 
                 event_type=event_type,
                 error=str(exc)[:200],
             )
+            if obs is not None:
+                try:
+                    counter = obs.workflow_events_failed_total
+                    if counter is not None:
+                        counter.labels(event_type=event_type).inc()
+                except Exception:  # noqa: BLE001
+                    pass
+    if obs is not None and fired:
+        try:
+            counter = obs.workflow_triggers_fired_total
+            if counter is not None:
+                counter.inc(fired)
+        except Exception:  # noqa: BLE001
+            pass
     return fired
+
+
+def _load_observability():
+    try:
+        from src.platform.workflows import observability
+
+        return observability
+    except Exception:  # noqa: BLE001
+        return None
 
 
 async def _mark_event_processed(organization_id: UUID, dedupe_key: str) -> bool:

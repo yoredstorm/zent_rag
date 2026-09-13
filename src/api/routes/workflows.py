@@ -203,6 +203,111 @@ async def tenant_workflow_patch_apply(workflow_id: str, body: PatchApplyIn, requ
     return result
 
 
+@router.get("/event-catalog", summary="Catálogo de eventos en lenguaje de negocio")
+async def tenant_workflow_event_catalog(request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.event_registry import catalog_payload
+
+    require_permission(request, "workflows:read")
+    return catalog_payload()
+
+
+@router.get("/watchers", summary="Data watchers del tenant")
+async def tenant_workflow_watchers(request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.watchers import list_watchers
+
+    ctx = require_permission(request, "workflows:read")
+    return {"watchers": await list_watchers(ctx.organization_id, await _workspace_id(request))}
+
+
+@router.post("/watchers", summary="Crear data watcher")
+async def tenant_workflow_watcher_create(body: WatcherIn, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.watchers import WatcherDefinition, WatcherError, create_watcher
+
+    ctx = require_permission(request, "workflows:create")
+    try:
+        payload = body.model_dump(mode="json")
+        if not payload.get("source_id"):
+            payload.pop("source_id", None)
+        definition = WatcherDefinition.model_validate(payload)
+        return await create_watcher(
+            ctx.organization_id,
+            definition,
+            workspace_id=await _workspace_id(request),
+            created_by=ctx.user_id,
+        )
+    except WatcherError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/watchers/{watcher_id}", summary="Detalle del watcher")
+async def tenant_workflow_watcher_detail(watcher_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.watchers import get_watcher
+
+    ctx = require_permission(request, "workflows:read")
+    watcher = await get_watcher(ctx.organization_id, UUID(watcher_id))
+    if watcher is None:
+        raise HTTPException(404, "Watcher not found")
+    return watcher
+
+
+@router.patch("/watchers/{watcher_id}", summary="Actualizar watcher (pausa, intervalo, condición)")
+async def tenant_workflow_watcher_update(watcher_id: str, body: WatcherPatchIn, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.watchers import WatcherError, update_watcher
+
+    ctx = require_permission(request, "workflows:update")
+    try:
+        result = await update_watcher(
+            ctx.organization_id, UUID(watcher_id), body.model_dump(exclude_unset=True)
+        )
+    except WatcherError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if result is None:
+        raise HTTPException(404, "Watcher not found")
+    return result
+
+
+@router.delete("/watchers/{watcher_id}", summary="Eliminar watcher")
+async def tenant_workflow_watcher_delete(watcher_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.watchers import delete_watcher
+
+    ctx = require_permission(request, "workflows:delete")
+    if not await delete_watcher(ctx.organization_id, UUID(watcher_id)):
+        raise HTTPException(404, "Watcher not found")
+    return {"deleted": True}
+
+
+@router.post("/watchers/{watcher_id}/check", summary="Check manual del watcher")
+async def tenant_workflow_watcher_check(watcher_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.watchers import check_watcher
+
+    ctx = require_permission(request, "workflows:run")
+    outcome = await check_watcher(ctx.organization_id, UUID(watcher_id), force=True)
+    if outcome is None:
+        raise HTTPException(404, "Watcher not found")
+    return outcome.to_dict()
+
+
+@router.get("/watchers/{watcher_id}/state", summary="Estado incremental del watcher")
+async def tenant_workflow_watcher_state(watcher_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.watchers import get_watcher_state
+
+    ctx = require_permission(request, "workflows:read")
+    state = await get_watcher_state(ctx.organization_id, UUID(watcher_id))
+    if state is None:
+        raise HTTPException(404, "Watcher not found")
+    return state
+
+
 @router.get("/templates", summary="Plantillas de workflows")
 async def tenant_workflow_templates(request: Request):
     from src.platform.rbac.policy import require_permission
@@ -644,6 +749,55 @@ class PatchPreviewIn(BaseModel):
 class PatchApplyIn(BaseModel):
     patch: dict
     base_graph_hash: str | None = Field(default=None, max_length=80)
+
+
+class WatcherIn(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=600)
+    source_id: str | None = None
+    strategy: str = Field(
+        default="watermark_polling",
+        pattern="^(watermark_polling|timestamp_polling|query_watch|application_event|webhook)$",
+    )
+    entity: str = Field(default="registro", max_length=80)
+    schema_name: str | None = Field(default=None, max_length=63)
+    table_name: str = Field(min_length=1, max_length=63)
+    primary_key: str | None = Field(default=None, max_length=63)
+    timestamp_field: str | None = Field(default=None, max_length=63)
+    selected_fields: list[str] = Field(default_factory=list, max_length=50)
+    condition: dict
+    transition_mode: str = Field(default="on_enter", pattern="^(on_change|on_enter|on_exit|while_true)$")
+    interval_seconds: int = Field(default=300, ge=60, le=86_400)
+    cooldown_seconds: int = Field(default=0, ge=0, le=604_800)
+    debounce_seconds: int = Field(default=0, ge=0, le=86_400)
+    event_type: str = Field(default="", max_length=160)
+    entity_field: str | None = Field(default=None, max_length=63)
+    workflow_id: str | None = None
+    status: str = Field(default="listening", pattern="^(listening|checking|error|paused)$")
+
+
+class WatcherPatchIn(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    description: str | None = Field(default=None, max_length=600)
+    strategy: str | None = Field(
+        default=None,
+        pattern="^(watermark_polling|timestamp_polling|query_watch|application_event|webhook)$",
+    )
+    entity: str | None = Field(default=None, max_length=80)
+    schema_name: str | None = Field(default=None, max_length=63)
+    table_name: str | None = Field(default=None, min_length=1, max_length=63)
+    primary_key: str | None = Field(default=None, max_length=63)
+    timestamp_field: str | None = Field(default=None, max_length=63)
+    selected_fields: list[str] | None = None
+    condition: dict | None = None
+    transition_mode: str | None = Field(default=None, pattern="^(on_change|on_enter|on_exit|while_true)$")
+    interval_seconds: int | None = Field(default=None, ge=60, le=86_400)
+    cooldown_seconds: int | None = Field(default=None, ge=0, le=604_800)
+    debounce_seconds: int | None = Field(default=None, ge=0, le=86_400)
+    event_type: str | None = Field(default=None, max_length=160)
+    entity_field: str | None = Field(default=None, max_length=63)
+    workflow_id: str | None = None
+    status: str | None = Field(default=None, pattern="^(listening|checking|error|paused)$")
 
 
 # ---------------------------------------------------------------------------
