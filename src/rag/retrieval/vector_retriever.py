@@ -44,6 +44,7 @@ class VectorRetriever(Retriever):
                 groups=query.groups,
                 knowledge_base_id=query.knowledge_base_id,
                 workspace_id=query.workspace_id,
+                source_ids=query.source_ids or None,
             )
             total_latency += ctx.retrieval_latency_ms
             for chunk in ctx.chunks:
@@ -74,6 +75,7 @@ class VectorRetriever(Retriever):
                 groups=query.groups,
                 knowledge_base_id=query.knowledge_base_id,
                 workspace_id=query.workspace_id,
+                source_ids=query.source_ids or None,
             )
             total_latency += ctx.retrieval_latency_ms
             for chunk in ctx.chunks:

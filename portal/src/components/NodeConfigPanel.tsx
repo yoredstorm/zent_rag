@@ -1,5 +1,6 @@
-import { Code, Trash } from "@phosphor-icons/react";
+import { Code, Trash, X } from "@phosphor-icons/react";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import type { GraphEdge, GraphNode, WorkflowGraph } from "../lib/workflowGraph";
 import { nodeMeta, nodePorts, referenceOptions } from "../lib/workflowGraph";
 
@@ -14,24 +15,41 @@ type Props = {
   agents: { id: string; name: string }[];
   mxInstalls?: { id: string; integration: { slug: string; name: string } }[];
   mxActions?: Record<string, { action_id: string; display_name: string }[]>;
+  /** El estudio lo monta como sheet flotante sobre el lienzo. */
+  className?: string;
+  onClose?: () => void;
 };
 
-export function NodeConfigPanel({ graph, node, edge, onChange, onDeleteNode, onDeleteEdge, kbs, agents, mxInstalls, mxActions }: Props) {
+export function NodeConfigPanel({
+  graph,
+  node,
+  edge,
+  onChange,
+  onDeleteNode,
+  onDeleteEdge,
+  kbs,
+  agents,
+  mxInstalls,
+  mxActions,
+  className = "w-72 shrink-0",
+  onClose,
+}: Props) {
   const [showAdv, setShowAdv] = useState(false);
   const [refOpen, setRefOpen] = useState<string | null>(null);
 
-  if (!node && !edge) {
-    return (
-      <aside className="w-72 shrink-0 rounded-md border border-border bg-raised/60 p-3 text-[11px] text-faint">
-        Selecciona un nodo para configurarlo o un edge para eliminarlo.
-      </aside>
-    );
-  }
+  if (!node && !edge) return null;
 
   if (edge && !node) {
     return (
-      <aside className="w-72 shrink-0 rounded-md border border-border bg-raised/60 p-3">
-        <h3 className="text-sm font-semibold text-text">Conexión</h3>
+      <aside className={`rounded-lg border border-border bg-surface p-3 shadow-panel ${className}`} data-testid="wf-edge-config">
+        <div className="flex items-start gap-2">
+          <h3 className="flex-1 text-sm font-semibold text-text">Conexión</h3>
+          {onClose && (
+            <button type="button" className="btn btn-ghost min-h-7 px-1.5" aria-label="Cerrar" onClick={onClose}>
+              <X size={14} aria-hidden />
+            </button>
+          )}
+        </div>
         <p className="mt-1 font-mono text-[10px] text-muted">
           {edge.from_node}.{edge.from_port} → {edge.to_node}.{edge.to_port}
         </p>
@@ -48,7 +66,13 @@ export function NodeConfigPanel({ graph, node, edge, onChange, onDeleteNode, onD
   const refs = referenceOptions(graph, n.id);
 
   function setField(key: string, value: unknown) {
-    onChange({ ...graph, nodes: graph.nodes.map((x) => (x.id === n.id ? { ...x, config: { ...x.config, [key]: value } } : x)) });
+    setFields({ [key]: value });
+  }
+  function setFields(patch: Record<string, unknown>) {
+    onChange({
+      ...graph,
+      nodes: graph.nodes.map((x) => (x.id === n.id ? { ...x, config: { ...x.config, ...patch } } : x)),
+    });
   }
   function setPolicy(key: "retry_policy" | "timeout_ms" | "error_policy", value: unknown) {
     onChange({
@@ -81,22 +105,46 @@ export function NodeConfigPanel({ graph, node, edge, onChange, onDeleteNode, onD
     return field?.options ?? [];
   };
 
+  const needsAgent = n.type === "llm" && !n.config.agent_id;
+
   return (
-    <aside className="flex w-72 shrink-0 flex-col overflow-hidden rounded-md border border-border bg-raised/60" data-testid="wf-node-config">
-      <div className={`flex items-center gap-2 border-b border-border px-3 py-2 ${meta.color} bg-opacity-10`}>
-        <span aria-hidden>{meta.icon}</span>
+    <aside className={`flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-panel ${className}`} data-testid="wf-node-config">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
+        <span className={`flex h-7 w-7 items-center justify-center rounded-md text-[13px] ${meta.color} bg-opacity-20`} aria-hidden>
+          {meta.icon}
+        </span>
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-[13px] font-semibold text-text">{meta.label}</h3>
-          <p className="truncate font-mono text-[9px] text-faint">{n.type} · v{n.version} · {n.id}</p>
+          <p className="truncate font-mono text-[9px] text-faint">{n.type} · v{n.version}</p>
         </div>
         {n.type !== "end" && !n.type.startsWith("trigger_") && (
           <button type="button" className="btn btn-ghost min-h-7 px-1.5 text-danger" aria-label="Eliminar nodo" onClick={() => onDeleteNode(n.id)}>
             <Trash size={14} />
           </button>
         )}
+        {onClose && (
+          <button type="button" className="btn btn-ghost min-h-7 px-1.5" aria-label="Cerrar configuración" onClick={onClose}>
+            <X size={14} aria-hidden />
+          </button>
+        )}
       </div>
 
       <div className="flex-1 space-y-2.5 overflow-y-auto p-3">
+        {needsAgent && (
+          <div className="rounded-md border border-warn/40 bg-warn-soft px-2.5 py-2 text-[10px] text-text" data-testid="wf-agent-required">
+            {agents.length === 0 ? (
+              <>
+                No tienes agentes todavía. Crea uno y vuelve: sin agente este nodo solo devuelve un
+                eco del prompt.
+                <Link to="/agents/new" className="btn btn-secondary mt-2 min-h-8 w-full text-[10px]" data-testid="wf-agent-cta">
+                  Crear un agente
+                </Link>
+              </>
+            ) : (
+              "Elige el agente que va a responder. Sin agente el nodo devuelve un eco, no una respuesta."
+            )}
+          </div>
+        )}
         {meta.fields
           .filter((f) => (f.adv ? showAdv : true))
           .map((f) => {
@@ -104,7 +152,10 @@ export function NodeConfigPanel({ graph, node, edge, onChange, onDeleteNode, onD
             return (
               <label key={f.key} className="block">
                 <span className="mb-0.5 flex items-center justify-between gap-1 text-[10px] font-medium text-muted">
-                  <span>{f.label}</span>
+                  <span>
+                    {f.label}
+                    {f.key === "agent_id" && <span className="ml-1 text-danger">*</span>}
+                  </span>
                   {f.refs && refs.length > 0 && (
                     <span className="relative">
                       <button type="button" className="btn btn-ghost min-h-5 px-1 text-[9px]" onClick={() => setRefOpen(refOpen === f.key ? null : f.key)} aria-label={`Insertar referencia en ${f.label}`}>
@@ -152,11 +203,23 @@ export function NodeConfigPanel({ graph, node, edge, onChange, onDeleteNode, onD
                   />
                 ) : f.type === "select" ? (
                   <select
-                    className="w-full rounded-md border border-border bg-soft px-2 py-1.5 text-[11px]"
+                    className={`w-full rounded-md border bg-soft px-2 py-2 text-[11px] ${
+                      f.key === "agent_id" && !value ? "border-warn/60" : "border-border"
+                    }`}
                     value={String(value ?? "")}
-                    onChange={(e) => setField(f.key, e.target.value)}
+                    data-testid={f.key === "agent_id" ? "wf-agent-select" : undefined}
+                    onChange={(e) => {
+                      if (f.key !== "agent_id") {
+                        setField(f.key, e.target.value);
+                        return;
+                      }
+                      // El nombre queda en el config para que el nodo del
+                      // canvas no muestre un UUID.
+                      const picked = agents.find((a) => a.id === e.target.value);
+                      setFields({ agent_id: e.target.value, agent_name: picked?.name ?? "" });
+                    }}
                   >
-                    <option value="">—</option>
+                    <option value="">{f.key === "agent_id" ? "Elige un agente…" : "—"}</option>
                     {selectOptions(f.key).map((o) => (
                       <option key={o.value} value={o.value}>{o.label}</option>
                     ))}

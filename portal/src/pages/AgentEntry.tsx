@@ -1,18 +1,25 @@
 import { lazy } from "react";
 import { Navigate, useParams, useSearchParams } from "react-router-dom";
 
-const AgentOverviewPage = lazy(() => import("./AgentOverview"));
+const AgentStudioPage = lazy(() => import("./AgentStudio"));
 
-/**
- * /agents/:id muestra el resumen del agente (FASE 05).
- * Las URLs legacy con ?tab=… (builder plano) se redirigen al builder por etapas.
- */
-export default function AgentEntry() {
+function mapBuilderQuery(tab: string | null): string {
+  const next = new URLSearchParams();
+  if (tab === "playground") next.set("panel", "test");
+  else if (tab && tab !== "instructions" && tab !== "knowledge") {
+    next.set("panel", "advanced");
+    next.set("tab", tab);
+  }
+  const query = next.toString();
+  return query ? `?${query}` : "";
+}
+
+export function AgentBuilderRedirect() {
   const { id } = useParams<{ id: string }>();
   const [sp] = useSearchParams();
-  const tab = sp.get("tab");
-  if (tab) {
-    return <Navigate to={`/agents/${id}/builder?tab=${encodeURIComponent(tab)}`} replace />;
-  }
-  return <AgentOverviewPage />;
+  return <Navigate to={`/agents/${id}${mapBuilderQuery(sp.get("tab"))}`} replace />;
+}
+
+export default function AgentEntry() {
+  return <AgentStudioPage />;
 }

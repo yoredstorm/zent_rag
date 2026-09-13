@@ -171,6 +171,65 @@ async def test_skip_review_marks_needs_attention(async_client: AsyncClient) -> N
     assert "campos" in warning, warning
 
 
+@pytest.mark.asyncio
+async def test_accept_review_approves_all_without_skipping(
+    async_client: AsyncClient,
+) -> None:
+    org = await _create_org(async_client, "Accept Co")
+    headers = await _owner_headers(org)
+    created = await async_client.post(
+        f"{PREFIX}/sessions", headers=headers, json={"kind": "documents"}
+    )
+    sid = created.json()["id"]
+    await async_client.post(
+        f"{PREFIX}/sessions/{sid}/connect/upload",
+        headers={k: v for k, v in headers.items() if k != "Content-Type"},
+        files={"file": ("contrato.txt", BytesIO(_CONTRACT_TXT.encode("utf-8")), "text/plain")},
+    )
+    analyzed = await async_client.post(f"{PREFIX}/sessions/{sid}/analyze", headers=headers)
+    assert analyzed.status_code == 200, analyzed.text
+    understanding = await async_client.get(
+        f"{PREFIX}/sessions/{sid}/understanding", headers=headers
+    )
+    pending = understanding.json().get("suggestions") or []
+    assert pending, "facts should be reviewable"
+    session_before = await async_client.get(f"{PREFIX}/sessions/{sid}", headers=headers)
+    assert session_before.json()["skipped_review"] is False
+
+    accepted = await async_client.post(
+        f"{PREFIX}/sessions/{sid}/accept-review", headers=headers
+    )
+    assert accepted.status_code == 200, accepted.text
+    body = accepted.json()
+    assert body["approved"] == len(pending)
+    assert body["session"]["skipped_review"] is False
+    assert body["session"]["status"] != "NEEDS_ATTENTION"
+
+    leftover = await async_client.get(
+        f"{PREFIX}/sessions/{sid}/understanding", headers=headers
+    )
+    assert leftover.json().get("suggestions") == []
+    readiness = await async_client.get(
+        f"{PREFIX}/sessions/{sid}/readiness", headers=headers
+    )
+    assert readiness.json()["pending_review_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_viewer_cannot_accept_review(async_client: AsyncClient) -> None:
+    org = await _create_org(async_client, "Accept RBAC")
+    owner = await _owner_headers(org)
+    created = await async_client.post(
+        f"{PREFIX}/sessions", headers=owner, json={"kind": "spreadsheets"}
+    )
+    sid = created.json()["id"]
+    viewer = await _viewer_headers(org)
+    denied = await async_client.post(
+        f"{PREFIX}/sessions/{sid}/accept-review", headers=viewer
+    )
+    assert denied.status_code == 403, denied.text
+
+
 _CONTRACT_TXT = """\
 CONTRATO DE PRESTACIÓN DE SERVICIOS
 
@@ -283,6 +342,78 @@ async def test_document_flow_extracts_facts_and_readiness(
     r2 = readiness2.json()
     assert r2["pending_review_count"] == len(suggestions) - 1
     assert r2["scores"]["key_facts"] > 0
+
+
+@pytest.mark.asyncio
+async def test_progress_includes_percent_and_glimpses(
+    async_client: AsyncClient,
+) -> None:
+    org = await _create_org(async_client, "Glimpses Co")
+    headers = await _owner_headers(org)
+    created = await async_client.post(
+        f"{PREFIX}/sessions", headers=headers, json={"kind": "documents"}
+    )
+    sid = created.json()["id"]
+    await async_client.post(
+        f"{PREFIX}/sessions/{sid}/connect/upload",
+        headers={k: v for k, v in headers.items() if k != "Content-Type"},
+        files={"file": ("contrato.txt", BytesIO(_CONTRACT_TXT.encode("utf-8")), "text/plain")},
+    )
+    analyzed = await async_client.post(f"{PREFIX}/sessions/{sid}/analyze", headers=headers)
+    assert analyzed.status_code == 200, analyzed.text
+    progress = await async_client.get(
+        f"{PREFIX}/sessions/{sid}/progress", headers=headers
+    )
+    assert progress.status_code == 200, progress.text
+    body = progress.json()
+    assert body["percent"] == 100
+    texts = [g["text"] for g in (body.get("glimpses") or [])]
+    assert texts, "progress should surface what Zent understood"
+    assert any(t.startswith("Ah,") or t.startswith("Vi un monto") or t.startswith("Fecha:") for t in texts)
+
+
+@pytest.mark.asyncio
+async def test_analyze_checkpoints_rule_facts_before_llm(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.platform.data_onboarding import document_facts as df
+    from src.platform.data_onboarding.service import DataOnboardingService
+
+    order: list[str] = []
+    orig_checkpoint = DataOnboardingService._checkpoint_understanding
+
+    async def spy_checkpoint(self, organization_id, session_id, row, understanding):
+        order.append("checkpoint")
+        facts = understanding.get("facts") or []
+        assert facts, "checkpoint must include rule facts"
+        assert any(
+            f.get("fact_type") in {"party", "identifier", "amount", "date"}
+            for f in facts
+        )
+        return await orig_checkpoint(self, organization_id, session_id, row, understanding)
+
+    async def spy_llm(_text: str):
+        order.append("llm")
+        assert order[:2] == ["checkpoint", "llm"]
+        return []
+
+    monkeypatch.setattr(DataOnboardingService, "_checkpoint_understanding", spy_checkpoint)
+    monkeypatch.setattr(df, "_llm_facts", spy_llm)
+
+    org = await _create_org(async_client, "Checkpoint Co")
+    headers = await _owner_headers(org)
+    created = await async_client.post(
+        f"{PREFIX}/sessions", headers=headers, json={"kind": "documents"}
+    )
+    sid = created.json()["id"]
+    await async_client.post(
+        f"{PREFIX}/sessions/{sid}/connect/upload",
+        headers={k: v for k, v in headers.items() if k != "Content-Type"},
+        files={"file": ("contrato.txt", BytesIO(_CONTRACT_TXT.encode("utf-8")), "text/plain")},
+    )
+    analyzed = await async_client.post(f"{PREFIX}/sessions/{sid}/analyze", headers=headers)
+    assert analyzed.status_code == 200, analyzed.text
+    assert order == ["checkpoint", "llm"]
 
 
 @pytest.mark.asyncio

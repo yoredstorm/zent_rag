@@ -4,7 +4,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { Suspense, lazy, useEffect, useMemo, useState } from "react";
-import { NavLink, Navigate, Outlet, Route, Routes } from "react-router-dom";
+import { NavLink, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ApiKeyCreatedModal } from "./components/ApiKeyCreatedModal";
 import { Topbar } from "./components/Topbar";
@@ -33,8 +33,10 @@ const SignupPage = lazy(() => import("./pages/Signup"));
 const UsagePage = lazy(() => import("./pages/Usage"));
 const ProjectsPage = lazy(() => import("./pages/Projects"));
 const AgentsPage = lazy(() => import("./pages/Agents"));
-const AgentBuilderPage = lazy(() => import("./pages/AgentBuilder"));
-const AgentEntryPage = lazy(() => import("./pages/AgentEntry"));
+const AgentStudioPage = lazy(() => import("./pages/AgentStudio"));
+const AgentBuilderRedirectPage = lazy(() =>
+  import("./pages/AgentEntry").then((m) => ({ default: m.AgentBuilderRedirect })),
+);
 const ConnectorsPage = lazy(() => import("./pages/Connectors"));
 const BillingPage = lazy(() => import("./pages/Billing"));
 const SettingsPage = lazy(() => import("./pages/Settings"));
@@ -133,6 +135,7 @@ const ReleasesPage = lazy(() => import("./pages/Releases"));
 const CopilotPage = lazy(() => import("./pages/Copilot"));
 const AdminCopilotPage = lazy(() => import("./pages/admin/Copilot"));
 const WorkflowsPage = lazy(() => import("./pages/Workflows"));
+const WorkflowStudioPage = lazy(() => import("./pages/WorkflowStudio"));
 const MigrationsPage = lazy(() => import("./pages/Migrations"));
 const OnboardingPage = lazy(() => import("./pages/Onboarding"));
 const EvaluationDatasetsPage = lazy(() => import("./pages/evaluation/Datasets"));
@@ -374,6 +377,9 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
 function ProtectedLayout() {
   const { session, ready, logout } = useAuth();
+  const { pathname } = useLocation();
+  // El estudio de workflows es un lienzo: necesita todo el ancho, sin max-w ni padding.
+  const fullBleed = /^\/workflows\/[^/]+$/.test(pathname);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [signupKey, setSignupKey] = useState<string | null>(null);
   const [impersonationMeta, setImpersonationMeta] = useState<{
@@ -508,7 +514,14 @@ function ProtectedLayout() {
               </div>
             )}
 
-            <main id="contenido" className="mx-auto w-full max-w-[1280px] flex-1 px-4 py-6 sm:px-6 lg:px-10">
+            <main
+              id="contenido"
+              className={
+                fullBleed
+                  ? "flex w-full min-w-0 flex-1 flex-col px-3 py-3 sm:px-4"
+                  : "mx-auto w-full max-w-[1280px] flex-1 px-4 py-6 sm:px-6 lg:px-10"
+              }
+            >
               <CommandPaletteRoot mode="tenant" />
               <IdleSessionWarning minutes={IDLE_SESSION_MINUTES} onLogout={logout} />
               {impersonating && (
@@ -543,7 +556,7 @@ function ProtectedLayout() {
                 </div>
               )}
               <SyncBanner />
-              <div className="animate-page-in">
+              <div className={fullBleed ? "flex min-h-0 min-w-0 flex-1 flex-col" : "animate-page-in"}>
                 <ErrorBoundary>
                   <Outlet />
                 </ErrorBoundary>
@@ -679,9 +692,9 @@ export default function App() {
         <Route path="/developers/tools" element={<Suspense fallback={<PageFallback />}><DeveloperToolsPage /></Suspense>} />
         <Route path="/developers/playground" element={<Suspense fallback={<PageFallback />}><PlaygroundPage /></Suspense>} />
         <Route path="/agents" element={<Suspense fallback={<PageFallback />}><AgentsPage /></Suspense>} />
-        <Route path="/agents/new" element={<Suspense fallback={<PageFallback />}><AgentBuilderPage /></Suspense>} />
-        <Route path="/agents/:id/builder" element={<Suspense fallback={<PageFallback />}><AgentBuilderPage /></Suspense>} />
-        <Route path="/agents/:id" element={<Suspense fallback={<PageFallback />}><AgentEntryPage /></Suspense>} />
+        <Route path="/agents/new" element={<Suspense fallback={<PageFallback />}><AgentStudioPage /></Suspense>} />
+        <Route path="/agents/:id/builder" element={<Suspense fallback={<PageFallback />}><AgentBuilderRedirectPage /></Suspense>} />
+        <Route path="/agents/:id" element={<Suspense fallback={<PageFallback />}><AgentStudioPage /></Suspense>} />
         <Route path="/connectors" element={<Suspense fallback={<PageFallback />}><ConnectorsPage /></Suspense>} />
         <Route path="/billing" element={<Suspense fallback={<PageFallback />}><BillingPage /></Suspense>} />
         <Route path="/ai-quality" element={<Suspense fallback={<PageFallback />}><AiQualityPage /></Suspense>} />
@@ -696,6 +709,8 @@ export default function App() {
         <Route path="/releases" element={<Suspense fallback={<PageFallback />}><ReleasesPage /></Suspense>} />
         <Route path="/copilot" element={<Suspense fallback={<PageFallback />}><CopilotPage /></Suspense>} />
         <Route path="/workflows" element={<Suspense fallback={<PageFallback />}><WorkflowsPage /></Suspense>} />
+        <Route path="/workflows/new" element={<Suspense fallback={<PageFallback />}><WorkflowStudioPage /></Suspense>} />
+        <Route path="/workflows/:id" element={<Suspense fallback={<PageFallback />}><WorkflowStudioPage /></Suspense>} />
         <Route path="/chat-insights" element={<Suspense fallback={<PageFallback />}><ChatInsightsPage /></Suspense>} />
         <Route path="/knowledge-hub" element={<Suspense fallback={<PageFallback />}><KnowledgeHubPage /></Suspense>} />
         <Route path="/risk-center" element={<Suspense fallback={<PageFallback />}><RiskCenterPage /></Suspense>} />

@@ -30,4 +30,5 @@ class LexicalRetriever(Retriever):
             groups=query.groups,
             knowledge_base_id=query.knowledge_base_id,
             workspace_id=query.workspace_id,
+            source_ids=query.source_ids or None,
         )

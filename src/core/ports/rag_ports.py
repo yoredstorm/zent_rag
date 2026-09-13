@@ -34,6 +34,7 @@ class VectorStore(ABC):
         role: str = "admin",
         knowledge_base_id: UUID | None = None,
         workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> RetrievalContext: ...
 
     @abstractmethod
@@ -138,6 +139,7 @@ class LexicalStore(ABC):
         role: str = "admin",
         knowledge_base_id: UUID | None = None,
         workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> RetrievalContext: ...
 
 
@@ -163,6 +165,7 @@ class HybridStore(ABC):
         knowledge_base_id: UUID | None = None,
         fusion_weights: dict[str, float] | None = None,
         workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> RetrievalContext: ...
 
 

@@ -29,7 +29,9 @@ from src.knowledge.connectors.base import ConnectorError, Record, SourceConnecto
 from src.knowledge.connectors.registry import register_connector
 from src.knowledge.engine.service import (
     KnowledgeIngestionEngine,
+    compute_failure_retry_delay,
     compute_retry_delay,
+    is_rate_limit_error,
 )
 
 # ---------------------------------------------------------------------------
@@ -334,3 +336,56 @@ def test_compute_retry_delay_exponential() -> None:
     assert compute_retry_delay(2, base_seconds=10) == 20
     assert compute_retry_delay(3, base_seconds=10) == 40
     assert compute_retry_delay(10, base_seconds=10, cap_seconds=300) == 300
+
+
+class RateLimitError(Exception):
+    """Mimics litellm.exceptions.RateLimitError without importing LiteLLM."""
+
+
+def test_is_rate_limit_error_detects_litellm_and_429() -> None:
+    assert is_rate_limit_error(RateLimitError("server overload"))
+    assert is_rate_limit_error(
+        Exception("Error code: 429 - {'message': 'server overload'}")
+    )
+    assert not is_rate_limit_error(ConnectorError("connector configured to fail"))
+
+
+def test_compute_failure_retry_delay_uses_longer_backoff_for_429() -> None:
+    exc = RateLimitError("Error code: 429 - server overload")
+    assert compute_failure_retry_delay(exc, 1, base_seconds=10) == 60
+    assert compute_failure_retry_delay(exc, 2, base_seconds=10) == 120
+    assert compute_failure_retry_delay(exc, 5, base_seconds=10) == 900
+    assert compute_failure_retry_delay(ConnectorError("boom"), 1, base_seconds=10) == 10
+
+
+def test_compute_failure_retry_delay_honors_retry_after_header() -> None:
+    exc = RateLimitError("Error code: 429")
+    exc.response = type("Resp", (), {"headers": {"Retry-After": "180"}})()
+    assert compute_failure_retry_delay(exc, 1, base_seconds=10) == 180
+    exc.response = type("Resp", (), {"headers": {"Retry-After": "10"}})()
+    assert compute_failure_retry_delay(exc, 1, base_seconds=10) == 60
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_failure_schedules_long_retry(context) -> None:
+    class RateLimitEmbedding:
+        async def embed(self, texts, model=None):
+            raise RateLimitError("Error code: 429 - {'message': 'server overload'}")
+
+    engine = KnowledgeIngestionEngine(
+        job_repo=PostgresIngestionJobRepository(),
+        sync_state_repo=PostgresSyncStateRepository(),
+        doc_registry_repo=PostgresDocumentRegistryRepository(),
+        kb_repo=PostgresKnowledgeBaseRepository(),
+        source_repo=PostgresSourceRepository(),
+        vector_store=FakeVectorStore(),
+        embedding_provider=RateLimitEmbedding(),
+        backoff_base_seconds=1,
+        max_attempts_default=2,
+    )
+    job_id = await create_job(context)
+    job = await engine.execute_job(job_id)
+    assert job.status == IngestionJobStatus.FAILED
+    assert job.retry_at is not None
+    delay = (job.retry_at - job.started_at).total_seconds() if job.started_at else 0
+    assert delay >= 50

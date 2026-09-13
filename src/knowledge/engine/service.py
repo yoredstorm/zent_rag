@@ -5,7 +5,8 @@
 #   pending -> running -> completed | failed ->(retry_at)-> pending
 #             failed -(attempts >= max_attempts)-> dead
 #
-# - Retry: backoff exponencial (compute_retry_delay).
+# - Retry: backoff exponencial (compute_retry_delay). 429/RateLimitError
+#   usa base 60s (cap 900s) y honra Retry-After si es más largo.
 # - Resume: cursor_snapshot persiste el checkpoint; el conector lo retoma.
 # - Dead letter: el job queda en 'dead' con error_summary y su historial en
 #   ingestion_job_errors (nunca se pierde).
@@ -56,9 +57,75 @@ _CHECKPOINT_EVERY = 10  # records entre updates de progreso
 _EMBED_BATCH = 32  # chunks por llamada de embedding
 
 
+RATE_LIMIT_BACKOFF_BASE_SECONDS = 60
+RATE_LIMIT_BACKOFF_CAP_SECONDS = 900
+
+_RATE_LIMIT_MARKERS = (
+    "ratelimiterror",
+    "error code: 429",
+    "status code: 429",
+    "httpstatuserror: 429",
+    "server overload",
+    "too many requests",
+)
+
+
 def compute_retry_delay(attempt: int, base_seconds: int = 10, cap_seconds: int = 300) -> int:
     """Backoff exponencial: base * 2^(attempt-1), acotado a cap."""
     return min(base_seconds * (2 ** max(attempt - 1, 0)), cap_seconds)
+
+
+def is_rate_limit_error(exc: BaseException) -> bool:
+    """True si el fallo es saturación/cuota del proveedor (429 / RateLimitError)."""
+    name = type(exc).__name__.lower()
+    if "ratelimit" in name or name in {"toomanyrequests", "resourceexhausted"}:
+        return True
+    text = str(exc).lower()
+    return any(marker in text for marker in _RATE_LIMIT_MARKERS)
+
+
+def retry_after_seconds(exc: BaseException) -> int | None:
+    """Lee Retry-After (segundos) del response/headers del exception, si existe."""
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None) if response is not None else None
+    if headers is None:
+        headers = getattr(exc, "headers", None)
+    if headers is None:
+        return None
+    raw = None
+    getter = getattr(headers, "get", None)
+    if callable(getter):
+        raw = getter("Retry-After") or getter("retry-after")
+    elif isinstance(headers, dict):
+        raw = headers.get("Retry-After") or headers.get("retry-after")
+    if raw is None:
+        return None
+    try:
+        seconds = int(float(str(raw).strip()))
+    except (TypeError, ValueError):
+        return None
+    return seconds if seconds >= 1 else None
+
+
+def compute_failure_retry_delay(
+    exc: BaseException,
+    attempt: int,
+    *,
+    base_seconds: int = 10,
+    cap_seconds: int = 300,
+) -> int:
+    """Backoff del job: 429 espera más (60s+) o el Retry-After del proveedor."""
+    if is_rate_limit_error(exc):
+        exponential = compute_retry_delay(
+            attempt,
+            base_seconds=RATE_LIMIT_BACKOFF_BASE_SECONDS,
+            cap_seconds=RATE_LIMIT_BACKOFF_CAP_SECONDS,
+        )
+        extra = retry_after_seconds(exc)
+        if extra is None:
+            return exponential
+        return min(max(exponential, extra), RATE_LIMIT_BACKOFF_CAP_SECONDS)
+    return compute_retry_delay(attempt, base_seconds=base_seconds, cap_seconds=cap_seconds)
 
 
 def _chunk_document_id(source_id: UUID, external_id: str, chunk_index: int) -> UUID:
@@ -199,7 +266,9 @@ class KnowledgeIngestionEngine:
                 },
             )
         else:
-            delay = compute_retry_delay(job.attempts, self._backoff_base)
+            delay = compute_failure_retry_delay(
+                exc, job.attempts, base_seconds=self._backoff_base
+            )
             await self._jobs.update_job(
                 job_id,
                 status=IngestionJobStatus.FAILED.value,

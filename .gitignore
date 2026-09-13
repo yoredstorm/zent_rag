@@ -39,6 +39,7 @@ docs/*
 # Portal
 portal/node_modules/
 portal/dist/
+portal/shots/
 
 # SDKs
 sdk/node/node_modules/
@@ -60,6 +61,9 @@ coverage.json
 # Agent skills (local tooling)
 .agents/
 skills-lock.json
+
+# Local scratch requests (contain webhook secrets)
+bruno/RAG/prueba.bru
 
 # Isolated git worktrees + SDD scratch
 .worktrees/

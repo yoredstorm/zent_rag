@@ -222,10 +222,15 @@ class TestRetrievalOverrides:
                     {"chunks": [], "query_embedding": [], "retrieval_latency_ms": 0},
                 )()
 
-        tool = SearchKnowledgeTool(_FakeRetriever())
+        class _StubEmbedder:
+            async def embed(self, text, model=None):
+                return [0.1, 0.2, 0.3]
+
+        tool = SearchKnowledgeTool(_FakeRetriever(), embedder=_StubEmbedder())
         ctx = ToolContext(
             tenant_id=ORG,
             user_id=None,
+            org_config={"knowledge_base_ids": [str(ORG)]},
             agent_config={"retrieval": {"strategy": "hybrid", "top_k": 3, "score_threshold": 0.4}},
         )
         result: ToolResult = tool.execute.__wrapped__(ctx, {"query": "stock", "top_k": 10}) if hasattr(tool.execute, "__wrapped__") else None
@@ -256,8 +261,17 @@ class TestRetrievalOverrides:
                     {"chunks": [], "query_embedding": [], "retrieval_latency_ms": 0},
                 )()
 
-        tool = SearchKnowledgeTool(_FakeRetriever())
-        ctx = ToolContext(tenant_id=ORG, user_id=None, agent_config={})
+        class _StubEmbedder:
+            async def embed(self, text, model=None):
+                return [0.1, 0.2, 0.3]
+
+        tool = SearchKnowledgeTool(_FakeRetriever(), embedder=_StubEmbedder())
+        ctx = ToolContext(
+            tenant_id=ORG,
+            user_id=None,
+            org_config={"knowledge_base_ids": [str(ORG)]},
+            agent_config={},
+        )
         asyncio.run(tool.execute(ctx, {"query": "stock", "top_k": 10}))
         assert captured["top_k"] == 10
         assert captured["strategy"] == "vector"

@@ -287,7 +287,14 @@ class TestAbuse:
     @pytest.mark.asyncio
     async def test_infinite_loop_cut_by_max_steps_and_tool_calls(self) -> None:
         register_tool(_RecordingTool())
-        llm = _FakeLLM(['{"tool": "recorder", "arguments": {}}'] * 50)
+        llm = _FakeLLM(
+            [
+                '{"tool": "recorder", "arguments": {"note": "1"}}',
+                '{"tool": "recorder", "arguments": {"note": "2"}}',
+                '{"tool": "recorder", "arguments": {"note": "3"}}',
+            ]
+            * 20
+        )
         agent = _agent(tools=["recorder"], config_json={"max_steps": 3, "max_tool_calls": 2})
         runtime = AgentRuntime(llm_provider=llm)
         result = await runtime.run(_request(agent, "loop forever"))
@@ -298,7 +305,14 @@ class TestAbuse:
     @pytest.mark.asyncio
     async def test_excessive_tool_calls_blocked(self) -> None:
         register_tool(_RecordingTool())
-        llm = _FakeLLM(['{"tool": "recorder", "arguments": {}}'] * 10)
+        llm = _FakeLLM(
+            [
+                '{"tool": "recorder", "arguments": {"note": "1"}}',
+                '{"tool": "recorder", "arguments": {"note": "2"}}',
+                '{"tool": "recorder", "arguments": {"note": "3"}}',
+            ]
+            * 5
+        )
         agent = _agent(tools=["recorder"], config_json={"max_tool_calls": 2})
         runtime = AgentRuntime(llm_provider=llm)
         result = await runtime.run(_request(agent, "muchas llamadas"))
@@ -418,7 +432,13 @@ class TestAgentBuilderConfig:
     @pytest.mark.asyncio
     async def test_nested_limits_cut_steps(self) -> None:
         register_tool(_RecordingTool())
-        llm = _FakeLLM(['{"tool": "recorder", "arguments": {}}'] * 20)
+        llm = _FakeLLM(
+            [
+                '{"tool": "recorder", "arguments": {"note": "1"}}',
+                '{"tool": "recorder", "arguments": {"note": "2"}}',
+            ]
+            * 10
+        )
         agent = _agent(
             tools=["recorder"],
             config_json={"limits": {"max_steps": 2, "max_tokens": 8000, "max_cost_usd": 1.0}},
@@ -474,7 +494,11 @@ class TestAgentBuilderConfig:
                 return RetrievalContext(chunks=[])
 
         kb_id = uuid4()
-        tool = SearchKnowledgeTool(_FakeRetriever())
+        class _StubEmbedder:
+            async def embed(self, text, model=None):
+                return [0.1, 0.2, 0.3]
+
+        tool = SearchKnowledgeTool(_FakeRetriever(), embedder=_StubEmbedder())
         ctx = ToolContext(
             tenant_id=uuid4(),
             org_config={"knowledge_base_ids": [str(kb_id)]},

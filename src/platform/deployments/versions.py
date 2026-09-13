@@ -19,6 +19,7 @@ _SNAPSHOT_CONFIG_KEYS = (
     "temperature",
     "tone",
     "knowledge_base_ids",
+    "source_ids",
     "limits",
     "security",
     "retrieval",

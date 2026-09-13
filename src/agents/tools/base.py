@@ -39,6 +39,7 @@ class ToolResult:
     latency_ms: float = 0.0
     truncated: bool = False
     tokens: int = 0
+    meta: dict = field(default_factory=dict)
 
 
 class ToolError(Exception):

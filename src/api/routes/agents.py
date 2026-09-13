@@ -36,6 +36,7 @@ class AgentConfig(BaseModel):
     temperature: float = Field(default=0.2, ge=0, le=1)
     tone: str = Field(default="professional", pattern="^(professional|friendly|concise)$")
     knowledge_base_ids: list[UUID] = Field(default_factory=list, max_length=50)
+    source_ids: list[UUID] = Field(default_factory=list, max_length=50)
     limits: AgentLimits | None = None
     security: AgentSecurity | None = None
     retrieval: dict | None = Field(
@@ -144,8 +145,8 @@ async def create_agent(
         await _require_own_workspace(ctx, body.workspace_id)
     config_payload = None
     if body.config is not None:
-        await _require_own_kbs(ctx, body.config.knowledge_base_ids)
-        config_payload = body.config.model_dump(mode="json")
+        config = await _apply_source_config(ctx, body.config)
+        config_payload = config.model_dump(mode="json")
     agent = await repo.create_agent(
         ctx.organization_id,
         body.name,
@@ -251,10 +252,10 @@ async def update_agent(
     fields = body.model_dump(exclude_none=True)
     if "config" in fields:
         if body.config is not None:
-            await _require_own_kbs(ctx, body.config.knowledge_base_ids)
-        fields["config_json"] = (
-            body.config.model_dump(mode="json") if body.config is not None else {}
-        )
+            applied = await _apply_source_config(ctx, body.config)
+            fields["config_json"] = applied.model_dump(mode="json")
+        else:
+            fields["config_json"] = {}
         del fields["config"]
     try:
         agent = await repo.update_agent(ctx.organization_id, aid, **fields)
@@ -329,7 +330,7 @@ async def agent_readiness(
                 {"aid": aid, "oid": ctx.organization_id},
             )
         ).fetchone()
-        kb_count = (
+        _kb_count = (
             await session.execute(
                 text(
                     "SELECT COUNT(*) FROM knowledge_bases WHERE organization_id = :oid"
@@ -357,13 +358,15 @@ async def agent_readiness(
     finally:
         await session.close()
 
-    kb_ids = (agent.config_json or {}).get("knowledge_base_ids") or []
+    cfg = agent.config_json or {}
+    kb_ids = cfg.get("knowledge_base_ids") or []
+    source_ids = cfg.get("source_ids") or []
     result = AgentReadinessService.compute(
         agent,
         has_eval_dataset=int(eval_count or 0) > 0,
         has_healthy_deployment=deployment is not None,
         has_ready_version=any(v.status in READY_VERSION_STATUSES for v in versions),
-        knowledge_configured=len(kb_ids) > 0 or int(kb_count or 0) > 0,
+        knowledge_configured=len(source_ids) > 0 or len(kb_ids) > 0,
         has_data_source=int(source_count or 0) > 0,
         sql_expert_enabled=True,
     )
@@ -455,6 +458,35 @@ async def _require_own_kbs(ctx, knowledge_base_ids: list[UUID]) -> None:
             raise HTTPException(
                 404, "Knowledge base not found in this organization"
             )
+
+
+async def _require_own_sources(ctx, source_ids: list[UUID]) -> list:
+    from src.api.deps import get_source_repo
+
+    repo = get_source_repo()
+    sources = []
+    for source_id in source_ids:
+        source = await repo.get_source(ctx.organization_id, source_id)
+        if source is None:
+            raise HTTPException(404, "Source not found in this organization")
+        sources.append(source)
+    return sources
+
+
+async def _apply_source_config(ctx, config: AgentConfig) -> AgentConfig:
+    if config.source_ids:
+        sources = await _require_own_sources(ctx, config.source_ids)
+        derived: list[UUID] = []
+        seen: set[UUID] = set()
+        for source in sources:
+            kb_id = source.knowledge_base_id
+            if kb_id and kb_id not in seen:
+                seen.add(kb_id)
+                derived.append(kb_id)
+        return config.model_copy(update={"knowledge_base_ids": derived})
+    if config.knowledge_base_ids:
+        await _require_own_kbs(ctx, config.knowledge_base_ids)
+    return config
 
 # ---------------------------------------------------------------------------
 # Marketplace & Sharing (tenant)

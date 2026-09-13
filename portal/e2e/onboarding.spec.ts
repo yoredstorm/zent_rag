@@ -39,6 +39,7 @@ test.describe("Data onboarding wizard — org nueva CSV", () => {
     await expect(page.getByRole("heading", { name: "Analizar", exact: true })).toBeVisible({
       timeout: 30_000,
     });
+    await expect(page.getByRole("progressbar")).toBeVisible();
     await expect(page.getByText("Zent está entendiendo tus datos")).toBeVisible();
     await expect(page.getByTestId("analyze-continue")).toBeEnabled({ timeout: 45_000 });
     await page.getByTestId("analyze-continue").click();
@@ -47,10 +48,7 @@ test.describe("Data onboarding wizard — org nueva CSV", () => {
       timeout: 20_000,
     });
     await expect(page.getByRole("link", { name: "Abrir Semántica" })).toBeVisible();
-    const confirm = page.getByTestId("review-confirm").first();
-    if (await confirm.isVisible().catch(() => false)) {
-      await confirm.click();
-    }
+    await expect(page.getByTestId("goto-questions")).toHaveText("Se ve bien");
     await page.getByTestId("goto-questions").click();
 
     await expect(page.getByRole("heading", { name: "Probar", exact: true })).toBeVisible();

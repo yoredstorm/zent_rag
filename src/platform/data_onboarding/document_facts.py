@@ -449,8 +449,8 @@ def _merge_facts(rules: list[dict], llm: list[dict]) -> list[dict]:
     return merged
 
 
-async def extract_document_facts(data: bytes, filename: str) -> dict:
-    """Extrae hechos de un documento. Devuelve perfil con hechos y metadatos."""
+def extract_document_facts_rules(data: bytes, filename: str) -> dict:
+    """Hechos por reglas (sin LLM). Rápido; sirve de checkpoint en Analizar."""
     text = _normalize_text(data, filename)
     rules: list[dict] = []
     rules.extend(_extract_parties(text))
@@ -459,11 +459,25 @@ async def extract_document_facts(data: bytes, filename: str) -> dict:
     rules.extend(_extract_identifiers(text))
     rules.extend(_extract_clauses(text, _headings(text)))
     rules = _dedupe(rules)
-    llm = await _llm_facts(text)
     return {
         "pages": _page_count(data, filename),
         "text_ok": bool(text.strip()),
         "text_len": len(text),
         "headings": _headings(text)[:20],
-        "facts": _merge_facts(rules, llm),
+        "facts": rules,
+        "_text": text,
     }
+
+
+async def complete_document_facts(partial: dict) -> dict:
+    """Completa un perfil de reglas con LLM. Nunca bloquea si el LLM falla."""
+    text = str(partial.pop("_text", "") or "")
+    llm = await _llm_facts(text)
+    out = dict(partial)
+    out["facts"] = _merge_facts(list(partial.get("facts") or []), llm)
+    return out
+
+
+async def extract_document_facts(data: bytes, filename: str) -> dict:
+    """Extrae hechos de un documento. Devuelve perfil con hechos y metadatos."""
+    return await complete_document_facts(extract_document_facts_rules(data, filename))

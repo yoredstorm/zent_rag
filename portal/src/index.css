@@ -43,9 +43,11 @@
   --shadow-glow: 0 0 0 1px rgb(52 211 166 / 0.35),
     0 0 24px -6px rgb(52 211 166 / 0.4);
 
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --animate-page-in: page-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
   --animate-fade-in: fade-in 0.2s ease-out both;
   --animate-toast-in: toast-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-analyze-chip: analyze-chip-in 220ms var(--ease-out) both;
   --animate-shimmer: shimmer 1.8s linear infinite;
   --animate-pulse-soft: pulse-soft 1.6s ease-in-out infinite;
   --animate-blink: blink 1s step-end infinite;
@@ -67,6 +69,16 @@
     }
     to {
       opacity: 1;
+    }
+  }
+  @keyframes analyze-chip-in {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
     }
   }
   @keyframes toast-in {
@@ -488,6 +500,39 @@
   .chat-markdown a {
     @apply text-accent underline underline-offset-2;
   }
+
+  .analyze-ring {
+    --p: 0;
+    width: 7.5rem;
+    height: 7.5rem;
+    border-radius: 999px;
+    display: grid;
+    place-items: center;
+    background: conic-gradient(
+      var(--color-accent) calc(var(--p) * 1%),
+      var(--color-soft) 0
+    );
+  }
+  .analyze-ring-inner {
+    width: 5.85rem;
+    height: 5.85rem;
+    border-radius: 999px;
+    display: grid;
+    place-items: center;
+    background: var(--color-bg);
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+  .analyze-cloud {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+  .analyze-chip {
+    @apply px-2.5 py-1 text-xs text-text;
+    animation: var(--animate-analyze-chip);
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -511,5 +556,13 @@
   }
   html {
     scroll-behavior: auto;
+  }
+  .analyze-chip {
+    animation: none;
+    transform: none;
+  }
+  .analyze-cloud {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

@@ -1030,6 +1030,7 @@ def get_agent_runtime():
         register_builtin_tools(
             retriever=get_retriever(),
             sql_expert=get_sql_expert(),
+            embedder=get_embedding_provider(),
         )
         load_tool_modules()
         _agent_runtime = AgentRuntime(

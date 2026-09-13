@@ -955,16 +955,20 @@ class RAGOrchestrator:
                     execution_error=execution_error,
                     authoritative_source=authoritative_source,
                 )
-                decision.evidence_summaries = [
-                    {
-                        "evidence_id": e.evidence_id,
-                        "type": e.type.value,
-                        "source_name": e.source_name,
-                        "authority_level": e.authority_level,
-                        "freshness": e.freshness,
+                summaries = []
+                for evidence in intelligence_evidences:
+                    row = {
+                        "evidence_id": evidence.evidence_id,
+                        "type": evidence.type.value,
+                        "source_name": evidence.source_name,
+                        "authority_level": evidence.authority_level,
+                        "freshness": evidence.freshness,
                     }
-                    for e in intelligence_evidences
-                ]
+                    snippet = " ".join((evidence.content or "").split())[:140]
+                    if snippet:
+                        row["snippet"] = snippet
+                    summaries.append(row)
+                decision.evidence_summaries = summaries
                 result.answerability = decision
                 if not decision.answerable:
                     abstention = self._intelligence.build_abstention(decision)  # type: ignore[union-attr]

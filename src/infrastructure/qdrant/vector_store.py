@@ -275,6 +275,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         user_id: UUID | None = None,
         groups: list[str] | None = None,
         workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> qdrant_models.Filter:
         must_conditions = [
             qdrant_models.FieldCondition(
@@ -288,6 +289,13 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
                 qdrant_models.FieldCondition(
                     key="knowledge_base_id",
                     match=qdrant_models.MatchValue(value=str(knowledge_base_id)),
+                )
+            )
+        if source_ids:
+            must_conditions.append(
+                qdrant_models.FieldCondition(
+                    key="metadata.source_id",
+                    match=qdrant_models.MatchAny(any=[str(sid) for sid in source_ids]),
                 )
             )
         if workspace_id is not None:
@@ -390,6 +398,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         user_id: UUID | None = None,
         groups: list[str] | None = None,
         workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> RetrievalContext:
         if organization_id is None:
             raise ValueError("search() requires organization_id (tenant isolation)")
@@ -401,7 +410,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
 
         qdrant_filter = self._build_qdrant_filter(
             organization_id, filters, exclude_filters, role, knowledge_base_id,
-            user_id, groups, workspace_id)
+            user_id, groups, workspace_id, source_ids)
 
         kwargs: dict[str, object] = {
             "collection_name": RAG_DOCUMENTS_COLLECTION,
@@ -451,6 +460,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         user_id: UUID | None = None,
         groups: list[str] | None = None,
         workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> RetrievalContext:
         if organization_id is None:
             raise ValueError("search_sparse() requires organization_id (tenant isolation)")
@@ -463,7 +473,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
 
         qdrant_filter = self._build_qdrant_filter(
             organization_id, filters, exclude_filters, role, knowledge_base_id,
-            user_id, groups, workspace_id)
+            user_id, groups, workspace_id, source_ids)
 
         sparse_vector = encode_sparse(query_text)
         if not sparse_vector:
@@ -513,6 +523,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         user_id: UUID | None = None,
         groups: list[str] | None = None,
         workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> RetrievalContext:
         """Fusión RRF server-side (un solo round-trip).
 
@@ -532,7 +543,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
 
         qdrant_filter = self._build_qdrant_filter(
             organization_id, filters, exclude_filters, role, knowledge_base_id,
-            user_id, groups, workspace_id)
+            user_id, groups, workspace_id, source_ids)
 
         sparse_vector = encode_sparse(query_text)
         if not sparse_vector:

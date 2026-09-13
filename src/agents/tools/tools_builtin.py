@@ -44,12 +44,13 @@ class SearchKnowledgeTool(Tool):
         "required": ["query"],
         "properties": {
             "query": {"type": "string", "minLength": 1},
-            "top_k": {"type": "integer", "minimum": 1, "maximum": 50},
+            "top_k": {"type": "integer", "minimum": 0, "maximum": 50},
         },
     }
 
-    def __init__(self, retriever) -> None:
+    def __init__(self, retriever, embedder=None) -> None:
         self._retriever = retriever
+        self._embedder = embedder
 
     @staticmethod
     def _retrieval_overrides(ctx: ToolContext) -> dict:
@@ -74,12 +75,33 @@ class SearchKnowledgeTool(Tool):
                 top_k = min(top_k, int(agent_top_k))
             strategy = str(overrides.get("strategy") or "vector")
             score_threshold = float(overrides.get("score_threshold") or 0.0)
-            kb_ids = self._knowledge_base_ids(ctx)
+            source_ids = self._uuids(ctx, "source_ids")
+            kb_ids = self._uuids(ctx, "knowledge_base_ids")
+            query_text = str(arguments["query"])
+            query_embedding = (
+                await self._embed_query(query_text, strategy)
+                if source_ids or kb_ids
+                else None
+            )
             chunks = []
-            if kb_ids:
+            if source_ids:
+                rquery = RetrievalQuery(
+                    query=query_text,
+                    organization_id=ctx.tenant_id,
+                    role=ctx.role,
+                    source_ids=source_ids,
+                    top_k=top_k,
+                    effective_top_k=top_k,
+                    score_threshold=score_threshold,
+                    strategy=strategy,
+                    query_embedding=query_embedding,
+                )
+                part: RetrievalContext = await self._retriever.retrieve(rquery)
+                chunks = list(part.chunks)
+            elif kb_ids:
                 for kb_id in kb_ids:
                     rquery = RetrievalQuery(
-                        query=str(arguments["query"]),
+                        query=query_text,
                         organization_id=ctx.tenant_id,
                         role=ctx.role,
                         knowledge_base_id=kb_id,
@@ -87,44 +109,58 @@ class SearchKnowledgeTool(Tool):
                         effective_top_k=top_k,
                         score_threshold=score_threshold,
                         strategy=strategy,
+                        query_embedding=query_embedding,
                     )
                     part: RetrievalContext = await self._retriever.retrieve(rquery)
                     chunks.extend(part.chunks)
-            else:
-                rquery = RetrievalQuery(
-                    query=str(arguments["query"]),
-                    organization_id=ctx.tenant_id,
-                    role=ctx.role,
-                    top_k=top_k,
-                    effective_top_k=top_k,
-                    score_threshold=score_threshold,
-                    strategy=strategy,
-                )
-                context: RetrievalContext = await self._retriever.retrieve(rquery)
-                chunks = list(context.chunks)
             chunks = chunks[:top_k]
             if not chunks:
                 return ToolResult(
                     output="(no results)",
                     latency_ms=(time.perf_counter() - start) * 1000,
                 )
-            snippet = "\n\n".join(
-                f"[Doc {i + 1}] {c.content[:1200]}"
-                for i, c in enumerate(chunks)
-            )
+            used: list[str] = []
+            lines: list[str] = []
+            for i, chunk in enumerate(chunks):
+                source_id = str((chunk.metadata or {}).get("source_id") or "")
+                if source_id and source_id not in used:
+                    used.append(source_id)
+                tag = f"[Doc {i + 1}"
+                if source_id:
+                    tag += f" | source:{source_id}"
+                tag += "]"
+                lines.append(f"{tag} {chunk.content[:1200]}")
+            snippet = "\n\n".join(lines)
             return ToolResult(
                 output=snippet[:6000],
                 truncated=len(snippet) > 6000,
                 latency_ms=(time.perf_counter() - start) * 1000,
+                meta={"source_ids": used},
             )
         except Exception as exc:
+            logger.warning("search_knowledge failed", error=str(exc)[:200])
             return ToolResult(
                 error=str(exc), latency_ms=(time.perf_counter() - start) * 1000
             )
 
+    async def _embed_query(self, text: str, strategy: str) -> list[float] | None:
+        if strategy == "lexical":
+            return None
+        embedder = self._embedder
+        if embedder is None:
+            from src.api.deps import get_embedding_provider
+
+            embedder = get_embedding_provider()
+        vector = await embedder.embed(text)
+        if not vector:
+            return None
+        if isinstance(vector[0], list):
+            vector = vector[0]
+        return list(vector)
+
     @staticmethod
-    def _knowledge_base_ids(ctx: ToolContext) -> list[UUID]:
-        raw = (ctx.org_config or {}).get("knowledge_base_ids") or []
+    def _uuids(ctx: ToolContext, key: str) -> list[UUID]:
+        raw = (ctx.org_config or {}).get(key) or []
         ids: list[UUID] = []
         for item in raw:
             try:
@@ -306,11 +342,11 @@ class CallApiTool(Tool):
             )
 
 
-def register_builtin_tools(retriever, sql_expert) -> None:
+def register_builtin_tools(retriever, sql_expert, embedder=None) -> None:
     """Registra las tools genéricas del core."""
     from src.agents.tools.registry import register_tool
 
-    register_tool(SearchKnowledgeTool(retriever))
+    register_tool(SearchKnowledgeTool(retriever, embedder=embedder))
     register_tool(QueryDatabaseTool(sql_expert))
     register_tool(CallApiTool())
     try:
