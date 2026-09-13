@@ -222,6 +222,7 @@ class FakeVectorStore(VectorStore):
         user_id: UUID | None = None,
         groups: list[str] | None = None,
         workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> RetrievalContext:
         self.calls.append(
             {"top_k": top_k, "filters": filters, "exclude": exclude_filters}
@@ -266,6 +267,7 @@ class FakeLexicalStore(LexicalStore):
         user_id: UUID | None = None,
         groups: list[str] | None = None,
         workspace_id: UUID | None = None,
+        source_ids: list[UUID] | None = None,
     ) -> RetrievalContext:
         chunks = self._results.get(("sparse",), [])
         return RetrievalContext(

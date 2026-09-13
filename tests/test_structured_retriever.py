@@ -55,6 +55,7 @@ class FakeVectorStore:
         user_id=None,
         groups=None,
         workspace_id=None,
+        source_ids=None,
     ):
         self.last_filters = filters
         self.last_acl = {"role": role, "user_id": user_id, "groups": groups}
@@ -74,6 +75,7 @@ class FakeVectorStore:
         user_id=None,
         groups=None,
         workspace_id=None,
+        source_ids=None,
     ):
         self.last_workspace_id = workspace_id
         return RetrievalContext(chunks=[c for c in self.sparse[:top_k]])
