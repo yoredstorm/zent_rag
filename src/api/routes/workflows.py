@@ -162,6 +162,47 @@ async def tenant_workflow_copilot_compile(body: CopilotCompileIn, request: Reque
         raise HTTPException(400, f"plan inválido: {exc}") from exc
 
 
+@router.post("/{workflow_id}/patch/preview", summary="Editar con IA: propuesta de diff")
+async def tenant_workflow_patch_preview(workflow_id: str, body: PatchPreviewIn, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.patches import propose_patch
+
+    ctx = require_permission(request, "workflows:update")
+    try:
+        result = await propose_patch(ctx.organization_id, UUID(workflow_id), body.prompt.strip())
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if result is None:
+        raise HTTPException(404, "Workflow not found")
+    return result
+
+
+@router.post("/{workflow_id}/patch/apply", summary="Editar con IA: aplicar diff confirmado")
+async def tenant_workflow_patch_apply(workflow_id: str, body: PatchApplyIn, request: Request):
+    from pydantic import ValidationError as PydanticValidationError
+
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.patches import apply_workflow_patch
+
+    ctx = require_permission(request, "workflows:update")
+    try:
+        result = await apply_workflow_patch(
+            ctx.organization_id,
+            UUID(workflow_id),
+            body.patch,
+            base_graph_hash=body.base_graph_hash,
+        )
+    except (PydanticValidationError, ValueError) as exc:
+        raise HTTPException(400, f"patch inválido: {exc}") from exc
+    if result is None:
+        raise HTTPException(404, "Workflow not found")
+    if result.get("status") == "conflict":
+        raise HTTPException(409, result.get("message") or "El flujo cambió")
+    if result.get("status") == "invalid":
+        raise HTTPException(422, result.get("issues") or "El cambio no es válido")
+    return result
+
+
 @router.get("/templates", summary="Plantillas de workflows")
 async def tenant_workflow_templates(request: Request):
     from src.platform.rbac.policy import require_permission
@@ -568,6 +609,15 @@ class CopilotIntentIn(BaseModel):
 
 class CopilotCompileIn(BaseModel):
     plan: dict
+
+
+class PatchPreviewIn(BaseModel):
+    prompt: str = Field(min_length=4, max_length=2000)
+
+
+class PatchApplyIn(BaseModel):
+    patch: dict
+    base_graph_hash: str | None = Field(default=None, max_length=80)
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-import { ArrowLeft, Code, FloppyDisk, Lightning, SlidersHorizontal, X } from "@phosphor-icons/react";
+import { ArrowLeft, Code, FloppyDisk, Lightning, MagicWand, SlidersHorizontal, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
@@ -9,6 +9,7 @@ import { WorkflowCanvasEditor } from "../components/WorkflowCanvasEditor";
 import type { RunOverlay } from "../components/WorkflowCanvas";
 import type { RunDetail } from "../components/WorkflowRunInspector";
 import { WorkflowApiPanel } from "../components/workflowStudio/WorkflowApiPanel";
+import { WorkflowPatchPanel } from "../components/workflowStudio/WorkflowPatchPanel";
 import { WorkflowTestPanel } from "../components/workflowStudio/WorkflowTestPanel";
 import { WorkflowVersionsPanel } from "../components/workflowStudio/WorkflowVersionsPanel";
 import {
@@ -84,6 +85,7 @@ export default function WorkflowStudioPage() {
   const [configLevel, setConfigLevel] = useState<ParameterLevel>("simple");
   const [run, setRun] = useState<RunDetail | null>(null);
   const [dockOpen, setDockOpen] = useState(panel === "test");
+  const [patchOpen, setPatchOpen] = useState(false);
 
   const status = detail?.status ?? "draft";
 
@@ -423,6 +425,14 @@ export default function WorkflowStudioPage() {
           </button>
           <button
             type="button"
+            className="btn btn-secondary min-h-11 px-2.5 text-xs"
+            onClick={() => setPatchOpen(true)}
+            data-testid="wf-open-patch"
+          >
+            <MagicWand size={15} aria-hidden /> Editar con IA
+          </button>
+          <button
+            type="button"
             className="btn btn-ghost min-h-11 px-2.5 text-xs lg:hidden"
             onClick={() => setDockOpen(true)}
             data-testid="wf-open-dock"
@@ -541,6 +551,40 @@ export default function WorkflowStudioPage() {
               ) : (
                 <WorkflowVersionsPanel workflowId={id} status={status} onChanged={() => void load(true)} />
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {patchOpen && id && (
+        <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={() => setPatchOpen(false)}>
+          <div
+            className="flex h-full w-full max-w-lg flex-col border-l border-border bg-bg"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-label="Editar con IA"
+            data-testid="wf-patch-drawer"
+          >
+            <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+              <h2 className="flex-1 text-sm font-semibold text-text">Editar con IA</h2>
+              <button
+                type="button"
+                className="btn btn-ghost min-h-9 px-2"
+                aria-label="Cerrar"
+                onClick={() => setPatchOpen(false)}
+              >
+                <X size={16} aria-hidden />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <WorkflowPatchPanel
+                workflowId={id}
+                onClose={() => setPatchOpen(false)}
+                onApplied={() => {
+                  setPatchOpen(false);
+                  void load(true);
+                }}
+              />
             </div>
           </div>
         </div>
