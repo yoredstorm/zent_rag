@@ -438,7 +438,7 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
             )
         )
     try:
-        return await _agent_run()
+        outcome = await _agent_run()
     except LookupError:
         return NodeOutcome(
             error=(
@@ -448,6 +448,30 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
         )
     except Exception as exc:  # noqa: BLE001
         return NodeOutcome(error=f"el agente falló: {str(exc)[:280]}")
+    return _apply_output_schema(cfg, outcome)
+
+
+def _apply_output_schema(cfg: dict[str, Any], outcome: NodeOutcome) -> NodeOutcome:
+    """Outputs estructurados opcionales (misión §16): si el nodo declara
+    `output_schema` y el agente devolvió JSON válido, sus campos quedan
+    disponibles al Data Picker en la raíz del output."""
+    schema = cfg.get("output_schema")
+    if not isinstance(schema, dict) or not schema or outcome.error:
+        return outcome
+    text = str((outcome.output or {}).get("text") or "")
+    if not text.strip():
+        return outcome
+    from src.platform.deployments.output_schema import validate_json_answer
+
+    data, errors = validate_json_answer(text, schema)
+    if isinstance(data, dict) and not errors:
+        outcome.output.update(data)
+        outcome.output["structured"] = True
+        outcome.output.pop("schema_errors", None)
+    else:
+        outcome.output["structured"] = False
+        outcome.output["schema_errors"] = errors[:5] or ["La respuesta no es JSON válido"]
+    return outcome
 
 
 async def _org_config_json(organization_id: UUID) -> dict:

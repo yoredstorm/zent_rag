@@ -135,6 +135,8 @@ const ReleasesPage = lazy(() => import("./pages/Releases"));
 const CopilotPage = lazy(() => import("./pages/Copilot"));
 const AdminCopilotPage = lazy(() => import("./pages/admin/Copilot"));
 const WorkflowsPage = lazy(() => import("./pages/Workflows"));
+const WorkflowNewPage = lazy(() => import("./pages/WorkflowNew"));
+const AskZentPage = lazy(() => import("./pages/AskZentPage"));
 const WorkflowStudioPage = lazy(() => import("./pages/WorkflowStudio"));
 const MigrationsPage = lazy(() => import("./pages/Migrations"));
 const OnboardingPage = lazy(() => import("./pages/Onboarding"));
@@ -709,7 +711,9 @@ export default function App() {
         <Route path="/releases" element={<Suspense fallback={<PageFallback />}><ReleasesPage /></Suspense>} />
         <Route path="/copilot" element={<Suspense fallback={<PageFallback />}><CopilotPage /></Suspense>} />
         <Route path="/workflows" element={<Suspense fallback={<PageFallback />}><WorkflowsPage /></Suspense>} />
-        <Route path="/workflows/new" element={<Suspense fallback={<PageFallback />}><WorkflowStudioPage /></Suspense>} />
+        <Route path="/workflows/new" element={<Suspense fallback={<PageFallback />}><WorkflowNewPage /></Suspense>} />
+        <Route path="/workflows/new/ask" element={<Suspense fallback={<PageFallback />}><AskZentPage /></Suspense>} />
+        <Route path="/workflows/new/manual" element={<Suspense fallback={<PageFallback />}><WorkflowStudioPage /></Suspense>} />
         <Route path="/workflows/:id" element={<Suspense fallback={<PageFallback />}><WorkflowStudioPage /></Suspense>} />
         <Route path="/chat-insights" element={<Suspense fallback={<PageFallback />}><ChatInsightsPage /></Suspense>} />
         <Route path="/knowledge-hub" element={<Suspense fallback={<PageFallback />}><KnowledgeHubPage /></Suspense>} />

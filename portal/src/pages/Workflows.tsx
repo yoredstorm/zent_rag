@@ -1,4 +1,4 @@
-import { Code, FlowArrow, PencilSimple, Play, Plus, SquaresFour, Trash } from "@phosphor-icons/react";
+import { Code, FlowArrow, MagicWand, PencilSimple, Play, Plus, SquaresFour, Trash } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api";
@@ -112,12 +112,18 @@ export default function WorkflowsPage() {
     <div>
       <PageHeader
         title="Workflow Automation"
-        subtitle="Automatiza con un grafo: datos, IA, eventos y acciones. Edítalo y pruébalo en el estudio."
+        subtitle="Dile a Zent qué quieres automatizar o diseña el grafo tú mismo."
         actions={
-          <Link to="/workflows/new" className="btn btn-primary min-h-11" data-testid="wf-new">
-            <Plus size={15} aria-hidden />
-            Nuevo workflow
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link to="/workflows/new" className="btn btn-secondary min-h-11" data-testid="wf-new-modes">
+              <Plus size={15} aria-hidden />
+              Nuevo workflow
+            </Link>
+            <Link to="/workflows/new/ask" className="btn btn-primary min-h-11" data-testid="wf-new-ai">
+              <MagicWand size={15} aria-hidden />
+              Crear con IA
+            </Link>
+          </div>
         }
       />
       <ErrorInline message={error} />
@@ -132,11 +138,11 @@ export default function WorkflowsPage() {
           <EmptyState
             icon={FlowArrow}
             title="Sin workflows"
-            body="Crea uno desde cero o instala una plantilla: después lo editas, lo pruebas y lo publicas."
+            body="Cuéntale a Zent qué quieres automatizar, instala una plantilla o diseña el lienzo tú mismo."
             action={
-              <Link to="/workflows/new" className="btn btn-primary min-h-11">
-                <Plus size={15} aria-hidden />
-                Nuevo workflow
+              <Link to="/workflows/new/ask" className="btn btn-primary min-h-11">
+                <MagicWand size={15} aria-hidden />
+                Crear con IA
               </Link>
             }
           />

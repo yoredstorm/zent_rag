@@ -128,6 +128,40 @@ async def tenant_workflow_notification_targets(request: Request):
     return await notification_targets(ctx.organization_id, await _workspace_id(request))
 
 
+@router.post("/copilot/intent", summary="Copiloto: describir qué automatizar → Intent + Plan")
+async def tenant_workflow_copilot_intent(body: CopilotIntentIn, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.copilot_v2 import propose_workflow
+
+    ctx = require_permission(request, "workflows:create")
+    try:
+        return await propose_workflow(
+            ctx.organization_id,
+            body.prompt.strip(),
+            workspace_id=await _workspace_id(request),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/copilot/compile", summary="Copiloto: WorkflowPlan → WorkflowGraph validado")
+async def tenant_workflow_copilot_compile(body: CopilotCompileIn, request: Request):
+    from pydantic import ValidationError as PydanticValidationError
+
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.copilot_v2 import compile_proposal
+
+    ctx = require_permission(request, "workflows:create")
+    try:
+        return await compile_proposal(
+            ctx.organization_id,
+            body.plan,
+            workspace_id=await _workspace_id(request),
+        )
+    except (PydanticValidationError, ValueError) as exc:
+        raise HTTPException(400, f"plan inválido: {exc}") from exc
+
+
 @router.get("/templates", summary="Plantillas de workflows")
 async def tenant_workflow_templates(request: Request):
     from src.platform.rbac.policy import require_permission
@@ -526,6 +560,14 @@ class ValidateIn(BaseModel):
     graph: dict | None = None
     trigger_type: str | None = None
     trigger_config: dict | None = None
+
+
+class CopilotIntentIn(BaseModel):
+    prompt: str = Field(min_length=8, max_length=2000)
+
+
+class CopilotCompileIn(BaseModel):
+    plan: dict
 
 
 # ---------------------------------------------------------------------------
