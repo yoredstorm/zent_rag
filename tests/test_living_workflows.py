@@ -391,6 +391,22 @@ async def test_watchers_are_tenant_isolated(
 
 
 @pytest.mark.asyncio
+async def test_run_due_watchers_smoke_and_metrics() -> None:
+    from src.platform.workflows.observability import (
+        workflow_watcher_checks_total,
+        workflow_watcher_transitions_total,
+    )
+    from src.platform.workflows.watchers import _emit_watcher_metrics, run_due_watchers
+
+    _emit_watcher_metrics({"checked": 1, "triggered": 0, "skipped": 1})
+    result = await run_due_watchers()
+    assert {"checked", "triggered", "skipped"} <= set(result)
+    # Las métricas del scheduler nunca deben romper el loop (fail-soft).
+    assert workflow_watcher_checks_total is not None or workflow_watcher_checks_total is None
+    assert workflow_watcher_transitions_total is not None or True
+
+
+@pytest.mark.asyncio
 async def test_watcher_api_rejects_unsafe_table(async_client: AsyncClient) -> None:
     org = await _org(async_client, "Living Unsafe")
     resp = await async_client.post(

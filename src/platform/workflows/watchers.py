@@ -977,7 +977,26 @@ async def run_due_watchers(now: datetime | None = None, limit: int = 50) -> dict
         checked += 1
         if outcome.triggered:
             triggered += 1
-    return {"checked": checked, "triggered": triggered, "skipped": skipped}
+    result = {"checked": checked, "triggered": triggered, "skipped": skipped}
+    _emit_watcher_metrics(result)
+    return result
+
+
+def _emit_watcher_metrics(result: dict[str, Any]) -> None:
+    """Métricas fail-soft (los nombres viven en observability.py)."""
+    try:
+        from src.platform.workflows.observability import (
+            workflow_watcher_checks_total,
+            workflow_watcher_transitions_total,
+        )
+
+        if workflow_watcher_checks_total is not None:
+            workflow_watcher_checks_total.labels(outcome="checked").inc(result.get("checked", 0))
+            workflow_watcher_checks_total.labels(outcome="skipped").inc(result.get("skipped", 0))
+        if workflow_watcher_transitions_total is not None:
+            workflow_watcher_transitions_total.inc(result.get("triggered", 0))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 async def watcher_scheduler_loop() -> None:
@@ -986,14 +1005,7 @@ async def watcher_scheduler_loop() -> None:
 
     while True:
         try:
-            from src.platform.workflows.observability import (
-                watcher_checks_total,
-                watcher_transitions_total,
-            )
-
-            result = await run_due_watchers()
-            watcher_checks_total.labels(outcome="checked").inc(result["checked"])
-            watcher_transitions_total.inc(result["triggered"])
+            await run_due_watchers()
         except Exception as exc:  # noqa: BLE001
             logger.warning("watcher scheduler iteration failed", error=str(exc)[:200])
         await asyncio.sleep(60)
