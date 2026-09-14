@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
+from httpx import AsyncClient
+
 from src.platform.workflows.context import (
     CONTEXT_SECTIONS,
     WRITABLE_SECTIONS,
@@ -22,10 +25,12 @@ from src.platform.workflows.node_catalog import (
     CATEGORIES,
     NODE_METADATA,
     REQUIREMENT_TOKENS,
+    catalog_availability,
     metadata_for,
 )
 from src.platform.workflows.nodes import registry
 from src.platform.workflows.parameters import NODE_BUSINESS_SCHEMAS
+from tests.test_workflows import _create_org, _headers, _owner_session
 
 # Contribuciones que los handlers emiten hoy (deben estar declaradas).
 EXPECTED_CONTRIBUTIONS: dict[str, set[str]] = {
@@ -131,3 +136,91 @@ def test_merger_rejects_writes_when_context_writes_is_empty() -> None:
     )
     assert context.data == {}
     assert report.rejected == [{"index": 0, "section": "data", "reason": "section_not_declared"}]
+
+
+# ---------------------------------------------------------------------------
+# Fase 4 — disponibilidad y API del catálogo
+# ---------------------------------------------------------------------------
+def test_catalog_availability_checks_requirements() -> None:
+    marketplace = registry.require("marketplace_action")
+    available, reason = catalog_availability(marketplace, {}, permissions=None)
+    assert available is False
+    assert reason is not None and "integraciones" in reason
+
+    available, reason = catalog_availability(
+        marketplace, {"actions": {"peru.taxpayer.lookup": {}}}, permissions=None
+    )
+    assert available is True and reason is None
+
+    kb = registry.require("kb_query")
+    available, reason = catalog_availability(kb, {"knowledge_bases": {}}, permissions=None)
+    assert available is False and reason is not None and "conocimiento" in reason
+
+
+def test_catalog_availability_checks_permissions() -> None:
+    llm = registry.require("llm")
+    available, reason = catalog_availability(llm, {"agents": {"a": {}}}, permissions=frozenset())
+    assert available is False
+    assert reason is not None and "agents:execute" in reason
+
+    available, reason = catalog_availability(
+        llm, {"agents": {"a": {}}}, permissions=frozenset({"agents:execute"})
+    )
+    assert available is True and reason is None
+
+
+@pytest.mark.asyncio
+async def test_node_catalog_endpoint_returns_tenant_catalog(async_client: AsyncClient) -> None:
+    org = await _create_org(async_client, "Node Catalog")
+    org["session"] = await _owner_session(async_client, org["organization_id"])
+
+    resp = await async_client.get("/api/v1/workflows/node-catalog", headers=_headers(org))
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["catalog_version"] == 1
+    assert body["generated_at"]
+    assert {category["id"] for category in body["categories"]} >= {"trigger", "data", "ai", "logic"}
+
+    by_type = {node["node_type"]: node for node in body["nodes"]}
+    assert {"llm", "kb_query", "query_business_data", "condition", "notify", "end"} <= set(by_type)
+
+    llm = by_type["llm"]
+    assert llm["business_name"] == "Preguntar a un agente"
+    assert llm["supports_agent"] is True
+    assert llm["supports_knowledge"] is False
+    assert llm["context_writes"] == ["findings", "decisions", "artifacts"]
+    assert isinstance(llm["available"], bool)
+    assert llm["when_to_use"]
+
+    query_node = by_type["query_business_data"]
+    assert query_node["business_name"] == "Consultar datos de negocio"
+    assert any(parameter["key"] == "ask" for parameter in query_node["parameters"])
+    assert {"rows", "columns", "answer"} <= {field["key"] for field in query_node["output_fields"]}
+
+    for node in body["nodes"]:
+        assert isinstance(node["available"], bool)
+        if node["available"] is False:
+            assert node["unavailable_reason"]
+
+
+@pytest.mark.asyncio
+async def test_node_catalog_covers_business_schemas(async_client: AsyncClient) -> None:
+    org = await _create_org(async_client, "Node Catalog Alias")
+    org["session"] = await _owner_session(async_client, org["organization_id"])
+    headers = _headers(org)
+
+    schemas_resp = await async_client.get("/api/v1/workflows/node-schemas", headers=headers)
+    catalog_resp = await async_client.get("/api/v1/workflows/node-catalog", headers=headers)
+    assert schemas_resp.status_code == 200, schemas_resp.text
+    assert catalog_resp.status_code == 200, catalog_resp.text
+
+    schema_types = {schema["node_type"] for schema in schemas_resp.json()["schemas"]}
+    catalog_types = {node["node_type"] for node in catalog_resp.json()["nodes"]}
+    assert schema_types <= catalog_types
+    assert len(catalog_types) > len(schema_types)  # `end` no tiene Business Schema.
+
+
+@pytest.mark.asyncio
+async def test_node_catalog_requires_auth(async_client: AsyncClient) -> None:
+    resp = await async_client.get("/api/v1/workflows/node-catalog")
+    assert resp.status_code == 401

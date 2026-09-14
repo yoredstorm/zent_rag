@@ -98,6 +98,7 @@ async def load_capabilities(organization_id: UUID, workspace_id: UUID | None = N
     agents: dict[str, dict] = {}
     knowledge_bases: dict[str, str] = {}
     actions: dict[str, dict] = {}
+    managed_db = False
     session = await get_async_session()
     try:
         agent_rows = (
@@ -136,6 +137,19 @@ async def load_capabilities(organization_id: UUID, workspace_id: UUID | None = N
             ).fetchall()
         except Exception:  # noqa: BLE001 — base sin marketplace
             action_rows = []
+        try:
+            managed_row = (
+                await session.execute(
+                    text(
+                        "SELECT 1 FROM managed_databases "
+                        "WHERE organization_id = :oid LIMIT 1"
+                    ),
+                    {"oid": organization_id},
+                )
+            ).fetchone()
+            managed_db = managed_row is not None
+        except Exception:  # noqa: BLE001 — base sin managed DB
+            managed_db = False
     finally:
         await session.close()
 
@@ -156,6 +170,7 @@ async def load_capabilities(organization_id: UUID, workspace_id: UUID | None = N
         "agents": agents,
         "knowledge_bases": knowledge_bases,
         "actions": actions,
+        "managed_db": managed_db,
         "event_types": list(STANDARD_EVENTS),
     }
 

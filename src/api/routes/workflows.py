@@ -119,6 +119,21 @@ async def tenant_workflow_node_schemas(request: Request):
     }
 
 
+@router.get("/node-catalog", summary="Catálogo semántico de nodos (tenant-aware)")
+async def tenant_workflow_node_catalog(request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.node_catalog import build_node_catalog
+
+    ctx = require_permission(request, "workflows:read")
+    scopes = getattr(ctx, "scopes", frozenset()) or frozenset()
+    permissions = None if "admin:*" in scopes else ctx.permissions
+    return await build_node_catalog(
+        ctx.organization_id,
+        workspace_id=await _workspace_id(request),
+        permissions=permissions,
+    )
+
+
 @router.get("/notification-targets", summary="Canales y destinatarios disponibles para Avisar")
 async def tenant_workflow_notification_targets(request: Request):
     from src.platform.rbac.policy import require_permission

@@ -1,6 +1,6 @@
 # Zent Workflow Semantic Core — Phase 0 Architecture Audit
 
-> **Status:** Phase 0 (auditoría) completa. D1–D3 confirmadas (2026-09-14). **Fases 1–3 implementadas** (contexto compartido + contribuciones; adaptadores de valores y provenance real; metadata semántica y contratos de contexto con validación estricta en runtime). Fases 4–8 pendientes.
+> **Status:** Phase 0 (auditoría) completa. D1–D3 confirmadas (2026-09-14). **Fases 1–4 implementadas** (contexto compartido + contribuciones; valores tipados y provenance; metadata semántica con allowlist estricta; catálogo backend tenant-aware `GET /node-catalog`). Fases 5–8 pendientes.
 > **Fecha:** 2026-09-14
 > **Base:** `feat/knowledge-cognitive-os` @ `3efd894` (más cambios locales de trabajo no relacionados).
 > **Programa:** convertir el Workflow en el orquestador semántico central de Zent.
@@ -480,7 +480,7 @@ class WorkflowContextAssembler:
 | `src/platform/workflows/engine.py` | `run_workflow` construye `TriggerSnapshot`/`WorkflowIdentity`; respuesta incluye `context` y `evidence_refs`; `run_detail` extendido; `evidence: []` deja de ser constante | 1,8 |
 | `src/agents/runtime/agent_runtime.py` | campo opcional `context` en `AgentRunRequest` + bloque `BUSINESS CONTEXT` en `_run_loop` (default `None`: comportamiento actual intacto) | 1 |
 | `src/platform/workflows/parameters.py` | outputs/campos nuevos (`evidence_ids`, `citations`, `decision`, `rows`, `columns`) y `context_*` documentados | 3,7 |
-| `src/platform/workflows/plan_compiler.py` | disponibilidad por nodo para el catálogo (sin cambiar `load_capabilities`) | 4 |
+| `src/platform/workflows/plan_compiler.py` | `load_capabilities` añade `managed_db` (chequeo barato) para la disponibilidad del catálogo | 4 |
 | `src/api/routes/workflows.py` | `GET /node-catalog`, `GET /{id}/data-catalog`, extensión aditiva de `GET /runs/{run_id}` | 4,6,8 |
 | `src/platform/workflows/readiness.py` | validar `context_reads` declarados existen en el grafo (warning, no error) | 6 |
 | `portal/src/lib/dataPicker.ts` | preferir `data-catalog` backend, fallback local | 6 |
@@ -645,7 +645,7 @@ CREATE INDEX IF NOT EXISTS idx_wf_ctx_org ON workflow_run_contexts(organization_
 | 1 | `context.py` + `contributions.py` + `context_assembler.py` (básico) + `values.py` (tipos base) + `NodeOutcome.contribution` + merge en runtime + `AgentRunRequest.context` opcional + contexto en `RunExecutionResult` (en memoria, sin DB) | `feat(workflows): shared run context and node contributions` | unit context/merge/assembler/values + regresión graph |
 | 2 | Adaptadores raw↔`WorkflowValue` + provenance real en outputs de nodos (los tipos base ya están en Fase 1) | `feat(workflows): typed business values and provenance` | unit values |
 | 3 | Metadata semántica en `NodeTypeDef` + `node_catalog.py` (`NODE_METADATA`, categorías) + registros + `parameters.py` alineado + allowlist estricta de `context_writes` en runtime | `feat(workflows): semantic node metadata and result contracts` | unit registry invariants |
-| 4 | `node_catalog.py` + `GET /node-catalog` + disponibilidad tenant + alias `/node-schemas` | `feat(workflows): backend node catalog api` | API + RBAC |
+| 4 | `node_catalog.py` (`build_node_catalog`, `catalog_availability`) + `GET /node-catalog` (perm `workflows:read`) + disponibilidad tenant (`load_capabilities` + `managed_db`) + filtro de permisos + alias `/node-schemas` intacto | `feat(workflows): backend node catalog api` | API + RBAC |
 | 5 | `workflowCatalog.ts` + render dinámico con fallback + paridad | `feat(portal): dynamic node catalog with local fallback` | vitest + e2e studio |
 | 6 | `references.py` + `data_catalog.py` + endpoint + DataPicker backend-first | `feat(workflows): data reference model and graph data catalog` | unit + API |
 | 7 | Evidence/claims: `kb_query` V2 (flag), `query_business_data` rows/columns + evidence_ids, contribution refs, migración 115 + store | `feat(workflows): evidence claim integration and context persistence` | integración + cross-tenant |
@@ -670,6 +670,11 @@ when_to_use/when_not_to_use, ejemplos, `context_reads`/`context_writes`, `requir
 `CATEGORIES` y `REQUIREMENT_TOKENS`. `NodeTypeDef` extendido con esos campos + `simulation_supported`; los 20 registros aplican `semantic_metadata(type)`.
 Runtime: el merge ahora usa `context_writes` como allowlist estricta (`()` = ningún write). Tests nuevos: `tests/test_workflow_node_catalog.py`
 (cobertura registry↔metadata, contratos válidos, contribuciones declaradas, flags, alineación con `parameters.py`, merge estricto).
+
+**Fase 4 entregada (2026-09-14)** — `node_catalog.py`: `build_node_catalog()` combina registry + `NODE_METADATA` + Business Schemas +
+capacidades del tenant (`load_capabilities`, ahora con `managed_db`) + permisos del caller; `catalog_availability()` puro y testeable.
+Endpoint `GET /api/v1/workflows/node-catalog` (`workflows:read`; `admin:*` omite filtro de permisos; workspace del request).
+`/node-schemas` sigue intacto como alias. Tests: 5 nuevos en `tests/test_workflow_node_catalog.py` (disponibilidad, permisos, API, cobertura, auth).
 
 ### Primer test end-to-end (brief §20)
 

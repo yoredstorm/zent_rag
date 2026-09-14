@@ -8,7 +8,11 @@
 # =============================================================================
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID
+
+from src.platform.workflows.values import jsonable
 
 # Tokens de dependencia que el catálogo puede verificar contra el tenant.
 REQUIREMENT_TOKENS: frozenset[str] = frozenset(
@@ -495,10 +499,129 @@ def semantic_metadata(node_type: str) -> dict[str, Any]:
     return metadata_for(node_type)
 
 
+# ---------------------------------------------------------------------------
+# Catálogo autorizado/disponible por tenant (Fase 4)
+# ---------------------------------------------------------------------------
+CATALOG_VERSION = 1
+
+_REQUIREMENT_REASONS: dict[str, str] = {
+    "agents": "No hay agentes disponibles en este espacio.",
+    "knowledge_bases": "No hay bases de conocimiento disponibles.",
+    "installed_integrations": "No hay integraciones instaladas.",
+    "managed_db": "No hay una base de datos de negocio conectada.",
+}
+
+
+def _requirement_status(
+    requirement: str, capabilities: dict[str, Any]
+) -> tuple[bool, str | None]:
+    if requirement == "agents":
+        return bool(capabilities.get("agents")), _REQUIREMENT_REASONS["agents"]
+    if requirement == "knowledge_bases":
+        return bool(capabilities.get("knowledge_bases")), _REQUIREMENT_REASONS["knowledge_bases"]
+    if requirement == "installed_integrations":
+        return bool(capabilities.get("actions")), _REQUIREMENT_REASONS["installed_integrations"]
+    if requirement == "managed_db":
+        return bool(capabilities.get("managed_db")), _REQUIREMENT_REASONS["managed_db"]
+    return True, None
+
+
+def catalog_availability(
+    node_def: Any,
+    capabilities: dict[str, Any] | None,
+    *,
+    permissions: frozenset[str] | None = None,
+) -> tuple[bool, str | None]:
+    """¿Puede usarse este nodo en el tenant/espacio y con estos permisos?
+
+    Devuelve `(available, unavailable_reason)`. `permissions=None` omite el
+    filtro RBAC (caller con `admin:*`).
+    """
+    caps = capabilities or {}
+    for requirement in getattr(node_def, "requires", ()) or ():
+        ok, reason = _requirement_status(str(requirement), caps)
+        if not ok:
+            return False, reason
+    if permissions is not None:
+        from src.platform.workflows.nodes import capability_permission
+
+        for capability in sorted(getattr(node_def, "capabilities", frozenset()) or frozenset()):
+            permission = capability_permission(capability)
+            if permission and permission not in permissions:
+                return False, f"Permiso insuficiente: {permission}"
+    return True, None
+
+
+async def build_node_catalog(
+    organization_id: UUID,
+    *,
+    workspace_id: UUID | None = None,
+    permissions: frozenset[str] | None = None,
+) -> dict[str, Any]:
+    """Catálogo semántico backend: definiciones autorizadas y disponibles.
+
+    Combina el registry (ejecución), `NODE_METADATA` (negocio), las Business
+    Schemas (formularios) y las capacidades reales del tenant.
+    """
+    from src.platform.workflows.nodes import registry
+    from src.platform.workflows.parameters import node_business_schema
+    from src.platform.workflows.plan_compiler import load_capabilities
+
+    capabilities = await load_capabilities(organization_id, workspace_id)
+    nodes: list[dict[str, Any]] = []
+    for node_def in registry.all():
+        schema = node_business_schema(node_def.node_type)
+        available, reason = catalog_availability(node_def, capabilities, permissions=permissions)
+        nodes.append(
+            {
+                "node_type": node_def.node_type,
+                "version": node_def.version,
+                "label": node_def.label,
+                "business_name": node_def.business_name or node_def.label,
+                "short_description": node_def.short_description,
+                "long_description": node_def.long_description,
+                "category": node_def.category,
+                "subcategory": node_def.subcategory,
+                "risk_level": node_def.risk_level,
+                "capabilities": sorted(node_def.capabilities),
+                "inputs": jsonable(node_def.inputs),
+                "outputs": jsonable(node_def.outputs),
+                "context_reads": list(node_def.context_reads),
+                "context_writes": list(node_def.context_writes),
+                "requires": list(node_def.requires),
+                "optional_dependencies": list(node_def.optional_dependencies),
+                "supports_simulation": node_def.simulation_supported,
+                "supports_agent": node_def.supports_agent,
+                "supports_knowledge": node_def.supports_knowledge,
+                "when_to_use": list(node_def.when_to_use),
+                "when_not_to_use": list(node_def.when_not_to_use),
+                "examples": jsonable(list(node_def.examples)),
+                "parameters": [
+                    parameter.model_dump(mode="json")
+                    for parameter in (schema.parameters if schema else [])
+                ],
+                "output_fields": [
+                    field.model_dump(mode="json") for field in (schema.outputs if schema else [])
+                ],
+                "available": available,
+                "unavailable_reason": reason,
+            }
+        )
+    return {
+        "catalog_version": CATALOG_VERSION,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "categories": [dict(category) for category in CATEGORIES],
+        "nodes": nodes,
+    }
+
+
 __all__ = [
+    "CATALOG_VERSION",
     "CATEGORIES",
     "NODE_METADATA",
     "REQUIREMENT_TOKENS",
+    "build_node_catalog",
+    "catalog_availability",
     "metadata_for",
     "semantic_metadata",
 ]
