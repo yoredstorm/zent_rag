@@ -1,6 +1,6 @@
 # Zent Workflow Semantic Core — Phase 0 Architecture Audit
 
-> **Status:** Phase 0 (auditoría) completa. D1–D3 confirmadas (2026-09-14). **Fase 1 implementada** (context, contribuciones, assembler básico, values tipos base; runtime/engine/nodes/agent runtime; tests). Fase 2 pendiente.
+> **Status:** Phase 0 (auditoría) completa. D1–D3 confirmadas (2026-09-14). **Fases 1–2 implementadas** (contexto compartido + contribuciones; adaptadores de valores y provenance real en nodos). Fases 3–8 pendientes.
 > **Fecha:** 2026-09-14
 > **Base:** `feat/knowledge-cognitive-os` @ `3efd894` (más cambios locales de trabajo no relacionados).
 > **Programa:** convertir el Workflow en el orquestador semántico central de Zent.
@@ -659,6 +659,11 @@ Cada fase: sin romper tests existentes; migraciones solo aditivas; flags para lo
 `nodes.py` (`NodeOutcome.contribution`, `NodeContext.context`, nodo `llm` ensambla contexto declarado y contribuye decisiones),
 `src/agents/runtime/agent_runtime.py` (`AgentRunRequest.context` + bloque acotado en `_run_loop`).
 Tests nuevos: `tests/test_workflow_context.py`, `tests/test_workflow_context_assembler.py`; regresión workflow/agent en verde.
+
+**Fase 2 entregada (2026-09-14)** — `values.py`: `from_raw` mapea tipos IR/negocio (`integer→number`, `text→string`) y helper `node_provenance`;
+contribuciones reales en `kb_query` (knowledge), `query_business_data` (data + query_id + answerable), `api_call` (data + url),
+`marketplace_action` (data + evidence ref), `business_node` (data + evidence refs), `business_result` (artifact) y `llm`
+(provenance `origin_kind="agent"` + confidence). Tests nuevos: `tests/test_workflow_values.py`.
 
 ### Primer test end-to-end (brief §20)
 

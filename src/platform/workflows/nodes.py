@@ -17,6 +17,7 @@ from uuid import UUID
 from src.infrastructure.observability.logging_config import get_logger
 from src.platform.workflows.context import WorkflowContext
 from src.platform.workflows.contributions import ContextWrite, NodeContribution
+from src.platform.workflows.values import node_provenance
 
 logger = get_logger(__name__)
 
@@ -169,6 +170,172 @@ async def _run_with_permission(rctx: NodeContext, perm: str, coro: Awaitable[Nod
 
 
 # ---------------------------------------------------------------------------
+# Contribuciones de contexto (Fase 2) — builders puros y testables.
+# ---------------------------------------------------------------------------
+def _kb_query_contribution(
+    rctx: NodeContext, *, query: str, chunks: list[dict], count: int
+) -> NodeContribution:
+    write = ContextWrite(
+        section="knowledge",
+        key=rctx.node_id,
+        value={"query": query, "chunks": chunks[:5], "count": count},
+        value_type="knowledge_answer",
+        label=str(rctx.node.label or "Knowledge"),
+        provenance=node_provenance(
+            rctx.node_id,
+            "kb_query",
+            origin_kind="knowledge",
+            workspace_id=rctx.workspace_id,
+        ),
+    )
+    return NodeContribution(writes=(write,))
+
+
+def _query_business_data_contribution(rctx: NodeContext, outcome: dict[str, Any]) -> NodeContribution:
+    payload = {
+        key: outcome[key]
+        for key in ("answer", "rows", "columns", "query_id", "method", "metrics")
+        if outcome.get(key) is not None
+    }
+    metrics = outcome.get("metrics")
+    confidence = None
+    if isinstance(metrics, dict) and isinstance(metrics.get("answerable"), bool):
+        confidence = 1.0 if metrics["answerable"] else 0.0
+    write = ContextWrite(
+        section="data",
+        key=rctx.node_id,
+        value=payload,
+        value_type="record_list" if outcome.get("rows") else "knowledge_answer",
+        label=str(rctx.node.config.get("ask") or rctx.node.label or "Datos")[:80],
+        provenance=node_provenance(
+            rctx.node_id,
+            "query_business_data",
+            origin_kind="datasource",
+            source_id=str(outcome.get("query_id") or "") or None,
+            workspace_id=rctx.workspace_id,
+            confidence=confidence,
+        ),
+    )
+    return NodeContribution(writes=(write,))
+
+
+def _api_call_contribution(
+    rctx: NodeContext, *, url: str, status_code: int, ok: bool, extracted: Any
+) -> NodeContribution:
+    write = ContextWrite(
+        section="data",
+        key=rctx.node_id,
+        value={"url": url, "status_code": status_code, "ok": ok, "extracted": extracted},
+        value_type="record",
+        label=str(rctx.node.label or "API"),
+        provenance=node_provenance(
+            rctx.node_id,
+            "api_call",
+            origin_kind="datasource",
+            source_id=url[:200],
+            workspace_id=rctx.workspace_id,
+        ),
+    )
+    return NodeContribution(writes=(write,))
+
+
+def _marketplace_contribution(
+    rctx: NodeContext, *, action_id: str, data: dict[str, Any], evidence_id: Any
+) -> NodeContribution:
+    writes: list[ContextWrite] = [
+        ContextWrite(
+            section="data",
+            key=rctx.node_id,
+            value=data,
+            value_type="record",
+            label=action_id,
+            provenance=node_provenance(
+                rctx.node_id,
+                "marketplace_action",
+                origin_kind="datasource",
+                source_id=action_id,
+                workspace_id=rctx.workspace_id,
+            ),
+        )
+    ]
+    if evidence_id:
+        evidence = str(evidence_id)
+        writes.append(
+            ContextWrite(
+                section="evidence",
+                value={"evidence_id": evidence, "label": action_id},
+                value_type="evidence",
+                provenance=node_provenance(
+                    rctx.node_id,
+                    "marketplace_action",
+                    origin_kind="datasource",
+                    source_id=action_id,
+                    evidence_id=UUID(evidence) if _is_uuid(evidence) else None,
+                    workspace_id=rctx.workspace_id,
+                ),
+            )
+        )
+    return NodeContribution(writes=tuple(writes))
+
+
+def _business_node_contribution(
+    rctx: NodeContext, *, title: str, outputs: dict[str, Any], evidence_ids: list[str]
+) -> NodeContribution:
+    action_outputs = {
+        key: value for key, value in outputs.items() if str(key).startswith("action_")
+    }
+    writes: list[ContextWrite] = [
+        ContextWrite(
+            section="data",
+            key=rctx.node_id,
+            value={"title": title, "outputs": action_outputs},
+            value_type="record",
+            label=title[:80],
+            provenance=node_provenance(
+                rctx.node_id,
+                "business_node",
+                origin_kind="node",
+                source_id=str(rctx.execution.correlation_id or "") or None,
+                workspace_id=rctx.workspace_id,
+            ),
+        )
+    ]
+    for evidence in evidence_ids[:20]:
+        writes.append(
+            ContextWrite(
+                section="evidence",
+                value={"evidence_id": str(evidence), "label": title[:80]},
+                value_type="evidence",
+                provenance=node_provenance(
+                    rctx.node_id,
+                    "business_node",
+                    origin_kind="datasource",
+                    evidence_id=UUID(str(evidence)) if _is_uuid(str(evidence)) else None,
+                    workspace_id=rctx.workspace_id,
+                ),
+            )
+        )
+    return NodeContribution(writes=tuple(writes))
+
+
+def _business_result_contribution(rctx: NodeContext, *, result_id: str, title: str) -> NodeContribution:
+    write = ContextWrite(
+        section="artifacts",
+        value={"id": result_id, "title": title, "kind": "business_result"},
+        value_type="artifact",
+        label=title[:80],
+        provenance=node_provenance(
+            rctx.node_id,
+            "business_result",
+            origin_kind="node",
+            source_id=result_id,
+            workspace_id=rctx.workspace_id,
+        ),
+    )
+    return NodeContribution(writes=(write,))
+
+
+# ---------------------------------------------------------------------------
 # Handlers
 # ---------------------------------------------------------------------------
 async def _exec_api_call(rctx: NodeContext) -> NodeOutcome:
@@ -252,16 +419,24 @@ async def _exec_api_call(rctx: NodeContext) -> NodeOutcome:
         from src.platform.workflows.engine import _extract_json_path as _extract
 
         extracted = _extract(parsed_json, json_path)
+    output = {
+        "url": url,
+        "status_code": resp.status_code,
+        "ok": 200 <= resp.status_code < 300,
+        "body": resp.text[:4000],
+        "json": parsed_json,
+        "extracted": extracted,
+        "idempotency_key": rctx.idempotency_key,
+    }
     return NodeOutcome(
-        output={
-            "url": url,
-            "status_code": resp.status_code,
-            "ok": 200 <= resp.status_code < 300,
-            "body": resp.text[:4000],
-            "json": parsed_json,
-            "extracted": extracted,
-            "idempotency_key": rctx.idempotency_key,
-        }
+        output=output,
+        contribution=_api_call_contribution(
+            rctx,
+            url=url,
+            status_code=int(output["status_code"]),
+            ok=bool(output["ok"]),
+            extracted=extracted,
+        ),
     )
 
 
@@ -315,7 +490,12 @@ async def _exec_kb_query(rctx: NodeContext) -> NodeOutcome:
                 }
                 for c in (context.chunks or [])[:limit]
             ]
-            return NodeOutcome(output={"chunks": chunks, "count": len(chunks), "documents": chunks})
+            return NodeOutcome(
+                output={"chunks": chunks, "count": len(chunks), "documents": chunks},
+                contribution=_kb_query_contribution(
+                    rctx, query=query, chunks=chunks, count=len(chunks)
+                ),
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("kb_query retrieval failed", error=str(exc)[:200])
             return NodeOutcome(output={"chunks": [], "count": 0, "documents": []})
@@ -334,7 +514,10 @@ async def _exec_kb_query(rctx: NodeContext) -> NodeOutcome:
     finally:
         await session.close()
     docs = [{"id": str(r.id), "title": r.title} for r in rows]
-    return NodeOutcome(output={"documents": docs, "count": len(docs)})
+    return NodeOutcome(
+        output={"documents": docs, "count": len(docs)},
+        contribution=_kb_query_contribution(rctx, query=query, chunks=docs, count=len(docs)),
+    )
 
 
 def _resolve_dep(getter: Callable[[], Any]) -> Any:
@@ -478,6 +661,21 @@ def _agent_output_contribution(data: dict[str, Any], rctx: NodeContext) -> NodeC
     transporta decisiones/hallazgos estructurados del output schema (brief §16).
     """
     label = str(rctx.node.config.get("agent_name") or rctx.node.label or "") or None
+    agent_source = str(rctx.node.config.get("agent_id") or "") or None
+    raw_confidence = data.get("confidence")
+    confidence = (
+        float(raw_confidence)
+        if isinstance(raw_confidence, (int, float)) and not isinstance(raw_confidence, bool)
+        else None
+    )
+    provenance = node_provenance(
+        rctx.node_id,
+        "llm",
+        origin_kind="agent",
+        source_id=agent_source,
+        workspace_id=rctx.workspace_id,
+        confidence=confidence,
+    )
     writes: list[ContextWrite] = []
     decision = {
         key: data[key]
@@ -492,6 +690,7 @@ def _agent_output_contribution(data: dict[str, Any], rctx: NodeContext) -> NodeC
                 value=decision,
                 value_type="decision",
                 label=label,
+                provenance=provenance,
             )
         )
     findings = data.get("findings")
@@ -504,6 +703,7 @@ def _agent_output_contribution(data: dict[str, Any], rctx: NodeContext) -> NodeC
                     value=payload,
                     value_type="agent_finding",
                     label=label,
+                    provenance=provenance,
                 )
             )
     if not writes:
@@ -807,7 +1007,10 @@ async def _exec_query_business_data(rctx: NodeContext) -> NodeOutcome:
         "ingested": bool(getattr(result, "lazy_ingested", False)),
         "rows_indexed": int(getattr(result, "lazy_rows_indexed", 0) or 0),
     }
-    return NodeOutcome(output=outcome)
+    return NodeOutcome(
+        output=outcome,
+        contribution=_query_business_data_contribution(rctx, outcome),
+    )
 
 
 async def _exec_for_each(rctx: NodeContext) -> NodeOutcome:
@@ -1039,16 +1242,23 @@ async def _exec_marketplace_action(rctx: NodeContext) -> NodeOutcome:
     )
     if not outcome.ok:
         return NodeOutcome(error=f"{outcome.error_code}: {outcome.error_message}")
+    output = {
+        **outcome.data,
+        "evidence_id": str(outcome.evidence_id) if outcome.evidence_id else None,
+        "cached": outcome.cached,
+        "cost": outcome.customer_cost,
+        "latency_ms": round(outcome.latency_ms, 1),
+        "renderer": str(cfg.get("renderer") or "") or None,
+    }
     return NodeOutcome(
-        output={
-            **outcome.data,
-            "evidence_id": str(outcome.evidence_id) if outcome.evidence_id else None,
-            "cached": outcome.cached,
-            "cost": outcome.customer_cost,
-            "latency_ms": round(outcome.latency_ms, 1),
-            "renderer": str(cfg.get("renderer") or "") or None,
-        },
+        output=output,
         cost_ms=outcome.customer_cost,
+        contribution=_marketplace_contribution(
+            rctx,
+            action_id=action_id,
+            data=dict(outcome.data or {}),
+            evidence_id=outcome.evidence_id,
+        ),
     )
 
 
@@ -1173,7 +1383,13 @@ async def _exec_business_node(rctx: NodeContext) -> NodeOutcome:
 
     outputs["evidence_ids"] = evidence_ids
     outputs["total_cost"] = total_cost
-    return NodeOutcome(output=outputs, cost_ms=total_cost)
+    return NodeOutcome(
+        output=outputs,
+        cost_ms=total_cost,
+        contribution=_business_node_contribution(
+            rctx, title=title, outputs=outputs, evidence_ids=evidence_ids
+        ),
+    )
 
 
 async def _exec_business_result(rctx: NodeContext) -> NodeOutcome:
@@ -1222,7 +1438,11 @@ async def _exec_business_result(rctx: NodeContext) -> NodeOutcome:
         saved = await save_result(rctx.organization_id, result, workspace_id=rctx.workspace_id)
     except BusinessResultError as exc:
         return NodeOutcome(error=str(exc))
-    return NodeOutcome(output={"result_id": str(saved["result_id"]), "importance": saved["importance"]})
+    result_id = str(saved["result_id"])
+    return NodeOutcome(
+        output={"result_id": result_id, "importance": saved["importance"]},
+        contribution=_business_result_contribution(rctx, result_id=result_id, title=title),
+    )
 
 
 def _register_defaults() -> None:

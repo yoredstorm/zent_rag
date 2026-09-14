@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone
 from typing import Any
 from uuid import UUID
 
@@ -179,14 +179,43 @@ class WorkflowValue:
         provenance: Provenance | None = None,
         redacted: bool = False,
     ) -> "WorkflowValue":
+        declared = str(value_type) if value_type else infer_value_type(raw)
         return cls(
             value=raw,
-            value_type=value_type or infer_value_type(raw),
+            value_type=RAW_TO_VALUE_TYPE.get(declared, declared),
             label=label,
             unit=unit,
             provenance=provenance,
             redacted=redacted,
         )
+
+
+def node_provenance(
+    node_id: str,
+    node_type: str,
+    *,
+    origin_kind: str = "node",
+    source_id: str | None = None,
+    workspace_id: UUID | None = None,
+    document_id: UUID | None = None,
+    evidence_id: UUID | None = None,
+    page: int | None = None,
+    confidence: float | None = None,
+    timestamp: datetime | None = None,
+) -> Provenance:
+    """Provenance estándar de un valor producido por un nodo (brief §14)."""
+    return Provenance(
+        origin_kind=origin_kind,
+        node_id=node_id,
+        node_type=node_type,
+        source_id=source_id,
+        workspace_id=workspace_id,
+        document_id=document_id,
+        evidence_id=evidence_id,
+        page=page,
+        confidence=confidence,
+        timestamp=timestamp or datetime.now(timezone.utc),
+    )
 
 
 __all__ = [
@@ -196,4 +225,5 @@ __all__ = [
     "WorkflowValue",
     "infer_value_type",
     "jsonable",
+    "node_provenance",
 ]
