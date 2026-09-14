@@ -350,6 +350,7 @@ async def run_workflow(
             await session.close()
 
     # IR: graph nativo (v2) o adaptación del legacy steps[] (v1).
+    from src.platform.workflows.context import WorkflowContext
     from src.platform.workflows.ir import LegacyWorkflowAdapter, WorkflowGraph
     from src.platform.workflows.runtime import ExecutionContext, execute_graph
 
@@ -445,6 +446,7 @@ async def run_workflow(
     )
 
     started = datetime.now(timezone.utc)
+    wf_context = WorkflowContext.from_execution(exec_ctx, payload=payload or {}, event_type=trig)
     result = await execute_graph(
         graph,
         exec_ctx,
@@ -454,6 +456,7 @@ async def run_workflow(
         entry_override=entry_override,
         preloaded=preloaded or None,
         pinned=pinned or None,
+        context=wf_context,
     )
 
     duration = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
@@ -516,6 +519,7 @@ async def run_workflow(
                 for nid, e in result.node_executions.items()
             }
         },
+        "context": result.context_snapshot,
         "evidence": [],
         "notifications": notifications,
         "errors": [

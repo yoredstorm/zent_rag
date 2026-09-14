@@ -15,6 +15,8 @@ from typing import Any, Awaitable, Callable
 from uuid import UUID
 
 from src.infrastructure.observability.logging_config import get_logger
+from src.platform.workflows.context import WorkflowContext
+from src.platform.workflows.contributions import ContextWrite, NodeContribution
 
 logger = get_logger(__name__)
 
@@ -69,6 +71,7 @@ class NodeOutcome:
     control: str | None = None  # None | "stop_success" | "stop_fail" | "wait_approval"
     cost_ms: float = 0.0
     partial: dict[str, Any] = field(default_factory=dict)
+    contribution: NodeContribution | None = None  # escrituras al WorkflowContext
 
 
 @dataclass
@@ -89,6 +92,7 @@ class NodeContext:
     run_branch: Callable[[list[str], Any], Awaitable[dict[str, NodeOutcome]]] | None = None
     cached: dict[str, dict[str, Any]] = field(default_factory=dict)  # resume/approval
     legacy_index_map: dict[str, str] = field(default_factory=dict)  # steps.N → node id
+    context: WorkflowContext | None = None  # contexto compartido del run (Fase 1)
 
     @property
     def organization_id(self) -> UUID:
@@ -389,6 +393,18 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
         if agent is None:
             raise LookupError()
         org_config = await _org_config_json(rctx.organization_id)
+        context_payload = None
+        context_truncated: list[str] = []
+        reads = cfg.get("context_reads")
+        if rctx.context is not None and isinstance(reads, list) and reads:
+            from src.platform.workflows.context_assembler import WorkflowContextAssembler
+
+            assembled = WorkflowContextAssembler().for_agent(
+                rctx.context,
+                reads=tuple(str(item) for item in reads if str(item).strip()),
+            )
+            context_payload = assembled.payload or None
+            context_truncated = list(assembled.truncated)
         result = await _resolve_dep(get_agent_runtime).run(
             AgentRunRequest(
                 agent=agent,
@@ -398,17 +414,18 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
                 permissions=rctx.permissions,
                 org_config=org_config,
                 trace_id=rctx.execution.correlation_id,
+                context=context_payload,
             )
         )
-        return NodeOutcome(
-            output={
-                "text": result.answer or result.message or "",
-                "agent_id": str(agent_id),
-                "model": result.model,
-                "cost": result.cost,
-            },
-            cost_ms=float(result.cost or 0.0),
-        )
+        output: dict[str, Any] = {
+            "text": result.answer or result.message or "",
+            "agent_id": str(agent_id),
+            "model": result.model,
+            "cost": result.cost,
+        }
+        if context_truncated:
+            output["context_truncated"] = context_truncated
+        return NodeOutcome(output=output, cost_ms=float(result.cost or 0.0))
 
     async def _echo() -> NodeOutcome:
         model = cfg.get("model", "gpt-4o-mini")
@@ -448,10 +465,57 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
         )
     except Exception as exc:  # noqa: BLE001
         return NodeOutcome(error=f"el agente falló: {str(exc)[:280]}")
-    return _apply_output_schema(cfg, outcome)
+    return _apply_output_schema(cfg, outcome, rctx)
 
 
-def _apply_output_schema(cfg: dict[str, Any], outcome: NodeOutcome) -> NodeOutcome:
+_AGENT_DECISION_KEYS = ("decision", "risk", "recommendation", "confidence", "reason", "summary")
+
+
+def _agent_output_contribution(data: dict[str, Any], rctx: NodeContext) -> NodeContribution | None:
+    """Traduce un output estructurado del agente a contribuciones de contexto.
+
+    El texto del agente nunca se convierte en claim aprobado: esto solo
+    transporta decisiones/hallazgos estructurados del output schema (brief §16).
+    """
+    label = str(rctx.node.config.get("agent_name") or rctx.node.label or "") or None
+    writes: list[ContextWrite] = []
+    decision = {
+        key: data[key]
+        for key in _AGENT_DECISION_KEYS
+        if key in data and data[key] is not None
+    }
+    if decision:
+        writes.append(
+            ContextWrite(
+                section="decisions",
+                key=rctx.node_id,
+                value=decision,
+                value_type="decision",
+                label=label,
+            )
+        )
+    findings = data.get("findings")
+    if isinstance(findings, list):
+        for item in findings[:20]:
+            payload = item if isinstance(item, dict) else {"text": str(item)[:500]}
+            writes.append(
+                ContextWrite(
+                    section="findings",
+                    value=payload,
+                    value_type="agent_finding",
+                    label=label,
+                )
+            )
+    if not writes:
+        return None
+    return NodeContribution(writes=tuple(writes))
+
+
+def _apply_output_schema(
+    cfg: dict[str, Any],
+    outcome: NodeOutcome,
+    rctx: NodeContext | None = None,
+) -> NodeOutcome:
     """Outputs estructurados opcionales (misión §16): si el nodo declara
     `output_schema` y el agente devolvió JSON válido, sus campos quedan
     disponibles al Data Picker en la raíz del output."""
@@ -468,6 +532,10 @@ def _apply_output_schema(cfg: dict[str, Any], outcome: NodeOutcome) -> NodeOutco
         outcome.output.update(data)
         outcome.output["structured"] = True
         outcome.output.pop("schema_errors", None)
+        if rctx is not None:
+            contribution = _agent_output_contribution(data, rctx)
+            if contribution is not None:
+                outcome.contribution = contribution
     else:
         outcome.output["structured"] = False
         outcome.output["schema_errors"] = errors[:5] or ["La respuesta no es JSON válido"]

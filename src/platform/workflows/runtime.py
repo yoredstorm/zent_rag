@@ -20,6 +20,8 @@ from sqlalchemy import text
 
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.session import get_async_session
+from src.platform.workflows.context import WorkflowContext
+from src.platform.workflows.contributions import ContextMerger
 
 logger = get_logger(__name__)
 
@@ -52,6 +54,7 @@ class NodeExecution:
     planned: dict[str, Any] = field(default_factory=dict)
     control: str | None = None
     cost_ms: float = 0.0
+    contribution: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -63,6 +66,7 @@ class RunExecutionResult:
     duration_ms: int = 0
     cost_ms: float = 0.0
     stopped: bool = False
+    context_snapshot: dict[str, Any] = field(default_factory=dict)
 
 
 def _ensure_metrics() -> None:
@@ -192,6 +196,7 @@ async def execute_graph(
     entry_override: list[str] | None = None,
     preloaded: dict[str, tuple[str, dict, str | None, int]] | None = None,
     pinned: dict[str, dict] | None = None,
+    context: WorkflowContext | None = None,
 ) -> RunExecutionResult:
     """Ejecuta el grafo completo. `resume` reutiliza pasos persistidos
     (aprobación humana). `stop_after`/`entry_override`/`preloaded` habilitan
@@ -248,10 +253,41 @@ async def execute_graph(
                 node_outputs_for_refs[preload_id] = {"output": entry[1]}
     total_started = time.monotonic()
 
-    def node_outcome(node_id: str, status: str, output: dict | None = None, error: str | None = None) -> None:
+    workflow_context = context or WorkflowContext.from_execution(
+        ctx, payload=payload or {}, event_type=ctx.trigger_type
+    )
+    workflow_context.variables = dict(variables)
+    workflow_context.execution.setdefault("nodes", {})
+    merger = ContextMerger()
+
+    def record_context(
+        node_id: str,
+        node_type: str,
+        status: str,
+        error: str | None,
+        exec_: NodeExecution | None,
+    ) -> None:
+        source = exec_ or NodeExecution(status=status)
+        workflow_context.execution.setdefault("nodes", {})[node_id] = {
+            "node_type": node_type,
+            "status": status,
+            "error": error,
+            "duration_ms": source.duration_ms,
+            "simulated": source.simulated,
+        }
+        workflow_context.variables = dict(variables)
+
+    def node_outcome(
+        node_id: str,
+        status: str,
+        output: dict | None = None,
+        error: str | None = None,
+        exec_: NodeExecution | None = None,
+    ) -> None:
         executions[node_id] = NodeExecution(status=status, output=output or {}, error=error)
         resolved.add(node_id)
         node_outputs_for_refs[node_id] = {"output": output or {}}
+        record_context(node_id, node_map[node_id].type, status, error, exec_)
 
     async def persist(node_id: str, node_type: str, config: dict, exec_: NodeExecution, virtual: bool) -> None:
         nonlocal step_index, planned_effects, total_cost
@@ -284,19 +320,20 @@ async def execute_graph(
             executions[node_id] = exec_
             resolved.add(node_id)
             node_outputs_for_refs[node_id] = {"output": out}
+            record_context(node_id, node.type, status, err, exec_)
             return
 
         virtual = bool((node.metadata or {}).get("virtual"))
         if node_def is None:
             exec_ = NodeExecution(status="failed", error=f"tipo de nodo desconocido: {node.type}")
             await persist(node_id, node.type, node.config, exec_, virtual)
-            node_outcome(node_id, "failed", exec_.output, exec_.error)
+            node_outcome(node_id, "failed", exec_.output, exec_.error, exec_)
             run_status, run_error = "failed", exec_.error
             return
         if virtual or node.type == "end":
             exec_ = NodeExecution(status="succeeded", output={"end": True})
             await persist(node_id, node.type, node.config, exec_, True)
-            node_outcome(node_id, "succeeded", exec_.output)
+            node_outcome(node_id, "succeeded", exec_.output, exec_=exec_)
             return
 
         # Datos fijados para pruebas: solo en simulate (nunca en producción).
@@ -309,7 +346,7 @@ async def execute_graph(
                 planned={"pinned": True},
             )
             await persist(node_id, node.type, node.config, exec_, False)
-            node_outcome(node_id, "simulated", exec_.output)
+            node_outcome(node_id, "simulated", exec_.output, exec_=exec_)
             return
 
         # Entradas por puerto resueltas.
@@ -332,6 +369,7 @@ async def execute_graph(
             simulate=ctx.simulate,
             cached=cached,
             legacy_index_map=dict(graph.metadata.get("legacy_index_map") or {}),
+            context=workflow_context,
             run_branch=(lambda branch, item: _run_branch(branch, item, node_id)) if node.type == "for_each" else None,
         )
 
@@ -351,7 +389,7 @@ async def execute_graph(
             exec_ = NodeExecution(status="denied", error=f"permiso insuficiente: {denied_perm}")
             _emit_node_metric(node.type, "denied", 0)
             await persist(node_id, node.type, node.config, exec_, virtual)
-            node_outcome(node_id, "denied", exec_.output, exec_.error)
+            node_outcome(node_id, "denied", exec_.output, exec_.error, exec_)
             run_status, run_error = "failed", exec_.error
             return
 
@@ -403,9 +441,19 @@ async def execute_graph(
             and exec_.output.get("result") is False
         ):
             exec_.status = "skipped"
+        # Contribución al contexto compartido (merge validado, en memoria).
+        if outcome is not None and outcome.error is None and outcome.contribution is not None:
+            report = merger.apply(
+                workflow_context,
+                node_id=node_id,
+                node_type=node.type,
+                contribution=outcome.contribution,
+                allowed_sections=getattr(node_def, "context_writes", None) or None,
+            )
+            exec_.contribution = report.to_dict()
         _emit_node_metric(node.type, exec_.status, exec_.duration_ms)
         await persist(node_id, node.type, node.config, exec_, virtual)
-        node_outcome(node_id, exec_.status, exec_.output, exec_.error)
+        node_outcome(node_id, exec_.status, exec_.output, exec_.error, exec_)
 
         if exec_.status == "failed":
             policy = node.error_policy or "fail"
@@ -502,6 +550,7 @@ async def execute_graph(
                 simulate=ctx.simulate,
                 cached={},
                 legacy_index_map=dict(graph.metadata.get("legacy_index_map") or {}),
+                context=workflow_context,
                 run_branch=None,
             )
             try:
@@ -607,6 +656,7 @@ async def execute_graph(
         duration_ms=int((time.monotonic() - total_started) * 1000),
         cost_ms=total_cost,
         stopped=run_status == "stopped" or partial_stop,
+        context_snapshot=workflow_context.snapshot(),
     )
 
 
