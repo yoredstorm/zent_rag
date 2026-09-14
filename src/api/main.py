@@ -601,6 +601,9 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     from src.api.routes.marketplace import router as marketplace_router
 
     new_app.include_router(marketplace_router)
+    from src.api.routes.integration_connector import router as integration_connector_router
+
+    new_app.include_router(integration_connector_router)
     from src.api.routes.intelligence import router as intelligence_router
 
     new_app.include_router(intelligence_router)

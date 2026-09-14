@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -252,9 +253,10 @@ async def install_integration(  # noqa: C901 — flujo con ramas de pack
             await session.execute(
                 text(
                     "SELECT id, slug, name, status, pricing FROM integration_manifests "
-                    "WHERE slug = :slug AND status IN ('PUBLISHED', 'DEPRECATED')"
+                    "WHERE slug = :slug AND status IN ('PUBLISHED', 'DEPRECATED') "
+                    "AND (organization_id IS NULL OR organization_id = :oid)"
                 ),
-                {"slug": manifest_slug},
+                {"slug": manifest_slug, "oid": organization_id},
             )
         ).fetchone()
         if m is None:
@@ -744,6 +746,42 @@ async def circuit_report(organization_id: UUID, action_id: str, ok: bool, status
         pass
 
 
+async def _enforce_rate_limits(
+    organization_id: UUID,
+    install_id: UUID,
+    rate_limits: dict | None,
+) -> int | None:
+    """Ventana deslizante simple por integración (Redis INCR + TTL).
+
+    Devuelve segundos de espera si se excedió requests_per_minute/day; None si
+    pasa. Fail-open: si Redis no está, no se bloquea la ejecución.
+    """
+    limits = rate_limits or {}
+    per_minute = int(limits.get("requests_per_minute") or 0)
+    per_day = int(limits.get("requests_per_day") or 0)
+    if per_minute <= 0 and per_day <= 0:
+        return None
+    try:
+        from src.infrastructure.redis.cache import _get_redis
+
+        client = await _get_redis()
+        checks: list[tuple[str, int, int]] = []
+        if per_minute > 0:
+            checks.append((f"mkt:rl:{organization_id.hex}:{install_id}:m", per_minute, 60))
+        if per_day > 0:
+            checks.append((f"mkt:rl:{organization_id.hex}:{install_id}:d", per_day, 86_400))
+        for key, limit, window in checks:
+            count = await client.incr(key)
+            if int(count) == 1:
+                await client.expire(key, window)
+            if int(count) > limit:
+                ttl = await client.ttl(key)
+                return max(1, int(ttl)) if ttl and int(ttl) > 0 else window
+        return None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Evidencia externa + cache de lookups
 # ---------------------------------------------------------------------------
@@ -936,7 +974,12 @@ async def _execute_rest(
     from src.agents.tools.tools_builtin import CallApiTool
 
     cfg = action.get("provider_config") or {}
-    base_url = str(credentials.get("endpoint_base_url") or credentials.get("base_url") or "")
+    base_url = str(
+        credentials.get("endpoint_base_url")
+        or credentials.get("base_url")
+        or cfg.get("base_url")
+        or ""
+    )
     if not base_url:
         raise CredentialsMissingError("endpoint_base_url no configurado en credenciales")
     parsed = urlparse(base_url)
@@ -954,7 +997,9 @@ async def _execute_rest(
     except ToolError as exc:
         raise CredentialsMissingError(str(exc)) from exc
 
-    path = str(cfg.get("path_template") or "/")
+    path_template = str(cfg.get("path_template") or "/")
+    path_params = set(re.findall(r"\{([^}]+)\}", path_template))
+    path = path_template
     for key, value in (inputs or {}).items():
         path = path.replace("{" + key + "}", str(value))
     url = base_url.rstrip("/") + path
@@ -965,14 +1010,21 @@ async def _execute_rest(
         headers["X-API-Key"] = str(api_key)
     if credentials.get("oauth_token"):
         headers["Authorization"] = f"Bearer {credentials['oauth_token']}"
+    if credentials.get("basic_username") and credentials.get("basic_password"):
+        import base64
+
+        raw = f"{credentials['basic_username']}:{credentials['basic_password']}".encode()
+        headers.setdefault("Authorization", "Basic " + base64.b64encode(raw).decode("ascii"))
     timeout = min(float(action.get("timeout_ms") or 5000) / 1000.0, 30.0)
     async with httpx.AsyncClient(follow_redirects=False, timeout=timeout) as client:
         if method == "POST":
             resp = await client.post(url, json=inputs, headers=headers)
         elif method == "PUT":
             resp = await client.put(url, json=inputs, headers=headers)
+        elif method == "PATCH":
+            resp = await client.patch(url, json=inputs, headers=headers)
         else:
-            query = {k: v for k, v in (inputs or {}).items() if k not in path}
+            query = {k: v for k, v in (inputs or {}).items() if k not in path_params}
             resp = await client.get(url, params=query, headers=headers)
     try:
         data = resp.json()
@@ -997,8 +1049,25 @@ async def _execute_rest(
     normalized.setdefault("source", credentials.get("provider_label") or parsed.hostname)
     normalized.setdefault("retrieved_at", _iso(datetime.now(timezone.utc)))
     if resp.status_code >= 400:
-        return {"_http_error": True, "_status_code": resp.status_code, "_body": str(data)[:500]}
+        return {
+            "_http_error": True,
+            "_status_code": resp.status_code,
+            "_body": str(data)[:500],
+            "_retry_after": _retry_after_seconds(resp),
+        }
     return {"status_code": resp.status_code, "ok": True, "data": normalized, "_raw": data}
+
+
+def _retry_after_seconds(resp: Any) -> int | None:
+    """Retry-After (segundos) de una respuesta 429/503, si viene."""
+    headers = getattr(resp, "headers", None) or {}
+    raw = headers.get("retry-after") or headers.get("Retry-After")
+    if raw is None:
+        return None
+    try:
+        return max(1, min(int(float(str(raw))), 3600))
+    except (TypeError, ValueError):
+        return None
 
 
 async def _execute_demo_echo(
@@ -1068,7 +1137,9 @@ async def _execute_public_rest(
     except ToolError as exc:
         raise CredentialsMissingError(str(exc)) from exc
 
-    path = str(cfg.get("path_template") or "/")
+    path_template = str(cfg.get("path_template") or "/")
+    path_params = set(re.findall(r"\{([^}]+)\}", path_template))
+    path = path_template
     for key, value in (inputs or {}).items():
         path = path.replace("{" + key + "}", str(value))
     url = base_url.rstrip("/") + path
@@ -1086,7 +1157,7 @@ async def _execute_public_rest(
         else:
             query = {
                 **{str(k): v for k, v in (cfg.get("query") or {}).items()},
-                **{k: v for k, v in (inputs or {}).items() if k not in path},
+                **{k: v for k, v in (inputs or {}).items() if k not in path_params},
             }
             resp = await client.get(url, params=query)
     if len(resp.text) > _MAX_RESPONSE_CHARS:
@@ -1097,7 +1168,12 @@ async def _execute_public_rest(
         data = {"raw": resp.text[:2000], "status_code": resp.status_code}
     normalized = _normalize_public_data(data, cfg.get("output_map") or {}, parsed.hostname)
     if resp.status_code >= 400:
-        return {"_http_error": True, "_status_code": resp.status_code, "_body": str(data)[:500]}
+        return {
+            "_http_error": True,
+            "_status_code": resp.status_code,
+            "_body": str(data)[:500],
+            "_retry_after": _retry_after_seconds(resp),
+        }
     return {"status_code": resp.status_code, "ok": True, "data": normalized, "_raw": data}
 
 
@@ -1127,6 +1203,7 @@ class ExecutionOutcome:
     status_code: int | None = None
     entity_type: str | None = None
     entity_id: str | None = None
+    retry_after: int | None = None
 
 
 def _estimate_cost(action: dict) -> float:
@@ -1242,6 +1319,19 @@ async def execute_action(
             error_message="proveedor en circuito abierto (recuperación)",
         )
 
+    # Rate limits declarados por el manifest (misión §41): requests/min y /day.
+    retry_after = await _enforce_rate_limits(
+        organization_id, install_id, install["integration"].get("rate_limits")
+    )
+    if retry_after is not None:
+        await _audit(organization_id, install_id, action_id, actor_id, "marketplace.rate_limited")
+        return ExecutionOutcome(
+            ok=False,
+            error_code="RATE_LIMITED",
+            error_message=f"límite de uso de la integración alcanzado; reintenta en {retry_after}s",
+            retry_after=retry_after,
+        )
+
     # Credenciales desde SecretStore (nunca plaintext).
     credentials = await read_credentials(organization_id, install_id)
     kind = (action.get("provider_config") or {}).get("kind") or "rest"
@@ -1286,13 +1376,24 @@ async def execute_action(
             error_message=last_error or "error del proveedor",
         )
 
-    status_code = raw.get("status_code")
+    status_code = raw.get("status_code") or raw.get("_status_code")
     if raw.get("_http_error") or (status_code and status_code >= 400):
         await circuit_report(organization_id, action_id, False, status_code)
+        if status_code == 429:
+            retry_after = raw.get("_retry_after")
+            suffix = f"; reintenta en {retry_after}s" if retry_after else ""
+            return ExecutionOutcome(
+                ok=False,
+                error_code="PROVIDER_RATE_LIMITED",
+                error_message=f"el proveedor pidió esperar (429){suffix}",
+                status_code=status_code,
+                retry_after=retry_after,
+            )
         return ExecutionOutcome(
             ok=False, error_code="PROVIDER_HTTP_ERROR",
             error_message=f"proveedor respondió {status_code}: {str(raw.get('_body') or '')[:200]}",
             status_code=status_code,
+            retry_after=raw.get("_retry_after"),
         )
 
     await circuit_report(organization_id, action_id, True, status_code)
@@ -1367,7 +1468,7 @@ async def _load_install(organization_id: UUID, install_id: UUID) -> dict | None:
     install = await get_install(organization_id, install_id)
     if install is None:
         return None
-    manifest = await _c.get_manifest(install["integration"]["slug"])
+    manifest = await _c.get_manifest(install["integration"]["slug"], organization_id=organization_id)
     install["data_policy"] = (manifest or {}).get("data_policy") or {}
     return install
 

@@ -53,15 +53,15 @@ async def marketplace_catalog(request: Request, category: str | None = None):
     ctx = _require(request, "marketplace:read")
     from src.platform.marketplace.catalog import list_catalog
 
-    return await list_catalog(category=category)
+    return await list_catalog(category=category, organization_id=ctx.organization_id)
 
 
 @router.get("/catalog/{slug}", summary="Detalle de integración (manifest + acciones)")
 async def marketplace_catalog_detail(slug: str, request: Request):
-    _require(request, "marketplace:read")
+    ctx = _require(request, "marketplace:read")
     from src.platform.marketplace.catalog import get_manifest
 
-    result = await get_manifest(slug)
+    result = await get_manifest(slug, organization_id=ctx.organization_id)
     if result is None:
         raise HTTPException(404, "Integración no encontrada")
     return result
@@ -184,7 +184,8 @@ async def marketplace_install_credentials(install_id: str, body: CredentialsIn, 
 
     # Sanidad: nunca aceptar valores con estructura de "secreto entero".
     allowed_keys = ("api_key", "oauth_token", "client_cert_pem", "endpoint_base_url",
-                    "base_url", "headers", "client_id", "client_secret")
+                    "base_url", "headers", "client_id", "client_secret",
+                    "basic_username", "basic_password")
     secrets = {k: v for k, v in (body.secrets or {}).items() if k in allowed_keys}
     try:
         return await set_credentials(
@@ -209,7 +210,9 @@ async def marketplace_install_test(install_id: str, request: Request):
     install = await get_install(ctx.organization_id, UUID(install_id))
     if install is None:
         raise HTTPException(404, "Instalación no encontrada")
-    manifest = await catalog.get_manifest(install["integration"]["slug"])
+    manifest = await catalog.get_manifest(
+        install["integration"]["slug"], organization_id=ctx.organization_id
+    )
     test_action = None
     for cap in manifest.get("capabilities") or []:
         for action in cap.get("actions") or []:
@@ -282,6 +285,7 @@ async def marketplace_action_execute(
         "currency": outcome.currency,
         "units": outcome.units,
         "latency_ms": round(outcome.latency_ms, 1),
+        "retry_after": outcome.retry_after,
     }
 
 

@@ -169,6 +169,56 @@ async def create_agent(
     return _agent_response(agent)
 
 
+@router.get("/assistants", summary="Living assistants: agentes y sus automatizaciones")
+async def list_assistants(request: Request, repo: AgentRepository = Depends(get_agent_repo)):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.assistants import agent_automations
+
+    ctx = require_permission(request, "agents:read")
+    agents = await repo.list_agents(ctx.organization_id)
+    out: list[dict] = []
+    for agent in agents[:40]:
+        data = await agent_automations(ctx.organization_id, agent.id)
+        summary = (data or {}).get("summary") or {}
+        automations = (data or {}).get("automations") or []
+        status = agent.status.value if hasattr(agent.status, "value") else str(agent.status)
+        out.append(
+            {
+                "id": str(agent.id),
+                "name": agent.name,
+                "description": agent.description,
+                "status": status,
+                "is_active": bool(agent.is_active),
+                "owner_id": str(agent.created_by) if agent.created_by else None,
+                "automations": summary.get("automations", 0),
+                "active": summary.get("active", 0),
+                "actions_today": summary.get("actions_today", 0),
+                "last_activity": summary.get("last_activity"),
+                "health": summary.get("health", "idle"),
+                "watches": [str(a.get("when")) for a in automations][:4],
+                "automation_names": [str(a.get("name")) for a in automations][:4],
+            }
+        )
+    out.sort(key=lambda item: int(item.get("automations") or 0), reverse=True)
+    return {"assistants": out, "count": len(out)}
+
+
+@router.get("/{agent_id}/activity", summary="Living assistant: feed de actividad legible")
+async def agent_activity_endpoint(agent_id: str, request: Request, limit: int = 40):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.assistant_activity import agent_activity
+
+    ctx = require_permission(request, "agents:read")
+    try:
+        aid = UUID(agent_id)
+    except ValueError:
+        raise HTTPException(400, "agent_id must be a valid UUID")
+    result = await agent_activity(ctx.organization_id, aid, limit=limit)
+    if result is None:
+        raise HTTPException(404, "Agent not found")
+    return result
+
+
 async def _require_own_agent(request, organization_id, agent_id) -> None:
     from src.api.deps import get_agent_repo
 

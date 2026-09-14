@@ -21,7 +21,7 @@ logger = get_logger(__name__)
 _CATALOG_SELECT = (
     "SELECT id, slug, name, provider, version, description, category, logo_ref, "
     "countries, auth_modes, scopes, pricing, rate_limits, data_policy, support, "
-    "certification, status FROM integration_manifests"
+    "certification, status, organization_id, events FROM integration_manifests"
 )
 
 
@@ -29,18 +29,29 @@ async def list_catalog(
     *,
     category: str | None = None,
     include_draft: bool = False,
+    organization_id: UUID | None = None,
 ) -> dict:
     session = await get_async_session()
     try:
+        # Manifests con organización son privados de ese tenant (import API);
+        # organization_id NULL = catálogo público.
+        if organization_id is not None:
+            scope = " AND (organization_id IS NULL OR organization_id = :oid)"
+            params: dict = {"oid": organization_id}
+        else:
+            scope = " AND organization_id IS NULL"
+            params = {}
         if category:
             rows = (
                 await session.execute(
                     text(
                         _CATALOG_SELECT
                         + " WHERE status IN ('PUBLISHED', 'DEPRECATED')"
-                        + " AND category = :cat ORDER BY category, name"
+                        + " AND category = :cat"
+                        + scope
+                        + " ORDER BY category, name"
                     ),
-                    {"cat": category},
+                    {**params, "cat": category},
                 )
             ).fetchall()
         else:
@@ -49,8 +60,10 @@ async def list_catalog(
                     text(
                         _CATALOG_SELECT
                         + " WHERE status IN ('PUBLISHED', 'DEPRECATED')"
+                        + scope
                         + " ORDER BY category, name"
-                    )
+                    ),
+                    params,
                 )
             ).fetchall()
     finally:
@@ -99,16 +112,25 @@ def _row_to_manifest(r) -> dict:
         "support": r.support,
         "certification": r.certification,
         "status": r.status,
+        "organization_id": str(r.organization_id) if r.organization_id else None,
+        "events": r.events if hasattr(r, "events") else [],
     }
 
 
-async def get_manifest(slug: str) -> dict | None:
+async def get_manifest(slug: str, *, organization_id: UUID | None = None) -> dict | None:
     session = await get_async_session()
     try:
+        scope = ""
+        params: dict = {"slug": slug}
+        if organization_id is not None:
+            scope = " AND (organization_id IS NULL OR organization_id = :oid)"
+            params["oid"] = organization_id
+        else:
+            scope = " AND organization_id IS NULL"
         row = (
             await session.execute(
-                text(_CATALOG_SELECT + " WHERE slug = :slug"),
-                {"slug": slug},
+                text(_CATALOG_SELECT + " WHERE slug = :slug" + scope),
+                params,
             )
         ).fetchone()
         if row is None:
@@ -222,22 +244,42 @@ async def get_action(action_id: str) -> dict | None:
     }
 
 
-async def register_manifest(manifest: dict, created_by: UUID | None = None) -> dict:
-    """Registra/actualiza un manifest (workflow de publishing: DRAFT → …)."""
+async def register_manifest(
+    manifest: dict,
+    created_by: UUID | None = None,
+    *,
+    organization_id: UUID | None = None,
+) -> dict:
+    """Registra/actualiza un manifest (workflow de publishing: DRAFT → …).
+
+    `organization_id` distingue una importación privada de un tenant
+    (Universal API Connector) del catálogo público (NULL).
+    """
     errors = validate_integration_manifest(manifest)
     if errors:
         raise ManifestValidationError("; ".join(errors[:10]))
+    org_id = manifest.get("organization_id") or organization_id
     session = await get_async_session()
     try:
         existing = (
             await session.execute(
-                text("SELECT id, status FROM integration_manifests WHERE slug = :slug"),
+                text(
+                    "SELECT id, status, organization_id FROM integration_manifests "
+                    "WHERE slug = :slug"
+                ),
                 {"slug": manifest["slug"]},
             )
         ).fetchone()
         status = str(manifest.get("status") or "DRAFT")
         if existing is not None and not can_transition(existing.status, status):
             raise ManifestValidationError(f"transición inválida: {existing.status} → {status}")
+        if (
+            existing is not None
+            and existing.organization_id is not None
+            and org_id is not None
+            and existing.organization_id != org_id
+        ):
+            raise ManifestValidationError("slug reservado por otro tenant")
         if existing is None:
             mid = (
                 await session.execute(
@@ -245,11 +287,11 @@ async def register_manifest(manifest: dict, created_by: UUID | None = None) -> d
                         "INSERT INTO integration_manifests "
                         "(slug, name, provider, version, description, category, logo_ref, "
                         "countries, auth_modes, scopes, pricing, rate_limits, data_policy, "
-                        "support, certification, status, created_by) "
+                        "support, certification, status, created_by, organization_id) "
                         "VALUES (:slug, :name, :provider, 1, :desc, :cat, :logo, "
                         "CAST(:countries AS jsonb), CAST(:auth AS jsonb), CAST(:scopes AS jsonb), "
                         "CAST(:pricing AS jsonb), CAST(:rl AS jsonb), CAST(:dp AS jsonb), "
-                        "CAST(:support AS jsonb), :cert, :status, :by) RETURNING id"
+                        "CAST(:support AS jsonb), :cert, :status, :by, :oid) RETURNING id"
                     ),
                     {
                         "slug": manifest["slug"],
@@ -268,6 +310,7 @@ async def register_manifest(manifest: dict, created_by: UUID | None = None) -> d
                         "cert": manifest.get("certification"),
                         "status": status,
                         "by": created_by,
+                        "oid": org_id,
                     },
                 )
             ).scalar()
@@ -277,7 +320,10 @@ async def register_manifest(manifest: dict, created_by: UUID | None = None) -> d
                         text(
                             "INSERT INTO integration_capabilities "
                             "(integration_id, slug, name, description) "
-                            "VALUES (:iid, :slug, :name, :desc) RETURNING id"
+                            "VALUES (:iid, :slug, :name, :desc) "
+                            "ON CONFLICT (integration_id, slug) DO UPDATE SET "
+                            "name = EXCLUDED.name, description = EXCLUDED.description "
+                            "RETURNING id"
                         ),
                         {
                             "iid": mid,
@@ -288,40 +334,90 @@ async def register_manifest(manifest: dict, created_by: UUID | None = None) -> d
                     )
                 ).scalar()
                 for act in cap.get("actions") or []:
-                    await _insert_action(session, mid, cap["slug"], act)
+                    await _insert_action(session, mid, cap["slug"], act, upsert=True)
                 _ = cap_row
         else:
+            # Reimportación/republish: actualiza metadata y acciones del tenant.
             await session.execute(
                 text(
                     "UPDATE integration_manifests SET status = :status, updated_at = NOW(), "
+                    "name = :name, provider = :provider, description = :desc, "
+                    "auth_modes = CAST(:auth AS jsonb), rate_limits = CAST(:rl AS jsonb), "
+                    "data_policy = CAST(:dp AS jsonb), support = CAST(:support AS jsonb), "
                     "pricing = CAST(:pricing AS jsonb) WHERE id = :mid"
                 ),
                 {
                     "status": status,
+                    "name": manifest.get("name", manifest["slug"]),
+                    "provider": manifest.get("provider", "Partner"),
+                    "desc": manifest.get("description"),
+                    "auth": json.dumps(manifest.get("auth_modes") or ["BYOC"]),
+                    "rl": json.dumps(manifest.get("rate_limits") or {}),
+                    "dp": json.dumps(manifest.get("data_policy") or {}),
+                    "support": json.dumps(manifest.get("support") or {}),
                     "pricing": json.dumps(manifest.get("pricing") or {}),
                     "mid": existing.id,
                 },
             )
             mid = existing.id
+            for cap in manifest.get("capabilities") or []:
+                await session.execute(
+                    text(
+                        "INSERT INTO integration_capabilities "
+                        "(integration_id, slug, name, description) "
+                        "VALUES (:iid, :slug, :name, :desc) "
+                        "ON CONFLICT (integration_id, slug) DO UPDATE SET "
+                        "name = EXCLUDED.name, description = EXCLUDED.description"
+                    ),
+                    {
+                        "iid": mid,
+                        "slug": cap["slug"],
+                        "name": cap.get("name", cap["slug"]),
+                        "desc": cap.get("description"),
+                    },
+                )
+                for act in cap.get("actions") or []:
+                    await _insert_action(session, mid, cap["slug"], act, upsert=True)
         await session.commit()
     finally:
         await session.close()
     return {"slug": manifest["slug"], "status": status, "id": str(mid)}
 
 
-async def _insert_action(session, integration_id: UUID, capability_slug: str, act: dict) -> None:
+async def _insert_action(
+    session,
+    integration_id: UUID,
+    capability_slug: str,
+    act: dict,
+    *,
+    upsert: bool = False,
+) -> None:
+    conflict = (
+        "ON CONFLICT (action_id) DO UPDATE SET "
+        "capability_slug = EXCLUDED.capability_slug, display_name = EXCLUDED.display_name, "
+        "description = EXCLUDED.description, input_schema = EXCLUDED.input_schema, "
+        "output_schema = EXCLUDED.output_schema, risk_level = EXCLUDED.risk_level, "
+        "read_only = EXCLUDED.read_only, requires_approval = EXCLUDED.requires_approval, "
+        "cache_policy = EXCLUDED.cache_policy, timeout_ms = EXCLUDED.timeout_ms, "
+        "cost_model = EXCLUDED.cost_model, provider_config = EXCLUDED.provider_config, "
+        "status = 'ACTIVE' "
+        "WHERE integration_actions.integration_id = EXCLUDED.integration_id"
+        if upsert
+        else "ON CONFLICT (action_id) DO NOTHING"
+    )
+    sql = (
+        "INSERT INTO integration_actions "
+        "(integration_id, capability_slug, action_id, display_name, description, "
+        "input_schema, output_schema, risk_level, read_only, requires_approval, "
+        "contains_personal_data, sensitive_data_classes, retention_policy, cache_policy, "
+        "timeout_ms, retry_policy, idempotency_support, cost_model, provider_config) "
+        "VALUES (:iid, :cap, :aid, :dn, :desc, CAST(:ins AS jsonb), CAST(:outs AS jsonb), "
+        ":risk, :ro, :ra, :pd, CAST(:sdc AS jsonb), CAST(:rp AS jsonb), "
+        "CAST(:cp AS jsonb), :tmo, CAST(:retry AS jsonb), :idem, CAST(:cost AS jsonb), "
+        "CAST(:pc AS jsonb)) " + conflict
+    )
     await session.execute(
-        text(
-            "INSERT INTO integration_actions "
-            "(integration_id, capability_slug, action_id, display_name, description, "
-            "input_schema, output_schema, risk_level, read_only, requires_approval, "
-            "contains_personal_data, sensitive_data_classes, retention_policy, cache_policy, "
-            "timeout_ms, retry_policy, idempotency_support, cost_model, provider_config) "
-            "VALUES (:iid, :cap, :aid, :dn, :desc, CAST(:ins AS jsonb), CAST(:outs AS jsonb), "
-            ":risk, :ro, :ra, :pd, CAST(:sdc AS jsonb), CAST(:rp AS jsonb), "
-            "CAST(:cp AS jsonb), :tmo, CAST(:retry AS jsonb), :idem, CAST(:cost AS jsonb), "
-            "CAST(:pc AS jsonb)) ON CONFLICT (action_id) DO NOTHING"
-        ),
+        text(sql),
         {
             "iid": integration_id,
             "cap": capability_slug,

@@ -527,6 +527,7 @@ async def intelligence_results(
     entity_id: str | None = None,
     limit: int = 50,
     since_minutes: int | None = None,
+    include_acknowledged: bool = False,
 ):
     ctx = require_permission(request, "intelligence:read")
     from src.platform.intelligence.results import list_results
@@ -539,6 +540,7 @@ async def intelligence_results(
         entity_id=entity_id,
         limit=limit,
         since_minutes=since_minutes,
+        include_acknowledged=include_acknowledged,
     )
 
 
@@ -548,6 +550,21 @@ async def intelligence_result_detail(result_id: str, request: Request):
     from src.platform.intelligence.results import get_result
 
     result = await get_result(ctx.organization_id, UUID(result_id))
+    if result is None:
+        raise HTTPException(404, "Resultado no encontrado")
+    return result
+
+
+@router.post("/results/{result_id}/acknowledge", summary="Marcar resultado como resuelto")
+async def intelligence_result_acknowledge(result_id: str, request: Request):
+    ctx = require_permission(request, "intelligence:read")
+    from src.platform.intelligence.results import acknowledge_result
+
+    try:
+        rid = UUID(result_id)
+    except ValueError as exc:
+        raise HTTPException(400, "result_id inválido") from exc
+    result = await acknowledge_result(ctx.organization_id, rid, user_id=ctx.user_id)
     if result is None:
         raise HTTPException(404, "Resultado no encontrado")
     return result

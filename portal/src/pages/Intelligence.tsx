@@ -19,6 +19,7 @@ type Result = {
   generated_at: string;
   workflow_id?: string | null;
   workflow_run_id?: string | null;
+  acknowledged_at?: string | null;
 };
 
 type Stats = {
@@ -62,6 +63,20 @@ export default function IntelligencePage() {
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [openDetails, setOpenDetails] = useState<Record<string, boolean>>({});
+
+  async function resolveResult(resultId: string) {
+    if (!session) return;
+    try {
+      await api(`/api/v1/intelligence/results/${resultId}/acknowledge`, {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      setResults((current) => current.filter((item) => item.id !== resultId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No pude marcar el resultado como resuelto");
+    }
+  }
 
   async function load(section?: string) {
     if (!session) return;
@@ -292,6 +307,29 @@ export default function IntelligencePage() {
                       workflow: <code className="font-mono">{r.workflow_id.slice(0, 8)}…</code>
                     </p>
                   )}
+                  {(r.recommendations ?? []).length > 0 && (
+                    <div className="rounded-md border border-border bg-soft/50 p-2">
+                      <p className="text-[9px] font-semibold tracking-wide text-faint uppercase">Recomendación</p>
+                      {(r.recommendations ?? []).slice(0, 3).map((recommendation, idx) => (
+                        <p key={idx} className="mt-0.5 text-text">· {recommendation}</p>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2 pt-1">
+                    <button
+                      type="button"
+                      className="btn btn-secondary min-h-7 px-2 text-[10px]"
+                      data-testid={`intelligence-resolve-${r.id}`}
+                      onClick={() => void resolveResult(r.id)}
+                    >
+                      Marcar resuelto
+                    </button>
+                    {r.workflow_id && (
+                      <Link to={`/workflows/${r.workflow_id}`} className="btn btn-ghost min-h-7 px-2 text-[10px]">
+                        Abrir workflow
+                      </Link>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

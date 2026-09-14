@@ -70,6 +70,44 @@ def assistant_status(automations: list[dict[str, Any]]) -> str:
     return "healthy"
 
 
+async def workflows_for_agent(
+    session, organization_id: UUID, agent_id: UUID, *, limit: int = 500
+) -> list[dict[str, Any]]:
+    """Workflows cuyo grafo tiene un nodo llm asociado al agente."""
+    workflow_rows = (
+        await session.execute(
+            text(
+                "SELECT id, name, description, status, trigger_type, trigger_config, graph "
+                "FROM workflows WHERE organization_id = :oid ORDER BY updated_at DESC LIMIT :lim"
+            ),
+            {"oid": organization_id, "lim": int(limit)},
+        )
+    ).fetchall()
+    matched: list[dict[str, Any]] = []
+    for row in workflow_rows:
+        graph = row.graph if isinstance(row.graph, dict) else {}
+        hits = 0
+        for node in graph.get("nodes") or []:
+            if not isinstance(node, dict) or node.get("type") != "llm":
+                continue
+            config = node.get("config") or {}
+            if str(config.get("agent_id") or "") == str(agent_id):
+                hits += 1
+        if hits:
+            matched.append(
+                {
+                    "workflow_id": str(row.id),
+                    "name": row.name,
+                    "description": row.description,
+                    "status": row.status,
+                    "trigger_type": row.trigger_type,
+                    "trigger_config": row.trigger_config or {},
+                    "agent_nodes": hits,
+                }
+            )
+    return matched
+
+
 async def agent_automations(organization_id: UUID, agent_id: UUID) -> dict[str, Any] | None:
     """Workflows, triggers, watchers y actividad de un agente. None si no existe."""
     session = await get_async_session()
@@ -86,40 +124,13 @@ async def agent_automations(organization_id: UUID, agent_id: UUID) -> dict[str, 
         if agent is None:
             return None
 
-        workflow_rows = (
-            await session.execute(
-                text(
-                    "SELECT id, name, description, status, trigger_type, trigger_config, graph "
-                    "FROM workflows WHERE organization_id = :oid ORDER BY updated_at DESC LIMIT 500"
-                ),
-                {"oid": organization_id},
-            )
-        ).fetchall()
-
-        matched: list[dict[str, Any]] = []
+        matched = await workflows_for_agent(session, organization_id, agent_id)
         matched_ids: list[UUID] = []
-        for row in workflow_rows:
-            graph = row.graph if isinstance(row.graph, dict) else {}
-            hits = 0
-            for node in graph.get("nodes") or []:
-                if not isinstance(node, dict) or node.get("type") != "llm":
-                    continue
-                config = node.get("config") or {}
-                if str(config.get("agent_id") or "") == str(agent_id):
-                    hits += 1
-            if hits:
-                matched.append(
-                    {
-                        "workflow_id": str(row.id),
-                        "name": row.name,
-                        "description": row.description,
-                        "status": row.status,
-                        "trigger_type": row.trigger_type,
-                        "trigger_config": row.trigger_config or {},
-                        "agent_nodes": hits,
-                    }
-                )
-                matched_ids.append(row.id)
+        for workflow in matched:
+            try:
+                matched_ids.append(UUID(str(workflow["workflow_id"])))
+            except ValueError:
+                continue
 
         triggers: dict[str, str] = {}
         if matched_ids:
@@ -221,4 +232,10 @@ async def agent_automations(organization_id: UUID, agent_id: UUID) -> dict[str, 
     }
 
 
-__all__ = ["agent_automations", "assistant_status", "describe_when", "summarize_workflow"]
+__all__ = [
+    "agent_automations",
+    "assistant_status",
+    "describe_when",
+    "summarize_workflow",
+    "workflows_for_agent",
+]

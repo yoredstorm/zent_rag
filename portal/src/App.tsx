@@ -137,6 +137,10 @@ const AdminCopilotPage = lazy(() => import("./pages/admin/Copilot"));
 const WorkflowsPage = lazy(() => import("./pages/Workflows"));
 const WatchersPage = lazy(() => import("./pages/Watchers"));
 const DemoCenterPage = lazy(() => import("./pages/DemoCenter"));
+const IntegrationsPage = lazy(() => import("./pages/IntegrationsPage"));
+const IntelligencePage = lazy(() => import("./pages/Intelligence"));
+const AssistantsPage = lazy(() => import("./pages/AssistantsPage"));
+const AssistantDetailPage = lazy(() => import("./pages/AssistantDetailPage"));
 const WorkflowNewPage = lazy(() => import("./pages/WorkflowNew"));
 const AskZentPage = lazy(() => import("./pages/AskZentPage"));
 const WorkflowStudioPage = lazy(() => import("./pages/WorkflowStudio"));
@@ -715,6 +719,10 @@ export default function App() {
         <Route path="/workflows" element={<Suspense fallback={<PageFallback />}><WorkflowsPage /></Suspense>} />
         <Route path="/watchers" element={<Suspense fallback={<PageFallback />}><WatchersPage /></Suspense>} />
         <Route path="/demos" element={<Suspense fallback={<PageFallback />}><DemoCenterPage /></Suspense>} />
+        <Route path="/integrations" element={<Suspense fallback={<PageFallback />}><IntegrationsPage /></Suspense>} />
+        <Route path="/assistants" element={<Suspense fallback={<PageFallback />}><AssistantsPage /></Suspense>} />
+        <Route path="/assistants/:id" element={<Suspense fallback={<PageFallback />}><AssistantDetailPage /></Suspense>} />
+        <Route path="/intelligence" element={<Suspense fallback={<PageFallback />}><IntelligencePage /></Suspense>} />
         <Route path="/workflows/new" element={<Suspense fallback={<PageFallback />}><WorkflowNewPage /></Suspense>} />
         <Route path="/workflows/new/ask" element={<Suspense fallback={<PageFallback />}><AskZentPage /></Suspense>} />
         <Route path="/workflows/new/manual" element={<Suspense fallback={<PageFallback />}><WorkflowStudioPage /></Suspense>} />

@@ -58,8 +58,10 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/chat", label: "Playground", icon: ChatCircleDots },
       { to: "/agents", label: "Agentes", icon: Robot },
+      { to: "/assistants", label: "Asistentes", icon: Robot },
       { to: "/knowledge", label: "Conocimiento", icon: Database },
       { to: "/workflows", label: "Workflows", icon: FlowArrow },
+      { to: "/integrations", label: "Integraciones API", icon: Plugs },
       { to: "/watchers", label: "Vigilancia de datos", icon: Eye },
       { to: "/demos", label: "Demo Center", icon: Sparkle },
       { to: "/intelligence", label: "Intelligence", icon: Sparkle },

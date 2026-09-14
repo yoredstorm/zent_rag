@@ -181,6 +181,12 @@ def _row(r) -> dict[str, Any]:
         "source": r.source,
         "generated_at": r.generated_at.isoformat(),
         "freshness_seconds": int(r.freshness_seconds or 0),
+        "acknowledged_at": (
+            r.acknowledged_at.isoformat() if getattr(r, "acknowledged_at", None) else None
+        ),
+        "acknowledged_by": (
+            str(r.acknowledged_by) if getattr(r, "acknowledged_by", None) else None
+        ),
     }
 
 
@@ -193,6 +199,7 @@ async def list_results(
     entity_id: str | None = None,
     limit: int = 50,
     since_minutes: int | None = None,
+    include_acknowledged: bool = False,
 ) -> dict:
     from sqlalchemy import text as _text
 
@@ -202,10 +209,12 @@ async def list_results(
             "SELECT id, title, summary, section, importance, metrics, insights, entities, "
             "recommendations, evidence, actions_taken, actions_available, workflow_id, "
             "workflow_run_id, agent_run_id, correlation_id, fingerprint, source, "
-            "generated_at, freshness_seconds "
+            "generated_at, freshness_seconds, acknowledged_at, acknowledged_by "
             "FROM business_results WHERE organization_id = :oid"
         )
         params: dict[str, Any] = {"oid": organization_id, "lim": min(int(limit), 200)}
+        if not include_acknowledged:
+            sql += " AND acknowledged_at IS NULL"
         if workspace_id is not None:
             sql += " AND (workspace_id = :ws OR workspace_id IS NULL)"
             params["ws"] = workspace_id
@@ -223,6 +232,7 @@ async def list_results(
                 _text(
                     "SELECT section, COUNT(*) AS n, MAX(generated_at) AS last "
                     "FROM business_results WHERE organization_id = :oid "
+                    "AND acknowledged_at IS NULL "
                     "GROUP BY section"
                 ),
                 {"oid": organization_id},
@@ -260,7 +270,7 @@ async def get_result(organization_id: UUID, result_id: UUID) -> dict | None:
                     "SELECT id, title, summary, section, importance, metrics, insights, entities, "
                     "recommendations, evidence, actions_taken, actions_available, workflow_id, "
                     "workflow_run_id, agent_run_id, correlation_id, fingerprint, source, "
-                    "generated_at, freshness_seconds "
+                    "generated_at, freshness_seconds, acknowledged_at, acknowledged_by "
                     "FROM business_results WHERE id = :rid AND organization_id = :oid"
                 ),
                 {"rid": result_id, "oid": organization_id},
@@ -269,6 +279,36 @@ async def get_result(organization_id: UUID, result_id: UUID) -> dict | None:
     finally:
         await session.close()
     return _row(row) if row else None
+
+
+async def acknowledge_result(
+    organization_id: UUID, result_id: UUID, *, user_id: UUID | None = None
+) -> dict | None:
+    """Marca un resultado del inbox como resuelto (idempotente)."""
+    from sqlalchemy import text as _text
+
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                _text(
+                    "UPDATE business_results SET acknowledged_at = COALESCE(acknowledged_at, NOW()), "
+                    "acknowledged_by = COALESCE(acknowledged_by, :uid) "
+                    "WHERE id = :rid AND organization_id = :oid "
+                    "RETURNING id, acknowledged_at"
+                ),
+                {"rid": result_id, "oid": organization_id, "uid": user_id},
+            )
+        ).fetchone()
+        await session.commit()
+    finally:
+        await session.close()
+    if row is None:
+        return None
+    return {
+        "result_id": str(row.id),
+        "acknowledged_at": row.acknowledged_at.isoformat() if row.acknowledged_at else None,
+    }
 
 
 def importance_from(**signals: Any) -> str:

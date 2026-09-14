@@ -55,7 +55,7 @@ class MarketplaceActionTool(Tool):
         action = await catalog.get_action(action_id)
         if action is None:
             return ToolResult(output="", error="acción no encontrada en el catálogo")
-        manifest = await catalog.get_manifest(integration_slug)
+        manifest = await catalog.get_manifest(integration_slug, organization_id=ctx.tenant_id)
         if manifest is None or action.get("integration_slug") != integration_slug:
             return ToolResult(output="", error=f"integración '{integration_slug}' no existe o la acción no pertenece")
 

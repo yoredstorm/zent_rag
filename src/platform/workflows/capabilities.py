@@ -52,8 +52,10 @@ async def _org_manifests(organization_id: UUID) -> dict[str, dict]:
                 text(
                     "SELECT m.id, m.slug, m.name, m.description, m.category, m.status, "
                     "m.data_policy, m.auth_modes "
-                    "FROM integration_manifests m"
-                )
+                    "FROM integration_manifests m "
+                    "WHERE m.organization_id IS NULL OR m.organization_id = :oid"
+                ),
+                {"oid": organization_id},
             )
         ).fetchall()
         actions = (

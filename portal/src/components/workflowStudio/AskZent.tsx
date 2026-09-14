@@ -34,7 +34,11 @@ type Proposal = {
 };
 
 type CompileOut = {
-  graph: { nodes: { type: string }[] };
+  graph: {
+    nodes: { id?: string; type: string; config?: Record<string, unknown> }[];
+    edges?: unknown[];
+    entrypoints?: string[];
+  };
   valid: boolean;
   issues: Issue[];
   summary: Summary;
@@ -53,10 +57,14 @@ function triggerTypeOfGraph(graph: { nodes: { type: string }[] }): "webhook" | "
   return "webhook";
 }
 
-export function AskZent() {
+export function AskZent({ initialPrompt = "", agentId = "", agentName = "" }: {
+  initialPrompt?: string;
+  agentId?: string;
+  agentName?: string;
+}) {
   const { session } = useAuth();
   const navigate = useNavigate();
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState(initialPrompt);
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState("");
   const [error, setError] = useState("");
@@ -90,12 +98,24 @@ export function AskZent() {
 
   async function compile(): Promise<CompileOut> {
     if (!session || !proposal?.plan) throw new Error("No hay plan para compilar");
-    return api<CompileOut>("/api/v1/workflows/copilot/compile", {
+    const out = await api<CompileOut>("/api/v1/workflows/copilot/compile", {
       method: "POST",
       token: session.token,
       organizationId: session.organizationId,
       body: JSON.stringify({ plan: proposal.plan }),
     });
+    // Asistente preseleccionado (misión §26): el LLM puede reasignarse luego.
+    if (agentId && Array.isArray(out.graph?.nodes)) {
+      out.graph = {
+        ...out.graph,
+        nodes: out.graph.nodes.map((node) =>
+          node.type === "llm"
+            ? { ...node, config: { ...(node.config || {}), agent_id: agentId, agent_name: agentName } }
+            : node,
+        ),
+      };
+    }
+    return out;
   }
 
   async function create(level: "simple" | "advanced") {
@@ -158,6 +178,12 @@ export function AskZent() {
         <p className="mt-1 text-xs text-muted">
           Descríbelo como se lo dirías a una persona. Zent te dirá primero qué entendió.
         </p>
+        {agentName && (
+          <p className="mt-1 rounded-md border border-border bg-soft/40 px-2 py-1.5 text-[10px] text-muted" data-testid="ask-agent-note">
+            Quedará asociado al asistente <strong className="text-text">{agentName}</strong>. Si el flujo no necesita
+            razonamiento, puede funcionar sin IA y ahorrar costo.
+          </p>
+        )}
       </div>
 
       <textarea
