@@ -188,9 +188,14 @@ async def execute_graph(
     *,
     resume: bool = False,
     step_index_start: int = 0,
+    stop_after: str | None = None,
+    entry_override: list[str] | None = None,
+    preloaded: dict[str, tuple[str, dict, str | None, int]] | None = None,
+    pinned: dict[str, dict] | None = None,
 ) -> RunExecutionResult:
     """Ejecuta el grafo completo. `resume` reutiliza pasos persistidos
-    (aprobación humana). Devuelve resultados por nodo + estado global."""
+    (aprobación humana). `stop_after`/`entry_override`/`preloaded` habilitan
+    ejecución parcial de pruebas (Fase 3); `pinned` solo aplica en simulate."""
     from src.platform.workflows.ir import WorkflowGraphError, validate_graph
     from src.platform.workflows.nodes import NodeContext, registry
 
@@ -200,6 +205,11 @@ async def execute_graph(
         return RunExecutionResult(status="failed", error=f"grafo inválido: {exc}")
 
     node_map = graph.node_map
+    if stop_after is not None and stop_after not in node_map:
+        return RunExecutionResult(status="failed", error=f"nodo objetivo no existe: {stop_after}")
+    for entry in entry_override or []:
+        if entry not in node_map:
+            return RunExecutionResult(status="failed", error=f"nodo de inicio no existe: {entry}")
     outgoing: dict[str, list[Any]] = {nid: [] for nid in node_map}
     incoming: dict[str, list[Any]] = {nid: [] for nid in node_map}
     branch_of: dict[str, str] = {}  # nodo del subgrafo for_each → for_each padre
@@ -211,6 +221,9 @@ async def execute_graph(
             branch_of[edge.to_node] = edge.from_node
 
     cached = await _load_cached_steps(ctx) if resume else {}
+    if preloaded:
+        # Hidratación desde un run anterior (parcial) sin re-ejecutar nodos.
+        cached = {**{k: v for k, v in preloaded.items()}, **cached}
 
     executions: dict[str, NodeExecution] = {}
     resolved: set[str] = set()
@@ -224,6 +237,15 @@ async def execute_graph(
     variables: dict[str, Any] = dict(graph.variables or {})
     trigger = payload or {}
     node_outputs_for_refs: dict[str, dict[str, Any]] = {}
+    if preloaded:
+        # Hidratación: predecesores preloaded quedan resueltos para refs.
+        for preload_id, entry in preloaded.items():
+            if preload_id in node_map and preload_id not in resolved:
+                executions[preload_id] = NodeExecution(
+                    status=entry[0], output=entry[1], error=entry[2], retries=entry[3]
+                )
+                resolved.add(preload_id)
+                node_outputs_for_refs[preload_id] = {"output": entry[1]}
     total_started = time.monotonic()
 
     def node_outcome(node_id: str, status: str, output: dict | None = None, error: str | None = None) -> None:
@@ -275,6 +297,19 @@ async def execute_graph(
             exec_ = NodeExecution(status="succeeded", output={"end": True})
             await persist(node_id, node.type, node.config, exec_, True)
             node_outcome(node_id, "succeeded", exec_.output)
+            return
+
+        # Datos fijados para pruebas: solo en simulate (nunca en producción).
+        pinned_output = (pinned or {}).get(node_id) if ctx.simulate else None
+        if pinned_output is not None:
+            exec_ = NodeExecution(
+                status="simulated",
+                output=dict(pinned_output),
+                simulated=True,
+                planned={"pinned": True},
+            )
+            await persist(node_id, node.type, node.config, exec_, False)
+            node_outcome(node_id, "simulated", exec_.output)
             return
 
         # Entradas por puerto resueltas.
@@ -478,8 +513,9 @@ async def execute_graph(
 
     # --- Scheduler principal (determinístico, waves por orden de id) --------
     processed: set[str] = set()
-    entry_set = set(graph.entrypoints)
-    ordered_ids = list(graph.entrypoints) + sorted(
+    entry_set = set(entry_override or graph.entrypoints)
+    partial_stop = False
+    ordered_ids = list(entry_override or graph.entrypoints) + sorted(
         (n for n in node_map if n not in entry_set), key=lambda x: x
     )
     guard = 0
@@ -491,7 +527,7 @@ async def execute_graph(
             node = node_map[node_id]
             if node.type == "merge":
                 ready = any(inc.id in executed_edges for inc in incoming.get(node_id, []))
-            elif node_id in entry_set and not incoming.get(node_id):
+            elif node_id in entry_set and (not incoming.get(node_id) or entry_override is not None):
                 ready = True
             else:
                 ready = _ready_check(incoming, executed_edges, skipped_edges, node_id)
@@ -503,7 +539,10 @@ async def execute_graph(
             advanced = True
             if run_status != "succeeded":
                 break
-        if run_status != "succeeded":
+            if stop_after and node_id == stop_after:
+                partial_stop = True
+                break
+        if run_status != "succeeded" or partial_stop:
             break
         if not advanced:
             # Cascada de skip: nodos muertos (todos sus entrantes saltados o
@@ -548,9 +587,17 @@ async def execute_graph(
     # Nodos del subgrafo for_each y no ejecutados → skipped de cierre.
     for node_id, _node in node_map.items():
         if node_id not in resolved and node_id not in branch_of:
-            if run_status in ("failed", "pending_approval", "stopped"):
+            if run_status in ("failed", "pending_approval", "stopped") or partial_stop:
                 executions[node_id] = NodeExecution(status="skipped", output={})
                 resolved.add(node_id)
+                if partial_stop:
+                    # Visibilidad del resto del flujo en ejecuciones parciales.
+                    await _persist_node_step(
+                        ctx, node_id, _node.type, step_index, "skipped", _node.config,
+                        {}, None, 0, 0, datetime.now(timezone.utc), 0,
+                        f"{ctx.correlation_id or ctx.run_id}:{node_id}:0",
+                    )
+                    step_index += 1
     _emit_run_metric(run_status if run_status != "pending_approval" else "pending_approval")
     return RunExecutionResult(
         status=run_status,
@@ -559,7 +606,7 @@ async def execute_graph(
         planned_effects=planned_effects,
         duration_ms=int((time.monotonic() - total_started) * 1000),
         cost_ms=total_cost,
-        stopped=run_status == "stopped",
+        stopped=run_status == "stopped" or partial_stop,
     )
 
 

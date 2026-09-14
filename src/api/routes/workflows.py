@@ -492,7 +492,7 @@ async def tenant_workflow_pause(workflow_id: str, request: Request):
     return result
 
 
-@router.post("/{workflow_id}/run", summary="Ejecutar workflow (también dry-run)")
+@router.post("/{workflow_id}/run", summary="Ejecutar workflow (también dry-run y parcial)")
 async def tenant_workflow_run(workflow_id: str, body: RunIn, request: Request):
     from src.platform.rbac.policy import require_permission
     from src.platform.workflows.engine import WorkflowAccessError, run_workflow
@@ -509,6 +509,9 @@ async def tenant_workflow_run(workflow_id: str, body: RunIn, request: Request):
             actor_id=ctx.user_id,
             permissions=ctx.permissions,
             simulate=bool(body.simulate),
+            run_mode=body.run_mode,
+            target_node_id=body.target_node_id,
+            source_run_id=UUID(body.source_run_id) if body.source_run_id else None,
         )
     except WorkflowAccessError as exc:
         raise HTTPException(403, str(exc)) from exc
@@ -569,6 +572,51 @@ async def tenant_workflow_summary(workflow_id: str, request: Request):
     if result is None:
         raise HTTPException(404, "Workflow not found")
     return result
+
+
+@router.get("/{workflow_id}/pinned-data", summary="Datos fijados para pruebas")
+async def tenant_workflow_pinned_list(workflow_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.pinned import list_pinned
+
+    ctx = require_permission(request, "workflows:read")
+    result = await list_pinned(ctx.organization_id, UUID(workflow_id))
+    if result is None:
+        raise HTTPException(404, "Workflow not found")
+    return result
+
+
+@router.put("/{workflow_id}/pinned-data/{node_id}", summary="Fijar datos de un nodo para pruebas")
+async def tenant_workflow_pinned_upsert(workflow_id: str, node_id: str, body: PinnedDataIn, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.engine import get_workflow
+    from src.platform.workflows.pinned import upsert_pinned
+
+    ctx = require_permission(request, "workflows:update")
+    workflow = await get_workflow(ctx.organization_id, UUID(workflow_id))
+    if workflow is None:
+        raise HTTPException(404, "Workflow not found")
+    graph = workflow.get("graph") or {}
+    node_ids = {str(node.get("id")) for node in graph.get("nodes") or [] if isinstance(node, dict)}
+    if node_ids and node_id not in node_ids:
+        raise HTTPException(422, f"nodo no existe en el flujo: {node_id}")
+    result = await upsert_pinned(
+        ctx.organization_id, UUID(workflow_id), node_id, body.output, created_by=ctx.user_id
+    )
+    if result is None:
+        raise HTTPException(404, "Workflow not found")
+    return result
+
+
+@router.delete("/{workflow_id}/pinned-data/{node_id}", summary="Quitar datos fijados")
+async def tenant_workflow_pinned_delete(workflow_id: str, node_id: str, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.pinned import delete_pinned
+
+    ctx = require_permission(request, "workflows:update")
+    if not await delete_pinned(ctx.organization_id, UUID(workflow_id), node_id):
+        raise HTTPException(404, "Pinned data not found")
+    return {"deleted": True}
 
 
 @router.post("/{workflow_id}/hook-secret/rotate", summary="Rotar secret inbound")
@@ -705,6 +753,13 @@ class WorkflowUpdateIn(BaseModel):
 class RunIn(BaseModel):
     payload: dict | None = None
     simulate: bool = False
+    run_mode: str = Field(default="full", pattern="^(full|node|until_node|from_node)$")
+    target_node_id: str | None = Field(default=None, max_length=80)
+    source_run_id: str | None = None
+
+
+class PinnedDataIn(BaseModel):
+    output: dict
 
 
 class VersionIn(BaseModel):

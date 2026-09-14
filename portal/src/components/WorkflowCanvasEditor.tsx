@@ -10,6 +10,7 @@ import { makeNode, newEdgeId, prepareGraphForSave, triggerConfigOf, triggerTypeO
 import { NodeConfigPanel } from "./NodeConfigPanel";
 import { NodeLibrary, type MarketplaceContext, type MxRecommendation } from "./NodeLibrary";
 import { WorkflowCanvas, type RunOverlay } from "./WorkflowCanvas";
+import type { RunDetail } from "./WorkflowRunInspector";
 import { ErrorInline } from "./ui";
 
 type Props = {
@@ -26,6 +27,13 @@ type Props = {
   /** Nivel de configuración (Simple/Guided/Advanced), compartido con el estudio. */
   configLevel?: ParameterLevel;
   onConfigLevelChange?: (level: ParameterLevel) => void;
+  /** Último run: alimenta las pestañas Input/Output/Run del inspector. */
+  run?: RunDetail | null;
+  pinnedNodes?: string[];
+  onPinData?: (nodeId: string, output: Record<string, unknown>) => void;
+  onUnpinData?: (nodeId: string) => void;
+  onRunPartial?: (nodeId: string, mode: "node" | "until_node" | "from_node") => void;
+  partialBusy?: string;
   /** Alto del lienzo y del rail (el estudio lo pone a viewport). */
   heightClass?: string;
 };
@@ -46,6 +54,12 @@ export function WorkflowCanvasEditor({
   onSelectNode,
   configLevel,
   onConfigLevelChange,
+  run,
+  pinnedNodes,
+  onPinData,
+  onUnpinData,
+  onRunPartial,
+  partialBusy,
   heightClass = "h-[560px]",
 }: Props) {
   const { session } = useAuth();
@@ -514,6 +528,12 @@ export function WorkflowCanvasEditor({
               mxActions={mxActions}
               nodeSchemas={nodeSchemas}
               samples={samples}
+              run={run}
+              pinned={Boolean(selectedNodeObj && pinnedNodes?.includes(selectedNodeObj.id))}
+              onPinData={onPinData}
+              onUnpinData={onUnpinData}
+              onRunPartial={onRunPartial}
+              partialBusy={partialBusy}
               configLevel={configLevel}
               onConfigLevelChange={onConfigLevelChange}
             />

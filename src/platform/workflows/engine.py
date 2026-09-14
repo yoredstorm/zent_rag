@@ -198,6 +198,45 @@ async def _audit_run_access(
         pass
 
 
+async def _preload_run_outputs(
+    workflow_id: UUID, source_run_id: UUID | None = None
+) -> dict[str, tuple[str, dict, str | None, int]]:
+    """Outputs del run fuente (o del último exitoso) para ejecución parcial."""
+    session = await get_async_session()
+    try:
+        run_id = source_run_id
+        if run_id is None:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT id FROM workflow_runs WHERE workflow_id = :wid "
+                        "AND status IN ('succeeded', 'simulated') "
+                        "ORDER BY started_at DESC LIMIT 1"
+                    ),
+                    {"wid": workflow_id},
+                )
+            ).fetchone()
+            run_id = row.id if row else None
+        if run_id is None:
+            return {}
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT node_id, status, output, error, retries FROM workflow_run_steps "
+                    "WHERE run_id = :rid AND node_id IS NOT NULL "
+                    "AND status IN ('succeeded', 'simulated') ORDER BY step_index"
+                ),
+                {"rid": run_id},
+            )
+        ).fetchall()
+    finally:
+        await session.close()
+    return {
+        str(r.node_id): (str(r.status), dict(r.output or {}), r.error, int(r.retries or 0))
+        for r in rows
+    }
+
+
 async def run_workflow(
     workflow_id: UUID,
     payload: dict | None = None,
@@ -212,6 +251,9 @@ async def run_workflow(
     simulate: bool = False,
     resume: bool = False,
     run_id: UUID | None = None,
+    run_mode: str = "full",
+    target_node_id: str | None = None,
+    source_run_id: UUID | None = None,
 ) -> dict:
     """Ejecuta el workflow bajo un ExecutionContext explícito.
 
@@ -220,7 +262,21 @@ async def run_workflow(
     pasan, se derivan de la fila (llamadas internas/scheduler/hook).
 
     `resume=True` reanuda un run existente (aprobación humana) reutilizando
-    los pasos persistidos: requiere `run_id` y NO crea un run nuevo."""
+    los pasos persistidos: requiere `run_id` y NO crea un run nuevo.
+
+    Ejecución parcial (Fase 3): run_mode full|node|until_node|from_node con
+    `target_node_id`; node/from_node hidratan predecesores desde
+    `source_run_id` (o el último run exitoso) y/o pinned data en simulate."""
+    if run_mode not in ("full", "node", "until_node", "from_node"):
+        return {"status": "failed", "error": f"run_mode inválido: {run_mode}"}
+    if run_mode != "full" and not target_node_id:
+        return {"status": "failed", "error": "run_mode parcial requiere target_node_id"}
+    try:
+        from src.platform.workflows.pinned import ensure_pinned_table
+
+        await ensure_pinned_table()
+    except Exception:  # noqa: BLE001 — paridad dev/test; la migración manda en prod
+        pass
     trig = trigger if trigger in ("manual", "schedule", "webhook", "event", "approval") else "manual"
     wf = await _load_workflow_row(workflow_id)
     if wf is None:
@@ -268,9 +324,10 @@ async def run_workflow(
                 text(
                     "INSERT INTO workflow_runs "
                     "(id, workflow_id, organization_id, workspace_id, trigger, "
-                    "trigger_payload, correlation_id, actor_type, actor_id, simulate) "
+                    "trigger_payload, correlation_id, actor_type, actor_id, simulate, "
+                    "run_mode, target_node_id, source_run_id) "
                     "VALUES (:rid, :wid, :oid, :ws, :trig, CAST(:payload AS jsonb), "
-                    ":corr, :atype, :aid, :sim)"
+                    ":corr, :atype, :aid, :sim, :rmode, :target, :source_run)"
                 ),
                 {
                     "rid": run_id,
@@ -283,6 +340,9 @@ async def run_workflow(
                     "atype": actor_type[:20],
                     "aid": actor_id,
                     "sim": bool(simulate),
+                    "rmode": run_mode,
+                    "target": target_node_id,
+                    "source_run": source_run_id,
                 },
             )
             await session.commit()
@@ -308,6 +368,59 @@ async def run_workflow(
             wf.steps or [], wf.trigger_type, wf.trigger_config
         )
 
+    # --- Ejecución parcial (Fase 3) + pinned data de pruebas (Fase 4) -------
+    preloaded: dict[str, tuple[str, dict, str | None, int]] = {}
+    pinned: dict[str, dict] = {}
+    entry_override: list[str] | None = None
+    stop_after: str | None = None
+    if run_mode != "full" and target_node_id not in graph.node_map:
+        return {
+            "run_id": str(run_id),
+            "workflow_id": str(workflow_id),
+            "status": "failed",
+            "error": f"nodo objetivo no existe: {target_node_id}",
+            "run_mode": run_mode,
+        }
+    if simulate:
+        from src.platform.workflows.pinned import load_pinned_map
+
+        pinned = await load_pinned_map(eff_org, workflow_id)
+    if run_mode in ("node", "from_node"):
+        entry_override = [str(target_node_id)]
+        preloaded = await _preload_run_outputs(workflow_id, source_run_id)
+        # Solo predecesores: el objetivo se ejecuta y los descendientes no se saltan.
+        ancestors: set[str] = set()
+        cursor = [str(target_node_id)]
+        while cursor:
+            current_id = cursor.pop()
+            for edge in graph.edges:
+                if edge.to_node == current_id and edge.from_node not in ancestors:
+                    ancestors.add(edge.from_node)
+                    cursor.append(edge.from_node)
+        preloaded = {k: v for k, v in preloaded.items() if k in ancestors}
+        missing = sorted(
+            {
+                edge.from_node
+                for edge in graph.edges
+                if edge.to_node == target_node_id
+                and edge.from_node not in preloaded
+                and edge.from_node not in pinned
+            }
+        )
+        if missing and str(target_node_id) not in pinned:
+            return {
+                "run_id": str(run_id),
+                "workflow_id": str(workflow_id),
+                "status": "failed",
+                "error": (
+                    "Faltan datos de: " + ", ".join(missing)
+                    + ". Ejecuta el flujo completo o fija datos para pruebas."
+                ),
+                "run_mode": run_mode,
+            }
+    if run_mode in ("node", "until_node"):
+        stop_after = str(target_node_id)
+
     _SYSTEM_NODE_PERMS = frozenset(
         {
             "workflows:run",
@@ -332,7 +445,16 @@ async def run_workflow(
     )
 
     started = datetime.now(timezone.utc)
-    result = await execute_graph(graph, exec_ctx, payload or {}, resume=resume)
+    result = await execute_graph(
+        graph,
+        exec_ctx,
+        payload or {},
+        resume=resume,
+        stop_after=stop_after,
+        entry_override=entry_override,
+        preloaded=preloaded or None,
+        pinned=pinned or None,
+    )
 
     duration = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
     if simulate and result.status == "succeeded":
@@ -384,6 +506,7 @@ async def run_workflow(
         "correlation_id": corr,
         "cost_ms": round(result.cost_ms, 4),
         "simulate": bool(simulate),
+        "run_mode": run_mode,
     }
     body["result"] = {
         "summary": summaries[:5],
@@ -897,7 +1020,8 @@ async def run_detail(organization_id: UUID, run_id: UUID) -> dict | None:
                 text(
                     "SELECT r.id, r.workflow_id, r.status, r.started_at, r.completed_at, "
                     "r.duration_ms, r.error, r.trigger_payload, r.simulate, r.correlation_id, "
-                    "r.workspace_id, w.name AS workflow_name, w.organization_id "
+                    "r.workspace_id, r.run_mode, r.target_node_id, r.source_run_id, "
+                    "w.name AS workflow_name, w.organization_id "
                     "FROM workflow_runs r JOIN workflows w ON w.id = r.workflow_id "
                     "WHERE r.id = :rid"
                 ),
@@ -930,6 +1054,9 @@ async def run_detail(organization_id: UUID, run_id: UUID) -> dict | None:
         "trigger_payload": run.trigger_payload,
         "simulate": bool(run.simulate),
         "correlation_id": run.correlation_id,
+        "run_mode": getattr(run, "run_mode", "full"),
+        "target_node_id": getattr(run, "target_node_id", None),
+        "source_run_id": str(run.source_run_id) if getattr(run, "source_run_id", None) else None,
         "workspace_id": str(run.workspace_id) if run.workspace_id else None,
         "steps": [
             {

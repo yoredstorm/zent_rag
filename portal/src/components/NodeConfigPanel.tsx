@@ -1,4 +1,4 @@
-import { CaretDown, Code, LockSimple, Trash, X } from "@phosphor-icons/react";
+import { CaretDown, Code, LockSimple, PushPin, Trash, X } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
@@ -16,8 +16,10 @@ import { buildDataSources, type NodeSamples } from "../lib/dataPicker";
 import type { ConditionGroupNode } from "../lib/conditionTree";
 import { BusinessParameterForm } from "./workflowStudio/BusinessParameterForm";
 import { ConditionBuilder } from "./workflowStudio/ConditionBuilder";
+import { DataView } from "./workflowStudio/DataView";
 import { NotificationBuilder } from "./workflowStudio/NotificationBuilder";
 import { ScheduleBuilder } from "./workflowStudio/ScheduleBuilder";
+import type { RunDetail, RunStep } from "./WorkflowRunInspector";
 
 type Props = {
   graph: WorkflowGraph;
@@ -34,6 +36,15 @@ type Props = {
   nodeSchemas?: Record<string, NodeBusinessSchema> | null;
   /** Últimos outputs reales por nodo (Live Preview / Data Picker). */
   samples?: NodeSamples | null;
+  /** Último run inspeccionado: alimenta INPUT/OUTPUT/RUN. */
+  run?: RunDetail | null;
+  /** Dato fijado para pruebas en este nodo. */
+  pinned?: boolean;
+  onPinData?: (nodeId: string, output: Record<string, unknown>) => void;
+  onUnpinData?: (nodeId: string) => void;
+  /** Ejecución parcial (Fase 3). */
+  onRunPartial?: (nodeId: string, mode: "node" | "until_node" | "from_node") => void;
+  partialBusy?: string;
   /** Nivel de configuración controlado por el estudio. */
   configLevel?: ParameterLevel;
   onConfigLevelChange?: (level: ParameterLevel) => void;
@@ -43,6 +54,13 @@ type Props = {
 };
 
 const LEVELS: ParameterLevel[] = ["simple", "guided", "advanced"];
+
+const NODE_TABS = [
+  { key: "config", label: "Configurar" },
+  { key: "input", label: "Input" },
+  { key: "output", label: "Output" },
+  { key: "run", label: "Run" },
+] as const;
 
 /** Claves que el NotificationBuilder edita; el resto las cubre el schema. */
 const NOTIFY_BUILDER_KEYS = new Set(["channel", "title", "message"]);
@@ -60,6 +78,12 @@ export function NodeConfigPanel({
   mxActions,
   nodeSchemas,
   samples,
+  run,
+  pinned = false,
+  onPinData,
+  onUnpinData,
+  onRunPartial,
+  partialBusy,
   configLevel,
   onConfigLevelChange,
   className = "w-72 shrink-0",
@@ -77,6 +101,11 @@ export function NodeConfigPanel({
   const dataSources = useMemo(
     () => buildDataSources(graph, nodeSchemas ?? null, samples ?? null, n?.id ?? null),
     [graph, nodeSchemas, samples, n?.id],
+  );
+  const [tab, setTab] = useState<"config" | "input" | "output" | "run">("config");
+  const runStep = useMemo<RunStep | null>(
+    () => (node ? (run?.steps ?? []).find((s) => s.node_id === node.id) ?? null : null),
+    [run, node],
   );
 
   // Formulario de la acción del marketplace según su input_schema (misión §17).
@@ -232,6 +261,27 @@ export function NodeConfigPanel({
       </div>
 
       <div className="flex-1 space-y-2.5 overflow-y-auto p-3">
+        {/* Pestañas del nodo: configurar / input / output / run (Fase 1). */}
+        <div className="flex rounded-md border border-border p-0.5" role="tablist" aria-label="Vista del nodo" data-testid="wf-node-tabs">
+          {NODE_TABS.map((nodeTab) => (
+            <button
+              key={nodeTab.key}
+              type="button"
+              role="tab"
+              aria-selected={tab === nodeTab.key}
+              className={`flex-1 rounded px-1.5 py-1 text-[10px] ${
+                tab === nodeTab.key ? "bg-accent/15 font-medium text-text" : "text-faint hover:text-muted"
+              }`}
+              data-testid={`wf-tab-${nodeTab.key}`}
+              onClick={() => setTab(nodeTab.key)}
+            >
+              {nodeTab.label}
+            </button>
+          ))}
+        </div>
+
+        {tab === "config" && (
+        <>
         {/* Nivel de configuración: mismo grafo, distinta vista. */}
         <div className="flex rounded-md border border-border p-0.5" data-testid="wf-level-toggle" role="tablist" aria-label="Nivel de configuración">
           {LEVELS.map((l) => (
@@ -427,15 +477,20 @@ export function NodeConfigPanel({
           <p className="text-[10px] text-faint">Cambia a Avanzado para ver más opciones.</p>
         )}
 
-        {/* Puertos y políticas: solo Advanced (misión §25). */}
-        {showPolicies && (
-          <>
+        {/* Avanzado (Fase 6): potencia disponible, complejidad progresiva. */}
+        <details className="rounded-md border border-border" data-testid="wf-advanced">
+          <summary className="cursor-pointer list-none px-2 py-1.5 text-[10px] text-faint">
+            Avanzado · ejecución, errores, seguridad y developer
+          </summary>
+          <div className="space-y-2 border-t border-border p-2">
+            <p className="text-[9px] font-semibold tracking-wide text-faint uppercase">Seguridad</p>
             <div className="rounded-md border border-border p-2 text-[9px] text-faint">
               {ports.input.length > 0 && <p>in: {ports.input.map((p) => `${p.name}:${p.type}`).join(", ")}</p>}
               {ports.output.length > 0 && <p>out: {ports.output.map((p) => `${p.name}:${p.type}`).join(", ")}</p>}
               <p>riesgo: {meta.risk ?? "normal"}</p>
             </div>
 
+            <p className="text-[9px] font-semibold tracking-wide text-faint uppercase">Ejecución y errores</p>
             <div className="space-y-1.5">
               <label className="flex items-center justify-between gap-2 text-[10px] text-muted">
                 Reintentos (max_attempts)
@@ -469,6 +524,7 @@ export function NodeConfigPanel({
               </label>
             </div>
 
+            <p className="text-[9px] font-semibold tracking-wide text-faint uppercase">Developer</p>
             <details className="rounded-md border border-border p-2">
               <summary className="flex cursor-pointer list-none items-center gap-1 text-[10px] text-faint">
                 <CaretDown size={10} aria-hidden /> Configuración técnica (JSON)
@@ -482,7 +538,159 @@ export function NodeConfigPanel({
                 <LockSimple size={10} aria-hidden /> Los secretos se guardan en SecretStore, nunca en el grafo.
               </p>
             )}
-          </>
+          </div>
+        </details>
+        </>
+        )}
+
+        {tab === "input" && (
+          <div className="space-y-2" data-testid="wf-node-input">
+            <p className="text-[10px] text-muted">Datos con los que corrió este paso en el run seleccionado.</p>
+            <DataView
+              data={runStep?.input ?? null}
+              testId="wf-input-view"
+              emptyHint="Sin run reciente para este nodo: ejecuta una prueba."
+            />
+          </div>
+        )}
+
+        {tab === "output" && (
+          <div className="space-y-2" data-testid="wf-node-output">
+            {pinned && (
+              <p
+                className="flex items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 py-1 text-[10px] text-text"
+                data-testid="wf-pinned-badge"
+              >
+                <PushPin size={11} aria-hidden /> Datos fijados para pruebas (no aplican en producción)
+              </p>
+            )}
+            <DataView
+              data={runStep?.output ?? null}
+              testId="wf-output-view"
+              emptyHint="Sin salida registrada todavía."
+            />
+            {(() => {
+              const planned = (run?.planned_effects ?? []).filter((effect) => effect.node_id === current.id);
+              if (planned.length === 0) return null;
+              return (
+                <div className="rounded-md border border-border bg-soft px-2 py-1.5">
+                  <p className="text-[10px] font-semibold text-muted">Efectos planeados (simulación)</p>
+                  <DataView data={planned.map((effect) => effect.planned)} testId="wf-output-planned" />
+                </div>
+              );
+            })()}
+            <div className="flex flex-wrap gap-1.5">
+              {onPinData && runStep?.output && !pinned && (
+                <button
+                  type="button"
+                  className="btn btn-secondary min-h-7 gap-1 px-2 text-[10px]"
+                  data-testid="wf-pin-data"
+                  onClick={() => onPinData(current.id, runStep.output ?? {})}
+                >
+                  <PushPin size={11} aria-hidden /> Fijar datos para pruebas
+                </button>
+              )}
+              {pinned && onUnpinData && (
+                <button
+                  type="button"
+                  className="btn btn-ghost min-h-7 gap-1 px-2 text-[10px] text-danger"
+                  data-testid="wf-unpin-data"
+                  onClick={() => onUnpinData(current.id)}
+                >
+                  <Trash size={11} aria-hidden /> Quitar datos fijados
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab === "run" && (
+          <div className="space-y-2" data-testid="wf-node-run">
+            {runStep ? (
+              <>
+                <dl className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px]">
+                  <div>
+                    <dt className="text-faint">Estado</dt>
+                    <dd className="text-text">{runStep.status}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-faint">Duración</dt>
+                    <dd className="text-text">{runStep.duration_ms != null ? `${runStep.duration_ms} ms` : "—"}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-faint">Intentos</dt>
+                    <dd className="text-text">{runStep.attempt ?? 1}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-faint">Reintentos</dt>
+                    <dd className="text-text">{runStep.retries ?? 0}</dd>
+                  </div>
+                  {typeof runStep.output?.cost === "number" && runStep.output.cost > 0 && (
+                    <div>
+                      <dt className="text-faint">Costo</dt>
+                      <dd className="text-text">S/ {Number(runStep.output.cost).toFixed(4)}</dd>
+                    </div>
+                  )}
+                  {typeof runStep.output?.model === "string" && (
+                    <div>
+                      <dt className="text-faint">Modelo</dt>
+                      <dd className="truncate text-text">{String(runStep.output.model)}</dd>
+                    </div>
+                  )}
+                </dl>
+                {runStep.error && (
+                  <p className="rounded-md border border-danger/40 bg-danger-soft px-2 py-1.5 text-[10px] text-danger">
+                    {runStep.error}
+                  </p>
+                )}
+                <p className="text-[9px] text-faint">
+                  Run {run?.id} · {run?.status}
+                  {run?.duration_ms != null ? ` · ${run.duration_ms} ms` : ""}
+                </p>
+              </>
+            ) : (
+              <p className="text-[11px] text-faint" data-testid="wf-node-run-empty">
+                Este nodo no participó en el último run (o fue saltado).
+              </p>
+            )}
+            {onRunPartial && !current.type.startsWith("trigger_") && current.type !== "end" && (
+              <div className="space-y-1.5 border-t border-border pt-2">
+                <p className="text-[9px] font-semibold tracking-wide text-faint uppercase">Ejecución parcial (pruebas)</p>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    className="btn btn-secondary min-h-7 px-2 text-[10px]"
+                    disabled={!!partialBusy}
+                    data-testid="wf-run-node"
+                    onClick={() => onRunPartial(current.id, "node")}
+                  >
+                    Ejecutar este nodo
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary min-h-7 px-2 text-[10px]"
+                    disabled={!!partialBusy}
+                    data-testid="wf-run-until"
+                    onClick={() => onRunPartial(current.id, "until_node")}
+                  >
+                    Ejecutar hasta aquí
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-secondary min-h-7 px-2 text-[10px]"
+                    disabled={!!partialBusy}
+                    data-testid="wf-run-from"
+                    onClick={() => onRunPartial(current.id, "from_node")}
+                  >
+                    Ejecutar desde aquí
+                  </button>
+                </div>
+                <p className="text-[9px] text-faint">
+                  Usa datos del último run o de los datos fijados. Nada se publica ni se activa.
+                </p>
+              </div>
+            )}
+          </div>
         )}
       </div>
     </aside>

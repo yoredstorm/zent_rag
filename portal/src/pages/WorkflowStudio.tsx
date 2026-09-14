@@ -87,6 +87,8 @@ export default function WorkflowStudioPage() {
   const [run, setRun] = useState<RunDetail | null>(null);
   const [dockOpen, setDockOpen] = useState(panel === "test");
   const [patchOpen, setPatchOpen] = useState(false);
+  const [pinnedNodes, setPinnedNodes] = useState<string[]>([]);
+  const [partialBusy, setPartialBusy] = useState("");
 
   const status = detail?.status ?? "draft";
 
@@ -175,6 +177,15 @@ export default function WorkflowStudioPage() {
         organizationId: session.organizationId,
       });
       applyDetail(d);
+      try {
+        const pinned = await api<{ nodes: { node_id: string }[] }>(
+          `/api/v1/workflows/${id}/pinned-data`,
+          { token: session.token, organizationId: session.organizationId },
+        );
+        setPinnedNodes((pinned.nodes || []).map((entry) => entry.node_id));
+      } catch {
+        setPinnedNodes([]);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
     } finally {
@@ -296,6 +307,69 @@ export default function WorkflowStudioPage() {
       setError(e instanceof Error ? e.message : "Error");
     } finally {
       setStatusBusy(false);
+    }
+  }
+
+  async function pinData(nodeId: string, output: Record<string, unknown>) {
+    if (!session || !id) return;
+    setError("");
+    try {
+      await api(`/api/v1/workflows/${id}/pinned-data/${encodeURIComponent(nodeId)}`, {
+        method: "PUT",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify({ output }),
+      });
+      setPinnedNodes((prev) => [...new Set([...prev, nodeId])]);
+      setMsg("Datos fijados solo para pruebas.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    }
+  }
+
+  async function unpinData(nodeId: string) {
+    if (!session || !id) return;
+    setError("");
+    try {
+      await api(`/api/v1/workflows/${id}/pinned-data/${encodeURIComponent(nodeId)}`, {
+        method: "DELETE",
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      setPinnedNodes((prev) => prev.filter((entry) => entry !== nodeId));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    }
+  }
+
+  async function partialRun(nodeId: string, mode: "node" | "until_node" | "from_node") {
+    if (!session || !id) return;
+    setPartialBusy(nodeId);
+    setError("");
+    try {
+      const out = await api<{ run_id?: string; status?: string; error?: string }>(
+        `/api/v1/workflows/${id}/run`,
+        {
+          method: "POST",
+          token: session.token,
+          organizationId: session.organizationId,
+          body: JSON.stringify({ payload: {}, simulate: true, run_mode: mode, target_node_id: nodeId }),
+        },
+      );
+      if (out.run_id) {
+        const detail = await api<RunDetail>(`/api/v1/workflows/runs/${out.run_id}`, {
+          token: session.token,
+          organizationId: session.organizationId,
+        });
+        setRun(detail);
+        const failed = (detail.steps ?? []).find((step) => step.status === "failed");
+        if (failed) setError(failed.error || "La ejecución parcial falló.");
+      }
+      await load(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+    } finally {
+      setPartialBusy("");
     }
   }
 
@@ -476,6 +550,12 @@ export default function WorkflowStudioPage() {
             onSelectNode={setSelectedNode}
             configLevel={configLevel}
             onConfigLevelChange={setConfigLevel}
+            run={run}
+            pinnedNodes={pinnedNodes}
+            onPinData={(nodeId, output) => void pinData(nodeId, output)}
+            onUnpinData={(nodeId) => void unpinData(nodeId)}
+            onRunPartial={(nodeId, mode) => void partialRun(nodeId, mode)}
+            partialBusy={partialBusy}
           />
         </div>
         {id && (

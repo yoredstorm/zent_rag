@@ -1,5 +1,6 @@
 import { CaretDown, CaretUp } from "@phosphor-icons/react";
 import { useState } from "react";
+import { DataView } from "./workflowStudio/DataView";
 
 export type RunStep = {
   step_index: number;
@@ -74,10 +75,16 @@ function Step({ s, onSelectNode }: { s: RunStep; onSelectNode?: (id: string) => 
         <p className="border-t border-border px-2 py-1 text-[10px] text-muted line-clamp-2">{text}</p>
       )}
       {open && (
-        <div className="space-y-1 border-t border-border px-2 py-1 font-mono text-[9px] text-muted">
-          <p className="text-faint">input: {JSON.stringify(s.input ?? {})}</p>
-          <p className="break-all">output: {JSON.stringify(s.output ?? {})}</p>
-          {s.idempotency_key && <p className="text-faint">idem: {s.idempotency_key}</p>}
+        <div className="space-y-2 border-t border-border px-2 py-2">
+          <div>
+            <p className="mb-1 text-[9px] font-semibold tracking-wide text-faint uppercase">Entrada</p>
+            <DataView data={s.input} testId={`wf-step-input-${s.node_id ?? s.step_index}`} emptyHint="Sin entrada registrada." />
+          </div>
+          <div>
+            <p className="mb-1 text-[9px] font-semibold tracking-wide text-faint uppercase">Salida</p>
+            <DataView data={s.output} testId={`wf-step-output-${s.node_id ?? s.step_index}`} emptyHint="Sin salida registrada." />
+          </div>
+          {s.idempotency_key && <p className="font-mono text-[9px] text-faint">idem: {s.idempotency_key}</p>}
         </div>
       )}
     </div>
