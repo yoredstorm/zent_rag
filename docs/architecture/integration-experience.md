@@ -140,3 +140,7 @@ como texto; falta envolverlos explícitamente como `UNTRUSTED DATA` a nivel de n
   `test_workflow_studio.py`, `test_workflows.py`, `test_living_workflows.py`,
   `test_workflow_business_schema.py`, `test_workflow_partial_runs.py` — 100 passed.
 - `portal/src/pages/IntegrationsPage.test.tsx`, `typecheck` y suites existentes.
+- Docker: `pyyaml` declarado explícitamente en `Dockerfile.api` y `pyproject.toml`
+  (litellm solo lo trae en extras proxy/cli); import YAML perezoso para que los
+  documentos JSON sigan funcionando sin esa dependencia. `docker compose config`
+  validado en dev y prod; `npm run build` del portal verificado.

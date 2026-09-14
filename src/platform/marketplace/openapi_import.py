@@ -17,8 +17,6 @@ import re
 from typing import Any
 from urllib.parse import urlparse
 
-import yaml
-
 from src.infrastructure.observability.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -53,6 +51,18 @@ class OpenApiImportError(ValueError):
     def __init__(self, message: str, code: str = "OPENAPI_INVALID") -> None:
         super().__init__(message)
         self.code = code
+
+
+def _load_yaml(text: str) -> Any:
+    """YAML perezoso: OpenAPI JSON sigue funcionando sin PyYAML instalado."""
+    try:
+        import yaml  # noqa: PLC0415 — dependencia declarada en Dockerfile.api/pyproject
+    except ImportError as exc:  # pragma: no cover — entorno sin PyYAML
+        raise OpenApiImportError(
+            "PyYAML no está instalado; pega el documento como JSON o instala 'pyyaml'.",
+            code="OPENAPI_YAML_UNAVAILABLE",
+        ) from exc
+    return yaml.safe_load(text)
 
 
 # ---------------------------------------------------------------------------
@@ -125,9 +135,11 @@ def parse_openapi_document(value: str | bytes | dict, *, format_hint: str | None
                 document = None
         if document is None:
             try:
-                parsed = yaml.safe_load(text)
+                parsed = _load_yaml(text)
                 document = parsed if isinstance(parsed, dict) else None
-            except yaml.YAMLError as exc:
+            except OpenApiImportError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — no acoplamos el import de yaml
                 raise OpenApiImportError(
                     f"no pude leer el documento como JSON/YAML: {str(exc)[:120]}",
                     code="OPENAPI_INVALID_DOCUMENT",

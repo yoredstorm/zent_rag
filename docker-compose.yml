@@ -79,6 +79,10 @@ x-common-env: &common-env
   RAG_CONNECTOR_SECRETS_KEY: ${RAG_CONNECTOR_SECRETS_KEY:-zent-connector-secrets-dev-key-change-me}
   RAG_CONNECTOR_TEST_TIMEOUT_SECONDS: ${RAG_CONNECTOR_TEST_TIMEOUT_SECONDS:-10}
   RAG_CONNECTOR_PLUGIN_MODULES: ${RAG_CONNECTOR_PLUGIN_MODULES:-}
+  # Universal API Connector + demo integrations: el contenedor api necesita
+  # egress HTTPS (443) a pokeapi.co, api.open-meteo.com, geocoding-api.open-meteo.com
+  # y jsonplaceholder.typicode.com (demos), y a las APIs que importe cada tenant.
+  # SSRF check, allowlist, rate limits y timeout se aplican en runtime (marketplace).
   # Usage & Cost Engine
   RAG_USAGE_ENGINE_ENABLED: ${RAG_USAGE_ENGINE_ENABLED:-true}
   RAG_USAGE_COST_CURRENCY: ${RAG_USAGE_COST_CURRENCY:-USD}
@@ -259,8 +263,10 @@ services:
       RAG_SEED_DEMO_DATA: ${RAG_SEED_DEMO_DATA:-true}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # SQL 01–80 (incl. 78-workspace-isolation / 79-managed-db) solo en volumen vacío.
-      # Volúmenes existentes: alembic upgrade head en el contenedor api (087 workflows studio).
+      # Init solo en volumen vacío: SQL top-level 01–31 y 77–79 + scripts .sh.
+      # Los espejos 32–86 viven en db_init/sql/ y las migraciones 087–114
+      # (incl. 113 integration connector, 114 assistant inbox) se aplican con
+      # `alembic upgrade head` al arrancar el contenedor api.
       # IMPORTANTE: en volúmenes existentes los scripts .sh de db_init NO se
       # re-ejecutan. Si el rol rag_reader no existe (09-readonly-role.sh), el
       # SQL Expert falla silenciosamente y responde vía RAG. Provisionar a

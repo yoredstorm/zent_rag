@@ -43,6 +43,10 @@ x-prod-env: &prod-env
   RAG_UPLOAD_DIR: /app/uploads
   # Cognitive OS (fases 1-10): off | shadow | limited | active (default off).
   RAG_COGNITIVE_OS_ENABLED: ${RAG_COGNITIVE_OS_ENABLED:-off}
+  # Universal API Connector: el API necesita egress HTTPS hacia las APIs que
+  # importen los tenants (demos: pokeapi.co, open-meteo.com,
+  # jsonplaceholder.typicode.com). SSRF check, allowlist y rate limits en runtime.
+  RAG_CONNECTOR_SSRF_BLOCK_PRIVATE: ${RAG_CONNECTOR_SSRF_BLOCK_PRIVATE:-true}
 
 services:
   api:
