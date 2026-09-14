@@ -17,6 +17,7 @@ from uuid import UUID
 from src.infrastructure.observability.logging_config import get_logger
 from src.platform.workflows.context import WorkflowContext
 from src.platform.workflows.contributions import ContextWrite, NodeContribution
+from src.platform.workflows.node_catalog import semantic_metadata
 from src.platform.workflows.values import node_provenance
 
 logger = get_logger(__name__)
@@ -46,12 +47,27 @@ class NodeTypeDef:
     node_type: str
     version: int
     label: str
-    category: str  # trigger | data | ai | integration | logic | control | output
+    category: str  # trigger | data | ai | integration | logic | business | control | output
     risk_level: str  # info | normal | elevated | critical
     capabilities: frozenset[str]
     inputs: dict[str, dict] = field(default_factory=dict)
     outputs: dict[str, dict] = field(default_factory=dict)
     execute: Callable[["NodeContext"], Awaitable["NodeOutcome"]] | None = None
+    # --- Metadata semántica de negocio (Fase 3; catálogo en Fase 4) ------
+    business_name: str = ""
+    short_description: str = ""
+    long_description: str = ""
+    subcategory: str | None = None
+    when_to_use: tuple[str, ...] = ()
+    when_not_to_use: tuple[str, ...] = ()
+    examples: tuple[dict[str, Any], ...] = ()
+    context_reads: tuple[str, ...] = ()
+    context_writes: tuple[str, ...] = ()
+    requires: tuple[str, ...] = ()
+    optional_dependencies: tuple[str, ...] = ()
+    supports_simulation: bool | None = None
+    supports_agent: bool = False
+    supports_knowledge: bool = False
 
     @property
     def simulated(self) -> bool:
@@ -61,6 +77,17 @@ class NodeTypeDef:
             & {WRITE_DB, CALLS_EXTERNAL, SENDS_NOTIFICATION, NEEDS_APPROVAL}
             or self.risk_level in ("elevated", "critical")
         )
+
+    @property
+    def simulation_supported(self) -> bool:
+        """¿Puede producir planned/simulated sin ejecutar efectos?
+
+        `supports_simulation=None` mantiene la derivación histórica
+        (capabilities + risk).
+        """
+        if self.supports_simulation is not None:
+            return bool(self.supports_simulation)
+        return self.simulated
 
 
 @dataclass
@@ -1464,6 +1491,7 @@ def _register_defaults() -> None:
             risk_level=risk,
             capabilities=frozenset({IS_TRIGGER}),
             execute=_exec_end,
+            **semantic_metadata(ttype),
         )
 
     # DATA
@@ -1477,6 +1505,7 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "json"}},
         execute=_exec_api_call,
+        **semantic_metadata("api_call"),
     )
     registry.register(
         "kb_query",
@@ -1488,6 +1517,7 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "json"}},
         execute=_exec_kb_query,
+        **semantic_metadata("kb_query"),
     )
     registry.register(
         "query_business_data",
@@ -1499,6 +1529,7 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "record_list"}},
         execute=_exec_query_business_data,
+        **semantic_metadata("query_business_data"),
     )
 
     # AI
@@ -1512,6 +1543,7 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "json"}},
         execute=_exec_llm,
+        **semantic_metadata("llm"),
     )
 
     # LOGIC
@@ -1525,6 +1557,7 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "boolean"}, "then": {"type": "json"}, "else": {"type": "json"}},
         execute=_exec_condition,
+        **semantic_metadata("condition"),
     )
     registry.register(
         "for_each",
@@ -1536,6 +1569,7 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "json"}, "done": {"type": "json"}},
         execute=_exec_for_each,
+        **semantic_metadata("for_each"),
     )
     registry.register(
         "join",
@@ -1547,6 +1581,7 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "json"}},
         execute=_exec_join,
+        **semantic_metadata("join"),
     )
     registry.register(
         "merge",
@@ -1558,6 +1593,7 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "json"}},
         execute=_exec_merge,
+        **semantic_metadata("merge"),
     )
     registry.register(
         "filter",
@@ -1569,6 +1605,7 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "record_list"}},
         execute=_exec_filter,
+        **semantic_metadata("filter"),
     )
     registry.register(
         "set_variable",
@@ -1580,6 +1617,7 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "json"}},
         execute=_exec_set_variable,
+        **semantic_metadata("set_variable"),
     )
 
     # OUTPUT
@@ -1593,6 +1631,7 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "json"}},
         execute=_exec_notify,
+        **semantic_metadata("notify"),
     )
 
     # MARKETPLACE (Phase 32B)
@@ -1606,6 +1645,7 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "json"}},
         execute=_exec_marketplace_action,
+        **semantic_metadata("marketplace_action"),
     )
 
     # INTELLIGENCE (Phase 32C)
@@ -1619,6 +1659,7 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "json"}},
         execute=_exec_business_result,
+        **semantic_metadata("business_result"),
     )
 
     # BUSINESS / PACKS (Phase 33B) — nodo compuesto de alto nivel.
@@ -1632,6 +1673,7 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "json"}},
         execute=_exec_business_node,
+        **semantic_metadata("business_node"),
     )
 
     # CONTROL
@@ -1645,6 +1687,7 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "json"}},
         execute=_exec_stop,
+        **semantic_metadata("stop"),
     )
     registry.register(
         "human_approval",
@@ -1656,6 +1699,7 @@ def _register_defaults() -> None:
         inputs={"in": {"type": "json"}},
         outputs={"out": {"type": "json"}},
         execute=_exec_human_approval,
+        **semantic_metadata("human_approval"),
     )
     registry.register(
         "end",
@@ -1665,6 +1709,7 @@ def _register_defaults() -> None:
         risk_level="info",
         capabilities=frozenset({VIRTUAL}),
         execute=_exec_end,
+        **semantic_metadata("end"),
     )
 
 

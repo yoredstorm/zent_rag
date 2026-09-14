@@ -448,7 +448,7 @@ async def execute_graph(
                 node_id=node_id,
                 node_type=node.type,
                 contribution=outcome.contribution,
-                allowed_sections=getattr(node_def, "context_writes", None) or None,
+                allowed_sections=getattr(node_def, "context_writes", None),
             )
             exec_.contribution = report.to_dict()
         _emit_node_metric(node.type, exec_.status, exec_.duration_ms)
