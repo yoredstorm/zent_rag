@@ -37,6 +37,8 @@ export type MarketplaceContext = {
 type Props = {
   onAdd: (meta: NodeMeta) => void;
   usedTypes: string[];
+  /** Catálogo backend (Fase 5). Sin él se usa NODE_LIBRARY local. */
+  nodes?: Record<string, NodeMeta> | null;
   marketplace?: MarketplaceContext | null;
   onAddMarketplaceAction?: (installId: string, action: MxInstall["actions"][number]) => void;
   onAddRecommendation?: (rec: MxRecommendation) => void;
@@ -60,9 +62,12 @@ const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
   disabled: { text: "deshabilitada", cls: "badge-muted" },
 };
 
-export function NodeLibrary({ onAdd, usedTypes, marketplace, onAddMarketplaceAction, onAddRecommendation, onInstall, className = "h-[560px]" }: Props) {
+export function NodeLibrary({ onAdd, usedTypes, nodes, marketplace, onAddMarketplaceAction, onAddRecommendation, onInstall, className = "h-[560px]" }: Props) {
   const [q, setQ] = useState("");
-  const items = useMemo(() => Object.values(NODE_LIBRARY).filter((m) => !m.type.startsWith("trigger_") || usedTypes.length === 0), [usedTypes]);
+  const items = useMemo(
+    () => Object.values(nodes ?? NODE_LIBRARY).filter((m) => !m.type.startsWith("trigger_") || usedTypes.length === 0),
+    [usedTypes, nodes]
+  );
   const filtered = items.filter(
     (m) => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.type.includes(q.toLowerCase())
   );
@@ -114,7 +119,9 @@ export function NodeLibrary({ onAdd, usedTypes, marketplace, onAddMarketplaceAct
                     key={m.type}
                     type="button"
                     data-testid={`wf-add-${m.type}`}
-                    className="flex w-full items-center gap-2 rounded-md border border-border bg-soft/60 px-2 py-1.5 text-left transition-colors hover:border-accent/40 hover:bg-soft"
+                    disabled={m.available === false}
+                    title={m.available === false ? m.unavailableReason ?? "No disponible" : m.description}
+                    className="flex w-full items-center gap-2 rounded-md border border-border bg-soft/60 px-2 py-1.5 text-left transition-colors hover:border-accent/40 hover:bg-soft disabled:cursor-not-allowed disabled:opacity-50"
                     onClick={() => onAdd(m)}
                   >
                     <span className="flex h-6 w-6 items-center justify-center rounded bg-bg text-[12px]" aria-hidden>
@@ -122,7 +129,9 @@ export function NodeLibrary({ onAdd, usedTypes, marketplace, onAddMarketplaceAct
                     </span>
                     <span className="min-w-0">
                       <span className="block truncate text-[11px] font-medium text-text">{m.label}</span>
-                      {m.risk === "elevated" || m.risk === "critical" ? (
+                      {m.available === false ? (
+                        <span className="block truncate text-[9px] text-faint">{m.unavailableReason ?? "No disponible"}</span>
+                      ) : m.risk === "elevated" || m.risk === "critical" ? (
                         <span className="block truncate text-[9px] text-warn">riesgo {m.risk}</span>
                       ) : null}
                     </span>

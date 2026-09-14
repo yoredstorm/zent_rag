@@ -77,6 +77,13 @@ export type NodeMeta = {
   defaults?: Record<string, unknown>;
   summary?: (config: Record<string, unknown>) => string;
   risk?: "info" | "normal" | "elevated" | "critical";
+  /** Catálogo backend (Fase 4/5): descripción y disponibilidad por tenant. */
+  description?: string;
+  available?: boolean;
+  unavailableReason?: string | null;
+  contextReads?: string[];
+  contextWrites?: string[];
+  requires?: string[];
 };
 
 export const CATEGORY_META: Record<NodeCategory, { label: string; color: string }> = {

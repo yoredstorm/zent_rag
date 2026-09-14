@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import type { GraphEdge, GraphNode, WorkflowGraph } from "../lib/workflowGraph";
+import type { GraphEdge, GraphNode, NodeMeta, WorkflowGraph } from "../lib/workflowGraph";
 import { nodeMeta, nodePorts, referenceOptions } from "../lib/workflowGraph";
 import type {
   BusinessParameter,
@@ -34,6 +34,8 @@ type Props = {
   mxActions?: Record<string, { action_id: string; display_name: string }[]>;
   /** Schemas de negocio por node_type (GET /workflows/node-schemas). */
   nodeSchemas?: Record<string, NodeBusinessSchema> | null;
+  /** Catálogo backend (GET /workflows/node-catalog) con disponibilidad. */
+  catalogNodes?: Record<string, NodeMeta> | null;
   /** Últimos outputs reales por nodo (Live Preview / Data Picker). */
   samples?: NodeSamples | null;
   /** Último run inspeccionado: alimenta INPUT/OUTPUT/RUN. */
@@ -77,6 +79,7 @@ export function NodeConfigPanel({
   mxInstalls,
   mxActions,
   nodeSchemas,
+  catalogNodes,
   samples,
   run,
   pinned = false,
@@ -162,7 +165,7 @@ export function NodeConfigPanel({
   }
 
   const current = node!;
-  const meta = nodeMeta(current.type);
+  const meta = catalogNodes?.[current.type] ?? nodeMeta(current.type);
   const ports = nodePorts(current.type);
 
   function patchConfig(patch: Record<string, unknown>) {

@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
+import { NODE_LIBRARY, nodeMeta } from "../lib/workflowGraph";
 import { NodeLibrary, type MarketplaceContext } from "./NodeLibrary";
 
 const MKT: MarketplaceContext = {
@@ -37,6 +38,28 @@ describe("NodeLibrary", () => {
     const buttons = screen.getAllByRole("button");
     const labels = buttons.map((b) => b.getAttribute("data-testid")).filter(Boolean);
     expect(labels[0]).toBe("wf-add-llm");
+  });
+
+  it("usa el catálogo backend: etiqueta y nodo deshabilitado con razón", () => {
+    render(
+      <NodeLibrary
+        onAdd={() => undefined}
+        usedTypes={[]}
+        nodes={{
+          ...NODE_LIBRARY,
+          llm: {
+            ...nodeMeta("llm"),
+            label: "Agente backend",
+            available: false,
+            unavailableReason: "No hay agentes disponibles.",
+          },
+        }}
+      />
+    );
+    const button = screen.getByTestId("wf-add-llm");
+    expect(button).toHaveTextContent("Agente backend");
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute("title", "No hay agentes disponibles.");
   });
 });
 

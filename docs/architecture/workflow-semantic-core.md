@@ -1,6 +1,6 @@
 # Zent Workflow Semantic Core — Phase 0 Architecture Audit
 
-> **Status:** Phase 0 (auditoría) completa. D1–D3 confirmadas (2026-09-14). **Fases 1–4 implementadas** (contexto compartido + contribuciones; valores tipados y provenance; metadata semántica con allowlist estricta; catálogo backend tenant-aware `GET /node-catalog`). Fases 5–8 pendientes.
+> **Status:** Phase 0 (auditoría) completa. D1–D3 confirmadas (2026-09-14). **Fases 1–5 implementadas** (contexto compartido + contribuciones; valores tipados y provenance; metadata semántica con allowlist estricta; catálogo backend tenant-aware; portal dinámico con fallback local). Fases 6–8 pendientes.
 > **Fecha:** 2026-09-14
 > **Base:** `feat/knowledge-cognitive-os` @ `3efd894` (más cambios locales de trabajo no relacionados).
 > **Programa:** convertir el Workflow en el orquestador semántico central de Zent.
@@ -646,7 +646,7 @@ CREATE INDEX IF NOT EXISTS idx_wf_ctx_org ON workflow_run_contexts(organization_
 | 2 | Adaptadores raw↔`WorkflowValue` + provenance real en outputs de nodos (los tipos base ya están en Fase 1) | `feat(workflows): typed business values and provenance` | unit values |
 | 3 | Metadata semántica en `NodeTypeDef` + `node_catalog.py` (`NODE_METADATA`, categorías) + registros + `parameters.py` alineado + allowlist estricta de `context_writes` en runtime | `feat(workflows): semantic node metadata and result contracts` | unit registry invariants |
 | 4 | `node_catalog.py` (`build_node_catalog`, `catalog_availability`) + `GET /node-catalog` (perm `workflows:read`) + disponibilidad tenant (`load_capabilities` + `managed_db`) + filtro de permisos + alias `/node-schemas` intacto | `feat(workflows): backend node catalog api` | API + RBAC |
-| 5 | `workflowCatalog.ts` + render dinámico con fallback + paridad | `feat(portal): dynamic node catalog with local fallback` | vitest + e2e studio |
+| 5 | `workflowCatalog.ts` (normalización + caché + fallback) + `NodeLibrary`/`NodeConfigPanel`/`WorkflowCanvasEditor` consumen el catálogo (nodos no disponibles deshabilitados con razón) + `NODE_LIBRARY` como fallback | `feat(portal): dynamic node catalog with local fallback` | vitest + e2e studio |
 | 6 | `references.py` + `data_catalog.py` + endpoint + DataPicker backend-first | `feat(workflows): data reference model and graph data catalog` | unit + API |
 | 7 | Evidence/claims: `kb_query` V2 (flag), `query_business_data` rows/columns + evidence_ids, contribution refs, migración 115 + store | `feat(workflows): evidence claim integration and context persistence` | integración + cross-tenant |
 | 8 | Inspector backend + UI + eventos de run (opcional) | `feat(workflows): execution inspector for semantic context` | API + vitest |
@@ -675,6 +675,12 @@ Runtime: el merge ahora usa `context_writes` como allowlist estricta (`()` = nin
 capacidades del tenant (`load_capabilities`, ahora con `managed_db`) + permisos del caller; `catalog_availability()` puro y testeable.
 Endpoint `GET /api/v1/workflows/node-catalog` (`workflows:read`; `admin:*` omite filtro de permisos; workspace del request).
 `/node-schemas` sigue intacto como alias. Tests: 5 nuevos en `tests/test_workflow_node_catalog.py` (disponibilidad, permisos, API, cobertura, auth).
+
+**Fase 5 entregada (2026-09-14)** — `portal/src/lib/workflowCatalog.ts` (nuevo): normaliza `GET /node-catalog` a `NodeMeta`,
+conserva icono/color/summary/defaults locales, convierte `parameters` a campos legacy, cachea por tenant (TTL 60s) y devuelve `null` si falla.
+`NodeLibrary` acepta `nodes` (catálogo) y deshabilita nodos no disponibles con razón; `WorkflowCanvasEditor` carga el catálogo con fallback
+silencioso; `NodeConfigPanel` prefiere el catálogo para label/icono/color. `NODE_LIBRARY` sigue como fallback. Tests: `workflowCatalog.test.ts` (7) +
+`NodeLibrary.test.tsx` (1 nuevo).
 
 ### Primer test end-to-end (brief §20)
 

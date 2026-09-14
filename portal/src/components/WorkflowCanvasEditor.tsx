@@ -5,8 +5,9 @@ import { useAuth } from "../auth";
 import type { NodeBusinessSchema, NodeSchemasPayload, ParameterLevel } from "../lib/businessSchema";
 import type { NodeSamples } from "../lib/dataPicker";
 import type { MarketRec, ShopInstall } from "../lib/marketplaceCanvas";
-import type { GraphNode, WorkflowGraph } from "../lib/workflowGraph";
+import type { GraphNode, NodeMeta, WorkflowGraph } from "../lib/workflowGraph";
 import { makeNode, newEdgeId, prepareGraphForSave, triggerConfigOf, triggerTypeOf } from "../lib/workflowGraph";
+import { fetchNodeCatalog, libraryWithCatalog } from "../lib/workflowCatalog";
 import { NodeConfigPanel } from "./NodeConfigPanel";
 import { NodeLibrary, type MarketplaceContext, type MxRecommendation } from "./NodeLibrary";
 import { WorkflowCanvas, type RunOverlay } from "./WorkflowCanvas";
@@ -66,6 +67,7 @@ export function WorkflowCanvasEditor({
   const [selectedEdge, setSelectedEdge] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [nodeSchemas, setNodeSchemas] = useState<Record<string, NodeBusinessSchema> | null>(null);
+  const [catalogNodes, setCatalogNodes] = useState<Record<string, NodeMeta> | null>(null);
   const [samples, setSamples] = useState<NodeSamples | null>(null);
   const [mxInstalls, setMxInstalls] = useState<{ id: string; integration: { slug: string; name: string } }[]>([]);
   const [mxActions, setMxActions] = useState<Record<string, { action_id: string; display_name: string }[]>>({});
@@ -102,6 +104,23 @@ export function WorkflowCanvasEditor({
         setNodeSchemas(map);
       })
       .catch(() => undefined);
+  }, [session, workflowId]);
+
+  // Catálogo semántico backend: nodos autorizados/disponibles del tenant.
+  // Si el endpoint falla, el rail usa NODE_LIBRARY local (fallback).
+  useEffect(() => {
+    if (!session) return;
+    let alive = true;
+    void fetchNodeCatalog(
+      <T,>(path: string) =>
+        api<T>(path, { token: session.token, organizationId: session.organizationId }),
+      session.organizationId,
+    ).then((payload) => {
+      if (alive) setCatalogNodes(payload ? libraryWithCatalog(payload) : null);
+    });
+    return () => {
+      alive = false;
+    };
   }, [session, workflowId]);
 
   // Live Preview / Data Picker: outputs reales del último run (se refresca
@@ -416,6 +435,7 @@ export function WorkflowCanvasEditor({
       <NodeLibrary
         className="h-full"
         usedTypes={local ? local.nodes.map((n) => n.type) : []}
+        nodes={catalogNodes}
         onAdd={(meta) => insertNode(meta.type)}
         marketplace={mkt}
         onAddMarketplaceAction={addMarketplaceAction}
@@ -527,6 +547,7 @@ export function WorkflowCanvasEditor({
               mxInstalls={mxInstalls}
               mxActions={mxActions}
               nodeSchemas={nodeSchemas}
+              catalogNodes={catalogNodes}
               samples={samples}
               run={run}
               pinned={Boolean(selectedNodeObj && pinnedNodes?.includes(selectedNodeObj.id))}
