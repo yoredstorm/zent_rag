@@ -704,6 +704,11 @@ Portal: `WorkflowRunInspector` agrega secciones colapsables "Datos y conocimient
 "Artefactos" y "Acciones del run" (solo datos estructurados; sin CoT). Tests: `tests/test_workflow_context_store.py` (+ aserciones de inspector)
 y `portal/src/components/WorkflowRunInspector.test.tsx` (2).
 
+**E2E de aceptación (2026-09-14)** — `tests/test_workflow_semantic_core.py`: flujo completo `sale.closed` → `query_business_data` →
+`kb_query` V2 → `llm` con `context_reads` → `condition` → `notify` (simulado). Valida outputs crudos y tipados, contexto ensamblado en el request
+del agente (data/knowledge/evidence, sin `security`), evidencia real del ledger con validación por tenant, decisiones/acciones en el inspector y
+ausencia de pegamento manual de strings. Fix de soporte: `ContextMerger._wrap` ahora conserva la `provenance` declarada por el nodo.
+
 ### Primer test end-to-end (brief §20)
 
 `tests/test_workflow_semantic_core.py`:
@@ -735,6 +740,8 @@ Validaciones mínimas:
 | Frontend y planner IA descubren capacidades del mismo catálogo | `GET /node-catalog` consumido por portal y copilot |
 | Evidencia de Knowledge llega al Agent sin concatenación manual | contribution `evidence` + assembler |
 | Agent recibe contexto estructurado, no prompt gigante | `AssembledContext.rendered`/`payload` + budget |
+
+**Estado (2026-09-14): los 6 criterios quedan cubiertos** por el E2E `tests/test_workflow_semantic_core.py` y las fases 1–8.
 
 ---
 
