@@ -1,7 +1,7 @@
 # Zent AI Workflow Architect — Phase 0 Architecture Audit
 
-> **Status:** Phase 0 (auditoría) completa. **First delivery implementado** (Capability Discovery, ArchitectIntent, SemanticPlan,
-> Graph Compiler determinístico, Validator + dataset de intents). Fases 6–10 pendientes.
+> **Status:** Phase 0 (auditoría) completa. **Fases 1–5 implementadas** (first delivery) y **fases 6, 9 y 10** (clarificación, readiness/simulación y evaluación con métricas).
+> Faltan 7 (patching conversacional) y 8 (UX semántica de nodos).
 > **Fecha:** 2026-09-15
 > **Base:** `feat/knowledge-cognitive-os` @ `08803fe` (Workflow Semantic Core + Cognitive Workflows completos).
 > **Prerrequisitos verificados:** contexto compartido y nodos knowledge/agent/data con resultado tipado, evidencia y decisiones.
@@ -168,11 +168,11 @@ edges por `depends_on`, requisitos faltantes y plan válido.
 | 3 | SemanticPlan | ✅ first delivery |
 | 4 | Compiler determinístico | ✅ first delivery |
 | 5 | Plan Validator | ✅ first delivery |
-| 6 | Clarification Engine + assumptions UI | pendiente |
+| 6 | Clarification Engine + assumptions UI | ✅ (backend: clarifications/requirements en la respuesta) |
 | 7 | Conversational patching (`SemanticPlanPatch`) | pendiente |
 | 8 | UX semántica de nodos (help contextual, biblioteca por propósito) | pendiente |
-| 9 | Simulation + readiness desde el plan | pendiente |
-| 10 | Dataset ≥50 intents + métricas | pendiente (first delivery: 13) |
+| 9 | Simulation + readiness desde el plan | ✅ (readiness + `simulation` sin efectos) |
+| 10 | Dataset ≥50 intents + métricas | ✅ (50 casos en `tests/data/workflow_architect_cases.json` + `architect_metrics.py`) |
 
 ---
 
@@ -201,3 +201,20 @@ M. plan inválido (paso huérfano/ciclo) → validator rechaza con error claro.
 | D3 | Ramas de decisión | `when: {step, outcome}` en pasos posteriores (sin ids de nodo) |
 | D4 | Agente por nombre vs capacidades | capacidades (`config.purpose`, tools, knowledge scope) + match de keywords del goal |
 | D5 | Persistencia del plan | no persistir en first delivery; el grafo draft se crea con endpoints existentes |
+
+---
+
+## 11. Entregas posteriores al first delivery
+
+**Fase 6 (2026-09-15)** — `architect_clarifications.py`: preguntas de negocio (máx 5, priorizadas por impacto) desde issues
+(`missing.*`, `plan.agent_needs_selection`, `assumption.high_impact`, `intent.missing_information`) y `requirements` agrupados
+(conexiones/setup). La respuesta del endpoint incluye `clarifications` y `requirements`.
+
+**Fase 9 (2026-09-15)** — `readiness` del grafo compilado con `readiness_checks` (adaptando capacidades descubiertas) y `simulation`
+sin efectos por paso (consulta OK, evidencia, decisión del agente, aprobación "se pediría", avisos simulados). El dry-run real sigue
+en el flujo de Probar existente.
+
+**Fase 10 (2026-09-15)** — `architect_metrics.py` (contadores y tasas: plan válido, compile, clarificación, requirements,
+agente innecesario, revisiones) + dataset de **50 casos** `tests/data/workflow_architect_cases.json` con `tests/test_workflow_architect_eval.py`
+(evalúa trigger, selección de nodos, ausencia de agente innecesario, operaciones de conocimiento, requisitos, referencias y readiness;
+casos de integración faltante quedan sin grafo con requirement).

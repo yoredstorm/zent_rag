@@ -392,6 +392,10 @@ async def test_architect_endpoint_plans_and_compiles(async_client: AsyncClient) 
     node_types = {node["type"] for node in body["graph"]["nodes"]}
     assert {"query_business_data", "kb_query", "llm", "condition", "human_approval"} <= node_types
     assert body["cost"] is not None
+    assert body["readiness"] is not None and body["readiness"]["total"] >= 5
+    assert body["simulation"] and len(body["simulation"]) == len(body["plan"]["steps"])
+    assert isinstance(body["clarifications"], list)
+    assert body["requirements"] == []
 
 
 @pytest.mark.asyncio
@@ -419,6 +423,9 @@ async def test_architect_endpoint_reports_missing_capabilities(async_client: Asy
     codes = {issue["code"] for issue in body["issues"]}
     assert "missing.managed_db" in codes
     assert "missing.agents" in codes
+    requirements = {item["requirement"] for item in body["requirements"]}
+    assert {"managed_db", "agents"} <= requirements
+    assert body["readiness"] is None
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,10 @@ from typing import Any
 from uuid import UUID
 
 from src.infrastructure.observability.logging_config import get_logger
+from src.platform.workflows.architect_clarifications import (
+    build_clarifications,
+    build_requirements,
+)
 from src.platform.workflows.architect_compiler import (
     compile_semantic_plan,
     default_knowledge_operation,
@@ -351,6 +355,93 @@ def _trigger_config_for_cost(plan: SemanticPlan) -> dict[str, Any]:
     return {}
 
 
+def _readiness(graph: dict[str, Any], capabilities: dict[str, Any]) -> dict[str, Any]:
+    """Readiness de negocio del grafo compilado (brief §26)."""
+    from src.platform.workflows.readiness import readiness_checks
+
+    caps = {
+        "agents": {
+            str(agent["id"]): str(agent.get("name") or "")
+            for agent in capabilities.get("agents") or []
+        },
+        "knowledge_bases": {
+            str(kb): str(kb) for kb in capabilities.get("knowledge_bases") or []
+        },
+        "actions": {
+            str(action.get("action_id")): action
+            for action in capabilities.get("actions") or []
+        },
+    }
+    checks = readiness_checks(graph, caps)
+    return {
+        "ready": not [check for check in checks if check.get("status") == "error"],
+        "checks": checks,
+        "passed": len([check for check in checks if check.get("status") == "ok"]),
+        "warnings": len([check for check in checks if check.get("status") == "warning"]),
+        "errors": len([check for check in checks if check.get("status") == "error"]),
+        "total": len(checks),
+    }
+
+
+_KNOWLEDGE_SIMULATION: dict[str, str] = {
+    "answer": "Respondería citando los fragmentos encontrados.",
+    "find_evidence": "Devolvería evidencia localizable para la afirmación.",
+    "compare": "Compararía ambos lados y listaría diferencias.",
+    "check_conflicts": "Buscaría contradicciones entre claims.",
+    "extract_facts": "Extraería hechos propuestos con su evidencia.",
+    "investigate": "Investigaría con el presupuesto definido.",
+    "search": "Buscaría fragmentos relevantes.",
+}
+
+
+def simulation_plan(plan: SemanticPlan) -> list[dict[str, str]]:
+    """Vista previa de ejecución sin efectos (brief §23)."""
+    entries: list[dict[str, str]] = []
+    for step in plan.steps:
+        if step.type == "trigger_event":
+            expectation = (
+                f"Recibiría un ejemplo del evento «{step.params.get('event_type') or 'evento'}»."
+            )
+        elif step.type == "trigger_schedule":
+            expectation = "Se ejecutaría según la programación."
+        elif step.type == "trigger_manual":
+            expectation = "Inicio manual."
+        elif step.type == "business_query":
+            expectation = "Consulta OK: filas de ejemplo (sin SQL real en la vista previa)."
+        elif step.type == "knowledge_query":
+            operation = str(step.params.get("operation") or "search")
+            expectation = _KNOWLEDGE_SIMULATION.get(operation, "Buscaría conocimiento.")
+        elif step.type == "agent_analysis":
+            agent_name = str(step.params.get("agent_name") or "el agente")
+            expectation = f"{agent_name} respondería una conclusión (sin efecto real)."
+        elif step.type == "decision":
+            expectation = "Evaluaría la regla y elegiría una rama."
+        elif step.type == "human_approval":
+            expectation = "Se pediría aprobación; nunca se aprueba solo."
+        elif step.type == "notify":
+            expectation = "Aviso simulado (sin envío)."
+        elif step.type == "integration_action":
+            expectation = "Acción simulada (sin efectos externos)."
+        elif step.type == "business_result":
+            expectation = "Resultado simulado (nada se publica)."
+        elif step.type == "filter":
+            expectation = "Filtraría la lista de ejemplo."
+        elif step.type == "for_each":
+            expectation = "Repetiría por cada elemento de ejemplo."
+        elif step.type == "join":
+            expectation = "Esperaría ambas ramas."
+        elif step.type == "merge":
+            expectation = "Elegiría la primera rama disponible."
+        elif step.type == "stop":
+            expectation = "Terminaría el flujo."
+        else:
+            expectation = "Se ejecutaría el paso."
+        entries.append(
+            {"step_id": step.id, "goal": step.goal, "expectation": expectation, "effects": "none"}
+        )
+    return entries
+
+
 async def plan_workflow(
     organization_id: UUID,
     prompt: str,
@@ -359,11 +450,13 @@ async def plan_workflow(
     permissions: frozenset[str] | None = None,
     provider: Any = None,
     model: str | None = None,
+    capabilities: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Pipeline completo (sin persistir): intent → plan → validación → grafo."""
-    capabilities = await discover_capabilities(
-        organization_id, workspace_id=workspace_id, permissions=permissions
-    )
+    if capabilities is None:
+        capabilities = await discover_capabilities(
+            organization_id, workspace_id=workspace_id, permissions=permissions
+        )
     source = "llm"
     intent: ArchitectIntent | None = None
     plan: SemanticPlan | None = None
@@ -406,6 +499,24 @@ async def plan_workflow(
         for issue in issues
         if issue.severity == "warning" and issue.code.startswith(("missing.", "assumption."))
     ]
+    clarifications = build_clarifications(plan, issues, intent=intent)
+    requirements = build_requirements(issues)
+    readiness = _readiness(graph, capabilities) if graph is not None else None
+    simulation = simulation_plan(plan) if graph is not None else None
+    has_agent = any(step.type == "agent_analysis" for step in plan.steps)
+    unnecessary_agent = bool(has_agent and intent is not None and not intent.reasoning_needs)
+    try:
+        from src.platform.workflows.architect_metrics import record_plan_outcome
+
+        record_plan_outcome(
+            valid=not any(issue.severity == "error" for issue in issues),
+            compiled=graph is not None,
+            clarifications=len(clarifications),
+            requirements=len(requirements),
+            unnecessary_agent=unnecessary_agent,
+        )
+    except Exception as exc:  # noqa: BLE001 — métricas no rompen el plan
+        logger.warning("architect metrics failed", error=str(exc)[:150])
     return {
         "source": source,
         "intent": intent.model_dump(mode="json") if intent is not None else None,
@@ -417,6 +528,10 @@ async def plan_workflow(
         "cost": cost,
         "assumptions": [assumption.model_dump(mode="json") for assumption in plan.assumptions],
         "questions": questions,
+        "clarifications": clarifications,
+        "requirements": requirements,
+        "readiness": readiness,
+        "simulation": simulation,
         "notes": notes,
     }
 

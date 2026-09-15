@@ -1,0 +1,954 @@
+{
+  "cases": [
+    {
+      "id": "sales_01",
+      "category": "sales",
+      "prompt": "Cuando se cierre una venta sobre S/40,000 revisa la politica y pide aprobacion si corresponde.",
+      "expect": {
+        "trigger": "event",
+        "data": true,
+        "knowledge": true,
+        "knowledge_op": null,
+        "agent": true,
+        "decision": true,
+        "approval": true,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "sales_02",
+      "category": "sales",
+      "prompt": "Cada venta cerrada, avisame por Zent con el total.",
+      "expect": {
+        "trigger": "event",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "sales_03",
+      "category": "sales",
+      "prompt": "Si una venta supera S/10,000 analiza el riesgo del cliente.",
+      "expect": {
+        "trigger": "event",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": true,
+        "decision": true,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "sales_04",
+      "category": "sales",
+      "prompt": "Ventas de ayer, resumen diario a las 8.",
+      "expect": {
+        "trigger": "schedule",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "sales_05",
+      "category": "sales",
+      "prompt": "Cuando entre una venta, consulta la politica de descuentos.",
+      "expect": {
+        "trigger": "event",
+        "data": false,
+        "knowledge": true,
+        "knowledge_op": "answer",
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "sales_06",
+      "category": "sales",
+      "prompt": "Compara la venta contra la politica comercial.",
+      "expect": {
+        "trigger": "event",
+        "data": false,
+        "knowledge": true,
+        "knowledge_op": "compare",
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "inv_01",
+      "category": "inventory",
+      "prompt": "Si el stock baja de 10, avisa a Compras.",
+      "expect": {
+        "trigger": "event",
+        "data": false,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": true,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "inv_02",
+      "category": "inventory",
+      "prompt": "Si el stock baja de 10, analiza ventas, politica y tiempo del proveedor para recomendar cuanto comprar.",
+      "expect": {
+        "trigger": "event",
+        "data": true,
+        "knowledge": true,
+        "knowledge_op": null,
+        "agent": true,
+        "decision": true,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "inv_03",
+      "category": "inventory",
+      "prompt": "Reposicion semanal de inventario.",
+      "expect": {
+        "trigger": "schedule",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "inv_04",
+      "category": "inventory",
+      "prompt": "Alerta de stock bajo cruzando ventas del dia.",
+      "expect": {
+        "trigger": "event",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": true,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "inv_05",
+      "category": "inventory",
+      "prompt": "Inventario diario a las 18 con resumen.",
+      "expect": {
+        "trigger": "schedule",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "inv_06",
+      "category": "inventory",
+      "prompt": "Detecta stock bajo y guarda el resultado del dia.",
+      "expect": {
+        "trigger": "event",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": true,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "fin_01",
+      "category": "finance",
+      "prompt": "Facturas vencidas: resumen semanal.",
+      "expect": {
+        "trigger": "schedule",
+        "data": false,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "fin_02",
+      "category": "finance",
+      "prompt": "Cuando una factura venza, avisame.",
+      "expect": {
+        "trigger": "event",
+        "data": false,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "fin_03",
+      "category": "finance",
+      "prompt": "Pagos sobre S/50,000 requieren aprobacion.",
+      "expect": {
+        "trigger": "event",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": true,
+        "approval": true,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "fin_04",
+      "category": "finance",
+      "prompt": "Resumen mensual de gastos.",
+      "expect": {
+        "trigger": "schedule",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "fin_05",
+      "category": "finance",
+      "prompt": "Compara presupuesto contra gastos reales.",
+      "expect": {
+        "trigger": "event",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": true,
+        "decision": true,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "kb_01",
+      "category": "knowledge",
+      "prompt": "Buscame la politica de vacaciones.",
+      "expect": {
+        "trigger": "manual",
+        "data": false,
+        "knowledge": true,
+        "knowledge_op": "answer",
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "kb_02",
+      "category": "knowledge",
+      "prompt": "Detecta contradicciones entre politicas internas.",
+      "expect": {
+        "trigger": "manual",
+        "data": false,
+        "knowledge": true,
+        "knowledge_op": "check_conflicts",
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "kb_03",
+      "category": "knowledge",
+      "prompt": "Encuentra evidencia sobre la clausula penal.",
+      "expect": {
+        "trigger": "manual",
+        "data": false,
+        "knowledge": true,
+        "knowledge_op": "find_evidence",
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "kb_04",
+      "category": "knowledge",
+      "prompt": "Extrae hechos de contratos procesados.",
+      "expect": {
+        "trigger": "event",
+        "data": false,
+        "knowledge": true,
+        "knowledge_op": "extract_facts",
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "kb_05",
+      "category": "knowledge",
+      "prompt": "Compara la politica antigua con la nueva.",
+      "expect": {
+        "trigger": "manual",
+        "data": false,
+        "knowledge": true,
+        "knowledge_op": "compare",
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "doc_01",
+      "category": "documents",
+      "prompt": "Cuando llegue un contrato nuevo, revisa si contradice nuestras politicas y avisa a Legal.",
+      "expect": {
+        "trigger": "event",
+        "data": false,
+        "knowledge": true,
+        "knowledge_op": "check_conflicts",
+        "agent": true,
+        "decision": true,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "doc_02",
+      "category": "documents",
+      "prompt": "Documento procesado: extrae hechos clave.",
+      "expect": {
+        "trigger": "event",
+        "data": false,
+        "knowledge": true,
+        "knowledge_op": "extract_facts",
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "doc_03",
+      "category": "documents",
+      "prompt": "Cuando suban un documento, avisa por Zent.",
+      "expect": {
+        "trigger": "event",
+        "data": false,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "doc_04",
+      "category": "documents",
+      "prompt": "Revisa el contrato con aprobacion si hay clausula riesgosa.",
+      "expect": {
+        "trigger": "event",
+        "data": false,
+        "knowledge": true,
+        "knowledge_op": null,
+        "agent": true,
+        "decision": true,
+        "approval": true,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "doc_05",
+      "category": "documents",
+      "prompt": "Resumen diario de documentos nuevos.",
+      "expect": {
+        "trigger": "schedule",
+        "data": false,
+        "knowledge": true,
+        "knowledge_op": "search",
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "app_01",
+      "category": "approvals",
+      "prompt": "Pagos altos requieren aprobacion del gerente.",
+      "expect": {
+        "trigger": "manual",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": true,
+        "approval": true,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "app_02",
+      "category": "approvals",
+      "prompt": "Descuentos mayores a 20% requieren aprobacion.",
+      "expect": {
+        "trigger": "manual",
+        "data": false,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": true,
+        "approval": true,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "app_03",
+      "category": "approvals",
+      "prompt": "Contrato riesgoso: analiza y pide aprobacion.",
+      "expect": {
+        "trigger": "event",
+        "data": false,
+        "knowledge": true,
+        "knowledge_op": null,
+        "agent": true,
+        "decision": true,
+        "approval": true,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "app_04",
+      "category": "approvals",
+      "prompt": "Pide aprobacion antes de publicar el resultado.",
+      "expect": {
+        "trigger": "manual",
+        "data": false,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": true,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "sch_01",
+      "category": "schedules",
+      "prompt": "Todos los dias a las 8 analiza ventas.",
+      "expect": {
+        "trigger": "schedule",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "sch_02",
+      "category": "schedules",
+      "prompt": "Resumen semanal los lunes.",
+      "expect": {
+        "trigger": "schedule",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "sch_03",
+      "category": "schedules",
+      "prompt": "Cada 30 minutos revisa stock.",
+      "expect": {
+        "trigger": "schedule",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": true,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "sch_04",
+      "category": "schedules",
+      "prompt": "Cierre de fin de mes.",
+      "expect": {
+        "trigger": "schedule",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "sch_05",
+      "category": "schedules",
+      "prompt": "Cada hora revisa facturas vencidas.",
+      "expect": {
+        "trigger": "schedule",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "evt_01",
+      "category": "events",
+      "prompt": "Cuando se cierre una venta, consulta el cliente.",
+      "expect": {
+        "trigger": "event",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "evt_02",
+      "category": "events",
+      "prompt": "Cuando venza una factura, avisame.",
+      "expect": {
+        "trigger": "event",
+        "data": false,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "evt_03",
+      "category": "events",
+      "prompt": "Cuando se cree un cliente nuevo, avisa.",
+      "expect": {
+        "trigger": "event",
+        "data": false,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "evt_04",
+      "category": "events",
+      "prompt": "Cuando suban un documento, buscalo en conocimiento.",
+      "expect": {
+        "trigger": "event",
+        "data": false,
+        "knowledge": true,
+        "knowledge_op": "search",
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "evt_05",
+      "category": "events",
+      "prompt": "Cuando el stock este bajo, avisa a Compras.",
+      "expect": {
+        "trigger": "event",
+        "data": false,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": true,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "agt_01",
+      "category": "agents",
+      "prompt": "Analiza la cartera de clientes.",
+      "expect": {
+        "trigger": "manual",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": true,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "agt_02",
+      "category": "agents",
+      "prompt": "Investiga el caso del cliente.",
+      "expect": {
+        "trigger": "manual",
+        "data": false,
+        "knowledge": true,
+        "knowledge_op": "investigate",
+        "agent": true,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "agt_03",
+      "category": "agents",
+      "prompt": "Clasifica contratos por riesgo.",
+      "expect": {
+        "trigger": "event",
+        "data": false,
+        "knowledge": true,
+        "knowledge_op": null,
+        "agent": true,
+        "decision": true,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "agt_04",
+      "category": "agents",
+      "prompt": "Recomienda precios para la lista.",
+      "expect": {
+        "trigger": "manual",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": true,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "agt_05",
+      "category": "agents",
+      "prompt": "Resumen ejecutivo con agente.",
+      "expect": {
+        "trigger": "schedule",
+        "data": true,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": true,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "int_01",
+      "category": "integrations",
+      "prompt": "Consulta el RUC usando la integracion demo.",
+      "expect": {
+        "trigger": "manual",
+        "data": false,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": "demo.echo",
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": false
+      }
+    },
+    {
+      "id": "int_02",
+      "category": "integrations",
+      "prompt": "Consulta Pokemon Pikachu con la integracion demo.",
+      "expect": {
+        "trigger": "manual",
+        "data": false,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": "pokemon.lookup",
+        "requirement": "integration:pokemon.lookup",
+        "expect_valid": false,
+        "clarify": false
+      }
+    },
+    {
+      "id": "int_03",
+      "category": "integrations",
+      "prompt": "Avisa por Slack cuando haya stock bajo.",
+      "expect": {
+        "trigger": "manual",
+        "data": false,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": true,
+        "approval": false,
+        "notify": false,
+        "integration": null,
+        "requirement": "integration:slack",
+        "expect_valid": false,
+        "clarify": false
+      }
+    },
+    {
+      "id": "int_04",
+      "category": "integrations",
+      "prompt": "Envia el resumen por correo a finanzas.",
+      "expect": {
+        "trigger": "manual",
+        "data": false,
+        "knowledge": false,
+        "knowledge_op": null,
+        "agent": false,
+        "decision": false,
+        "approval": false,
+        "notify": true,
+        "integration": null,
+        "requirement": null,
+        "expect_valid": true,
+        "clarify": true
+      }
+    }
+  ]
+}
