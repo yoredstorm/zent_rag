@@ -159,22 +159,36 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
     ),
     "kb_query": _meta(
         "Consultar knowledge base",
-        "Busca en una base de conocimiento de Zent.",
+        "Busca, responde o investiga en el conocimiento de Zent.",
         long_description=(
-            "Recupera fragmentos de documentos/políticas; en Fase 7 adjunta "
-            "citations y referencias de evidencia al contexto."
+            "Operaciones: buscar información, responder una pregunta grounded, "
+            "encontrar evidencia, extraer hechos, comparar documentos, detectar "
+            "contradicciones o investigar con el Cognitive OS. El resultado "
+            "incluye `status` tipado para ramificar."
         ),
-        when_to_use=("la respuesta está en documentos, políticas o procedimientos",),
+        when_to_use=(
+            "la respuesta está en documentos, políticas o procedimientos",
+            "necesitas evidencia localizable (citas, página, documento)",
+        ),
         when_not_to_use=(
             "necesitas totales o filas de una base de datos; usa Consultar datos de negocio",
         ),
         examples=(
             {
-                "title": "Política de reposición",
+                "title": "Responder con política",
                 "config": {
+                    "operation": "answer",
                     "knowledge_base_id": "…",
                     "query": "política de reposición de stock",
                     "limit": 5,
+                },
+            },
+            {
+                "title": "Buscar información",
+                "config": {
+                    "operation": "search",
+                    "knowledge_base_id": "…",
+                    "query": "descuentos comerciales",
                 },
             },
         ),

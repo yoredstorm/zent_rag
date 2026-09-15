@@ -208,8 +208,26 @@ def _kb_query_schema() -> NodeBusinessSchema:
         node_type="kb_query",
         label="Consultar knowledge base",
         category="data",
-        description="Busca en una base de conocimiento de Zent.",
+        description="Busca, responde o investiga en el conocimiento de Zent.",
         parameters=[
+            _p(
+                "operation",
+                "¿Qué necesitas hacer?",
+                "enum",
+                default="search",
+                validation={
+                    "options": [
+                        {"value": "search", "label": "Buscar información"},
+                        {"value": "answer", "label": "Responder una pregunta"},
+                        {"value": "find_evidence", "label": "Encontrar evidencia"},
+                        {"value": "extract_facts", "label": "Extraer hechos"},
+                        {"value": "compare", "label": "Comparar documentos"},
+                        {"value": "check_conflicts", "label": "Detectar contradicciones"},
+                        {"value": "investigate", "label": "Investigar con Zent"},
+                    ]
+                },
+                help="Los modos avanzados usan Knowledge V2 y pueden requerir permisos.",
+            ),
             _p(
                 "knowledge_base_id",
                 "Base de conocimiento",
@@ -220,7 +238,7 @@ def _kb_query_schema() -> NodeBusinessSchema:
             ),
             _p(
                 "query",
-                "¿Qué buscas?",
+                "¿Sobre qué?",
                 "text",
                 required=True,
                 data_source="any",
@@ -229,11 +247,16 @@ def _kb_query_schema() -> NodeBusinessSchema:
             _p("limit", "Máximo de resultados", "number", min_level="guided", default=5),
         ],
         outputs=[
+            _out("status", "Estado", "text"),
+            _out("answer", "Respuesta", "text"),
             _out("documents", "Documentos", "record_list"),
             _out("chunks", "Fragmentos", "record_list"),
             _out("count", "Encontrados", "number"),
             _out("citations", "Citas", "json"),
+            _out("claims", "Afirmaciones", "json"),
+            _out("coverage", "Cobertura", "json"),
             _out("evidence_ids", "Evidencias", "json"),
+            _out("reason_codes", "Motivos", "json"),
         ],
     )
 
