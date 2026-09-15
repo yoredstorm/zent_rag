@@ -255,7 +255,7 @@ async def test_incident_alerts_and_webhook(async_client: AsyncClient) -> None:
     check = await async_client.post(
         "/api/v1/platform/obs/check",
         headers=plat,
-        json={"organization_id": org["organization_id"]},
+        params={"organization_id": org["organization_id"]},
     )
     assert check.status_code == 200, check.text
     types = [a["alert_type"] for a in check.json()["alerts_created"]]
@@ -278,7 +278,7 @@ async def test_incident_alerts_and_webhook(async_client: AsyncClient) -> None:
     check2 = await async_client.post(
         "/api/v1/platform/obs/check",
         headers=plat,
-        json={"organization_id": org["organization_id"]},
+        params={"organization_id": org["organization_id"]},
     )
     assert check2.status_code == 200
     assert check2.json()["count"] == 0
@@ -329,7 +329,7 @@ async def test_webhook_delivered_success(async_client: AsyncClient) -> None:
         check = await async_client.post(
             "/api/v1/platform/obs/check",
             headers=plat,
-            json={"organization_id": org["organization_id"]},
+            params={"organization_id": org["organization_id"]},
         )
         assert check.status_code == 200, check.text
         created = check.json()["alerts_created"]
