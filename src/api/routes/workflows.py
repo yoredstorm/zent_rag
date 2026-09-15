@@ -177,6 +177,24 @@ async def tenant_workflow_copilot_compile(body: CopilotCompileIn, request: Reque
         raise HTTPException(400, f"plan inválido: {exc}") from exc
 
 
+@router.post(
+    "/architect/plan",
+    summary="Workflow Architect: lenguaje natural → plan semántico → grafo draft",
+)
+async def tenant_workflow_architect_plan(body: ArchitectPlanIn, request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.architect import plan_workflow
+
+    ctx = require_permission(request, "workflows:create")
+    return await plan_workflow(
+        ctx.organization_id,
+        body.prompt.strip(),
+        workspace_id=await _workspace_id(request),
+        permissions=ctx.permissions,
+        model=body.model,
+    )
+
+
 @router.post("/{workflow_id}/patch/preview", summary="Editar con IA: propuesta de diff")
 async def tenant_workflow_patch_preview(workflow_id: str, body: PatchPreviewIn, request: Request):
     from src.platform.rbac.policy import require_permission
@@ -830,6 +848,11 @@ class CopilotIntentIn(BaseModel):
 
 class CopilotCompileIn(BaseModel):
     plan: dict
+
+
+class ArchitectPlanIn(BaseModel):
+    prompt: str = Field(min_length=8, max_length=2000)
+    model: str | None = Field(default=None, max_length=120)
 
 
 class PatchPreviewIn(BaseModel):

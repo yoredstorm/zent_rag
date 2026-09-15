@@ -1,0 +1,430 @@
+# =============================================================================
+# Workflow Architect — orquestador (First delivery, brief §34).
+#
+# TEXT → ArchitectIntent → SemanticPlan → validation → WorkflowGraph draft.
+# El LLM propone; el código valida y compila. Fallback heurístico sin LLM.
+# =============================================================================
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+from uuid import UUID
+
+from src.infrastructure.observability.logging_config import get_logger
+from src.platform.workflows.architect_compiler import (
+    compile_semantic_plan,
+    default_knowledge_operation,
+)
+from src.platform.workflows.architect_discovery import (
+    capability_digest,
+    discover_capabilities,
+)
+from src.platform.workflows.architect_models import (
+    ArchitectIntent,
+    PlanAssumption,
+    PlanStep,
+    SemanticPlan,
+)
+from src.platform.workflows.architect_validator import validate_semantic_plan
+
+logger = get_logger(__name__)
+
+_JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+INTENT_SYSTEM_PROMPT = """Eres el arquitecto de automatizaciones de Zent.
+Convierte la petición del usuario en un ArchitectIntent JSON. Reglas:
+- Responde SOLO con un objeto JSON, sin markdown.
+- Shape:
+{
+  "goal": str,
+  "trigger_intent": {"kind": "event"|"schedule"|"manual"|"webhook", "event_type": str|null,
+                     "description": str|null},
+  "inputs_needed": [str], "data_needs": [str], "knowledge_needs": [str],
+  "reasoning_needs": [str], "conditions": [str], "actions": [str],
+  "approval_needs": [str], "schedule": {"daily": "HH:MM", "timezone": str}|null,
+  "output": [str], "constraints": [str],
+  "uncertainties": [str], "missing_information": [str],
+  "assumptions": [{"statement": str, "impact": "low"|"high", "needs_confirmation": bool}],
+  "confidence": 0.0-1.0
+}
+- No inventes integraciones, agentes ni bases de conocimiento: si faltan, ponlos en
+  "missing_information" y baja "confidence".
+- "reasoning_needs": solo si hace falta criterio/interpretación; reglas simples no llevan agente.
+"""
+
+PLAN_SYSTEM_PROMPT = """Eres el arquitecto de automatizaciones de Zent.
+Convierte el ArchitectIntent en un SemanticPlan JSON de pasos de NEGOCIO. Reglas:
+- Responde SOLO con un objeto JSON, sin markdown. Sin ids de nodo, sin posiciones, sin {{...}}.
+- Shape:
+{
+  "goal": str,
+  "steps": [{
+    "id": "t1", "type": "trigger_event"|"trigger_schedule"|"trigger_manual"|"business_query"|
+            "knowledge_query"|"agent_analysis"|"decision"|"filter"|"for_each"|"join"|"merge"|
+            "human_approval"|"notify"|"integration_action"|"business_result"|"stop",
+    "goal": str, "depends_on": [str], "when": {"step": str, "outcome": true}|null,
+    "inputs": [{"step": str, "field": str, "label": str|null}],
+    "params": {}, "reason_summary": str, "optional": false
+  }],
+  "assumptions": [{"statement": str, "impact": "low"|"high", "needs_confirmation": bool}],
+  "uncertainties": [str], "notes": [str]
+}
+- Un solo disparador. Cada paso declara de quién depende (depends_on).
+- Usa un agente SOLO cuando haga falta criterio; si una regla simple alcanza, no lo pongas.
+- knowledge_query: params.operation ∈ search|answer|find_evidence|extract_facts|compare|check_conflicts|investigate.
+- decision: referencia al paso que decide en "inputs" (p. ej. agente → field "risk" o "requires_review").
+- notify/integration_action solo con canales/acciones disponibles en el contexto.
+"""
+
+
+def _parse_json_object(text: str) -> dict[str, Any] | None:
+    match = _JSON_OBJECT_RE.search(text or "")
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _resolve_provider(provider: Any = None) -> Any:
+    if provider is not None:
+        return provider
+    from src.platform.workflows.copilot_v2 import _resolve_llm_provider
+
+    return _resolve_llm_provider(None)
+
+
+async def _generate_json(
+    provider: Any, *, system: str, prompt: str, model: str | None, max_tokens: int
+) -> dict[str, Any]:
+    response = await provider.generate(
+        prompt=prompt,
+        system_prompt=system,
+        model=model,
+        temperature=0.0,
+        max_tokens=max_tokens,
+    )
+    content = getattr(response, "content", None)
+    if content is None and isinstance(response, dict):
+        content = response.get("content")
+    data = _parse_json_object(str(content or ""))
+    if data is None:
+        raise ValueError("el LLM no devolvió un JSON válido")
+    return data
+
+
+async def extract_intent_with_architect(
+    prompt: str,
+    *,
+    capabilities: dict[str, Any],
+    provider: Any,
+    model: str | None = None,
+) -> ArchitectIntent:
+    system = INTENT_SYSTEM_PROMPT + "\nCapacidades del tenant:\n" + capability_digest(capabilities)
+    data = await _generate_json(
+        provider, system=system, prompt=prompt, model=model, max_tokens=1200
+    )
+    data.setdefault("raw_prompt", prompt[:2000])
+    return ArchitectIntent.model_validate(data)
+
+
+async def extract_plan_with_architect(
+    intent: ArchitectIntent,
+    *,
+    capabilities: dict[str, Any],
+    provider: Any,
+    model: str | None = None,
+) -> SemanticPlan:
+    system = PLAN_SYSTEM_PROMPT + "\nCapacidades del tenant:\n" + capability_digest(capabilities)
+    prompt = (
+        "ArchitectIntent:\n"
+        + json.dumps(intent.model_dump(mode="json"), ensure_ascii=False)
+        + "\n\nPlanifica los pasos de negocio."
+    )
+    data = await _generate_json(
+        provider, system=system, prompt=prompt, model=model, max_tokens=2000
+    )
+    if not data.get("goal"):
+        data["goal"] = intent.goal
+    return SemanticPlan.model_validate(data)
+
+
+def _legacy_step_to_plan(step_type: str, config: dict[str, Any], step_id: str) -> PlanStep | None:
+    if step_type == "query_business_data":
+        return PlanStep(
+            type="business_query",
+            id=step_id,
+            goal="Consultar datos de negocio",
+            params={"ask": config.get("ask")},
+        )
+    if step_type == "kb_query":
+        return PlanStep(
+            type="knowledge_query",
+            id=step_id,
+            goal="Consultar conocimiento",
+            params={
+                "operation": config.get("operation") or default_knowledge_operation(str(config.get("query") or "")),
+                "query": config.get("query"),
+            },
+        )
+    if step_type == "llm":
+        return PlanStep(
+            type="agent_analysis",
+            id=step_id,
+            goal="Analizar la situación",
+            params={"prompt": config.get("prompt"), "output_type": config.get("output_type") or "text"},
+        )
+    if step_type == "condition":
+        return PlanStep(
+            type="decision",
+            id=step_id,
+            goal="Tomar una decisión",
+            params={
+                "field": config.get("field"),
+                "operator": config.get("operator") or "==",
+                "value": config.get("value", True),
+            },
+        )
+    if step_type == "notify":
+        return PlanStep(
+            type="notify",
+            id=step_id,
+            goal="Avisar",
+            params={"channel": "in_app", "title": config.get("title"), "message": config.get("message")},
+        )
+    if step_type == "marketplace_action":
+        return PlanStep(
+            type="integration_action",
+            id=step_id,
+            goal="Usar integración",
+            params={
+                "action_id": config.get("action_id"),
+                "install_id": config.get("install_id"),
+                "inputs": config.get("inputs") or {},
+            },
+        )
+    if step_type == "business_result":
+        return PlanStep(
+            type="business_result",
+            id=step_id,
+            goal="Publicar resultado",
+            params={"title": config.get("title")},
+        )
+    return None
+
+
+def heuristic_semantic_plan(prompt: str) -> SemanticPlan:
+    """Fallback determinístico (legacy `build_draft`) mapeado a plan semántico."""
+    from src.platform.workflows.copilot import build_draft
+
+    draft = build_draft(prompt)
+    trigger_config = draft.trigger_config or {}
+    steps: list[PlanStep] = []
+    counter = 0
+
+    def next_id() -> str:
+        nonlocal counter
+        counter += 1
+        return f"s{counter}"
+
+    if draft.trigger_type == "event":
+        steps.append(
+            PlanStep(
+                id=next_id(),
+                type="trigger_event",
+                goal=draft.name,
+                params={
+                    "event_type": str(trigger_config.get("event_type") or "workflow.run"),
+                    "filters": trigger_config.get("filters") or {},
+                },
+                reason_summary="El pedido reacciona a un evento del negocio.",
+            )
+        )
+    elif draft.trigger_type == "schedule":
+        schedule = trigger_config if trigger_config else {"every_minutes": 60}
+        steps.append(
+            PlanStep(
+                id=next_id(),
+                type="trigger_schedule",
+                goal=draft.name,
+                params=dict(schedule),
+                reason_summary="El pedido pide una frecuencia.",
+            )
+        )
+    else:
+        steps.append(
+            PlanStep(id=next_id(), type="trigger_manual", goal=draft.name, reason_summary="Inicio manual.")
+        )
+
+    previous = steps[0].id
+    for raw in draft.steps or []:
+        step_type = str((raw or {}).get("type") or "")
+        config = (raw or {}).get("config") or {}
+        mapped = _legacy_step_to_plan(step_type, config, next_id())
+        if mapped is None:
+            continue
+        mapped = mapped.model_copy(update={"depends_on": [previous]})
+        steps.append(mapped)
+        previous = mapped.id
+    assumptions = [
+        PlanAssumption(statement="Usaremos el espacio de trabajo actual.", impact="low"),
+    ]
+    if draft.questions:
+        assumptions.append(
+            PlanAssumption(
+                statement="Hay datos por confirmar: " + "; ".join(draft.questions[:3]),
+                impact="high",
+                needs_confirmation=True,
+            )
+        )
+    return SemanticPlan(
+        goal=draft.name,
+        steps=steps,
+        assumptions=assumptions,
+        notes=["Plan generado con reglas (sin LLM); revísalo antes de publicar."],
+    )
+
+
+_PREVIEW_KIND_BY_TYPE: dict[str, str] = {
+    "trigger_event": "when",
+    "trigger_schedule": "when",
+    "trigger_manual": "when",
+    "business_query": "get",
+    "knowledge_query": "consult",
+    "agent_analysis": "analyze",
+    "decision": "if",
+    "filter": "get",
+    "for_each": "then",
+    "join": "then",
+    "merge": "then",
+    "human_approval": "then",
+    "notify": "after",
+    "integration_action": "then",
+    "business_result": "after",
+    "stop": "then",
+}
+
+
+def semantic_preview(plan: SemanticPlan) -> list[dict[str, str]]:
+    """Preview de negocio: qué entendí, en orden (brief §14)."""
+    preview: list[dict[str, str]] = []
+    for step in plan.steps:
+        kind = _PREVIEW_KIND_BY_TYPE.get(step.type, "then")
+        text = step.goal
+        if step.type == "trigger_event":
+            event_type = str(step.params.get("event_type") or "un evento")
+            text = f"Cuando ocurra «{event_type}»."
+        elif step.type == "trigger_schedule":
+            schedule = step.params or {}
+            if schedule.get("daily"):
+                daily = schedule["daily"]
+                time = daily.get("time") if isinstance(daily, dict) else str(daily)
+                text = f"Programado todos los días a las {time}."
+            elif schedule.get("every_minutes"):
+                text = f"Cada {schedule['every_minutes']} minutos."
+            else:
+                text = "Según la programación configurada."
+        elif step.type == "agent_analysis":
+            agent_name = str(step.params.get("agent_name") or "")
+            text = f"Analizar con {agent_name or 'un agente'}: {step.goal}"
+        elif step.type == "notify":
+            text = f"Avisar por {step.params.get('channel') or 'Zent'}: {step.goal}"
+        elif step.type == "human_approval":
+            text = f"Pedir aprobación humana: {step.params.get('action') or step.goal}"
+        preview.append({"kind": kind, "step_id": step.id, "text": text})
+    return preview
+
+
+def _trigger_config_for_cost(plan: SemanticPlan) -> dict[str, Any]:
+    for step in plan.steps:
+        if step.type == "trigger_event":
+            return {"event_type": str(step.params.get("event_type") or "")}
+        if step.type == "trigger_schedule":
+            schedule = step.params or {}
+            daily = schedule.get("daily")
+            if isinstance(daily, dict):
+                schedule = {**schedule, "daily": daily.get("time")}
+            return dict(schedule)
+    return {}
+
+
+async def plan_workflow(
+    organization_id: UUID,
+    prompt: str,
+    *,
+    workspace_id: UUID | None = None,
+    permissions: frozenset[str] | None = None,
+    provider: Any = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Pipeline completo (sin persistir): intent → plan → validación → grafo."""
+    capabilities = await discover_capabilities(
+        organization_id, workspace_id=workspace_id, permissions=permissions
+    )
+    source = "llm"
+    intent: ArchitectIntent | None = None
+    plan: SemanticPlan | None = None
+    notes: list[str] = []
+    try:
+        resolved = _resolve_provider(provider)
+        intent = await extract_intent_with_architect(
+            prompt, capabilities=capabilities, provider=resolved, model=model
+        )
+        plan = await extract_plan_with_architect(
+            intent, capabilities=capabilities, provider=resolved, model=model
+        )
+    except Exception as exc:  # noqa: BLE001 — fallback determinístico
+        logger.info("architect: fallback heurístico", error=str(exc)[:200])
+        source = "heuristics"
+        intent = None
+        plan = heuristic_semantic_plan(prompt)
+        notes.append("No pude usar el modelo; armé un plan con reglas. Revísalo.")
+
+    issues = validate_semantic_plan(plan, capabilities, permissions=permissions)
+    graph: dict[str, Any] | None = None
+    steps_map: dict[str, str] = {}
+    cost: dict[str, Any] | None = None
+    if not any(issue.severity == "error" for issue in issues):
+        compiled = compile_semantic_plan(plan, capabilities, intent=intent)
+        graph = compiled["graph"]
+        steps_map = compiled["steps_map"]
+        issues = [*issues, *compiled["issues"]]
+        try:
+            from src.platform.workflows.capabilities import cost_estimate
+
+            cost = await cost_estimate(
+                organization_id, graph, _trigger_config_for_cost(plan)
+            )
+        except Exception as exc:  # noqa: BLE001 — costo best-effort
+            logger.warning("architect cost estimate failed", error=str(exc)[:200])
+
+    questions = [
+        issue.message
+        for issue in issues
+        if issue.severity == "warning" and issue.code.startswith(("missing.", "assumption."))
+    ]
+    return {
+        "source": source,
+        "intent": intent.model_dump(mode="json") if intent is not None else None,
+        "plan": plan.model_dump(mode="json"),
+        "issues": [issue.model_dump(mode="json") for issue in issues],
+        "preview": semantic_preview(plan),
+        "graph": graph,
+        "steps_map": steps_map,
+        "cost": cost,
+        "assumptions": [assumption.model_dump(mode="json") for assumption in plan.assumptions],
+        "questions": questions,
+        "notes": notes,
+    }
+
+
+__all__ = [
+    "extract_intent_with_architect",
+    "extract_plan_with_architect",
+    "heuristic_semantic_plan",
+    "plan_workflow",
+    "semantic_preview",
+]
