@@ -50,10 +50,14 @@ export function LexiconPanel({ onClose, auth }: { onClose: () => void; auth?: Au
           Cerrar
         </button>
       </div>
-      <p className="mt-1 text-xs text-zinc-500">
+      <p className="mt-1 text-xs leading-relaxed text-muted">
         Señales, nunca verdad global. El mismo token puede significar otra cosa en otra organización.
       </p>
-      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+      {error && (
+        <p className="mt-2 text-xs text-danger" role="alert">
+          {error}
+        </p>
+      )}
       <div className="mt-3 flex flex-wrap gap-2">
         <input
           className="input"
@@ -87,7 +91,7 @@ export function LexiconPanel({ onClose, auth }: { onClose: () => void; auth?: Au
             <span className="font-mono">{r.token}</span> → {r.meaning} ({r.role}, {r.status})
           </li>
         ))}
-        {rows.length === 0 && <li className="text-zinc-400">Sin entradas todavía</li>}
+        {rows.length === 0 && <li className="text-faint">Sin entradas todavía</li>}
       </ul>
     </div>
   );
@@ -121,7 +125,7 @@ export function FreeTextDraft({
   };
   return (
     <div className="mt-3">
-      <label className="text-xs text-zinc-500" htmlFor="studio-freetext">
+      <label className="text-xs text-muted" htmlFor="studio-freetext">
         Describe el campo en tus palabras
       </label>
       <textarea
@@ -130,11 +134,16 @@ export function FreeTextDraft({
         rows={2}
         value={text}
         onChange={(e) => setText(e.target.value)}
+        aria-describedby={msg ? "studio-freetext-msg" : undefined}
       />
       <button type="button" className="btn btn-sm mt-2" onClick={submit} disabled={!text.trim()}>
         Crear borrador
       </button>
-      {msg && <p className="mt-1 text-xs text-zinc-600">{msg}</p>}
+      {msg && (
+        <p id="studio-freetext-msg" className="mt-1 text-xs text-muted" role="status">
+          {msg}
+        </p>
+      )}
     </div>
   );
 }

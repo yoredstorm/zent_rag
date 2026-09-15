@@ -44,12 +44,12 @@ describe("TOUR_STEPS", () => {
       "webhooks",
       "developers-center",
       "mcp",
-      "organization",
+      "govern",
       "team",
       "billing",
       "security",
       "settings",
-      "advanced",
+      "manage",
       "workspace",
       "search",
     ]);
@@ -162,8 +162,10 @@ describe("tourTarget helpers", () => {
     expect(tourTargetForPath("/workflows")).toBe("nav-workflows");
     expect(tourTargetForPath("/assistants")).toBe("nav-assistants");
     expect(tourTargetForGroup("Construir")).toBe("nav-group-construir");
-    expect(tourTargetForGroup("Desarrolladores")).toBe("nav-group-desarrolladores");
-    expect(tourTargetForGroup("Avanzado")).toBe("nav-group-avanzado");
+    expect(tourTargetForGroup("Operar")).toBe("nav-group-operar");
+    expect(tourTargetForGroup("Desarrollar")).toBe("nav-group-desarrollar");
+    expect(tourTargetForGroup("Gobernar")).toBe("nav-group-gobernar");
+    expect(tourTargetForGroup("Gestionar")).toBe("nav-group-gestionar");
     expect(tourTargetForGroup("Panel general")).toBeUndefined();
   });
 });

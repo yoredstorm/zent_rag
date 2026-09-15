@@ -1,14 +1,32 @@
 import {
   ArrowsClockwise,
+  CheckCircle,
   Database,
   Info,
   Lightning,
+  Prohibit,
   Trash,
 } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
-import { EmptyState, ErrorInline, PageHeader, SkeletonBlock, Spinner } from "../../components/ui";
+import {
+  Badge,
+  Button,
+  DataTable,
+  EmptyState,
+  ErrorInline,
+  PageHeader,
+  Panel,
+  Progress,
+  ResultCount,
+  SectionHeader,
+  StatusBadge,
+  StatusRow,
+  Toolbar,
+  Tooltip,
+  type Column,
+} from "../../components/ui";
 import { fmtNum, timeAgo } from "../../lib/format";
 import { useSyncJob } from "../../syncJob";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
@@ -47,34 +65,44 @@ function secondsAgo(iso: string): number {
   return Math.max(0, Math.floor((Date.now() - t) / 1000));
 }
 
-function sourceStatus(
-  s: Source,
-  hasProgress: boolean
-): { label: string; badge: string } {
-  if (s.synced) return { label: "Sincronizada", badge: "badge-ok" };
-  if (s.skipped) return { label: "Omitida", badge: "badge-muted" };
-  if (hasProgress) return { label: "Sincronizando…", badge: "badge-pending" };
-  if ((s.lazy_rows_indexed ?? 0) > 0) {
-    return {
-      label: `Parcial · ${fmtNum(s.lazy_rows_indexed)} filas por demanda`,
-      badge: "badge-pending",
-    };
+function SourceStatusBadge({ source, running }: { source: Source; running: boolean }) {
+  if (source.synced) {
+    return (
+      <Badge tone="ok" icon={CheckCircle}>
+        Sincronizada
+      </Badge>
+    );
   }
-  return { label: "Pendiente", badge: "badge-pending" };
+  if (source.skipped) {
+    return (
+      <Badge tone="neutral" icon={Prohibit}>
+        Omitida
+      </Badge>
+    );
+  }
+  if (running) return <StatusBadge status="syncing" />;
+  const lazyRows = source.lazy_rows_indexed ?? 0;
+  if (lazyRows > 0) {
+    return (
+      <Badge tone="warn" icon={Lightning}>
+        Parcial · {fmtNum(lazyRows)} filas por demanda
+      </Badge>
+    );
+  }
+  return <StatusBadge status="pending" />;
 }
 
-function ProgressBar({ progress }: { progress: TableProgress }) {
-  if (!progress) return null;
+function ProgressCell({ progress }: { progress: TableProgress }) {
+  if (!progress) return <span className="text-xs text-ghost">—</span>;
   const pct = progress.status === "completed" ? 100 : progress.pct || 0;
   return (
-    <div className="flex min-w-[130px] items-center gap-2">
-      <div className="progress-track h-1.5 flex-1">
-        <div
-          className={`progress-fill ${progress.status === "completed" ? "" : "bg-warn"}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <span className="mono shrink-0 text-[11px] text-faint">
+    <div className="flex min-w-[150px] items-center gap-2">
+      <Progress
+        value={pct}
+        tone={progress.status === "completed" ? "accent" : "warn"}
+        className="w-24 flex-1"
+      />
+      <span className="mono shrink-0 text-[11px] text-faint tabular-nums">
         {progress.status === "completed"
           ? "100%"
           : `${fmtNum(progress.rows_indexed ?? 0)}/${fmtNum(progress.row_count ?? 0)}`}
@@ -166,15 +194,110 @@ export default function IngestionPage() {
   const ago = secondsAgo(sync.updatedAt);
   const showProgress = Boolean(sync.jobId);
 
+  const jobState: "queued" | "running" | "warning" | "ready" | "failed" = sync.active
+    ? sync.stale
+      ? "warning"
+      : "running"
+    : sync.status === "failed"
+      ? "failed"
+      : sync.status === "completed"
+        ? "ready"
+        : "queued";
+
+  const jobTitle = sync.active
+    ? "Progreso en vivo"
+    : sync.status === "completed"
+      ? "Última sincronización — completada"
+      : sync.status === "failed"
+        ? "Última sincronización — falló"
+        : "Estado del job";
+
+  const jobStatus =
+    jobState === "running"
+      ? "running"
+      : jobState === "warning"
+        ? "warning"
+        : jobState === "ready"
+          ? "completed"
+          : jobState === "failed"
+            ? "failed"
+            : "queued";
+
+  const sourceColumns: Column<Source>[] = [
+    {
+      key: "schema",
+      header: "Esquema",
+      hideBelow: "md",
+      render: (s) => <span className="text-muted">{s.schema}</span>,
+    },
+    {
+      key: "table",
+      header: "Tabla",
+      render: (s) => <span className="mono text-[13px]">{s.table}</span>,
+    },
+    {
+      key: "rows",
+      header: "Filas",
+      align: "right",
+      render: (s) => <span className="mono">{fmtNum(s.row_count ?? 0)}</span>,
+    },
+    {
+      key: "progress",
+      header: "Progreso",
+      hideBelow: "lg",
+      render: (s) => <ProgressCell progress={s.progress ?? null} />,
+    },
+    {
+      key: "status",
+      header: "Estado",
+      render: (s) => {
+        const isSyncing = syncingTables.has(`${s.schema}.${s.table}`);
+        const hasProgress = Boolean(s.progress && s.progress.status === "running");
+        return <SourceStatusBadge source={s} running={isSyncing || hasProgress} />;
+      },
+    },
+  ];
+
+  const lazyRows = lazyEvents.map((ev, index) => ({ ...ev, _key: `${ev.at}-${index}` }));
+  const lazyColumns: Column<LazyEvent & { _key: string }>[] = [
+    {
+      key: "tables",
+      header: "Tablas",
+      render: (ev) => <span className="mono text-xs">{(ev.tables || []).join(", ") || "—"}</span>,
+    },
+    {
+      key: "rows",
+      header: "Filas",
+      align: "right",
+      render: (ev) => <span className="mono">{fmtNum(ev.rows_indexed)}</span>,
+    },
+    {
+      key: "query",
+      header: "Consulta",
+      hideBelow: "md",
+      className: "max-w-[320px] text-muted",
+      render: (ev) => (
+        <span className="block truncate" title={ev.query_preview}>
+          {ev.query_preview || "—"}
+        </span>
+      ),
+    },
+    {
+      key: "at",
+      header: "Cuándo",
+      render: (ev) => <span className="text-faint">{timeAgo(ev.at)}</span>,
+    },
+  ];
+
   return (
     <KnowledgeLayout>
       <PageHeader
         title={KNOWLEDGE_HEADINGS.sql}
-        subtitle="Descubre tablas y sincroniza tu información para poder hacer preguntas. Las tablas grandes se indexan solas a medida que las preguntas las necesitan."
+        subtitle="Descubrí tablas y sincronizá tu información para poder hacer preguntas. Las tablas grandes se indexan solas a medida que las preguntas las necesitan."
         actions={
-          <button
-            type="button"
-            className="btn btn-secondary"
+          <Button
+            variant="secondary"
+            leadingIcon={ArrowsClockwise}
             onClick={() => {
               setError("");
               loadSources().catch((err) =>
@@ -182,220 +305,162 @@ export default function IngestionPage() {
               );
             }}
           >
-            <ArrowsClockwise size={15} aria-hidden />
             Refrescar
-          </button>
+          </Button>
         }
       />
       <ErrorInline message={error} />
 
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <button
-          className="btn btn-primary"
-          type="button"
-          onClick={() => void sync.startSyncAll(false)}
+      <Toolbar className="mb-4">
+        <Button
+          variant="primary"
+          leadingIcon={Database}
+          loading={sync.active}
           disabled={sync.active}
+          onClick={() => void sync.startSyncAll(false)}
         >
-          {sync.active ? (
-            <>
-              <Spinner size={14} /> Sincronizando…
-            </>
-          ) : (
-            <>
-              <Database size={16} aria-hidden />
-              Sincronizar todos mis datos
-              {hasPending ? ` (${pendingCount} pendientes)` : ""}
-            </>
-          )}
-        </button>
-        <span
-          className="flex items-center gap-1.5 text-xs text-faint"
-          title="No es obligatorio sincronizar todo antes de empezar. Las tablas grandes se indexan automáticamente a medida que las preguntas las necesitan."
-        >
-          <Info size={15} aria-hidden />
-          La sincronización completa es opcional
-        </span>
+          {sync.active
+            ? "Sincronizando…"
+            : `Sincronizar todos mis datos${hasPending ? ` (${pendingCount} pendientes)` : ""}`}
+        </Button>
+        <Tooltip label="No es obligatorio sincronizar todo antes de empezar. Las tablas grandes se indexan automáticamente a medida que las preguntas las necesitan.">
+          <span
+            tabIndex={0}
+            className="inline-flex items-center gap-1.5 text-xs text-faint transition-colors duration-150 hover:text-muted"
+          >
+            <Info size={14} aria-hidden />
+            La sincronización completa es opcional
+          </span>
+        </Tooltip>
         {sync.jobId && !sync.active && (
-          <button className="btn btn-secondary" type="button" onClick={sync.clearJob}>
-            <Trash size={15} aria-hidden />
+          <Button variant="ghost" leadingIcon={Trash} onClick={sync.clearJob}>
             Limpiar estado
-          </button>
+          </Button>
         )}
-      </div>
+      </Toolbar>
 
       {showProgress && (
-        <div
-          className={`panel mb-4 border p-4 ${
-            sync.stale ? "border-warn/40" : "border-accent/25"
-          }`}
-        >
-          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-sm font-semibold text-text">
-              {sync.active
-                ? "Progreso en vivo"
-                : sync.status === "completed"
-                  ? "Última sincronización — completada"
-                  : sync.status === "failed"
-                    ? "Última sincronización — falló"
-                    : "Estado del job"}
-            </h2>
-            <span className="mono text-xs text-faint">
-              {Math.round(sync.progress)}%
-              {sync.tablesTotal > 0 && (
-                <> · tablas {sync.tablesDone}/{sync.tablesTotal}</>
-              )}
-              {ago > 0 && <> · actualizado hace {ago}s</>}
-            </span>
-          </div>
-          <div className="progress-track">
-            <div
-              className={`progress-fill ${sync.stale ? "bg-warn" : ""}`}
-              style={{ width: `${Math.min(sync.progress, 100)}%` }}
+        <Panel className="mb-6">
+          <div className="p-4">
+            <StatusRow
+              state={jobState}
+              progress={sync.progress}
+              title={
+                <>
+                  <span className="text-h3">{jobTitle}</span>
+                  <StatusBadge status={jobStatus} />
+                </>
+              }
+              meta={
+                <>
+                  <span className="block">{sync.message || "—"}</span>
+                  {sync.currentTable && sync.active && (
+                    <span className="mono block">Tabla actual: {sync.currentTable}</span>
+                  )}
+                  {sync.stale && (
+                    <span className="block text-warn">
+                      Sin heartbeat reciente (&gt;3 min). Si la tabla es grande, el proceso
+                      puede seguir en el servidor.
+                    </span>
+                  )}
+                  {sync.error && <span className="block text-danger">{sync.error}</span>}
+                  {sync.resultSummary && sync.status === "completed" && (
+                    <span className="block text-ok">
+                      Vectores: {String(sync.resultSummary.vectors_upserted ?? "—")} · Filas:{" "}
+                      {String(sync.resultSummary.rows_indexed ?? "—")} · Duración:{" "}
+                      {String(sync.resultSummary.duration_ms ?? "—")} ms
+                    </span>
+                  )}
+                  <span className="mono block text-[11px]">
+                    {Math.round(sync.progress)}%
+                    {sync.tablesTotal > 0 && (
+                      <>
+                        {" "}
+                        · tablas {sync.tablesDone}/{sync.tablesTotal}
+                      </>
+                    )}
+                    {ago > 0 && <> · actualizado hace {ago}s</>} · job {sync.jobId}
+                  </span>
+                </>
+              }
             />
           </div>
-          <div className="mt-2 space-y-1 text-[13px]">
-            <p className="text-muted">{sync.message || "—"}</p>
-            {sync.currentTable && sync.active && (
-              <p className="mono text-faint">Tabla actual: {sync.currentTable}</p>
-            )}
-            {sync.stale && (
-              <p className="text-warn">
-                Sin heartbeat reciente (&gt;3 min). Si la tabla es grande, el proceso
-                puede seguir en el servidor.
-              </p>
-            )}
-            {sync.error && <p className="text-danger">{sync.error}</p>}
-            {sync.resultSummary && sync.status === "completed" && (
-              <p className="text-ok">
-                Vectores: {String(sync.resultSummary.vectors_upserted ?? "—")} · Filas:{" "}
-                {String(sync.resultSummary.rows_indexed ?? "—")} · Duración:{" "}
-                {String(sync.resultSummary.duration_ms ?? "—")} ms
-              </p>
-            )}
-            <p className="mono text-[11px] text-faint">job {sync.jobId}</p>
-          </div>
-        </div>
+        </Panel>
       )}
 
-      <div className="panel">
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 className="text-sm font-semibold text-text">Fuentes de datos</h2>
-          <span className="mono text-[11px] text-faint">{sources.length} tablas</span>
-        </div>
-        {loading ? (
-          <div className="p-5">
-            <SkeletonBlock rows={6} />
-          </div>
-        ) : sources.length === 0 ? (
+      <SectionHeader
+        title="Fuentes de datos"
+        description="Tablas descubiertas y su estado de indexado."
+        className="mb-3"
+        actions={
+          sources.length > 0 ? (
+            <ResultCount shown={sources.length} total={sources.length} noun="tablas" />
+          ) : undefined
+        }
+      />
+      <DataTable
+        columns={sourceColumns}
+        rows={sources}
+        rowKey={(s) => `${s.schema}.${s.table}`}
+        caption="Tablas descubiertas en las fuentes SQL"
+        loading={loading}
+        empty={
           <EmptyState
             icon={Database}
             title="No hay fuentes descubiertas aún"
-            body="Pulsa «Sincronizar todos mis datos» para descubrir tablas e indexarlas."
+            body="Usá «Sincronizar todos mis datos» para descubrir tablas e indexarlas."
+            hint="De paso quedan registradas en Conocimiento para poder preguntarles."
           />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="table min-w-[720px]">
-              <thead>
-                <tr>
-                  <th>Schema</th>
-                  <th>Tabla</th>
-                  <th className="text-right">Filas</th>
-                  <th>Progreso</th>
-                  <th>Estado</th>
-                  <th className="w-[180px]">Acción</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sources.map((s) => {
-                  const key = `${s.schema}.${s.table}`;
-                  const isSyncing = syncingTables.has(key);
-                  const hasProgress = Boolean(s.progress && s.progress.status === "running");
-                  const status = sourceStatus(s, hasProgress);
-                  const isPartial =
-                    !s.synced && !s.skipped && !hasProgress && (s.lazy_rows_indexed ?? 0) > 0;
-                  return (
-                    <tr key={key}>
-                      <td className="text-muted">{s.schema}</td>
-                      <td className="mono">{s.table}</td>
-                      <td className="mono text-right">{fmtNum(s.row_count ?? 0)}</td>
-                      <td>
-                        <ProgressBar progress={s.progress ?? null} />
-                      </td>
-                      <td>
-                        <span className={`badge ${status.badge}`}>{status.label}</span>
-                      </td>
-                      <td>
-                        {!s.synced && s.row_count > 0 && !s.skipped && (
-                          <button
-                            className="btn btn-secondary px-3 py-1.5 text-xs"
-                            type="button"
-                            disabled={isSyncing || hasProgress}
-                            onClick={() => void syncTable(s.schema, s.table)}
-                          >
-                            {isSyncing || hasProgress ? (
-                              <>
-                                <Spinner size={12} /> En curso
-                              </>
-                            ) : isPartial ? (
-                              "Completar sincronización"
-                            ) : (
-                              "Sincronizar"
-                            )}
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+        }
+        rowActions={(s) => {
+          const key = `${s.schema}.${s.table}`;
+          const isSyncing = syncingTables.has(key);
+          const hasProgress = Boolean(s.progress && s.progress.status === "running");
+          const isPartial =
+            !s.synced && !s.skipped && !hasProgress && (s.lazy_rows_indexed ?? 0) > 0;
+          if (s.synced || s.row_count <= 0 || s.skipped) return null;
+          return (
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={isSyncing || hasProgress}
+              disabled={isSyncing || hasProgress}
+              onClick={() => void syncTable(s.schema, s.table)}
+            >
+              {isSyncing || hasProgress
+                ? "En curso"
+                : isPartial
+                  ? "Completar sincronización"
+                  : "Sincronizar"}
+            </Button>
+          );
+        }}
+      />
 
-      <div className="panel mt-4">
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 className="text-sm font-semibold text-text">Actividad de indexado por demanda</h2>
-          <span className="mono text-[11px] text-faint">últimos 30 días</span>
-        </div>
-        {lazyEvents.length === 0 ? (
+      <SectionHeader
+        title="Actividad de indexado por demanda"
+        description="Tablas que se indexaron al vuelo porque una pregunta las necesitó."
+        className="mt-8 mb-3"
+        actions={<span className="text-xs text-faint">Últimos 30 días</span>}
+      />
+      <DataTable
+        columns={lazyColumns}
+        rows={lazyRows}
+        rowKey={(ev) => ev._key}
+        caption="Indexados por demanda de los últimos 30 días"
+        empty={
           <EmptyState
             icon={Lightning}
             title="Todavía no hay indexados al vuelo"
             body="Cuando una pregunta necesite datos no sincronizados, se indexarán automáticamente y quedarán registrados aquí."
           />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="table min-w-[560px]">
-              <thead>
-                <tr>
-                  <th>Tablas</th>
-                  <th className="text-right">Filas</th>
-                  <th>Consulta</th>
-                  <th>Cuándo</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lazyEvents.map((ev, i) => (
-                  <tr key={`${ev.at}-${i}`}>
-                    <td className="mono text-xs">{(ev.tables || []).join(", ") || "—"}</td>
-                    <td className="mono text-right">{fmtNum(ev.rows_indexed)}</td>
-                    <td className="max-w-[320px] truncate text-muted" title={ev.query_preview}>
-                      {ev.query_preview || "—"}
-                    </td>
-                    <td className="text-faint">{timeAgo(ev.at)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+        }
+      />
 
-      <p className="mt-4 flex items-center gap-1.5 text-xs text-faint">
-        <Lightning size={14} className="text-accent" aria-hidden />
-        Las tablas con columna de actualización se sincronizan incrementalmente (solo lo
-        nuevo).
+      <p className="mt-6 flex items-start gap-2 text-xs leading-relaxed text-faint">
+        <Lightning size={14} className="mt-px shrink-0 text-accent" aria-hidden />
+        Las tablas con columna de actualización se sincronizan incrementalmente: solo se
+        indexa lo nuevo.
       </p>
     </KnowledgeLayout>
   );

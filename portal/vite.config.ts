@@ -3,17 +3,26 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
+const API_TARGET = process.env.VITE_API_PROXY || "http://localhost:8000";
+
+/** El portal siempre habla con la API por el mismo origen (dev y preview). */
+const proxy = {
+  "/api": { target: API_TARGET, changeOrigin: true },
+  "/health": { target: API_TARGET, changeOrigin: true },
+  "/docs": { target: API_TARGET, changeOrigin: true },
+  "/redoc": { target: API_TARGET, changeOrigin: true },
+  "/openapi.json": { target: API_TARGET, changeOrigin: true },
+};
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     port: 8080,
-    proxy: {
-      "/api": { target: process.env.VITE_API_PROXY || "http://localhost:8000", changeOrigin: true },
-      "/health": { target: process.env.VITE_API_PROXY || "http://localhost:8000", changeOrigin: true },
-      "/docs": { target: process.env.VITE_API_PROXY || "http://localhost:8000", changeOrigin: true },
-      "/redoc": { target: process.env.VITE_API_PROXY || "http://localhost:8000", changeOrigin: true },
-      "/openapi.json": { target: process.env.VITE_API_PROXY || "http://localhost:8000", changeOrigin: true },
-    },
+    proxy,
+  },
+  preview: {
+    port: 4173,
+    proxy,
   },
   test: {
     environment: "jsdom",

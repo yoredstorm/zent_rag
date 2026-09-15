@@ -59,7 +59,7 @@ export const TOUR_STEPS: TourStep[] = [
     id: "operate",
     target: "nav-group-operar",
     title: "Operar",
-    body: "Aquí operas lo que ya construiste: asistentes en marcha, métricas, calidad, despliegues y entornos. Pasa a este bloque cuando el agente deja de ser un experimento y tiene que aguantar uso real.",
+    body: "Aquí operas lo que ya construiste: asistentes en marcha, vigilancia de datos, despliegues, entornos y consumo. Pasa a este bloque cuando el agente deja de ser un experimento y tiene que aguantar uso real.",
   },
   {
     id: "assistants",
@@ -93,9 +93,9 @@ export const TOUR_STEPS: TourStep[] = [
   },
   {
     id: "developers-group",
-    target: "nav-group-desarrolladores",
-    title: "Desarrolladores",
-    body: "Todo lo que necesitas para integrar Zent fuera de este panel: API, webhooks y MCP. Entra a este bloque cuando tu producto, no solo el chat interno, tiene que hablar con Zent.",
+    target: "nav-group-desarrollar",
+    title: "Desarrollar",
+    body: "Todo lo que necesitas para integrar Zent fuera de este panel: API, webhooks, herramientas y MCP. Entra a este bloque cuando tu producto, no solo el chat interno, tiene que hablar con Zent.",
   },
   {
     id: "keys",
@@ -124,10 +124,10 @@ export const TOUR_STEPS: TourStep[] = [
     body: "Conecta Zent como servidor MCP para que otras apps (Cursor, Claude, etc.) usen tus agentes y conocimiento. Úsalo si integras Zent dentro de herramientas que ya hablan MCP.",
   },
   {
-    id: "organization",
-    target: "nav-group-organizacion",
-    title: "Organización",
-    body: "Personas, plan, seguridad y ajustes del tenant. Este bloque no construye agentes: administra quién entra, qué se paga y cómo queda auditado.",
+    id: "govern",
+    target: "nav-group-gobernar",
+    title: "Gobernar",
+    body: "Seguridad, auditoría, riesgo, cumplimiento y continuidad. Este bloque no construye agentes: deja registro de quién cambió qué y qué controles protegen al tenant. Entra cuando tenés que responder a una revisión interna o de un cliente.",
   },
   {
     id: "team",
@@ -158,10 +158,10 @@ export const TOUR_STEPS: TourStep[] = [
     body: "Nombre, preferencias y ajustes generales de la organización. Entra para cambios de configuración que no son de un agente concreto ni de facturación.",
   },
   {
-    id: "advanced",
-    target: "nav-group-avanzado",
-    title: "Avanzado",
-    body: "Evaluación extra, conectores, gobernanza, riesgo y herramientas de plataforma. Está colapsado a propósito: ábrelo cuando el flujo básico ya te queda corto.",
+    id: "manage",
+    target: "nav-group-gestionar",
+    title: "Gestionar",
+    body: "Personas, plan, workspaces, releases y pruebas. Está colapsado a propósito: abrilo cuando tengas que cambiar quién entra, qué se paga o qué versión corre.",
   },
   {
     id: "workspace",
@@ -263,10 +263,13 @@ export function tourTargetForPath(to: string): string | undefined {
 }
 
 export function tourTargetForGroup(label: string | null): string | undefined {
+  if (label === "Inicio") return "nav-group-inicio";
+  if (label === "Conocimiento") return "nav-group-conocimiento";
   if (label === "Construir") return "nav-group-construir";
   if (label === "Operar") return "nav-group-operar";
-  if (label === "Desarrolladores") return "nav-group-desarrolladores";
-  if (label === "Organización") return "nav-group-organizacion";
-  if (label === "Avanzado") return "nav-group-avanzado";
+  if (label === "Evaluar") return "nav-group-evaluar";
+  if (label === "Desarrollar") return "nav-group-desarrollar";
+  if (label === "Gobernar") return "nav-group-gobernar";
+  if (label === "Gestionar") return "nav-group-gestionar";
   return undefined;
 }

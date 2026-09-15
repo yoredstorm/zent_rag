@@ -1,7 +1,7 @@
 import {
   CaretDown,
   ChatCircleDots,
-  Copy,
+  Check,
   Database,
   Files,
   MagnifyingGlass,
@@ -9,23 +9,42 @@ import {
   PencilSimple,
   Play,
   Plus,
+  Quotes,
   Stop,
   ThumbsDown,
   ThumbsUp,
   Trash,
   User,
-  X,
 } from "@phosphor-icons/react";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  FormEvent,
+  KeyboardEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { useToast } from "../Toast";
 import { KnowledgePillarLinks } from "../components/KnowledgePillarLinks";
-import { ErrorInline, LoadingDots } from "../components/ui";
-import SqlRunnerModal from "../components/SqlRunnerModal";
+import {
+  Badge,
+  Button,
+  CodeBlock,
+  Drawer,
+  EmptyState,
+  ErrorInline,
+  IconButton,
+  LoadingDots,
+  Progress,
+  Tooltip,
+} from "../components/ui";
 import { fmtLatency, timeAgo } from "../lib/format";
 import { renderMarkdownHtml } from "../lib/markdown";
+import SqlRunnerModal from "../components/SqlRunnerModal";
 import {
   deleteConversation,
   groupByDay,
@@ -57,6 +76,8 @@ function renderMarkdown(text: string) {
 
 type Message = StoredMessage & { id: string; reasonPrompt?: boolean };
 
+type Source = NonNullable<StoredMessage["sources"]>[number];
+
 function uid(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -84,6 +105,7 @@ export default function ChatPage() {
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [error, setError] = useState("");
+  const [lastFailedQuery, setLastFailedQuery] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamText, setStreamText] = useState("");
   const [streamPhase, setStreamPhase] = useState("");
@@ -94,7 +116,7 @@ export default function ChatPage() {
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hintTimer = useRef<number | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (!session) return;
@@ -214,7 +236,8 @@ export default function ChatPage() {
     inputRef.current?.focus();
   }
 
-  async function startStreaming(query: string) {
+  async function startStreaming(query: string, options: { appendUserMessage?: boolean } = {}) {
+    const { appendUserMessage = true } = options;
     if (!session) return;
     if (destination.kind === "agent" && !destination.id) {
       setError("Elige un agente para probar.");
@@ -242,6 +265,7 @@ export default function ChatPage() {
           : "Buscando en tus datos…",
     );
     setError("");
+    setLastFailedQuery("");
 
     if (hintTimer.current) window.clearTimeout(hintTimer.current);
     if (destination.kind === "knowledge") {
@@ -254,9 +278,11 @@ export default function ChatPage() {
     abortRef.current = controller;
 
     const userMessage: Message = { id: uid(), role: "user", content: query };
-    const withUser = [...messages, userMessage];
-    setMessages(withUser);
-    if (conversationId) persist(withUser.map(({ id: _id, ...rest }) => rest), conversationId);
+    const withUser = appendUserMessage ? [...messages, userMessage] : messages;
+    if (appendUserMessage) {
+      setMessages(withUser);
+      if (conversationId) persist(withUser.map(({ id: _id, ...rest }) => rest), conversationId);
+    }
 
     try {
       const result = await runPlaygroundTurn({
@@ -315,7 +341,8 @@ export default function ChatPage() {
         }
         pushToast("info", "Generación detenida");
       } else {
-        setError(err instanceof Error ? err.message : "No se pudo obtener una respuesta");
+        setError(err instanceof Error ? err.message : "No pudimos obtener una respuesta.");
+        setLastFailedQuery(query);
         pushToast("error", "La consulta falló", err instanceof Error ? err.message : undefined);
       }
     } finally {
@@ -337,6 +364,16 @@ export default function ChatPage() {
     const query = input.trim();
     setInput("");
     await startStreaming(query);
+  }
+
+  function onComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      if (!input.trim() || streaming) return;
+      const query = input.trim();
+      setInput("");
+      void startStreaming(query);
+    }
   }
 
   async function sendFeedback(index: number, rating: "up" | "down") {
@@ -423,102 +460,92 @@ export default function ChatPage() {
   const empty = messages.length === 0 && !streaming;
   const selectedAgent = agents.find((a) => a.id === destination.id);
   const selectedWorkflow = workflows.find((w) => w.id === destination.id);
+  const composerDisabled = streaming || (destination.kind !== "knowledge" && !destination.id);
+
+  const composerPlaceholder =
+    destination.kind === "agent"
+      ? selectedAgent
+        ? `Pregunta a ${selectedAgent.name}…`
+        : "Elige un agente para preguntar…"
+      : destination.kind === "workflow"
+        ? "Escribe el mensaje que dispara el flujo…"
+        : role === "customer"
+          ? "Ej. ¿Qué analgésicos tienen disponible?"
+          : "Ej. ¿Cuántas ventas hubo en enero?";
+
+  const historyList = (
+    <ConversationList
+      groups={groups}
+      activeId={conversationId}
+      renamingId={renamingId}
+      renameValue={renameValue}
+      confirmDeleteId={confirmDeleteId}
+      onOpen={openConversation}
+      onStartRename={(id, title) => {
+        setRenamingId(id);
+        setRenameValue(title);
+      }}
+      onRenameValue={setRenameValue}
+      onCommitRename={commitRename}
+      onAskDelete={setConfirmDeleteId}
+      onDelete={handleDelete}
+    />
+  );
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
-      {/* ------------------------------------------------------------- */}
-      {/* Historial (drawer en mobile, columna en desktop)               */}
-      {/* ------------------------------------------------------------- */}
-      <aside className="shrink-0 lg:w-[260px]">
-        <div className="flex items-center justify-between lg:hidden">
-          <button
-            type="button"
-            className="btn btn-secondary"
+      {/* Historial: columna en desktop, drawer en móvil */}
+      <aside className="shrink-0 lg:w-[264px]">
+        <div className="flex items-center gap-2 lg:hidden">
+          <Button
+            variant="secondary"
+            leadingIcon={ChatCircleDots}
             onClick={() => setHistoryOpen(true)}
           >
-            <ChatCircleDots size={16} aria-hidden />
             Historial
-          </button>
+            {visibleConversations.length > 0 && <Badge tone="neutral">{visibleConversations.length}</Badge>}
+          </Button>
+          <span className="flex-1" />
+          <Button variant="primary" size="sm" leadingIcon={Plus} onClick={newConversation}>
+            Nueva
+          </Button>
         </div>
-        <div
-          className={`fixed inset-0 z-40 lg:hidden ${
-            historyOpen ? "block" : "hidden"
-          }`}
-          role="dialog"
-          aria-label="Historial de conversaciones"
+
+        <Drawer
+          open={historyOpen}
+          onOpenChange={setHistoryOpen}
+          side="left"
+          width={300}
+          title="Conversaciones"
+          description="Guardadas en este navegador."
         >
-          <div
-            className="absolute inset-0 animate-fade-in bg-black/60"
-            onClick={() => setHistoryOpen(false)}
-            aria-hidden
-          />
-          <div className="absolute inset-y-0 left-0 flex w-[300px] animate-page-in flex-col border-r border-border bg-surface shadow-pop">
-            <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <h2 className="text-sm font-semibold text-text">Conversaciones</h2>
-              <button
-                type="button"
-                className="cursor-pointer rounded-xs p-1 text-faint hover:bg-soft hover:text-text"
-                aria-label="Cerrar historial"
-                onClick={() => setHistoryOpen(false)}
-              >
-                <X size={16} aria-hidden />
-              </button>
-            </div>
-            <ConversationList
-              groups={groups}
-              activeId={conversationId}
-              renamingId={renamingId}
-              renameValue={renameValue}
-              confirmDeleteId={confirmDeleteId}
-              onOpen={openConversation}
-              onStartRename={(id, title) => {
-                setRenamingId(id);
-                setRenameValue(title);
-              }}
-              onRenameValue={setRenameValue}
-              onCommitRename={commitRename}
-              onAskDelete={setConfirmDeleteId}
-              onDelete={handleDelete}
-            />
+          <div className="mb-3">
+            <Button variant="primary" className="w-full" leadingIcon={Plus} onClick={newConversation}>
+              Nueva conversación
+            </Button>
           </div>
-        </div>
+          {historyList}
+        </Drawer>
 
         <div className="panel hidden h-[calc(100dvh-7rem)] flex-col overflow-hidden lg:flex">
           <div className="border-b border-border p-3">
-            <button
-              type="button"
-              className="btn btn-primary w-full"
-              onClick={newConversation}
-            >
-              <Plus size={15} aria-hidden />
+            <Button variant="primary" className="w-full" leadingIcon={Plus} onClick={newConversation}>
               Nueva conversación
-            </button>
+            </Button>
           </div>
-          <ConversationList
-            groups={groups}
-            activeId={conversationId}
-            renamingId={renamingId}
-            renameValue={renameValue}
-            confirmDeleteId={confirmDeleteId}
-            onOpen={openConversation}
-            onStartRename={(id, title) => {
-              setRenamingId(id);
-              setRenameValue(title);
-            }}
-            onRenameValue={setRenameValue}
-            onCommitRename={commitRename}
-            onAskDelete={setConfirmDeleteId}
-            onDelete={handleDelete}
-          />
+          {historyList}
         </div>
       </aside>
 
-      {/* ------------------------------------------------------------- */}
-      {/* Chat principal                                                 */}
-      {/* ------------------------------------------------------------- */}
+      {/* Conversación */}
       <div className="min-w-0 flex-1">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-xl font-semibold tracking-tight text-text">Playground</h1>
+          <div className="min-w-0">
+            <h1 className="text-h1">Playground</h1>
+            <p className="mt-0.5 text-[12.5px] text-muted">
+              Probá respuestas antes de publicarlas. Nada de lo que pase acá llega a tus usuarios.
+            </p>
+          </div>
           <PlaygroundTargetBar
             target={destination}
             agents={agents}
@@ -530,7 +557,25 @@ export default function ChatPage() {
           />
         </div>
 
-        <ErrorInline message={error} />
+        {error && (
+          <ErrorInline
+            message={
+              <span className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span>{error}</span>
+                {lastFailedQuery && (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    leadingIcon={Play}
+                    onClick={() => void startStreaming(lastFailedQuery, { appendUserMessage: false })}
+                  >
+                    Reintentar
+                  </Button>
+                )}
+              </span>
+            }
+          />
+        )}
         {destination.kind === "knowledge" && (
           <KnowledgePillarLinks
             title="Mejora las respuestas con conocimiento"
@@ -538,17 +583,18 @@ export default function ChatPage() {
           />
         )}
         {destination.kind === "agent" && selectedAgent && (
-          <p className="mb-4 text-xs text-muted">
-            Fuentes del agente.{" "}
-            <Link to={`/agents/${selectedAgent.id}`} className="text-accent hover:underline">
+          <p className="mb-4 flex flex-wrap items-center gap-x-2 text-xs text-muted">
+            <span>Fuentes del agente.</span>
+            <Link to={`/agents/${selectedAgent.id}`} className="font-medium text-accent hover:underline">
               Editar {selectedAgent.name}
             </Link>
           </p>
         )}
         {destination.kind === "workflow" && selectedWorkflow && (
-          <p className="mb-4 text-xs text-muted">
-            Simulación: no dispara acciones reales.{" "}
-            <Link to={`/workflows/${selectedWorkflow.id}`} className="text-accent hover:underline">
+          <p className="mb-4 flex flex-wrap items-center gap-x-2 text-xs text-muted">
+            <Badge tone="warn">Modo simulación</Badge>
+            <span>No dispara acciones reales.</span>
+            <Link to={`/workflows/${selectedWorkflow.id}`} className="font-medium text-accent hover:underline">
               Abrir {selectedWorkflow.name}
             </Link>
           </p>
@@ -557,14 +603,14 @@ export default function ChatPage() {
         <div className="panel flex flex-col overflow-hidden">
           <div
             ref={scrollRef}
-            className="flex min-h-[320px] flex-1 flex-col gap-4 overflow-y-auto p-4 sm:p-5 lg:h-[calc(100dvh-17rem)]"
+            className="flex min-h-[320px] flex-1 flex-col gap-4 overflow-y-auto p-4 sm:p-5 lg:h-[calc(100dvh-18rem)]"
           >
             {empty && (
               <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-                <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-border bg-soft text-accent">
-                  <MagnifyingGlass size={24} aria-hidden />
-                </div>
-                <h2 className="text-base font-medium text-text">
+                <span className="flex h-11 w-11 items-center justify-center rounded-md border border-border bg-raised text-accent">
+                  <MagnifyingGlass size={21} aria-hidden />
+                </span>
+                <h2 className="text-h3">
                   {destination.kind === "agent" && !destination.id
                     ? "Elige un agente para probar"
                     : destination.kind === "workflow" && !destination.id
@@ -575,18 +621,18 @@ export default function ChatPage() {
                           ? `Prueba el flujo ${selectedWorkflow.name}`
                           : "Escribe una pregunta para empezar"}
                 </h2>
-                <p className="max-w-sm text-[13px] leading-relaxed text-muted">
+                <p className="max-w-md text-[13px] leading-relaxed text-muted">
                   {destination.kind === "agent" && !destination.id ? (
                     <>
                       Crea un agente o elige uno existente.{" "}
-                      <Link to="/agents/new" className="text-accent hover:underline">
+                      <Link to="/agents/new" className="font-medium text-accent hover:underline">
                         Crear agente
                       </Link>
                     </>
                   ) : destination.kind === "workflow" && !destination.id ? (
                     <>
                       Crea un flujo o elige uno existente.{" "}
-                      <Link to="/workflows/new" className="text-accent hover:underline">
+                      <Link to="/workflows/new" className="font-medium text-accent hover:underline">
                         Crear flujo
                       </Link>
                     </>
@@ -610,13 +656,13 @@ export default function ChatPage() {
                       <button
                         key={q}
                         type="button"
-                        className="cursor-pointer rounded-full border border-border bg-soft px-3 py-1.5 text-xs text-muted transition-colors duration-150 hover:border-accent/40 hover:text-text"
+                        className="chip max-w-full cursor-pointer text-left transition-colors duration-150 hover:border-border-strong hover:text-text"
                         onClick={() => {
                           setInput(q);
                           inputRef.current?.focus();
                         }}
                       >
-                        {q}
+                        <span className="truncate">{q}</span>
                       </button>
                     ))}
                   </div>
@@ -629,31 +675,41 @@ export default function ChatPage() {
                 key={m.id}
                 message={m}
                 onFeedback={(rating) => void sendFeedback(i, rating)}
-                    onFeedbackReason={(reason) => void sendFeedbackReason(i, reason)}
+                onFeedbackReason={(reason) => void sendFeedbackReason(i, reason)}
               />
             ))}
 
             {streaming && (
               <div className="flex items-start gap-2.5">
                 <Avatar isUser={false} />
-                <div className="bubble bubble-assistant min-w-[60%]">
-                  {streamText ? (
-                    <div
-                      className="chat-markdown whitespace-pre-wrap text-[14.5px] leading-relaxed"
-                      dangerouslySetInnerHTML={renderMarkdown(streamText)}
-                    />
-                  ) : (
-                    <LoadingDots />
-                  )}
-                  {streamText && (
-                    <span
-                      className="ml-0.5 inline-block h-4 w-[7px] translate-y-0.5 animate-blink rounded-xs bg-accent"
-                      aria-hidden
-                    />
-                  )}
+                <div className="min-w-0 flex-1">
+                  <div className="bubble bubble-assistant max-w-full">
+                    {streamText ? (
+                      <>
+                        <div
+                          className="chat-markdown whitespace-pre-wrap text-[14.5px] leading-relaxed"
+                          dangerouslySetInnerHTML={renderMarkdown(streamText)}
+                        />
+                        <span
+                          className="ml-0.5 inline-block h-4 w-[7px] translate-y-0.5 animate-blink rounded-xs bg-accent"
+                          aria-hidden
+                        />
+                      </>
+                    ) : (
+                      <span className="flex items-center gap-2.5 text-muted">
+                        <LoadingDots label="Generando" />
+                        <span className="text-[13px]">Generando respuesta…</span>
+                      </span>
+                    )}
+                  </div>
                   {streamPhase && (
-                    <p className="mt-2 flex items-center gap-1.5 text-[11.5px] text-faint">
-                      <MagnifyingGlass size={12} aria-hidden />
+                    <p
+                      className="state-rail mt-2 flex items-center gap-2 text-[12px] text-muted"
+                      data-state="running"
+                      role="status"
+                      aria-live="polite"
+                    >
+                      <MagnifyingGlass size={12} className="shrink-0" aria-hidden />
                       {streamPhase}
                     </p>
                   )}
@@ -663,55 +719,62 @@ export default function ChatPage() {
           </div>
 
           <form
-            className="flex items-end gap-2 border-t border-border bg-surface/60 p-3 sm:p-4"
+            className="border-t border-border bg-surface/60 p-3 sm:p-4"
             onSubmit={(e) => void send(e)}
           >
-            <input
-              ref={inputRef}
-              className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text transition-colors duration-200 outline-none placeholder:text-faint hover:border-border-strong focus:border-accent"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={
-                destination.kind === "agent"
-                  ? selectedAgent
-                    ? `Pregunta a ${selectedAgent.name}…`
-                    : "Elige un agente para preguntar…"
-                  : destination.kind === "workflow"
-                    ? "Escribe el mensaje que dispara el flujo…"
-                    : role === "customer"
-                      ? "Ej. ¿Qué analgésicos tienen disponible?"
-                      : "Ej. ¿Cuántas ventas hubo en enero?"
-              }
-              disabled={streaming}
-              aria-label="Tu pregunta"
-            />
-            {streaming ? (
-              <button
-                type="button"
-                className="btn btn-danger shrink-0 px-3"
-                onClick={stopStreaming}
-                aria-label="Detener generación"
-              >
-                <Stop size={17} weight="fill" aria-hidden />
-              </button>
-            ) : (
-              <button
-                className="btn btn-primary shrink-0 px-4"
-                type="submit"
-                disabled={!input.trim() || (destination.kind !== "knowledge" && !destination.id)}
-                aria-label="Enviar pregunta"
-              >
-                <PaperPlaneRight size={17} aria-hidden />
-                Enviar
-              </button>
-            )}
+            <div className="flex items-end gap-2">
+              <label className="sr-only" htmlFor="playground-composer">
+                Tu pregunta
+              </label>
+              <textarea
+                id="playground-composer"
+                ref={inputRef}
+                rows={1}
+                className="input max-h-40 min-h-10 flex-1 resize-none py-2.5 leading-relaxed"
+                value={input}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  const el = e.currentTarget;
+                  el.style.height = "auto";
+                  el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+                }}
+                onKeyDown={onComposerKeyDown}
+                placeholder={composerPlaceholder}
+                disabled={streaming}
+                aria-label="Tu pregunta"
+                aria-describedby="playground-composer-hint"
+              />
+              {streaming ? (
+                <IconButton
+                  label="Detener generación"
+                  icon={Stop}
+                  variant="danger"
+                  iconSize={17}
+                  className="h-10 w-10 min-h-0"
+                  onClick={stopStreaming}
+                />
+              ) : (
+                <Button
+                  type="submit"
+                  variant="primary"
+                  disabled={!input.trim() || composerDisabled}
+                  aria-label="Enviar pregunta"
+                  leadingIcon={PaperPlaneRight}
+                >
+                  Enviar
+                </Button>
+              )}
+            </div>
+            <p id="playground-composer-hint" className="mt-2 text-[11.5px] text-faint">
+              Enter envía · Shift+Enter salto de línea.
+              <span className="hidden sm:inline">
+                {" "}
+                Las respuestas se generan con tu información sincronizada: verificá los datos sensibles
+                antes de decidir.
+              </span>
+            </p>
           </form>
         </div>
-
-        <p className="mt-3 text-center text-[11.5px] text-faint">
-          Las respuestas se generan con tu información sincronizada. Verifica los datos
-          sensibles antes de decidir.
-        </p>
       </div>
     </div>
   );
@@ -724,15 +787,139 @@ export default function ChatPage() {
 function Avatar({ isUser }: { isUser: boolean }) {
   return (
     <div
-      className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border ${
+      className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border ${
         isUser
-          ? "border-accent/30 bg-accent-soft text-accent"
-          : "border-border bg-soft text-faint"
+          ? "border-accent-line bg-accent-soft text-accent"
+          : "border-border bg-raised text-faint"
       }`}
       aria-hidden
     >
       {isUser ? <User size={14} weight="fill" /> : <ChatCircleDots size={14} />}
     </div>
+  );
+}
+
+/** Método de respuesta: de dónde salió el dato. */
+function MethodChip({ method }: { method: string }) {
+  if (method === "sql") {
+    return (
+      <span className="flex items-center gap-1 text-[11px] text-muted">
+        <Database size={11} aria-hidden />
+        Datos de tu base
+      </span>
+    );
+  }
+  if (method === "agent") {
+    return (
+      <span className="flex items-center gap-1 text-[11px] text-muted">
+        <ChatCircleDots size={11} aria-hidden />
+        Agente
+      </span>
+    );
+  }
+  if (method === "workflow") {
+    return (
+      <span className="flex items-center gap-1 text-[11px] text-muted">
+        <Play size={11} aria-hidden />
+        Flujo simulado
+      </span>
+    );
+  }
+  return (
+    <span className="flex items-center gap-1 text-[11px] text-muted">
+      <Files size={11} aria-hidden />
+      Documentos
+    </span>
+  );
+}
+
+/** Evidencia: las fuentes son una capacidad principal, no un link al pie. */
+function SourceEvidence({ sources }: { sources: Source[] }) {
+  const [openIndex, setOpenIndex] = useState<number | null>(null);
+  const [open, setOpen] = useState(false);
+  const selected = openIndex === null ? null : sources[openIndex];
+
+  return (
+    <>
+      <button
+        type="button"
+        className="flex cursor-pointer items-center gap-1.5 text-[11.5px] text-muted transition-colors hover:text-text"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Quotes size={12} aria-hidden />
+        {sources.length} {sources.length === 1 ? "fuente" : "fuentes"} recuperadas
+        <CaretDown
+          size={11}
+          className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          aria-hidden
+        />
+      </button>
+      {open && (
+        <ul className="mt-2 flex flex-col gap-1.5">
+          {sources.map((s, j) => (
+            <li key={j}>
+              <button
+                type="button"
+                onClick={() => setOpenIndex(j)}
+                className="w-full cursor-pointer rounded-sm border border-border-soft bg-surface px-2.5 py-2 text-left transition-colors duration-150 hover:border-border-strong"
+              >
+                <span className="flex items-start gap-2">
+                  <span className="mono mt-px shrink-0 text-[10px] text-faint">{j + 1}</span>
+                  <span className="line-clamp-2 min-w-0 flex-1 text-[12.5px] leading-relaxed text-muted">
+                    {s.text}
+                  </span>
+                  {s.score !== undefined && (
+                    <span className="mono shrink-0 text-[10px] text-faint">
+                      {(s.score * 100).toFixed(0)}%
+                    </span>
+                  )}
+                </span>
+                {s.score !== undefined && (
+                  <Progress
+                    value={Math.round(s.score * 100)}
+                    className="mt-1.5 pl-5"
+                  />
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <Drawer
+        open={selected !== null}
+        onOpenChange={(next) => !next && setOpenIndex(null)}
+        title="Evidencia recuperada"
+        description={
+          selected?.score !== undefined
+            ? `Relevancia ${(selected.score * 100).toFixed(0)}% sobre tu consulta`
+            : undefined
+        }
+      >
+        {selected && (
+          <div className="flex flex-col gap-4">
+            {selected.image && (
+              <img
+                src={`data:image/svg+xml;base64,${selected.image}`}
+                alt="Imagen asociada a la fuente"
+                className="w-full rounded-md border border-border object-cover"
+              />
+            )}
+            <p className="text-[13.5px] leading-relaxed whitespace-pre-wrap text-text">
+              {selected.text}
+            </p>
+            {selected.score !== undefined && (
+              <Progress
+                value={Math.round(selected.score * 100)}
+                label="Relevancia respecto de tu consulta"
+                showValue
+              />
+            )}
+          </div>
+        )}
+      </Drawer>
+    </>
   );
 }
 
@@ -745,20 +932,8 @@ function MessageBubble({
   onFeedback: (rating: "up" | "down") => void;
   onFeedbackReason: (reason: string) => void;
 }) {
-  const [sourcesOpen, setSourcesOpen] = useState(false);
   const [sqlOpen, setSqlOpen] = useState(false);
   const [sqlModalOpen, setSqlModalOpen] = useState(false);
-  const { pushToast } = useToast();
-
-  async function copySql() {
-    if (!message.sqlQuery) return;
-    try {
-      await navigator.clipboard.writeText(message.sqlQuery);
-      pushToast("success", "SQL copiado");
-    } catch {
-      pushToast("error", "No se pudo copiar");
-    }
-  }
 
   if (message.role === "user") {
     return (
@@ -783,7 +958,7 @@ function MessageBubble({
             dangerouslySetInnerHTML={renderMarkdown(message.content)}
           />
           {message.stopped && (
-            <span className="mt-1 inline-block rounded-xs bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">
+            <span className="mt-1.5 inline-block rounded-xs bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">
               Generación detenida
             </span>
           )}
@@ -804,106 +979,53 @@ function MessageBubble({
           )}
 
           {message.sqlQuery && (
-            <div className="mt-2 rounded-xs border border-border/70 bg-[var(--zent-code-bg)]">
-              <div className="flex items-center gap-1 px-2.5 py-1.5">
-                <button
-                  type="button"
-                  className="flex cursor-pointer items-center gap-1.5 text-xs text-muted transition-colors hover:text-text"
-                  aria-expanded={sqlOpen}
-                  onClick={() => setSqlOpen((o) => !o)}
-                >
-                  <CaretDown
-                    size={12}
-                    className={`transition-transform ${sqlOpen ? "rotate-180" : ""}`}
-                    aria-hidden
-                  />
-                  Ver consulta SQL
-                </button>
-                <span className="ml-auto flex items-center gap-1">
-                  <button
-                    type="button"
-                    className="cursor-pointer rounded-xs p-1 text-faint transition-colors hover:bg-raised hover:text-text"
-                    aria-label="Copiar SQL"
-                    title="Copiar SQL"
-                    onClick={() => void copySql()}
-                  >
-                    <Copy size={12} aria-hidden />
-                  </button>
-                  <button
-                    type="button"
-                    className="flex cursor-pointer items-center gap-1 rounded-xs px-1.5 py-1 text-[11px] text-accent transition-colors hover:bg-raised"
-                    onClick={() => setSqlModalOpen(true)}
-                  >
-                    <Play size={11} weight="fill" aria-hidden />
-                    Ejecutar
-                  </button>
-                </span>
-              </div>
+            <div className="mt-2.5">
+              <button
+                type="button"
+                className="flex cursor-pointer items-center gap-1.5 text-xs text-muted transition-colors hover:text-text"
+                aria-expanded={sqlOpen}
+                onClick={() => setSqlOpen((o) => !o)}
+              >
+                <CaretDown
+                  size={12}
+                  className={`transition-transform duration-200 ${sqlOpen ? "rotate-180" : ""}`}
+                  aria-hidden
+                />
+                Ver consulta SQL
+              </button>
               {sqlOpen && (
-                <pre className="overflow-x-auto border-t border-border/50 px-3 py-2.5 font-mono text-[12px] leading-relaxed text-accent">
-                  {message.sqlQuery}
-                </pre>
+                <CodeBlock
+                  className="mt-2"
+                  code={message.sqlQuery}
+                  language="sql"
+                  maxHeight={220}
+                  actions={
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      leadingIcon={Play}
+                      onClick={() => setSqlModalOpen(true)}
+                    >
+                      Ejecutar
+                    </Button>
+                  }
+                />
+              )}
+              {sqlModalOpen && message.sqlQuery && (
+                <SqlRunnerModal sql={message.sqlQuery} onClose={() => setSqlModalOpen(false)} />
               )}
             </div>
           )}
 
-          {sqlModalOpen && message.sqlQuery && (
-            <SqlRunnerModal
-              sql={message.sqlQuery}
-              onClose={() => setSqlModalOpen(false)}
-            />
-          )}
-
           {(message.sources?.length ?? 0) > 0 && (
-            <div className="mt-2">
-              <button
-                type="button"
-                className="flex cursor-pointer items-center gap-1 text-[11.5px] text-faint transition-colors hover:text-muted"
-                aria-expanded={sourcesOpen}
-                onClick={() => setSourcesOpen((o) => !o)}
-              >
-                <Files size={12} aria-hidden />
-                {message.sources!.length} fuentes recuperadas
-                <CaretDown
-                  size={11}
-                  className={`transition-transform ${sourcesOpen ? "rotate-180" : ""}`}
-                  aria-hidden
-                />
-              </button>
-              {sourcesOpen && (
-                <ul className="mt-1.5 flex flex-col gap-1">
-                  {message.sources!.map((s, j) => (
-                    <li key={j} className="source-chip flex-col items-start gap-0.5">
-                      <span className="line-clamp-2 text-left" title={s.text}>
-                        {s.text}
-                      </span>
-                      {s.score !== undefined && (
-                        <span className="mono text-[10px] text-faint">
-                          relevancia {(s.score * 100).toFixed(0)}%
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
+            <div className="mt-2.5">
+              <SourceEvidence sources={message.sources!} />
             </div>
           )}
         </div>
 
-        <div className="mt-1 flex items-center gap-2 pl-1">
-          {message.method && (
-            <span className="flex items-center gap-1 text-[11px] text-faint">
-              {message.method === "sql" ? (
-                <>
-                  <Database size={11} aria-hidden /> Datos de tu base
-                </>
-              ) : (
-                <>
-                  <Files size={11} aria-hidden /> Documentos
-                </>
-              )}
-            </span>
-          )}
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-1">
+          {message.method && <MethodChip method={message.method} />}
           {message.lazyIngested && (
             <span className="flex items-center gap-1 text-[11px] text-accent">
               <MagnifyingGlass size={11} aria-hidden />
@@ -911,37 +1033,45 @@ function MessageBubble({
             </span>
           )}
           {message.latencyMs !== undefined && message.latencyMs > 0 && (
-            <span className="mono text-[11px] text-faint">
-              {fmtLatency(message.latencyMs)}
-            </span>
+            <span className="mono text-[11px] text-faint">{fmtLatency(message.latencyMs)}</span>
           )}
           {!message.rated ? (
-            <span className="ml-auto flex items-center gap-1">
-              <button
-                type="button"
-                className="cursor-pointer rounded-xs p-1 text-faint transition-colors hover:bg-soft hover:text-ok"
-                aria-label="Respuesta útil"
-                onClick={() => onFeedback("up")}
-              >
-                <ThumbsUp size={13} aria-hidden />
-              </button>
-              <button
-                type="button"
-                className="cursor-pointer rounded-xs p-1 text-faint transition-colors hover:bg-soft hover:text-danger"
-                aria-label="Respuesta no útil"
-                onClick={() => onFeedback("down")}
-              >
-                <ThumbsDown size={13} aria-hidden />
-              </button>
+            <span className="ml-auto flex items-center gap-0.5">
+              <Tooltip label="Respuesta útil" side="top">
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-xs p-1 text-faint transition-colors hover:bg-soft hover:text-ok"
+                  aria-label="Respuesta útil"
+                  onClick={() => onFeedback("up")}
+                >
+                  <ThumbsUp size={13} aria-hidden />
+                </button>
+              </Tooltip>
+              <Tooltip label="Respuesta no útil" side="top">
+                <button
+                  type="button"
+                  className="cursor-pointer rounded-xs p-1 text-faint transition-colors hover:bg-soft hover:text-danger"
+                  aria-label="Respuesta no útil"
+                  onClick={() => onFeedback("down")}
+                >
+                  <ThumbsDown size={13} aria-hidden />
+                </button>
+              </Tooltip>
             </span>
           ) : message.rated === "down" && message.reasonPrompt ? (
             <span className="ml-auto flex items-center gap-1">
+              <label className="sr-only" htmlFor={`reason-${message.id}`}>
+                Motivo
+              </label>
               <select
-                className="rounded-md border border-border bg-soft px-2 py-1 text-[11px]"
+                id={`reason-${message.id}`}
+                className="input w-auto px-2 py-1 text-[11px]"
                 value=""
                 onChange={(e) => onFeedbackReason(e.target.value)}
               >
-                <option value="" disabled>¿Por qué no fue útil?</option>
+                <option value="" disabled>
+                  ¿Por qué no fue útil?
+                </option>
                 <option value="wrong_answer">Respuesta incorrecta</option>
                 <option value="too_long">Demasiado larga</option>
                 <option value="too_slow">Demasiado lenta</option>
@@ -950,7 +1080,8 @@ function MessageBubble({
               </select>
             </span>
           ) : (
-            <span className="ml-auto text-[11px] text-faint">
+            <span className="ml-auto flex items-center gap-1 text-[11px] text-muted">
+              <Check size={12} weight="bold" className={message.rated === "up" ? "text-ok" : "text-danger"} aria-hidden />
               {message.rated === "up" ? "Marcada como útil" : "Marcada como no útil"}
             </span>
           )}
@@ -987,102 +1118,98 @@ function ConversationList({
 }) {
   if (groups.length === 0) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center">
-        <ChatCircleDots size={22} className="text-faint" aria-hidden />
-        <p className="text-[13px] text-muted">Aún no tienes conversaciones.</p>
-        <p className="text-[11.5px] text-faint">
-          Las conversaciones se guardan en este navegador.
-        </p>
-      </div>
+      <EmptyState
+        compact
+        icon={ChatCircleDots}
+        title="Sin conversaciones todavía"
+        body="Escribí una pregunta para empezar. Las conversaciones se guardan en este navegador."
+      />
     );
   }
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-2">
       {groups.map((group) => (
         <div key={group.label} className="mb-2">
-          <p className="px-2 pt-2 pb-1 text-[10.5px] font-semibold tracking-[0.08em] text-faint uppercase">
-            {group.label}
-          </p>
-          {group.items.map((conv) => (
-            <div
-              key={conv.id}
-              className={`group/conversation mb-0.5 flex items-center gap-1 rounded-md px-2 py-2 transition-colors duration-150 ${
-                activeId === conv.id ? "bg-accent-soft" : "hover:bg-soft"
-              }`}
-            >
-              {renamingId === conv.id ? (
-                <form
-                  className="flex flex-1 gap-1"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    onCommitRename(conv.id);
-                  }}
-                >
-                  <input
-                    autoFocus
-                    className="flex-1 rounded-xs border border-border bg-soft px-2 py-1 text-xs text-text outline-none focus:border-accent"
-                    value={renameValue}
-                    onChange={(e) => onRenameValue(e.target.value)}
-                    onBlur={() => onCommitRename(conv.id)}
-                  />
-                </form>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    className="min-w-0 flex-1 cursor-pointer truncate text-left text-[13px] text-muted transition-colors hover:text-text"
-                    title={conv.title}
-                    onClick={() => onOpen(conv.id)}
+          <p className="eyebrow px-2 pt-2 pb-1">{group.label}</p>
+          {group.items.map((conv) => {
+            const active = activeId === conv.id;
+            return (
+              <div
+                key={conv.id}
+                className={`group/conversation relative mb-0.5 flex items-center gap-1 rounded-sm px-2 py-2 transition-colors duration-150 ${
+                  active ? "bg-soft/70" : "hover:bg-soft/45"
+                }`}
+              >
+                {active && (
+                  <span className="absolute top-1.5 bottom-1.5 left-0 w-[2px] rounded-full bg-accent" aria-hidden />
+                )}
+                {renamingId === conv.id ? (
+                  <form
+                    className="flex flex-1 gap-1"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      onCommitRename(conv.id);
+                    }}
                   >
-                    {conv.title}
-                  </button>
-                  <span
-                    className="mono shrink-0 text-[10px] text-faint"
-                    title={new Date(conv.updatedAt).toLocaleString()}
-                  >
-                    {timeAgo(new Date(conv.updatedAt).toISOString())}
-                  </span>
-                  <span className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover/conversation:opacity-100">
+                    <input
+                      autoFocus
+                      aria-label="Nuevo nombre"
+                      className="input flex-1 px-2 py-1 text-xs"
+                      value={renameValue}
+                      onChange={(e) => onRenameValue(e.target.value)}
+                      onBlur={() => onCommitRename(conv.id)}
+                    />
+                  </form>
+                ) : (
+                  <>
                     <button
                       type="button"
-                      className="cursor-pointer rounded-xs p-1 text-faint hover:bg-raised hover:text-text"
-                      aria-label="Renombrar conversación"
-                      onClick={() => onStartRename(conv.id, conv.title)}
+                      className={`min-w-0 flex-1 cursor-pointer truncate text-left text-[13px] transition-colors ${
+                        active ? "font-medium text-text" : "text-muted hover:text-text"
+                      }`}
+                      title={conv.title}
+                      onClick={() => onOpen(conv.id)}
                     >
-                      <PencilSimple size={12} aria-hidden />
+                      {conv.title}
                     </button>
-                    <button
-                      type="button"
-                      className="cursor-pointer rounded-xs p-1 text-faint hover:bg-raised hover:text-danger"
-                      aria-label="Eliminar conversación"
-                      onClick={() => onAskDelete(confirmDeleteId === conv.id ? null : conv.id)}
+                    <span
+                      className="mono shrink-0 text-[10px] text-faint"
+                      title={new Date(conv.updatedAt).toLocaleString()}
                     >
-                      <Trash size={12} aria-hidden />
-                    </button>
-                  </span>
-                  {confirmDeleteId === conv.id && (
-                    <span className="flex shrink-0 items-center gap-1">
-                      <button
-                        type="button"
-                        className="cursor-pointer rounded-xs bg-danger-soft px-1.5 py-0.5 text-[10px] text-danger"
-                        onClick={() => onDelete(conv.id)}
-                      >
-                        Eliminar
-                      </button>
-                      <button
-                        type="button"
-                        className="cursor-pointer rounded-xs px-1 py-0.5 text-[10px] text-faint hover:text-text"
-                        aria-label="Cancelar eliminación"
-                        onClick={() => onAskDelete(null)}
-                      >
-                        <X size={10} aria-hidden />
-                      </button>
+                      {timeAgo(new Date(conv.updatedAt).toISOString())}
                     </span>
-                  )}
-                </>
-              )}
-            </div>
-          ))}
+                    <span className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover/conversation:opacity-100 focus-within:opacity-100">
+                      <IconButton
+                        label="Renombrar"
+                        icon={PencilSimple}
+                        iconSize={13}
+                        className="h-6 w-6 min-h-0"
+                        onClick={() => onStartRename(conv.id, conv.title)}
+                      />
+                      <IconButton
+                        label="Eliminar"
+                        icon={Trash}
+                        iconSize={13}
+                        className="h-6 w-6 min-h-0 hover:text-danger"
+                        onClick={() => onAskDelete(conv.id)}
+                      />
+                    </span>
+                  </>
+                )}
+                {confirmDeleteId === conv.id && (
+                  <div className="absolute inset-x-1 top-full z-10 mt-1 flex items-center gap-2 rounded-md border border-border bg-overlay px-2.5 py-2 shadow-pop">
+                    <span className="flex-1 text-[11.5px] text-text">¿Eliminar conversación?</span>
+                    <Button variant="danger" size="sm" onClick={() => onDelete(conv.id)}>
+                      Eliminar
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => onAskDelete(null)}>
+                      Cancelar
+                    </Button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       ))}
     </div>

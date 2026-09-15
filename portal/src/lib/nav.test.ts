@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Session } from "../api";
-import { NAV_GROUPS, canSeeNavItem, visibleNavLeaves } from "./nav";
+import { NAV_GROUPS, canSeeNavItem, navLeaves, visibleNavLeaves } from "./nav";
 
 function session(roles: string[], permissions: string[] = []): Session {
   return {
@@ -63,6 +63,34 @@ describe("NAV_GROUPS", () => {
     expect(construir?.items?.map((item) => item.to)).not.toContain("/assistants");
     expect(construir?.items?.map((item) => item.to)).toContain("/agents");
     expect(operar?.items?.[0]).toMatchObject({ to: "/assistants", label: "Asistentes" });
+  });
+
+  it("mantiene los clusters del modelo mental en orden", () => {
+    expect(NAV_GROUPS.map((g) => g.label)).toEqual([
+      "Inicio",
+      "Conocimiento",
+      "Construir",
+      "Operar",
+      "Evaluar",
+      "Desarrollar",
+      "Gobernar",
+      "Gestionar",
+    ]);
+  });
+
+  it("no duplica rutas y conserva el gating de las hojas", () => {
+    const leaves = NAV_GROUPS.flatMap(navLeaves);
+    const paths = leaves.map((l) => l.to);
+    expect(new Set(paths).size).toBe(paths.length);
+    expect(leaves.find((l) => l.to === "/keys")?.key).toBe("keys");
+    expect(leaves.find((l) => l.to === "/evaluation")?.key).toBe("eval_ui");
+    expect(leaves.find((l) => l.to === "/security")?.key).toBe("audit");
+  });
+
+  it("Gestionar arranca colapsado y es la única sección colapsable", () => {
+    const collapsibles = NAV_GROUPS.filter((g) => g.collapsible).map((g) => g.label);
+    expect(collapsibles).toEqual(["Gestionar"]);
+    expect(NAV_GROUPS.find((g) => g.label === "Gestionar")?.defaultCollapsed).toBe(true);
   });
 });
 

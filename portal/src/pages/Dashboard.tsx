@@ -2,15 +2,15 @@ import {
   ArrowRight,
   CalendarBlank,
   ChartLineUp,
-  Gauge,
+  Database,
   Heartbeat,
   Lightning,
   ListBullets,
+  Plugs,
   Robot,
-  Stack,
+  Sparkle,
   Star,
-  TrendDown,
-  TrendUp,
+  Timer,
 } from "@phosphor-icons/react";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
@@ -18,8 +18,19 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { AttentionList } from "../components/AttentionList";
 import { KnowledgePillarLinks } from "../components/KnowledgePillarLinks";
-import { EmptyState, ErrorInline, PageHeader, SkeletonBlock, StatCard } from "../components/ui";
+import {
+  EmptyState,
+  ErrorInline,
+  Progress,
+  Skeleton,
+  WarningInline,
+} from "../components/ui";
+import { ButtonLink } from "../components/ui/Button";
+import { Metric, MetricGrid, PageHeader, Panel, PanelHeader } from "../components/ui/surface";
+import { StatusDot } from "../components/ui/Badge";
+import { Tooltip } from "../components/ui/overlay";
 import { fmtDateTime, fmtLatency, fmtNum, timeAgo } from "../lib/format";
+import { cn } from "../components/ui/cn";
 
 const UsageChart = lazy(() => import("../components/UsageChart"));
 
@@ -76,6 +87,8 @@ const SERVICE_LABELS: Record<string, string> = {
   qdrant: "Vector DB",
   redis: "Redis",
 };
+
+const SERVICES = ["api", "postgres", "qdrant", "redis"] as const;
 
 export default function DashboardPage() {
   const { session } = useAuth();
@@ -168,7 +181,7 @@ export default function DashboardPage() {
           }))
         );
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Error cargando panel");
+        setError(err instanceof Error ? err.message : "No pudimos cargar el panel.");
       } finally {
         setLoading(false);
       }
@@ -177,150 +190,277 @@ export default function DashboardPage() {
 
   const limit = sub?.requests_limit ?? null;
   const used = sub?.requests_used ?? 0;
-  const quotaPct =
-    limit && limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : null;
+  const quotaPct = limit && limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : null;
   const daily = usage?.daily ?? [];
   const recentQueries = usage?.recent ?? [];
   const lazyEvents = (lazyActivity?.recent ?? []).slice(0, 5);
-  const services = ["api", "postgres", "qdrant", "redis"] as const;
+  const outages = SERVICES.filter((s) => checks[s] && checks[s] !== "ok");
+  const pending = issues.length + attentionSessions.length;
+  const quotaTone = quotaPct === null ? "accent" : quotaPct >= 85 ? "danger" : quotaPct >= 60 ? "warn" : "accent";
+
+  // ------------------------------------------------------------------ //
+  // Bienvenida: workspace sin datos reales todavía                      //
+  // ------------------------------------------------------------------ //
+  if (!loading && hasRealData === false) {
+    const steps = [
+      {
+        title: "Conectá tus fuentes",
+        body: "Documentos, bases de datos, APIs o conectores. Zent los interpreta y los deja consultables.",
+      },
+      {
+        title: "Preguntá en el Playground",
+        body: "Comprobá respuestas con citas antes de que las use un usuario real.",
+      },
+      {
+        title: "Publicá un agente",
+        body: "Elegí conocimiento, herramientas y comportamiento. Después lo servís por chat, API o workflows.",
+      },
+    ];
+    return (
+      <div>
+        <PageHeader
+          title="Panel general"
+          subtitle="Cuando conectes datos, acá vas a ver el pulso de tu workspace: salud, consumo y qué pide atención."
+        />
+        <ErrorInline message={error} />
+        <Panel className="p-6 sm:p-8">
+          <p className="eyebrow mb-2">Primer paso</p>
+          <h2 className="text-display">Bienvenido a Zent</h2>
+          <p className="prose-measure mt-2.5 text-sm leading-relaxed text-muted">
+            Zent responde con el conocimiento de tu negocio. Empezá conectando una fuente: te guiamos
+            paso a paso y podés salir en cualquier momento sin perder lo cargado.
+          </p>
+          <ol className="mt-7 grid gap-4 sm:grid-cols-3">
+            {steps.map((step, i) => (
+              <li key={step.title} className="flex gap-3">
+                <span className="mono mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-xs border border-border bg-raised text-[11px] text-muted">
+                  {i + 1}
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-[13px] font-medium text-text">{step.title}</span>
+                  <span className="mt-0.5 block text-[12.5px] leading-relaxed text-muted">
+                    {step.body}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ol>
+          <div className="mt-7 flex flex-wrap items-center gap-2">
+            <ButtonLink to="/knowledge/add" variant="primary" leadingIcon={Database}>
+              Conectar mis datos
+            </ButtonLink>
+            {session?.workspaceKind === "demo" && (
+              <ButtonLink to="/chat" variant="secondary" leadingIcon={Sparkle}>
+                Explorar demo
+              </ButtonLink>
+            )}
+            {resumeId && (
+              <ButtonLink to={`/knowledge/add/${resumeId}`} variant="ghost" leadingIcon={ArrowRight}>
+                Continuar donde lo dejé
+              </ButtonLink>
+            )}
+          </div>
+        </Panel>
+      </div>
+    );
+  }
 
   return (
     <div>
       <PageHeader
         title="Panel general"
-        subtitle="Monitorea tu workspace de IA, el uso y la salud de la plataforma."
+        subtitle="Salud del sistema, consumo del período y lo que pide atención en tu workspace."
+        actions={
+          <>
+            <ButtonLink to="/chat" variant="secondary" size="sm" leadingIcon={Sparkle}>
+              Probar
+            </ButtonLink>
+            <ButtonLink to="/usage" variant="ghost" size="sm" leadingIcon={ChartLineUp}>
+              Analítica
+            </ButtonLink>
+          </>
+        }
       />
 
       <ErrorInline message={error} />
+
+      {!loading && attentionSessions.length > 0 && (
+        <WarningInline>
+          {attentionSessions[0].warning || "Zent tiene datos sin revisar de tu última fuente."}{" "}
+          <Link className="font-medium underline" to={`/knowledge/add/${attentionSessions[0].id}`}>
+            Revisar ahora
+          </Link>
+        </WarningInline>
+      )}
+
       <KnowledgePillarLinks
         title="Conocimiento"
         subtitle="Resumen, fuentes, semántica y mejora — el viaje de tus datos."
       />
 
-      {!loading && attentionSessions.length > 0 && (
-        <div className="mb-4 rounded-md border border-warn/40 bg-warn/10 px-4 py-3 text-sm">
-          {attentionSessions[0].warning ||
-            "Zent tiene datos sin revisar de tu última fuente."}{" "}
-          <Link className="text-accent underline" to={`/knowledge/add/${attentionSessions[0].id}`}>
-            Revisar ahora
-          </Link>
-        </div>
-      )}
-
-      {!loading && hasRealData === false && (
-        <div className="panel mb-6 p-8">
-          <h2 className="text-xl font-semibold text-text">Bienvenido a Zent</h2>
-          <p className="mt-2 max-w-[60ch] text-sm text-muted">
-            Empieza añadiendo el conocimiento de tu negocio. Zent te guía paso a paso.
-          </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <Link to="/knowledge/add" className="btn btn-primary">
-              Conectar mis datos
-            </Link>
-            {session?.workspaceKind === "demo" && (
-              <Link to="/chat" className="btn btn-secondary">
-                Explorar demo
-              </Link>
-            )}
-            {resumeId && (
-              <Link to={`/knowledge/add/${resumeId}`} className="btn btn-secondary">
-                Continuar donde lo dejé
-              </Link>
-            )}
+      {loading ? (
+        <div className="mt-4 flex flex-col gap-4" aria-hidden>
+          <Skeleton className="h-[132px] rounded-lg" />
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-[92px] rounded-lg" />
+            ))}
+          </div>
+          <div className="grid gap-4 xl:grid-cols-3">
+            <Skeleton className="h-[320px] rounded-lg xl:col-span-2" />
+            <Skeleton className="h-[320px] rounded-lg" />
           </div>
         </div>
-      )}
+      ) : (
+        <div className="mt-4 flex flex-col gap-4">
+          {/* Foco: pulso del workspace */}
+          <Panel className="p-5 sm:p-6">
+            <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0">
+                <p className="eyebrow mb-2">Pulso del workspace</p>
+                <div className="flex items-baseline gap-3">
+                  <p
+                    className={cn(
+                      "text-display",
+                      health === "ok" ? "text-ok" : "text-danger"
+                    )}
+                  >
+                    {health === "ok" ? "Operativo" : "Degradado"}
+                  </p>
+                  <StatusDot tone={health === "ok" ? "ok" : "danger"} className="mb-2" />
+                </div>
+                <p className="mt-1.5 text-[13px] text-muted">
+                  {outages.length === 0
+                    ? "Todos los servicios responden."
+                    : `${outages.length} de ${SERVICES.length} servicios con problemas.`}
+                </p>
+                <ul className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+                  {SERVICES.map((service) => {
+                    const value = checks[service];
+                    const ok = value === "ok";
+                    return (
+                      <li key={service} className="flex items-center gap-1.5 text-[12px]">
+                        <StatusDot tone={!value ? "neutral" : ok ? "ok" : "danger"} />
+                        <span className="text-muted">{SERVICE_LABELS[service]}</span>
+                        <span className="sr-only">
+                          {!value ? "sin verificar" : ok ? "saludable" : "degradado"}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
 
-      {loading ? (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="stat space-y-2">
-              <SkeletonBlock rows={1} />
+              <div className="min-w-0 lg:w-[320px] lg:shrink-0">
+                {quotaPct !== null ? (
+                  <Progress
+                    value={quotaPct}
+                    tone={quotaTone === "accent" ? "accent" : quotaTone}
+                    label={`Uso del período · ${fmtNum(used)} de ${fmtNum(limit ?? 0)}`}
+                    showValue
+                  />
+                ) : (
+                  <p className="text-[13px] text-muted">
+                    <span className="mono text-text">{fmtNum(used)}</span> consultas este período · sin
+                    tope definido
+                  </p>
+                )}
+                <div className="mt-4 flex items-center justify-between gap-3 border-t border-border pt-4">
+                  <span className="text-[13px]">
+                    {pending === 0 ? (
+                      <span className="text-muted">Sin pendientes que revisar</span>
+                    ) : (
+                      <span className="text-warn">
+                        {pending} {pending === 1 ? "cosa pide" : "cosas piden"} atención
+                      </span>
+                    )}
+                  </span>
+                  {pending > 0 && (
+                    <Link
+                      to="/knowledge/sources"
+                      className="shrink-0 text-[13px] font-medium text-accent hover:underline"
+                    >
+                      Revisar
+                    </Link>
+                  )}
+                </div>
+              </div>
             </div>
-          ))}
-        </div>
-      ) : hasRealData === false ? null : (
-        <>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <StatCard
-              label="Solicitudes"
+          </Panel>
+
+          {/* Métricas secundarias, deliberadamente más chicas que el foco */}
+          <MetricGrid cols={4}>
+            <Metric
+              size="md"
+              label="Consultas · 30 días"
               value={fmtNum(usage?.totals.requests ?? 0)}
+              hint={
+                usage?.totals.tokens
+                  ? `${fmtNum(usage.totals.tokens)} tokens generados`
+                  : "sin consumo aún"
+              }
               icon={Lightning}
             />
-            <StatCard
-              label="Uso del período"
-              value={limit ? `${fmtNum(used)} / ${fmtNum(limit)}` : fmtNum(used)}
-              icon={Gauge}
-              hint={
-                quotaPct !== null && (
-                  <span className="mt-2 block">
-                    <span className="progress-track">
-                      <span
-                        className={`progress-fill ${quotaPct >= 85 ? "bg-danger" : quotaPct >= 60 ? "bg-warn" : ""}`}
-                        style={{ width: `${quotaPct}%` }}
-                      />
-                    </span>
-                    <span className="mono mt-1 inline-block text-[11px] text-faint">
-                      {quotaPct}% usado
-                    </span>
-                  </span>
-                )
-              }
+            <Metric
+              size="md"
+              label="Latencia media"
+              value={usage?.totals.avg_latency_ms ? fmtLatency(usage.totals.avg_latency_ms) : "—"}
+              hint="últimos 30 días"
+              icon={Timer}
             />
-            <StatCard
-              label="Plan"
-              value={sub?.plan_name || sub?.status || "—"}
-              icon={Stack}
-            />
-            <StatCard
-              label="Estado del sistema"
-              value={health === "ok" ? "Operativo" : "Degradado"}
-              icon={Heartbeat}
-              tone={health === "ok" ? "ok" : "danger"}
-            />
-            <StatCard
-              label="Agentes activos"
+            <Metric
+              size="md"
+              label="Agentes"
               value={agentCount != null ? fmtNum(agentCount) : "—"}
+              hint={agentCount === 0 ? "todavía no creaste ninguno" : "en este workspace"}
               icon={Robot}
             />
-            <StatCard
+            <Metric
+              size="md"
               label="Calidad de IA"
               value={quality?.total_evaluations ? `${quality.approval_rate}%` : "—"}
-              icon={Star}
               tone={
-                quality && quality.approval_rate >= 70 ? "ok" : "default"
+                quality?.total_evaluations
+                  ? quality.approval_rate >= 70
+                    ? "ok"
+                    : "warn"
+                  : "default"
               }
-              hint={quality?.total_evaluations ? `${fmtNum(quality.total_evaluations)} evaluaciones` : "sin feedback aún"}
+              hint={
+                quality?.total_evaluations
+                  ? `${fmtNum(quality.total_evaluations)} evaluaciones aprobadas`
+                  : "sin evaluaciones todavía"
+              }
+              icon={Star}
             />
-          </div>
+          </MetricGrid>
 
-          <div className="mt-4 grid gap-4 xl:grid-cols-3">
-            <div className="panel xl:col-span-2">
-              <div className="flex items-center justify-between border-b border-border px-5 py-4">
-                <h2 className="text-sm font-semibold text-text">Consultas por día</h2>
-                <span className="mono text-[11px] text-faint">últimos 30 días</span>
-              </div>
+          <div className="grid gap-4 xl:grid-cols-3">
+            <Panel className="xl:col-span-2">
+              <PanelHeader
+                title="Consultas por día"
+                description="Volumen diario de consultas a tus agentes."
+                actions={
+                  <span className="mono text-[11px] text-faint">últimos 30 días</span>
+                }
+              />
               <div className="p-4">
                 {daily.length === 0 ? (
                   <EmptyState
                     icon={ChartLineUp}
                     title="Aún no hay consultas"
-                    body="Cuando hagas preguntas en el Playground, verás aquí la actividad diaria."
+                    body="Cuando hagas preguntas en el Playground, vas a ver acá la actividad diaria."
                     action={
-                      <Link to="/chat" className="btn btn-secondary">
-                        Probar el Playground <ArrowRight size={15} aria-hidden />
-                      </Link>
+                      <ButtonLink to="/chat" variant="secondary" size="sm" trailingIcon={ArrowRight}>
+                        Probar el Playground
+                      </ButtonLink>
                     }
                   />
                 ) : (
                   <Suspense
                     fallback={
                       <div className="flex h-[240px] items-center justify-center">
-                        <span
-                          className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-border-strong border-t-accent"
-                          role="status"
-                          aria-label="Cargando gráfico"
-                        />
+                        <Skeleton className="h-full w-full rounded-md" />
                       </div>
                     }
                   >
@@ -328,75 +468,36 @@ export default function DashboardPage() {
                   </Suspense>
                 )}
               </div>
-            </div>
+            </Panel>
 
-            <div className="panel">
-              <div className="flex items-center justify-between border-b border-border px-5 py-4">
-                <h2 className="text-sm font-semibold text-text">Estado de la plataforma</h2>
-                <Link
-                  to="/deployments"
-                  className="flex items-center gap-1 text-xs text-accent hover:underline"
-                >
-                  Despliegues <ArrowRight size={12} aria-hidden />
-                </Link>
-              </div>
-              <ul className="divide-y divide-border/60 px-2">
-                {services.map((service) => {
-                  const value = checks[service];
-                  const healthy = value === "ok";
-                  return (
-                    <li
-                      key={service}
-                      className="flex items-center justify-between gap-2 px-3 py-2.5"
-                    >
-                      <span className="text-[13px] text-text">{SERVICE_LABELS[service]}</span>
-                      {value ? (
-                        <span
-                          className={`badge ${healthy ? "badge-ok" : "badge-danger"}`}
-                        >
-                          <span className="status-dot mr-1 bg-current" aria-hidden />
-                          {healthy ? "Saludable" : "Degradado"}
-                        </span>
-                      ) : (
-                        <span className="badge badge-muted">No verificado</span>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-4 xl:grid-cols-3">
-            <div className="xl:col-span-2">
-              <AttentionList
-                items={issues}
-                emptyBody="No se detectaron problemas en tu workspace."
+            <Panel>
+              <PanelHeader
+                title="Consultas recientes"
+                actions={
+                  <Link
+                    to="/usage"
+                    className="flex items-center gap-1 text-xs text-accent hover:underline"
+                  >
+                    Analítica <ArrowRight size={12} aria-hidden />
+                  </Link>
+                }
               />
-            </div>
-
-            <div className="panel">
-              <div className="flex items-center justify-between border-b border-border px-5 py-4">
-                <h2 className="text-sm font-semibold text-text">Consultas recientes</h2>
-                <Link
-                  to="/usage"
-                  className="flex items-center gap-1 text-xs text-accent hover:underline"
-                >
-                  Analítica <ArrowRight size={12} aria-hidden />
-                </Link>
-              </div>
               {recentQueries.length === 0 ? (
                 <EmptyState
+                  compact
                   icon={ListBullets}
                   title="Sin consultas recientes"
-                  body="Tus últimas preguntas y su rendimiento aparecerán aquí."
+                  body="Tus últimas preguntas y su rendimiento aparecen acá."
                 />
               ) : (
-                <ul className="divide-y divide-border/60 px-2">
+                <ul className="px-2 pb-2">
                   {recentQueries.slice(0, 6).map((r) => (
-                    <li key={r.id} className="flex items-center justify-between gap-3 px-3 py-2.5">
+                    <li
+                      key={r.id}
+                      className="flex items-center justify-between gap-3 border-b border-border-soft px-3 py-2.5 last:border-b-0"
+                    >
                       <div className="min-w-0">
-                        <p className="mono truncate text-xs text-muted">
+                        <p className="truncate text-[12.5px] text-muted">
                           {r.model || "modelo por defecto"}
                         </p>
                         <p className="text-[11px] text-faint">{fmtDateTime(r.created_at)}</p>
@@ -413,38 +514,47 @@ export default function DashboardPage() {
                   ))}
                 </ul>
               )}
-            </div>
+            </Panel>
           </div>
 
-          <div className="mt-4 grid gap-4 xl:grid-cols-3">
-            <div className="panel xl:col-span-2">
-              <div className="flex items-center justify-between border-b border-border px-5 py-4">
-                <h2 className="text-sm font-semibold text-text">Indexado por demanda</h2>
-                <span className="mono text-[11px] text-faint">últimos 30 días</span>
-              </div>
+          <div className="grid gap-4 xl:grid-cols-3">
+            <div className="xl:col-span-2">
+              <AttentionList
+                items={issues}
+                emptyBody="No se detectaron problemas en tu workspace."
+              />
+            </div>
+
+            <Panel>
+              <PanelHeader
+                title="Indexado por demanda"
+                actions={<span className="mono text-[11px] text-faint">30 días</span>}
+              />
               {lazyEvents.length === 0 ? (
                 <EmptyState
+                  compact
                   icon={Lightning}
                   title="Sin indexados automáticos"
-                  body="Cuando una pregunta necesite datos aún no sincronizados, el sistema los indexará y quedará registrado aquí."
+                  body="Cuando una pregunta necesite datos no sincronizados, el sistema los indexa y queda registrado acá."
                 />
               ) : (
-                <ul className="divide-y divide-border/60 px-2">
+                <ul className="px-2 pb-2">
                   {lazyEvents.map((ev, i) => (
-                    <li key={`${ev.at}-${i}`} className="px-3 py-3">
+                    <li
+                      key={`${ev.at}-${i}`}
+                      className="border-b border-border-soft px-3 py-3 last:border-b-0"
+                    >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <span className="mono text-xs text-accent">
                           {(ev.tables || []).join(", ") || "—"}
                         </span>
                         <span className="flex items-center gap-2 text-[11px] text-faint">
-                          {ev.rows_indexed > 0 && (
-                            <span className="mono">{ev.rows_indexed} filas</span>
-                          )}
+                          {ev.rows_indexed > 0 && <span className="mono">{ev.rows_indexed} filas</span>}
                           · {timeAgo(ev.at)}
                         </span>
                       </div>
                       {ev.query_preview && (
-                        <p className="mt-1 truncate text-[13px] text-muted" title={ev.query_preview}>
+                        <p className="mt-1 truncate text-[12.5px] text-muted" title={ev.query_preview}>
                           «{ev.query_preview}»
                         </p>
                       )}
@@ -452,66 +562,74 @@ export default function DashboardPage() {
                   ))}
                 </ul>
               )}
-            </div>
-
-            <div className="panel">
-              <div className="border-b border-border px-5 py-4">
-                <h2 className="text-sm font-semibold text-text">Próximos pasos</h2>
-              </div>
-              <div className="flex flex-col gap-2 p-4">
-                <Link
-                  to="/knowledge/add"
-                  className="group flex items-center justify-between rounded-md border border-border bg-soft px-4 py-3 text-sm text-text transition-all duration-200 hover:border-accent/40 hover:bg-raised"
-                >
-                  Añade conocimiento a Zent
-                  <ArrowRight size={15} className="text-faint transition-transform group-hover:translate-x-0.5" aria-hidden />
-                </Link>
-                <Link
-                  to="/chat"
-                  className="group flex items-center justify-between rounded-md border border-border bg-soft px-4 py-3 text-sm text-text transition-all duration-200 hover:border-accent/40 hover:bg-raised"
-                >
-                  Probar el Playground
-                  <ArrowRight size={15} className="text-faint transition-transform group-hover:translate-x-0.5" aria-hidden />
-                </Link>
-                <Link
-                  to="/agents"
-                  className="group flex items-center justify-between rounded-md border border-border bg-soft px-4 py-3 text-sm text-text transition-all duration-200 hover:border-accent/40 hover:bg-raised"
-                >
-                  Crear un agente
-                  <ArrowRight size={15} className="text-faint transition-transform group-hover:translate-x-0.5" aria-hidden />
-                </Link>
-                <Link
-                  to="/keys"
-                  className="group flex items-center justify-between rounded-md border border-border bg-soft px-4 py-3 text-sm text-text transition-all duration-200 hover:border-accent/40 hover:bg-raised"
-                >
-                  Ver credenciales de API
-                  <ArrowRight size={15} className="text-faint transition-transform group-hover:translate-x-0.5" aria-hidden />
-                </Link>
-              </div>
-            </div>
+            </Panel>
           </div>
 
-          {(usage?.totals.requests ?? 0) > 0 && (
-            <p className="mt-4 flex items-center gap-1.5 text-xs text-faint">
-              {usage!.totals.requests > 10 ? (
-                <TrendUp size={14} className="text-ok" aria-hidden />
-              ) : (
-                <TrendDown size={14} className="text-muted" aria-hidden />
+          <div className="flex flex-col gap-3 border-t border-border pt-4 text-xs text-muted sm:flex-row sm:items-center sm:justify-between">
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span>
+                <span className="mono text-text">{fmtNum(usage?.totals.requests ?? 0)}</span> consultas
+              </span>
+              <span aria-hidden className="text-ghost">
+                ·
+              </span>
+              <span>
+                <span className="mono text-text">{fmtNum(usage?.totals.tokens ?? 0)}</span> tokens
+              </span>
+              <span aria-hidden className="text-ghost">
+                ·
+              </span>
+              <span>
+                <span className="mono text-text">
+                  {usage?.totals.avg_latency_ms ? fmtLatency(usage.totals.avg_latency_ms) : "—"}
+                </span>{" "}
+                de latencia media
+              </span>
+              <span className="text-faint">en los últimos 30 días</span>
+            </p>
+            <p className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              {sub?.trial_end && (
+                <span className="flex items-center gap-1.5">
+                  <CalendarBlank size={13} aria-hidden />
+                  Trial hasta {new Date(sub.trial_end).toLocaleDateString()}
+                </span>
               )}
-              <span className="mono">{fmtNum(usage!.totals.requests)}</span> consultas,{" "}
-              <span className="mono">{fmtNum(usage!.totals.tokens)}</span> tokens,{" "}
-              <span className="mono">{fmtLatency(usage!.totals.avg_latency_ms)}</span> de latencia
-              media en los últimos 30 días.
+              <span className="flex items-center gap-1.5">
+                Plan <span className="text-text">{sub?.plan_name || sub?.status || "—"}</span>
+              </span>
+              <Link to="/billing" className="font-medium text-accent hover:underline">
+                Facturación
+              </Link>
+              <Tooltip label="Estado de los servicios de plataforma">
+                <span className="flex items-center gap-1.5">
+                  <Heartbeat size={13} aria-hidden />
+                  <StatusDot tone={health === "ok" ? "ok" : "danger"} />
+                  {health === "ok" ? "Operativo" : "Degradado"}
+                </span>
+              </Tooltip>
             </p>
-          )}
+          </div>
 
-          {sub?.trial_end && (
-            <p className="mt-2 flex items-center gap-1.5 text-xs text-faint">
-              <CalendarBlank size={14} aria-hidden />
-              Trial hasta {new Date(sub.trial_end).toLocaleDateString()}
-            </p>
-          )}
-        </>
+          <p className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-faint">
+            <span className="eyebrow">Atajos</span>
+            <Link to="/knowledge/add" className="inline-flex items-center gap-1 hover:text-text">
+              <Database size={13} aria-hidden />
+              Añadir conocimiento
+            </Link>
+            <Link to="/agents" className="inline-flex items-center gap-1 hover:text-text">
+              <Robot size={13} aria-hidden />
+              Crear un agente
+            </Link>
+            <Link to="/connectors" className="inline-flex items-center gap-1 hover:text-text">
+              <Plugs size={13} aria-hidden />
+              Conectores
+            </Link>
+            <Link to="/keys" className="inline-flex items-center gap-1 hover:text-text">
+              <Sparkle size={13} aria-hidden />
+              Credenciales de API
+            </Link>
+          </p>
+        </div>
       )}
     </div>
   );

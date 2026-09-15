@@ -1,24 +1,35 @@
-import { ArrowsClockwise, Database, Plus, Trash } from "@phosphor-icons/react";
+import { ArrowsClockwise, Database, MagnifyingGlass, Plus, Trash, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import {
+  Badge,
+  Button,
+  ButtonLink,
+  DataTable,
   EmptyState,
   ErrorInline,
+  Field,
+  IconButton,
+  Input,
   PageHeader,
-  SkeletonBlock,
-  Spinner,
+  Panel,
+  PanelHeader,
+  SectionHeader,
+  Select,
+  Skeleton,
   SuccessInline,
+  type Column,
 } from "../../components/ui";
+import { StatusBadge } from "../../components/ui/Badge";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 import { fmtDateTime, fmtNum } from "../../lib/format";
 import {
   COPY,
   isFileUploadType,
-  sourceStatusBadgeClass,
   sourceStatusLabel,
   sourceTypeBlurb,
   sourceTypeLabel,
@@ -53,13 +64,90 @@ type SourceRow = {
 
 type KnowledgeBase = { id: string; name: string };
 
+type ProfileCol = {
+  name: string;
+  data_type: string;
+  nullable: boolean;
+  is_pk: boolean;
+  is_fk: boolean;
+  null_rate: number | null;
+  cardinality: number | null;
+  pii_flags: string[];
+  sensitive: boolean;
+};
+
 const PENDING_KEY = "zent_gdrive_pending";
+
+type RailState = "queued" | "running" | "ready" | "failed";
+
+/** Estado real de la fuente → rail de actividad. Sin estado conocido, rail neutro. */
+const RAIL_STATE: Record<string, RailState> = {
+  created: "queued",
+  discovering: "running",
+  ingesting: "running",
+  ready: "ready",
+  indexed: "ready",
+  error: "failed",
+};
+
+const PROFILE_COLUMNS: Column<ProfileCol>[] = [
+  {
+    key: "name",
+    header: "Columna",
+    render: (col) => <span className="mono text-xs text-text">{col.name}</span>,
+  },
+  {
+    key: "data_type",
+    header: "Tipo",
+    render: (col) => <span className="text-xs text-muted">{col.data_type}</span>,
+  },
+  {
+    key: "null_rate",
+    header: "Null %",
+    align: "right",
+    hideBelow: "md",
+    render: (col) => (
+      <span className="mono text-xs text-muted">{col.null_rate ?? "—"}</span>
+    ),
+  },
+  {
+    key: "cardinality",
+    header: "Cardinalidad",
+    align: "right",
+    hideBelow: "lg",
+    render: (col) => <span className="mono text-xs text-muted">{col.cardinality ?? "—"}</span>,
+  },
+  {
+    key: "keys",
+    header: "PK/FK",
+    hideBelow: "md",
+    render: (col) =>
+      col.is_pk || col.is_fk ? (
+        <Badge tone="neutral">{col.is_pk ? "PK" : "FK"}</Badge>
+      ) : (
+        <span className="text-xs text-faint">—</span>
+      ),
+  },
+  {
+    key: "pii",
+    header: "PII",
+    render: (col) =>
+      col.pii_flags.length > 0 ? (
+        <Badge tone="danger">{col.pii_flags.join(", ")}</Badge>
+      ) : col.sensitive ? (
+        <Badge tone="warn">sensible</Badge>
+      ) : (
+        <span className="text-xs text-faint">—</span>
+      ),
+  },
+];
 
 export default function KnowledgeSourcesPage() {
   const { session } = useAuth();
   const [sources, setSources] = useState<SourceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [msg, setMsg] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [profile, setProfile] = useState<{ sourceId: string; tables: { name: string; columns: ProfileCol[] }[] } | null>(null);
@@ -72,10 +160,12 @@ export default function KnowledgeSourcesPage() {
   const [file, setFile] = useState<File | null>(null);
   const [pendingDelete, setPendingDelete] = useState<SourceRow | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [query, setQuery] = useState("");
 
   const load = useCallback(() => {
     if (!session) return;
     setLoading(true);
+    setLoadError("");
     Promise.all([
       api<{ sources: SourceRow[] }>("/api/v1/sources", {
         token: session.token,
@@ -90,7 +180,7 @@ export default function KnowledgeSourcesPage() {
         setSources(data.sources || []);
         setKbs(kbData.knowledge_bases || []);
       })
-      .catch((err) => setError(err instanceof Error ? err.message : "Error"))
+      .catch((err) => setLoadError(err instanceof Error ? err.message : "Error"))
       .finally(() => setLoading(false));
   }, [session]);
 
@@ -272,18 +362,6 @@ export default function KnowledgeSourcesPage() {
     }
   }
 
-  type ProfileCol = {
-  name: string;
-  data_type: string;
-  nullable: boolean;
-  is_pk: boolean;
-  is_fk: boolean;
-  null_rate: number | null;
-  cardinality: number | null;
-  pii_flags: string[];
-  sensitive: boolean;
-};
-
   async function profileSource(sourceId: string) {
     if (!session) return;
     setError("");
@@ -325,283 +403,352 @@ export default function KnowledgeSourcesPage() {
     }
   }
 
+  const term = query.trim().toLowerCase();
+  const visible = term
+    ? sources.filter(
+        (s) =>
+          s.name.toLowerCase().includes(term) ||
+          sourceTypeLabel(s.type, s.config?.managed).toLowerCase().includes(term) ||
+          sourceStatusLabel(s.status).toLowerCase().includes(term),
+      )
+    : sources;
+
   return (
     <KnowledgeLayout>
       <PageHeader
         title={KNOWLEDGE_HEADINGS.sources}
+        subtitle={
+          <>
+            Los agentes eligen estas fuentes en{" "}
+            <Link to="/agents" className="text-accent hover:underline">
+              Agent Studio
+            </Link>
+            . Prueba en{" "}
+            <Link to="/chat?target=knowledge" className="text-accent hover:underline">
+              Playground
+            </Link>{" "}
+            cuando estén indexadas.
+          </>
+        }
         actions={
-          <button
-            className="btn btn-primary min-h-11"
-            type="button"
+          <Button
+            variant="primary"
+            leadingIcon={Plus}
+            aria-expanded={showCreate}
             onClick={() => setShowCreate((s) => !s)}
           >
-            <Plus size={15} aria-hidden />
             Nueva fuente
-          </button>
+          </Button>
         }
       />
-      <p className="mb-4 text-sm text-muted">
-        Los agentes eligen estas fuentes en{" "}
-        <Link to="/agents" className="text-accent hover:underline">
-          Agent Studio
-        </Link>
-        . Prueba en{" "}
-        <Link to="/chat?target=knowledge" className="text-accent hover:underline">
-          Playground
-        </Link>{" "}
-        cuando estén indexadas.
-      </p>
-      <div className="mt-4">
-        <ErrorInline message={error} />
-        <SuccessInline message={msg} />
-      </div>
 
-      {showCreate && (
-        <div className="panel mb-4 border-accent/30">
-          <div className="border-b border-border px-5 py-4">
-            <h2 className="text-sm font-semibold text-text">Alta de fuente</h2>
-          </div>
-          <form
-            className="flex flex-col gap-3 p-5"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void create();
-            }}
-          >
-            <label className="block text-sm text-text">
-              Nombre
-              <input
-                className="mt-1 w-full min-h-11 rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                autoComplete="off"
-                required={!isFileUploadType(type)}
-              />
-            </label>
-            <label className="block text-sm text-text">
-              Tipo
-              <select
-                className="mt-1 w-full min-h-11 rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
-                value={type}
-                onChange={(e) => setType(e.target.value as SourceType)}
-              >
-                {SOURCE_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {sourceTypeLabel(t)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {isFileUploadType(type) && (
-              <label className="block text-sm text-text">
-                {COPY.uploadFile}
-                <input
-                  className="mt-1 w-full min-h-11 text-sm text-text"
-                  type="file"
-                  data-testid="source-file"
-                  onChange={(e) => setFile(e.target.files?.[0] || null)}
+      <div className="flex flex-col gap-4">
+        <ErrorInline message={error} className="mb-0" />
+        <SuccessInline message={msg} className="mb-0" />
+
+        {showCreate && (
+          <Panel>
+            <PanelHeader
+              title="Alta de fuente"
+              description="El origen queda conectado a una colección para que los agentes puedan citarlo."
+              actions={
+                <IconButton
+                  label="Cerrar alta de fuente"
+                  icon={X}
+                  onClick={() => setShowCreate(false)}
                 />
-              </label>
-            )}
-            {type === "gdrive" && (
-              <label className="block text-sm text-text">
-                ID de carpeta de Google Drive
-                <input
-                  className="mt-1 w-full min-h-11 rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
-                  value={folderId}
-                  onChange={(e) => setFolderId(e.target.value)}
-                  autoComplete="off"
-                  placeholder="1abc… (ID de la carpeta, no la URL)"
-                />
-              </label>
-            )}
-            <p className="text-[13px] leading-relaxed text-muted">
-              {type === "gdrive"
-                ? "Se abre Google para autorizar solo lectura. El refresh token vive en el almacén de secretos, nunca en la fuente."
-                : isFileUploadType(type)
-                  ? COPY.collectionHint
-                  : "Las credenciales de conectores viven en Vault, no en esta ficha."}
-            </p>
-            <button
-              className="btn btn-primary min-h-11 w-full sm:w-auto"
-              type="submit"
-              disabled={
-                creating ||
-                (isFileUploadType(type) ? !file : type === "gdrive" ? !name.trim() : !name.trim())
               }
+            />
+            <form
+              className="panel-body flex flex-col gap-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void create();
+              }}
             >
-              {creating ? <Spinner size={14} /> : <Plus size={15} aria-hidden />}
-              {type === "gdrive" ? "Conectar Google Drive" : "Crear fuente"}
-            </button>
-          </form>
-        </div>
-      )}
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Nombre" hint="Cómo vas a reconocer esta fuente en los agentes.">
+                  <Input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    autoComplete="off"
+                    required={!isFileUploadType(type)}
+                  />
+                </Field>
+                <Field label="Tipo">
+                  <Select value={type} onChange={(e) => setType(e.target.value as SourceType)}>
+                    {SOURCE_TYPES.map((t) => (
+                      <option key={t} value={t}>
+                        {sourceTypeLabel(t)}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
 
-      <div className="panel">
-        <div className="flex items-center justify-between border-b border-border px-5 py-4">
-          <h2 className="text-sm font-semibold text-text">Fuentes de conocimiento</h2>
-          <span className="mono text-[11px] text-faint">{sources.length}</span>
-        </div>
-        {loading ? (
-          <div className="p-5">
-            <SkeletonBlock rows={5} />
-          </div>
-        ) : sources.length === 0 ? (
-          <EmptyState
-            icon={Database}
-            title="Todavía no hay fuentes"
-            body="Crea una fuente (incluido Google Drive) o sube archivos para alimentar tus colecciones."
-            action={
-              <button
-                type="button"
-                className="btn btn-secondary min-h-11"
-                onClick={() => setShowCreate(true)}
-              >
-                <Plus size={14} aria-hidden /> Nueva fuente
-              </button>
+              {isFileUploadType(type) && (
+                <Field label={COPY.uploadFile} hint="PDF, CSV o Excel. Se indexa en la colección elegida.">
+                  <Input
+                    type="file"
+                    data-testid="source-file"
+                    className="py-1.5 file:mr-3 file:rounded-sm file:border-0 file:bg-soft file:px-2.5 file:py-1.5 file:text-[13px] file:font-medium file:text-text"
+                    onChange={(e) => setFile(e.target.files?.[0] || null)}
+                  />
+                </Field>
+              )}
+
+              {type === "gdrive" && (
+                <Field
+                  label="ID de carpeta de Google Drive"
+                  hint="1abc… (ID de la carpeta, no la URL). Se autoriza solo lectura."
+                >
+                  <Input
+                    value={folderId}
+                    onChange={(e) => setFolderId(e.target.value)}
+                    autoComplete="off"
+                    placeholder="1abc…"
+                  />
+                </Field>
+              )}
+
+              <p className="prose-measure text-[13px] leading-relaxed text-muted">
+                {type === "gdrive"
+                  ? "Se abre Google para autorizar solo lectura. El refresh token vive en el almacén de secretos, nunca en la fuente."
+                  : isFileUploadType(type)
+                    ? COPY.collectionHint
+                    : "Las credenciales de conectores viven en Vault, no en esta ficha."}
+              </p>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="submit"
+                  variant="primary"
+                  loading={creating}
+                  leadingIcon={Plus}
+                  disabled={
+                    creating ||
+                    (isFileUploadType(type) ? !file : type === "gdrive" ? !name.trim() : !name.trim())
+                  }
+                >
+                  {type === "gdrive" ? "Conectar Google Drive" : "Crear fuente"}
+                </Button>
+                <Button variant="ghost" onClick={() => setShowCreate(false)}>
+                  Cancelar
+                </Button>
+              </div>
+            </form>
+          </Panel>
+        )}
+
+        <Panel>
+          <PanelHeader
+            title="Fuentes de conocimiento"
+            description="Origen de datos indexado en tus colecciones."
+            actions={
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  type="search"
+                  icon={MagnifyingGlass}
+                  aria-label="Buscar fuentes"
+                  placeholder="Buscar por nombre o tipo"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  className="w-full sm:w-64"
+                />
+                <span className="mono text-[11px] text-faint tabular-nums">
+                  {visible.length === sources.length
+                    ? fmtNum(sources.length)
+                    : `${fmtNum(visible.length)}/${fmtNum(sources.length)}`}
+                </span>
+              </div>
             }
           />
-        ) : (
-          <div className="grid gap-3 md:grid-cols-2">
-            {sources.map((s) => {
-              const canProfile = s.type === "sql" || Boolean(s.config?.managed);
-              return (
-              <article key={s.id} className="panel p-4" data-testid={`source-card-${s.id}`}>
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <Link to={`/knowledge/sources/${s.id}`} className="font-medium text-text hover:underline">
-                      {s.name}
-                    </Link>
-                    <p className="text-xs text-muted">{sourceTypeLabel(s.type, s.config?.managed)}</p>
-                  </div>
-                  <span className={`badge ${sourceStatusBadgeClass(s.status)}`}>
-                    {sourceStatusLabel(s.status)}
-                  </span>
+
+          {loading ? (
+            <div className="flex flex-col gap-4 p-4" aria-busy="true">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="flex flex-col gap-2">
+                  <Skeleton className="h-4 w-52" />
+                  <Skeleton className="h-3.5 w-72" />
+                  <Skeleton className="h-8 w-56" />
                 </div>
-                <p className="mt-2 text-sm text-muted">{sourceTypeBlurb(s.type, s.config?.managed)}</p>
-                <dl className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted">
-                  <div>
-                    {COPY.lastSync}: {s.last_sync ? fmtDateTime(s.last_sync) : "—"}
-                  </div>
-                  <div>
-                    {COPY.documents}: {fmtNum(s.document_count || s.last_processed_count || 0)}
-                  </div>
-                  {s.error_count > 0 ? (
-                    <div className="col-span-2 text-danger">
-                      {COPY.issues}: {fmtNum(s.error_count)}
+              ))}
+            </div>
+          ) : loadError ? (
+            <div className="p-4">
+              <ErrorInline message={loadError} className="mb-0" />
+            </div>
+          ) : sources.length === 0 ? (
+            <EmptyState
+              icon={Database}
+              title="Todavía no hay fuentes"
+              body="Crea una fuente (incluido Google Drive) o sube archivos para alimentar tus colecciones."
+              action={
+                <Button variant="primary" leadingIcon={Plus} onClick={() => setShowCreate(true)}>
+                  Nueva fuente
+                </Button>
+              }
+            />
+          ) : visible.length === 0 ? (
+            <EmptyState
+              compact
+              icon={MagnifyingGlass}
+              title="Sin resultados"
+              body="Ninguna fuente coincide con la búsqueda."
+              action={
+                <Button variant="ghost" size="sm" onClick={() => setQuery("")}>
+                  Limpiar búsqueda
+                </Button>
+              }
+            />
+          ) : (
+            <ul>
+              {visible.map((s) => {
+                const canProfile = s.type === "sql" || Boolean(s.config?.managed);
+                const docs = s.document_count || s.last_processed_count || 0;
+                return (
+                  <li
+                    key={s.id}
+                    data-testid={`source-card-${s.id}`}
+                    data-state={RAIL_STATE[s.status]}
+                    className="state-rail border-b border-border-soft py-3.5 pr-3 pl-4 last:border-b-0"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+                          <Link
+                            to={`/knowledge/sources/${s.id}`}
+                            className="truncate text-[13.5px] font-medium text-text transition-colors duration-150 hover:text-accent"
+                          >
+                            {s.name}
+                          </Link>
+                          <StatusBadge status={s.status} label={sourceStatusLabel(s.status)} />
+                        </div>
+                        <p className="prose-measure mt-1 text-xs leading-relaxed text-muted">
+                          <span className="text-faint">{sourceTypeLabel(s.type, s.config?.managed)}</span>
+                          {" · "}
+                          {sourceTypeBlurb(s.type, s.config?.managed)}
+                        </p>
+                        <p className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
+                          <span>
+                            {COPY.lastSync}:{" "}
+                            <span className="text-muted">
+                              {s.last_sync ? fmtDateTime(s.last_sync) : "—"}
+                            </span>
+                          </span>
+                          <span>
+                            {COPY.documents}:{" "}
+                            <span className="mono text-muted">{fmtNum(docs)}</span>
+                          </span>
+                          {s.error_count > 0 ? (
+                            <span className="text-danger">
+                              {COPY.issues}: <span className="mono">{fmtNum(s.error_count)}</span>
+                            </span>
+                          ) : null}
+                        </p>
+                        {s.last_error ? (
+                          <p className="mt-1.5 max-w-[68ch] text-xs leading-relaxed text-danger">
+                            {s.last_error}
+                          </p>
+                        ) : null}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <ButtonLink
+                          to={`/knowledge/sources/${s.id}`}
+                          variant="secondary"
+                          size="sm"
+                        >
+                          {COPY.open}
+                        </ButtonLink>
+                        {canProfile ? (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            aria-label={`Perfilizar ${s.name}`}
+                            onClick={() => void profileSource(s.id)}
+                          >
+                            Perfilizar
+                          </Button>
+                        ) : null}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          aria-label={`Sincronizar ${s.name}`}
+                          loading={syncingId === s.id}
+                          leadingIcon={ArrowsClockwise}
+                          onClick={() => void syncSource(s.id)}
+                        >
+                          {COPY.sync}
+                        </Button>
+                        {kbs.length > 0 ? (
+                          <Select
+                            className="w-auto py-1 pl-2 text-xs"
+                            value={s.knowledge_base_id || kbs[0]?.id || ""}
+                            aria-label={`Colección de ${s.name}`}
+                            data-testid={`source-kb-${s.id}`}
+                            onChange={(e) => void assignKb(s.id, e.target.value)}
+                          >
+                            {kbs.map((kb) => (
+                              <option key={kb.id} value={kb.id}>
+                                {kb.name}
+                              </option>
+                            ))}
+                          </Select>
+                        ) : null}
+                        <IconButton
+                          label={`Eliminar ${s.name}`}
+                          icon={Trash}
+                          className="text-danger"
+                          data-testid={`source-delete-${s.id}`}
+                          onClick={() => setPendingDelete(s)}
+                        />
+                      </div>
                     </div>
-                  ) : null}
-                </dl>
-                {s.last_error ? <p className="mt-2 text-xs text-danger">{s.last_error}</p> : null}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Link to={`/knowledge/sources/${s.id}`} className="btn btn-secondary min-h-11 px-3 text-xs">
-                    {COPY.open}
-                  </Link>
-                  {canProfile ? (
-                    <button
-                      type="button"
-                      className="btn btn-ghost min-h-11 px-3 text-xs"
-                      aria-label={`Perfilizar ${s.name}`}
-                      onClick={() => void profileSource(s.id)}
-                    >
-                      Perfilizar
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="btn btn-ghost min-h-11 px-3 text-xs"
-                    aria-label={`Sincronizar ${s.name}`}
-                    disabled={syncingId === s.id}
-                    onClick={() => void syncSource(s.id)}
-                  >
-                    {syncingId === s.id ? <Spinner size={14} /> : <ArrowsClockwise size={14} aria-hidden />}
-                    {COPY.sync}
-                  </button>
-                  {kbs.length > 0 ? (
-                    <label className="flex min-h-11 items-center gap-1 text-xs text-muted">
-                      {COPY.collection}
-                      <select
-                        className="min-h-9 rounded-md border border-border bg-soft px-2 text-xs text-text"
-                        value={s.knowledge_base_id || kbs[0]?.id || ""}
-                        aria-label={`Colección de ${s.name}`}
-                        data-testid={`source-kb-${s.id}`}
-                        onChange={(e) => void assignKb(s.id, e.target.value)}
-                      >
-                        {kbs.map((kb) => (
-                          <option key={kb.id} value={kb.id}>
-                            {kb.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : null}
-                  <button
-                    type="button"
-                    className="btn btn-ghost min-h-11 px-3 text-xs text-danger"
-                    aria-label={`Eliminar ${s.name}`}
-                    data-testid={`source-delete-${s.id}`}
-                    onClick={() => setPendingDelete(s)}
-                  >
-                    <Trash size={14} aria-hidden />
-                    {COPY.deleteSource}
-                  </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </Panel>
+
+        {profile && (
+          <div className="flex flex-col gap-4">
+            <SectionHeader
+              title="Perfil de datos"
+              description="Columnas detectadas por tabla tras la última lectura de la fuente."
+              actions={
+                <Button variant="ghost" size="sm" onClick={() => setProfile(null)}>
+                  Cerrar
+                </Button>
+              }
+            />
+            {profile.tables.length === 0 ? (
+              <Panel>
+                <EmptyState
+                  compact
+                  title="Sin tablas en el perfil"
+                  body="La fuente no expuso tablas al perfilar."
+                />
+              </Panel>
+            ) : (
+              profile.tables.map((table) => (
+                <div key={table.name} className="min-w-0">
+                  <p className="mb-2 font-mono text-xs text-muted">{table.name}</p>
+                  <DataTable
+                    columns={PROFILE_COLUMNS}
+                    rows={table.columns}
+                    rowKey={(col) => col.name}
+                    caption={`Columnas de ${table.name}`}
+                    dense
+                  />
                 </div>
-              </article>
-              );
-            })}
+              ))
+            )}
           </div>
         )}
       </div>
 
-      {profile && (
-        <div className="panel mt-6">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-text">Perfil de datos</h3>
-            <button type="button" className="btn btn-ghost min-h-8 text-xs" onClick={() => setProfile(null)}>
-              Cerrar
-            </button>
-          </div>
-          {profile.tables.map((table) => (
-            <div key={table.name} className="mb-4 overflow-x-auto">
-              <p className="mb-1 font-mono text-xs text-muted">{table.name}</p>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Columna</th>
-                    <th>Tipo</th>
-                    <th>Null %</th>
-                    <th>Cardinalidad</th>
-                    <th>PK/FK</th>
-                    <th>PII</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {table.columns.map((col) => (
-                    <tr key={col.name}>
-                      <td className="font-mono text-xs text-text">{col.name}</td>
-                      <td className="text-xs text-muted">{col.data_type}</td>
-                      <td className="text-xs text-muted">{col.null_rate ?? "—"}</td>
-                      <td className="text-xs text-muted">{col.cardinality ?? "—"}</td>
-                      <td className="text-xs text-muted">
-                        {col.is_pk ? "PK" : col.is_fk ? "FK" : ""}
-                      </td>
-                      <td className="text-xs">
-                        {col.pii_flags.length > 0 ? (
-                          <span className="badge badge-danger">{col.pii_flags.join(", ")}</span>
-                        ) : col.sensitive ? (
-                          <span className="badge badge-pending">sensible</span>
-                        ) : (
-                          <span className="text-faint">—</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ))}
-        </div>
-      )}
       <ConfirmDialog
         open={Boolean(pendingDelete)}
         title={`Eliminar ${pendingDelete?.name || "fuente"}`}

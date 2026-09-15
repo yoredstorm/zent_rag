@@ -1,20 +1,23 @@
-import {
-  Books,
-  Database,
-  Plus,
-  Trash,
-  type Icon,
-} from "@phosphor-icons/react";
+import { Database, Plus, Trash, X } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import {
+  Button,
+  DataTable,
   EmptyState,
   ErrorInline,
+  Field,
+  FormActions,
+  IconButton,
+  Input,
   PageHeader,
-  SkeletonBlock,
-  Spinner,
+  Panel,
+  PanelHeader,
+  ResultCount,
+  StatusBadge,
   SuccessInline,
+  type Column,
 } from "../../components/ui";
 import { fmtDateTime } from "../../lib/format";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
@@ -30,40 +33,6 @@ type KB = {
   created_at: string;
 };
 
-function KBRow({
-  kb,
-  onDelete,
-}: {
-  kb: KB;
-  onDelete: (id: string, name: string) => void;
-}) {
-  const IconEl: Icon = kb.status === "active" ? Database : Books;
-  return (
-    <div className="panel p-5">
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <h3 className="flex items-center gap-2 font-semibold text-text">
-          <IconEl size={16} className="text-accent" aria-hidden />
-          {kb.name}
-        </h3>
-        <button
-          type="button"
-          className="btn btn-ghost px-2 py-1.5 text-xs text-danger"
-          aria-label={`Eliminar ${kb.name}`}
-          onClick={() => onDelete(kb.id, kb.name)}
-        >
-          <Trash size={14} aria-hidden />
-        </button>
-      </div>
-      <p className="mb-3 text-sm text-muted">{kb.description || "—"}</p>
-      <div className="flex flex-wrap items-center gap-2 text-xs text-faint">
-        <span className="badge badge-ok">{kb.status}</span>
-        {kb.embedding_model && <span className="mono">{kb.embedding_model}</span>}
-        <span>Creada {fmtDateTime(kb.created_at)}</span>
-      </div>
-    </div>
-  );
-}
-
 export default function KnowledgeBasesPage() {
   const { session } = useAuth();
   const [kbs, setKbs] = useState<KB[]>([]);
@@ -72,18 +41,20 @@ export default function KnowledgeBasesPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [msg, setMsg] = useState("");
   const [showCreate, setShowCreate] = useState(false);
 
   function load() {
     if (!session) return;
     setLoading(true);
+    setLoadError("");
     api<{ knowledge_bases: KB[] }>("/api/v1/knowledge-bases", {
       token: session.token,
       organizationId: session.organizationId,
     })
       .then((data) => setKbs(data.knowledge_bases))
-      .catch((err) => setError(err instanceof Error ? err.message : "Error"))
+      .catch((err) => setLoadError(err instanceof Error ? err.message : "Error"))
       .finally(() => setLoading(false));
   }
 
@@ -123,85 +94,150 @@ export default function KnowledgeBasesPage() {
         token: session.token,
         organizationId: session.organizationId,
       });
-      setMsg(`Knowledge base "${kbName}" eliminada (incluye sus vectores).`);
+      setMsg(`Colección «${kbName}» eliminada con sus vectores.`);
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al eliminar");
     }
   }
 
+  const columns: Column<KB>[] = [
+    {
+      key: "name",
+      header: "Colección",
+      render: (kb) => (
+        <div className="min-w-0">
+          <p className="truncate text-[13.5px] text-text">{kb.name}</p>
+          {kb.description ? (
+            <p className="mt-0.5 line-clamp-1 text-xs text-muted">{kb.description}</p>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      key: "status",
+      header: "Estado",
+      render: (kb) => <StatusBadge status={kb.status} />,
+    },
+    {
+      key: "embedding_model",
+      header: "Modelo",
+      hideBelow: "md",
+      render: (kb) =>
+        kb.embedding_model ? (
+          <span className="mono text-xs text-muted">{kb.embedding_model}</span>
+        ) : (
+          <span className="text-xs text-faint">—</span>
+        ),
+    },
+    {
+      key: "created_at",
+      header: "Creada",
+      hideBelow: "lg",
+      render: (kb) => <span className="text-xs text-muted">{fmtDateTime(kb.created_at)}</span>,
+    },
+  ];
+
   return (
     <KnowledgeLayout>
       <PageHeader
         title={KNOWLEDGE_HEADINGS.collections}
         subtitle="Bases de conocimiento vectorizadas. Al eliminarlas se purgan sus vectores de Qdrant (solo los de tu organización)."
+        actions={
+          <Button
+            variant="primary"
+            leadingIcon={showCreate ? X : Plus}
+            onClick={() => setShowCreate((s) => !s)}
+          >
+            {showCreate ? "Cerrar alta" : "Nueva colección"}
+          </Button>
+        }
       />
-      <ErrorInline message={error} />
-      <SuccessInline message={msg} />
 
-      <div className="mb-4 flex justify-end">
-        <button
-          className="btn btn-primary"
-          type="button"
-          onClick={() => setShowCreate((s) => !s)}
-        >
-          <Plus size={15} aria-hidden />
-          Nueva colección
-        </button>
+      <div className="flex flex-col gap-4">
+        <ErrorInline message={error} className="mb-0" />
+        <SuccessInline message={msg} className="mb-0" />
+
+        {showCreate && (
+          <Panel>
+            <PanelHeader
+              title="Crear colección"
+              description="Agrupa documentos y vectores bajo un mismo contexto de recuperación."
+              actions={
+                <IconButton label="Cerrar alta de colección" icon={X} onClick={() => setShowCreate(false)} />
+              }
+            />
+            <form
+              className="panel-body flex flex-col gap-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void create();
+              }}
+            >
+              <Field label="Nombre">
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  autoComplete="off"
+                  required
+                />
+              </Field>
+              <Field label="Descripción" hint="Opcional. Ayuda a elegir la colección al crear agentes.">
+                <Input
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  autoComplete="off"
+                />
+              </Field>
+              <FormActions>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  leadingIcon={Plus}
+                  loading={creating}
+                  disabled={!name.trim()}
+                >
+                  Crear
+                </Button>
+              </FormActions>
+            </form>
+          </Panel>
+        )}
+
+        <DataTable
+          columns={columns}
+          rows={kbs}
+          rowKey={(kb) => kb.id}
+          caption="Colecciones de conocimiento"
+          loading={loading}
+          error={loadError || null}
+          empty={
+            <EmptyState
+              icon={Database}
+              title="Sin colecciones"
+              body="Crea tu primera colección para organizar tus datos."
+              action={
+                <Button variant="primary" leadingIcon={Plus} onClick={() => setShowCreate(true)}>
+                  Nueva colección
+                </Button>
+              }
+            />
+          }
+          rowActions={(kb) => (
+            <IconButton
+              label={`Eliminar ${kb.name}`}
+              icon={Trash}
+              className="text-danger"
+              onClick={() => void remove(kb.id, kb.name)}
+            />
+          )}
+          footer={
+            kbs.length > 0 ? (
+              <ResultCount shown={kbs.length} total={kbs.length} noun="colecciones" />
+            ) : undefined
+          }
+        />
       </div>
-
-      {showCreate && (
-        <div className="panel mb-4 border-accent/30">
-          <div className="border-b border-border px-5 py-4">
-            <h2 className="text-sm font-semibold text-text">Crear colección</h2>
-          </div>
-          <div className="flex flex-col gap-3 p-5">
-            <input
-              className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
-              placeholder="Nombre"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-            <input
-              className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
-              placeholder="Descripción (opcional)"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-            <div>
-              <button
-                className="btn btn-primary"
-                type="button"
-                disabled={creating || !name.trim()}
-                onClick={() => void create()}
-              >
-                {creating ? <Spinner size={14} /> : <Plus size={15} aria-hidden />}
-                Crear
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {loading ? (
-        <div className="panel p-5">
-          <SkeletonBlock rows={4} />
-        </div>
-      ) : kbs.length === 0 ? (
-        <div className="panel">
-          <EmptyState
-            icon={Database}
-            title="Sin colecciones"
-            body="Crea tu primera colección para organizar tus datos."
-          />
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {kbs.map((kb) => (
-            <KBRow key={kb.id} kb={kb} onDelete={remove} />
-          ))}
-        </div>
-      )}
     </KnowledgeLayout>
   );
 }

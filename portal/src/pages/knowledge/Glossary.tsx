@@ -1,8 +1,34 @@
-import { BookOpen, Plus } from "@phosphor-icons/react";
+import {
+  Archive,
+  BookOpen,
+  CheckCircle,
+  Clock,
+  Eye,
+  Plus,
+  Sparkle,
+  XCircle,
+  type Icon,
+} from "@phosphor-icons/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
-import { EmptyState, ErrorInline, PageHeader, SkeletonBlock } from "../../components/ui";
+import {
+  Badge,
+  Button,
+  DataTable,
+  EmptyState,
+  ErrorInline,
+  Field,
+  Input,
+  PageHeader,
+  Panel,
+  PanelHeader,
+  ResultCount,
+  SectionHeader,
+  Textarea,
+  type Column,
+  type Tone,
+} from "../../components/ui";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 import { isApiError } from "../../lib/errors";
 import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
@@ -17,6 +43,48 @@ type GlossaryTerm = {
   version: number;
   provenance: string;
 };
+
+const STATUS_META: Record<string, { label: string; tone: Tone; icon: Icon }> = {
+  approved: { label: "Aprobado", tone: "ok", icon: CheckCircle },
+  draft: { label: "Borrador", tone: "warn", icon: Clock },
+  deprecated: { label: "Obsoleto", tone: "neutral", icon: Archive },
+};
+
+const PROVENANCE_META: Record<string, { label: string; icon: Icon }> = {
+  APPROVED: { label: "Aprobado por una persona", icon: CheckCircle },
+  OBSERVED: { label: "Observado en los datos", icon: Eye },
+  INFERRED: { label: "Inferido por Zent", icon: Sparkle },
+  REJECTED: { label: "Rechazado", icon: XCircle },
+  DEPRECATED: { label: "Obsoleto", icon: Archive },
+};
+
+function StatusCell({ term }: { term: GlossaryTerm }) {
+  const meta = STATUS_META[term.status];
+  return (
+    <span className="flex flex-wrap items-center gap-2">
+      {meta ? (
+        <Badge tone={meta.tone} icon={meta.icon}>
+          {meta.label}
+        </Badge>
+      ) : (
+        <Badge tone="neutral">{term.status}</Badge>
+      )}
+      <span className="mono text-[11px] text-faint">v{term.version}</span>
+    </span>
+  );
+}
+
+function ProvenanceCell({ provenance }: { provenance: string }) {
+  const meta = PROVENANCE_META[provenance];
+  if (!meta) return <span className="text-xs text-faint">{provenance}</span>;
+  const IconEl = meta.icon;
+  return (
+    <span className="inline-flex items-center gap-1.5 text-xs text-muted">
+      <IconEl size={13} aria-hidden />
+      {meta.label}
+    </span>
+  );
+}
 
 export default function KnowledgeGlossaryPage() {
   const { session } = useAuth();
@@ -84,72 +152,156 @@ export default function KnowledgeGlossaryPage() {
     }
   };
 
+  const canSave = Boolean(concept.trim() && definition.trim()) && !saving;
+
+  const columns: Column<GlossaryTerm>[] = [
+    {
+      key: "concept",
+      header: "Término",
+      render: (t) => <span className="font-medium text-text">{t.concept}</span>,
+    },
+    {
+      key: "definition",
+      header: "Definición",
+      className: "max-w-[48ch] text-muted",
+      render: (t) => <span className="text-[13px] leading-relaxed">{t.definition}</span>,
+    },
+    {
+      key: "synonyms",
+      header: "Sinónimos",
+      hideBelow: "md",
+      render: (t) =>
+        t.synonyms.length > 0 ? (
+          <span className="flex flex-wrap gap-1">
+            {t.synonyms.map((s) => (
+              <span key={s} className="chip">
+                {s}
+              </span>
+            ))}
+          </span>
+        ) : (
+          <span className="text-xs text-faint">—</span>
+        ),
+    },
+    {
+      key: "status",
+      header: "Estado",
+      render: (t) => <StatusCell term={t} />,
+    },
+    {
+      key: "provenance",
+      header: "Origen",
+      hideBelow: "lg",
+      render: (t) => <ProvenanceCell provenance={t.provenance} />,
+    },
+    {
+      key: "owner",
+      header: "Owner",
+      hideBelow: "xl",
+      render: (t) =>
+        t.owner ? (
+          <span className="text-[13px] text-muted">{t.owner}</span>
+        ) : (
+          <span className="text-xs text-faint">sin owner</span>
+        ),
+    },
+  ];
+
   return (
     <KnowledgeLayout>
-      <PageHeader title={KNOWLEDGE_HEADINGS.glossary} subtitle="Términos empresariales con synonyms, owner y versionado (solo lo aprobado alimenta las respuestas)." />
+      <PageHeader
+        title={KNOWLEDGE_HEADINGS.glossary}
+        subtitle="Términos de negocio con sinónimos, owner y versionado. Solo lo aprobado alimenta las respuestas."
+      />
+
       {error && <ErrorInline message={error} />}
 
-      <div className="card mb-4 p-4">
-        <div className="text-sm font-medium text-zinc-600">Nuevo término</div>
-        <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_2fr_1fr]">
-          <input
-            className="input"
-            placeholder="concepto (p.ej. cliente activo)"
-            value={concept}
-            onChange={(e) => setConcept(e.target.value)}
-          />
-          <input
-            className="input"
-            placeholder="definición"
-            value={definition}
-            onChange={(e) => setDefinition(e.target.value)}
-          />
-          <input
-            className="input"
-            placeholder="sinónimos (coma separada)"
-            value={synonyms}
-            onChange={(e) => setSynonyms(e.target.value)}
-          />
-        </div>
-        <button className="btn btn-primary mt-2" onClick={save} disabled={saving}>
-          <Plus size={14} /> Guardar (draft)
-        </button>
-      </div>
+      <Panel className="mb-6">
+        <PanelHeader
+          title="Nuevo término"
+          description="Se guarda como borrador y queda versionado; no alimenta respuestas hasta aprobarlo."
+        />
+        <form
+          className="p-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void save();
+          }}
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Concepto" required hint="Por ejemplo: cliente activo.">
+              <Input
+                value={concept}
+                onChange={(e) => setConcept(e.target.value)}
+                placeholder="cliente activo"
+                autoComplete="off"
+              />
+            </Field>
+            <Field
+              label="Sinónimos"
+              hint="Separados por coma. Opcional."
+            >
+              <Input
+                value={synonyms}
+                onChange={(e) => setSynonyms(e.target.value)}
+                placeholder="cliente vigente, cliente con actividad"
+                autoComplete="off"
+              />
+            </Field>
+            <Field
+              label="Definición"
+              required
+              className="sm:col-span-2"
+              hint="Cómo se calcula o qué incluye, en una frase que pueda usar cualquiera."
+            >
+              <Textarea
+                value={definition}
+                onChange={(e) => setDefinition(e.target.value)}
+                rows={3}
+                placeholder="Cliente con al menos una compra en los últimos 12 meses."
+              />
+            </Field>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-faint">
+              Estado inicial: borrador · versión 1 si el término es nuevo.
+            </p>
+            <Button
+              type="submit"
+              variant="primary"
+              leadingIcon={Plus}
+              loading={saving}
+              disabled={!canSave}
+            >
+              Guardar borrador
+            </Button>
+          </div>
+        </form>
+      </Panel>
 
-      {loading ? (
-        <SkeletonBlock rows={4} />
-      ) : terms.length === 0 ? (
-        <EmptyState icon={BookOpen} title="Sin términos aún" />
-      ) : (
-        <div className="space-y-2">
-          {terms.map((t) => (
-            <div key={t.id} className="card p-3">
-              <div className="flex items-center justify-between">
-                <span className="font-medium">{t.concept}</span>
-                <div className="flex items-center gap-2 text-xs">
-                  <span
-                    className={`rounded-full px-2 py-0.5 ${
-                      t.status === "approved"
-                        ? "bg-emerald-100 text-emerald-700"
-                        : "bg-amber-100 text-amber-700"
-                    }`}
-                  >
-                    {t.status} · v{t.version}
-                  </span>
-                  <span className="text-zinc-400">{t.provenance}</span>
-                </div>
-              </div>
-              <div className="mt-1 text-sm text-zinc-600">{t.definition}</div>
-              {t.synonyms.length > 0 && (
-                <div className="mt-1 text-xs text-zinc-400">
-                  Sinónimos: {t.synonyms.join(", ")}
-                </div>
-              )}
-              {t.owner && <div className="mt-1 text-xs text-zinc-400">Owner: {t.owner}</div>}
-            </div>
-          ))}
-        </div>
-      )}
+      <SectionHeader
+        title="Términos"
+        description="El vocabulario que Zent usa para interpretar preguntas y mapear campos."
+        actions={!loading && terms.length > 0 ? <ResultCount shown={terms.length} total={terms.length} noun="términos" /> : undefined}
+      />
+
+      <div className="mt-4">
+        <DataTable
+          columns={columns}
+          rows={terms}
+          rowKey={(t) => t.id}
+          caption="Términos del glosario de negocio"
+          loading={loading}
+          empty={
+            <EmptyState
+              icon={BookOpen}
+              title="Sin términos aún"
+              body="Creá el primer término arriba para fijar el vocabulario con el que Zent interpreta tus datos."
+              hint="Los términos en borrador se pueden aprobar después; nada se publica solo."
+            />
+          }
+        />
+      </div>
     </KnowledgeLayout>
   );
 }

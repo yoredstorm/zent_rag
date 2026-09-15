@@ -1,11 +1,12 @@
-import { Heartbeat, WarningCircle } from "@phosphor-icons/react";
+import { CheckCircle, WarningCircle } from "@phosphor-icons/react";
 import { Link } from "react-router-dom";
 
 export type AttentionItem = { id: string; label: string; to: string };
 
 /**
  * Bloque "Necesita atención" reutilizable (FASE 12).
- * Muestra problemas reales con CTA directo al recurso.
+ * Muestra problemas reales con CTA directo al recurso. Si no hay nada,
+ * lo dice explícitamente en vez de dejar el panel vacío.
  */
 export function AttentionList({
   items,
@@ -18,29 +19,51 @@ export function AttentionList({
   emptyBody?: string;
   title?: string;
 }) {
+  const hasIssues = items.length > 0;
   return (
     <div className="panel">
-      <div className="flex items-center justify-between border-b border-border px-5 py-4">
-        <h2 className="text-sm font-semibold text-text">{title}</h2>
+      <div className="panel-header">
+        <div className="flex items-center gap-2.5">
+          <h2 className="text-h3">{title}</h2>
+          {hasIssues ? (
+            <span className="badge badge-pending">{items.length}</span>
+          ) : (
+            <span className="badge badge-ok">
+              <CheckCircle size={12} weight="fill" aria-hidden />
+              Sin pendientes
+            </span>
+          )}
+        </div>
         <span className="mono text-[11px] text-faint">eventos reales</span>
       </div>
-      {items.length === 0 ? (
-        <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
-          <span className="flex h-11 w-11 items-center justify-center rounded-md border border-border bg-soft text-ok">
-            <Heartbeat size={22} aria-hidden />
+      {!hasIssues ? (
+        <div className="flex items-start gap-3 px-5 py-5">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-ok/25 bg-ok-soft text-ok">
+            <CheckCircle size={18} aria-hidden />
           </span>
-          <p className="mt-1 text-sm font-medium text-text">{emptyTitle}</p>
-          <p className="max-w-sm text-[13px] leading-relaxed text-muted">{emptyBody}</p>
+          <span className="min-w-0">
+            <span className="block text-[13px] font-medium text-text">{emptyTitle}</span>
+            <span className="mt-0.5 block text-[12.5px] leading-relaxed text-muted">{emptyBody}</span>
+          </span>
         </div>
       ) : (
-        <ul className="divide-y divide-border/60 px-2">
+        <ul className="px-2 pb-2">
           {items.map((item) => (
-            <li key={item.id} className="flex items-center justify-between gap-3 px-3 py-3">
-              <span className="flex items-center gap-2 text-[13px] text-text">
-                <WarningCircle size={15} className="shrink-0 text-warn" aria-hidden />
-                {item.label}
+            <li
+              key={item.id}
+              className="state-rail flex items-center justify-between gap-3 border-b border-border-soft py-3 pr-3 pl-4 last:border-b-0"
+              data-state="warning"
+            >
+              <span className="flex min-w-0 items-center gap-2 text-[13px] text-text">
+                <WarningCircle size={15} weight="regular" className="shrink-0 text-warn" aria-hidden />
+                <span className="line-clamp-2 min-w-0" title={item.label}>
+                  {item.label}
+                </span>
               </span>
-              <Link to={item.to} className="shrink-0 text-xs text-accent hover:underline">
+              <Link
+                to={item.to}
+                className="shrink-0 text-[13px] font-medium text-accent hover:underline"
+              >
                 Revisar
               </Link>
             </li>

@@ -3,6 +3,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../../api";
 import { useAuth } from "../../../auth";
 import { ErrorInline, PageHeader } from "../../../components/ui";
+import { WarningInline } from "../../../components/ui/states";
 import { KnowledgeLayout } from "../../../components/KnowledgeLayout";
 import { KNOWLEDGE_HEADINGS } from "../../../lib/knowledgeNav";
 import { Stepper } from "../../../components/Stepper";
@@ -438,18 +439,17 @@ export default function OnboardingWizardPage() {
         subtitle="Conecta tus datos. Zent los entiende contigo."
       />
       <ErrorInline message={error} />
-      {current?.warning && (
-        <div className="mb-4 rounded-md border border-warn/40 bg-warn/10 px-4 py-3 text-sm">
-          {current.warning}
+      {current?.warning && <WarningInline message={current.warning} />}
+      {current && (
+        <div className="rounded-lg border border-border bg-surface p-2 shadow-panel">
+          <Stepper
+            steps={WIZARD_STEPS}
+            active={uiStep === "confirm" ? "review" : uiStep}
+            onSelect={selectStep}
+          />
         </div>
       )}
-      {current && (
-        <Stepper
-          steps={WIZARD_STEPS}
-          active={uiStep === "confirm" ? "review" : uiStep}
-          onSelect={selectStep}
-        />
-      )}
+      <div className="mt-6">    
       {uiStep === "choose" && <SourceTypeStep onSelect={startKind} />}
       {current && uiStep === "connect" && kind === "database" && (
         <>
@@ -603,6 +603,7 @@ export default function OnboardingWizardPage() {
           readyActions={readiness.ready_actions}
         />
       )}
+      </div>
     </KnowledgeLayout>
   );
 }

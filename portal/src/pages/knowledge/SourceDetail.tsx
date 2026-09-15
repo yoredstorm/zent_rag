@@ -1,12 +1,29 @@
 import { ArrowsClockwise, ChatCircleDots, Files, Trash } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 import { PageTabs } from "../../components/PageTabs";
-import { EmptyState, ErrorInline, PageHeader, SkeletonBlock, Spinner, SuccessInline } from "../../components/ui";
+import {
+  Button,
+  ButtonLink,
+  DataTable,
+  EmptyState,
+  ErrorInline,
+  Field,
+  KeyValue,
+  PageHeader,
+  Panel,
+  PanelHeader,
+  ResultCount,
+  Select,
+  Skeleton,
+  SuccessInline,
+  type Column,
+} from "../../components/ui";
+import { StatusBadge } from "../../components/ui/Badge";
 import { fmtDateTime, fmtNum } from "../../lib/format";
 import {
   COPY,
@@ -14,7 +31,6 @@ import {
   parseSourceTab,
   SOURCE_TAB_LABEL,
   SOURCE_TABS,
-  sourceStatusBadgeClass,
   sourceStatusLabel,
   sourceTypeBlurb,
   sourceTypeLabel,
@@ -43,6 +59,41 @@ type SourceDocument = {
   status: string;
   last_seen_at: string | null;
 };
+
+type RailState = "queued" | "running" | "ready" | "failed";
+
+/** Estado real de la fuente → rail de actividad. Sin estado conocido, rail neutro. */
+const RAIL_STATE: Record<string, RailState> = {
+  created: "queued",
+  discovering: "running",
+  ingesting: "running",
+  ready: "ready",
+  indexed: "ready",
+  error: "failed",
+};
+
+const DOC_COLUMNS: Column<SourceDocument>[] = [
+  {
+    key: "external_id",
+    header: "Documento",
+    render: (doc) => <span className="mono text-xs text-text">{doc.external_id}</span>,
+  },
+  {
+    key: "status",
+    header: "Estado",
+    render: (doc) => <span className="text-xs text-muted">{documentStatusLabel(doc.status)}</span>,
+  },
+  {
+    key: "last_seen_at",
+    header: "Visto",
+    hideBelow: "md",
+    render: (doc) => (
+      <span className="text-xs text-muted">
+        {doc.last_seen_at ? fmtDateTime(doc.last_seen_at) : "—"}
+      </span>
+    ),
+  },
+];
 
 export default function SourceDetailPage() {
   const { sourceId } = useParams();
@@ -168,140 +219,189 @@ export default function SourceDetailPage() {
     <KnowledgeLayout>
       <PageHeader
         title={source?.name || "Fuente"}
+        backTo="/knowledge/sources"
+        backLabel={COPY.allSources}
+        meta={
+          source ? (
+            <>
+              <span className="text-[13px] text-muted">
+                {sourceTypeLabel(source.type, managed)}
+              </span>
+              <StatusBadge status={source.status} label={sourceStatusLabel(source.status)} />
+            </>
+          ) : undefined
+        }
         actions={
-          <div className="flex flex-wrap gap-2">
-            <Link to="/chat?target=knowledge" className="btn btn-secondary min-h-11 text-xs">
-              <ChatCircleDots size={14} aria-hidden className="mr-1" /> {COPY.playground}
-            </Link>
-            <Link to="/knowledge/sources" className="btn btn-secondary min-h-11 text-xs">
-              {COPY.allSources}
-            </Link>
-            <button
-              type="button"
-              className="btn btn-ghost min-h-11 text-xs text-danger"
+          <>
+            <ButtonLink
+              to="/chat?target=knowledge"
+              variant="secondary"
+              size="sm"
+              leadingIcon={ChatCircleDots}
+            >
+              {COPY.playground}
+            </ButtonLink>
+            <Button
+              variant="ghost"
+              size="sm"
+              leadingIcon={Trash}
+              className="text-danger"
               data-testid="source-delete"
               onClick={() => setConfirmDelete(true)}
             >
-              <Trash size={14} aria-hidden className="mr-1" /> {COPY.deleteSource}
-            </button>
-          </div>
+              {COPY.deleteSource}
+            </Button>
+          </>
         }
       />
-      <ErrorInline message={error} />
-      <SuccessInline message={msg} />
 
-      {loading ? (
-        <div className="mt-4">
-          <SkeletonBlock rows={5} />
-        </div>
-      ) : !source ? null : (
-        <>
-          <PageTabs tabs={tabs} active={tab} onChange={(id) => setTab(id as SourceTab)} />
+      <div className="flex flex-col gap-4">
+        <ErrorInline message={error} className="mb-0" />
+        <SuccessInline message={msg} className="mb-0" />
 
-          {tab === "resumen" && (
-            <section className="mt-4 space-y-3" data-testid="source-resumen">
-              <div className="panel space-y-2 p-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-sm text-muted">{sourceTypeLabel(source.type, managed)}</span>
-                  <span className={`badge ${sourceStatusBadgeClass(source.status)}`}>
-                    {sourceStatusLabel(source.status)}
-                  </span>
-                </div>
-                <p className="text-sm text-muted">{sourceTypeBlurb(source.type, managed)}</p>
-                <p className="text-sm text-text" data-testid="source-index-copy">
-                  {docs > 0 ? COPY.indexedReady : COPY.indexedEmpty}
-                </p>
-                <dl className="grid gap-2 text-sm text-muted sm:grid-cols-2">
-                  <div>
-                    {COPY.lastSync}: {source.last_sync ? fmtDateTime(source.last_sync) : "—"}
-                  </div>
-                  <div>
-                    {COPY.documents}: {fmtNum(docs)}
-                  </div>
-                  {source.error_count > 0 ? (
-                    <div className="text-danger">
-                      {COPY.issues}: {fmtNum(source.error_count)}
-                    </div>
-                  ) : null}
-                </dl>
-                {source.last_error ? <p className="text-sm text-danger">{source.last_error}</p> : null}
-                {kbs.length > 0 ? (
-                  <label className="block text-sm text-text">
-                    {COPY.collection}
-                    <select
-                      className="mt-1 w-full min-h-11 rounded-md border border-border bg-soft px-3 text-sm"
-                      value={source.knowledge_base_id || kbs[0]?.id || ""}
-                      data-testid="source-kb"
-                      aria-label={COPY.collection}
-                      onChange={(e) => void assignKb(e.target.value)}
+        {loading ? (
+          <div className="flex flex-col gap-4" aria-busy="true">
+            <Skeleton className="h-10 w-[320px] rounded-sm" />
+            <Skeleton className="h-[236px] rounded-lg" />
+          </div>
+        ) : !source ? null : (
+          <>
+            <div className="-mt-1">
+              <PageTabs tabs={tabs} active={tab} onChange={(id) => setTab(id as SourceTab)} />
+            </div>
+
+            {tab === "resumen" && (
+              <section data-testid="source-resumen">
+                <Panel>
+                  <PanelHeader title="Resumen" description={sourceTypeBlurb(source.type, managed)} />
+                  <div className="panel-body flex flex-col gap-4">
+                    <p
+                      data-testid="source-index-copy"
+                      data-state={RAIL_STATE[source.status]}
+                      className="state-rail prose-measure text-[13px] leading-relaxed text-text"
                     >
-                      {kbs.map((kb) => (
-                        <option key={kb.id} value={kb.id}>
-                          {kb.name}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="mt-1 block text-xs text-muted">{COPY.collectionHint}</span>
-                  </label>
-                ) : null}
-              </div>
-            </section>
-          )}
+                      {docs > 0 ? COPY.indexedReady : COPY.indexedEmpty}
+                    </p>
 
-          {tab === "documentos" && (
-            <section className="mt-4" data-testid="source-documentos">
-              {documents.length === 0 ? (
-                <EmptyState
-                  icon={Files}
-                  title={COPY.documentsEmpty}
-                  body="Sincroniza la fuente o espera a que termine el indexado."
+                    <KeyValue
+                      columns={2}
+                      items={[
+                        {
+                          key: COPY.lastSync,
+                          value: source.last_sync ? fmtDateTime(source.last_sync) : "—",
+                        },
+                        { key: COPY.documents, value: fmtNum(docs) },
+                        {
+                          key: COPY.issues,
+                          value:
+                            source.error_count > 0 ? (
+                              <span className="text-danger">{fmtNum(source.error_count)}</span>
+                            ) : (
+                              "—"
+                            ),
+                        },
+                      ]}
+                    />
+
+                    {source.last_error ? (
+                      <ErrorInline message={source.last_error} className="mb-0" />
+                    ) : null}
+
+                    {kbs.length > 0 ? (
+                      <Field label={COPY.collection} hint={COPY.collectionHint} className="max-w-sm">
+                        <Select
+                          value={source.knowledge_base_id || kbs[0]?.id || ""}
+                          data-testid="source-kb"
+                          aria-label={COPY.collection}
+                          onChange={(e) => void assignKb(e.target.value)}
+                        >
+                          {kbs.map((kb) => (
+                            <option key={kb.id} value={kb.id}>
+                              {kb.name}
+                            </option>
+                          ))}
+                        </Select>
+                      </Field>
+                    ) : null}
+                  </div>
+                </Panel>
+              </section>
+            )}
+
+            {tab === "documentos" && (
+              <section data-testid="source-documentos">
+                <DataTable
+                  columns={DOC_COLUMNS}
+                  rows={documents}
+                  rowKey={(doc) => String(doc.id)}
+                  caption={`Documentos de ${source.name}`}
+                  empty={
+                    <EmptyState
+                      icon={Files}
+                      title={COPY.documentsEmpty}
+                      body="Sincroniza la fuente o espera a que termine el indexado."
+                    />
+                  }
+                  footer={
+                    documents.length > 0 ? (
+                      <ResultCount
+                        shown={documents.length}
+                        total={documents.length}
+                        noun="documentos"
+                      />
+                    ) : undefined
+                  }
                 />
-              ) : (
-                <div className="panel overflow-x-auto">
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Documento</th>
-                        <th>Estado</th>
-                        <th>Visto</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {documents.map((doc) => (
-                        <tr key={doc.id}>
-                          <td className="text-sm text-text">{doc.external_id}</td>
-                          <td className="text-sm text-muted">{documentStatusLabel(doc.status)}</td>
-                          <td className="text-sm text-muted">{fmtDateTime(doc.last_seen_at)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </section>
-          )}
+              </section>
+            )}
 
-          {tab === "sincronizar" && (
-            <section className="mt-4 space-y-3" data-testid="source-sincronizar">
-              <div className="panel space-y-2 p-4">
-                <p className="text-sm text-muted">
-                  {COPY.lastSync}: {source.last_sync ? fmtDateTime(source.last_sync) : COPY.neverSynced}
-                </p>
-                {source.last_error ? <p className="text-sm text-danger">{source.last_error}</p> : null}
-                <button
-                  type="button"
-                  className="btn btn-primary min-h-11"
-                  disabled={syncing}
-                  onClick={() => void syncNow()}
-                >
-                  {syncing ? <Spinner size={14} /> : <ArrowsClockwise size={14} aria-hidden />}
-                  {COPY.syncNow}
-                </button>
-              </div>
-            </section>
-          )}
-        </>
-      )}
+            {tab === "sincronizar" && (
+              <section data-testid="source-sincronizar">
+                <Panel>
+                  <PanelHeader
+                    title="Sincronizar"
+                    description="Vuelve a leer la fuente y actualiza el índice de la colección."
+                  />
+                  <div className="panel-body flex flex-col gap-4">
+                    <KeyValue
+                      columns={2}
+                      items={[
+                        {
+                          key: COPY.lastSync,
+                          value: source.last_sync
+                            ? fmtDateTime(source.last_sync)
+                            : COPY.neverSynced,
+                        },
+                        { key: COPY.documents, value: fmtNum(docs) },
+                      ]}
+                    />
+
+                    {source.last_error ? (
+                      <ErrorInline message={source.last_error} className="mb-0" />
+                    ) : null}
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button
+                        variant="primary"
+                        leadingIcon={ArrowsClockwise}
+                        loading={syncing}
+                        onClick={() => void syncNow()}
+                      >
+                        {COPY.syncNow}
+                      </Button>
+                      <span className="text-xs text-faint">
+                        La sincronización corre en segundo plano; los documentos se actualizan al
+                        terminar.
+                      </span>
+                    </div>
+                  </div>
+                </Panel>
+              </section>
+            )}
+          </>
+        )}
+      </div>
+
       <ConfirmDialog
         open={confirmDelete}
         title={`Eliminar ${source?.name || "fuente"}`}

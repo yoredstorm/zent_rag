@@ -1,10 +1,28 @@
-import { Database, Files, Lightning } from "@phosphor-icons/react";
+import {
+  CheckCircle,
+  Database,
+  Files,
+  Lightning,
+  Plus,
+  WarningCircle,
+} from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { AttentionList } from "../../components/AttentionList";
-import { ErrorInline, PageHeader, SkeletonBlock, StatCard } from "../../components/ui";
+import {
+  ButtonLink,
+  cn,
+  EmptyState,
+  ErrorInline,
+  Metric,
+  MetricGrid,
+  PageHeader,
+  Panel,
+  Skeleton,
+  WarningInline,
+} from "../../components/ui";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 import { fmtNum, formatErrorSummary } from "../../lib/format";
@@ -85,6 +103,7 @@ export default function KnowledgeOverviewPage() {
   const documents = sources.reduce((acc, s) => acc + (s.document_count || 0), 0);
   const failedJobs = jobs.filter((j) => j.status === "failed" || j.status === "dead");
   const hasSources = sources.length > 0;
+  const hasIssues = broken.length > 0;
 
   const issues: { id: string; label: string; to: string }[] = [
     ...broken.slice(0, 5).map((s) => ({
@@ -105,81 +124,131 @@ export default function KnowledgeOverviewPage() {
         title={KNOWLEDGE_HEADINGS.overview}
         subtitle={COPY.subtitle}
         actions={
-          <div className="flex flex-wrap gap-2">
+          <>
             {resumeId && (
-              <Link to={`/knowledge/add/${resumeId}`} className="btn btn-secondary">
+              <ButtonLink to={`/knowledge/add/${resumeId}`} variant="secondary">
                 {COPY.continue}
-              </Link>
+              </ButtonLink>
             )}
-            <Link to="/knowledge/add" className="btn btn-primary">
+            <ButtonLink to="/knowledge/add" variant="primary" leadingIcon={Plus}>
               {COPY.addSource}
-            </Link>
-          </div>
+            </ButtonLink>
+          </>
         }
       />
-      <ErrorInline message={error} />
 
-      {attention && (
-        <div className="mb-4 rounded-md border border-warn/40 bg-warn/10 px-4 py-3 text-sm">
-          {attention.warning || "Zent tiene datos sin revisar de tu última fuente."}{" "}
-          <Link className="text-accent underline" to={`/knowledge/add/${attention.id}`}>
-            Revisar ahora
-          </Link>
-        </div>
-      )}
+      <div className="flex flex-col gap-4">
+        <ErrorInline message={error} className="mb-0" />
 
-      {loading && (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="stat space-y-2">
-              <SkeletonBlock rows={1} />
-            </div>
-          ))}
-        </div>
-      )}
+        {attention && (
+          <WarningInline
+            className="mb-0"
+            message={
+              <>
+                {attention.warning || "Zent tiene datos sin revisar de tu última fuente."}{" "}
+                <Link
+                  to={`/knowledge/add/${attention.id}`}
+                  className="font-medium underline underline-offset-2"
+                >
+                  Revisar ahora
+                </Link>
+              </>
+            }
+          />
+        )}
 
-      {!loading && !hasSources && (
-        <div className="panel mb-4 p-6" data-testid="knowledge-empty">
-          <p className="text-sm text-muted">{COPY.empty}</p>
-          <Link to="/knowledge/add" className="btn btn-primary mt-3">
-            {COPY.addSource}
-          </Link>
-        </div>
-      )}
-
-      {!loading && hasSources && (
-        <>
-          <div className="mb-4 rounded-md border border-border p-4" data-testid="knowledge-ready">
-            <h2 className="font-semibold">{COPY.readyTitle}</h2>
-            <p className="text-sm text-muted">{COPY.readyBody(sources.length, broken.length)}</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Link to="/chat?target=knowledge" className="btn btn-primary">
-                {COPY.playground}
-              </Link>
-              <Link to="/agents/new" className="btn btn-secondary">
-                {COPY.createAgent}
-              </Link>
-              <Link to="/knowledge/sources" className="btn btn-secondary">
-                {COPY.viewSources}
-              </Link>
+        {loading && (
+          <div className="flex flex-col gap-4" aria-busy="true">
+            <Skeleton className="h-[124px] rounded-lg" />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-[86px] rounded-lg" />
+              ))}
             </div>
           </div>
+        )}
 
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
-            <StatCard label="Fuentes" value={fmtNum(sources.length)} icon={Database} />
-            <StatCard label="Documentos" value={fmtNum(documents)} icon={Files} />
-            <StatCard
-              label="Chunks indexados"
-              value={vectorPoints != null ? fmtNum(vectorPoints) : "—"}
-              icon={Lightning}
-            />
+        {!loading && !hasSources && (
+          <div data-testid="knowledge-empty">
+            <Panel>
+              <EmptyState
+                icon={Database}
+                title="Todavía no hay fuentes"
+                body={COPY.empty}
+                action={
+                  <ButtonLink to="/knowledge/add" variant="primary" leadingIcon={Plus}>
+                    {COPY.addSource}
+                  </ButtonLink>
+                }
+                secondaryAction={
+                  <ButtonLink to="/knowledge/sources" variant="secondary">
+                    {COPY.viewSources}
+                  </ButtonLink>
+                }
+              />
+            </Panel>
           </div>
+        )}
 
-          <div className="mt-4">
+        {!loading && hasSources && (
+          <>
+            <div data-testid="knowledge-ready">
+              <Panel>
+                <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="flex min-w-0 gap-3">
+                    <span
+                      className={cn(
+                        "flex h-10 w-10 shrink-0 items-center justify-center rounded-md border",
+                        hasIssues
+                          ? "border-warn/25 bg-warn-soft text-warn"
+                          : "border-ok/25 bg-ok-soft text-ok",
+                      )}
+                      aria-hidden
+                    >
+                      {hasIssues ? <WarningCircle size={20} /> : <CheckCircle size={20} />}
+                    </span>
+                    <div className="min-w-0">
+                      <h2 className="text-h2">{COPY.readyTitle}</h2>
+                      <p className="prose-measure mt-1.5 text-sm leading-relaxed text-muted">
+                        {COPY.readyBody(sources.length, broken.length)}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                    <ButtonLink to="/chat?target=knowledge" variant="primary">
+                      {COPY.playground}
+                    </ButtonLink>
+                    <ButtonLink to="/agents/new" variant="secondary">
+                      {COPY.createAgent}
+                    </ButtonLink>
+                    <ButtonLink to="/knowledge/sources" variant="secondary">
+                      {COPY.viewSources}
+                    </ButtonLink>
+                  </div>
+                </div>
+              </Panel>
+            </div>
+
+            <MetricGrid cols={3}>
+              <Metric
+                label="Fuentes"
+                value={fmtNum(sources.length)}
+                icon={Database}
+                hint={hasIssues ? `${fmtNum(broken.length)} con incidencias` : "sin incidencias"}
+              />
+              <Metric label="Documentos" value={fmtNum(documents)} icon={Files} />
+              <Metric
+                label="Chunks indexados"
+                value={vectorPoints != null ? fmtNum(vectorPoints) : "—"}
+                icon={Lightning}
+                hint={vectorPoints == null ? "sin dato de uso" : undefined}
+              />
+            </MetricGrid>
+
             <AttentionList items={issues} emptyBody={COPY.attentionEmpty} />
-          </div>
-        </>
-      )}
+          </>
+        )}
+      </div>
     </KnowledgeLayout>
   );
 }

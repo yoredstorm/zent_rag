@@ -1,28 +1,28 @@
-import {
-  List,
-  SignOut,
-  X,
-} from "@phosphor-icons/react";
-import { Suspense, lazy, useEffect, useMemo, useState } from "react";
-import { NavLink, Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
+import { MagnifyingGlass, List } from "@phosphor-icons/react";
+import { motion, useAnimation, useReducedMotion } from "motion/react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
+import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ApiKeyCreatedModal } from "./components/ApiKeyCreatedModal";
 import { Topbar } from "./components/Topbar";
-import { WorkspaceSelector } from "./components/WorkspaceSelector";
 import { api, clearSession, loadSession, SIGNUP_API_KEY_STORAGE } from "./api";
 import { useAuth } from "./auth";
 import { IMPERSONATING_KEY } from "./platformAuth";
 import { SyncBanner, SyncJobProvider } from "./syncJob";
 import { ToastProvider } from "./Toast";
-import { NAV_GROUPS, canSeeNavItem } from "./lib/nav";
-import { tourTargetForGroup, tourTargetForPath } from "./lib/productTour";
-import { CommandPaletteRoot } from "./components/CommandPalette";
+import { CommandPaletteRoot, openCommandPalette } from "./components/CommandPalette";
 import { IdleSessionWarning } from "./components/IdleSessionWarning";
 import { DemoBanner } from "./components/DemoBanner";
 import { TenantStepUpModal } from "./components/TenantStepUpModal";
 import { ProductTourRoot } from "./components/ProductTour";
+import { EntitlementsProvider } from "./lib/entitlements";
+import { AppSidebar } from "./components/shell/AppSidebar";
+import { MobileNav } from "./components/shell/MobileNav";
+import { Brand } from "./components/Brand";
+import { PageSkeleton } from "./components/ui/states";
 
 const IDLE_SESSION_MINUTES = 30;
+const SIDEBAR_COLLAPSED_KEY = "zent_sidebar_collapsed";
 
 const ChatPage = lazy(() => import("./pages/Chat"));
 const DashboardPage = lazy(() => import("./pages/Dashboard"));
@@ -162,225 +162,18 @@ const McpPage = lazy(() => import("./pages/Mcp"));
 
 function PageFallback() {
   return (
-    <div className="flex justify-center py-16">
-      <span
-        role="status"
-        className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-border-strong border-t-accent"
-        aria-label="Cargando"
-      />
+    <div className="mx-auto w-full max-w-[1360px] px-4 py-6 sm:px-6 lg:px-8">
+      <PageSkeleton />
     </div>
   );
 }
 
-type Entitlements = Record<string, boolean | number | null>;
-
-function Brand() {
-  return (
-    <div className="flex items-center gap-2.5">
-      <div className="flex h-8 w-8 items-center justify-center rounded-md border border-accent/30 bg-accent-soft shadow-glow">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-          <path
-            d="M4 6.5 12 3l8 3.5v6.2c0 4.6-3.2 7.8-8 9.3-4.8-1.5-8-4.7-8-9.3V6.5Z"
-            stroke="var(--color-accent)"
-            strokeWidth="1.6"
-            strokeLinejoin="round"
-          />
-          <path
-            d="m8.5 12.5 2.4 2.4 4.6-4.9"
-            stroke="var(--color-accent)"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-      </div>
-      <span className="text-[15px] font-semibold tracking-tight text-text">
-        Zent
-      </span>
-    </div>
-  );
-}
-
-function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
-  const { session, logout } = useAuth();
-  const [confirming, setConfirming] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [entitlements, setEntitlements] = useState<Entitlements>({});
-  const identity =
-    session?.email || session?.companyName || session?.organizationId.slice(0, 8) || "";
-
-  useEffect(() => {
-    if (!session) return;
-    api<{ entitlements: Entitlements }>("/api/v1/billing/entitlements", {
-      token: session.token,
-      organizationId: session.organizationId,
-    })
-      .then((out) => setEntitlements(out.entitlements || {}))
-      .catch(() => setEntitlements({}));
-  }, [session]);
-
-  const groups = useMemo(
-    () =>
-      NAV_GROUPS.map((group) => ({
-        ...group,
-        items: group.items?.filter((item) => canSeeNavItem(session, item.key, entitlements)),
-        sections: group.sections
-          ?.map((s) => ({
-            heading: s.heading,
-            items: s.items.filter((item) => canSeeNavItem(session, item.key, entitlements)),
-          }))
-          .filter((s) => s.items.length > 0),
-      })).filter(
-        (group) =>
-          (group.items && group.items.length > 0) ||
-          (group.sections && group.sections.length > 0)
-      ),
-    [session, entitlements]
-  );
-
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex flex-col gap-3 px-5 pt-5 pb-4">
-        <Brand />
-        <WorkspaceSelector />
-      </div>
-      <nav className="flex flex-1 flex-col gap-3 overflow-y-auto px-3 pb-3" aria-label="Principal">
-        {groups.map((group) => {
-          if (group.collapsible) {
-            return (
-              <div key={group.label || "root"}>
-                <button
-                  type="button"
-                  className="mb-1 flex w-full items-center justify-between rounded-xs px-2.5 py-1 text-[10px] font-semibold tracking-wider text-faint uppercase transition-colors duration-150 hover:text-muted"
-                  aria-expanded={advancedOpen}
-                  data-tour={tourTargetForGroup(group.label)}
-                  onClick={() => setAdvancedOpen((v) => !v)}
-                >
-                  {group.label}
-                  <span
-                    className={`transition-transform duration-150 ${advancedOpen ? "rotate-90" : ""}`}
-                    aria-hidden
-                  >
-                    ▸
-                  </span>
-                </button>
-                {advancedOpen && (
-                  <div className="flex flex-col gap-2.5">
-                    {(group.sections ?? []).map((section) => (
-                      <div key={section.heading}>
-                        <p className="mb-1 px-2.5 text-[10px] font-semibold tracking-wider text-faint uppercase">
-                          {section.heading}
-                        </p>
-                        <div className="flex flex-col gap-0.5">
-                          {section.items.map(({ to, label, icon: IconEl, end }) => (
-                            <NavLink
-                              key={to}
-                              to={to}
-                              end={end}
-                              data-tour={tourTargetForPath(to)}
-                              onClick={onNavigate}
-                              className={({ isActive }) =>
-                                `group flex min-h-9 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors duration-150 ${
-                                  isActive
-                                    ? "bg-accent-soft font-medium text-accent"
-                                    : "text-muted hover:bg-soft hover:text-text"
-                                }`
-                              }
-                            >
-                              {({ isActive }) => (
-                                <>
-                                  <IconEl
-                                    size={16}
-                                    weight={isActive ? "fill" : "regular"}
-                                    aria-hidden
-                                  />
-                                  <span className="truncate">{label}</span>
-                                </>
-                              )}
-                            </NavLink>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          }
-          return (
-            <div key={group.label || "root"} data-tour={tourTargetForGroup(group.label)}>
-              {group.label && (
-                <p className="mb-1 px-2.5 text-[10px] font-semibold tracking-wider text-faint uppercase">
-                  {group.label}
-                </p>
-              )}
-              <div className="flex flex-col gap-0.5">
-                {(group.items ?? []).map(({ to, label, icon: IconEl, end }) => (
-                  <NavLink
-                    key={to}
-                    to={to}
-                    end={end}
-                    data-tour={tourTargetForPath(to)}
-                    onClick={onNavigate}
-                    className={({ isActive }) =>
-                      `group flex min-h-9 items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] transition-colors duration-150 ${
-                        isActive
-                          ? "bg-accent-soft font-medium text-accent"
-                          : "text-muted hover:bg-soft hover:text-text"
-                      }`
-                    }
-                  >
-                    {({ isActive }) => (
-                      <>
-                        <IconEl
-                          size={16}
-                          weight={isActive ? "fill" : "regular"}
-                          aria-hidden
-                        />
-                        <span className="truncate">{label}</span>
-                      </>
-                    )}
-                  </NavLink>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </nav>
-      <div className="border-t border-border p-4">
-        <p className="mb-3 truncate text-xs text-faint" title={identity}>
-          {identity}
-        </p>
-        {confirming ? (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="btn btn-danger flex-1 px-2 py-1.5 text-xs"
-              onClick={logout}
-            >
-              Sí, salir
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary flex-1 px-2 py-1.5 text-xs"
-              onClick={() => setConfirming(false)}
-            >
-              Cancelar
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            className="btn btn-ghost w-full justify-start gap-2 px-2 py-1.5 text-[13px]"
-            onClick={() => setConfirming(true)}
-          >
-            <SignOut size={16} aria-hidden />
-            Cerrar sesión
-          </button>
-        )}
-      </div>
-    </div>
-  );
+function readSidebarCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
 }
 
 function ProtectedLayout() {
@@ -388,7 +181,8 @@ function ProtectedLayout() {
   const { pathname } = useLocation();
   // El estudio de workflows es un lienzo: necesita todo el ancho, sin max-w ni padding.
   const fullBleed = /^\/workflows\/[^/]+$/.test(pathname);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(readSidebarCollapsed);
   const [signupKey, setSignupKey] = useState<string | null>(null);
   const [impersonationMeta, setImpersonationMeta] = useState<{
     tenant: string;
@@ -396,8 +190,32 @@ function ProtectedLayout() {
     expiresAt?: number;
   } | null>(null);
   const [nowTs, setNowTs] = useState(0);
+  const pageControls = useAnimation();
+  const reduceMotion = useReducedMotion();
+  const lastPath = useRef<string | null>(null);
+
+  // Entrada de página sin remount: anima el wrapper al cambiar de ruta.
+  useEffect(() => {
+    if (lastPath.current === pathname) return;
+    lastPath.current = pathname;
+    if (reduceMotion) return;
+    void pageControls.start({
+      opacity: [0, 1],
+      y: [4, 0],
+      transition: { duration: 0.32, ease: [0.16, 1, 0.3, 1] },
+    });
+  }, [pathname, pageControls, reduceMotion]);
   const impersonating =
     typeof sessionStorage !== "undefined" ? sessionStorage.getItem(IMPERSONATING_KEY) : null;
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-sidebar", collapsed ? "collapsed" : "expanded");
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
+    } catch {
+      // sin persistencia
+    }
+  }, [collapsed]);
 
   useEffect(() => {
     setNowTs(Math.floor(Date.now() / 1000));
@@ -409,7 +227,10 @@ function ProtectedLayout() {
     if (impersonating) {
       try {
         const raw = sessionStorage.getItem("zent_impersonation_meta");
-        if (raw) setImpersonationMeta(JSON.parse(raw) as { tenant: string; reason?: string; expiresAt?: number });
+        if (raw)
+          setImpersonationMeta(
+            JSON.parse(raw) as { tenant: string; reason?: string; expiresAt?: number }
+          );
       } catch {
         setImpersonationMeta(null);
       }
@@ -420,6 +241,11 @@ function ProtectedLayout() {
     const key = sessionStorage.getItem(SIGNUP_API_KEY_STORAGE);
     if (key) setSignupKey(key);
   }, []);
+
+  // Al cambiar de ruta se cierra la navegación móvil.
+  useEffect(() => {
+    setNavOpen(false);
+  }, [pathname]);
 
   async function exitImpersonation() {
     // FASE 09: revoca la sesión impersonada server-side y vuelve al Control Center.
@@ -454,126 +280,129 @@ function ProtectedLayout() {
   if (session.needsStartMode) return <Navigate to="/onboarding/start" replace />;
 
   return (
-    <ToastProvider>
-      <SyncJobProvider>
-        {signupKey && (
-          <ApiKeyCreatedModal
-            apiKey={signupKey}
-            onClose={() => {
-              sessionStorage.removeItem(SIGNUP_API_KEY_STORAGE);
-              setSignupKey(null);
+    <EntitlementsProvider>
+      <ToastProvider>
+        <SyncJobProvider>
+          {signupKey && (
+            <ApiKeyCreatedModal
+              apiKey={signupKey}
+              onClose={() => {
+                sessionStorage.removeItem(SIGNUP_API_KEY_STORAGE);
+                setSignupKey(null);
+              }}
+            />
+          )}
+          <a href="#contenido" className="skip-link">
+            Saltar al contenido
+          </a>
+          <ProductTourRoot
+            session={session}
+            blocked={Boolean(impersonating) || Boolean(signupKey)}
+            layoutKey={navOpen}
+            onTourActive={(active) => {
+              if (active && !window.matchMedia("(min-width: 1024px)").matches) {
+                setNavOpen(true);
+              }
             }}
           />
-        )}
-        <a href="#contenido" className="skip-link">
-          Saltar al contenido
-        </a>
-        <ProductTourRoot
-          session={session}
-          blocked={Boolean(impersonating) || Boolean(signupKey)}
-          layoutKey={drawerOpen}
-          onTourActive={(active) => {
-            if (active && !window.matchMedia("(min-width: 1024px)").matches) {
-              setDrawerOpen(true);
-            }
-          }}
-        />
-        <div className="min-h-[100dvh] lg:pl-[248px]">
-          <aside className="fixed inset-y-0 left-0 z-30 hidden w-[248px] border-r border-border bg-surface/70 backdrop-blur-xl lg:block">
-            <SidebarContent />
-          </aside>
+          <div className="min-h-[100dvh]">
+            <aside className="app-sidebar fixed inset-y-0 left-0 z-30 hidden border-r border-border bg-surface lg:block">
+              <AppSidebar
+                collapsed={collapsed}
+                onToggleCollapsed={() => setCollapsed((v) => !v)}
+                instanceId="desktop"
+              />
+            </aside>
 
-          <div className="flex min-h-[100dvh] flex-col">
-            <Topbar />
-            <DemoBanner />
-            <TenantStepUpModal />
+            <div className="app-main flex min-h-[100dvh] min-w-0 flex-col">
+              <Topbar
+                sidebarCollapsed={collapsed}
+                onExpandSidebar={() => setCollapsed(false)}
+              />
+              <DemoBanner />
+              <TenantStepUpModal />
 
-            <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-border bg-bg/85 px-4 py-3 backdrop-blur-md lg:hidden">
-              <button
-                type="button"
-                className="btn btn-secondary min-h-11 px-2.5"
-                aria-label="Abrir menú"
-                aria-expanded={drawerOpen}
-                onClick={() => setDrawerOpen(true)}
-              >
-                <List size={18} aria-hidden />
-              </button>
-              <Brand />
-            </header>
-
-            {drawerOpen && (
-              <div className="fixed inset-0 z-40 lg:hidden">
-                <div
-                  className="absolute inset-0 animate-fade-in bg-black/60"
-                  onClick={() => setDrawerOpen(false)}
-                  aria-hidden
-                />
-                <div className="absolute inset-y-0 left-0 w-[280px] animate-page-in border-r border-border bg-surface shadow-pop">
-                  <button
-                    type="button"
-                    className="absolute top-4 right-4 min-h-11 min-w-11 cursor-pointer rounded-xs p-1 text-faint hover:bg-soft hover:text-text"
-                    aria-label="Cerrar menú"
-                    onClick={() => setDrawerOpen(false)}
-                  >
-                    <X size={18} aria-hidden />
-                  </button>
-                  <SidebarContent onNavigate={() => setDrawerOpen(false)} />
-                </div>
-              </div>
-            )}
-
-            <main
-              id="contenido"
-              className={
-                fullBleed
-                  ? "flex w-full min-w-0 flex-1 flex-col px-3 py-3 sm:px-4"
-                  : "mx-auto w-full max-w-[1280px] flex-1 px-4 py-6 sm:px-6 lg:px-10"
-              }
-            >
-              <CommandPaletteRoot mode="tenant" />
-              <IdleSessionWarning minutes={IDLE_SESSION_MINUTES} onLogout={logout} />
-              {impersonating && (
-                <div
-                  className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger/40 bg-danger-soft px-4 py-3 text-sm text-text"
-                  role="status"
+              <header className="sticky top-0 z-20 flex items-center gap-3 border-b border-border bg-bg/90 px-4 py-2.5 backdrop-blur-md lg:hidden">
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-icon h-10 w-10 min-h-0"
+                  aria-label="Abrir menú"
+                  aria-expanded={navOpen}
+                  onClick={() => setNavOpen(true)}
                 >
-                  <span>
-                    <strong className="font-semibold text-danger">IMPERSONATION MODE</strong> — operando como{" "}
-                    <span className="font-medium text-text">{impersonating}</span>
-                    {impersonationMeta && (
-                      <>
-                        {impersonationMeta.reason && (
-                          <span className="text-muted"> · motivo: {impersonationMeta.reason}</span>
-                        )}
-                        {impersonationMeta.expiresAt && (
-                          <span className="mono text-muted">
-                            {" "}
-                            · expira en {Math.max(0, impersonationMeta.expiresAt - nowTs)}s
-                          </span>
-                        )}
-                      </>
-                    )}
-                  </span>
-                  <button
-                    type="button"
-                    className="btn btn-danger min-h-11"
-                    onClick={() => void exitImpersonation()}
+                  <List size={18} aria-hidden />
+                </button>
+                <Brand compact />
+                <span className="flex-1" />
+                <button
+                  type="button"
+                  className="inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-sm border border-border bg-control text-muted"
+                  onClick={() => openCommandPalette("tenant")}
+                  aria-label="Buscar (Ctrl+K)"
+                >
+                  <MagnifyingGlass size={16} aria-hidden />
+                </button>
+              </header>
+
+              <MobileNav open={navOpen} onOpenChange={setNavOpen} />
+
+              <main
+                id="contenido"
+                className={
+                  fullBleed
+                    ? "flex w-full min-w-0 flex-1 flex-col px-3 py-3 sm:px-4"
+                    : "mx-auto w-full max-w-[1360px] flex-1 px-4 py-6 sm:px-6 lg:px-8"
+                }
+              >
+                <CommandPaletteRoot mode="tenant" />
+                <IdleSessionWarning minutes={IDLE_SESSION_MINUTES} onLogout={logout} />
+                {impersonating && (
+                  <div
+                    className="state-rail mb-5 flex flex-wrap items-center justify-between gap-3 rounded-md border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-text"
+                    data-state="failed"
+                    role="status"
                   >
-                    Salir de impersonación
-                  </button>
-                </div>
-              )}
-              <SyncBanner />
-              <div className={fullBleed ? "flex min-h-0 min-w-0 flex-1 flex-col" : "animate-page-in"}>
-                <ErrorBoundary>
-                  <Outlet />
-                </ErrorBoundary>
-              </div>
-            </main>
+                    <span className="min-w-0">
+                      <strong className="font-semibold text-danger">Modo impersonación</strong> — operando
+                      como <span className="font-medium text-text">{impersonating}</span>
+                      {impersonationMeta && (
+                        <>
+                          {impersonationMeta.reason && (
+                            <span className="text-muted"> · motivo: {impersonationMeta.reason}</span>
+                          )}
+                          {impersonationMeta.expiresAt && (
+                            <span className="mono text-muted">
+                              {" "}
+                              · expira en {Math.max(0, impersonationMeta.expiresAt - nowTs)}s
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-danger btn-sm"
+                      onClick={() => void exitImpersonation()}
+                    >
+                      Salir de impersonación
+                    </button>
+                  </div>
+                )}
+                <SyncBanner />
+                <motion.div
+                  animate={pageControls}
+                  className={fullBleed ? "flex min-h-0 min-w-0 flex-1 flex-col" : undefined}
+                >
+                  <ErrorBoundary>
+                    <Outlet />
+                  </ErrorBoundary>
+                </motion.div>
+              </main>
+            </div>
           </div>
-        </div>
-      </SyncJobProvider>
-    </ToastProvider>
+        </SyncJobProvider>
+      </ToastProvider>
+    </EntitlementsProvider>
   );
 }
 

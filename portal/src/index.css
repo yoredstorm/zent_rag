@@ -1,23 +1,40 @@
 @import "tailwindcss";
 
-/* ------------------------------------------------------------------ */
-/* Theme tokens (dark por defecto; light bajo [data-theme="light"])    */
-/* ------------------------------------------------------------------ */
+/* ==================================================================
+   ZENT DESIGN SYSTEM — tokens
+   Dirección: instrumento de precisión. Grafito fresado + teal señal.
+   Superficies: canvas / s1 / s2 / s3 / overlay.
+   Profundidad: hairlines 1px + escalones tonales. Sin blur decorativo.
+   ================================================================== */
 
 @theme {
+  /* --- Superficies ------------------------------------------------ */
   --color-bg: var(--zent-bg);
   --color-surface: var(--zent-surface);
   --color-raised: var(--zent-raised);
   --color-soft: var(--zent-soft);
+  --color-overlay: var(--zent-overlay);
+  --color-control: var(--zent-control);
+  --color-track: var(--zent-track);
+  --color-scrim: var(--zent-scrim);
+
+  /* --- Bordes ----------------------------------------------------- */
   --color-border: var(--zent-border);
+  --color-border-soft: var(--zent-border-soft);
   --color-border-strong: var(--zent-border-strong);
+
+  /* --- Texto (4 niveles) ------------------------------------------ */
   --color-text: var(--zent-text);
   --color-muted: var(--zent-muted);
   --color-faint: var(--zent-faint);
+  --color-ghost: var(--zent-ghost);
+
+  /* --- Marca y semánticos ----------------------------------------- */
   --color-accent: var(--zent-accent);
   --color-accent-dim: var(--zent-accent-dim);
   --color-accent-fg: var(--zent-accent-fg);
   --color-accent-soft: var(--zent-accent-soft);
+  --color-accent-line: var(--zent-accent-line);
   --color-danger: var(--zent-danger);
   --color-danger-soft: var(--zent-danger-soft);
   --color-warn: var(--zent-warn);
@@ -27,36 +44,56 @@
   --color-info: var(--zent-info);
   --color-info-soft: var(--zent-info-soft);
 
+  /* --- Tipografía ------------------------------------------------- */
   --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
 
+  --text-caption: 11px;
+  --text-caption--line-height: 1.4;
+  --text-caption--letter-spacing: 0.07em;
+
+  /* --- Geometría -------------------------------------------------- */
   --radius-xs: 6px;
   --radius-sm: 8px;
   --radius-md: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 20px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
 
-  --shadow-panel: inset 0 1px 0 0 rgb(255 255 255 / 0.04),
-    0 16px 40px -24px rgb(0 0 0 / 0.6);
-  --shadow-pop: inset 0 1px 0 0 rgb(255 255 255 / 0.06),
-    0 24px 56px -16px rgb(0 0 0 / 0.7);
-  --shadow-glow: 0 0 0 1px rgb(52 211 166 / 0.35),
-    0 0 24px -6px rgb(52 211 166 / 0.4);
+  /* --- Profundidad (sombras tintadas al hue del canvas) ----------- */
+  --shadow-panel: var(--zent-shadow-panel);
+  --shadow-pop: var(--zent-shadow-pop);
+  --shadow-glow: var(--zent-shadow-glow);
 
+  /* --- Motion ----------------------------------------------------- */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  --animate-page-in: page-in 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
-  --animate-fade-in: fade-in 0.2s ease-out both;
-  --animate-toast-in: toast-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-swift: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --animate-page-in: page-in 0.32s var(--ease-swift) both;
+  --animate-fade-in: fade-in 0.18s ease-out both;
+  --animate-toast-in: toast-in 0.26s var(--ease-swift) both;
   --animate-analyze-chip: analyze-chip-in 220ms var(--ease-out) both;
   --animate-shimmer: shimmer 1.8s linear infinite;
   --animate-pulse-soft: pulse-soft 1.6s ease-in-out infinite;
   --animate-blink: blink 1s step-end infinite;
   --animate-spin: spin 0.7s linear infinite;
+  --animate-pop-in: pop-in 0.16s var(--ease-out) both;
+  --animate-pop-out: pop-out 0.13s var(--ease-out) both;
+  --animate-rise: rise 0.24s var(--ease-swift) both;
+  --animate-fade-out: fade-out 0.14s ease-out both;
+  --animate-slide-in-right: slide-in-right 0.26s var(--ease-swift) both;
+  --animate-slide-out-right: slide-out-right 0.2s var(--ease-in-out) both;
+  --animate-slide-in-left: slide-in-left 0.26s var(--ease-swift) both;
+  --animate-slide-out-left: slide-out-left 0.2s var(--ease-in-out) both;
+  --animate-slide-in-bottom: slide-in-bottom 0.26s var(--ease-swift) both;
+  --animate-slide-out-bottom: slide-out-bottom 0.2s var(--ease-in-out) both;
+  --animate-rail-pulse: rail-pulse 2.2s ease-in-out infinite;
 
   @keyframes page-in {
     from {
       opacity: 0;
-      transform: translateY(8px);
+      transform: translateY(6px);
     }
     to {
       opacity: 1;
@@ -84,11 +121,118 @@
   @keyframes toast-in {
     from {
       opacity: 0;
-      transform: translateY(8px) scale(0.98);
+      transform: translateY(8px) scale(0.985);
     }
     to {
       opacity: 1;
       transform: translateY(0) scale(1);
+    }
+  }
+  @keyframes pop-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  @keyframes pop-out {
+    from {
+      opacity: 1;
+      transform: scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
+  @keyframes fade-out {
+    from {
+      opacity: 1;
+    }
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes slide-in-right {
+    from {
+      transform: translateX(16px);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+  @keyframes slide-out-right {
+    from {
+      transform: translateX(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateX(16px);
+      opacity: 0;
+    }
+  }
+  @keyframes slide-in-left {
+    from {
+      transform: translateX(-16px);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+  @keyframes slide-out-left {
+    from {
+      transform: translateX(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateX(-16px);
+      opacity: 0;
+    }
+  }
+  @keyframes slide-in-bottom {
+    from {
+      transform: translateY(12px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+  @keyframes slide-out-bottom {
+    from {
+      transform: translateY(0);
+      opacity: 1;
+    }
+    to {
+      transform: translateY(12px);
+      opacity: 0;
+    }
+  }
+  @keyframes rise {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes rail-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.45;
     }
   }
   @keyframes shimmer {
@@ -119,60 +263,134 @@
   }
 }
 
+/* ------------------------------------------------------------------ */
+/* Paletas                                                            */
+/* ------------------------------------------------------------------ */
+
 :root {
-  --zent-bg: #0b0f14;
-  --zent-surface: #10161d;
-  --zent-raised: #161e27;
-  --zent-soft: #1c2632;
-  --zent-border: #223041;
-  --zent-border-strong: #31445a;
-  --zent-text: #e6edf4;
-  --zent-muted: #93a5b8;
-  --zent-faint: #6e829b;
+  /* Canvas y escalones de superficie (5 pasos, deltas de ~5% luz) */
+  --zent-bg: #0a0e13;
+  --zent-surface: #0f141b;
+  --zent-raised: #151c25;
+  --zent-soft: #1c2531;
+  --zent-overlay: #212b39;
+  --zent-control: rgb(5 8 12 / 0.42);
+  --zent-track: rgb(255 255 255 / 0.07);
+  --zent-scrim: rgb(4 7 10 / 0.66);
+
+  /* Bordes: soft (separación), base (estructura), strong (énfasis) */
+  --zent-border: rgb(255 255 255 / 0.07);
+  --zent-border-soft: rgb(255 255 255 / 0.045);
+  --zent-border-strong: rgb(255 255 255 / 0.14);
+
+  /* Texto: primary / secondary / tertiary / muted */
+  --zent-text: #f2f6fa;
+  --zent-muted: #aebac9;
+  --zent-faint: #8a97a8;
+  --zent-ghost: #6b7889;
+
+  /* Marca: teal señal (identidad Zent, intacta) */
   --zent-accent: #34d3a6;
   --zent-accent-dim: #1a9e7a;
   --zent-accent-fg: #06241c;
   --zent-accent-soft: rgb(52 211 166 / 0.12);
-  --zent-danger: #f07178;
-  --zent-danger-soft: rgb(240 113 120 / 0.12);
-  --zent-warn: #e6c07b;
-  --zent-warn-soft: rgb(230 192 123 / 0.12);
-  --zent-ok: #4fc98f;
-  --zent-ok-soft: rgb(79 201 143 / 0.12);
-  --zent-info: #6ea8fe;
-  --zent-info-soft: rgb(110 168 254 / 0.12);
-  --zent-code-bg: rgb(0 0 0 / 0.35);
-  --zent-glow-a: rgb(26 61 54 / 0.35);
-  --zent-glow-b: rgb(26 42 68 / 0.28);
-  --zent-overlay: rgb(0 0 0 / 0.6);
+  --zent-accent-line: rgb(52 211 166 / 0.32);
+
+  /* Semánticos (desaturados para dark) */
+  --zent-danger: #ee737b;
+  --zent-danger-soft: rgb(238 115 123 / 0.13);
+  --zent-warn: #dcb977;
+  --zent-warn-soft: rgb(220 185 119 / 0.13);
+  --zent-ok: #48c98d;
+  --zent-ok-soft: rgb(72 201 141 / 0.13);
+  --zent-info: #75aaf6;
+  --zent-info-soft: rgb(117 170 246 / 0.13);
+
+  --zent-code-bg: rgb(3 6 10 / 0.42);
+  --zent-glow-a: rgb(26 61 54 / 0.22);
+  --zent-glow-b: rgb(26 42 68 / 0.18);
+  /* Chevron de <select> nativo (no se puede usar currentColor en background-image) */
+  --zent-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23ffffff' stroke-opacity='0.45' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6.5 8 10.5l4-4'/%3E%3C/svg%3E");
+
+  /* Sombras tintadas con el hue del canvas */
+  --zent-shadow-panel:
+    inset 0 1px 0 0 rgb(255 255 255 / 0.03), 0 1px 2px -1px rgb(3 6 10 / 0.5),
+    0 12px 32px -28px rgb(3 6 10 / 0.8);
+  --zent-shadow-pop:
+    inset 0 1px 0 0 rgb(255 255 255 / 0.05), 0 4px 12px -6px rgb(3 6 10 / 0.55),
+    0 24px 56px -20px rgb(3 6 10 / 0.7);
+  --zent-shadow-glow:
+    0 0 0 1px rgb(52 211 166 / 0.26), 0 0 20px -8px rgb(52 211 166 / 0.45);
+
+  /* Motion */
+  --dur-1: 120ms;
+  --dur-2: 160ms;
+  --dur-3: 200ms;
+  --dur-4: 260ms;
+  --dur-5: 340ms;
+  --dur-6: 420ms;
+
+  /* Z-scale */
+  --z-sticky: 20;
+  --z-sidebar: 30;
+  --z-drawer: 40;
+  --z-modal: 50;
+  --z-palette: 60;
+  --z-tour: 70;
+  --z-toast: 80;
+
+  color-scheme: dark;
 }
 
 [data-theme="light"] {
-  --zent-bg: #f6f8fb;
+  --zent-bg: #f5f7fa;
   --zent-surface: #ffffff;
   --zent-raised: #eef2f7;
   --zent-soft: #e7ecf3;
-  --zent-border: #d6dee9;
-  --zent-border-strong: #b6c3d3;
-  --zent-text: #10171f;
-  --zent-muted: #4e5f73;
-  --zent-faint: #5e7189;
+  --zent-overlay: #ffffff;
+  --zent-control: #fbfcfe;
+  --zent-track: rgb(15 23 42 / 0.06);
+  --zent-scrim: rgb(15 23 32 / 0.42);
+
+  --zent-border: #e4e8ef;
+  --zent-border-soft: #edf1f6;
+  --zent-border-strong: #cdd6e1;
+
+  --zent-text: #0c1119;
+  --zent-muted: #4a5666;
+  --zent-faint: #5e6b7e;
+  --zent-ghost: #8a94a6;
+
   --zent-accent: #0b8060;
   --zent-accent-dim: #0a6b4f;
   --zent-accent-fg: #ffffff;
-  --zent-accent-soft: rgb(11 128 96 / 0.12);
-  --zent-danger: #c22f3b;
-  --zent-danger-soft: rgb(194 47 59 / 0.1);
+  --zent-accent-soft: rgb(11 128 96 / 0.1);
+  --zent-accent-line: rgb(11 128 96 / 0.28);
+
+  --zent-danger: #c0283a;
+  --zent-danger-soft: rgb(192 40 58 / 0.09);
   --zent-warn: #8a5d14;
-  --zent-warn-soft: rgb(138 93 20 / 0.1);
-  --zent-ok: #157a4c;
-  --zent-ok-soft: rgb(21 122 76 / 0.1);
+  --zent-warn-soft: rgb(138 93 20 / 0.09);
+  --zent-ok: #12784a;
+  --zent-ok-soft: rgb(18 120 74 / 0.09);
   --zent-info: #1f5fbf;
-  --zent-info-soft: rgb(31 95 191 / 0.1);
-  --zent-code-bg: #e9eef4;
-  --zent-glow-a: rgb(52 211 166 / 0.08);
-  --zent-glow-b: rgb(110 168 254 / 0.08);
-  --zent-overlay: rgb(15 23 32 / 0.5);
+  --zent-info-soft: rgb(31 95 191 / 0.09);
+
+  --zent-code-bg: #eff3f8;
+  --zent-glow-a: rgb(52 211 166 / 0.07);
+  --zent-glow-b: rgb(110 168 254 / 0.07);
+  --zent-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%230f172a' stroke-opacity='0.45' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6.5 8 10.5l4-4'/%3E%3C/svg%3E");
+
+  --zent-shadow-panel:
+    0 0 0 1px rgb(15 23 42 / 0.035), 0 1px 2px -1px rgb(15 23 42 / 0.06),
+    0 2px 6px -2px rgb(15 23 42 / 0.05);
+  --zent-shadow-pop:
+    0 0 0 1px rgb(15 23 42 / 0.045), 0 8px 24px -10px rgb(15 23 42 / 0.12),
+    0 24px 48px -24px rgb(15 23 42 / 0.16);
+  --zent-shadow-glow:
+    0 0 0 1px rgb(11 128 96 / 0.2), 0 0 16px -8px rgb(11 128 96 / 0.35);
+
+  color-scheme: light;
 }
 
 /* ------------------------------------------------------------------ */
@@ -187,14 +405,27 @@
   body {
     @apply bg-bg text-text font-sans antialiased;
     background-image:
-      radial-gradient(900px 420px at 8% -8%, var(--zent-glow-a), transparent 62%),
-      radial-gradient(820px 400px at 96% -6%, var(--zent-glow-b), transparent 62%);
-    background-attachment: fixed;
+      radial-gradient(880px 400px at 6% -10%, var(--zent-glow-a), transparent 60%),
+      radial-gradient(780px 380px at 98% -8%, var(--zent-glow-b), transparent 60%);
     font-feature-settings: "cv11";
+    font-variant-numeric: proportional-nums;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
   }
 
   ::selection {
-    background: rgb(52 211 166 / 0.28);
+    background: var(--zent-accent-soft);
+    color: var(--zent-text);
   }
 
   :focus-visible {
@@ -212,97 +443,240 @@
     border-radius: 999px;
     border: 2px solid var(--color-bg);
   }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-faint);
+  }
   ::-webkit-scrollbar-track {
     background: transparent;
   }
 
   input::placeholder,
   textarea::placeholder {
-    color: var(--color-faint);
+    color: var(--color-ghost);
+  }
+
+  /* Autofill: mantener superficie del sistema, no el amarillo del navegador */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus {
+    -webkit-text-fill-color: var(--zent-text);
+    -webkit-box-shadow: inset 0 0 0 1000px var(--zent-control);
+    caret-color: var(--zent-text);
+    transition: background-color 9999s ease-out;
   }
 
   button,
   a {
     -webkit-tap-highlight-color: transparent;
   }
+
+  /* Datos numéricos: cero layout shift */
+  .mono,
+  .tabular,
+  .stat-value,
+  table td,
+  table th {
+    font-variant-numeric: tabular-nums;
+  }
 }
 
 /* ------------------------------------------------------------------ */
-/* Componentes                                                        */
+/* Primitivas de layout                                               */
 /* ------------------------------------------------------------------ */
 
 @layer components {
+  /* --- Superficies ------------------------------------------------- */
   .panel {
     @apply rounded-lg border border-border bg-surface shadow-panel;
   }
+  .card {
+    @apply rounded-lg border border-border bg-surface p-3 shadow-panel;
+  }
+  .panel-quiet {
+    @apply rounded-lg bg-raised;
+  }
+  .panel-header {
+    @apply flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3;
+  }
+  .panel-body {
+    @apply p-4;
+  }
+  .panel-footer {
+    @apply flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3;
+  }
 
+  /* --- Tipografía -------------------------------------------------- */
+  .text-display {
+    @apply text-3xl leading-[1.1] font-semibold tracking-[-0.025em] text-text;
+  }
+  .text-h1 {
+    @apply text-[24px] leading-[1.2] font-semibold tracking-[-0.022em] text-text;
+  }
+  .text-h2 {
+    @apply text-[18px] leading-[1.3] font-semibold tracking-[-0.015em] text-text;
+  }
+  .text-h3 {
+    @apply text-sm leading-[1.4] font-semibold text-text;
+  }
+  .text-caption {
+    @apply text-[11px] leading-[1.4] font-medium tracking-[0.07em] text-faint uppercase;
+  }
+  .eyebrow {
+    @apply text-[11px] leading-[1.4] font-semibold tracking-[0.07em] text-faint uppercase;
+  }
+  .prose-measure {
+    @apply max-w-[68ch];
+  }
+
+  /* --- Botones ----------------------------------------------------- */
   .btn {
-    @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 select-none disabled:pointer-events-none disabled:opacity-50;
+    @apply inline-flex min-h-9 cursor-pointer items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium select-none;
+    transition-property: background-color, border-color, color, box-shadow, transform, opacity;
+    transition-duration: var(--dur-2);
+    transition-timing-function: var(--ease-out);
+  }
+  .btn:disabled {
+    @apply pointer-events-none opacity-45;
   }
   .btn:active:not(:disabled) {
-    transform: scale(0.98);
+    transform: scale(0.978);
   }
   .btn-primary {
-    @apply bg-accent text-accent-fg hover:bg-[#4ae0b8];
+    @apply bg-accent text-accent-fg;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-accent) 88%, white);
+    box-shadow: 0 0 0 1px var(--color-accent-line);
   }
   .btn-secondary {
-    @apply border border-border bg-soft text-text hover:border-border-strong hover:bg-raised;
+    @apply border border-border bg-raised text-text;
+  }
+  .btn-secondary:hover:not(:disabled) {
+    @apply border-border-strong;
+    background: var(--color-soft);
   }
   .btn-danger {
-    @apply bg-danger/90 text-[#2a0a0e] hover:bg-danger;
+    @apply bg-danger/90 text-[#2a0a0e];
+  }
+  .btn-danger:hover:not(:disabled) {
+    @apply bg-danger;
   }
   .btn-ghost {
-    @apply text-muted hover:bg-soft hover:text-text;
+    @apply text-muted;
+  }
+  .btn-ghost:hover:not(:disabled) {
+    @apply bg-soft text-text;
+  }
+  .btn-sm {
+    @apply min-h-8 rounded-sm px-2.5 py-1 text-[13px];
+  }
+  .btn-icon {
+    @apply h-9 w-9 min-h-0 px-0 py-0;
   }
 
+  /* --- Formularios ------------------------------------------------ */
   .field {
     @apply flex flex-col gap-1.5;
   }
-  .field > label {
-    @apply text-[13px] font-medium text-muted;
+  .field > label,
+  .field-label {
+    @apply text-[13px] font-medium text-text;
+  }
+  .field-hint {
+    @apply text-xs leading-relaxed text-faint;
   }
   .field > input,
   .field > textarea,
-  .field > select {
-    @apply w-full rounded-md border border-border bg-soft px-3 py-2 text-sm text-text transition-colors duration-200;
+  .field > select,
+  .input {
+    @apply w-full rounded-sm border border-border bg-control px-3 py-2 text-sm text-text;
+    transition-property: border-color, box-shadow, background-color;
+    transition-duration: var(--dur-2);
+    transition-timing-function: var(--ease-out);
   }
-  .field > input:hover,
-  .field > textarea:hover,
-  .field > select:hover {
+  /* <select> nativo: chevron propio para que no dependa del navegador */
+  .field > select,
+  select.input {
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: var(--zent-chevron);
+    background-repeat: no-repeat;
+    background-position: right 0.6rem center;
+    background-size: 0.8rem;
+    padding-right: 2rem;
+    cursor: pointer;
+  }
+  .field > input:hover:not(:disabled),
+  .field > textarea:hover:not(:disabled),
+  .field > select:hover:not(:disabled),
+  .input:hover:not(:disabled) {
     @apply border-border-strong;
   }
   .field > input:focus,
   .field > textarea:focus,
-  .field > select:focus {
+  .field > select:focus,
+  .input:focus {
     @apply border-accent outline-none;
-    box-shadow: 0 0 0 3px rgb(52 211 166 / 0.15);
+    box-shadow: 0 0 0 3px var(--color-accent-soft);
   }
-  .field > input[readonly] {
+  .field > input:disabled,
+  .field > textarea:disabled,
+  .field > select:disabled,
+  .input:disabled {
+    @apply cursor-not-allowed bg-soft text-ghost;
+  }
+  .field > input[readonly],
+  .input[readonly] {
     @apply cursor-default bg-soft/60 font-mono text-muted;
   }
-
+  .field > input[aria-invalid="true"],
+  .field > textarea[aria-invalid="true"],
+  .field > select[aria-invalid="true"],
+  .input[aria-invalid="true"] {
+    @apply border-danger;
+  }
+  .field > input[aria-invalid="true"]:focus,
+  .field > textarea[aria-invalid="true"]:focus,
+  .field > select[aria-invalid="true"]:focus,
+  .input[aria-invalid="true"]:focus {
+    box-shadow: 0 0 0 3px var(--color-danger-soft);
+  }
   .field-error {
-    @apply text-[13px] text-danger;
+    @apply text-[13px] font-medium text-danger;
   }
 
+  /* --- Tablas ----------------------------------------------------- */
   .table {
     @apply w-full border-collapse text-left text-sm;
   }
   .table th {
-    @apply border-b border-border px-3 py-2.5 text-[11px] font-semibold tracking-[0.08em] text-faint uppercase;
+    @apply border-b border-border px-3 py-2.5 text-[11px] font-semibold tracking-[0.06em] text-faint uppercase;
   }
   .table td {
-    @apply border-b border-border/60 px-3 py-3 align-middle;
+    @apply border-b border-border-soft px-3 py-2.5 align-middle text-text;
   }
   .table tbody tr:last-child td {
     @apply border-b-0;
   }
   .table tbody tr {
-    @apply transition-colors duration-150 hover:bg-soft/50;
+    transition: background-color var(--dur-1) var(--ease-out);
+  }
+  .table tbody tr:hover {
+    background: color-mix(in srgb, var(--color-soft) 55%, transparent);
+  }
+  .table tbody tr[data-selected="true"] {
+    background: var(--color-accent-soft);
+  }
+  .table-sticky thead th {
+    @apply sticky top-0 z-10 bg-surface;
+  }
+  .table-numeric {
+    @apply text-right; /* combinar con .mono */
   }
 
+  /* --- Badges ----------------------------------------------------- */
   .badge {
-    @apply inline-flex items-center gap-1.5 rounded-xs px-2 py-0.5 text-xs font-medium;
+    @apply inline-flex items-center gap-1.5 rounded-xs px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap;
   }
   .badge-ok {
     @apply bg-ok-soft text-ok;
@@ -313,42 +687,161 @@
   .badge-danger {
     @apply bg-danger-soft text-danger;
   }
+  .badge-info {
+    @apply bg-info-soft text-info;
+  }
+  .badge-accent {
+    @apply bg-accent-soft text-accent;
+  }
   .badge-muted {
     @apply bg-soft text-muted;
   }
 
+  /* --- Métricas --------------------------------------------------- */
   .stat {
-    @apply relative overflow-visible rounded-lg border border-border bg-surface p-4 shadow-panel;
-  }
-  .stat:hover,
-  .stat:focus-within {
-    z-index: 20;
+    @apply rounded-lg border border-border bg-surface p-4 shadow-panel;
+    position: relative;
   }
   .stat-label {
-    @apply text-xs font-medium text-faint;
+    @apply text-[11px] font-medium tracking-[0.05em] text-faint uppercase;
   }
   .stat-value {
-    @apply mt-1.5 text-2xl font-semibold tracking-tight text-text tabular-nums;
+    @apply mt-2 text-[26px] leading-none font-semibold tracking-[-0.02em] text-text tabular-nums;
+  }
+  .stat-hint {
+    @apply mt-1.5 text-xs text-muted;
   }
 
+  /* --- Chips ------------------------------------------------------ */
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-xs bg-soft px-2 py-1 text-xs text-muted;
+  }
+  .source-chip {
+    @apply inline-flex max-w-full items-center gap-1.5 rounded-xs border border-border-soft bg-surface px-2 py-1 text-xs text-muted;
+  }
+  .kbd {
+    @apply rounded-xs border border-border bg-surface px-1 py-0.5 font-mono text-[10px] text-faint;
+  }
+
+  /* --- Tabs ------------------------------------------------------- */
+  .tabs {
+    @apply flex flex-wrap items-center gap-1 border-b border-border;
+  }
+  .tab {
+    @apply -mb-px inline-flex min-h-10 cursor-pointer items-center gap-1.5 rounded-t-sm border-b-2 border-transparent px-3 text-[13.5px] font-medium text-muted;
+    transition:
+      color var(--dur-2) var(--ease-out),
+      border-color var(--dur-2) var(--ease-out),
+      background-color var(--dur-2) var(--ease-out);
+  }
+  .tab:hover {
+    @apply text-text;
+  }
+  .tab[aria-selected="true"],
+  .tab[aria-current="page"] {
+    @apply border-accent text-text;
+  }
+  .tab:focus-visible {
+    outline-offset: -2px;
+  }
+
+  /* --- Estados: cargando / progreso ------------------------------- */
   .skeleton {
-    @apply rounded-sm bg-gradient-to-r from-soft via-raised to-soft;
+    @apply rounded-xs;
+    background-image: linear-gradient(
+      90deg,
+      var(--color-soft) 0%,
+      color-mix(in srgb, var(--color-soft) 55%, var(--color-raised)) 50%,
+      var(--color-soft) 100%
+    );
     background-size: 200% 100%;
     animation: shimmer 1.8s linear infinite;
   }
-
-  .mono {
-    @apply font-mono tabular-nums;
-  }
-
   .progress-track {
-    @apply h-1.5 w-full overflow-hidden rounded-full bg-soft;
+    @apply h-1.5 w-full overflow-hidden rounded-full;
+    background: var(--color-track);
   }
   .progress-fill {
-    @apply h-full rounded-full bg-accent transition-[width] duration-400;
+    @apply h-full rounded-full bg-accent;
+    transition: width var(--dur-5) var(--ease-out);
   }
 
-  /* Knowledge Learning Orb (FASE 33E): órbitas reales de etapas */
+  /* --- Signature: activity rail ----------------------------------- */
+  /* Rail de estado real (queued/running/ready/warning/failed) sin depender del color solo. */
+  .state-rail {
+    position: relative;
+    padding-left: 14px;
+  }
+  .state-rail::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 2px;
+    bottom: 2px;
+    width: 2px;
+    border-radius: 2px;
+    background: var(--rail-color, var(--color-border-strong));
+  }
+  .state-rail[data-state="queued"] {
+    --rail-color: var(--color-border-strong);
+  }
+  .state-rail[data-state="running"],
+  .state-rail[data-state="processing"],
+  .state-rail[data-state="indexing"] {
+    --rail-color: var(--color-accent);
+  }
+  .state-rail[data-state="running"]::before,
+  .state-rail[data-state="processing"]::before,
+  .state-rail[data-state="indexing"]::before {
+    animation: rail-pulse 2.2s ease-in-out infinite;
+  }
+  .state-rail[data-state="ready"],
+  .state-rail[data-state="completed"],
+  .state-rail[data-state="succeeded"] {
+    --rail-color: var(--color-ok);
+  }
+  .state-rail[data-state="warning"],
+  .state-rail[data-state="partial"] {
+    --rail-color: var(--color-warn);
+  }
+  .state-rail[data-state="failed"],
+  .state-rail[data-state="error"] {
+    --rail-color: var(--color-danger);
+  }
+
+  /* --- Indicador de estado (icono + color + texto se combinan) ---- */
+  .status-dot {
+    @apply relative inline-block h-2 w-2 shrink-0 rounded-full;
+  }
+
+  /* --- Feedback --------------------------------------------------- */
+  .toast {
+    @apply flex items-start gap-3 rounded-lg border border-border bg-surface p-3.5 shadow-pop;
+    animation: var(--animate-toast-in);
+  }
+
+  /* --- Chat ------------------------------------------------------- */
+  .bubble {
+    @apply max-w-[85%] rounded-lg px-4 py-2.5 text-[14.5px] leading-relaxed;
+  }
+  .bubble-user {
+    @apply rounded-br-xs border border-accent/20 bg-accent-soft/40;
+  }
+  .bubble-assistant {
+    @apply rounded-bl-xs border border-border bg-raised;
+  }
+
+  .help-icon {
+    @apply inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm text-muted;
+    transition:
+      background-color var(--dur-2) var(--ease-out),
+      color var(--dur-2) var(--ease-out);
+  }
+  .help-icon:hover {
+    @apply bg-soft text-text;
+  }
+
+  /* --- Knowledge Learning Orb (FASE 33E): órbitas reales de etapas - */
   .kl-orb {
     position: relative;
     display: inline-block;
@@ -369,85 +862,35 @@
     top: 0;
     left: 50%;
     transform: translateX(-50%);
-    transition: opacity 200ms ease, box-shadow 200ms ease;
+    transition:
+      opacity 200ms ease,
+      box-shadow 200ms ease;
   }
   .kl-particle[data-active="true"] {
     box-shadow: 0 0 0 3px var(--color-accent-soft);
   }
 
   @keyframes kl-orbit-spin {
-    from { transform: rotate(0deg); }
-    to { transform: rotate(360deg); }
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
   @keyframes kl-breathe {
-    0%, 100% { transform: scale(1); opacity: 0.92; }
-    50% { transform: scale(1.05); opacity: 1; }
+    0%,
+    100% {
+      transform: scale(1);
+      opacity: 0.92;
+    }
+    50% {
+      transform: scale(1.05);
+      opacity: 1;
+    }
   }
 
-  .bubble {
-    @apply max-w-[85%] rounded-lg px-4 py-2.5 text-[14.5px] leading-relaxed;
-  }
-  .bubble-user {
-    @apply rounded-br-xs border border-accent/20 bg-accent-soft/40;
-  }
-  .bubble-assistant {
-    @apply rounded-bl-xs border border-border bg-raised;
-  }
-
-  .source-chip {
-    @apply inline-flex max-w-full items-center gap-1.5 rounded-sm bg-soft px-2 py-1 text-xs text-muted;
-  }
-
-  .help-icon {
-    @apply inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-sm text-muted transition-colors duration-200 hover:bg-soft hover:text-text;
-  }
-
-  /* Typography scale */
-  .text-display {
-    @apply text-3xl font-semibold tracking-tight text-text;
-  }
-  .text-h1 {
-    @apply text-2xl font-semibold tracking-tight text-text;
-  }
-  .text-h2 {
-    @apply text-lg font-semibold tracking-tight text-text;
-  }
-  .text-h3 {
-    @apply text-sm font-semibold text-text;
-  }
-  .text-caption {
-    @apply text-[11px] font-medium uppercase tracking-[0.08em] text-faint;
-  }
-
-  /* Status dot (sin depender solo del color) */
-  .status-dot {
-    @apply relative inline-block h-2 w-2 shrink-0 rounded-full;
-    box-shadow: 0 0 0 2px rgb(0 0 0 / 0.35);
-  }
-
-  .chip {
-    @apply inline-flex items-center gap-1.5 rounded-sm bg-soft px-2 py-1 text-xs text-muted;
-  }
-
-  .tabs {
-    @apply flex flex-wrap items-center gap-1 border-b border-border;
-  }
-  .tab {
-    @apply -mb-px inline-flex min-h-10 cursor-pointer items-center gap-1.5 rounded-t-sm border-b-2 border-transparent px-3 text-[13.5px] font-medium text-muted transition-colors duration-150 hover:text-text;
-  }
-  .tab[aria-selected="true"],
-  .tab[aria-current="page"] {
-    @apply border-accent text-text;
-  }
-  .tab:focus-visible {
-    outline-offset: -2px;
-  }
-
-  .toast {
-    @apply flex items-start gap-3 rounded-md border bg-surface p-3.5 shadow-pop;
-    animation: var(--animate-toast-in);
-  }
-
+  /* --- Markdown del chat ------------------------------------------ */
   .chat-markdown p {
     @apply mb-2 last:mb-0;
   }
@@ -501,6 +944,7 @@
     @apply text-accent underline underline-offset-2;
   }
 
+  /* --- Knowledge: anillo de análisis ------------------------------ */
   .analyze-ring {
     --p: 0;
     width: 7.5rem;
@@ -508,10 +952,7 @@
     border-radius: 999px;
     display: grid;
     place-items: center;
-    background: conic-gradient(
-      var(--color-accent) calc(var(--p) * 1%),
-      var(--color-soft) 0
-    );
+    background: conic-gradient(var(--color-accent) calc(var(--p) * 1%), var(--color-soft) 0);
   }
   .analyze-ring-inner {
     width: 5.85rem;
@@ -536,11 +977,48 @@
 }
 
 /* ------------------------------------------------------------------ */
-/* Accesibilidad                                                       */
+/* Shell                                                              */
+/* ------------------------------------------------------------------ */
+
+/* Ancho del sidebar como custom property registrada: permite animar el
+   colapso sin tocar la lógica de layout. Fallback: cambio instantáneo. */
+@property --sidebar-w {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 248px;
+}
+
+:root {
+  --sidebar-w: 248px;
+}
+
+:root[data-sidebar="collapsed"] {
+  --sidebar-w: 72px;
+}
+
+.app-sidebar {
+  width: var(--sidebar-w);
+  transition: width var(--dur-4) var(--ease-swift);
+}
+
+.app-main {
+  transition: padding-left var(--dur-4) var(--ease-swift);
+}
+
+@media (min-width: 1024px) {
+  .app-main {
+    padding-left: var(--sidebar-w);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Accesibilidad                                                      */
 /* ------------------------------------------------------------------ */
 
 .skip-link {
-  @apply absolute top-2 left-2 z-50 -translate-y-20 rounded-sm bg-accent px-3 py-2 text-sm font-medium text-accent-fg transition-transform;
+  @apply absolute top-2 left-2 z-50 rounded-sm bg-accent px-3 py-2 text-sm font-medium text-accent-fg;
+  transform: translateY(-200%);
+  transition: transform var(--dur-3) var(--ease-out);
 }
 .skip-link:focus {
   transform: translateY(0);
@@ -564,5 +1042,8 @@
   .analyze-cloud {
     flex-direction: column;
     align-items: flex-start;
+  }
+  .state-rail::before {
+    animation: none !important;
   }
 }

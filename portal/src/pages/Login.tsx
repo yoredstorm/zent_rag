@@ -4,7 +4,10 @@ import { Link, Navigate, useNavigate } from "react-router-dom";
 import { api, afterLoginPath } from "../api";
 import { useAuth } from "../auth";
 import { usePlatformAuth } from "../platformAuth";
-import { Spinner } from "../components/ui";
+import { AuthShell } from "../components/auth/AuthShell";
+import { Button } from "../components/ui/Button";
+import { ErrorInline, SuccessInline } from "../components/ui/states";
+import { Field, Input, PasswordInput } from "../components/ui/form";
 
 export default function LoginPage() {
   const { session, ready, login } = useAuth();
@@ -16,6 +19,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [forgotOpen, setForgotOpen] = useState(false);
   const [forgotMsg, setForgotMsg] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
 
   if (ready && session) return <Navigate to={afterLoginPath(session)} replace />;
 
@@ -36,135 +40,117 @@ export default function LoginPage() {
           setError(
             platformErr instanceof Error
               ? platformErr.message
-              : "Entra en /admin/login (Control Center)"
+              : "Esta cuenta es de plataforma. Entrá por el Control Center."
           );
           return;
         }
       }
-      setError(msg || "Error al iniciar sesión");
+      setError(msg || "No pudimos iniciar sesión. Revisá tus credenciales e intentá de nuevo.");
     } finally {
       setLoading(false);
     }
   }
 
-  return (
-    <div className="flex min-h-[100dvh] items-center justify-center px-4 py-10">
-      <div className="w-full max-w-[400px]">
-        <div className="mb-8 flex flex-col items-center gap-3 text-center">
-          <div className="flex h-12 w-12 items-center justify-center rounded-lg border border-accent/30 bg-accent-soft shadow-glow">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
-              <path
-                d="M4 6.5 12 3l8 3.5v6.2c0 4.6-3.2 7.8-8 9.3-4.8-1.5-8-4.7-8-9.3V6.5Z"
-                stroke="var(--color-accent)"
-                strokeWidth="1.6"
-                strokeLinejoin="round"
-              />
-              <path
-                d="m8.5 12.5 2.4 2.4 4.6-4.9"
-                stroke="var(--color-accent)"
-                strokeWidth="1.6"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </div>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight text-text">
-              Entrar a Zent
-            </h1>
-            <p className="mt-1 text-sm text-muted">
-              Plataforma de IA empresarial. Inicia sesión con el email y contraseña de tu cuenta.
-            </p>
-          </div>
-        </div>
+  async function onForgot() {
+    setForgotMsg("");
+    setError("");
+    setForgotLoading(true);
+    try {
+      await api("/api/v1/auth/forgot-password", {
+        method: "POST",
+        body: JSON.stringify({ email: email.trim() }),
+      });
+      setForgotMsg(
+        "Si el email existe, generamos un enlace de restablecimiento. En desarrollo el token queda en los logs del servidor."
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No pudimos enviar el enlace de restablecimiento.");
+    } finally {
+      setForgotLoading(false);
+    }
+  }
 
-        <form className="panel space-y-4 p-6" onSubmit={onSubmit}>
-          <div className="field">
-            <label htmlFor="email">Email</label>
-            <input
-              id="email"
-              type="email"
-              autoComplete="username"
-              placeholder="tu@empresa.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="password">Contraseña</label>
-            <input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          </div>
-          {error && <p className="field-error" role="alert">{error}</p>}
-          <button className="btn btn-primary w-full py-2.5" type="submit" disabled={loading}>
-            {loading ? (
-              <>
-                <Spinner size={15} /> Entrando…
-              </>
-            ) : (
-              <>
-                <SignIn size={17} aria-hidden /> Continuar
-              </>
-            )}
-          </button>
-          <p className="text-center text-[13px] text-muted">
-            <button
-              type="button"
-              className="font-medium text-accent hover:underline"
-              onClick={() => {
-                setForgotOpen((v) => !v);
-                setForgotMsg("");
-              }}
-            >
-              Olvidé mi contraseña
-            </button>
-          </p>
-          {forgotOpen && (
-            <div className="space-y-2">
-              <button
-                type="button"
-                className="btn btn-secondary w-full min-h-11"
-                onClick={() => {
-                  setForgotMsg("");
-                  api("/api/v1/auth/forgot-password", {
-                    method: "POST",
-                    body: JSON.stringify({ email: email.trim() }),
-                  })
-                    .then(() =>
-                      setForgotMsg(
-                        "Si el email existe, generamos un enlace de reset. En desarrollo el token va en logs/respuesta."
-                      )
-                    )
-                    .catch((err) =>
-                      setError(err instanceof Error ? err.message : "Error")
-                    );
-                }}
-              >
-                Enviar reset
-              </button>
-              {forgotMsg && <p className="text-center text-xs text-muted">{forgotMsg}</p>}
-            </div>
-          )}
-          <p className="text-center text-[13px] text-muted">
-            ¿Nuevo?{" "}
+  return (
+    <AuthShell
+      title="Entrar a Zent"
+      subtitle="Plataforma de IA empresarial. Iniciá sesión con el email y la contraseña de tu cuenta."
+      footer={
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5 text-[13px] text-muted">
+          <span>
+            ¿Nuevo en Zent?{" "}
             <Link className="font-medium text-accent hover:underline" to="/signup">
               Crear trial
             </Link>
-            {" · "}
-            <Link className="font-medium text-accent hover:underline" to="/admin/login">
-              Control Center
-            </Link>
-          </p>
-        </form>
-      </div>
-    </div>
+          </span>
+          <Link className="font-medium text-muted hover:text-text" to="/admin/login">
+            Control Center
+          </Link>
+        </div>
+      }
+    >
+      <form className="flex flex-col gap-4" onSubmit={onSubmit} noValidate>
+        <ErrorInline message={error} className="mb-0" />
+
+        <Field label="Email" required>
+          <Input
+            id="email"
+            type="email"
+            autoComplete="username"
+            placeholder="tu@empresa.com"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            autoFocus
+          />
+        </Field>
+
+        <Field label="Contraseña" required>
+          <PasswordInput
+            id="password"
+            autoComplete="current-password"
+            placeholder="••••••••"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+          />
+        </Field>
+
+        <Button type="submit" variant="primary" className="min-h-10 w-full" loading={loading}>
+          {loading ? "Entrando…" : "Continuar"}
+        </Button>
+
+        <div>
+          <button
+            type="button"
+            className="text-[13px] font-medium text-muted transition-colors duration-150 hover:text-text"
+            aria-expanded={forgotOpen}
+            onClick={() => {
+              setForgotOpen((v) => !v);
+              setForgotMsg("");
+            }}
+          >
+            Olvidé mi contraseña
+          </button>
+          {forgotOpen && (
+            <div className="mt-3 flex flex-col gap-2.5 animate-rise">
+              <p className="text-[12.5px] leading-relaxed text-muted">
+                Te enviamos un enlace de restablecimiento al email de la cuenta.
+              </p>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="self-start"
+                loading={forgotLoading}
+                onClick={() => void onForgot()}
+                leadingIcon={SignIn}
+              >
+                Enviar enlace
+              </Button>
+              <SuccessInline message={forgotMsg} className="mb-0" />
+            </div>
+          )}
+        </div>
+      </form>
+    </AuthShell>
   );
 }

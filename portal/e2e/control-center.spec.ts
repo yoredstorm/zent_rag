@@ -29,12 +29,12 @@ test.describe("Control Center — flujo smoke", () => {
     await page.getByPlaceholder(/Soporte/).fill("E2E smoke: verificación de impersonación");
     await page.getByRole("button", { name: "Impersonar", exact: true }).click();
     await expect(page).toHaveURL(/\/$/);
-    await expect(page.getByText(/IMPERSONATION MODE/)).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText(/Modo impersonación/)).toBeVisible({ timeout: 20000 });
 
     // Salir de impersonación
     await page.getByRole("button", { name: /Salir de impersonación/ }).click();
     await expect(page).toHaveURL(/\/control-center/);
-    await expect(page.getByText(/IMPERSONATION MODE/)).toBeHidden({ timeout: 20000 });
+    await expect(page.getByText(/Modo impersonación/)).toBeHidden({ timeout: 20000 });
 
     // Logout de plataforma
     await page.getByRole("button", { name: "Cerrar sesión" }).click();

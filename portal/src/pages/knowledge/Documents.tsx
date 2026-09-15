@@ -1,12 +1,15 @@
 import { Files } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import {
+  DataTable,
   EmptyState,
-  ErrorInline,
   PageHeader,
-  SkeletonBlock,
+  ResultCount,
+  StatusBadge,
+  type Column,
+  type SortState,
 } from "../../components/ui";
 import { fmtDateTime } from "../../lib/format";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
@@ -21,11 +24,46 @@ type DocRow = {
   source_name: string;
 };
 
+const columns: Column<DocRow>[] = [
+  {
+    key: "source_name",
+    header: "Fuente",
+    sortable: true,
+    render: (d) => <span className="text-text">{d.source_name}</span>,
+  },
+  {
+    key: "external_id",
+    header: "External ID",
+    sortable: true,
+    render: (d) => (
+      <span className="mono block max-w-[320px] truncate text-xs text-muted" title={d.external_id}>
+        {d.external_id}
+      </span>
+    ),
+  },
+  {
+    key: "status",
+    header: "Estado",
+    sortable: true,
+    render: (d) => <StatusBadge status={d.status} />,
+  },
+  {
+    key: "last_seen_at",
+    header: "Visto",
+    hideBelow: "md",
+    sortable: true,
+    render: (d) => (
+      <span className="text-xs text-muted">{d.last_seen_at ? fmtDateTime(d.last_seen_at) : "—"}</span>
+    ),
+  },
+];
+
 export default function KnowledgeDocumentsPage() {
   const { session } = useAuth();
   const [docs, setDocs] = useState<DocRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [sort, setSort] = useState<SortState>(null);
 
   useEffect(() => {
     if (!session) return;
@@ -58,55 +96,52 @@ export default function KnowledgeDocumentsPage() {
     })();
   }, [session]);
 
+  const rows = useMemo(() => {
+    if (!sort) return docs;
+    const dir = sort.dir === "asc" ? 1 : -1;
+    return [...docs].sort((a, b) => {
+      const left = a[sort.key as keyof DocRow];
+      const right = b[sort.key as keyof DocRow];
+      return String(left ?? "").localeCompare(String(right ?? ""), "es") * dir;
+    });
+  }, [docs, sort]);
+
+  const sourceCount = new Set(docs.map((d) => d.source_name)).size;
+
   return (
     <KnowledgeLayout>
       <PageHeader
         title={KNOWLEDGE_HEADINGS.documents}
-        subtitle="Registry de documentos indexados por fuente (solo tu organización)."
+        subtitle="Registro de documentos indexados por fuente (solo tu organización)."
       />
-      <ErrorInline message={error} />
-      <div className="panel">
-        {loading ? (
-          <div className="p-5">
-            <SkeletonBlock rows={5} />
-          </div>
-        ) : docs.length === 0 ? (
+
+      <DataTable
+        columns={columns}
+        rows={rows}
+        rowKey={(d) => `${d.source_name}-${d.id}`}
+        caption="Documentos indexados"
+        loading={loading}
+        error={error || null}
+        sort={sort}
+        onSortChange={setSort}
+        empty={
           <EmptyState
             icon={Files}
             title="Sin documentos indexados"
             body="Cuando sincronices fuentes, los documentos aparecerán aquí."
           />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="table min-w-[640px]">
-              <thead>
-                <tr>
-                  <th>Fuente</th>
-                  <th>External ID</th>
-                  <th>Estado</th>
-                  <th>Visto</th>
-                </tr>
-              </thead>
-              <tbody>
-                {docs.map((d) => (
-                  <tr key={`${d.source_name}-${d.id}`}>
-                    <td className="text-text">{d.source_name}</td>
-                    <td className="mono max-w-[280px] truncate text-xs" title={d.external_id}>
-                      {d.external_id}
-                    </td>
-                    <td>
-                      <span className="badge badge-ok">{d.status}</span>
-                    </td>
-                    <td className="text-muted">
-                      {d.last_seen_at ? fmtDateTime(d.last_seen_at) : "—"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+        }
+        footer={
+          docs.length > 0 ? (
+            <>
+              <ResultCount shown={docs.length} total={docs.length} noun="documentos" />
+              <span className="text-xs text-faint tabular-nums">
+                {sourceCount === 1 ? "1 fuente" : `${sourceCount} fuentes`}
+              </span>
+            </>
+          ) : undefined
+        }
+      />
     </KnowledgeLayout>
   );
 }

@@ -2,7 +2,8 @@ import { CheckCircle, XCircle } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { saveSession } from "../api";
-import { Spinner } from "../components/ui";
+import { Button } from "../components/ui/Button";
+import { Spinner } from "../components/ui/states";
 
 export default function SsoCallbackPage() {
   const navigate = useNavigate();
@@ -13,7 +14,7 @@ export default function SsoCallbackPage() {
     const token = params.get("token");
     const org = params.get("org");
     if (!token || !org) {
-      setError("Faltó el token de sesión en el callback SSO.");
+      setError("El proveedor no devolvió una sesión válida. Probá iniciar sesión de nuevo.");
       return;
     }
     try {
@@ -21,27 +22,38 @@ export default function SsoCallbackPage() {
       saveSession({ token, organizationId: org, companyName: "", email: undefined });
       navigate("/", { replace: true });
     } catch {
-      setError("No se pudo guardar la sesión.");
+      setError("No pudimos guardar la sesión en este navegador.");
     }
   }, [navigate]);
 
-  if (error) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-soft p-6 text-center">
-        <XCircle size={40} className="text-danger" aria-hidden />
-        <p className="text-sm text-text">{error}</p>
-        <button type="button" className="btn btn-secondary min-h-11" onClick={() => navigate("/login")}>
-          Ir al login
-        </button>
-      </div>
-    );
-  }
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-soft p-6 text-center">
-      <CheckCircle size={40} className="text-success" aria-hidden />
-      <p className="flex items-center gap-2 text-sm text-text">
-        <Spinner size={14} /> Sesión iniciada vía SSO, redirigiendo…
-      </p>
+    <div className="flex min-h-[100dvh] items-center justify-center px-4 py-10">
+      <div className="flex w-full max-w-[380px] flex-col items-center gap-4 text-center">
+        {error ? (
+          <>
+            <span className="flex h-11 w-11 items-center justify-center rounded-md border border-danger/25 bg-danger-soft text-danger">
+              <XCircle size={22} aria-hidden />
+            </span>
+            <div>
+              <p className="text-h3">No pudimos completar el SSO</p>
+              <p className="mt-1 text-[13px] leading-relaxed text-muted">{error}</p>
+            </div>
+            <Button variant="secondary" onClick={() => navigate("/login")}>
+              Ir al login
+            </Button>
+          </>
+        ) : (
+          <>
+            <span className="flex h-11 w-11 items-center justify-center rounded-md border border-accent-line bg-accent-soft text-accent">
+              <CheckCircle size={22} aria-hidden />
+            </span>
+            <p className="flex items-center gap-2 text-sm text-muted" role="status" aria-live="polite">
+              <Spinner size={14} />
+              Sesión verificada por SSO. Entrando a tu workspace…
+            </p>
+          </>
+        )}
+      </div>
     </div>
   );
 }

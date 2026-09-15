@@ -1,76 +1,55 @@
-import { Moon, Sun, Monitor, CaretDown } from "@phosphor-icons/react";
-import { useEffect, useRef, useState } from "react";
+import { CaretUpDown, Check, Monitor, Moon, Sun } from "@phosphor-icons/react";
 import { useTheme, type ThemePreference } from "../lib/theme";
+import { Menu, MenuLabel, MenuRadioGroup, MenuRadioItem } from "./ui/overlay";
+import { cn } from "./ui/cn";
 
 const OPTIONS: { id: ThemePreference; label: string; icon: typeof Sun }[] = [
-  { id: "system", label: "System", icon: Monitor },
-  { id: "light", label: "Light", icon: Sun },
-  { id: "dark", label: "Dark", icon: Moon },
+  { id: "system", label: "Sistema", icon: Monitor },
+  { id: "light", label: "Claro", icon: Sun },
+  { id: "dark", label: "Oscuro", icon: Moon },
 ];
 
+/** Selector de tema en menú (no un switch sol/luna de dos estados). */
 export function ThemeToggle({ compact = false }: { compact?: boolean }) {
-  const { preference, setPreference } = useTheme();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onPointer(event: PointerEvent) {
-      if (!ref.current?.contains(event.target as Node)) setOpen(false);
-    }
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("pointerdown", onPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
+  const { preference, setPreference, resolved } = useTheme();
   const current = OPTIONS.find((o) => o.id === preference) ?? OPTIONS[0];
+  const CurrentIcon = resolved === "light" ? Sun : Moon;
 
   return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        className="inline-flex h-9 items-center gap-1.5 rounded-sm px-2 text-muted transition-colors duration-150 hover:bg-soft hover:text-text"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label={`Tema: ${current.label}`}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <current.icon size={15} aria-hidden />
-        {!compact && <span className="text-xs">{current.label}</span>}
-        <CaretDown size={11} className="text-faint" aria-hidden />
-      </button>
-      {open && (
-        <div
-          role="menu"
-          aria-label="Tema de color"
-          className="absolute right-0 top-full z-40 mt-1.5 w-40 overflow-hidden rounded-md border border-border bg-raised shadow-pop"
+    <Menu
+      label="Tema de color"
+      align="end"
+      trigger={
+        <button
+          type="button"
+          className={cn(
+            "inline-flex cursor-pointer items-center gap-1.5 rounded-sm text-muted transition-colors duration-150 hover:bg-soft hover:text-text",
+            compact ? "h-9 w-9 justify-center" : "h-9 px-2"
+          )}
+          aria-label={`Tema: ${current.label}`}
+          title={`Tema: ${current.label}`}
         >
-          {OPTIONS.map((opt) => (
-            <button
-              key={opt.id}
-              type="button"
-              role="menuitemradio"
-              aria-checked={opt.id === preference}
-              className={`flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] transition-colors duration-150 ${
-                opt.id === preference ? "bg-accent-soft font-medium text-accent" : "text-muted hover:bg-soft hover:text-text"
-              }`}
-              onClick={() => {
-                setPreference(opt.id);
-                setOpen(false);
-              }}
-            >
-              <opt.icon size={15} aria-hidden />
-              {opt.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+          <CurrentIcon size={16} aria-hidden />
+          {!compact && <span className="hidden text-xs sm:inline">{current.label}</span>}
+          {!compact && <CaretUpDown size={11} className="text-ghost" aria-hidden />}
+        </button>
+      }
+      className="min-w-[10rem]"
+    >
+      <MenuLabel>Tema</MenuLabel>
+      <MenuRadioGroup value={preference} onValueChange={(v) => setPreference(v as ThemePreference)}>
+        {OPTIONS.map((opt) => (
+          <MenuRadioItem
+            key={opt.id}
+            value={opt.id}
+            className="flex cursor-pointer items-center gap-2.5 rounded-sm px-2.5 py-2 text-[13px] text-muted outline-none select-none data-[highlighted]:bg-soft data-[highlighted]:text-text"
+          >
+            <opt.icon size={15} aria-hidden />
+            <span className="flex-1">{opt.label}</span>
+            {preference === opt.id && <Check size={13} weight="bold" className="text-accent" aria-hidden />}
+          </MenuRadioItem>
+        ))}
+      </MenuRadioGroup>
+    </Menu>
   );
 }

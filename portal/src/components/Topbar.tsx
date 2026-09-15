@@ -1,21 +1,29 @@
 import {
   Bell,
-  CaretDown,
   CircleNotch,
+  Code,
+  GearSix,
   GraduationCap,
   MagnifyingGlass,
   Question,
   SignOut,
-  GearSix,
+  SidebarSimple,
 } from "@phosphor-icons/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { openCommandPalette } from "./CommandPalette";
 import { ThemeToggle } from "./ThemeToggle";
 import { KNOWLEDGE_ROUTE_TITLES } from "../lib/knowledgeNav";
+import { navContextForPath } from "../lib/nav";
 import { requestProductTourStart } from "../lib/productTour";
+import { IdentityTile } from "./Brand";
+import { Menu, MenuItem, MenuLabel, MenuSeparator } from "./ui/overlay";
+import { Kbd } from "./ui/code";
+import { StatusDot, type Tone } from "./ui/Badge";
+import { Tooltip } from "./ui/overlay";
+import { cn } from "./ui/cn";
 
 const ROUTE_TITLES: Record<string, string> = {
   "/": "Panel general",
@@ -38,8 +46,6 @@ const ROUTE_TITLES: Record<string, string> = {
   "/billing": "Facturación",
   "/security": "Seguridad y Auditoría",
   "/settings": "Configuración",
-  "/users": "Equipo y Acceso",
-  "/audit": "Seguridad y Auditoría",
   "/evaluation": "Evaluación",
   "/projects": "Proyectos",
   "/connectors": "Conectores",
@@ -48,6 +54,8 @@ const ROUTE_TITLES: Record<string, string> = {
 };
 
 function routeTitle(pathname: string): string {
+  const exact = ROUTE_TITLES[pathname];
+  if (exact) return exact;
   if (pathname.startsWith("/agents/")) return "Agente";
   if (pathname.startsWith("/assistants/")) return "Asistente";
   if (pathname.startsWith("/evaluation/")) return "Evaluación";
@@ -58,18 +66,26 @@ function routeTitle(pathname: string): string {
     return (key && ROUTE_TITLES[key]) || "Conocimiento";
   }
   if (pathname.startsWith("/developers")) return "Centro de desarrolladores";
-  return ROUTE_TITLES[pathname] || "Zent";
+  return "Zent";
 }
 
-export function Topbar() {
+/**
+ * Topbar del workspace: dónde estás, buscador, estado del sistema y cuenta.
+ * Todo lo operativo vive acá; el sidebar es navegación, no estado.
+ */
+export function Topbar({
+  sidebarCollapsed = false,
+  onExpandSidebar,
+}: {
+  sidebarCollapsed?: boolean;
+  onExpandSidebar?: () => void;
+} = {}) {
   const { session, logout } = useAuth();
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const [env, setEnv] = useState<string>("production");
   const [healthOk, setHealthOk] = useState<boolean | null>(null);
   const [unread, setUnread] = useState<number>(0);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,152 +127,151 @@ export function Topbar() {
     };
   }, [session]);
 
-  useEffect(() => {
-    if (!menuOpen) return;
-    function onPointer(event: PointerEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
-    }
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setMenuOpen(false);
-    }
-    document.addEventListener("pointerdown", onPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [menuOpen]);
-
   const email = session?.email || "";
-  const initial = (email.charAt(0) || "Z").toUpperCase();
+  const context = navContextForPath(pathname);
+  const sectionLabel = context?.group.label ?? null;
+  const title = context?.leaf.label ?? routeTitle(pathname);
+  const healthTone: Tone = healthOk === null ? "neutral" : healthOk ? "ok" : "danger";
+  const healthLabel = healthOk === null ? "Comprobando" : healthOk ? "Saludable" : "Degradado";
 
   return (
-    <header className="sticky top-0 z-20 hidden items-center justify-between gap-3 border-b border-border bg-bg/85 px-6 py-2.5 backdrop-blur-md lg:flex">
-      <div className="flex min-w-0 items-center gap-2.5">
-        <span className="text-sm font-medium text-muted">{routeTitle(pathname)}</span>
+    <header className="sticky top-0 z-20 hidden items-center justify-between gap-4 border-b border-border bg-bg/85 px-5 py-2 backdrop-blur-md lg:flex">
+      <div className="flex min-w-0 items-baseline gap-2.5">
+        {sidebarCollapsed && onExpandSidebar && (
+          <button
+            type="button"
+            onClick={onExpandSidebar}
+            aria-label="Mostrar menú"
+            className="-ml-1 mr-0.5 inline-flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center self-center rounded-sm text-muted transition-colors duration-150 hover:bg-soft hover:text-text"
+          >
+            <SidebarSimple size={16} aria-hidden />
+          </button>
+        )}
+        {sectionLabel && (
+          <span className="text-[11px] font-semibold tracking-[0.07em] text-faint uppercase">
+            {sectionLabel}
+          </span>
+        )}
+        <span className="truncate text-[15px] font-medium text-text" data-page-title>
+          {title}
+        </span>
       </div>
 
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-1.5">
         <button
           type="button"
-          className="inline-flex h-9 items-center gap-2 rounded-sm border border-border bg-soft px-2.5 text-xs text-muted transition-colors duration-150 hover:border-border-strong hover:text-text"
+          className="mr-1 inline-flex h-9 min-w-[13rem] cursor-pointer items-center gap-2 rounded-sm border border-border bg-control px-2.5 text-[13px] text-faint transition-colors duration-200 hover:border-border-strong hover:text-muted"
           onClick={() => openCommandPalette("tenant")}
           aria-label="Buscar (Ctrl+K)"
           data-tour="command-palette"
         >
           <MagnifyingGlass size={14} aria-hidden />
-          <span className="hidden sm:inline">Buscar</span>
-          <kbd className="rounded-xs border border-border bg-bg px-1 font-mono text-[10px] text-faint">Ctrl K</kbd>
+          <span className="flex-1 text-left">Buscar o ir a…</span>
+          <Kbd>Ctrl K</Kbd>
         </button>
 
-        <span className="badge badge-muted">{env}</span>
-
-        <span
-          className="relative inline-flex items-center gap-1.5 text-xs text-muted"
-          title={healthOk === null ? "Comprobando estado" : healthOk ? "Sistema operativo" : "Sistema degradado"}
+        <Tooltip
+          label={`Entorno ${env} · sistema ${healthLabel.toLowerCase()}`}
+          side="bottom"
         >
-          <span
-            className={`status-dot ${healthOk === null ? "bg-faint" : healthOk ? "bg-ok" : "bg-danger"}`}
-            aria-hidden
-          />
-          {healthOk === null ? (
-            <CircleNotch size={13} className="animate-spin" aria-hidden />
-          ) : healthOk ? (
-            "Saludable"
-          ) : (
-            "Degradado"
-          )}
-        </span>
-
-        <span className="mx-1 h-5 w-px bg-border" aria-hidden />
-
-        <ThemeToggle />
-
-        <Link
-          to="/notifications"
-          className="relative inline-flex h-9 w-9 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-soft hover:text-text"
-          aria-label={`Notificaciones${unread > 0 ? ` (${unread} sin leer)` : ""}`}
-        >
-          <Bell size={17} aria-hidden />
-          {unread > 0 && (
-            <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-accent-fg">
-              {unread > 99 ? "99+" : unread}
+          <span className="inline-flex h-9 items-center gap-2 rounded-sm px-2 text-xs text-muted">
+            <span className="hidden xl:inline">{env}</span>
+            {healthOk === null ? (
+              <CircleNotch size={13} className="animate-spin text-faint" aria-hidden />
+            ) : (
+              <StatusDot tone={healthTone} />
+            )}
+            <span className="sr-only">
+              Entorno {env}. Sistema {healthLabel}.
             </span>
-          )}
-        </Link>
+          </span>
+        </Tooltip>
 
-        <a
-          href="/docs"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex h-9 w-9 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-soft hover:text-text"
-          aria-label="Documentación de API"
-        >
-          <Question size={17} aria-hidden />
-        </a>
+        <ThemeToggle compact />
 
-        <div className="relative" ref={menuRef}>
-          <button
-            type="button"
-            className="flex items-center gap-1.5 rounded-sm p-1 text-text transition-colors duration-150 hover:bg-soft"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            aria-label="Cuenta"
-            onClick={() => setMenuOpen((v) => !v)}
+        <Tooltip label={unread > 0 ? `${unread} sin leer` : "Notificaciones"} side="bottom">
+          <Link
+            to="/notifications"
+            className="relative inline-flex h-9 w-9 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-soft hover:text-text"
+            aria-label={`Notificaciones${unread > 0 ? ` (${unread} sin leer)` : ""}`}
           >
-            <span className="flex h-7 w-7 items-center justify-center rounded-full border border-border bg-soft text-xs font-semibold text-muted">
-              {initial}
-            </span>
-            <CaretDown size={13} className="text-faint" aria-hidden />
-          </button>
-          {menuOpen && (
-            <div
-              role="menu"
-              className="absolute right-0 top-full z-50 mt-1.5 w-52 overflow-hidden rounded-md border border-border bg-raised shadow-pop"
+            <Bell size={17} aria-hidden />
+            {unread > 0 && (
+              <span className="absolute top-1 right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-accent-fg tabular-nums">
+                {unread > 99 ? "99+" : unread}
+              </span>
+            )}
+          </Link>
+        </Tooltip>
+
+        <Tooltip label="Documentación de API" side="bottom">
+          <a
+            href="/docs"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-soft hover:text-text"
+            aria-label="Documentación de API"
+          >
+            <Question size={17} aria-hidden />
+          </a>
+        </Tooltip>
+
+        <span className="mx-0.5 h-5 w-px bg-border" aria-hidden />
+
+        <Menu
+          label="Cuenta"
+          align="end"
+          className="min-w-[15rem]"
+          trigger={
+            <button
+              type="button"
+              className="flex cursor-pointer items-center gap-2 rounded-sm p-1 transition-colors duration-150 hover:bg-soft"
+              aria-label="Cuenta"
             >
-              <div className="border-b border-border px-3 py-2.5">
-                <p className="truncate text-[13px] font-medium text-text">{email || "Cuenta"}</p>
-                <p className="text-[11px] text-faint">Workspace de {session?.companyName || "tu organización"}</p>
-              </div>
-              <button
-                type="button"
-                role="menuitem"
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-muted transition-colors duration-150 hover:bg-soft hover:text-text"
-                onClick={() => {
-                  setMenuOpen(false);
-                  requestProductTourStart();
-                }}
-              >
-                <GraduationCap size={15} aria-hidden />
-                Ver tutorial
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] text-muted transition-colors duration-150 hover:bg-soft hover:text-text"
-                onClick={() => {
-                  setMenuOpen(false);
-                  navigate("/settings");
-                }}
-              >
-                <GearSix size={15} aria-hidden />
-                Configuración
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                className="flex w-full items-center gap-2 border-t border-border px-3 py-2 text-left text-[13px] text-danger transition-colors duration-150 hover:bg-danger-soft"
-                onClick={() => {
-                  setMenuOpen(false);
-                  logout();
-                }}
-              >
-                <SignOut size={15} aria-hidden />
-                Cerrar sesión
-              </button>
-            </div>
-          )}
-        </div>
+              <IdentityTile label={email || "Z"} kind="account" size={28} />
+            </button>
+          }
+        >
+          <div className="border-b border-border px-2.5 pt-1.5 pb-2.5">
+            <p className="truncate text-[13px] font-medium text-text">{email || "Cuenta"}</p>
+            <p className="truncate text-[11px] text-faint">
+              {session?.companyName || "Tu organización"}
+            </p>
+          </div>
+          <MenuLabel>Ayuda y ajustes</MenuLabel>
+          <MenuItem
+            className="flex cursor-pointer items-center gap-2.5 rounded-sm px-2.5 py-2 text-[13px] text-muted outline-none select-none data-[highlighted]:bg-soft data-[highlighted]:text-text"
+            onSelect={() => requestProductTourStart()}
+          >
+            <GraduationCap size={15} aria-hidden />
+            Ver tutorial
+          </MenuItem>
+          <MenuItem
+            className="flex cursor-pointer items-center gap-2.5 rounded-sm px-2.5 py-2 text-[13px] text-muted outline-none select-none data-[highlighted]:bg-soft data-[highlighted]:text-text"
+            onSelect={() => navigate("/settings")}
+          >
+            <GearSix size={15} aria-hidden />
+            Configuración
+          </MenuItem>
+          <MenuItem
+            className="flex cursor-pointer items-center gap-2.5 rounded-sm px-2.5 py-2 text-[13px] text-muted outline-none select-none data-[highlighted]:bg-soft data-[highlighted]:text-text"
+            onSelect={() => openCommandPalette("tenant")}
+          >
+            <Code size={15} aria-hidden />
+            Buscar
+          </MenuItem>
+          <MenuSeparator className="my-1 h-px bg-border" />
+          <MenuItem
+            className={cn(
+              "flex cursor-pointer items-center gap-2.5 rounded-sm px-2.5 py-2 text-[13px] text-danger outline-none select-none",
+              "data-[highlighted]:bg-danger-soft"
+            )}
+            onSelect={() => logout()}
+          >
+            <SignOut size={15} aria-hidden />
+            Cerrar sesión
+          </MenuItem>
+        </Menu>
       </div>
     </header>
   );

@@ -1,7 +1,11 @@
+import { ArrowLeft, Key, ShieldCheck } from "@phosphor-icons/react";
 import { FormEvent, useState } from "react";
 import { Link, Navigate, useLocation } from "react-router-dom";
 import { usePlatformAuth } from "../../platformAuth";
-import { Spinner } from "../../components/ui";
+import { AuthShell } from "../../components/auth/AuthShell";
+import { Button } from "../../components/ui/Button";
+import { ErrorInline } from "../../components/ui/states";
+import { Field, Input, PasswordInput } from "../../components/ui/form";
 
 function redirectAfterLogin(state: unknown): string {
   const from =
@@ -32,9 +36,10 @@ export default function AdminLoginPage() {
       const mfa = await login(email.trim(), password);
       if (mfa?.mfaRequired && mfa.mfaSession) {
         setMfaSession(mfa.mfaSession);
+        setPassword("");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo iniciar sesión");
+      setError(err instanceof Error ? err.message : "No pudimos iniciar sesión.");
     } finally {
       setLoading(false);
     }
@@ -48,91 +53,117 @@ export default function AdminLoginPage() {
     try {
       await loginMfa(mfaSession, mfaCode.trim());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Código inválido");
+      setError(err instanceof Error ? err.message : "El código no es válido o ya expiró.");
     } finally {
       setLoading(false);
     }
   }
 
+  if (mfaSession) {
+    return (
+      <AuthShell
+        variant="platform"
+        eyebrow="Verificación en dos pasos"
+        title="Confirmá tu identidad"
+        subtitle="Ingresá el código de 6 dígitos de tu autenticador para entrar al Control Center."
+        footer={
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 text-[13px] font-medium text-muted transition-colors duration-150 hover:text-text"
+            onClick={() => {
+              setMfaSession("");
+              setMfaCode("");
+              setError("");
+            }}
+          >
+            <ArrowLeft size={14} aria-hidden />
+            Volver al inicio de sesión
+          </button>
+        }
+      >
+        <form className="flex flex-col gap-4" onSubmit={onSubmitMfa} noValidate>
+          <ErrorInline message={error} className="mb-0" />
+          <Field label="Código TOTP" required hint="Se renueva cada 30 segundos.">
+            <Input
+              id="admin-mfa"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]*"
+              maxLength={6}
+              value={mfaCode}
+              onChange={(e) => setMfaCode(e.target.value.replace(/[^0-9]/g, ""))}
+              placeholder="123456"
+              className="mono text-center text-lg tracking-[0.4em]"
+              required
+              autoFocus
+            />
+          </Field>
+          <Button
+            type="submit"
+            variant="primary"
+            className="min-h-10 w-full"
+            loading={loading}
+            disabled={!mfaCode.trim()}
+            leadingIcon={ShieldCheck}
+          >
+            Verificar
+          </Button>
+        </form>
+      </AuthShell>
+    );
+  }
+
   return (
-    <div className="flex min-h-[100dvh] items-center justify-center px-4 py-10">
-      <form className="panel w-full max-w-[400px] space-y-4 p-6" onSubmit={onSubmit}>
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight text-text">
-            Control Center
-          </h1>
-          <p className="mt-1 text-sm text-muted">
-            Acceso de platform admin. URL: /admin/login. Un dueño de organización no entra aquí.
-          </p>
+    <AuthShell
+      variant="platform"
+      eyebrow="Control Center"
+      title="Acceso de plataforma"
+      subtitle="Acceso de platform admin. Si sos dueño de una organización, entrá por el portal de clientes."
+      footer={
+        <div className="border-t border-border pt-5 text-[13px] text-muted">
+          <Link className="font-medium text-accent hover:underline" to="/login">
+            Portal de clientes
+          </Link>
         </div>
-        {error && (
-          <p className="rounded-md border border-danger/25 bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="field">
-          <label htmlFor="admin-email">Email</label>
-          <input
+      }
+    >
+      <form className="flex flex-col gap-4" onSubmit={onSubmit} noValidate>
+        <ErrorInline message={error} className="mb-0" />
+
+        <Field label="Email" required>
+          <Input
             id="admin-email"
             type="email"
             autoComplete="username"
+            placeholder="admin@zent.dev"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
+            autoFocus
           />
-        </div>
-        <div className="field">
-          <label htmlFor="admin-password">Contraseña</label>
-          <input
+        </Field>
+
+        <Field label="Contraseña" required>
+          <PasswordInput
             id="admin-password"
-            type="password"
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
           />
-        </div>
-        <button type="submit" className="btn btn-primary w-full min-h-11" disabled={loading}>
-          {loading ? <Spinner /> : "Entrar"}
-        </button>
-        <p className="text-center text-[13px] text-muted">
-          <Link className="font-medium text-accent hover:underline" to="/login">
-            Portal de clientes
-          </Link>
-        </p>
-      </form>
+        </Field>
 
-      {mfaSession && (
-        <form className="panel w-full max-w-[400px] space-y-4 p-6" onSubmit={onSubmitMfa}>
-          <div>
-            <h2 className="text-base font-semibold text-text">Verificación MFA</h2>
-            <p className="mt-1 text-sm text-muted">
-              Ingresa el código de 6 dígitos de tu autenticador.
-            </p>
-          </div>
-          {error && (
-            <p className="rounded-md border border-danger/25 bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">
-              {error}
-            </p>
-          )}
-          <div className="field">
-            <label htmlFor="admin-mfa">Código TOTP</label>
-            <input
-              id="admin-mfa"
-              type="text"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              value={mfaCode}
-              onChange={(e) => setMfaCode(e.target.value.replace(/[^0-9]/g, ""))}
-              placeholder="123456"
-              required
-            />
-          </div>
-          <button type="submit" className="btn btn-primary w-full min-h-11" disabled={loading || !mfaCode.trim()}>
-            {loading ? <Spinner /> : "Verificar"}
-          </button>
-        </form>
-      )}
-    </div>
+        <Button
+          type="submit"
+          variant="primary"
+          className="min-h-10 w-full"
+          loading={loading}
+          leadingIcon={Key}
+        >
+          Entrar
+        </Button>
+      </form>
+    </AuthShell>
   );
 }
