@@ -355,6 +355,127 @@ def _trigger_config_for_cost(plan: SemanticPlan) -> dict[str, Any]:
     return {}
 
 
+async def patch_workflow_plan(
+    organization_id: UUID,
+    plan: dict[str, Any],
+    instruction: str,
+    *,
+    workspace_id: UUID | None = None,
+    permissions: frozenset[str] | None = None,
+    provider: Any = None,
+    model: str | None = None,
+    capabilities: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Patch conversacional: aplica sobre el plan, re-valida y recompila."""
+    from src.platform.workflows.architect_patch import (
+        apply_semantic_patch,
+        propose_plan_patch,
+    )
+
+    semantic_plan = SemanticPlan.model_validate(plan)
+    if capabilities is None:
+        capabilities = await discover_capabilities(
+            organization_id, workspace_id=workspace_id, permissions=permissions
+        )
+    notes: list[str] = []
+    source = "llm"
+    try:
+        resolved = _resolve_provider(provider)
+        patch = await propose_plan_patch(
+            semantic_plan, instruction, provider=resolved, model=model
+        )
+    except Exception as exc:  # noqa: BLE001 — fallback determinístico
+        logger.info("architect patch: fallback", error=str(exc)[:200])
+        patch = heuristic_plan_patch(instruction, semantic_plan)
+        source = "heuristics"
+        if patch is None:
+            raise ValueError(
+                "No pude interpretar el cambio; prueba «cambia el umbral a 50000», "
+                "«quita la aprobación» o «solo lunes a viernes»."
+            ) from exc
+    updated, notes = apply_semantic_patch(semantic_plan, patch)
+    issues = validate_semantic_plan(updated, capabilities, permissions=permissions)
+    graph: dict[str, Any] | None = None
+    cost: dict[str, Any] | None = None
+    if not any(issue.severity == "error" for issue in issues):
+        compiled = compile_semantic_plan(updated, capabilities)
+        graph = compiled["graph"]
+        issues = [*issues, *compiled["issues"]]
+        try:
+            from src.platform.workflows.capabilities import cost_estimate
+
+            cost = await cost_estimate(organization_id, graph, _trigger_config_for_cost(updated))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("architect patch cost failed", error=str(exc)[:150])
+    try:
+        from src.platform.workflows.architect_metrics import record_revision
+
+        record_revision()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("architect revision metric failed", error=str(exc)[:150])
+    clarifications = build_clarifications(updated, issues)
+    return {
+        "source": source,
+        "plan": updated.model_dump(mode="json"),
+        "patch": patch.model_dump(mode="json"),
+        "issues": [issue.model_dump(mode="json") for issue in issues],
+        "preview": semantic_preview(updated),
+        "graph": graph,
+        "cost": cost,
+        "clarifications": clarifications,
+        "requirements": build_requirements(issues),
+        "readiness": _readiness(graph, capabilities) if graph is not None else None,
+        "simulation": simulation_plan(updated) if graph is not None else None,
+        "notes": notes,
+    }
+
+
+def heuristic_plan_patch(instruction: str, plan: SemanticPlan) -> Any:
+    """Patch determinístico para cambios comunes (sin LLM)."""
+    from src.platform.workflows.architect_patch import PlanPatchOp, SemanticPlanPatch
+
+    text = str(instruction or "").lower()
+    operations: list[PlanPatchOp] = []
+    approval = next((step for step in plan.steps if step.type == "human_approval"), None)
+    if approval is not None and (
+        "quita" in text and "aprob" in text or "sin aprobacion" in text or "sin aprobación" in text
+    ):
+        operations.append(
+            PlanPatchOp(kind="remove_step", step_id=approval.id, reason="Quitar la aprobación")
+        )
+    decision = next((step for step in plan.steps if step.type == "decision"), None)
+    threshold = re.search(r"(\d[\d.,]{2,})", text)
+    if decision is not None and threshold and ("umbral" in text or "mayor" in text or "sobre" in text):
+        raw = threshold.group(1).replace(".", "").replace(",", "")
+        try:
+            value: Any = float(raw) if "." in raw else int(raw)
+        except ValueError:
+            value = threshold.group(1)
+        operations.append(
+            PlanPatchOp(
+                kind="set_param",
+                step_id=decision.id,
+                key="value",
+                value=value,
+                reason=f"Umbral {value}",
+            )
+        )
+    if "lunes a viernes" in text and any(step.type == "trigger_schedule" for step in plan.steps):
+        operations.append(
+            PlanPatchOp(
+                kind="set_schedule",
+                params={
+                    "weekly": {"days": [0, 1, 2, 3, 4], "time": "08:00"},
+                    "daily": None,
+                },
+                reason="Solo días hábiles",
+            )
+        )
+    if not operations:
+        return None
+    return SemanticPlanPatch(operations=operations, summary=instruction[:200])
+
+
 def _readiness(graph: dict[str, Any], capabilities: dict[str, Any]) -> dict[str, Any]:
     """Readiness de negocio del grafo compilado (brief §26)."""
     from src.platform.workflows.readiness import readiness_checks
@@ -539,7 +660,10 @@ async def plan_workflow(
 __all__ = [
     "extract_intent_with_architect",
     "extract_plan_with_architect",
+    "heuristic_plan_patch",
     "heuristic_semantic_plan",
+    "patch_workflow_plan",
     "plan_workflow",
     "semantic_preview",
+    "simulation_plan",
 ]

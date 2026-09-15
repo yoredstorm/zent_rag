@@ -195,6 +195,30 @@ async def tenant_workflow_architect_plan(body: ArchitectPlanIn, request: Request
     )
 
 
+@router.post(
+    "/architect/patch",
+    summary="Workflow Architect: cambio conversacional sobre el plan",
+)
+async def tenant_workflow_architect_patch(body: ArchitectPatchIn, request: Request):
+    from pydantic import ValidationError as PydanticValidationError
+
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.architect import patch_workflow_plan
+
+    ctx = require_permission(request, "workflows:create")
+    try:
+        return await patch_workflow_plan(
+            ctx.organization_id,
+            body.plan,
+            body.instruction.strip(),
+            workspace_id=await _workspace_id(request),
+            permissions=ctx.permissions,
+            model=body.model,
+        )
+    except (PydanticValidationError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.post("/{workflow_id}/patch/preview", summary="Editar con IA: propuesta de diff")
 async def tenant_workflow_patch_preview(workflow_id: str, body: PatchPreviewIn, request: Request):
     from src.platform.rbac.policy import require_permission
@@ -852,6 +876,12 @@ class CopilotCompileIn(BaseModel):
 
 class ArchitectPlanIn(BaseModel):
     prompt: str = Field(min_length=8, max_length=2000)
+    model: str | None = Field(default=None, max_length=120)
+
+
+class ArchitectPatchIn(BaseModel):
+    plan: dict
+    instruction: str = Field(min_length=3, max_length=500)
     model: str | None = Field(default=None, max_length=120)
 
 

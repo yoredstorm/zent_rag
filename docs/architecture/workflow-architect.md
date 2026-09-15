@@ -169,7 +169,7 @@ edges por `depends_on`, requisitos faltantes y plan válido.
 | 4 | Compiler determinístico | ✅ first delivery |
 | 5 | Plan Validator | ✅ first delivery |
 | 6 | Clarification Engine + assumptions UI | ✅ (backend: clarifications/requirements en la respuesta) |
-| 7 | Conversational patching (`SemanticPlanPatch`) | pendiente |
+| 7 | Conversational patching (`SemanticPlanPatch`) | ✅ (heurístico + LLM; endpoint `/architect/patch`) |
 | 8 | UX semántica de nodos (help contextual, biblioteca por propósito) | pendiente |
 | 9 | Simulation + readiness desde el plan | ✅ (readiness + `simulation` sin efectos) |
 | 10 | Dataset ≥50 intents + métricas | ✅ (50 casos en `tests/data/workflow_architect_cases.json` + `architect_metrics.py`) |
@@ -218,3 +218,8 @@ en el flujo de Probar existente.
 agente innecesario, revisiones) + dataset de **50 casos** `tests/data/workflow_architect_cases.json` con `tests/test_workflow_architect_eval.py`
 (evalúa trigger, selección de nodos, ausencia de agente innecesario, operaciones de conocimiento, requisitos, referencias y readiness;
 casos de integración faltante quedan sin grafo con requirement).
+
+**Fase 7 (2026-09-15)** — `architect_patch.py`: `SemanticPlanPatch` (set_param/set_trigger/set_schedule/remove_step/replace_agent/add_step),
+aplicación determinística con reescritura de dependencias y `when`, propuesta por LLM con fallback heurístico («cambia el umbral a 50000»,
+«quita la aprobación», «solo lunes a viernes»). Endpoint `POST /architect/patch` re-valida y recompila; métrica `revision_total`.
+Tests: `tests/test_workflow_architect_patch.py` (6).
