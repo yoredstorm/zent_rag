@@ -146,7 +146,7 @@ def _llm_schema() -> NodeBusinessSchema:
         node_type="llm",
         label="Preguntar a un agente",
         category="ai",
-        description="Pide a un agente de Zent que analice o recomiende.",
+        description="Analiza con un agente de Zent y devuelve una conclusión estructurada si la pides.",
         parameters=[
             _p(
                 "agent_id",
@@ -164,6 +164,51 @@ def _llm_schema() -> NodeBusinessSchema:
                 placeholder="Recomienda qué hacer con este stock bajo",
                 examples=["Analiza la venta y recomienda próximos pasos"],
             ),
+            _p(
+                "context_mode",
+                "Contexto",
+                "enum",
+                min_level="guided",
+                default="auto",
+                validation={
+                    "options": [
+                        {"value": "auto", "label": "Automático (solo lo disponible)"},
+                        {"value": "manual", "label": "Elegir secciones"},
+                        {"value": "none", "label": "Sin contexto"},
+                    ]
+                },
+                help="Automático incluye solo secciones con contenido (datos, conocimiento, evidencia).",
+            ),
+            _p(
+                "context_selectors",
+                "Usar como contexto",
+                "json",
+                min_level="guided",
+                help='Lista: ["trigger","knowledge","evidence","claims","data:<nodo>","knowledge:<nodo>"].',
+            ),
+            _p(
+                "output_type",
+                "Resultado esperado",
+                "enum",
+                min_level="guided",
+                default="text",
+                validation={
+                    "options": [
+                        {"value": "text", "label": "Texto libre"},
+                        {"value": "decision", "label": "Decisión"},
+                        {"value": "classification", "label": "Clasificación"},
+                        {"value": "business_assessment", "label": "Evaluación de negocio"},
+                        {"value": "json_schema", "label": "JSON personalizado"},
+                    ]
+                },
+                help="Decisión/Evaluación validan el JSON y exponen campos como «Riesgo» o «Decisión».",
+            ),
+            _p(
+                "output_schema",
+                "JSON personalizado (schema)",
+                "json",
+                min_level="advanced",
+            ),
             _p("model", "Modelo (solo sin agente)", "text", min_level="advanced", default="gpt-4o-mini"),
         ],
         outputs=[
@@ -171,6 +216,11 @@ def _llm_schema() -> NodeBusinessSchema:
             _out("agent_id", "Agente", "text"),
             _out("model", "Modelo", "text"),
             _out("cost", "Costo", "money"),
+            _out("status", "Estado", "text"),
+            _out("decision", "Decisión", "json"),
+            _out("confidence", "Confianza", "number"),
+            _out("context_summary", "Contexto incluido", "json"),
+            _out("reason_codes", "Motivos", "json"),
         ],
     )
 

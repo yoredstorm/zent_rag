@@ -1,6 +1,6 @@
 # Zent Cognitive Workflows — Phase 0 Architecture Audit
 
-> **Status:** Phase 0 (auditoría) completa. **Fases 1–3 implementadas** (modos de conocimiento; extract_facts/compare/check_conflicts; investigate vía Cognitive OS). Fases 4–8 pendientes.
+> **Status:** Phase 0 (auditoría) completa. **Fases 1–4 implementadas** (modos de conocimiento; extract_facts/compare/check_conflicts; investigate vía Cognitive OS; contexto/presets/DecisionResult del agente). Fases 5–8 pendientes.
 > **Fecha:** 2026-09-14
 > **Base:** `feat/knowledge-cognitive-os` @ `33c238c` (Workflow Semantic Core Fases 0–8 + bloque 8.1).
 > **Prerrequisito verificado:** `docs/architecture/workflow-semantic-core.md` ya existe y está implementado:
@@ -378,3 +378,14 @@ Tests: `tests/test_workflow_knowledge_facts_conflicts.py` (6).
 - Mapeo defensivo de mensajes: `answer` (final_candidate), `findings`, `claim_ids`, `evidence_ids`, `conflicts` (plan_patch), `metrics` (tokens/cost/specialists);
   contribution con `knowledge` + refs de evidencia/claims reales (validadas por org al persistir).
 Tests: `tests/test_workflow_cognitive_investigate.py` (3: E2E con scope/budget/refs, permission_restricted, plan fallido tipado).
+
+**Fase 4 entregada (2026-09-14)** — nodo agent:
+- `context_mode` = `auto` (default; solo secciones con contenido) | `manual` | `none`; `context_selectors` con `data:<node>`/`knowledge:<node>` y
+  secciones (`trigger`, `evidence`, `claims`, `decisions`, ...). Los nodos con `context_reads` explícitos siguen en modo manual (compat).
+- Presets `output_type`: `text/decision/classification/business_assessment/json_schema` (`output_presets.py`); `output_schema` explícito gana.
+- `DecisionResult` tipado (`decisions.py`): `decision/status/confidence/reasons/evidence_refs/claim_refs/requires_review`; viaja en la contribución
+  `decisions` como `decision_result` sin romper refs al output raíz.
+- Enum de fallo: `ok | low_confidence | insufficient_context | tool_error | budget_exceeded | permission_denied | invalid_output` con `reason_codes`;
+  `context_summary` con secciones/conteos/truncado para la UI.
+- Data Catalog lee `output_schema` del nodo: los campos del agente (p. ej. «Riesgo») aparecen con label y ref en el Data Picker/ConditionBuilder.
+Tests: `tests/test_workflow_agent_context.py` (8).

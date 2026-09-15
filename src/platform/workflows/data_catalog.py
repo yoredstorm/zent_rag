@@ -165,6 +165,40 @@ def _node_source(
         fields.append(entry)
         seen.add(key)
 
+    # Contrato declarado por el nodo (output_schema/`output_type` del agente).
+    config = node.get("config") if isinstance(node.get("config"), dict) else {}
+    output_schema = config.get("output_schema") if isinstance(config, dict) else None
+    if isinstance(output_schema, dict):
+        properties = output_schema.get("properties")
+        if isinstance(properties, dict):
+            for key, prop in properties.items():
+                schema_key = str(key)
+                if schema_key in seen or not isinstance(prop, dict):
+                    continue
+                label = str(prop.get("title") or humanize_path(schema_key))
+                type_ = str(prop.get("type") or "text")
+                schema_entry: dict[str, Any] = {
+                    "key": schema_key,
+                    "label": label,
+                    "ref": DataReference(
+                        source_kind="node",
+                        source_id=node_id,
+                        path=(schema_key,),
+                        value_type=type_,
+                        business_label=label,
+                    ).render(),
+                    "type": type_,
+                }
+                if prop.get("enum"):
+                    schema_entry["enum"] = list(prop["enum"])
+                schema_sample = output.get(schema_key)
+                if schema_sample is None:
+                    schema_sample = prop.get("example")
+                if schema_sample is not None:
+                    schema_entry["sample"] = _preview(schema_sample)
+                fields.append(schema_entry)
+                seen.add(schema_key)
+
     for key, value in output.items():
         text_key = str(key)
         if text_key in seen or text_key.startswith("_"):

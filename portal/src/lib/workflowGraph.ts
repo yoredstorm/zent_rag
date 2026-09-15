@@ -601,7 +601,7 @@ const OUTPUT_FIELDS: Record<string, string[]> = {
   api_call: ["extracted", "status_code", "ok", "json", "body", "url", "idempotency_key"],
   kb_query: ["count", "documents", "chunks", "citations", "evidence_ids", "answer", "claims", "facts", "entities", "findings", "differences", "conflicts", "has_conflicts", "status", "coverage", "temporal_context", "cognitive_run_id", "metrics", "reason_codes"],
   query_business_data: ["rows", "columns", "answer", "evidence", "evidence_ids", "row_count", "query_id"],
-  llm: ["text", "agent_id", "model", "cost", "structured", "echo"],
+  llm: ["text", "agent_id", "model", "cost", "structured", "echo", "status", "decision", "confidence", "context_summary", "reason_codes"],
   notify: ["sent", "channel", "recipients", "delivered", "deliveries", "count", "result"],
   for_each: ["items_processed", "results", "errors", "duration_ms"],
   join: ["merged", "values"],

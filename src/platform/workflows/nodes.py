@@ -17,7 +17,9 @@ from uuid import UUID
 from src.infrastructure.observability.logging_config import get_logger
 from src.platform.workflows.context import WorkflowContext
 from src.platform.workflows.contributions import ContextWrite, NodeContribution
+from src.platform.workflows.decisions import DecisionResult
 from src.platform.workflows.node_catalog import semantic_metadata
+from src.platform.workflows.output_presets import resolve_output_schema
 from src.platform.workflows.values import jsonable, node_provenance
 
 logger = get_logger(__name__)
@@ -1835,6 +1837,114 @@ def _resolve_dep(getter: Callable[[], Any]) -> Any:
     return getter()
 
 
+_LLM_VISIBLE_READS = (
+    "trigger",
+    "data",
+    "knowledge",
+    "evidence_refs",
+    "claim_refs",
+    "entity_refs",
+    "findings",
+    "decisions",
+    "artifacts",
+)
+
+
+def _auto_context_reads(rctx: NodeContext) -> tuple[str, ...]:
+    """AUTO: solo secciones del contexto que ya tienen contenido."""
+    if rctx.context is None:
+        return ()
+    present: list[str] = []
+    for section in _LLM_VISIBLE_READS:
+        value = rctx.context.section(section)
+        if value:
+            present.append(section)
+    return tuple(present)
+
+
+async def _agent_context_payload(
+    rctx: NodeContext,
+) -> tuple[dict[str, Any] | None, list[str], dict[str, Any] | None, tuple[str, ...]]:
+    """Ensambla el contexto del agente según `context_mode`/`context_selectors`.
+
+    Devuelve (payload, truncated, summary, requested_reads). AUTO incluye solo
+    secciones con contenido; los selectores `data:<node>`/`knowledge:<node>`
+    acotan por nodo. Nunca envía `security` ni secciones runtime-only.
+    """
+    cfg = rctx.node.config
+    raw_mode = str(cfg.get("context_mode") or "").strip().lower()
+    selectors = [
+        str(item).strip()
+        for item in (cfg.get("context_selectors") or [])
+        if str(item).strip()
+    ]
+    raw_reads = [
+        str(item).strip() for item in (cfg.get("context_reads") or []) if str(item).strip()
+    ]
+    if raw_mode in ("none", "off", "disabled"):
+        return None, [], None, ()
+    if raw_mode not in ("auto", "manual", "selectors"):
+        raw_mode = "auto" if not raw_reads and not selectors else "manual"
+    if rctx.context is None:
+        return None, [], None, ()
+
+    requested: list[str] = []
+    scoped: dict[str, set[str]] = {}
+    for selector in selectors:
+        base, _, node_id = selector.partition(":")
+        base = base.strip().lower()
+        if base in ("data", "knowledge") and node_id.strip():
+            scoped.setdefault(base, set()).add(node_id.strip())
+            if base not in requested:
+                requested.append(base)
+        elif base and base not in requested:
+            requested.append(base)
+    for item in raw_reads:
+        if item not in requested:
+            requested.append(item)
+    if raw_mode == "auto" and not requested:
+        requested = list(_auto_context_reads(rctx))
+    if not requested:
+        return None, [], None, ()
+
+    try:
+        from src.platform.workflows.context_store import validate_context_refs
+
+        await validate_context_refs(rctx.context, rctx.organization_id)
+    except Exception as exc:  # noqa: BLE001 — validación best-effort
+        logger.warning("context ref validation failed", error=str(exc)[:200])
+    from src.platform.workflows.context_assembler import WorkflowContextAssembler
+
+    assembled = WorkflowContextAssembler().for_agent(rctx.context, reads=tuple(requested))
+    payload: dict[str, Any] = dict(assembled.payload or {})
+    for base, node_ids in scoped.items():
+        section_payload = payload.get(base)
+        if not isinstance(section_payload, dict):
+            continue
+        filtered = {key: value for key, value in section_payload.items() if key in node_ids}
+        if filtered:
+            payload[base] = filtered
+        else:
+            payload.pop(base, None)
+
+    sections = list(assembled.sections_used)
+    counts = {
+        section: (
+            len(payload[section]) if isinstance(payload.get(section), (dict, list)) else 1
+        )
+        for section in sections
+        if payload.get(section) is not None
+    }
+    summary = {
+        "mode": raw_mode,
+        "requested": list(requested),
+        "sections": sections,
+        "counts": counts,
+        "truncated": list(assembled.truncated),
+    }
+    return payload or None, list(assembled.truncated), summary, tuple(requested)
+
+
 async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
     cfg = rctx.node.config
     raw_prompt = str(cfg.get("prompt") or cfg.get("message") or "")
@@ -1878,24 +1988,9 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
         if agent is None:
             raise LookupError()
         org_config = await _org_config_json(rctx.organization_id)
-        context_payload = None
-        context_truncated: list[str] = []
-        reads = cfg.get("context_reads")
-        if rctx.context is not None and isinstance(reads, list) and reads:
-            try:
-                from src.platform.workflows.context_store import validate_context_refs
-
-                await validate_context_refs(rctx.context, rctx.organization_id)
-            except Exception as exc:  # noqa: BLE001 — validación best-effort
-                logger.warning("context ref validation failed", error=str(exc)[:200])
-            from src.platform.workflows.context_assembler import WorkflowContextAssembler
-
-            assembled = WorkflowContextAssembler().for_agent(
-                rctx.context,
-                reads=tuple(str(item) for item in reads if str(item).strip()),
-            )
-            context_payload = assembled.payload or None
-            context_truncated = list(assembled.truncated)
+        context_payload, context_truncated, context_summary, requested_reads = (
+            await _agent_context_payload(rctx)
+        )
         result = await _resolve_dep(get_agent_runtime).run(
             AgentRunRequest(
                 agent=agent,
@@ -1914,6 +2009,21 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
             "model": result.model,
             "cost": result.cost,
         }
+        raw_status = str(getattr(result, "status", "") or "")
+        if raw_status == "limit_reached":
+            status, reason = "budget_exceeded", "agent_budget_limit"
+        elif raw_status == "error":
+            status, reason = "tool_error", "agent_runtime_error"
+        else:
+            status, reason = "ok", None
+        if requested_reads and context_summary is not None and not context_summary.get("sections"):
+            status = "insufficient_context"
+            reason = "no_context_sections"
+        output["status"] = status
+        if reason:
+            output["reason_codes"] = [reason]
+        if context_summary is not None:
+            output["context_summary"] = context_summary
         if context_truncated:
             output["context_truncated"] = context_truncated
         return NodeOutcome(output=output, cost_ms=float(result.cost or 0.0))
@@ -1959,14 +2069,30 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
     return _apply_output_schema(cfg, outcome, rctx)
 
 
-_AGENT_DECISION_KEYS = ("decision", "risk", "recommendation", "confidence", "reason", "summary")
+_AGENT_DECISION_KEYS = (
+    "decision",
+    "risk",
+    "label",
+    "recommendation",
+    "confidence",
+    "reason",
+    "summary",
+    "requires_review",
+)
 
 
-def _agent_output_contribution(data: dict[str, Any], rctx: NodeContext) -> NodeContribution | None:
+def _agent_output_contribution(
+    data: dict[str, Any],
+    rctx: NodeContext,
+    *,
+    status: str = "ok",
+    reason_codes: list[str] | tuple[str, ...] | None = None,
+) -> NodeContribution | None:
     """Traduce un output estructurado del agente a contribuciones de contexto.
 
     El texto del agente nunca se convierte en claim aprobado: esto solo
     transporta decisiones/hallazgos estructurados del output schema (brief §16).
+    La decisión viaja además como `DecisionResult` tipado (Fase 4).
     """
     label = str(rctx.node.config.get("agent_name") or rctx.node.label or "") or None
     agent_source = str(rctx.node.config.get("agent_id") or "") or None
@@ -1991,11 +2117,16 @@ def _agent_output_contribution(data: dict[str, Any], rctx: NodeContext) -> NodeC
         if key in data and data[key] is not None
     }
     if decision:
+        decision_result = DecisionResult.from_agent_output(
+            data,
+            status=status,
+            reason_codes=tuple(reason_codes or ()),
+        )
         writes.append(
             ContextWrite(
                 section="decisions",
                 key=rctx.node_id,
-                value=decision,
+                value={**decision, "decision_result": decision_result.to_dict()},
                 value_type="decision",
                 label=label,
                 provenance=provenance,
@@ -2024,10 +2155,13 @@ def _apply_output_schema(
     outcome: NodeOutcome,
     rctx: NodeContext | None = None,
 ) -> NodeOutcome:
-    """Outputs estructurados opcionales (misión §16): si el nodo declara
-    `output_schema` y el agente devolvió JSON válido, sus campos quedan
-    disponibles al Data Picker en la raíz del output."""
-    schema = cfg.get("output_schema")
+    """Outputs estructurados: `output_schema` explícito o preset (`output_type`).
+
+    Los campos validados quedan en la raíz del output (referencias
+    `{{nodes.x.output.campo}}`); un JSON inválido marca `invalid_output` sin
+    romper el run.
+    """
+    schema = resolve_output_schema(cfg)
     if not isinstance(schema, dict) or not schema or outcome.error:
         return outcome
     text = str((outcome.output or {}).get("text") or "")
@@ -2040,13 +2174,32 @@ def _apply_output_schema(
         outcome.output.update(data)
         outcome.output["structured"] = True
         outcome.output.pop("schema_errors", None)
+        final_status = str(outcome.output.get("status") or "ok")
+        reasons = list(outcome.output.get("reason_codes") or [])
+        confidence = data.get("confidence")
+        if (
+            final_status == "ok"
+            and isinstance(confidence, (int, float))
+            and not isinstance(confidence, bool)
+            and confidence < 0.4
+        ):
+            final_status = "low_confidence"
+            reasons.append("low_confidence")
+        outcome.output["status"] = final_status
+        if reasons:
+            outcome.output["reason_codes"] = reasons
         if rctx is not None:
-            contribution = _agent_output_contribution(data, rctx)
+            contribution = _agent_output_contribution(
+                data, rctx, status=final_status, reason_codes=reasons
+            )
             if contribution is not None:
                 outcome.contribution = contribution
     else:
         outcome.output["structured"] = False
         outcome.output["schema_errors"] = errors[:5] or ["La respuesta no es JSON válido"]
+        if str(outcome.output.get("status") or "ok") == "ok":
+            outcome.output["status"] = "invalid_output"
+            outcome.output["reason_codes"] = ["invalid_output"]
     return outcome
 
 

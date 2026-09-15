@@ -246,15 +246,17 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
     # ------------------------------------------------------------------
     "llm": _meta(
         "Preguntar a un agente",
-        "Pide a un agente de Zent que analice o recomiende.",
+        "Analiza con un agente de Zent y devuelve una conclusión estructurada.",
         long_description=(
-            "Ejecuta el AgentRuntime con el prompt y el contexto declarado en "
-            "config.context_reads; si declaras output_schema, la decisión "
-            "estructurada queda disponible para los pasos siguientes."
+            "Ejecuta el AgentRuntime con contexto seleccionable (automático por "
+            "defecto: solo secciones con contenido) y resultado esperado "
+            "(texto, decisión, clasificación, evaluación de negocio o JSON "
+            "personalizado). La decisión viaja tipada (DecisionResult) y los "
+            "campos validados quedan referenciables."
         ),
         when_to_use=(
             "necesitas interpretación, priorización o recomendación",
-            "el resultado debe ser JSON estructurado (output_schema)",
+            "el resultado debe ser JSON estructurado (decisión/evaluación)",
         ),
         when_not_to_use=("basta una regla determinística; usa Si / si no",),
         examples=(
@@ -262,8 +264,9 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
                 "title": "Riesgo de venta",
                 "config": {
                     "agent_id": "…",
-                    "prompt": "Analiza la venta {{trigger.sale_id}} y devuelve risk, reason y recommendation",
-                    "context_reads": ["data", "knowledge", "evidence"],
+                    "prompt": "Analiza la venta {{trigger.sale_id}} y recomienda próximos pasos",
+                    "context_mode": "auto",
+                    "output_type": "business_assessment",
                 },
             },
         ),
