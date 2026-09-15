@@ -203,3 +203,8 @@ skips = ["B101", "B603"]  # assert (tests) y subprocess sin shell=True
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Guard anti-cuelgues: ningún test (ni sus fixtures) puede pasar de 5 minutos.
+# pytest-timeout usa "thread" en Windows (signal no está disponible).
+# Override puntual: pytest -o timeout=600 (o -o timeout=0 para desactivar).
+timeout = 300
+timeout_method = "thread"
