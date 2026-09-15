@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import type { NodeBusinessSchema, NodeSchemasPayload, ParameterLevel } from "../lib/businessSchema";
-import type { NodeSamples } from "../lib/dataPicker";
+import type { DataCatalogPayload, NodeSamples } from "../lib/dataPicker";
 import type { MarketRec, ShopInstall } from "../lib/marketplaceCanvas";
 import type { GraphNode, NodeMeta, WorkflowGraph } from "../lib/workflowGraph";
 import { makeNode, newEdgeId, prepareGraphForSave, triggerConfigOf, triggerTypeOf } from "../lib/workflowGraph";
@@ -69,6 +69,7 @@ export function WorkflowCanvasEditor({
   const [nodeSchemas, setNodeSchemas] = useState<Record<string, NodeBusinessSchema> | null>(null);
   const [catalogNodes, setCatalogNodes] = useState<Record<string, NodeMeta> | null>(null);
   const [samples, setSamples] = useState<NodeSamples | null>(null);
+  const [dataCatalog, setDataCatalog] = useState<DataCatalogPayload | null>(null);
   const [mxInstalls, setMxInstalls] = useState<{ id: string; integration: { slug: string; name: string } }[]>([]);
   const [mxActions, setMxActions] = useState<Record<string, { action_id: string; display_name: string }[]>>({});
   const [mkt, setMkt] = useState<MarketplaceContext | null>(null);
@@ -140,6 +141,29 @@ export function WorkflowCanvasEditor({
       })
       .catch(() => {
         if (alive) setSamples(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [session, workflowId, overlay]);
+
+  // Data Catalog backend (Fase 6): refs tipadas + etiquetas de negocio.
+  // Si falla, el Data Picker usa el cálculo local (contratos + samples).
+  useEffect(() => {
+    if (!session || !workflowId) {
+      setDataCatalog(null);
+      return;
+    }
+    let alive = true;
+    api<DataCatalogPayload>(`/api/v1/workflows/${workflowId}/data-catalog`, {
+      token: session.token,
+      organizationId: session.organizationId,
+    })
+      .then((d) => {
+        if (alive) setDataCatalog(d);
+      })
+      .catch(() => {
+        if (alive) setDataCatalog(null);
       });
     return () => {
       alive = false;
@@ -548,6 +572,7 @@ export function WorkflowCanvasEditor({
               mxActions={mxActions}
               nodeSchemas={nodeSchemas}
               catalogNodes={catalogNodes}
+              dataCatalog={dataCatalog}
               samples={samples}
               run={run}
               pinned={Boolean(selectedNodeObj && pinnedNodes?.includes(selectedNodeObj.id))}

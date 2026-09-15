@@ -12,7 +12,12 @@ import type {
   SelectOption,
 } from "../lib/businessSchema";
 import { LEVEL_LABELS, setByPath } from "../lib/businessSchema";
-import { buildDataSources, type NodeSamples } from "../lib/dataPicker";
+import {
+  buildDataSources,
+  dataSourcesFromCatalog,
+  type DataCatalogPayload,
+  type NodeSamples,
+} from "../lib/dataPicker";
 import type { ConditionGroupNode } from "../lib/conditionTree";
 import { BusinessParameterForm } from "./workflowStudio/BusinessParameterForm";
 import { ConditionBuilder } from "./workflowStudio/ConditionBuilder";
@@ -36,6 +41,8 @@ type Props = {
   nodeSchemas?: Record<string, NodeBusinessSchema> | null;
   /** Catálogo backend (GET /workflows/node-catalog) con disponibilidad. */
   catalogNodes?: Record<string, NodeMeta> | null;
+  /** Catálogo de datos backend (GET /workflows/{id}/data-catalog). */
+  dataCatalog?: DataCatalogPayload | null;
   /** Últimos outputs reales por nodo (Live Preview / Data Picker). */
   samples?: NodeSamples | null;
   /** Último run inspeccionado: alimenta INPUT/OUTPUT/RUN. */
@@ -80,6 +87,7 @@ export function NodeConfigPanel({
   mxActions,
   nodeSchemas,
   catalogNodes,
+  dataCatalog,
   samples,
   run,
   pinned = false,
@@ -101,10 +109,11 @@ export function NodeConfigPanel({
   const level = configLevel ?? localLevel;
   const n = node;
   const actionId = n?.type === "marketplace_action" ? String(n.config.action_id ?? "") : "";
-  const dataSources = useMemo(
-    () => buildDataSources(graph, nodeSchemas ?? null, samples ?? null, n?.id ?? null),
-    [graph, nodeSchemas, samples, n?.id],
-  );
+  const dataSources = useMemo(() => {
+    const fromCatalog = dataSourcesFromCatalog(dataCatalog, n?.id ?? null);
+    if (fromCatalog.length > 0) return fromCatalog;
+    return buildDataSources(graph, nodeSchemas ?? null, samples ?? null, n?.id ?? null);
+  }, [dataCatalog, graph, nodeSchemas, samples, n?.id]);
   const [tab, setTab] = useState<"config" | "input" | "output" | "run">("config");
   const runStep = useMemo<RunStep | null>(
     () => (node ? (run?.steps ?? []).find((s) => s.node_id === node.id) ?? null : null),

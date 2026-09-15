@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDataSources } from "./dataPicker";
+import { buildDataSources, dataSourcesFromCatalog, type DataCatalogPayload } from "./dataPicker";
 import type { NodeBusinessSchema } from "./businessSchema";
 import type { WorkflowGraph } from "./workflowGraph";
 
@@ -71,5 +71,62 @@ describe("buildDataSources", () => {
     const sources = buildDataSources(graph, schemas, null, "q");
     expect(sources.some((s) => s.id === "q")).toBe(false);
     expect(sources.some((s) => s.id === "t")).toBe(false);
+  });
+});
+
+const CATALOG: DataCatalogPayload = {
+  workflow_id: "w1",
+  run_id: "r1",
+  sources: [
+    {
+      id: "trigger",
+      kind: "trigger",
+      label: "Cuando ocurre el evento",
+      fields: [
+        { key: "message", label: "Mensaje recibido", ref: "{{trigger.message}}", type: "text", sample: "hola" },
+        { key: "extra", label: "Extra", ref: "{{trigger.extra}}" },
+      ],
+    },
+    {
+      id: "q",
+      kind: "node",
+      label: "Consulta de datos",
+      node_type: "query_business_data",
+      context_writes: ["data"],
+      fields: [
+        { key: "rows.0.producto", label: "Producto", ref: "{{nodes.q.output.rows.0.producto}}", type: "text", sample: "MacBook" },
+      ],
+    },
+    { id: "n", kind: "node", label: "Avisar", fields: [] },
+  ],
+};
+
+describe("dataSourcesFromCatalog", () => {
+  it("mapea fuentes del backend y conserva refs/samples", () => {
+    const sources = dataSourcesFromCatalog(CATALOG);
+    expect(sources.map((s) => s.id)).toEqual(["trigger", "q"]);
+    const query = sources.find((s) => s.id === "q");
+    expect(query?.label).toBe("Consulta de datos");
+    expect(query?.kind).toBe("node");
+    expect(query?.fields[0]).toEqual({
+      key: "rows.0.producto",
+      label: "Producto",
+      ref: "{{nodes.q.output.rows.0.producto}}",
+      type: "text",
+      sample: "MacBook",
+    });
+  });
+
+  it("excluye el nodo seleccionado y normaliza tipo ausente", () => {
+    const sources = dataSourcesFromCatalog(CATALOG, "q");
+    expect(sources.some((s) => s.id === "q")).toBe(false);
+    const trigger = sources.find((s) => s.id === "trigger");
+    expect(trigger?.fields[0].type).toBe("text");
+    expect(trigger?.fields[1].type).toBe("text");
+  });
+
+  it("devuelve [] sin payload", () => {
+    expect(dataSourcesFromCatalog(null)).toEqual([]);
+    expect(dataSourcesFromCatalog({ workflow_id: "w", sources: [] })).toEqual([]);
   });
 });

@@ -563,6 +563,26 @@ async def tenant_workflow_sample_outputs(workflow_id: str, request: Request, run
     return result
 
 
+@router.get(
+    "/{workflow_id}/data-catalog",
+    summary="Datos disponibles del grafo para el Data Picker",
+)
+async def tenant_workflow_data_catalog(workflow_id: str, request: Request, run_id: str | None = None):
+    from src.platform.rbac.policy import require_permission
+    from src.platform.workflows.data_catalog import workflow_data_catalog
+
+    ctx = require_permission(request, "workflows:read")
+    result = await workflow_data_catalog(
+        ctx.organization_id,
+        UUID(workflow_id),
+        workspace_id=await _workspace_id(request),
+        run_id=UUID(run_id) if run_id else None,
+    )
+    if result is None:
+        raise HTTPException(404, "Workflow not found")
+    return result
+
+
 @router.get("/{workflow_id}/readiness", summary="Checklist de negocio antes de publicar")
 async def tenant_workflow_readiness(workflow_id: str, request: Request):
     from src.platform.rbac.policy import require_permission

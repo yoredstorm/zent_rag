@@ -29,6 +29,30 @@ export type NodeSamples = {
   nodes?: Record<string, { node_type?: string; status?: string; output?: Record<string, unknown> }>;
 };
 
+/** Catálogo backend de datos (`GET /workflows/{id}/data-catalog`). */
+export type DataCatalogField = {
+  key: string;
+  label: string;
+  ref: string;
+  type?: string;
+  sample?: unknown;
+};
+
+export type DataCatalogSource = {
+  id: string;
+  label: string;
+  kind: "trigger" | "node";
+  node_type?: string;
+  fields?: DataCatalogField[];
+  context_writes?: string[];
+};
+
+export type DataCatalogPayload = {
+  workflow_id: string;
+  run_id?: string | null;
+  sources: DataCatalogSource[];
+};
+
 const TRIGGER_DEFAULTS: DataFieldOption[] = [
   { key: "message", label: "Mensaje recibido", ref: "{{trigger.message}}", type: "text" },
   { key: "query", label: "Consulta recibida", ref: "{{trigger.query}}", type: "text" },
@@ -143,6 +167,28 @@ export function buildDataSources(
     ];
     if (fields.length === 0 && !output) continue;
     sources.push({ id: node.id, label, kind: "node", fields });
+  }
+  return sources;
+}
+
+/** Normaliza el catálogo backend al shape del Data Picker. */
+export function dataSourcesFromCatalog(
+  payload: DataCatalogPayload | null | undefined,
+  excludeNodeId?: string | null,
+): DataSourceOption[] {
+  if (!payload?.sources?.length) return [];
+  const sources: DataSourceOption[] = [];
+  for (const source of payload.sources) {
+    if (source.kind === "node" && source.id === excludeNodeId) continue;
+    const fields = (source.fields ?? []).map((field) => ({
+      key: field.key,
+      label: field.label,
+      ref: field.ref,
+      type: field.type ?? "text",
+      sample: samplePreview(field.sample),
+    }));
+    if (fields.length === 0 && source.kind !== "trigger") continue;
+    sources.push({ id: source.id, label: source.label, kind: source.kind, fields });
   }
   return sources;
 }
