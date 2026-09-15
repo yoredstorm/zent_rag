@@ -112,7 +112,13 @@ def _parse_json_object(text: str) -> dict[str, Any] | None:
 
 def _capability_hints(capabilities: dict[str, Any] | None) -> str:
     caps = capabilities or {}
-    agents = sorted({v["name"] for v in caps.get("agents", {}).values() if isinstance(v, dict)})
+    agents = sorted(
+        {
+            str(v.get("name"))
+            for v in caps.get("agents", {}).values()
+            if isinstance(v, dict) and v.get("name")
+        }
+    )
     # knowledge_bases indexa id→id y nombre→id; mostramos solo los nombres reales.
     kb_names = [k for k, v in caps.get("knowledge_bases", {}).items() if k != v]
     events = caps.get("event_types") or []
@@ -141,7 +147,14 @@ async def extract_intent_with_llm(
     capabilities: dict[str, Any] | None = None,
 ) -> WorkflowIntent:
     hints = _capability_hints(capabilities)
-    system = INTENT_SYSTEM_PROMPT + (f"\nContexto del tenant:\n{hints}\n" if hints else "")
+    from src.platform.workflows.node_catalog import planner_hints
+
+    catalog_block = planner_hints(capabilities)
+    system = INTENT_SYSTEM_PROMPT
+    if hints:
+        system += f"\nContexto del tenant:\n{hints}\n"
+    if catalog_block:
+        system += f"\n{catalog_block}\n"
     response = await provider.generate(
         prompt=prompt,
         model=model,

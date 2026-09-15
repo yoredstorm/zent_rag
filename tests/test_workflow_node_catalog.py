@@ -123,6 +123,55 @@ def test_metadata_for_returns_copy() -> None:
     assert metadata_for("no_existe") == {}
 
 
+def test_planner_hints_include_catalog_and_unavailable() -> None:
+    from src.platform.workflows.node_catalog import planner_hints
+
+    hints = planner_hints({})
+    assert "Nodos disponibles (catálogo backend):" in hints
+    assert "- condition:" in hints
+    assert "No disponibles ahora" in hints
+    assert "llm: No hay agentes disponibles" in hints
+    assert "query_business_data: No hay una base de datos" in hints
+
+    full = {
+        "agents": {"a": {}},
+        "knowledge_bases": {"k": "k"},
+        "actions": {"peru.taxpayer.lookup": {}},
+        "managed_db": True,
+    }
+    hints_full = planner_hints(full)
+    assert "No disponibles ahora" not in hints_full
+    assert "- kb_query:" in hints_full
+    assert "- query_business_data:" in hints_full
+
+
+@pytest.mark.asyncio
+async def test_extract_intent_uses_backend_catalog_hints() -> None:
+    from types import SimpleNamespace
+
+    from src.platform.workflows.copilot_v2 import extract_intent_with_llm
+
+    captured: dict = {}
+
+    class _Provider:
+        async def generate(self, **kwargs):  # noqa: ANN003
+            captured.update(kwargs)
+            return SimpleNamespace(content='{"name": "Test", "trigger": {"kind": "manual"}}')
+
+    capabilities = {
+        "agents": {"a": {}},
+        "knowledge_bases": {"k": "k"},
+        "actions": {},
+        "managed_db": True,
+    }
+    intent = await extract_intent_with_llm("avísame de ventas", _Provider(), capabilities=capabilities)
+    assert intent.name == "Test"
+    system = str(captured.get("system_prompt") or "")
+    assert "Nodos disponibles (catálogo backend):" in system
+    assert "- query_business_data:" in system
+    assert "No disponibles ahora" in system  # marketplace_action sin integraciones
+
+
 def test_merger_rejects_writes_when_context_writes_is_empty() -> None:
     context = WorkflowContext(
         identity=WorkflowIdentity(organization_id=uuid4(), workflow_id=uuid4(), run_id=uuid4()),

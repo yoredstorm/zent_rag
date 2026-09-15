@@ -499,6 +499,44 @@ def semantic_metadata(node_type: str) -> dict[str, Any]:
     return metadata_for(node_type)
 
 
+def planner_hints(capabilities: dict[str, Any] | None = None) -> str:
+    """Bloque compacto del catálogo backend para el planner IA.
+
+    Incluye qué nodo usar, cuándo, y (si hay capabilities) qué nodos no están
+    disponibles ahora para el tenant.
+    """
+    unavailable: list[str] = []
+    unavailable_types: set[str] = set()
+    if capabilities is not None:
+        try:
+            from src.platform.workflows.nodes import registry
+
+            for node_def in registry.all():
+                available, reason = catalog_availability(node_def, capabilities)
+                if not available and reason:
+                    unavailable.append(f"{node_def.node_type}: {reason}")
+                    unavailable_types.add(node_def.node_type)
+        except Exception:  # noqa: BLE001 — hints nunca rompen el copilot
+            unavailable = []
+            unavailable_types = set()
+
+    lines: list[str] = []
+    for node_type, meta in NODE_METADATA.items():
+        if node_type in unavailable_types:
+            continue
+        name = str(meta.get("business_name") or node_type)
+        when = meta.get("when_to_use") or ()
+        hint = str(when[0]) if when else str(meta.get("short_description") or "")
+        lines.append(f"- {node_type}: {name}. {hint}".strip())
+
+    parts: list[str] = []
+    if lines:
+        parts.append("Nodos disponibles (catálogo backend):\n" + "\n".join(lines))
+    if unavailable:
+        parts.append("No disponibles ahora en este tenant: " + "; ".join(unavailable[:10]))
+    return "\n".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # Catálogo autorizado/disponible por tenant (Fase 4)
 # ---------------------------------------------------------------------------
@@ -623,5 +661,6 @@ __all__ = [
     "build_node_catalog",
     "catalog_availability",
     "metadata_for",
+    "planner_hints",
     "semantic_metadata",
 ]
