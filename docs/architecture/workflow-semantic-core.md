@@ -1,6 +1,6 @@
 # Zent Workflow Semantic Core — Phase 0 Architecture Audit
 
-> **Status:** Phase 0 (auditoría) completa. D1–D4, D7–D8 confirmadas (2026-09-14). **Programa completo: Fases 1–8 implementadas** (contexto + contribuciones; valores y provenance; metadata semántica; catálogo backend; portal dinámico; DataReference + Data Catalog; evidencia y persistencia; Execution Inspector). D5–D6 quedan como mejoras opcionales.
+> **Status:** Phase 0 (auditoría) completa. D1–D4, D6–D8 confirmadas/implementadas (2026-09-14). **Programa completo: Fases 1–8 + bloque 8.1** (contexto + contribuciones; valores y provenance; metadata semántica; catálogo backend; portal dinámico; DataReference + Data Catalog; evidencia y persistencia; Execution Inspector; hidratación resume/parcial; planner IA sobre catálogo; validación de refs pre-LLM; timeline de eventos; alineación portal). D5 (entidades) queda como mejora opcional.
 > **Fecha:** 2026-09-14
 > **Base:** `feat/knowledge-cognitive-os` @ `3efd894` (más cambios locales de trabajo no relacionados).
 > **Programa:** convertir el Workflow en el orquestador semántico central de Zent.
@@ -709,6 +709,15 @@ y `portal/src/components/WorkflowRunInspector.test.tsx` (2).
 del agente (data/knowledge/evidence, sin `security`), evidencia real del ledger con validación por tenant, decisiones/acciones en el inspector y
 ausencia de pegamento manual de strings. Fix de soporte: `ContextMerger._wrap` ahora conserva la `provenance` declarada por el nodo.
 
+**Fase 8.1 entregada (2026-09-14)** — cierre de deuda posterior al programa:
+- Hidratación de contexto en resume (contribuciones persistidas, idempotente) y en runs parciales (seed desde la proyección del run fuente);
+  `write_key` persistido para slots. Antes, `workflow_run_contexts` podía perder evidencia/artefactos al reanudar.
+- Planner IA consume el catálogo: `planner_hints()` inyecta semántica de nodos + disponibilidad del tenant en el prompt del copilot.
+- Validación de refs de evidencia/claims **antes del prompt** del agente (`validate_context_refs`, fail-closed).
+- D6: `workflow_run_events` append-only (migración 116) con `run_started`, `node_finished`, `context_rejected`, `run_finished`; el inspector
+  expone `events` (sin CoT).
+- Portal: labels de categoría desde `GET /node-catalog`, `referenceOptions` alineado a los contratos reales de salida.
+
 ### Primer test end-to-end (brief §20)
 
 `tests/test_workflow_semantic_core.py`:
@@ -756,6 +765,6 @@ Confirmadas 2026-09-14: **D1, D2, D3**. Las demás siguen abiertas y se confirma
 | D3 | ¿Snapshot materializado por run o solo contribuciones? | **CONFIRMADA**: ambas. `workflow_context_contributions` append-only + `workflow_run_contexts` proyección reconstruible |
 | D4 | `kb_query` V2 dentro del nodo | **CONFIRMADA**: detrás de `RAG_KNOWLEDGE_V2_ENABLED`; V1 intacto si el flag está apagado |
 | D5 | Entity refs en Fase 7 | pendiente (opcional): no se implementó; el contexto soporta `entity_refs`, se activará cuando exista identidad canónica en uso real |
-| D6 | `workflow_run_events` | pendiente (opcional): el inspector deriva de steps + contribuciones + proyección del run |
+| D6 | `workflow_run_events` | **CONFIRMADA e implementada** (Fase 8.1): timeline append-only (migración 116), expuesto en el inspector |
 | D7 | Nombre del endpoint: `node-catalog` | **CONFIRMADA e implementada** (Fase 4): `GET /api/v1/workflows/node-catalog` |
 | D8 | `workflow_version` del IR | **CONFIRMADA**: no se subió a 3; el IR sigue v2 |
