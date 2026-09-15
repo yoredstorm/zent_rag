@@ -278,7 +278,11 @@ def test_structured_agent_output_produces_decision_contribution() -> None:
     assert result.contribution is not None
     first = result.contribution.writes[0]
     assert first.section == "decisions"
-    assert first.value == {"risk": "high", "reason": "cliente moroso", "recommendation": "revisar crédito"}
+    assert first.value["risk"] == "high"
+    assert first.value["reason"] == "cliente moroso"
+    assert first.value["recommendation"] == "revisar crédito"
+    assert first.value["decision_result"]["decision"] == "high"
+    assert first.value["decision_result"]["status"] == "ok"
 
     report = ContextMerger().apply(
         context, node_id="riesgo", node_type="llm", contribution=result.contribution
