@@ -177,6 +177,7 @@ async def test_extract_facts_persists_proposed_claims(async_client: AsyncClient)
     assert output["claims"], output
     assert output["claims"][0]["status"] == "proposed"
     assert output["entities"]
+    assert output["entities"][0]["resolution"] == "label_only"
     assert output["evidence_ids"]
     assert output["facts"]
 

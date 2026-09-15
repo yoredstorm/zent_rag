@@ -34,12 +34,12 @@ from tests.test_workflows import _create_org, _headers, _owner_session
 
 # Contribuciones que los handlers emiten hoy (deben estar declaradas).
 EXPECTED_CONTRIBUTIONS: dict[str, set[str]] = {
-    "kb_query": {"knowledge"},
+    "kb_query": {"knowledge", "entities"},
     "query_business_data": {"data"},
     "api_call": {"data"},
     "marketplace_action": {"data", "evidence"},
-    "business_node": {"data", "evidence"},
-    "business_result": {"artifacts"},
+    "business_node": {"data", "evidence", "entities"},
+    "business_result": {"artifacts", "entities"},
     "llm": {"decisions", "findings"},
 }
 

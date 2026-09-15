@@ -425,3 +425,10 @@ Tests: `WorkflowContextPanel.test.tsx` (2).
   evidencia → approve → notify), E2E 2 contrato vs política (compare + conflicts → condition → agente legal → notify) y E2E 3 diario
   (schedule → datos → conocimiento → agente → business_result → notify simulada), con narrativa verificada.
 Tests: `tests/test_workflow_narrative.py` (2) + E2E (3).
+
+**D5 entregado (2026-09-14)** — entidades con identidad canónica existente:
+- `entities.py`: `resolve_entity_ref` consulta `CanonicalKnowledgeRepository.get_by_natural_key(..., CanonicalKind.ENTITY, entity_natural_key(label, kind))`;
+  encontrada → `resolution="canonical"` + `canonical_id`; si no o si falla → `resolution="label_only"` (nunca IDs inventados).
+- Productores: `extract_facts` (party → organization, resto concept), `business_result` y `business_node` (config `entities` string/dict) contribuyen
+  la sección `entities` (declarada en `context_writes`). Cero registros paralelos.
+Tests: `tests/test_workflow_entities.py` (3) + aserción de resolución en facts.

@@ -764,7 +764,7 @@ Confirmadas 2026-09-14: **D1, D2, D3**. Las demás siguen abiertas y se confirma
 | D2 | Persistir contribuciones desde Fase 1 o Fase 7 | **CONFIRMADA**: Fase 7. Fase 1 valida el modelo en memoria con tests; migración 115 en Fase 7 |
 | D3 | ¿Snapshot materializado por run o solo contribuciones? | **CONFIRMADA**: ambas. `workflow_context_contributions` append-only + `workflow_run_contexts` proyección reconstruible |
 | D4 | `kb_query` V2 dentro del nodo | **CONFIRMADA**: detrás de `RAG_KNOWLEDGE_V2_ENABLED`; V1 intacto si el flag está apagado |
-| D5 | Entity refs en Fase 7 | pendiente (opcional): no se implementó; el contexto soporta `entity_refs`, se activará cuando exista identidad canónica en uso real |
+| D5 | Entity refs en Fase 7 | **CONFIRMADA e implementada (bloque de cierre)**: `resolve_entity_ref` contra `CanonicalKnowledgeRepository` (kind=ENTITY); si no existe queda label-only sin inventar IDs. Productores: `extract_facts`, `business_result`, `business_node` |
 | D6 | `workflow_run_events` | **CONFIRMADA e implementada** (Fase 8.1): timeline append-only (migración 116), expuesto en el inspector |
 | D7 | Nombre del endpoint: `node-catalog` | **CONFIRMADA e implementada** (Fase 4): `GET /api/v1/workflows/node-catalog` |
 | D8 | `workflow_version` del IR | **CONFIRMADA**: no se subió a 3; el IR sigue v2 |

@@ -18,6 +18,7 @@ from src.infrastructure.observability.logging_config import get_logger
 from src.platform.workflows.context import WorkflowContext
 from src.platform.workflows.contributions import ContextWrite, NodeContribution
 from src.platform.workflows.decisions import DecisionResult
+from src.platform.workflows.entities import resolve_entity_ref
 from src.platform.workflows.node_catalog import semantic_metadata
 from src.platform.workflows.output_presets import resolve_output_schema
 from src.platform.workflows.values import jsonable, node_provenance
@@ -221,6 +222,66 @@ async def _run_with_permission(rctx: NodeContext, perm: str, coro: Awaitable[Nod
 # ---------------------------------------------------------------------------
 # Contribuciones de contexto (Fase 2) — builders puros y testables.
 # ---------------------------------------------------------------------------
+def _entity_writes(rctx: NodeContext, refs: list[dict[str, Any]] | None) -> list[ContextWrite]:
+    writes: list[ContextWrite] = []
+    for ref in refs or []:
+        confidence = ref.get("confidence")
+        writes.append(
+            ContextWrite(
+                section="entities",
+                value=ref,
+                value_type="entity",
+                label=str(ref.get("label") or "")[:160],
+                provenance=node_provenance(
+                    rctx.node_id,
+                    rctx.node.type,
+                    origin_kind="node",
+                    source_id=str(ref.get("canonical_id") or "") or None,
+                    workspace_id=rctx.workspace_id,
+                    confidence=(
+                        float(confidence)
+                        if isinstance(confidence, (int, float)) and not isinstance(confidence, bool)
+                        else None
+                    ),
+                ),
+            )
+        )
+    return writes
+
+
+async def _resolve_entity_refs(rctx: NodeContext, raw: Any) -> list[dict[str, Any]]:
+    """Resuelve labels/kinds de negocio contra la identidad canónica existente."""
+    refs: list[dict[str, Any]] = []
+    if not isinstance(raw, list):
+        return refs
+    for item in raw[:20]:
+        if isinstance(item, dict):
+            label = str(item.get("label") or item.get("name") or "").strip()
+            kind = str(item.get("kind") or "entity")
+            entity_id = str(item.get("id") or item.get("entity_id") or "") or None
+            confidence = item.get("confidence")
+        else:
+            label, kind, entity_id = str(item or "").strip(), "entity", None
+            confidence = None
+        if not label:
+            continue
+        ref = await resolve_entity_ref(
+            rctx.organization_id,
+            kind=kind,
+            label=label,
+            entity_id=entity_id,
+            source_node_id=rctx.node_id,
+            confidence=(
+                float(confidence)
+                if isinstance(confidence, (int, float)) and not isinstance(confidence, bool)
+                else None
+            ),
+        )
+        if ref:
+            refs.append(ref)
+    return refs
+
+
 def _kb_query_contribution(
     rctx: NodeContext,
     *,
@@ -230,6 +291,7 @@ def _kb_query_contribution(
     evidence_ids: list[str] | None = None,
     citations: list[dict] | None = None,
     claim_ids: list[str] | None = None,
+    entities: list[dict] | None = None,
     extra: dict[str, Any] | None = None,
 ) -> NodeContribution:
     value: dict[str, Any] = {
@@ -292,6 +354,7 @@ def _kb_query_contribution(
                 ),
             )
         )
+    writes.extend(_entity_writes(rctx, entities))
     return NodeContribution(writes=tuple(writes))
 
 
@@ -411,7 +474,12 @@ def _marketplace_contribution(
 
 
 def _business_node_contribution(
-    rctx: NodeContext, *, title: str, outputs: dict[str, Any], evidence_ids: list[str]
+    rctx: NodeContext,
+    *,
+    title: str,
+    outputs: dict[str, Any],
+    evidence_ids: list[str],
+    entities: list[dict[str, Any]] | None = None,
 ) -> NodeContribution:
     action_outputs = {
         key: value for key, value in outputs.items() if str(key).startswith("action_")
@@ -447,10 +515,13 @@ def _business_node_contribution(
                 ),
             )
         )
+    writes.extend(_entity_writes(rctx, entities))
     return NodeContribution(writes=tuple(writes))
 
 
-def _business_result_contribution(rctx: NodeContext, *, result_id: str, title: str) -> NodeContribution:
+def _business_result_contribution(
+    rctx: NodeContext, *, result_id: str, title: str, entities: list[dict[str, Any]] | None = None
+) -> NodeContribution:
     write = ContextWrite(
         section="artifacts",
         value={"id": result_id, "title": title, "kind": "business_result"},
@@ -464,7 +535,9 @@ def _business_result_contribution(rctx: NodeContext, *, result_id: str, title: s
             workspace_id=rctx.workspace_id,
         ),
     )
-    return NodeContribution(writes=(write,))
+    writes = [write]
+    writes.extend(_entity_writes(rctx, entities))
+    return NodeContribution(writes=tuple(writes))
 
 
 def _citation_dict(citation: Any) -> dict[str, Any]:
@@ -967,7 +1040,14 @@ async def _kb_query_extract_facts(
         entity_key = _normalize_claim_text(key)
         if entity_key and entity_key not in seen_entities:
             seen_entities.add(entity_key)
-            entities.append({"kind": "concept", "label": key[:120]})
+            entity = await resolve_entity_ref(
+                rctx.organization_id,
+                kind="organization" if fact_type == "party" else "concept",
+                label=key,
+                source_node_id=rctx.node_id,
+            )
+            if entity:
+                entities.append(entity)
 
     status = KB_STATUS_OK if claims_out else KB_STATUS_INSUFFICIENT
     output = {
@@ -999,6 +1079,7 @@ async def _kb_query_extract_facts(
             evidence_ids=evidence_ids,
             citations=citations,
             claim_ids=claim_ids,
+            entities=entities,
             extra={
                 "operation": "extract_facts",
                 "status": status,
@@ -3136,11 +3217,14 @@ async def _exec_business_node(rctx: NodeContext) -> NodeOutcome:
 
     outputs["evidence_ids"] = evidence_ids
     outputs["total_cost"] = total_cost
+    entity_refs = await _resolve_entity_refs(rctx, (br or {}).get("entities") or [])
+    if entity_refs:
+        outputs["entities"] = entity_refs
     return NodeOutcome(
         output=outputs,
         cost_ms=total_cost,
         contribution=_business_node_contribution(
-            rctx, title=title, outputs=outputs, evidence_ids=evidence_ids
+            rctx, title=title, outputs=outputs, evidence_ids=evidence_ids, entities=entity_refs
         ),
     )
 
@@ -3192,9 +3276,15 @@ async def _exec_business_result(rctx: NodeContext) -> NodeOutcome:
     except BusinessResultError as exc:
         return NodeOutcome(error=str(exc))
     result_id = str(saved["result_id"])
+    entity_refs = await _resolve_entity_refs(rctx, entities)
+    output = {"result_id": result_id, "importance": saved["importance"]}
+    if entity_refs:
+        output["entities"] = entity_refs
     return NodeOutcome(
-        output={"result_id": result_id, "importance": saved["importance"]},
-        contribution=_business_result_contribution(rctx, result_id=result_id, title=title),
+        output=output,
+        contribution=_business_result_contribution(
+            rctx, result_id=result_id, title=title, entities=entity_refs
+        ),
     )
 
 
