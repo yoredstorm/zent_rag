@@ -141,6 +141,8 @@ class NodeContext:
     cached: dict[str, dict[str, Any]] = field(default_factory=dict)  # resume/approval
     legacy_index_map: dict[str, str] = field(default_factory=dict)  # steps.N → node id
     context: WorkflowContext | None = None  # contexto compartido del run (Fase 1)
+    node_labels: dict[str, str] = field(default_factory=dict)  # node_id → label visible (Fase 5)
+    node_types: dict[str, str] = field(default_factory=dict)  # node_id → node_type (Fase 5)
 
     @property
     def organization_id(self) -> UUID:
@@ -2508,6 +2510,19 @@ async def _exec_for_each(rctx: NodeContext) -> NodeOutcome:
     max_iter = min(max(int(cfg.get("max_iterations", 100) or 100), 1), 500)
     concurrency = min(max(int(cfg.get("concurrency", 1) or 1), 1), 16)
     fail_policy = str(cfg.get("fail_policy", "fail"))
+    expensive_types = {"llm", "kb_query", "human_approval", "marketplace_action", "api_call"}
+    expensive_nodes = [
+        node_id for node_id in branch if rctx.node_types.get(node_id) in expensive_types
+    ]
+    warnings: list[dict[str, Any]] = []
+    if expensive_nodes:
+        warnings.append(
+            {
+                "code": "expensive_branch",
+                "message": "La rama usa agentes o conocimiento: el costo crece por ítem.",
+                "nodes": expensive_nodes[:10],
+            }
+        )
     if rctx.run_branch is None:
         return NodeOutcome(error="for_each sin subgrafo (run_branch no disponible)")
     items = collection[:max_iter]
@@ -2539,7 +2554,7 @@ async def _exec_for_each(rctx: NodeContext) -> NodeOutcome:
     if errors and fail_policy == "fail":
         return NodeOutcome(
             error=f"for_each falló en {len(errors)} ítems",
-            output={"processed": len(outcomes), "errors": errors[:20]},
+            output={"processed": len(outcomes), "errors": errors[:20], "warnings": warnings},
         )
     return NodeOutcome(
         output={
@@ -2547,18 +2562,200 @@ async def _exec_for_each(rctx: NodeContext) -> NodeOutcome:
             "results": outcomes,
             "errors": errors[:50],
             "duration_ms": int((time.monotonic() - started) * 1000),
+            "warnings": warnings,
+            "billable_calls_estimate": len(expensive_nodes) * len(items),
         }
     )
 
 
+def _branch_results(rctx: NodeContext) -> dict[str, dict[str, Any]]:
+    """Resultados de predecesores por node_id: {node_id: {output, status}}."""
+    results: dict[str, dict[str, Any]] = {}
+    for nodes in rctx.inputs.values():
+        if not isinstance(nodes, dict):
+            continue
+        for from_node, execution in nodes.items():
+            output = getattr(execution, "output", None)
+            status = str(getattr(execution, "status", "") or "")
+            if output is None and isinstance(execution, dict):
+                output = execution.get("output")
+                status = str(execution.get("status") or status)
+            results[str(from_node)] = {"output": dict(output or {}), "status": status}
+    return results
+
+
+def _branch_name(rctx: NodeContext, node_id: str, used: set[str]) -> str:
+    name = str(rctx.node_labels.get(node_id) or rctx.node_types.get(node_id) or node_id)
+    base = name.strip() or node_id
+    name = base
+    suffix = 2
+    while name in used:
+        name = f"{base} {suffix}"
+        suffix += 1
+    return name
+
+
 async def _exec_join(rctx: NodeContext) -> NodeOutcome:
-    values = {k: v.get("output") for k, v in rctx.inputs.items() if isinstance(v, dict)}
-    return NodeOutcome(output={"merged": True, "values": values})
+    """Une ramas con nombres de negocio (label → tipo → id), sin posiciones."""
+    results = _branch_results(rctx)
+    overrides = rctx.node.config.get("branch_labels")
+    overrides = overrides if isinstance(overrides, dict) else {}
+    used: set[str] = set()
+    branches: dict[str, Any] = {}
+    for node_id, entry in results.items():
+        custom = str(overrides.get(node_id) or "").strip()
+        name = custom or _branch_name(rctx, node_id, used)
+        base = name
+        suffix = 2
+        while name in used:
+            name = f"{base} {suffix}"
+            suffix += 1
+        used.add(name)
+        branches[name] = entry["output"]
+    values = {node_id: entry["output"] for node_id, entry in results.items()}
+    output = {
+        "merged": True,
+        "branches": branches,
+        "values": values,
+        "branch_order": list(branches),
+    }
+    contribution = ContextWrite(
+        section="data",
+        key=rctx.node_id,
+        value={"branches": branches, "values": values},
+        value_type="record",
+        label=str(rctx.node.label or "Unión"),
+        provenance=node_provenance(
+            rctx.node_id, "join", origin_kind="node", workspace_id=rctx.workspace_id
+        ),
+    )
+    return NodeOutcome(output=output, contribution=NodeContribution(writes=(contribution,)))
+
+
+_MERGE_STRATEGIES = ("first_available", "first_success", "prefer_source", "fallback")
 
 
 async def _exec_merge(rctx: NodeContext) -> NodeOutcome:
-    values = {k: v.get("output") for k, v in rctx.inputs.items() if isinstance(v, dict)}
-    return NodeOutcome(output={"first": next(iter(values.values()), None), "values": values})
+    """Primer resultado con estrategia explícita (legacy: first_available)."""
+    cfg = rctx.node.config
+    strategy = str(cfg.get("strategy") or "first_available").strip().lower()
+    if strategy not in _MERGE_STRATEGIES:
+        strategy = "first_available"
+    results = _branch_results(rctx)
+    values = {node_id: entry["output"] for node_id, entry in results.items()}
+    selected_from: str | None = None
+    if results:
+        if strategy == "first_success":
+            selected_from = next(
+                (
+                    node_id
+                    for node_id, entry in results.items()
+                    if entry["status"] in ("succeeded", "simulated", "approved")
+                ),
+                None,
+            )
+        elif strategy == "prefer_source":
+            preferred = str(cfg.get("source_node_id") or "").strip()
+            if preferred and preferred in results:
+                selected_from = preferred
+        elif strategy == "fallback":
+            for candidate in cfg.get("sources") or []:
+                if str(candidate) in results:
+                    selected_from = str(candidate)
+                    break
+        if selected_from is None:
+            selected_from = next(iter(results))
+    first = results.get(selected_from, {}).get("output") if selected_from else None
+    output = {
+        "first": first,
+        "values": values,
+        "strategy": strategy,
+        "selected_from": selected_from,
+        "selected_label": (
+            rctx.node_labels.get(selected_from or "", selected_from) if selected_from else None
+        ),
+    }
+    contribution = ContextWrite(
+        section="data",
+        key=rctx.node_id,
+        value={"selected_from": selected_from, "strategy": strategy, "branches": list(values)},
+        value_type="record",
+        label=str(rctx.node.label or "Primer resultado"),
+        provenance=node_provenance(
+            rctx.node_id, "merge", origin_kind="node", workspace_id=rctx.workspace_id
+        ),
+    )
+    return NodeOutcome(output=output, contribution=NodeContribution(writes=(contribution,)))
+
+
+async def _exec_filter(rctx: NodeContext) -> NodeOutcome:
+    """Filtra listas tipadas con una o varias condiciones (AND/OR)."""
+    cfg = rctx.node.config
+    items = _resolve_ref(cfg.get("items", []), rctx)
+    if not isinstance(items, list) and isinstance(items, str) and items.strip().startswith("["):
+        try:
+            parsed = json.loads(items)
+            if isinstance(parsed, list):
+                items = parsed
+        except (TypeError, ValueError):
+            pass
+    from src.platform.workflows.engine import _eval_condition as _eval
+
+    if not isinstance(items, list):
+        return NodeOutcome(output={"filtered": [], "count": 0, "total": 0})
+    raw_rules = cfg.get("conditions")
+    rules: list[tuple[str, str, Any]] = []
+    if isinstance(raw_rules, list) and raw_rules:
+        for rule in raw_rules:
+            if not isinstance(rule, dict):
+                continue
+            rules.append(
+                (
+                    str(rule.get("field") or ""),
+                    str(rule.get("operator") or "=="),
+                    _resolve_ref(rule.get("value", None), rctx),
+                )
+            )
+    if not rules:
+        rules = [
+            (
+                str(cfg.get("field") or ""),
+                str(cfg.get("operator", "==")),
+                _resolve_ref(cfg.get("value", None), rctx),
+            )
+        ]
+    combine = str(cfg.get("op") or "and").strip().lower()
+    if combine not in ("and", "or"):
+        combine = "and"
+
+    def _matches(item: Any) -> bool:
+        checks = [
+            _eval(_field_of(item, field), operator, value)
+            for field, operator, value in rules
+        ]
+        return all(checks) if combine == "and" else any(checks)
+
+    kept = [item for item in items if _matches(item)]
+    output = {
+        "filtered": kept,
+        "count": len(kept),
+        "total": len(items),
+        "conditions": [
+            {"field": field, "operator": operator} for field, operator, _ in rules
+        ],
+        "op": combine,
+    }
+    contribution = ContextWrite(
+        section="data",
+        key=rctx.node_id,
+        value={"count": len(kept), "total": len(items), "op": combine},
+        value_type="record",
+        label=str(rctx.node.label or "Filtrar"),
+        provenance=node_provenance(
+            rctx.node_id, "filter", origin_kind="node", workspace_id=rctx.workspace_id
+        ),
+    )
+    return NodeOutcome(output=output, contribution=NodeContribution(writes=(contribution,)))
 
 
 async def _exec_set_variable(rctx: NodeContext) -> NodeOutcome:
@@ -2569,20 +2766,6 @@ async def _exec_set_variable(rctx: NodeContext) -> NodeOutcome:
     value = _resolve_ref(cfg.get("value", None), rctx)
     rctx.variables[name] = value
     return NodeOutcome(output={"variable": name, "value": value})
-
-
-async def _exec_filter(rctx: NodeContext) -> NodeOutcome:
-    cfg = rctx.node.config
-    items = _resolve_ref(cfg.get("items", []), rctx)
-    field = str(cfg.get("field") or "")
-    operator = str(cfg.get("operator", "=="))
-    value = _resolve_ref(cfg.get("value", None), rctx)
-    from src.platform.workflows.engine import _eval_condition as _eval
-
-    if not isinstance(items, list):
-        return NodeOutcome(output={"filtered": []})
-    kept = [it for it in items if _eval(_field_of(it, field), operator, value)]
-    return NodeOutcome(output={"filtered": kept, "count": len(kept), "total": len(items)})
 
 
 def _field_of(item: Any, field: str) -> Any:

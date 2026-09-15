@@ -566,6 +566,13 @@ def _register(registry: dict[str, NodeBusinessSchema]) -> None:
             [
                 _p("collection", "Lista", "data_reference", required=True, data_source="record_list"),
                 _p("max_iterations", "Máximo de iteraciones", "number", min_level="guided", default=100),
+                _p(
+                    "expected_items",
+                    "Ítems esperados (para costo)",
+                    "number",
+                    min_level="guided",
+                    help="Estimación para el presupuesto; la rama se avisa si usa agentes o conocimiento.",
+                ),
                 _p("concurrency", "Concurrencia", "number", min_level="advanced", default=1),
                 _p(
                     "fail_policy",
@@ -581,19 +588,47 @@ def _register(registry: dict[str, NodeBusinessSchema]) -> None:
                     },
                 ),
             ],
-            [_out("items_processed", "Procesados", "number"), _out("results", "Resultados", "json")],
+            [
+                _out("items_processed", "Procesados", "number"),
+                _out("results", "Resultados", "json"),
+                _out("warnings", "Advertencias", "json"),
+            ],
         ),
         _logic_schema(
             "filter",
             "Filtrar",
-            "Filtra una lista por una condición.",
+            "Filtra una lista con una o varias condiciones.",
             [
                 _p("items", "Lista", "data_reference", required=True, data_source="record_list"),
-                _p("field", "Campo", "text", required=True),
+                _p(
+                    "conditions",
+                    "Condiciones (JSON)",
+                    "json",
+                    min_level="guided",
+                    help='Lista: [{"field":"estado","operator":"==","value":"activo"}].',
+                ),
+                _p("field", "Campo (condición simple)", "text", data_source="any"),
                 _p("operator", "Cumple que", "enum", validation={"options": _OPERATOR_OPTIONS}, default="=="),
                 _p("value", "Valor", "text", data_source="any"),
+                _p(
+                    "op",
+                    "Combinar con",
+                    "enum",
+                    min_level="guided",
+                    default="and",
+                    validation={
+                        "options": [
+                            {"value": "and", "label": "Todas"},
+                            {"value": "or", "label": "Alguna"},
+                        ]
+                    },
+                ),
             ],
-            [_out("filtered", "Resultados", "record_list"), _out("count", "Cantidad", "number")],
+            [
+                _out("filtered", "Resultados", "record_list"),
+                _out("count", "Cantidad", "number"),
+                _out("total", "Total", "number"),
+            ],
         ),
         _logic_schema(
             "set_variable",
@@ -608,16 +643,47 @@ def _register(registry: dict[str, NodeBusinessSchema]) -> None:
         _logic_schema(
             "join",
             "Unir resultados",
-            "Espera a todos los pasos anteriores.",
-            [],
-            [_out("values", "Resultados", "json")],
+            "Espera a todos los pasos anteriores y conserva ramas con nombre.",
+            [
+                _p(
+                    "branch_labels",
+                    "Nombres de rama (JSON)",
+                    "json",
+                    min_level="advanced",
+                    help='Opcional: {"<node_id>": "Ventas"} para renombrar ramas.',
+                ),
+            ],
+            [_out("branches", "Ramas", "json"), _out("values", "Resultados", "json")],
         ),
         _logic_schema(
             "merge",
             "Primer resultado",
-            "Continúa con el primer paso que termine.",
-            [],
-            [_out("first", "Primer resultado", "json"), _out("values", "Resultados", "json")],
+            "Elige un resultado según la estrategia (primer disponible, primer éxito, preferido o respaldo).",
+            [
+                _p(
+                    "strategy",
+                    "Estrategia",
+                    "enum",
+                    min_level="guided",
+                    default="first_available",
+                    validation={
+                        "options": [
+                            {"value": "first_available", "label": "Primero que responda"},
+                            {"value": "first_success", "label": "Primero exitoso"},
+                            {"value": "prefer_source", "label": "Preferir una rama"},
+                            {"value": "fallback", "label": "Respaldo ordenado"},
+                        ]
+                    },
+                ),
+                _p("source_node_id", "Rama preferida (node_id)", "text", min_level="advanced", data_source="any"),
+                _p("sources", "Respaldo (node_ids JSON)", "json", min_level="advanced"),
+            ],
+            [
+                _out("first", "Primer resultado", "json"),
+                _out("values", "Resultados", "json"),
+                _out("strategy", "Estrategia", "text"),
+                _out("selected_from", "Origen", "text"),
+            ],
         ),
         _control_schema(
             "human_approval",

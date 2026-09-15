@@ -245,7 +245,17 @@ async def cost_estimate(organization_id: UUID, graph: dict, trigger_config: dict
         for a in m["actions"]:
             price_by_action[a["action_id"]] = a["cost"]["price"]
 
-    def walk(node_id: str, multiplier: float = 1.0, visited: set[str] | None = None) -> tuple[int, float]:
+    counters = {"agent": 0.0, "knowledge": 0.0, "cognitive": 0.0}
+    warnings: list[dict[str, str]] = []
+    warning_state = {"agent_loop": False}
+
+    def walk(
+        node_id: str,
+        multiplier: float = 1.0,
+        visited: set[str] | None = None,
+        *,
+        inside_loop: bool = False,
+    ) -> tuple[int, float]:
         visited = visited or set()
         if node_id in visited:
             return 0, 0.0
@@ -260,6 +270,23 @@ async def cost_estimate(organization_id: UUID, graph: dict, trigger_config: dict
         if ntype == "for_each":
             base = _num(cfg.get("bulk_size") or cfg.get("expected_items") or 1000)
             multiplier = multiplier * base
+            inside_loop = True
+        if ntype == "llm":
+            counters["agent"] += multiplier
+            if inside_loop and not warning_state["agent_loop"]:
+                warning_state["agent_loop"] = True
+                warnings.append(
+                    {
+                        "code": "agent_inside_loop",
+                        "message": "Hay un agente dentro de «Para cada»: se ejecuta una vez por ítem.",
+                    }
+                )
+        elif ntype == "kb_query":
+            operation = str(cfg.get("operation") or "search").strip().lower()
+            if operation in ("answer", "compare", "extract_facts"):
+                counters["knowledge"] += multiplier
+            elif operation == "investigate":
+                counters["cognitive"] += multiplier
         if ntype in ("marketplace_action", "business_node", "composite"):
             action_ids: list[str] = []
             if ntype == "marketplace_action" and cfg.get("action_id"):
@@ -272,7 +299,7 @@ async def cost_estimate(organization_id: UUID, graph: dict, trigger_config: dict
                 calls += multiplier
                 cost += price * multiplier
         for child_id in out_edges.get(node_id, []):
-            c, co = walk(child_id, multiplier, visited)
+            c, co = walk(child_id, multiplier, visited, inside_loop=inside_loop)
             calls += c
             cost += co
         return calls, cost
@@ -312,6 +339,35 @@ async def cost_estimate(organization_id: UUID, graph: dict, trigger_config: dict
     elif tc.get("cron") and re.search(r"\b0 \d{1,2} \* \* \*\b", str(tc.get("cron"))):
         monthly = 30
 
+    event_type = str(tc.get("event_type") or "")
+    trigger_kind = str(tc.get("kind") or tc.get("trigger_type") or "").lower()
+    if counters["cognitive"] > 0 and (event_type or trigger_kind in ("event", "webhook")):
+        warnings.append(
+            {
+                "code": "investigation_per_event",
+                "message": "Investigar en cada evento puede ser costoso; limita el presupuesto del nodo.",
+            }
+        )
+    every_raw = tc.get("every_minutes")
+    try:
+        every_minutes = int(every_raw) if every_raw is not None else 0
+    except (TypeError, ValueError):
+        every_minutes = 0
+    if every_minutes and every_minutes <= 15:
+        warnings.append(
+            {
+                "code": "high_frequency_schedule",
+                "message": f"El flujo corre cada {every_minutes} minutos; cada corrida consume IA.",
+            }
+        )
+    if bulk_size > 100:
+        warnings.append(
+            {
+                "code": "large_batch",
+                "message": f"Lotes de hasta {bulk_size} ítems: el costo por corrida crece.",
+            }
+        )
+
     return {
         "per_run": round(cost, 4),
         "calls_per_run": calls,
@@ -319,6 +375,10 @@ async def cost_estimate(organization_id: UUID, graph: dict, trigger_config: dict
         "runs_per_month": monthly,
         "bulk_size": bulk_size,
         "bulk_warning": calls > 0 and cost > 0 and bulk_size > 100,
+        "ai_calls_per_run": round(counters["agent"], 2),
+        "knowledge_calls_per_run": round(counters["knowledge"], 2),
+        "cognitive_calls_per_run": round(counters["cognitive"], 2),
+        "warnings": warnings,
         "currency": "PEN",
     }
 

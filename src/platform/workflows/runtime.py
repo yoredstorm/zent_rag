@@ -394,6 +394,8 @@ async def execute_graph(
             cached=cached,
             legacy_index_map=dict(graph.metadata.get("legacy_index_map") or {}),
             context=workflow_context,
+            node_labels={nid: (node.label or node.type) for nid, node in node_map.items()},
+            node_types={nid: node.type for nid, node in node_map.items()},
             run_branch=(lambda branch, item: _run_branch(branch, item, node_id)) if node.type == "for_each" else None,
         )
 
@@ -605,6 +607,8 @@ async def execute_graph(
                 cached={},
                 legacy_index_map=dict(graph.metadata.get("legacy_index_map") or {}),
                 context=workflow_context,
+                node_labels={nid: (node.label or node.type) for nid, node in node_map.items()},
+                node_types={nid: node.type for nid, node in node_map.items()},
                 run_branch=None,
             )
             try:
