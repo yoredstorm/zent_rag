@@ -52,6 +52,7 @@ const RUN: RunDetail = {
     },
   ],
   chain_of_thought_exposed: false,
+  story: ["Se inició el flujo.", "El agente analizó la situación: HIGH."],
   events: [
     { id: "ev1", kind: "run_started", payload: { run_mode: "full" } },
     { id: "ev2", kind: "node_finished", node_id: "br", payload: { status: "succeeded" } },
@@ -71,6 +72,7 @@ describe("WorkflowRunInspector — Execution Inspector", () => {
     expect(screen.getByTestId("wf-run-actions")).toHaveTextContent("business_result");
     expect(screen.getByTestId("wf-run-events")).toHaveTextContent("Timeline del run (2)");
     expect(screen.getByTestId("wf-run-events")).toHaveTextContent("run_started");
+    expect(screen.getByTestId("wf-run-story")).toHaveTextContent("El agente analizó la situación: HIGH");
   });
 
   it("no rompe sin contexto extra ni CoT", () => {

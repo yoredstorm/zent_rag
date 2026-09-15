@@ -1,6 +1,6 @@
 # Zent Cognitive Workflows — Phase 0 Architecture Audit
 
-> **Status:** Phase 0 (auditoría) completa. **Fases 1–7 implementadas** (modos de conocimiento; extract/compare/conflicts; investigate; contexto/presets del agente; join/merge/filter y costo; aprobación con evidencia; panel de contexto del editor). Fase 8 pendiente.
+> **Status:** Phase 0 (auditoría) completa. **Programa completo: Fases 1–8 implementadas** + E2E 1–3 (brief §31–§33). Modos de conocimiento, extract/compare/conflicts, investigate, contexto/presets del agente, join/merge/filter y costo, aprobación con evidencia, panel de contexto y narrativa de ejecución.
 > **Fecha:** 2026-09-14
 > **Base:** `feat/knowledge-cognitive-os` @ `33c238c` (Workflow Semantic Core Fases 0–8 + bloque 8.1).
 > **Prerrequisito verificado:** `docs/architecture/workflow-semantic-core.md` ya existe y está implementado:
@@ -417,3 +417,11 @@ Tests: `tests/test_workflow_approval_context.py` (1 E2E) + `WorkflowApprovalPane
   contribuciones del último run inspeccionado; agrupado por sección con conteos y vacíos claros.
 - `WorkflowCanvasEditor`: botón "Contexto" (`wf-context-toggle`) y overlay (`wf-context-panel`); se oculta cuando el inspector de nodo está abierto.
 Tests: `WorkflowContextPanel.test.tsx` (2).
+
+**Fase 8 entregada (2026-09-14)** — narrativa + E2E de aceptación:
+- `narrative.py`: `run_story(run_detail)` convierte steps/decisiones/ramas en frases de negocio; sin chain of thought ni JSON crudo. `run_detail.story`
+  lo expone y el inspector lo muestra arriba de los pasos (`wf-run-story`).
+- `tests/test_cognitive_workflows_e2e.py`: E2E 1 venta > 40k (condition → datos ∥ conocimiento → join → agente → condition → aprobación con
+  evidencia → approve → notify), E2E 2 contrato vs política (compare + conflicts → condition → agente legal → notify) y E2E 3 diario
+  (schedule → datos → conocimiento → agente → business_result → notify simulada), con narrativa verificada.
+Tests: `tests/test_workflow_narrative.py` (2) + E2E (3).

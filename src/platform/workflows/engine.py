@@ -22,6 +22,7 @@ from sqlalchemy import text
 
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.session import get_async_session
+from src.platform.workflows.narrative import run_story
 
 logger = get_logger(__name__)
 
@@ -1173,7 +1174,7 @@ async def run_detail(organization_id: UUID, run_id: UUID) -> dict | None:
             run_id=str(run_id),
             error=str(exc)[:200],
         )
-    return {
+    payload_out: dict = {
         "id": str(run.id),
         "workflow_id": str(run.workflow_id),
         "workflow_name": run.workflow_name,
@@ -1201,6 +1202,8 @@ async def run_detail(organization_id: UUID, run_id: UUID) -> dict | None:
         "events": events,
         "chain_of_thought_exposed": False,
     }
+    payload_out["story"] = run_story(payload_out)
+    return payload_out
 
 
 # ---------------------------------------------------------------------------

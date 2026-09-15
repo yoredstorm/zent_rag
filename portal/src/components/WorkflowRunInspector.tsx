@@ -68,6 +68,8 @@ export type RunDetail = {
   artifacts?: RunContribution[];
   actions?: RunAction[];
   events?: RunEvent[];
+  /** Narrativa de negocio del run (Fase 8; sin chain of thought). */
+  story?: string[];
   chain_of_thought_exposed?: boolean;
 };
 
@@ -248,6 +250,18 @@ export function WorkflowRunInspector({
         </p>
       )}
       {run.status === "pending_approval" && <WorkflowApprovalPanel runId={run.id} />}
+      {(run.story ?? []).length > 0 && (
+        <ol
+          className="space-y-0.5 rounded-md border border-border bg-soft/60 px-2 py-1.5"
+          data-testid="wf-run-story"
+        >
+          {(run.story ?? []).map((line, index) => (
+            <li key={index} className="text-[10px] text-muted">
+              {index + 1}. {line}
+            </li>
+          ))}
+        </ol>
+      )}
       {plannedEffects && plannedEffects.length > 0 && (
         <div className="rounded-md border border-border bg-soft px-2 py-1.5">
           <p className="text-[10px] font-semibold text-muted">Efectos no ejecutados en la prueba</p>
