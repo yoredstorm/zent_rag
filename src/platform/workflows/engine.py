@@ -556,6 +556,29 @@ async def run_workflow(
         error=result.error,
     )
     try:
+        from src.platform.usage.usage_engine import UsageEvent, record_event
+
+        await record_event(
+            UsageEvent(
+                request_id=UUID(str(run_id)),
+                organization_id=eff_org,
+                event_type="workflow_run",
+                user_id=actor_id,
+                latency_ms=float(duration),
+                status=final_status,
+                estimated_cost=0.0,
+                trace_id=corr,
+                cost_tags={"cost_ms": round(float(result.cost_ms or 0.0), 6)},
+                routing={
+                    "workflow_id": str(workflow_id),
+                    "run_mode": run_mode,
+                    "simulate": bool(simulate),
+                },
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — metering no rompe el run
+        logger.warning("workflow usage event failed", run_id=str(run_id), error=str(exc)[:200])
+    try:
         from src.platform.workflows.context_store import save_run_context
 
         await save_run_context(

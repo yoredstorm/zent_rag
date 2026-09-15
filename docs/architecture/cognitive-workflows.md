@@ -432,3 +432,7 @@ Tests: `tests/test_workflow_narrative.py` (2) + E2E (3).
 - Productores: `extract_facts` (party → organization, resto concept), `business_result` y `business_node` (config `entities` string/dict) contribuyen
   la sección `entities` (declarada en `context_writes`). Cero registros paralelos.
 Tests: `tests/test_workflow_entities.py` (3) + aserción de resolución en facts.
+
+**Metering de runs (2026-09-14)** — `run_workflow` registra un `usage_events` idempotente (`event_type="workflow_run"`,
+`request_id=run_id`) con status, latencia y `cost_tags.cost_ms`; el costo monetario de agentes sigue registrado por AgentRuntime (sin doble conteo).
+Test: `tests/test_workflow_usage.py` (1).
