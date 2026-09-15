@@ -481,3 +481,27 @@ async def complete_document_facts(partial: dict) -> dict:
 async def extract_document_facts(data: bytes, filename: str) -> dict:
     """Extrae hechos de un documento. Devuelve perfil con hechos y metadatos."""
     return await complete_document_facts(extract_document_facts_rules(data, filename))
+
+
+async def extract_facts_from_text(text: str) -> list[dict]:
+    """Hechos desde texto plano (workflow `kb_query.extract_facts`).
+
+    Reglas léxicas offline + complemento LLM best-effort. Mismo shape de
+    `facts` que `extract_document_facts`; nunca rompe si el LLM falla.
+    """
+    clean = str(text or "")
+    if not clean.strip():
+        return []
+    try:
+        rules = list(
+            extract_document_facts_rules(clean.encode("utf-8"), "inline.txt").get("facts") or []
+        )
+    except Exception as exc:  # noqa: BLE001 — reglas no rompen el nodo
+        logger.warning("inline fact rules failed", error=str(exc)[:200])
+        rules = []
+    try:
+        llm = await _llm_facts(clean)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("inline llm facts failed", error=str(exc)[:200])
+        llm = []
+    return _merge_facts(rules, llm)

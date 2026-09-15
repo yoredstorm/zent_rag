@@ -1,6 +1,6 @@
 # Zent Cognitive Workflows — Phase 0 Architecture Audit
 
-> **Status:** Phase 0 (auditoría) completa. **Fase 1 implementada** (modos de conocimiento + resultado tipado: SEARCH/ANSWER/FIND_EVIDENCE; modos pendientes tipados como `not_supported`). Fases 2–8 pendientes.
+> **Status:** Phase 0 (auditoría) completa. **Fases 1–2 implementadas** (modos de conocimiento + resultado tipado; extract_facts/compare/check_conflicts con ledger de claims). Fases 3–8 pendientes.
 > **Fecha:** 2026-09-14
 > **Base:** `feat/knowledge-cognitive-os` @ `33c238c` (Workflow Semantic Core Fases 0–8 + bloque 8.1).
 > **Prerrequisito verificado:** `docs/architecture/workflow-semantic-core.md` ya existe y está implementado:
@@ -357,3 +357,14 @@ Contribuciones de contexto por modo: `knowledge` (answer/sources), `evidence` (r
 - Contribution de `knowledge` incluye `operation`/`status` (y answer/claims/coverage por modo); evidencia por referencia como siempre.
 - Catálogo y Business Schema: parámetro `operation` (select de negocio) + outputs `status/answer/claims/coverage/reason_codes`; `OUTPUT_FIELDS` del portal alineado.
 Tests: `tests/test_workflow_knowledge_modes.py` (6).
+
+**Fase 2 entregada (2026-09-14)** — modos avanzados de conocimiento:
+- `extract_facts`: usa `extract_facts_from_text` (nuevo wrapper público sobre reglas de `document_facts` + LLM best-effort), escribe
+  `ClaimRecord(PROPOSED)` + `attach_evidence` por claim (máx 5 refs) y devuelve `facts/claims/entities` + `claim_ids` por referencia.
+- `compare`: retrieval V2 de dos lados (`compare_left`/`compare_right`), diff grounded por LLM validado contra schema, `temporal_context`
+  con `TemporalResolver` (si la metadata trae fechas), citations/evidence de ambos lados; `invalid_output` tipado si el LLM no cumple el JSON.
+- `check_conflicts`: `ClaimLedgerRepository.list_by_subject` + `find_conflicting` + `classify_conflict` (severity + `resolution_status=unresolved`);
+  requiere `subject` (o usa `query`); `has_conflicts` booleano para ramificar. No necesita V2 (es ledger puro).
+- D4 cumplido: claims de extracción nacen PROPOSED, con evidencia adjunta; nunca se aprueban solos.
+- Catálogo/params/OUTPUT_FIELDS actualizados (`subject`, `compare_left/right`, salidas de hechos/conflictos).
+Tests: `tests/test_workflow_knowledge_facts_conflicts.py` (6).
