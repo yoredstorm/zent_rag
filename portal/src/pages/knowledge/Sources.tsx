@@ -1,8 +1,9 @@
-import { ArrowsClockwise, Database, Plus } from "@phosphor-icons/react";
+import { ArrowsClockwise, Database, Plus, Trash } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
+import { ConfirmDialog } from "../../components/ConfirmDialog";
 import {
   EmptyState,
   ErrorInline,
@@ -14,6 +15,14 @@ import {
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 import { fmtDateTime, fmtNum } from "../../lib/format";
+import {
+  COPY,
+  isFileUploadType,
+  sourceStatusBadgeClass,
+  sourceStatusLabel,
+  sourceTypeBlurb,
+  sourceTypeLabel,
+} from "./knowledgeCopy";
 
 const SOURCE_TYPES = [
   "sql",
@@ -38,8 +47,11 @@ type SourceRow = {
   document_count: number;
   error_count: number;
   last_processed_count?: number;
+  knowledge_base_id?: string | null;
   config?: { managed?: boolean };
 };
+
+type KnowledgeBase = { id: string; name: string };
 
 const PENDING_KEY = "zent_gdrive_pending";
 
@@ -56,15 +68,28 @@ export default function KnowledgeSourcesPage() {
   const [folderId, setFolderId] = useState("");
   const [creating, setCreating] = useState(false);
   const [syncingId, setSyncingId] = useState("");
+  const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
+  const [file, setFile] = useState<File | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<SourceRow | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(() => {
     if (!session) return;
     setLoading(true);
-    api<{ sources: SourceRow[] }>("/api/v1/sources", {
-      token: session.token,
-      organizationId: session.organizationId,
-    })
-      .then((data) => setSources(data.sources || []))
+    Promise.all([
+      api<{ sources: SourceRow[] }>("/api/v1/sources", {
+        token: session.token,
+        organizationId: session.organizationId,
+      }),
+      api<{ knowledge_bases: KnowledgeBase[] }>("/api/v1/knowledge-bases", {
+        token: session.token,
+        organizationId: session.organizationId,
+      }).catch(() => ({ knowledge_bases: [] as KnowledgeBase[] })),
+    ])
+      .then(([data, kbData]) => {
+        setSources(data.sources || []);
+        setKbs(kbData.knowledge_bases || []);
+      })
       .catch((err) => setError(err instanceof Error ? err.message : "Error"))
       .finally(() => setLoading(false));
   }, [session]);
@@ -149,22 +174,101 @@ export default function KnowledgeSourcesPage() {
       }
       return;
     }
+    if (isFileUploadType(type) && !file) {
+      setError(COPY.pickFile);
+      return;
+    }
     setCreating(true);
     try {
-      await api("/api/v1/sources", {
-        method: "POST",
-        token: session.token,
-        organizationId: session.organizationId,
-        body: JSON.stringify({ name: name.trim(), type, config: {} }),
-      });
-      setMsg("Fuente creada.");
+      const kbId = await ensureKbId();
+      if (isFileUploadType(type) && file) {
+        const params = new URLSearchParams();
+        if (kbId) params.set("knowledge_base_id", kbId);
+        if (name.trim()) params.set("name", name.trim());
+        const qs = params.toString() ? `?${params.toString()}` : "";
+        const body = new FormData();
+        body.append("file", file);
+        await api(`/api/v1/sources/files/upload${qs}`, {
+          method: "POST",
+          token: session.token,
+          organizationId: session.organizationId,
+          body,
+        });
+        setMsg("Archivo subido. Indexado en cola.");
+      } else {
+        await api("/api/v1/sources", {
+          method: "POST",
+          token: session.token,
+          organizationId: session.organizationId,
+          body: JSON.stringify({
+            name: name.trim(),
+            type,
+            knowledge_base_id: kbId || null,
+            config: {},
+          }),
+        });
+        setMsg("Fuente creada.");
+      }
       setName("");
+      setFile(null);
       setShowCreate(false);
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al crear");
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function ensureKbId(): Promise<string | undefined> {
+    if (!session) return undefined;
+    if (kbs[0]) return kbs[0].id;
+    const created = await api<KnowledgeBase>("/api/v1/knowledge-bases", {
+      method: "POST",
+      token: session.token,
+      organizationId: session.organizationId,
+      body: JSON.stringify({ name: COPY.principalKb }),
+    });
+    setKbs((prev) => [...prev, created]);
+    return created.id;
+  }
+
+  async function assignKb(sourceId: string, knowledgeBaseId: string) {
+    if (!session || !knowledgeBaseId) return;
+    setError("");
+    try {
+      await api(`/api/v1/sources/${sourceId}`, {
+        method: "PUT",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify({ knowledge_base_id: knowledgeBaseId }),
+      });
+      setSources((prev) =>
+        prev.map((row) => (row.id === sourceId ? { ...row, knowledge_base_id: knowledgeBaseId } : row)),
+      );
+      setMsg("Colección actualizada.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al agrupar");
+    }
+  }
+
+  async function confirmDelete() {
+    if (!session || !pendingDelete) return;
+    setDeleting(true);
+    setError("");
+    try {
+      await api(`/api/v1/sources/${pendingDelete.id}`, {
+        method: "DELETE",
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      setMsg(`Fuente «${pendingDelete.name}» eliminada.`);
+      setPendingDelete(null);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al eliminar");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -225,7 +329,6 @@ export default function KnowledgeSourcesPage() {
     <KnowledgeLayout>
       <PageHeader
         title={KNOWLEDGE_HEADINGS.sources}
-        subtitle="Administra la información que tu IA puede usar para responder: fuentes, colecciones, documentos y sincronización."
         actions={
           <button
             className="btn btn-primary min-h-11"
@@ -237,6 +340,17 @@ export default function KnowledgeSourcesPage() {
           </button>
         }
       />
+      <p className="mb-4 text-sm text-muted">
+        Los agentes eligen estas fuentes en{" "}
+        <Link to="/agents" className="text-accent hover:underline">
+          Agent Studio
+        </Link>
+        . Prueba en{" "}
+        <Link to="/chat?target=knowledge" className="text-accent hover:underline">
+          Playground
+        </Link>{" "}
+        cuando estén indexadas.
+      </p>
       <div className="mt-4">
         <ErrorInline message={error} />
         <SuccessInline message={msg} />
@@ -261,7 +375,7 @@ export default function KnowledgeSourcesPage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 autoComplete="off"
-                required
+                required={!isFileUploadType(type)}
               />
             </label>
             <label className="block text-sm text-text">
@@ -273,11 +387,22 @@ export default function KnowledgeSourcesPage() {
               >
                 {SOURCE_TYPES.map((t) => (
                   <option key={t} value={t}>
-                    {t === "gdrive" ? "Google Drive" : t}
+                    {sourceTypeLabel(t)}
                   </option>
                 ))}
               </select>
             </label>
+            {isFileUploadType(type) && (
+              <label className="block text-sm text-text">
+                {COPY.uploadFile}
+                <input
+                  className="mt-1 w-full min-h-11 text-sm text-text"
+                  type="file"
+                  data-testid="source-file"
+                  onChange={(e) => setFile(e.target.files?.[0] || null)}
+                />
+              </label>
+            )}
             {type === "gdrive" && (
               <label className="block text-sm text-text">
                 ID de carpeta de Google Drive
@@ -293,12 +418,17 @@ export default function KnowledgeSourcesPage() {
             <p className="text-[13px] leading-relaxed text-muted">
               {type === "gdrive"
                 ? "Se abre Google para autorizar solo lectura. El refresh token vive en el almacén de secretos, nunca en la fuente."
-                : "Las credenciales de conectores viven en Vault, no en esta ficha."}
+                : isFileUploadType(type)
+                  ? COPY.collectionHint
+                  : "Las credenciales de conectores viven en Vault, no en esta ficha."}
             </p>
             <button
               className="btn btn-primary min-h-11 w-full sm:w-auto"
               type="submit"
-              disabled={creating || !name.trim()}
+              disabled={
+                creating ||
+                (isFileUploadType(type) ? !file : type === "gdrive" ? !name.trim() : !name.trim())
+              }
             >
               {creating ? <Spinner size={14} /> : <Plus size={15} aria-hidden />}
               {type === "gdrive" ? "Conectar Google Drive" : "Crear fuente"}
@@ -333,53 +463,50 @@ export default function KnowledgeSourcesPage() {
           />
         ) : (
           <div className="grid gap-3 md:grid-cols-2">
-            {sources.map((s) => (
-              <article key={s.id} className="panel p-4">
+            {sources.map((s) => {
+              const canProfile = s.type === "sql" || Boolean(s.config?.managed);
+              return (
+              <article key={s.id} className="panel p-4" data-testid={`source-card-${s.id}`}>
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <Link to={`/knowledge/sources/${s.id}`} className="font-medium text-text hover:underline">
                       {s.name}
                     </Link>
-                    <p className="text-xs text-muted">
-                      {s.config?.managed ? "Managed Database" : s.type === "gdrive" ? "Google Drive" : s.type}
-                    </p>
+                    <p className="text-xs text-muted">{sourceTypeLabel(s.type, s.config?.managed)}</p>
                   </div>
-                  <span
-                    className={`badge ${s.status === "error" ? "badge-danger" : s.status === "ready" || s.status === "indexed" ? "badge-ok" : s.status === "ingesting" || s.status === "discovering" ? "badge-pending" : "badge-muted"}`}
-                  >
-                    {s.status || "—"}
+                  <span className={`badge ${sourceStatusBadgeClass(s.status)}`}>
+                    {sourceStatusLabel(s.status)}
                   </span>
                 </div>
-                <p className="mt-2 text-sm text-muted">
-                  {s.config?.managed || s.type === "sql"
-                    ? "Entities, fields, relationships and metrics."
-                    : s.type === "file"
-                      ? "Topics, sections, entities and policies."
-                      : s.type === "csv" || s.type === "excel"
-                        ? "Dataset fields, measures and dimensions."
-                        : s.type === "web"
-                          ? "Pages, topics and products or services."
-                          : "Open the source to see what Zent understood."}
-                </p>
+                <p className="mt-2 text-sm text-muted">{sourceTypeBlurb(s.type, s.config?.managed)}</p>
                 <dl className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted">
-                  <div>Last sync: {s.last_sync ? fmtDateTime(s.last_sync) : "—"}</div>
-                  <div>Usage: {fmtNum(s.document_count || s.last_processed_count || 0)}</div>
-                  <div>Readiness: {s.status === "ready" || s.status === "indexed" ? "Ready" : "In progress"}</div>
-                  <div>Issues: {s.error_count > 0 ? fmtNum(s.error_count) : "none"}</div>
+                  <div>
+                    {COPY.lastSync}: {s.last_sync ? fmtDateTime(s.last_sync) : "—"}
+                  </div>
+                  <div>
+                    {COPY.documents}: {fmtNum(s.document_count || s.last_processed_count || 0)}
+                  </div>
+                  {s.error_count > 0 ? (
+                    <div className="col-span-2 text-danger">
+                      {COPY.issues}: {fmtNum(s.error_count)}
+                    </div>
+                  ) : null}
                 </dl>
                 {s.last_error ? <p className="mt-2 text-xs text-danger">{s.last_error}</p> : null}
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Link to={`/knowledge/sources/${s.id}`} className="btn btn-secondary min-h-11 px-3 text-xs">
-                    Open
+                    {COPY.open}
                   </Link>
-                  <button
-                    type="button"
-                    className="btn btn-ghost min-h-11 px-3 text-xs"
-                    aria-label={`Perfilizar ${s.name}`}
-                    onClick={() => void profileSource(s.id)}
-                  >
-                    Perfilizar
-                  </button>
+                  {canProfile ? (
+                    <button
+                      type="button"
+                      className="btn btn-ghost min-h-11 px-3 text-xs"
+                      aria-label={`Perfilizar ${s.name}`}
+                      onClick={() => void profileSource(s.id)}
+                    >
+                      Perfilizar
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     className="btn btn-ghost min-h-11 px-3 text-xs"
@@ -388,11 +515,40 @@ export default function KnowledgeSourcesPage() {
                     onClick={() => void syncSource(s.id)}
                   >
                     {syncingId === s.id ? <Spinner size={14} /> : <ArrowsClockwise size={14} aria-hidden />}
-                    Sync
+                    {COPY.sync}
+                  </button>
+                  {kbs.length > 0 ? (
+                    <label className="flex min-h-11 items-center gap-1 text-xs text-muted">
+                      {COPY.collection}
+                      <select
+                        className="min-h-9 rounded-md border border-border bg-soft px-2 text-xs text-text"
+                        value={s.knowledge_base_id || kbs[0]?.id || ""}
+                        aria-label={`Colección de ${s.name}`}
+                        data-testid={`source-kb-${s.id}`}
+                        onChange={(e) => void assignKb(s.id, e.target.value)}
+                      >
+                        {kbs.map((kb) => (
+                          <option key={kb.id} value={kb.id}>
+                            {kb.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="btn btn-ghost min-h-11 px-3 text-xs text-danger"
+                    aria-label={`Eliminar ${s.name}`}
+                    data-testid={`source-delete-${s.id}`}
+                    onClick={() => setPendingDelete(s)}
+                  >
+                    <Trash size={14} aria-hidden />
+                    {COPY.deleteSource}
                   </button>
                 </div>
               </article>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -400,7 +556,7 @@ export default function KnowledgeSourcesPage() {
       {profile && (
         <div className="panel mt-6">
           <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-text">Data Profile</h3>
+            <h3 className="text-sm font-semibold text-text">Perfil de datos</h3>
             <button type="button" className="btn btn-ghost min-h-8 text-xs" onClick={() => setProfile(null)}>
               Cerrar
             </button>
@@ -433,7 +589,7 @@ export default function KnowledgeSourcesPage() {
                         {col.pii_flags.length > 0 ? (
                           <span className="badge badge-danger">{col.pii_flags.join(", ")}</span>
                         ) : col.sensitive ? (
-                          <span className="badge badge-pending">sensitive</span>
+                          <span className="badge badge-pending">sensible</span>
                         ) : (
                           <span className="text-faint">—</span>
                         )}
@@ -446,6 +602,15 @@ export default function KnowledgeSourcesPage() {
           ))}
         </div>
       )}
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        title={`Eliminar ${pendingDelete?.name || "fuente"}`}
+        body={COPY.deleteSourceBody}
+        confirmLabel={COPY.deleteSource}
+        busy={deleting}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setPendingDelete(null)}
+      />
     </KnowledgeLayout>
   );
 }

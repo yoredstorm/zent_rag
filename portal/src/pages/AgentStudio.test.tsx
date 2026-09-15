@@ -51,6 +51,7 @@ function fetchRouter() {
     if (url.includes("/auth/me"))
       return Promise.resolve(json({ organization_id: "org-1", company_name: "Acme", email: "a@b.cl", roles: ["owner"], permissions: [] }));
     if (url.includes("/api/v1/sources")) return Promise.resolve(json({ sources: [SOURCE] }));
+    if (url.includes("/api/v1/jobs")) return Promise.resolve(json({ jobs: [] }));
     if (url.includes("/agents/a1/readiness"))
       return Promise.resolve(json({ score: 80, items: [{ key: "model", label: "Modelo", met: true, weight: 15, detail: "ok" }] }));
     if (url.includes("/agents/a1/versions")) return Promise.resolve(json({ versions: [] }));
@@ -140,6 +141,10 @@ describe("AgentStudio", () => {
     expect(screen.getByRole("checkbox", { name: /Políticas RRHH/ })).toBeChecked();
     expect(screen.getByRole("heading", { name: "Probar" })).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Pregunta al agente…")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Probar en Playground" })).toHaveAttribute(
+      "href",
+      "/chat?target=agent&id=a1",
+    );
   });
 
   it("no marca dirty al cargar un agente guardado", async () => {
@@ -150,6 +155,7 @@ describe("AgentStudio", () => {
 
   it("marca cambios sin guardar al editar el nombre", async () => {
     const { user } = await renderStudio();
+    await screen.findByDisplayValue("Soporte");
     const nameInput = await screen.findByLabelText("Nombre");
     expect(screen.queryByText("Cambios sin guardar")).toBeNull();
     await user.clear(nameInput);
@@ -164,13 +170,41 @@ describe("AgentStudio", () => {
     expect(screen.getByRole("link", { name: "Agentes" })).toHaveAttribute("href", "/agents");
   });
 
-  it("abre Avanzado y muestra readiness", async () => {
-    const { user } = await renderStudio("/agents/a1?panel=advanced&tab=readiness");
+  it("abre Ajustes extra en Publicar con un tab antiguo y muestra readiness", async () => {
+    await renderStudio("/agents/a1?panel=advanced&tab=readiness");
     await screen.findByDisplayValue("Soporte");
-    expect(screen.getByText("Avanzado")).toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: "Readiness" }));
-    await waitFor(() => expect(screen.getByText("Production Readiness")).toBeInTheDocument());
-    expect(within(screen.getByText("Production Readiness").closest(".panel")!).getByText("80%")).toBeInTheDocument();
+    expect(screen.getByText("Ajustes extra")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Publicar" })).toHaveAttribute("aria-selected", "true");
+    await waitFor(() => expect(screen.getByText("Listo para producción")).toBeInTheDocument());
+    expect(
+      within(screen.getByText("Listo para producción").closest(".panel")!).getByText("80%"),
+    ).toBeInTheDocument();
+  });
+
+  it("explica el modelo y la creatividad en Cómo responde", async () => {
+    const { user } = await renderStudio("/agents/a1?panel=advanced");
+    await screen.findByDisplayValue("Soporte");
+    expect(screen.getByLabelText("Qué modelo usar")).toHaveValue("zent-default");
+    expect(screen.getByRole("option", { name: /Equilibrado \(recomendado\) · zent-default/ })).toBeInTheDocument();
+    expect(screen.getByLabelText(/Creatividad \(0\.20\)/)).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Qué puede hacer" }));
+    expect(screen.getByRole("checkbox", { name: /Buscar en el conocimiento/ })).toBeChecked();
+    expect(screen.getByLabelText("Fragmentos a usar")).toHaveValue(8);
+  });
+
+  it("guarda los permisos elegidos en Qué puede hacer", async () => {
+    const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=tools");
+    await screen.findByDisplayValue("Soporte");
+    await user.click(screen.getByRole("checkbox", { name: /Consultar la base de datos/ }));
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(
+        (call) => String(call[0]).includes("/agents/a1") && String(call[1]?.method || "").toUpperCase() === "PUT",
+      );
+      const body = JSON.parse(String(put?.[1]?.body || "{}"));
+      expect(body.tools).toContain("query_database");
+      expect(body.config.security.sql_enabled).toBe(true);
+    });
   });
 
   it("cambia a panel test en mobile tabs", async () => {

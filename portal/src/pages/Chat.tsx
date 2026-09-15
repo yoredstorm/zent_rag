@@ -17,6 +17,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { useToast } from "../Toast";
@@ -35,25 +36,26 @@ import {
   type Conversation,
   type StoredMessage,
 } from "../chatHistory";
+import { PlaygroundTargetBar } from "./chat/PlaygroundTargetBar";
+import {
+  conversationMatches,
+  parsePlaygroundSearch,
+  playgroundSearchParams,
+  readLastUsed,
+  resolvePlaygroundTarget,
+  sameTarget,
+  writeLastUsed,
+  type PlaygroundAgent,
+  type PlaygroundTarget,
+  type PlaygroundWorkflow,
+} from "./chat/playgroundTargets";
+import { runPlaygroundTurn } from "./chat/runPlaygroundTurn";
 
 function renderMarkdown(text: string) {
   return renderMarkdownHtml(text);
 }
 
-type SourceItem = { text: string; image?: string; score?: number };
-
 type Message = StoredMessage & { id: string; reasonPrompt?: boolean };
-
-type StreamMeta = {
-  sources: SourceItem[];
-  sqlQuery: string | null;
-  method: string;
-  lazyIngested: boolean;
-  queryId: string;
-  conversationId: string;
-  usage: { total_tokens: number };
-  latencyMs: number;
-};
 
 function uid(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -69,7 +71,14 @@ function titleFrom(messages: StoredMessage[]): string {
 export default function ChatPage() {
   const { session } = useAuth();
   const { pushToast } = useToast();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [role, setRole] = useState<"admin" | "customer">("admin");
+  const [destination, setDestination] = useState<PlaygroundTarget>(() => {
+    return parsePlaygroundSearch(searchParams) || readLastUsed() || { kind: "knowledge", id: "" };
+  });
+  const [agents, setAgents] = useState<PlaygroundAgent[]>([]);
+  const [workflows, setWorkflows] = useState<PlaygroundWorkflow[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(true);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -92,6 +101,67 @@ export default function ChatPage() {
     setConversations(listConversations(session.organizationId));
   }, [session]);
 
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    setCatalogLoading(true);
+    Promise.all([
+      api<{ agents: PlaygroundAgent[] }>("/api/v1/agents", {
+        token: session.token,
+        organizationId: session.organizationId,
+      }).catch(() => ({ agents: [] as PlaygroundAgent[] })),
+      api<{ workflows: PlaygroundWorkflow[] }>("/api/v1/workflows", {
+        token: session.token,
+        organizationId: session.organizationId,
+      }).catch(() => ({ workflows: [] as PlaygroundWorkflow[] })),
+    ])
+      .then(([agentRes, wfRes]) => {
+        if (cancelled) return;
+        const nextAgents = agentRes.agents || [];
+        const nextWorkflows = wfRes.workflows || [];
+        setAgents(nextAgents);
+        setWorkflows(nextWorkflows);
+        const resolved = resolvePlaygroundTarget({
+          fromUrl: parsePlaygroundSearch(searchParams),
+          lastUsed: readLastUsed(),
+          agents: nextAgents,
+          workflows: nextWorkflows,
+        });
+        setDestination(resolved);
+        writeLastUsed(resolved);
+        const nextParams = playgroundSearchParams(resolved);
+        if (searchParams.toString() !== nextParams.toString()) {
+          setSearchParams(nextParams, { replace: true });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setCatalogLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // Solo al montar / cambiar sesión: la URL la escribe el usuario o applyDestination.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+
+  const destinationRef = useRef(destination);
+  useEffect(() => {
+    destinationRef.current = destination;
+  }, [destination]);
+
+  function applyDestination(next: PlaygroundTarget) {
+    if (sameTarget(destination, next)) return;
+    if (abortRef.current) abortRef.current.abort();
+    setMessages([]);
+    setConversationId(null);
+    setStreaming(false);
+    setStreamText("");
+    setError("");
+    setDestination(next);
+    writeLastUsed(next);
+    setSearchParams(playgroundSearchParams(next), { replace: true });
+  }
+
   const scrollToBottom = useCallback((force = false) => {
     const el = scrollRef.current;
     if (!el) return;
@@ -106,11 +176,15 @@ export default function ChatPage() {
   function persist(messagesToSave: StoredMessage[], id: string) {
     if (!session) return;
     const existing = loadConversation(session.organizationId, id);
+    const current = destinationRef.current;
     const conv: Conversation = {
       id,
       title: existing?.title || titleFrom(messagesToSave),
-      updatedAt: Date.now(),
+      // `upsertConversation` estampa el timestamp real al guardar.
+      updatedAt: existing?.updatedAt ?? 0,
       messages: messagesToSave,
+      target: current.kind,
+      targetId: current.id,
     };
     setConversations(upsertConversation(session.organizationId, conv));
   }
@@ -142,177 +216,102 @@ export default function ChatPage() {
 
   async function startStreaming(query: string) {
     if (!session) return;
+    if (destination.kind === "agent" && !destination.id) {
+      setError("Elige un agente para probar.");
+      return;
+    }
+    if (destination.kind === "workflow" && !destination.id) {
+      setError("Elige un flujo para probar.");
+      return;
+    }
+    if (destination.kind === "agent") {
+      const agent = agents.find((a) => a.id === destination.id);
+      if (agent && !agent.is_active) {
+        setError("Actívalo para probar.");
+        return;
+      }
+    }
+
     setStreaming(true);
     setStreamText("");
-    setStreamPhase("Buscando en tus datos…");
+    setStreamPhase(
+      destination.kind === "agent"
+        ? "Ejecutando agente…"
+        : destination.kind === "workflow"
+          ? "Simulando el flujo…"
+          : "Buscando en tus datos…",
+    );
     setError("");
 
     if (hintTimer.current) window.clearTimeout(hintTimer.current);
-    hintTimer.current = window.setTimeout(() => {
-      setStreamPhase("Buscando más a fondo en tus datos…");
-    }, 2500);
+    if (destination.kind === "knowledge") {
+      hintTimer.current = window.setTimeout(() => {
+        setStreamPhase("Buscando más a fondo en tus datos…");
+      }, 2500);
+    }
 
     const controller = new AbortController();
     abortRef.current = controller;
-
-    const body: Record<string, unknown> = { query, role };
-    if (conversationId) body.conversation_id = conversationId;
 
     const userMessage: Message = { id: uid(), role: "user", content: query };
     const withUser = [...messages, userMessage];
     setMessages(withUser);
     if (conversationId) persist(withUser.map(({ id: _id, ...rest }) => rest), conversationId);
 
-    let buffer = "";
-    let acc = "";
-    let meta: StreamMeta | null = null;
-
     try {
-      const res = await fetch("/api/v1/rag/query/stream", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.token}`,
-          "X-Organization-Id": session.organizationId,
-          "X-User-Role": role,
+      const result = await runPlaygroundTurn({
+        target: destination,
+        query,
+        role,
+        conversationId,
+        session,
+        hooks: {
+          onDelta: (text) => {
+            setStreamText(text);
+            setStreamPhase("");
+          },
+          onPhase: setStreamPhase,
+          signal: controller.signal,
         },
-        body: JSON.stringify(body),
-        signal: controller.signal,
       });
-
-      if (!res.ok || !res.body) {
-        let message = `HTTP ${res.status}`;
-        try {
-          const data = await res.json();
-          message = data.detail || data.message || message;
-        } catch {
-          // mantiene el código HTTP
-        }
-        throw new Error(message);
-      }
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-
-      const processEvent = (event: string, data: string) => {
-        if (event === "delta") {
-          const text = JSON.parse(data).text as string;
-          acc += text;
-          setStreamText(acc);
-          setStreamPhase("");
-        } else if (event === "sources") {
-          const payload = JSON.parse(data) as {
-            sources: ({ content?: string; score?: number; image_base64?: string | null } | string)[];
-            method: string;
-            sql_query: string | null;
-            lazy_ingested: boolean;
-          };
-          const sources: SourceItem[] =
-            payload.method === "sql"
-              ? []
-              : (payload.sources || [])
-                  .filter(
-                    (s): s is { content?: string; score?: number; image_base64?: string | null } =>
-                      typeof s === "object" && s !== null
-                  )
-                  .slice(0, 6)
-                  .map((s) => ({
-                    text: (s.content || "").slice(0, 240),
-                    image: s.image_base64 || undefined,
-                    score: s.score,
-                  }));
-          meta = {
-            sources,
-            sqlQuery: payload.sql_query ?? null,
-            method: payload.method,
-            lazyIngested: payload.lazy_ingested ?? false,
-            queryId: "",
-            conversationId: conversationId ?? "",
-            usage: { total_tokens: 0 },
-            latencyMs: 0,
-          };
-        } else if (event === "done") {
-          const payload = JSON.parse(data) as {
-            conversation_id: string;
-            query_id: string;
-            usage: { total_tokens: number };
-            latency_ms: number;
-          };
-          if (meta) {
-            meta.queryId = payload.query_id;
-            meta.conversationId = payload.conversation_id;
-            meta.usage = payload.usage ?? meta.usage;
-            meta.latencyMs = payload.latency_ms ?? 0;
-          }
-        } else if (event === "error") {
-          throw new Error((JSON.parse(data) as { message: string }).message);
-        }
-      };
-
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        let idx: number;
-        while ((idx = buffer.indexOf("\n\n")) !== -1) {
-          const frame = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 2);
-          let event = "message";
-          let data = "";
-          for (const line of frame.split("\n")) {
-            if (line.startsWith("event: ")) event = line.slice(7).trim();
-            else if (line.startsWith("data: ")) data += line.slice(6);
-          }
-          if (data) processEvent(event, data);
-        }
-      }
-
-      if (!meta) {
-        throw new Error("El servidor cerró la conexión sin enviar una respuesta");
-      }
-      const finalMeta = meta as StreamMeta;
 
       const assistantMessage: Message = {
         id: uid(),
         role: "assistant",
-        content: acc,
-        sources: finalMeta.sources.length > 0 ? finalMeta.sources : undefined,
-        sqlQuery: finalMeta.sqlQuery ?? null,
-        method: finalMeta.method,
-        lazyIngested: finalMeta.lazyIngested,
-        queryId: finalMeta.queryId,
+        content: result.text,
+        sources: result.sources,
+        sqlQuery: result.sqlQuery ?? null,
+        method: result.method,
+        lazyIngested: result.lazyIngested,
+        queryId: result.queryId,
         userQuery: query,
-        latencyMs: finalMeta.latencyMs,
+        latencyMs: result.latencyMs,
       };
       const finalMessages = [...withUser, assistantMessage];
       setMessages(finalMessages);
-      setConversationId(finalMeta.conversationId);
+      const persistId = result.conversationId || conversationId || uid();
+      setConversationId(persistId);
       setStreaming(false);
       setStreamText("");
       persist(
         finalMessages.map(({ id: _id, ...rest }) => rest),
-        finalMeta.conversationId
+        persistId,
       );
     } catch (err) {
       if ((err as Error).name === "AbortError") {
-        const m = meta as StreamMeta | null;
         const partial: Message = {
           id: uid(),
           role: "assistant",
-          content: acc,
+          content: streamText,
           stopped: true,
-          method: m?.method ?? "rag",
-          sources: (m?.sources?.length ?? 0) > 0 ? m!.sources : undefined,
-          sqlQuery: m?.sqlQuery ?? null,
-          lazyIngested: m?.lazyIngested ?? false,
+          method:
+            destination.kind === "agent" ? "agent" : destination.kind === "workflow" ? "workflow" : "rag",
           userQuery: query,
         };
         const finalMessages = [...withUser, partial];
         setMessages(finalMessages);
-        if (m?.conversationId || conversationId) {
-          const id = m?.conversationId || conversationId!;
-          setConversationId(id);
-          persist(finalMessages.map(({ id: _id, ...rest }) => rest), id);
+        if (conversationId) {
+          persist(finalMessages.map(({ id: _id, ...rest }) => rest), conversationId);
         }
         pushToast("info", "Generación detenida");
       } else {
@@ -416,8 +415,14 @@ export default function ChatPage() {
     setRenamingId(null);
   }
 
-  const groups = useMemo(() => groupByDay(conversations), [conversations]);
+  const visibleConversations = useMemo(
+    () => conversations.filter((c) => conversationMatches(c, destination)),
+    [conversations, destination],
+  );
+  const groups = useMemo(() => groupByDay(visibleConversations), [visibleConversations]);
   const empty = messages.length === 0 && !streaming;
+  const selectedAgent = agents.find((a) => a.id === destination.id);
+  const selectedWorkflow = workflows.find((w) => w.id === destination.id);
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
@@ -513,37 +518,41 @@ export default function ChatPage() {
       {/* ------------------------------------------------------------- */}
       <div className="min-w-0 flex-1">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-xl font-semibold tracking-tight text-text">
-            Playground
-          </h1>
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-faint" htmlFor="role">
-              Vista
-            </label>
-            <div className="field w-auto">
-              <select
-                id="role"
-                className="w-auto! cursor-pointer"
-                value={role}
-                onChange={(e) => setRole(e.target.value as "admin" | "customer")}
-                title={
-                  role === "admin"
-                    ? "Vista equipo: acceso a métricas y datos internos"
-                    : "Vista cliente: catálogo y productos"
-                }
-              >
-                <option value="admin">Equipo</option>
-                <option value="customer">Cliente</option>
-              </select>
-            </div>
-          </div>
+          <h1 className="text-xl font-semibold tracking-tight text-text">Playground</h1>
+          <PlaygroundTargetBar
+            target={destination}
+            agents={agents}
+            workflows={workflows}
+            loading={catalogLoading}
+            role={role}
+            onRole={setRole}
+            onChange={applyDestination}
+          />
         </div>
 
         <ErrorInline message={error} />
-        <KnowledgePillarLinks
-          title="Mejora las respuestas con conocimiento"
-          subtitle="Conecta fuentes, revisa semántica y mide el aprendizaje."
-        />
+        {destination.kind === "knowledge" && (
+          <KnowledgePillarLinks
+            title="Mejora las respuestas con conocimiento"
+            subtitle="Conecta fuentes, revisa semántica y mide el aprendizaje."
+          />
+        )}
+        {destination.kind === "agent" && selectedAgent && (
+          <p className="mb-4 text-xs text-muted">
+            Fuentes del agente.{" "}
+            <Link to={`/agents/${selectedAgent.id}`} className="text-accent hover:underline">
+              Editar {selectedAgent.name}
+            </Link>
+          </p>
+        )}
+        {destination.kind === "workflow" && selectedWorkflow && (
+          <p className="mb-4 text-xs text-muted">
+            Simulación: no dispara acciones reales.{" "}
+            <Link to={`/workflows/${selectedWorkflow.id}`} className="text-accent hover:underline">
+              Abrir {selectedWorkflow.name}
+            </Link>
+          </p>
+        )}
 
         <div className="panel flex flex-col overflow-hidden">
           <div
@@ -556,31 +565,62 @@ export default function ChatPage() {
                   <MagnifyingGlass size={24} aria-hidden />
                 </div>
                 <h2 className="text-base font-medium text-text">
-                  Escribe una pregunta para empezar
+                  {destination.kind === "agent" && !destination.id
+                    ? "Elige un agente para probar"
+                    : destination.kind === "workflow" && !destination.id
+                      ? "Elige un flujo para probar"
+                      : destination.kind === "agent" && selectedAgent
+                        ? `Pregunta a ${selectedAgent.name}`
+                        : destination.kind === "workflow" && selectedWorkflow
+                          ? `Prueba el flujo ${selectedWorkflow.name}`
+                          : "Escribe una pregunta para empezar"}
                 </h2>
                 <p className="max-w-sm text-[13px] leading-relaxed text-muted">
-                  Pregunta sobre ventas, productos o métricas de tu negocio. El asistente
-                  usa tus datos sincronizados y puede consultar tu base en tiempo real.
+                  {destination.kind === "agent" && !destination.id ? (
+                    <>
+                      Crea un agente o elige uno existente.{" "}
+                      <Link to="/agents/new" className="text-accent hover:underline">
+                        Crear agente
+                      </Link>
+                    </>
+                  ) : destination.kind === "workflow" && !destination.id ? (
+                    <>
+                      Crea un flujo o elige uno existente.{" "}
+                      <Link to="/workflows/new" className="text-accent hover:underline">
+                        Crear flujo
+                      </Link>
+                    </>
+                  ) : destination.kind === "agent" ? (
+                    selectedAgent?.config?.purpose ||
+                    selectedAgent?.description ||
+                    "Usa las instrucciones y fuentes de este agente, sin desplegarlo."
+                  ) : destination.kind === "workflow" ? (
+                    "La corrida es una simulación: no envía correos ni llama APIs de verdad."
+                  ) : (
+                    "Pregunta sobre ventas, productos o métricas de tu negocio. El asistente usa tus datos sincronizados y puede consultar tu base en tiempo real."
+                  )}
                 </p>
-                <div className="mt-1 flex flex-wrap justify-center gap-2">
-                  {[
-                    "¿Cuáles son los productos disponibles?",
-                    "¿Cuántas ventas hubo este mes?",
-                    "Recomiéndame un analgésico",
-                  ].map((q) => (
-                    <button
-                      key={q}
-                      type="button"
-                      className="cursor-pointer rounded-full border border-border bg-soft px-3 py-1.5 text-xs text-muted transition-colors duration-150 hover:border-accent/40 hover:text-text"
-                      onClick={() => {
-                        setInput(q);
-                        inputRef.current?.focus();
-                      }}
-                    >
-                      {q}
-                    </button>
-                  ))}
-                </div>
+                {destination.kind === "knowledge" && (
+                  <div className="mt-1 flex flex-wrap justify-center gap-2">
+                    {[
+                      "¿Cuáles son los productos disponibles?",
+                      "¿Cuántas ventas hubo este mes?",
+                      "Recomiéndame un analgésico",
+                    ].map((q) => (
+                      <button
+                        key={q}
+                        type="button"
+                        className="cursor-pointer rounded-full border border-border bg-soft px-3 py-1.5 text-xs text-muted transition-colors duration-150 hover:border-accent/40 hover:text-text"
+                        onClick={() => {
+                          setInput(q);
+                          inputRef.current?.focus();
+                        }}
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -632,9 +672,15 @@ export default function ChatPage() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               placeholder={
-                role === "customer"
-                  ? "Ej. ¿Qué analgésicos tienen disponible?"
-                  : "Ej. ¿Cuántas ventas hubo en enero?"
+                destination.kind === "agent"
+                  ? selectedAgent
+                    ? `Pregunta a ${selectedAgent.name}…`
+                    : "Elige un agente para preguntar…"
+                  : destination.kind === "workflow"
+                    ? "Escribe el mensaje que dispara el flujo…"
+                    : role === "customer"
+                      ? "Ej. ¿Qué analgésicos tienen disponible?"
+                      : "Ej. ¿Cuántas ventas hubo en enero?"
               }
               disabled={streaming}
               aria-label="Tu pregunta"
@@ -652,7 +698,7 @@ export default function ChatPage() {
               <button
                 className="btn btn-primary shrink-0 px-4"
                 type="submit"
-                disabled={!input.trim()}
+                disabled={!input.trim() || (destination.kind !== "knowledge" && !destination.id)}
                 aria-label="Enviar pregunta"
               >
                 <PaperPlaneRight size={17} aria-hidden />

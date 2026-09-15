@@ -34,6 +34,7 @@ describe("TOUR_STEPS", () => {
       "knowledge",
       "workflows",
       "operate",
+      "assistants",
       "usage",
       "ai-quality",
       "deployments",
@@ -159,6 +160,7 @@ describe("tourTarget helpers", () => {
     expect(tourTargetForPath("/keys")).toBe("nav-keys");
     expect(tourTargetForPath("/billing")).toBe("nav-billing");
     expect(tourTargetForPath("/workflows")).toBe("nav-workflows");
+    expect(tourTargetForPath("/assistants")).toBe("nav-assistants");
     expect(tourTargetForGroup("Construir")).toBe("nav-group-construir");
     expect(tourTargetForGroup("Desarrolladores")).toBe("nav-group-desarrolladores");
     expect(tourTargetForGroup("Avanzado")).toBe("nav-group-avanzado");

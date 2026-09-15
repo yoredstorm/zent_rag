@@ -186,6 +186,7 @@ function json(body: unknown, status = 200) {
 function setupFetch(options: {
   status?: unknown;
   sources?: unknown;
+  kbSources?: { type: string }[];
   questions?: unknown;
   run?: unknown;
   answered?: boolean;
@@ -200,6 +201,8 @@ function setupFetch(options: {
       return Promise.resolve(json(options.status ?? STATUS));
     if (url.includes("/knowledge/learning/sources"))
       return Promise.resolve(json(options.sources ?? [SOURCE]));
+    if (url.includes("/api/v1/sources"))
+      return Promise.resolve(json({ sources: options.kbSources ?? [] }));
     if (url.includes("/knowledge/learning/score"))
       return Promise.resolve(json(SCORE));
     if (
@@ -287,9 +290,16 @@ afterEach(() => {
 });
 
 describe("Knowledge Learning Studio", () => {
-  it("muestra estado vacío cuando no hay fuentes", async () => {
-    await renderLearning({ status: { ...STATUS, counts: { ...STATUS.counts, sources_connected: 0 } }, sources: [] });
-    expect(await screen.findByText("Sin fuentes conectadas")).toBeInTheDocument();
+  it("explica SQL y cuenta archivos de Fuentes cuando no hay catálogo", async () => {
+    await renderLearning({
+      status: { ...STATUS, counts: { ...STATUS.counts, sources_connected: 0 } },
+      sources: [],
+      kbSources: [{ type: "file" }],
+    });
+    expect(await screen.findByTestId("sql-learning-empty")).toBeInTheDocument();
+    expect(screen.getByText(/Tienes 1 archivo/)).toBeInTheDocument();
+    expect(screen.queryByText("Sin fuentes conectadas")).toBeNull();
+    expect(screen.queryByText("Sin fuentes")).toBeNull();
   });
 
   it("muestra readiness, entidades aprendidas y preguntas reales", async () => {

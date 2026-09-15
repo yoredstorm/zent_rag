@@ -1,6 +1,6 @@
-import { ArrowLeft, FloppyDisk } from "@phosphor-icons/react";
+import { ArrowLeft, ChatCircleDots, FloppyDisk } from "@phosphor-icons/react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { AgentAdvancedPanel } from "../components/agentStudio/AgentAdvancedPanel";
@@ -13,9 +13,10 @@ import {
   type AgentVersion,
   type Deployment,
   type Environment,
+  type IngestionJob,
   type KnowledgeSource,
   defaultConfig,
-  isAdvancedTab,
+  legacyTabToGroup,
   sourceIdsFromSteps,
   toolErrorsFromSteps,
   buildAgentPayload,
@@ -33,12 +34,14 @@ export default function AgentStudioPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const { session } = useAuth();
   const panel = searchParams.get("panel") === "test" ? "test" : "configure";
-  const rawTab = searchParams.get("tab");
-  const advancedTab: AdvancedTab = isAdvancedTab(rawTab) ? rawTab : "model";
-  const advancedOpen = searchParams.get("panel") === "advanced" || isAdvancedTab(rawTab);
+  const tabGroup = legacyTabToGroup(searchParams.get("tab"));
+  const advancedTab: AdvancedTab = tabGroup ?? "behavior";
+  const advancedOpen = searchParams.get("panel") === "advanced" || tabGroup !== null;
 
   const [sources, setSources] = useState<KnowledgeSource[]>([]);
+  const [jobs, setJobs] = useState<IngestionJob[]>([]);
   const [sourcesLoading, setSourcesLoading] = useState(true);
+  const [indexingId, setIndexingId] = useState("");
   const [name, setName] = useState("");
   const [systemPrompt, setSystemPrompt] = useState("");
   const [model, setModel] = useState("zent-default");
@@ -114,16 +117,50 @@ export default function AgentStudioPage() {
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [dirty]);
 
+  const sourcesRef = useRef<KnowledgeSource[]>([]);
+  const jobsRef = useRef<IngestionJob[]>([]);
+  sourcesRef.current = sources;
+  jobsRef.current = jobs;
+
   useEffect(() => {
     if (!session) return;
-    setSourcesLoading(true);
-    api<{ sources: KnowledgeSource[] }>("/api/v1/sources", {
-      token: session.token,
-      organizationId: session.organizationId,
-    })
-      .then((data) => setSources(data.sources || []))
-      .catch(() => setSources([]))
-      .finally(() => setSourcesLoading(false));
+    let cancelled = false;
+
+    async function refresh(initial: boolean) {
+      if (initial) setSourcesLoading(true);
+      try {
+        const [sourceData, jobData] = await Promise.all([
+          api<{ sources: KnowledgeSource[] }>("/api/v1/sources", {
+            token: session!.token,
+            organizationId: session!.organizationId,
+          }),
+          api<{ jobs: IngestionJob[] }>("/api/v1/jobs?limit=50", {
+            token: session!.token,
+            organizationId: session!.organizationId,
+          }).catch(() => ({ jobs: [] as IngestionJob[] })),
+        ]);
+        if (cancelled) return;
+        setSources(sourceData.sources || []);
+        setJobs(jobData.jobs || []);
+      } catch {
+        if (!cancelled) setSources([]);
+      } finally {
+        if (initial && !cancelled) setSourcesLoading(false);
+      }
+    }
+
+    void refresh(true);
+    const timer = window.setInterval(() => {
+      const waitingSources = sourcesRef.current.some((source) => !source.document_count);
+      const activeJobs = jobsRef.current.some(
+        (job) => job.status === "pending" || job.status === "running",
+      );
+      if (waitingSources || activeJobs) void refresh(false);
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [session]);
 
   useEffect(() => {
@@ -254,6 +291,28 @@ export default function AgentStudioPage() {
     const next = checked ? config.source_ids.filter((x) => x !== sourceId) : [...config.source_ids, sourceId];
     setConfig({ ...config, source_ids: next });
     if (next.length > 0) setSemantic(true);
+  }
+
+  async function indexSource(sourceId: string) {
+    if (!session) return;
+    setIndexingId(sourceId);
+    setError("");
+    try {
+      await api(`/api/v1/sources/${sourceId}/sync`, {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      const jobData = await api<{ jobs: IngestionJob[] }>("/api/v1/jobs?limit=50", {
+        token: session.token,
+        organizationId: session.organizationId,
+      }).catch(() => ({ jobs: [] as IngestionJob[] }));
+      setJobs(jobData.jobs || []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo encolar el indexado");
+    } finally {
+      setIndexingId("");
+    }
   }
 
   async function refreshVersions() {
@@ -593,6 +652,12 @@ export default function AgentStudioPage() {
                   Activo
                 </label>
               )}
+              {!isNew && id && (
+                <Link to={`/chat?target=agent&id=${id}`} className="btn btn-ghost min-h-11">
+                  <ChatCircleDots size={16} aria-hidden />
+                  Probar en Playground
+                </Link>
+              )}
               <button type="button" className="btn btn-primary min-h-11" disabled={saving || !name.trim()} onClick={() => void saveAndStay()}>
                 {saving ? <Spinner size={14} /> : <FloppyDisk size={15} aria-hidden />}
                 {isNew ? "Crear agente" : "Guardar"}
@@ -638,8 +703,11 @@ export default function AgentStudioPage() {
             <AgentSourcePicker
               sources={sources}
               selectedIds={config.source_ids}
+              jobs={jobs}
               loading={sourcesLoading}
+              indexingId={indexingId}
               onToggle={toggleSource}
+              onIndex={(sourceId) => void indexSource(sourceId)}
             />
           </div>
         </div>
@@ -651,6 +719,7 @@ export default function AgentStudioPage() {
             playing={playing}
             inactive={!isNew && !isActive}
             sources={sources}
+            selectedIds={config.source_ids}
             onInput={setPlayInput}
             onSubmit={(e) => void runPlayground(e)}
             onActivate={() => setIsActive(true)}

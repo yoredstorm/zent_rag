@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { KnowledgePillarLinks } from "./KnowledgePillarLinks";
 
 describe("KnowledgePillarLinks", () => {
-  it("enlaza los 4 pilares de Knowledge", () => {
+  it("enlaza los 3 pilares de Knowledge", () => {
     render(
       <MemoryRouter>
         <KnowledgePillarLinks />
@@ -13,7 +13,7 @@ describe("KnowledgePillarLinks", () => {
     const nav = screen.getByRole("navigation", { name: "Pilares de conocimiento" });
     expect(nav.querySelector('a[href="/knowledge"]')).toHaveTextContent("Resumen");
     expect(nav.querySelector('a[href="/knowledge/sources"]')).toHaveTextContent("Fuentes");
-    expect(nav.querySelector('a[href="/knowledge/glossary"]')).toHaveTextContent("Semántica");
-    expect(nav.querySelector('a[href="/knowledge/learning"]')).toHaveTextContent("Mejora");
+    expect(nav.querySelector('a[href="/knowledge/learning"]')).toHaveTextContent("Aprendizaje");
+    expect(nav.querySelector('a[href="/knowledge/glossary"]')).toBeNull();
   });
 });

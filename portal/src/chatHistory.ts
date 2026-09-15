@@ -17,6 +17,9 @@ export type Conversation = {
   title: string;
   updatedAt: number;
   messages: StoredMessage[];
+  /** Destino del Playground. Ausente = conocimiento (conversaciones viejas). */
+  target?: "agent" | "workflow" | "knowledge";
+  targetId?: string;
 };
 
 const KEY_PREFIX = "rag_chat_conv_";

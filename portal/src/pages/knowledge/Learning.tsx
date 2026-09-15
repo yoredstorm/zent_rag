@@ -35,10 +35,13 @@ import {
   SkeletonBlock,
   StatCard,
 } from "../../components/ui";
+import { api } from "../../api";
 import { useToast } from "../../Toast";
 import { useAuth } from "../../auth";
 import { isUnauthorized } from "../../lib/errors";
 import { fmtNum, timeAgo } from "../../lib/format";
+import { COPY, fileLikeSourceCount } from "./knowledgeCopy";
+import { SqlLearningEmpty } from "./SqlLearningEmpty";
 import {
   answerQuestion,
   cancelLearning,
@@ -110,6 +113,7 @@ export default function KnowledgeLearningPage() {
   const [busy, setBusy] = useState(false);
   const [answerBusyId, setAnswerBusyId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [fileCount, setFileCount] = useState(0);
   const [feedRefresh, setFeedRefresh] = useState(0);
   const streamRef = useRef<{ close: () => void } | null>(null);
   const refreshTimerRef = useRef<number | null>(null);
@@ -162,12 +166,19 @@ export default function KnowledgeLearningPage() {
     async (sourceId?: string) => {
       let expired = false;
       try {
-        const [statusData, sourcesData] = await Promise.all([
+        const [statusData, sourcesData, listing] = await Promise.all([
           fetchLearningStatus(),
           fetchLearningSources(),
+          session
+            ? api<{ sources: { type: string }[] }>("/api/v1/sources", {
+                token: session.token,
+                organizationId: session.organizationId,
+              }).catch(() => ({ sources: [] as { type: string }[] }))
+            : Promise.resolve({ sources: [] as { type: string }[] }),
         ]);
         setStatus(statusData);
         setSources(sourcesData || []);
+        setFileCount(fileLikeSourceCount(listing.sources || []));
         const activeSourceId =
           sourceId ||
           selectedSourceId ||
@@ -198,7 +209,7 @@ export default function KnowledgeLearningPage() {
         if (!expired) setLoading(false);
       }
     },
-    [loadRun, refreshForSource, selectedSourceId]
+    [loadRun, refreshForSource, selectedSourceId, session]
   );
 
   useEffect(() => {
@@ -389,13 +400,15 @@ export default function KnowledgeLearningPage() {
       <div data-testid="learning-page">
         <PageHeader
           title={KNOWLEDGE_HEADINGS.learning}
-          subtitle="Zent está aprendiendo cómo funciona tu negocio: descubrimiento, semántica, relaciones, validación y readiness reales."
+          subtitle={COPY.learningSqlHint}
           actions={
             <>
               <Link className="btn btn-secondary min-h-9" to="/knowledge/map">
                 <Graph size={15} aria-hidden />
                 Ver mapa
               </Link>
+              {sources.length > 0 ? (
+                <>
               <label className="sr-only" htmlFor="learning-source">
                 Fuente
               </label>
@@ -406,7 +419,6 @@ export default function KnowledgeLearningPage() {
                 value={selectedSourceId}
                 onChange={(event) => setSelectedSourceId(event.target.value)}
               >
-                {sources.length === 0 && <option value="">Sin fuentes</option>}
                 {sources.map((source) => (
                   <option key={source.source_id} value={source.source_id}>
                     {(source.engine || "Fuente")} · {source.source_id.slice(0, 8)}
@@ -427,6 +439,8 @@ export default function KnowledgeLearningPage() {
                 )}
                 {running ? "Aprendiendo…" : "Iniciar aprendizaje"}
               </button>
+                </>
+              ) : null}
             </>
           }
         />
@@ -434,18 +448,7 @@ export default function KnowledgeLearningPage() {
         {error && <ErrorInline>{error}</ErrorInline>}
 
         {sources.length === 0 ? (
-          <div className="panel">
-            <EmptyState
-              icon={Database}
-              title="Sin fuentes conectadas"
-              body="Conecta una fuente de datos para que Zent pueda aprender su estructura y su negocio."
-              action={
-                <Link className="btn btn-primary min-h-9" to="/knowledge/sources">
-                  Ir a fuentes
-                </Link>
-              }
-            />
-          </div>
+          <SqlLearningEmpty fileCount={fileCount} />
         ) : (
           <>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">

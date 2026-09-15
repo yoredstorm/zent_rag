@@ -40,8 +40,8 @@ const AGENT = {
   status: "configured",
   is_active: true,
   model: "zent-default",
-  tools: [],
-  config: { purpose: "Vigilar inventario", knowledge_base_ids: [] },
+  tools: ["search_knowledge"],
+  config: { purpose: "Vigilar inventario", knowledge_base_ids: ["kb-1"] },
 };
 
 const AUTOMATIONS = {
@@ -88,7 +88,9 @@ function stubApi() {
       if (url.endsWith("/api/v1/agents/agent-1/automations")) return Promise.resolve(json(AUTOMATIONS));
       if (url.endsWith("/api/v1/agents/agent-1/activity")) return Promise.resolve(json(ACTIVITY));
       if (url.endsWith("/api/v1/agents/agent-1/permissions")) return Promise.resolve(json({ permissions: [] }));
-      if (url.endsWith("/api/v1/knowledge-bases")) return Promise.resolve(json({ knowledge_bases: [] }));
+      if (url.endsWith("/api/v1/knowledge-bases")) {
+        return Promise.resolve(json({ knowledge_bases: [{ id: "kb-1", name: "Inventario" }] }));
+      }
       if (url.endsWith("/api/v1/agents/agent-1")) return Promise.resolve(json(AGENT));
       return Promise.resolve(json({}));
     }),
@@ -108,13 +110,16 @@ describe("AssistantsPage", () => {
     expect(screen.getByText("Asistente de Inventario")).toBeInTheDocument();
     expect(screen.getByText(/El stock bajó del mínimo/)).toBeInTheDocument();
     expect(screen.getByText(/7/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Ver operación/ })).toBeInTheDocument();
+    expect(screen.getByText("Operar")).toBeInTheDocument();
+    expect(screen.getByText(/Agentes que trabajan solos/)).toBeInTheDocument();
   });
 });
 
 describe("AssistantDetailPage", () => {
-  function renderDetail() {
+  function renderDetail(entry = "/assistants/agent-1") {
     return render(
-      <MemoryRouter initialEntries={["/assistants/agent-1"]}>
+      <MemoryRouter initialEntries={[entry]}>
         <Routes>
           <Route path="/assistants/:id" element={<AssistantDetailPage />} />
         </Routes>
@@ -122,13 +127,44 @@ describe("AssistantDetailPage", () => {
     );
   }
 
+  it("muestra tres pestañas, cabecera ES y Qué está vigilando", async () => {
+    stubApi();
+    renderDetail();
+    await waitFor(() => expect(screen.getByTestId("assistant-overview")).toBeInTheDocument());
+    expect(screen.getByTestId("assistant-tab-resumen")).toHaveTextContent("Qué hace");
+    expect(screen.getByTestId("assistant-tab-automatizaciones")).toBeInTheDocument();
+    expect(screen.getByTestId("assistant-tab-actividad")).toBeInTheDocument();
+    expect(screen.queryByTestId("assistant-tab-conocimiento")).toBeNull();
+    expect(screen.queryByTestId("assistant-tab-permisos")).toBeNull();
+    expect(screen.queryByTestId("assistant-tab-ajustes")).toBeNull();
+    const editLinks = screen.getAllByRole("link", { name: "Editar agente" });
+    expect(editLinks.length).toBeGreaterThanOrEqual(1);
+    expect(editLinks[0]).toHaveAttribute("href", "/agents/agent-1");
+    expect(screen.getByRole("link", { name: "Probar en Playground" })).toHaveAttribute(
+      "href",
+      "/chat?target=agent&id=agent-1",
+    );
+    expect(screen.getByText("Qué está vigilando")).toBeInTheDocument();
+    expect(screen.getByText(/Equilibrado · zent-default/)).toBeInTheDocument();
+    expect(screen.getByText("Buscar en el conocimiento")).toBeInTheDocument();
+    expect(screen.getByText(/· Inventario/)).toBeInTheDocument();
+    expect(screen.queryByText("Abrir Agent Studio")).toBeNull();
+  });
+
+  it("abre Qué hace con el alias ?tab=ajustes", async () => {
+    stubApi();
+    renderDetail("/assistants/agent-1?tab=ajustes");
+    await waitFor(() => expect(screen.getByTestId("assistant-overview")).toBeInTheDocument());
+    expect(screen.getByText("Qué está vigilando")).toBeInTheDocument();
+  });
+
   it("muestra actividad legible con detalles técnicos bajo demanda", async () => {
     stubApi();
     const user = userEvent.setup();
     renderDetail();
     await waitFor(() => expect(screen.getByTestId("assistant-overview")).toBeInTheDocument());
     await user.click(screen.getByTestId("assistant-tab-actividad"));
-    await waitFor(() => expect(screen.getByText("El agente analizó la información")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("El asistente analizó la información")).toBeInTheDocument());
     expect(screen.queryByText("run-9")).toBeNull();
     await user.click(screen.getByTestId("assistant-tech-0"));
     expect(screen.getByText("run-9")).toBeInTheDocument();

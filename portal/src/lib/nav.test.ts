@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Session } from "../api";
-import { canSeeNavItem, visibleNavLeaves } from "./nav";
+import { NAV_GROUPS, canSeeNavItem, visibleNavLeaves } from "./nav";
 
 function session(roles: string[], permissions: string[] = []): Session {
   return {
@@ -53,6 +53,16 @@ describe("canSeeNavItem — RBAC de navegación", () => {
   it("ítems sin key son visibles para todos", () => {
     expect(canSeeNavItem(null, undefined)).toBe(true);
     expect(canSeeNavItem(session(["viewer"]), undefined)).toBe(true);
+  });
+});
+
+describe("NAV_GROUPS", () => {
+  it("pone Asistentes primero en Operar, no en Construir", () => {
+    const construir = NAV_GROUPS.find((g) => g.label === "Construir");
+    const operar = NAV_GROUPS.find((g) => g.label === "Operar");
+    expect(construir?.items?.map((item) => item.to)).not.toContain("/assistants");
+    expect(construir?.items?.map((item) => item.to)).toContain("/agents");
+    expect(operar?.items?.[0]).toMatchObject({ to: "/assistants", label: "Asistentes" });
   });
 });
 

@@ -338,7 +338,7 @@ export default function AgentOverviewPage() {
               <div className="panel">
                 <EmptyState
                   icon={ChartLineUp}
-                  title="Sin readiness"
+                  title="Sin puntaje todavía"
                   body="Guarda y configura el agente para calcular su puntaje de producción."
                 />
               </div>

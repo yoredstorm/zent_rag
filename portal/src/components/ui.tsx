@@ -405,7 +405,7 @@ export function ReadinessScore({
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between">
-            <p className="text-sm font-semibold text-text">Production Readiness</p>
+            <p className="text-sm font-semibold text-text">Listo para producción</p>
             <p className="text-2xl font-semibold text-text">{score}%</p>
           </div>
           <div className="mt-2 h-2 overflow-hidden rounded-full bg-soft">

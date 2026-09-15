@@ -1,14 +1,11 @@
 import {
   BookOpen,
   Database,
-  MagnifyingGlass,
   PencilLine,
   Binoculars,
-  Wrench,
   CaretDown,
   Sparkle,
   Graph,
-  Books,
   type Icon,
 } from "@phosphor-icons/react";
 import { NavLink, useLocation } from "react-router-dom";
@@ -25,26 +22,16 @@ import {
 const PILLAR_ICONS: Record<(typeof KNOWLEDGE_PILLARS)[number]["id"], Icon> = {
   resumen: BookOpen,
   fuentes: Database,
-  semantica: PencilLine,
   mejora: Sparkle,
 };
 
 const TAB_ICONS: Record<string, Icon> = {
   "/knowledge/sources": Database,
-  "/knowledge/database": Database,
-  "/knowledge/sql": Database,
-  "/knowledge/collections": Database,
-  "/knowledge/documents": Database,
   "/knowledge/glossary": PencilLine,
   "/knowledge/catalog": Binoculars,
-  "/knowledge/understanding": BookOpen,
   "/knowledge/learning": Sparkle,
   "/knowledge/map": Graph,
-  "/knowledge/review": PencilLine,
-  "/knowledge/improvements": Wrench,
   "/knowledge/jobs": Database,
-  "/knowledge/playground": MagnifyingGlass,
-  "/knowledge-hub": Books,
   "/connectors": Database,
 };
 
@@ -64,7 +51,7 @@ function TabLink({ tab, pathname }: { tab: KnowledgeTab; pathname: string }) {
   );
 }
 
-/** Hub de Conocimiento: 4 pilares + Avanzado colapsado. */
+/** Hub de Conocimiento: Resumen, Fuentes, Aprendizaje + Avanzado. */
 export function KnowledgeLayout({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const pillar = knowledgePillarForPath(pathname);
@@ -74,8 +61,7 @@ export function KnowledgeLayout({ children }: { children: ReactNode }) {
     if (pillar === "avanzado") setAdvanced(true);
   }, [pillar]);
 
-  const subnav = pillar === "semantica" || pillar === "mejora" ? KNOWLEDGE_SUBNAVS[pillar] : null;
-  const pillarLabel = pillar === "semantica" ? "Semántica" : pillar === "mejora" ? "Mejora" : null;
+  const subnav = pillar === "mejora" ? KNOWLEDGE_SUBNAVS.mejora : null;
 
   return (
     <div>
@@ -110,8 +96,8 @@ export function KnowledgeLayout({ children }: { children: ReactNode }) {
             <TabLink key={tab.to} tab={tab} pathname={pathname} />
           ))}
       </nav>
-      {subnav && pillarLabel && (
-        <nav className="tabs mt-1" aria-label={`Subsecciones de ${pillarLabel}`}>
+      {subnav && (
+        <nav className="tabs mt-1" aria-label="Subsecciones de Aprendizaje">
           {subnav.map((tab) => (
             <TabLink key={tab.to} tab={tab} pathname={pathname} />
           ))}

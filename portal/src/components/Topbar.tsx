@@ -22,6 +22,7 @@ const ROUTE_TITLES: Record<string, string> = {
   "/chat": "Playground",
   "/agents": "Agentes",
   "/agents/new": "Nuevo agente",
+  "/assistants": "Asistentes",
   ...KNOWLEDGE_ROUTE_TITLES,
   "/workflows": "Workflows",
   "/data-sources": "Fuentes de datos",
@@ -48,6 +49,7 @@ const ROUTE_TITLES: Record<string, string> = {
 
 function routeTitle(pathname: string): string {
   if (pathname.startsWith("/agents/")) return "Agente";
+  if (pathname.startsWith("/assistants/")) return "Asistente";
   if (pathname.startsWith("/evaluation/")) return "Evaluación";
   if (pathname === "/knowledge" || pathname.startsWith("/knowledge/")) {
     const key = Object.keys(ROUTE_TITLES)

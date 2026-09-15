@@ -17,6 +17,7 @@ import {
   PageHeader,
   SkeletonBlock,
 } from "../../components/ui";
+import { api } from "../../api";
 import { useAuth } from "../../auth";
 import {
   NODE_TYPE_LABELS,
@@ -31,6 +32,8 @@ import {
   fetchQuestions,
   type SourceLearning,
 } from "../../lib/knowledgeLearning";
+import { COPY, fileLikeSourceCount } from "./knowledgeCopy";
+import { SqlLearningEmpty } from "./SqlLearningEmpty";
 
 const ALL_TYPES: GraphNodeType[] = [
   "datasource",
@@ -68,18 +71,35 @@ export default function KnowledgeMapPage() {
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [booting, setBooting] = useState(true);
+  const [fileCount, setFileCount] = useState(0);
   const [error, setError] = useState("");
   const [detailQuestions, setDetailQuestions] = useState<string[]>([]);
   const [loadingQuestions, setLoadingQuestions] = useState(false);
 
   useEffect(() => {
     if (!session) return;
-    fetchLearningSources()
-      .then((items) => {
+    let cancelled = false;
+    Promise.all([
+      fetchLearningSources().catch(() => [] as SourceLearning[]),
+      api<{ sources: { type: string }[] }>("/api/v1/sources", {
+        token: session.token,
+        organizationId: session.organizationId,
+      }).catch(() => ({ sources: [] as { type: string }[] })),
+    ])
+      .then(([items, listing]) => {
+        if (cancelled) return;
         setSources(items || []);
+        setFileCount(fileLikeSourceCount(listing.sources || []));
         if (items?.[0]) setSelectedSourceId(items[0].source_id);
+        else setLoading(false);
       })
-      .catch(() => setSources([]));
+      .finally(() => {
+        if (!cancelled) setBooting(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [session]);
 
   const loadGraph = useCallback(async (sourceId: string) => {
@@ -167,9 +187,10 @@ export default function KnowledgeMapPage() {
       <div data-testid="map-page">
         <PageHeader
           title={KNOWLEDGE_HEADINGS.map}
-          subtitle="El modelo de negocio que Zent aprendió: entidades, relaciones, confianza, provenance y estado de validación."
+          subtitle={COPY.learningSqlHint}
           actions={
-            <>
+            sources.length > 0 ? (
+              <>
               <label className="sr-only" htmlFor="map-source">Fuente</label>
               <select
                 id="map-source"
@@ -177,21 +198,23 @@ export default function KnowledgeMapPage() {
                 value={selectedSourceId}
                 onChange={(event) => setSelectedSourceId(event.target.value)}
               >
-                {sources.length === 0 && <option value="">Sin fuentes</option>}
                 {sources.map((source) => (
                   <option key={source.source_id} value={source.source_id}>
                     {(source.engine || "Fuente")} · {source.source_id.slice(0, 8)}
                   </option>
                 ))}
               </select>
-            </>
+              </>
+            ) : undefined
           }
         />
 
         {error && <ErrorInline>{error}</ErrorInline>}
 
-        {loading ? (
+        {booting || (loading && sources.length > 0) ? (
           <SkeletonBlock rows={6} />
+        ) : sources.length === 0 ? (
+          <SqlLearningEmpty fileCount={fileCount} />
         ) : !graph || positioned.length === 0 ? (
           <div className="panel">
             <EmptyState

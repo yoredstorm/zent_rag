@@ -17,6 +17,7 @@ export const KNOWLEDGE_HEADINGS = {
   importCsv: "Import CSV / Excel",
   hub: "Knowledge Hub",
   add: "Añade conocimiento a Zent",
+  workspaces: "Workspaces",
 } as const;
 
 export type KnowledgePillarId = "resumen" | "fuentes" | "semantica" | "mejora" | "avanzado";
@@ -27,24 +28,16 @@ export type KnowledgeTab = {
   end?: boolean;
 };
 
-export const KNOWLEDGE_PILLARS: (KnowledgeTab & { id: Exclude<KnowledgePillarId, "avanzado"> })[] = [
+export const KNOWLEDGE_PILLARS: (KnowledgeTab & { id: Exclude<KnowledgePillarId, "avanzado" | "semantica"> })[] = [
   { id: "resumen", to: "/knowledge", label: "Resumen", end: true },
   { id: "fuentes", to: "/knowledge/sources", label: "Fuentes" },
-  { id: "semantica", to: "/knowledge/glossary", label: "Semántica" },
-  { id: "mejora", to: "/knowledge/learning", label: "Mejora" },
+  { id: "mejora", to: "/knowledge/learning", label: "Aprendizaje" },
 ];
 
-export const KNOWLEDGE_SUBNAVS: Record<"semantica" | "mejora", KnowledgeTab[]> = {
-  semantica: [
-    { to: "/knowledge/glossary", label: "Términos" },
-    { to: "/knowledge/understanding", label: "Entendimiento" },
-    { to: "/knowledge/catalog", label: "Catálogo" },
-  ],
+export const KNOWLEDGE_SUBNAVS: Record<"mejora", KnowledgeTab[]> = {
   mejora: [
     { to: "/knowledge/learning", label: "Aprendizaje" },
-    { to: "/knowledge/improvements", label: "Mejoras" },
     { to: "/knowledge/map", label: "Mapa" },
-    { to: "/knowledge/review", label: "Revisión" },
   ],
 };
 
@@ -66,27 +59,20 @@ export const KNOWLEDGE_ROUTE_TITLES: Record<string, string> = {
   "/knowledge/playground": KNOWLEDGE_HEADINGS.playground,
   "/knowledge-hub": KNOWLEDGE_HEADINGS.hub,
   "/knowledge/add": KNOWLEDGE_HEADINGS.add,
+  "/knowledge/workspaces": KNOWLEDGE_HEADINGS.workspaces,
 };
 
 export const KNOWLEDGE_ADVANCED_TABS: KnowledgeTab[] = [
-  { to: "/knowledge/jobs", label: "Sincronización" },
-  { to: "/knowledge/sql", label: "SQL" },
-  { to: "/knowledge/database", label: "Base" },
+  { to: "/knowledge/glossary", label: "Términos" },
+  { to: "/knowledge/catalog", label: "Catálogo" },
   { to: "/connectors", label: "Conectores" },
-  { to: "/knowledge/collections", label: "Colecciones" },
-  { to: "/knowledge/documents", label: "Documentos" },
-  { to: "/knowledge/playground", label: "Búsqueda" },
-  { to: "/knowledge-hub", label: "Knowledge Hub" },
+  { to: "/knowledge/jobs", label: "Trabajos" },
 ];
 
 const PREFIX_GROUPS: { id: KnowledgePillarId; prefixes: string[] }[] = [
   {
     id: "fuentes",
     prefixes: ["/knowledge/sources", "/knowledge/add"],
-  },
-  {
-    id: "semantica",
-    prefixes: ["/knowledge/glossary", "/knowledge/understanding", "/knowledge/catalog"],
   },
   {
     id: "mejora",
@@ -100,6 +86,10 @@ const PREFIX_GROUPS: { id: KnowledgePillarId; prefixes: string[] }[] = [
   {
     id: "avanzado",
     prefixes: [
+      "/knowledge/glossary",
+      "/knowledge/understanding",
+      "/knowledge/catalog",
+      "/knowledge/workspaces",
       "/knowledge/jobs",
       "/knowledge/sql",
       "/knowledge/database",

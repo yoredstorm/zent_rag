@@ -4,10 +4,10 @@ import { api, type Session } from "../api";
 type GateState = Record<string, number>;
 
 const METRICS = [
-  { key: "composite_score", label: "Composite score", hint: "0-1" },
-  { key: "faithfulness", label: "Faithfulness", hint: "0-1" },
-  { key: "answer_relevance", label: "Answer relevance", hint: "0-1" },
-  { key: "sql_accuracy", label: "SQL accuracy", hint: "0-1 (datasets con expected_sql)" },
+  { key: "composite_score", label: "Puntaje compuesto", hint: "0-1 · composite_score" },
+  { key: "faithfulness", label: "Fidelidad a las fuentes", hint: "0-1 · faithfulness" },
+  { key: "answer_relevance", label: "Relevancia de la respuesta", hint: "0-1 · answer_relevance" },
+  { key: "sql_accuracy", label: "Precisión SQL", hint: "0-1 · sql_accuracy (datasets con expected_sql)" },
 ];
 
 /** FASE 03 (S4/S5): umbrales de calidad por org + regresión máxima permitida. */
@@ -32,7 +32,7 @@ export default function QualityGatesPanel({ session }: { session: Session | null
         max_regression_pct: out.gate.max_regression_pct,
       });
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Error cargando gates");
+      setErr(e instanceof Error ? e.message : "Error cargando umbrales");
     }
   }
 
@@ -54,7 +54,7 @@ export default function QualityGatesPanel({ session }: { session: Session | null
         organizationId: session.organizationId,
         body: JSON.stringify({ thresholds, max_hallucination, max_regression_pct }),
       });
-      setMsg("Gates guardados. Se aplican al promover a production.");
+      setMsg("Umbrales guardados. Se aplican al promover a producción.");
     } catch (e) {
       setErr(e instanceof Error ? e.message : "Error guardando");
     } finally {
@@ -68,14 +68,14 @@ export default function QualityGatesPanel({ session }: { session: Session | null
     <section className="panel mt-4 p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold text-text">Quality gates</h3>
+          <h3 className="text-sm font-semibold text-text">Umbrales de calidad</h3>
           <p className="mt-1 text-xs text-muted">
-            Umbrales sobre métricas que el engine calcula. Se aplican al promover a production;
-            una regresión vs la versión desplegada también bloquea.
+            Mínimos que debe alcanzar una versión para pasar a producción. Si empeora frente a la
+            versión ya publicada, también se bloquea.
           </p>
         </div>
         <button type="button" className="btn btn-secondary min-h-9 text-xs" disabled={saving} onClick={() => void save()}>
-          {saving ? "Guardando…" : "Guardar gates"}
+          {saving ? "Guardando…" : "Guardar umbrales"}
         </button>
       </div>
       {msg && <p className="mt-2 text-xs text-ok" role="status">{msg}</p>}
@@ -97,7 +97,7 @@ export default function QualityGatesPanel({ session }: { session: Session | null
           </label>
         ))}
         <label className="block text-xs text-muted">
-          <span className="mb-1 block">Max hallucination</span>
+          <span className="mb-1 block">Alucinación máxima</span>
           <input
             type="number"
             min={0}
@@ -109,7 +109,7 @@ export default function QualityGatesPanel({ session }: { session: Session | null
           />
         </label>
         <label className="block text-xs text-muted">
-          <span className="mb-1 block">Max regresión (%)</span>
+          <span className="mb-1 block">Regresión máxima (%)</span>
           <input
             type="number"
             min={0}

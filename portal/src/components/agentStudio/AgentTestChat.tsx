@@ -19,6 +19,7 @@ export function AgentTestChat({
   inactive,
   disabledReason,
   sources,
+  selectedIds,
   onInput,
   onSubmit,
   onActivate,
@@ -30,11 +31,15 @@ export function AgentTestChat({
   inactive: boolean;
   disabledReason?: string;
   sources: KnowledgeSource[];
+  selectedIds: string[];
   onInput: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
   onActivate?: () => void;
 }) {
   const nameById = new Map(sources.map((s) => [s.id, s.name]));
+  const waitingOnIndex = sources.some(
+    (source) => selectedIds.includes(source.id) && !source.document_count,
+  );
 
   return (
     <section className="flex h-full min-h-[22rem] flex-col rounded-md border border-border bg-surface">
@@ -46,6 +51,11 @@ export function AgentTestChat({
         <p className="mt-0.5 text-xs text-muted">Habla con el agente. Ajusta propósito o fuentes y vuelve a preguntar.</p>
       </header>
 
+      {waitingOnIndex && (
+        <div className="border-b border-warn/30 bg-warn-soft px-4 py-3 text-sm text-text" role="status" data-testid="chat-wait-index">
+          Espera a que termine el indexado; ahora mismo no hay nada que buscar.
+        </div>
+      )}
       {inactive && (
         <div className="border-b border-warn/30 bg-warn-soft px-4 py-3 text-sm text-text" role="status">
           Actívalo para probar.

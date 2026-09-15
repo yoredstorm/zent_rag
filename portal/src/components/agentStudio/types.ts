@@ -39,6 +39,14 @@ export type KnowledgeSource = {
   knowledge_base_id?: string | null;
 };
 
+export type IngestionJob = {
+  id: string;
+  job_type: string;
+  status: string;
+  progress: number;
+  source_id: string | null;
+};
+
 export type AgentVersion = {
   id: string;
   version_number: number;
@@ -61,38 +69,40 @@ export type Deployment = {
   rollback_from_id: string | null;
 };
 
-export const ADVANCED_TABS = [
-  "model",
-  "output",
-  "retrieval",
-  "tools",
-  "security",
-  "limits",
-  "readiness",
-  "evaluation",
-  "versions",
-  "deployments",
-  "embed",
-] as const;
+export const ADVANCED_TABS = ["behavior", "capabilities", "publish"] as const;
 
 export type AdvancedTab = (typeof ADVANCED_TABS)[number];
 
 export const ADVANCED_TAB_LABELS: Record<AdvancedTab, string> = {
-  model: "Modelo",
-  output: "Salida",
-  retrieval: "Retrieval",
-  tools: "Tools",
-  security: "Seguridad",
-  limits: "Límites",
-  readiness: "Readiness",
-  evaluation: "Evaluación",
-  versions: "Versiones",
-  deployments: "Despliegues",
-  embed: "Embed",
+  behavior: "Cómo responde",
+  capabilities: "Qué puede hacer",
+  publish: "Publicar",
+};
+
+/** Las 11 pestañas antiguas siguen llegando por URL (enlaces guardados, redirects). */
+const LEGACY_TAB_GROUPS: Record<string, AdvancedTab> = {
+  model: "behavior",
+  output: "behavior",
+  tools: "capabilities",
+  security: "capabilities",
+  retrieval: "capabilities",
+  limits: "capabilities",
+  readiness: "publish",
+  evaluation: "publish",
+  versions: "publish",
+  deployments: "publish",
+  embed: "publish",
 };
 
 export function isAdvancedTab(value: string | null): value is AdvancedTab {
   return ADVANCED_TABS.includes(value as AdvancedTab);
+}
+
+/** Resuelve el grupo visible a partir de `?tab=`, o null si no es una pestaña conocida. */
+export function legacyTabToGroup(value: string | null): AdvancedTab | null {
+  if (!value) return null;
+  if (isAdvancedTab(value)) return value;
+  return LEGACY_TAB_GROUPS[value] ?? null;
 }
 
 export function defaultConfig(): AgentConfig {

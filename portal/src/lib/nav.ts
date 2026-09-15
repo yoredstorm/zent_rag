@@ -20,6 +20,7 @@ import {
   Lifebuoy,
   NotePencil,
   Plugs,
+  Pulse,
   Robot,
   Rocket,
   RocketLaunch,
@@ -58,7 +59,6 @@ export const NAV_GROUPS: NavGroup[] = [
     items: [
       { to: "/chat", label: "Playground", icon: ChatCircleDots },
       { to: "/agents", label: "Agentes", icon: Robot },
-      { to: "/assistants", label: "Asistentes", icon: Robot },
       { to: "/knowledge", label: "Conocimiento", icon: Database },
       { to: "/workflows", label: "Workflows", icon: FlowArrow },
       { to: "/integrations", label: "Integraciones API", icon: Plugs },
@@ -70,6 +70,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Operar",
     items: [
+      { to: "/assistants", label: "Asistentes", icon: Pulse },
       { to: "/usage", label: "Analítica", icon: ChartLineUp },
       { to: "/ai-quality", label: "Calidad de IA", icon: Target },
       { to: "/deployments", label: "Despliegues", icon: RocketLaunch },

@@ -29,13 +29,13 @@ export const TOUR_STEPS: TourStep[] = [
     id: "build",
     target: "nav-group-construir",
     title: "Construir",
-    body: "Este bloque es donde nace el producto: agentes, conocimiento, playground y workflows. Empieza aquí si todavía no tienes un agente respondiendo con tus datos.",
+    body: "Este bloque es donde nace el producto: playground, agentes, conocimiento y workflows. Empieza aquí si todavía no tienes un agente respondiendo con tus datos. El trabajo automático se mira en Asistentes, dentro de Operar.",
   },
   {
     id: "playground",
     target: "nav-chat",
     title: "Playground",
-    body: "Prueba preguntas contra tus agentes sin desplegar nada a producción. Úsalo para iterar instrucciones y comprobar respuestas antes de que un usuario real las vea.",
+    body: "Banco de pruebas: elige un agente, un flujo o el conocimiento de la org y haz preguntas sin desplegar nada. Úsalo para comprobar respuestas antes de que un usuario real las vea.",
   },
   {
     id: "agents",
@@ -47,7 +47,7 @@ export const TOUR_STEPS: TourStep[] = [
     id: "knowledge",
     target: "nav-knowledge",
     title: "Conocimiento",
-    body: "Sube documentos, bases y fuentes para que el agente cite información tuya. Entra cuando quieras que las respuestas dejen de ser genéricas y usen tu negocio.",
+    body: "Carga fuentes aquí para que el agente cite tu negocio. En Agent Studio eliges cuáles lee; en Playground preguntas sobre ellas antes de publicar.",
   },
   {
     id: "workflows",
@@ -59,7 +59,13 @@ export const TOUR_STEPS: TourStep[] = [
     id: "operate",
     target: "nav-group-operar",
     title: "Operar",
-    body: "Aquí operas lo que ya construiste: métricas, calidad, despliegues y entornos. Pasa a este bloque cuando el agente deja de ser un experimento y tiene que aguantar uso real.",
+    body: "Aquí operas lo que ya construiste: asistentes en marcha, métricas, calidad, despliegues y entornos. Pasa a este bloque cuando el agente deja de ser un experimento y tiene que aguantar uso real.",
+  },
+  {
+    id: "assistants",
+    target: "nav-assistants",
+    title: "Asistentes",
+    body: "El mismo agente, visto en operación: qué vigila, qué flujos corre y si algo falló. Entra después de crear el cerebro en Agentes, cuando quieras que trabaje solo y te avise.",
   },
   {
     id: "usage",
@@ -235,6 +241,7 @@ const PATH_TOUR_TARGET: Record<string, string> = {
   "/": "nav-dashboard",
   "/chat": "nav-chat",
   "/agents": "nav-agents",
+  "/assistants": "nav-assistants",
   "/knowledge": "nav-knowledge",
   "/workflows": "nav-workflows",
   "/usage": "nav-usage",

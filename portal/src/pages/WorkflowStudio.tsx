@@ -1,6 +1,6 @@
-import { ArrowLeft, Code, FloppyDisk, Lightning, MagicWand, SlidersHorizontal, X } from "@phosphor-icons/react";
+import { ArrowLeft, ChatCircleDots, Code, FloppyDisk, Lightning, MagicWand, SlidersHorizontal, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { Breadcrumb } from "../components/Breadcrumb";
@@ -506,6 +506,13 @@ export default function WorkflowStudioPage() {
           >
             <MagicWand size={15} aria-hidden /> Editar con IA
           </button>
+          <Link
+            to={`/chat?target=workflow&id=${id}`}
+            className="btn btn-ghost min-h-11 px-2.5 text-xs"
+          >
+            <ChatCircleDots size={15} aria-hidden />
+            Probar en Playground
+          </Link>
           <button
             type="button"
             className="btn btn-ghost min-h-11 px-2.5 text-xs lg:hidden"

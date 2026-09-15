@@ -133,13 +133,15 @@ function json(body: unknown, status = 200) {
   });
 }
 
-function setupFetch(options: { graph?: unknown; empty?: boolean } = {}) {
+function setupFetch(options: { graph?: unknown; empty?: boolean; kbSources?: { type: string }[] } = {}) {
   const calls: string[] = [];
   const fetchMock = vi.fn((input: RequestInfo | URL) => {
     const url = String(input);
     calls.push(url);
     if (url.includes("/knowledge/learning/sources"))
-      return Promise.resolve(json([SOURCE]));
+      return Promise.resolve(json(options.empty ? [] : [SOURCE]));
+    if (url.includes("/api/v1/sources"))
+      return Promise.resolve(json({ sources: options.kbSources ?? [] }));
     if (url.includes("/knowledge/learning/graph"))
       return Promise.resolve(json(options.graph ?? GRAPH));
     if (url.includes("/knowledge/learning/questions"))
@@ -271,12 +273,10 @@ describe("Knowledge Map", () => {
     expect(await screen.findByText('¿Qué significa CUST_STS = "A"?')).toBeInTheDocument();
   });
 
-  it("acerca y reinicia la vista", async () => {
-    const { user } = await renderMap();
-    await screen.findByTestId("graph-canvas");
-    await user.click(screen.getByTestId("map-zoom-in"));
-    await user.click(screen.getByTestId("map-zoom-out"));
-    await user.click(screen.getByTestId("map-reset"));
-    expect(screen.getByTestId("graph-canvas")).toBeInTheDocument();
+  it("explica SQL si no hay catálogo y hay archivos", async () => {
+    await renderMap({ empty: true, kbSources: [{ type: "file" }] });
+    expect(await screen.findByTestId("sql-learning-empty")).toBeInTheDocument();
+    expect(screen.getByText(/Tienes 1 archivo/)).toBeInTheDocument();
+    expect(screen.queryByText("Sin fuentes")).toBeNull();
   });
 });

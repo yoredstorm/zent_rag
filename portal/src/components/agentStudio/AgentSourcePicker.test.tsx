@@ -1,0 +1,108 @@
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { describe, expect, it, vi } from "vitest";
+import { AgentSourcePicker, INDEXING_COPY } from "./AgentSourcePicker";
+import { AgentTestChat } from "./AgentTestChat";
+import type { IngestionJob, KnowledgeSource } from "./types";
+
+const EMPTY: KnowledgeSource = {
+  id: "s1",
+  name: "Intl Fares.pdf",
+  type: "file",
+  status: "created",
+  document_count: 0,
+  last_sync: null,
+};
+
+const READY: KnowledgeSource = {
+  ...EMPTY,
+  document_count: 4,
+  status: "indexed",
+};
+
+const RUNNING: IngestionJob = {
+  id: "j1",
+  job_type: "sync_source:file",
+  status: "running",
+  progress: 50,
+  source_id: "s1",
+};
+
+describe("AgentSourcePicker", () => {
+  it("muestra barra y copy cuando el job corre y no hay docs", () => {
+    render(
+      <MemoryRouter>
+        <AgentSourcePicker
+          sources={[EMPTY]}
+          selectedIds={["s1"]}
+          jobs={[RUNNING]}
+          loading={false}
+          onToggle={() => {}}
+          onIndex={() => {}}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.getByTestId("source-indexing-copy")).toHaveTextContent(INDEXING_COPY);
+    expect(screen.getByTestId("source-progress-s1")).toBeInTheDocument();
+    expect(screen.getByText(/Indexando/)).toBeInTheDocument();
+    expect(screen.queryByText("Aún no indexada")).toBeNull();
+    expect(screen.queryByText("created")).toBeNull();
+  });
+
+  it("no dice Aún no indexada cuando hay documentos", () => {
+    render(
+      <MemoryRouter>
+        <AgentSourcePicker
+          sources={[READY]}
+          selectedIds={["s1"]}
+          jobs={[]}
+          loading={false}
+          onToggle={() => {}}
+          onIndex={() => {}}
+        />
+      </MemoryRouter>,
+    );
+    expect(screen.queryByText("Aún no indexada")).toBeNull();
+    expect(screen.getByText(/4 docs/)).toBeInTheDocument();
+    expect(screen.queryByTestId("source-indexing-copy")).toBeNull();
+  });
+
+  it("ofrece Indexar ahora si no hay job", async () => {
+    const onIndex = vi.fn();
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <AgentSourcePicker
+          sources={[EMPTY]}
+          selectedIds={[]}
+          jobs={[]}
+          loading={false}
+          onToggle={() => {}}
+          onIndex={onIndex}
+        />
+      </MemoryRouter>,
+    );
+    await user.click(screen.getByTestId("source-index-s1"));
+    expect(onIndex).toHaveBeenCalledWith("s1");
+  });
+});
+
+describe("AgentTestChat", () => {
+  it("avisa si las fuentes elegidas no están indexadas", () => {
+    render(
+      <AgentTestChat
+        turns={[]}
+        input=""
+        status=""
+        playing={false}
+        inactive={false}
+        sources={[EMPTY]}
+        selectedIds={["s1"]}
+        onInput={() => {}}
+        onSubmit={(e) => e.preventDefault()}
+      />,
+    );
+    expect(screen.getByTestId("chat-wait-index")).toHaveTextContent(/termine el indexado/);
+  });
+});
