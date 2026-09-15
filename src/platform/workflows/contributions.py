@@ -139,12 +139,16 @@ class ContextMerger:
             if error is not None:
                 report.rejected.append({"index": index, "section": section, "reason": error})
                 continue
+            entry = value.to_dict()
+            if value.redacted:
+                entry = {**entry, "value": "[redactado]"}
             applied: dict[str, Any] = {
                 "index": index,
                 "section": section,
                 "key": write.key,
                 "value_type": value.value_type,
                 "label": value.label,
+                "payload": entry,
             }
             applied.update(detail)
             report.applied.append(applied)

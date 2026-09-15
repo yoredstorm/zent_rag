@@ -277,6 +277,12 @@ async def run_workflow(
         await ensure_pinned_table()
     except Exception:  # noqa: BLE001 — paridad dev/test; la migración manda en prod
         pass
+    try:
+        from src.platform.workflows.context_store import ensure_context_tables
+
+        await ensure_context_tables()
+    except Exception:  # noqa: BLE001 — paridad dev/test; la migración manda en prod
+        pass
     trig = trigger if trigger in ("manual", "schedule", "webhook", "event", "approval") else "manual"
     wf = await _load_workflow_row(workflow_id)
     if wf is None:
@@ -498,6 +504,17 @@ async def run_workflow(
         run_id=run_id,
         error=result.error,
     )
+    try:
+        from src.platform.workflows.context_store import save_run_context
+
+        await save_run_context(
+            organization_id=eff_org,
+            run_id=run_id,
+            workspace_id=eff_ws,
+            snapshot=result.context_snapshot,
+        )
+    except Exception as exc:  # noqa: BLE001 — no romper la respuesta del run
+        logger.warning("run context persist failed", run_id=str(run_id), error=str(exc)[:200])
 
     body: dict = {
         "run_id": str(run_id),

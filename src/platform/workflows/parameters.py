@@ -196,6 +196,8 @@ def _query_business_data_schema() -> NodeBusinessSchema:
             _out("columns", "Columnas", "json"),
             _out("answer", "Respuesta", "text"),
             _out("evidence", "Evidencia", "evidence"),
+            _out("evidence_ids", "Evidencias", "json"),
+            _out("row_count", "Filas", "number"),
             _out("query_id", "Consulta", "text"),
         ],
     )
@@ -230,6 +232,8 @@ def _kb_query_schema() -> NodeBusinessSchema:
             _out("documents", "Documentos", "record_list"),
             _out("chunks", "Fragmentos", "record_list"),
             _out("count", "Encontrados", "number"),
+            _out("citations", "Citas", "json"),
+            _out("evidence_ids", "Evidencias", "json"),
         ],
     )
 

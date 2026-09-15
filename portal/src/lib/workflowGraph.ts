@@ -599,8 +599,8 @@ export type RefOption = { label: string; ref: string };
 
 const OUTPUT_FIELDS: Record<string, string[]> = {
   api_call: ["extracted", "status_code", "json", "body"],
-  kb_query: ["count", "documents", "chunks"],
-  query_business_data: ["rows", "columns", "answer", "evidence", "query_id"],
+  kb_query: ["count", "documents", "chunks", "citations", "evidence_ids"],
+  query_business_data: ["rows", "columns", "answer", "evidence", "evidence_ids", "row_count", "query_id"],
   llm: ["text", "agent_id", "model"],
   notify: ["sent", "channel"],
   for_each: ["items_processed", "results", "errors"],

@@ -18,7 +18,7 @@ from src.infrastructure.observability.logging_config import get_logger
 from src.platform.workflows.context import WorkflowContext
 from src.platform.workflows.contributions import ContextWrite, NodeContribution
 from src.platform.workflows.node_catalog import semantic_metadata
-from src.platform.workflows.values import node_provenance
+from src.platform.workflows.values import jsonable, node_provenance
 
 logger = get_logger(__name__)
 
@@ -200,50 +200,110 @@ async def _run_with_permission(rctx: NodeContext, perm: str, coro: Awaitable[Nod
 # Contribuciones de contexto (Fase 2) — builders puros y testables.
 # ---------------------------------------------------------------------------
 def _kb_query_contribution(
-    rctx: NodeContext, *, query: str, chunks: list[dict], count: int
+    rctx: NodeContext,
+    *,
+    query: str,
+    chunks: list[dict],
+    count: int,
+    evidence_ids: list[str] | None = None,
+    citations: list[dict] | None = None,
 ) -> NodeContribution:
-    write = ContextWrite(
-        section="knowledge",
-        key=rctx.node_id,
-        value={"query": query, "chunks": chunks[:5], "count": count},
-        value_type="knowledge_answer",
-        label=str(rctx.node.label or "Knowledge"),
-        provenance=node_provenance(
-            rctx.node_id,
-            "kb_query",
-            origin_kind="knowledge",
-            workspace_id=rctx.workspace_id,
-        ),
-    )
-    return NodeContribution(writes=(write,))
+    writes: list[ContextWrite] = [
+        ContextWrite(
+            section="knowledge",
+            key=rctx.node_id,
+            value={
+                "query": query,
+                "chunks": chunks[:5],
+                "count": count,
+                "citations": citations or [],
+            },
+            value_type="knowledge_answer",
+            label=str(rctx.node.label or "Knowledge"),
+            provenance=node_provenance(
+                rctx.node_id,
+                "kb_query",
+                origin_kind="knowledge",
+                workspace_id=rctx.workspace_id,
+            ),
+        )
+    ]
+    for evidence in evidence_ids or []:
+        try:
+            evidence_uuid = UUID(str(evidence))
+        except (TypeError, ValueError):
+            continue
+        writes.append(
+            ContextWrite(
+                section="evidence",
+                value={"evidence_id": str(evidence_uuid), "label": query[:80]},
+                value_type="evidence",
+                provenance=node_provenance(
+                    rctx.node_id,
+                    "kb_query",
+                    origin_kind="knowledge",
+                    evidence_id=evidence_uuid,
+                    workspace_id=rctx.workspace_id,
+                ),
+            )
+        )
+    return NodeContribution(writes=tuple(writes))
 
 
-def _query_business_data_contribution(rctx: NodeContext, outcome: dict[str, Any]) -> NodeContribution:
+def _query_business_data_contribution(
+    rctx: NodeContext, outcome: dict[str, Any], *, evidence_ids: list[str] | None = None
+) -> NodeContribution:
     payload = {
         key: outcome[key]
         for key in ("answer", "rows", "columns", "query_id", "method", "metrics")
         if outcome.get(key) is not None
     }
+    if evidence_ids:
+        payload["evidence_ids"] = list(evidence_ids)
     metrics = outcome.get("metrics")
     confidence = None
     if isinstance(metrics, dict) and isinstance(metrics.get("answerable"), bool):
         confidence = 1.0 if metrics["answerable"] else 0.0
-    write = ContextWrite(
-        section="data",
-        key=rctx.node_id,
-        value=payload,
-        value_type="record_list" if outcome.get("rows") else "knowledge_answer",
-        label=str(rctx.node.config.get("ask") or rctx.node.label or "Datos")[:80],
-        provenance=node_provenance(
-            rctx.node_id,
-            "query_business_data",
-            origin_kind="datasource",
-            source_id=str(outcome.get("query_id") or "") or None,
-            workspace_id=rctx.workspace_id,
-            confidence=confidence,
-        ),
-    )
-    return NodeContribution(writes=(write,))
+    writes: list[ContextWrite] = [
+        ContextWrite(
+            section="data",
+            key=rctx.node_id,
+            value=payload,
+            value_type="record_list" if outcome.get("rows") else "knowledge_answer",
+            label=str(rctx.node.config.get("ask") or rctx.node.label or "Datos")[:80],
+            provenance=node_provenance(
+                rctx.node_id,
+                "query_business_data",
+                origin_kind="datasource",
+                source_id=str(outcome.get("query_id") or "") or None,
+                workspace_id=rctx.workspace_id,
+                confidence=confidence,
+            ),
+        )
+    ]
+    for evidence in evidence_ids or []:
+        try:
+            evidence_uuid = UUID(str(evidence))
+        except (TypeError, ValueError):
+            continue
+        writes.append(
+            ContextWrite(
+                section="evidence",
+                value={
+                    "evidence_id": str(evidence_uuid),
+                    "label": str(outcome.get("query_id") or "query_business_data"),
+                },
+                value_type="evidence",
+                provenance=node_provenance(
+                    rctx.node_id,
+                    "query_business_data",
+                    origin_kind="datasource",
+                    evidence_id=evidence_uuid,
+                    workspace_id=rctx.workspace_id,
+                ),
+            )
+        )
+    return NodeContribution(writes=tuple(writes))
 
 
 def _api_call_contribution(
@@ -360,6 +420,149 @@ def _business_result_contribution(rctx: NodeContext, *, result_id: str, title: s
         ),
     )
     return NodeContribution(writes=(write,))
+
+
+def _citation_dict(citation: Any) -> dict[str, Any]:
+    """Serializa una Citation de grounding para output/UI (JSON-safe)."""
+    return {
+        "source_id": str(getattr(citation, "source_id", "") or ""),
+        "document_id": str(getattr(citation, "document_id", "") or ""),
+        "document_name": getattr(citation, "document_name", "") or "",
+        "page": getattr(citation, "page", None),
+        "section_path": list(getattr(citation, "section_path", ()) or ()),
+        "block_id": str(getattr(citation, "block_id", "") or "") or None,
+        "chunk_id": str(getattr(citation, "chunk_id", "") or "") or None,
+        "excerpt": str(getattr(citation, "excerpt", "") or "")[:400],
+        "relevance": getattr(citation, "relevance", None),
+    }
+
+
+async def _kb_query_v2(rctx: NodeContext, *, kb_id: UUID, query: str, limit: int) -> NodeOutcome:
+    """Knowledge V2: StructuredRetriever + citations + Evidence Ledger.
+
+    Solo se usa con `RAG_KNOWLEDGE_V2_ENABLED`; el caller cae a V1 si falla.
+    """
+    from src.api.deps import get_structured_retriever
+    from src.rag.grounding.citations import build_citations
+    from src.rag.grounding.models import GroundedAnswer
+    from src.rag.grounding.recorder import GroundingLedgerRecorder
+    from src.rag.retrieval.models import RetrievalQuery
+
+    retriever = _resolve_dep(get_structured_retriever)
+    assembled = await retriever.retrieve(
+        RetrievalQuery(
+            query=query,
+            organization_id=rctx.organization_id,
+            knowledge_base_id=kb_id,
+            top_k=limit,
+            effective_top_k=limit,
+        )
+    )
+    citations = list(build_citations(assembled, limit=limit))
+    citation_dicts = [_citation_dict(citation) for citation in citations]
+    evidence_ids: list[str] = []
+    evidence_error: str | None = None
+    if citations:
+        try:
+            from src.api.deps import get_evidence_ledger_repo
+
+            answer = GroundedAnswer(
+                answer="",
+                citations=tuple(citations),
+                confidence=0.0,
+                sources_used=tuple(
+                    sorted(
+                        {
+                            citation.document_id
+                            for citation in citations
+                            if citation.document_id is not None
+                        },
+                        key=str,
+                    )
+                ),
+            )
+            recorder = GroundingLedgerRecorder(_resolve_dep(get_evidence_ledger_repo))
+            recorded = await recorder.record_evidence(
+                organization_id=rctx.organization_id,
+                answer=answer,
+                workspace_id=rctx.workspace_id,
+                task_id=rctx.execution.run_id,
+            )
+            evidence_ids = [str(item) for item in recorded]
+        except Exception as exc:  # noqa: BLE001 — la evidencia no rompe el nodo
+            evidence_error = str(exc)[:200]
+            logger.warning("kb_query evidence ledger failed", error=evidence_error)
+
+    children = list(getattr(assembled, "children", ()) or ())
+    chunks = [
+        {
+            "title": (getattr(child, "metadata", {}) or {}).get("title") or "",
+            "text": str(getattr(child, "content", "") or "")[:800],
+        }
+        for child in children[:limit]
+    ]
+    output: dict[str, Any] = {
+        "chunks": chunks,
+        "count": len(chunks),
+        "documents": chunks,
+        "citations": citation_dicts,
+        "evidence_ids": evidence_ids,
+        "method": "knowledge_v2",
+    }
+    if evidence_error:
+        output["evidence_error"] = evidence_error
+    return NodeOutcome(
+        output=output,
+        contribution=_kb_query_contribution(
+            rctx,
+            query=query,
+            chunks=chunks,
+            count=len(chunks),
+            evidence_ids=evidence_ids,
+            citations=citation_dicts,
+        ),
+    )
+
+
+async def _record_query_evidence(rctx: NodeContext, outcome: dict[str, Any]) -> list[str]:
+    """Registra la consulta SQL en el Evidence Ledger (una evidencia localizable)."""
+    if not (outcome.get("rows") or outcome.get("answer")):
+        return []
+    try:
+        import hashlib
+
+        from src.api.deps import get_evidence_ledger_repo
+        from src.core.domain.evidence import EvidenceRecord
+
+        excerpt = json.dumps(
+            {
+                key: outcome.get(key)
+                for key in ("query_id", "answer", "columns", "row_count", "method")
+                if outcome.get(key) is not None
+            },
+            ensure_ascii=False,
+            default=str,
+        )[:2000]
+        columns = outcome.get("columns") or []
+        record = EvidenceRecord(
+            organization_id=rctx.organization_id,
+            excerpt=excerpt,
+            content_hash=hashlib.sha256(excerpt.encode("utf-8")).hexdigest(),
+            workspace_id=rctx.workspace_id,
+            table_reference=",".join(str(column) for column in columns)[:200] or None,
+            row_reference=str(outcome.get("row_count")) if outcome.get("row_count") is not None else None,
+            database_reference=str(outcome.get("method") or "query_business_data"),
+            task_id=rctx.execution.run_id,
+            metadata={
+                "query_id": outcome.get("query_id"),
+                "ask": str(rctx.node.config.get("ask") or "")[:300],
+            },
+        )
+        saved = await _resolve_dep(get_evidence_ledger_repo).append(record)
+        return [str(saved.id)]
+    except Exception as exc:  # noqa: BLE001 — la evidencia no rompe el nodo
+        logger.warning("query evidence ledger append failed", error=str(exc)[:200])
+        return []
 
 
 # ---------------------------------------------------------------------------
@@ -497,10 +700,17 @@ async def _exec_kb_query(rctx: NodeContext) -> NodeOutcome:
         if owned is None:
             return NodeOutcome(error="knowledge_base_id no pertenece al tenant")
         try:
+            from src.core.config import get_settings
+
+            if get_settings().KNOWLEDGE_V2_ENABLED:
+                return await _kb_query_v2(rctx, kb_id=kb_id, query=query, limit=limit)
+        except Exception as exc:  # noqa: BLE001 — V2 no rompe; cae a V1
+            logger.warning("kb_query V2 failed, falling back to V1", error=str(exc)[:200])
+        try:
             from src.api.deps import get_retriever
             from src.rag.retrieval.models import RetrievalQuery
 
-            retriever = get_retriever()
+            retriever = _resolve_dep(get_retriever)
             context = await retriever.retrieve(
                 RetrievalQuery(
                     query=query,
@@ -1010,14 +1220,27 @@ async def _exec_query_business_data(rctx: NodeContext) -> NodeOutcome:
         "evidence": [],
     }
     if structured is not None:
-        outcome["rows"] = structured.get("rows", [])
-        outcome["columns"] = structured.get("columns", [])
+        outcome["rows"] = jsonable(structured.get("rows") or [])
+        outcome["columns"] = jsonable(structured.get("columns") or [])
+        if structured.get("row_count") is not None:
+            outcome["row_count"] = int(structured.get("row_count") or 0)
+        outcome["truncated"] = bool(structured.get("truncated", False))
     ab = getattr(result, "answerability", None)
     if ab is not None:
         outcome["evidence"] = [
             {"source": s} for s in (getattr(ab, "sources", None) or [])
         ]
         outcome["metrics"]["answerable"] = bool(getattr(ab, "answerable", False))
+        status = getattr(ab, "status", None)
+        outcome["answerability"] = {
+            "status": getattr(status, "value", status) if status is not None else None,
+            "answerable": bool(getattr(ab, "answerable", False)),
+            "confidence": getattr(ab, "confidence_level", None),
+            "reason_codes": list(getattr(ab, "reason_codes", ()) or ()),
+            "evidence_object_ids": [
+                str(item) for item in (getattr(ab, "evidence_ids", ()) or ())
+            ],
+        }
     rc = getattr(result, "retrieval_context", None)
     if rc is not None:
         chunks = getattr(rc, "chunks", None) or []
@@ -1034,9 +1257,12 @@ async def _exec_query_business_data(rctx: NodeContext) -> NodeOutcome:
         "ingested": bool(getattr(result, "lazy_ingested", False)),
         "rows_indexed": int(getattr(result, "lazy_rows_indexed", 0) or 0),
     }
+    evidence_ids = await _record_query_evidence(rctx, outcome)
+    if evidence_ids:
+        outcome["evidence_ids"] = evidence_ids
     return NodeOutcome(
         output=outcome,
-        contribution=_query_business_data_contribution(rctx, outcome),
+        contribution=_query_business_data_contribution(rctx, outcome, evidence_ids=evidence_ids),
     )
 
 

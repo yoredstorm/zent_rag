@@ -431,6 +431,8 @@ class RAGQueryResult:
     error_message: str | None = None
     method: str = "rag"  # "sql" when SQL-first mode, "rag" when vector-only
     sql_query: str | None = None  # populated when method == "sql"; exposed to admin only
+    # SQL-first: filas/columnas reales (Workflow Semantic Core, Fase 7).
+    structured_output: dict | None = None
     lazy_ingested: bool = False
     lazy_rows_indexed: int = 0
     lazy_tables: list[str] = field(default_factory=list)

@@ -895,6 +895,12 @@ class RAGOrchestrator:
             result.method = "sql" if sql_mode else "rag"
             if sql_mode and sql_result is not None:
                 result.sql_query = sql_result.sql
+                result.structured_output = {
+                    "rows": list(getattr(sql_result, "rows", None) or []),
+                    "columns": list(getattr(sql_result, "columns", None) or []),
+                    "row_count": int(getattr(sql_result, "row_count", 0) or 0),
+                    "truncated": bool(getattr(sql_result, "truncated", False)),
+                }
 
             # -----------------------------------------------------------------
             # Hard anti-hallucination: sin datos vectoriales ni SQL → lazy ingest

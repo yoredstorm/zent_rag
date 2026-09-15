@@ -451,6 +451,23 @@ async def execute_graph(
                 allowed_sections=getattr(node_def, "context_writes", None),
             )
             exec_.contribution = report.to_dict()
+            if exec_.contribution.get("applied"):
+                try:
+                    from src.platform.workflows.context_store import save_contribution
+
+                    await save_contribution(
+                        organization_id=ctx.organization_id,
+                        run_id=ctx.run_id,
+                        node_id=node_id,
+                        node_type=node.type,
+                        report=exec_.contribution,
+                    )
+                except Exception as exc:  # noqa: BLE001 — persistencia no rompe el run
+                    logger.warning(
+                        "context contribution persist failed",
+                        node_id=node_id,
+                        error=str(exc)[:200],
+                    )
         _emit_node_metric(node.type, exec_.status, exec_.duration_ms)
         await persist(node_id, node.type, node.config, exec_, virtual)
         node_outcome(node_id, exec_.status, exec_.output, exec_.error, exec_)
