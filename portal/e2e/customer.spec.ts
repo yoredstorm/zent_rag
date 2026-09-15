@@ -33,11 +33,7 @@ test.describe("Customer portal — flujo smoke", () => {
       "href",
       "/knowledge/sources"
     );
-    await expect(dashboardKnowledge.getByRole("link", { name: "Semántica" })).toHaveAttribute(
-      "href",
-      "/knowledge/glossary"
-    );
-    await expect(dashboardKnowledge.getByRole("link", { name: "Mejora" })).toHaveAttribute(
+    await expect(dashboardKnowledge.getByRole("link", { name: "Aprendizaje" })).toHaveAttribute(
       "href",
       "/knowledge/learning"
     );
@@ -81,31 +77,23 @@ test.describe("Customer portal — flujo smoke", () => {
     const knowledgeNav = page.getByRole("navigation", { name: "Secciones de conocimiento" });
     await expect(knowledgeNav.getByRole("link", { name: "Resumen" })).toBeVisible();
     await expect(knowledgeNav.getByRole("link", { name: "Fuentes" })).toBeVisible();
-    await expect(knowledgeNav.getByRole("link", { name: "Semántica" })).toBeVisible();
-    await expect(knowledgeNav.getByRole("link", { name: "Mejora" })).toBeVisible();
+    await expect(knowledgeNav.getByRole("link", { name: "Aprendizaje" })).toBeVisible();
     await expect(knowledgeNav.getByRole("button", { name: "Avanzado" })).toBeVisible();
-    await expect(knowledgeNav.getByRole("link")).toHaveCount(4);
+    await expect(knowledgeNav.getByRole("link")).toHaveCount(3);
     await page.goto("/knowledge/sources");
     await expect(page.getByRole("heading", { name: "Fuentes", exact: true })).toBeVisible();
     await expect(knowledgeNav.getByRole("link", { name: "Fuentes" })).toBeVisible();
 
-    // Playground (chat): sin LLM el stream falla con elegancia, la UI no debe romperse
+    // Playground: elige el agente recién creado (o conocimiento si no hay)
     await page.goto("/chat");
     await expect(page.getByRole("heading", { name: "Playground" })).toBeVisible();
-    const chatKnowledge = page.getByTestId("knowledge-pillar-links");
-    await expect(chatKnowledge.getByRole("link", { name: "Fuentes" })).toHaveAttribute(
-      "href",
-      "/knowledge/sources"
-    );
-    await expect(chatKnowledge.getByRole("link", { name: "Mejora" })).toHaveAttribute(
-      "href",
-      "/knowledge/learning"
-    );
-    const composer = page.getByRole("textbox");
+    await expect(page.getByTestId("playground-target-bar")).toBeVisible();
+    await expect(page.getByLabel("Qué probar")).toBeVisible();
+    const composer = page.getByRole("textbox", { name: "Tu pregunta" });
     await composer.fill("¿Qué es Zent?");
     await composer.press("Enter");
     await page.waitForTimeout(4000);
-    await expect(page.getByRole("textbox")).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Tu pregunta" })).toBeVisible();
 
     // Evaluation / Calidad
     await page.goto("/ai-quality");
@@ -113,20 +101,20 @@ test.describe("Customer portal — flujo smoke", () => {
     await page.goto("/evaluation");
     await expect(page.getByRole("heading", { name: "Evaluation" })).toBeVisible();
 
-    // Deploy: snapshot → ready → go live
+    // Publicar: versión → lista → producción
     await page.goto(`/agents/${agentId}/builder?tab=versions`);
-    await page.getByRole("button", { name: "Crear snapshot" }).click();
+    await page.getByRole("button", { name: "Crear versión" }).click();
     await expect(page.getByText(/Snapshot creado/)).toBeVisible({ timeout: 20000 });
-    await page.getByRole("button", { name: "Promover a ready" }).first().click();
+    await page.getByRole("button", { name: "Marcar como lista" }).first().click();
     await expect(page.getByText(/Versión promovida/)).toBeVisible({ timeout: 20000 });
     await page.goto(`/agents/${agentId}/builder?tab=deployments`);
-    await expect(page.getByRole("combobox", { name: "Versión" })).toContainText("v1 · ready", {
+    await expect(page.getByRole("combobox", { name: "Versión a publicar" })).toContainText("v1 · ready", {
       timeout: 20000,
     });
     await expect(page.getByRole("combobox", { name: "Entorno" })).toContainText("production", {
       timeout: 20000,
     });
-    await page.getByRole("button", { name: /Go live/ }).click();
+    await page.getByRole("button", { name: "Publicar en producción" }).click();
     await expect(page.getByText(/desplegada en production/)).toBeVisible({ timeout: 20000 });
     await page.goto("/deployments");
     await expect(page.getByRole("heading", { name: "Despliegues" })).toBeVisible();

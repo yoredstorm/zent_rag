@@ -8,9 +8,10 @@ test.describe("Workflow Studio", () => {
     await page.goto("/workflows");
     await expect(page.getByRole("heading", { name: "Workflow Automation" })).toBeVisible({ timeout: 20_000 });
 
-    // La lista ya no trae editor: se navega al estudio.
-    await page.getByTestId("wf-new").click();
+    // La lista ya no trae editor: modo manual → estudio.
+    await page.getByTestId("wf-new-modes").click();
     await expect(page).toHaveURL(/\/workflows\/new/, { timeout: 10_000 });
+    await page.getByTestId("wf-mode-manual").click();
     await page.getByTestId("wf-new-name").fill("E2E Studio Flow");
     await page.getByTestId("wf-create").click();
 
@@ -31,8 +32,8 @@ test.describe("Workflow Studio", () => {
     }).toPass({ timeout: 10_000 });
     await expect(page.getByTestId("wf-node-config")).toBeVisible({ timeout: 10_000 });
 
-    // El agente es obligatorio: se elige del select o se ofrece crear uno.
-    const agentSelect = page.getByTestId("wf-agent-select");
+    // El agente es obligatorio: se elige del select de negocio o se ofrece crear uno.
+    const agentSelect = page.getByTestId("wf-param-agent_id");
     await expect(agentSelect).toBeVisible();
     const options = await agentSelect.locator("option").count();
     if (options > 1) {
@@ -43,7 +44,7 @@ test.describe("Workflow Studio", () => {
     }
 
     // El prompt por defecto usa el payload del trigger.
-    await expect(page.getByPlaceholder("{{trigger.message}}")).toHaveValue("{{trigger.message}}");
+    await expect(page.getByTestId("wf-param-prompt")).toHaveValue("{{trigger.message}}");
 
     // Guardar desde la cabecera del estudio.
     await expect(page.getByText("Cambios sin guardar")).toBeVisible({ timeout: 10_000 });

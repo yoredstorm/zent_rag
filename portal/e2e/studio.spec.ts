@@ -36,11 +36,6 @@ test.describe("Semantic Mapping Studio", () => {
     // does not race the two-step rail (same URL as before the IA redesign).
     await page.goto("/knowledge/understanding");
     await expect(page).toHaveURL(/\/knowledge\/understanding\/?$/, { timeout: 20_000 });
-    await expect(
-      page.getByRole("navigation", { name: "Subsecciones de Semántica" }).getByRole("link", {
-        name: "Entendimiento",
-      })
-    ).toBeVisible();
     await expect(page.getByTestId("studio-page")).toBeVisible({ timeout: 20_000 });
     await expect(
       page.getByTestId("studio-layout").or(page.getByText("Todavía no hay catálogo"))

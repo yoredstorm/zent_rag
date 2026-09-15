@@ -8,8 +8,9 @@ test.describe("Marketplace-native workflow canvas", () => {
     await page.goto("/workflows");
     await expect(page.getByRole("heading", { name: "Workflow Automation" })).toBeVisible({ timeout: 30_000 });
 
-    // Workflow nuevo en canvas: la lista navega al estudio.
-    await page.getByTestId("wf-new").click();
+    // Workflow nuevo en canvas: lista → modo manual → estudio.
+    await page.getByTestId("wf-new-modes").click();
+    await page.getByTestId("wf-mode-manual").click();
     await page.getByTestId("wf-new-name").fill("E2E Mkt Canvas");
     await page.getByTestId("wf-create").click();
     await expect(page.getByTestId("workflow-canvas-editor")).toBeVisible({ timeout: 20_000 });
