@@ -222,10 +222,13 @@ async def test_unknown_operation_is_typed_not_error(async_client: AsyncClient) -
 
 
 @pytest.mark.asyncio
-async def test_pending_operation_is_not_supported(async_client: AsyncClient) -> None:
-    org, kb_id = await _kb_setup(async_client, "KM Pending")
+async def test_investigate_disabled_is_typed(async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    org, kb_id = await _kb_setup(async_client, "KM Investigate Off")
+    from src.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "off")
     output = await _run_kb(
         async_client, org, kb_id, {"operation": "investigate", "query": "investiga el caso"}
     )
     assert output["status"] == "not_supported"
-    assert output["reason_codes"] == ["phase_pending"]
+    assert output["reason_codes"] == ["cognitive_disabled"]

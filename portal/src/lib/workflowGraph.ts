@@ -599,7 +599,7 @@ export type RefOption = { label: string; ref: string };
 
 const OUTPUT_FIELDS: Record<string, string[]> = {
   api_call: ["extracted", "status_code", "ok", "json", "body", "url", "idempotency_key"],
-  kb_query: ["count", "documents", "chunks", "citations", "evidence_ids", "answer", "claims", "facts", "entities", "differences", "conflicts", "has_conflicts", "status", "coverage", "temporal_context", "reason_codes"],
+  kb_query: ["count", "documents", "chunks", "citations", "evidence_ids", "answer", "claims", "facts", "entities", "findings", "differences", "conflicts", "has_conflicts", "status", "coverage", "temporal_context", "cognitive_run_id", "metrics", "reason_codes"],
   query_business_data: ["rows", "columns", "answer", "evidence", "evidence_ids", "row_count", "query_id"],
   llm: ["text", "agent_id", "model", "cost", "structured", "echo"],
   notify: ["sent", "channel", "recipients", "delivered", "deliveries", "count", "result"],

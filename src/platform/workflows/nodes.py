@@ -51,13 +51,13 @@ KB_OPERATIONS: tuple[str, ...] = (
     "check_conflicts",
     "investigate",
 )
-KB_PENDING_OPERATIONS = frozenset({"investigate"})
 KB_STATUS_OK = "ok"
 KB_STATUS_NOT_FOUND = "knowledge_not_found"
 KB_STATUS_INSUFFICIENT = "insufficient_evidence"
 KB_STATUS_NOT_SUPPORTED = "not_supported"
 KB_STATUS_INVALID_OPERATION = "invalid_operation"
 KB_STATUS_INVALID_OUTPUT = "invalid_output"
+KB_STATUS_BUDGET_EXCEEDED = "budget_exceeded"
 
 
 @dataclass(frozen=True)
@@ -1439,8 +1439,246 @@ async def _kb_query_search_v1(
         )
 
 
+async def _kb_owned_id(
+    rctx: NodeContext, cfg: dict[str, Any]
+) -> tuple[UUID | None, NodeOutcome | None]:
+    """Valida ownership de la KB configurada (None si no hay)."""
+    kb_raw = cfg.get("knowledge_base_id")
+    if not kb_raw:
+        return None, None
+    try:
+        kb_id = UUID(str(kb_raw))
+    except ValueError:
+        return None, NodeOutcome(error="knowledge_base_id inválido")
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    session = await get_async_session()
+    try:
+        owned = (
+            await session.execute(
+                text("SELECT id FROM knowledge_bases WHERE id = :kid AND organization_id = :oid"),
+                {"kid": kb_id, "oid": rctx.organization_id},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+    if owned is None:
+        return None, NodeOutcome(error="knowledge_base_id no pertenece al tenant")
+    return kb_id, None
+
+
+_COGNITIVE_ENABLED_MODES = frozenset({"shadow", "limited", "active"})
+KNOWLEDGE_WRITE_PERMISSION = "knowledge:write"
+
+
+def _cognitive_mode_enabled() -> bool:
+    from src.core.config import get_settings
+
+    mode = str(get_settings().COGNITIVE_OS_ENABLED or "off").strip().lower()
+    return mode in _COGNITIVE_ENABLED_MODES
+
+
+def _cognitive_budget_from_config(cfg: dict[str, Any]) -> Any:
+    raw = cfg.get("budget")
+    if not isinstance(raw, dict) or not raw:
+        return None
+    from dataclasses import replace
+
+    from src.core.domain.cognitive import CognitiveBudget
+
+    overrides = {key: value for key, value in raw.items() if value is not None}
+    try:
+        return replace(CognitiveBudget(), **overrides)
+    except (TypeError, ValueError):
+        return None
+
+
+async def _cognitive_scope(rctx: NodeContext, *, kb_id: UUID | None) -> Any:
+    from src.core.domain.cognitive import CognitiveScope
+
+    groups: list[str] = []
+    if rctx.execution.actor_id is not None:
+        try:
+            from src.platform.acl.groups import user_group_names
+
+            groups = list(await user_group_names(rctx.organization_id, rctx.execution.actor_id))
+        except Exception as exc:  # noqa: BLE001 — groups best-effort
+            logger.warning("cognitive scope groups failed", error=str(exc)[:150])
+    source_ids: list[UUID] = []
+    raw_sources = rctx.node.config.get("source_ids")
+    if isinstance(raw_sources, list):
+        for item in raw_sources:
+            try:
+                source_ids.append(UUID(str(item)))
+            except (TypeError, ValueError):
+                continue
+    return CognitiveScope(
+        organization_id=rctx.organization_id,
+        workspace_id=rctx.workspace_id,
+        user_id=rctx.execution.actor_id,
+        role="admin",
+        groups=tuple(groups),
+        source_ids=tuple(source_ids),
+        knowledge_base_id=kb_id,
+    )
+
+
+def _cognitive_result_field(result: Any, key: str, default: Any) -> Any:
+    if isinstance(result, dict):
+        return result.get(key, default)
+    return getattr(result, key, default)
+
+
+def _kb_investigate_status(failure_mode: str, answer: str | None) -> str:
+    if failure_mode == "budget_limit":
+        return KB_STATUS_BUDGET_EXCEEDED
+    return KB_STATUS_OK if answer else KB_STATUS_INSUFFICIENT
+
+
+async def _kb_query_investigate(
+    rctx: NodeContext, *, kb_id: UUID | None, query: str
+) -> NodeOutcome:
+    """INVESTIGATE: Cognitive OS (planificar + ejecutar) con scope y budget del run."""
+    from src.api.deps import get_cognitive_executor, get_cognitive_service
+
+    if KNOWLEDGE_WRITE_PERMISSION not in rctx.permissions:
+        return NodeOutcome(
+            output={
+                "operation": "investigate",
+                "status": "permission_restricted",
+                "reason_codes": ["requires_knowledge_write"],
+                "answer": None,
+                "findings": [],
+                "claims": [],
+                "claim_ids": [],
+                "evidence_ids": [],
+                "conflicts": [],
+                "has_conflicts": False,
+                "method": "cognitive_os",
+            }
+        )
+    if not _cognitive_mode_enabled():
+        return _kb_unsupported_outcome(rctx, operation="investigate", reason="cognitive_disabled")
+
+    scope = await _cognitive_scope(rctx, kb_id=kb_id)
+    budget = _cognitive_budget_from_config(rctx.node.config)
+    created = await _resolve_dep(get_cognitive_service).create_run(
+        query=query,
+        scope=scope,
+        budget=budget,
+        created_by=rctx.execution.actor_id,
+    )
+    run_info = _cognitive_result_field(created, "run", {}) or {}
+    cognitive_run_id = run_info.get("id") if isinstance(run_info, dict) else None
+    if not cognitive_run_id:
+        return NodeOutcome(
+            output={
+                "operation": "investigate",
+                "status": KB_STATUS_INSUFFICIENT,
+                "reason_codes": ["cognitive_plan_failed"],
+                "answer": None,
+                "findings": [],
+                "claims": [],
+                "claim_ids": [],
+                "evidence_ids": [],
+                "conflicts": [],
+                "has_conflicts": False,
+                "method": "cognitive_os",
+            }
+        )
+
+    result = await _resolve_dep(get_cognitive_executor).execute_run(
+        organization_id=rctx.organization_id,
+        run_id=UUID(str(cognitive_run_id)),
+        scope=scope,
+    )
+    messages = _cognitive_result_field(result, "messages", []) or []
+    metrics = _cognitive_result_field(result, "metrics", {}) or {}
+    run_after = _cognitive_result_field(result, "run", {}) or {}
+
+    evidence_ids: list[str] = []
+    claim_ids: list[str] = []
+    findings: list[dict[str, Any]] = []
+    answer: str | None = None
+    for message in messages:
+        if not isinstance(message, dict):
+            message = {
+                "type": str(getattr(message, "type", "") or ""),
+                "content": str(getattr(message, "content", "") or ""),
+                "claim_ids": [str(item) for item in (getattr(message, "claim_ids", ()) or ())],
+                "evidence_ids": [str(item) for item in (getattr(message, "evidence_ids", ()) or ())],
+            }
+        for evidence in message.get("evidence_ids") or []:
+            text_evidence = str(evidence)
+            if text_evidence not in evidence_ids:
+                evidence_ids.append(text_evidence)
+        for claim in message.get("claim_ids") or []:
+            text_claim = str(claim)
+            if text_claim not in claim_ids:
+                claim_ids.append(text_claim)
+        message_type = str(message.get("type") or "").lower()
+        content = str(message.get("content") or "")
+        if message_type in ("final_candidate", "answer") and content:
+            answer = content
+        elif message_type == "finding" and content:
+            findings.append({"text": content[:400]})
+
+    plan_patch = run_after.get("plan_patch") if isinstance(run_after, dict) else None
+    conflicts = list(plan_patch.get("conflicts") or []) if isinstance(plan_patch, dict) else []
+    failure_mode = str(run_after.get("failure_mode") or "") if isinstance(run_after, dict) else ""
+    status = _kb_investigate_status(failure_mode, answer)
+    output: dict[str, Any] = {
+        "operation": "investigate",
+        "status": status,
+        "reason_codes": [] if status == KB_STATUS_OK else [failure_mode or "no_answer"],
+        "answer": answer,
+        "findings": findings[:20],
+        "claims": [{"claim_id": claim, "status": "proposed"} for claim in claim_ids[:50]],
+        "claim_ids": claim_ids[:50],
+        "evidence_ids": evidence_ids[:50],
+        "conflicts": conflicts[:20],
+        "has_conflicts": bool(conflicts),
+        "confidence": float(metrics.get("confidence") or (0.7 if answer else 0.3)),
+        "metrics": {
+            key: metrics.get(key)
+            for key in (
+                "evidence_count",
+                "claims",
+                "conflicts",
+                "tokens",
+                "cost_usd",
+                "has_answer",
+                "specialists",
+            )
+            if metrics.get(key) is not None
+        },
+        "cognitive_run_id": str(cognitive_run_id),
+        "method": "cognitive_os",
+    }
+    return NodeOutcome(
+        output=output,
+        contribution=_kb_query_contribution(
+            rctx,
+            query=query,
+            chunks=[],
+            count=0,
+            evidence_ids=evidence_ids[:50],
+            claim_ids=claim_ids[:50],
+            extra={
+                "operation": "investigate",
+                "status": status,
+                "answer": answer,
+                "findings": findings[:20],
+                "conflicts": conflicts[:20],
+            },
+        ),
+    )
+
+
 async def _exec_kb_query(rctx: NodeContext) -> NodeOutcome:
-    """Nodo de conocimiento con modos (Cognitive Workflows, Fase 1).
+    """Nodo de conocimiento con modos (Cognitive Workflows, Fases 1–3).
 
     `config.operation` (default "search") decide el camino; el output siempre
     incluye `operation` + `status` tipado para ramificar sin parsear strings.
@@ -1464,6 +1702,17 @@ async def _exec_kb_query(rctx: NodeContext) -> NodeOutcome:
             }
         )
 
+    kb_id, kb_error = await _kb_owned_id(rctx, cfg)
+    if kb_error is not None:
+        return kb_error
+
+    if operation == "investigate":
+        try:
+            return await _kb_query_investigate(rctx, kb_id=kb_id, query=query)
+        except Exception as exc:  # noqa: BLE001 — error técnico del modo
+            logger.warning("kb_query investigate failed", error=str(exc)[:200])
+            return NodeOutcome(error=f"kb_query investigate falló: {str(exc)[:200]}")
+
     if operation == "check_conflicts":
         subject = str(cfg.get("subject") or query or "").strip()
         if not subject:
@@ -1476,122 +1725,101 @@ async def _exec_kb_query(rctx: NodeContext) -> NodeOutcome:
             logger.warning("kb_query check_conflicts failed", error=str(exc)[:200])
             return NodeOutcome(error=f"kb_query check_conflicts falló: {str(exc)[:200]}")
 
-    kb_raw = cfg.get("knowledge_base_id")
-    if kb_raw:
-        try:
-            kb_id = UUID(str(kb_raw))
-        except ValueError:
-            return NodeOutcome(error="knowledge_base_id inválido")
-        session = await get_async_session()
-        try:
-            owned = (
-                await session.execute(
-                    text(
-                        "SELECT id FROM knowledge_bases "
-                        "WHERE id = :kid AND organization_id = :oid"
-                    ),
-                    {"kid": kb_id, "oid": rctx.organization_id},
-                )
-            ).fetchone()
-        finally:
-            await session.close()
-        if owned is None:
-            return NodeOutcome(error="knowledge_base_id no pertenece al tenant")
-
-        from src.core.config import get_settings
-
-        v2_enabled = bool(get_settings().KNOWLEDGE_V2_ENABLED)
-        if operation in KB_PENDING_OPERATIONS:
-            return _kb_unsupported_outcome(rctx, operation=operation, reason="phase_pending")
-        if operation == "search":
-            if v2_enabled:
-                try:
-                    retrieved = await _kb_v2_retrieve(rctx, kb_id=kb_id, query=query, limit=limit)
-                    return _kb_search_outcome(
-                        rctx, query=query, retrieved=retrieved, method="knowledge_v2"
-                    )
-                except Exception as exc:  # noqa: BLE001 — V2 no rompe; cae a V1
-                    logger.warning("kb_query V2 failed, falling back to V1", error=str(exc)[:200])
-            return await _kb_query_search_v1(rctx, kb_id=kb_id, query=query, limit=limit)
-        if not v2_enabled:
-            return _kb_unsupported_outcome(
-                rctx, operation=operation, reason="requires_knowledge_v2"
-            )
-        if operation == "answer":
-            try:
-                return await _kb_query_answer(rctx, kb_id=kb_id, query=query, limit=limit)
-            except Exception as exc:  # noqa: BLE001 — error técnico del modo
-                logger.warning("kb_query answer failed", error=str(exc)[:200])
-                return NodeOutcome(error=f"kb_query answer falló: {str(exc)[:200]}")
-        if operation == "find_evidence":
-            try:
-                return await _kb_query_find_evidence(rctx, kb_id=kb_id, query=query, limit=limit)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("kb_query find_evidence failed", error=str(exc)[:200])
-                return NodeOutcome(error=f"kb_query find_evidence falló: {str(exc)[:200]}")
-        if operation == "extract_facts":
-            try:
-                return await _kb_query_extract_facts(rctx, kb_id=kb_id, query=query, limit=limit)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("kb_query extract_facts failed", error=str(exc)[:200])
-                return NodeOutcome(error=f"kb_query extract_facts falló: {str(exc)[:200]}")
-        if operation == "compare":
-            left = str(_resolve_ref(cfg.get("compare_left") or query, rctx) or "")
-            right = str(_resolve_ref(cfg.get("compare_right") or "", rctx) or "")
-            if not left.strip() or not right.strip():
-                return _kb_unsupported_outcome(
-                    rctx, operation="compare", reason="requires_left_and_right"
-                )
-            try:
-                return await _kb_query_compare(
-                    rctx, kb_id=kb_id, left=left, right=right, limit=limit
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("kb_query compare failed", error=str(exc)[:200])
-                return NodeOutcome(error=f"kb_query compare falló: {str(exc)[:200]}")
-
-    if operation != "search":
+    if operation != "search" and kb_id is None:
         return _kb_unsupported_outcome(
             rctx, operation=operation, reason="requires_knowledge_base_id"
         )
 
-    # Legacy: búsqueda por título en `documents` (sin KB configurada).
-    session = await get_async_session()
-    try:
-        rows = (
-            await session.execute(
-                text(
-                    "SELECT id, title FROM documents WHERE organization_id = :oid "
-                    "AND (title ILIKE :pattern OR metadata_json::text ILIKE :pattern) "
-                    "LIMIT :lim"
+    from src.core.config import get_settings
+
+    v2_enabled = bool(get_settings().KNOWLEDGE_V2_ENABLED)
+    if operation == "search":
+        if kb_id is None:
+            # Legacy: búsqueda por título en `documents` (sin KB configurada).
+            session = await get_async_session()
+            try:
+                rows = (
+                    await session.execute(
+                        text(
+                            "SELECT id, title FROM documents WHERE organization_id = :oid "
+                            "AND (title ILIKE :pattern OR metadata_json::text ILIKE :pattern) "
+                            "LIMIT :lim"
+                        ),
+                        {"oid": rctx.organization_id, "pattern": f"%{query}%", "lim": limit},
+                    )
+                ).fetchall()
+            finally:
+                await session.close()
+            docs = [{"id": str(r.id), "title": r.title} for r in rows]
+            status = KB_STATUS_OK if docs else KB_STATUS_NOT_FOUND
+            return NodeOutcome(
+                output={
+                    "operation": "search",
+                    "status": status,
+                    "reason_codes": [] if docs else ["no_matches"],
+                    "documents": docs,
+                    "count": len(docs),
+                    "chunks": docs,
+                    "citations": [],
+                    "evidence_ids": [],
+                    "method": "documents_legacy",
+                },
+                contribution=_kb_query_contribution(
+                    rctx,
+                    query=query,
+                    chunks=docs,
+                    count=len(docs),
+                    extra={"operation": "search", "status": status},
                 ),
-                {"oid": rctx.organization_id, "pattern": f"%{query}%", "lim": limit},
             )
-        ).fetchall()
-    finally:
-        await session.close()
-    docs = [{"id": str(r.id), "title": r.title} for r in rows]
-    status = KB_STATUS_OK if docs else KB_STATUS_NOT_FOUND
-    return NodeOutcome(
-        output={
-            "operation": "search",
-            "status": status,
-            "reason_codes": [] if docs else ["no_matches"],
-            "documents": docs,
-            "count": len(docs),
-            "chunks": docs,
-            "citations": [],
-            "evidence_ids": [],
-            "method": "documents_legacy",
-        },
-        contribution=_kb_query_contribution(
-            rctx,
-            query=query,
-            chunks=docs,
-            count=len(docs),
-            extra={"operation": "search", "status": status},
-        ),
-    )
+        if v2_enabled:
+            try:
+                retrieved = await _kb_v2_retrieve(rctx, kb_id=kb_id, query=query, limit=limit)
+                return _kb_search_outcome(
+                    rctx, query=query, retrieved=retrieved, method="knowledge_v2"
+                )
+            except Exception as exc:  # noqa: BLE001 — V2 no rompe; cae a V1
+                logger.warning("kb_query V2 failed, falling back to V1", error=str(exc)[:200])
+        return await _kb_query_search_v1(rctx, kb_id=kb_id, query=query, limit=limit)
+
+    if not v2_enabled:
+        return _kb_unsupported_outcome(
+            rctx, operation=operation, reason="requires_knowledge_v2"
+        )
+    if operation == "answer":
+        try:
+            return await _kb_query_answer(rctx, kb_id=kb_id, query=query, limit=limit)
+        except Exception as exc:  # noqa: BLE001 — error técnico del modo
+            logger.warning("kb_query answer failed", error=str(exc)[:200])
+            return NodeOutcome(error=f"kb_query answer falló: {str(exc)[:200]}")
+    if operation == "find_evidence":
+        try:
+            return await _kb_query_find_evidence(rctx, kb_id=kb_id, query=query, limit=limit)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("kb_query find_evidence failed", error=str(exc)[:200])
+            return NodeOutcome(error=f"kb_query find_evidence falló: {str(exc)[:200]}")
+    if operation == "extract_facts":
+        try:
+            return await _kb_query_extract_facts(rctx, kb_id=kb_id, query=query, limit=limit)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("kb_query extract_facts failed", error=str(exc)[:200])
+            return NodeOutcome(error=f"kb_query extract_facts falló: {str(exc)[:200]}")
+    if operation == "compare":
+        left = str(_resolve_ref(cfg.get("compare_left") or query, rctx) or "")
+        right = str(_resolve_ref(cfg.get("compare_right") or "", rctx) or "")
+        if not left.strip() or not right.strip():
+            return _kb_unsupported_outcome(
+                rctx, operation="compare", reason="requires_left_and_right"
+            )
+        try:
+            return await _kb_query_compare(
+                rctx, kb_id=kb_id, left=left, right=right, limit=limit
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("kb_query compare failed", error=str(exc)[:200])
+            return NodeOutcome(error=f"kb_query compare falló: {str(exc)[:200]}")
+
+    return _kb_unsupported_outcome(rctx, operation=operation, reason="phase_pending")
 
 
 def _resolve_dep(getter: Callable[[], Any]) -> Any:

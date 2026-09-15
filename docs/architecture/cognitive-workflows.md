@@ -1,6 +1,6 @@
 # Zent Cognitive Workflows — Phase 0 Architecture Audit
 
-> **Status:** Phase 0 (auditoría) completa. **Fases 1–2 implementadas** (modos de conocimiento + resultado tipado; extract_facts/compare/check_conflicts con ledger de claims). Fases 3–8 pendientes.
+> **Status:** Phase 0 (auditoría) completa. **Fases 1–3 implementadas** (modos de conocimiento; extract_facts/compare/check_conflicts; investigate vía Cognitive OS). Fases 4–8 pendientes.
 > **Fecha:** 2026-09-14
 > **Base:** `feat/knowledge-cognitive-os` @ `33c238c` (Workflow Semantic Core Fases 0–8 + bloque 8.1).
 > **Prerrequisito verificado:** `docs/architecture/workflow-semantic-core.md` ya existe y está implementado:
@@ -368,3 +368,13 @@ Tests: `tests/test_workflow_knowledge_modes.py` (6).
 - D4 cumplido: claims de extracción nacen PROPOSED, con evidencia adjunta; nunca se aprueban solos.
 - Catálogo/params/OUTPUT_FIELDS actualizados (`subject`, `compare_left/right`, salidas de hechos/conflictos).
 Tests: `tests/test_workflow_knowledge_facts_conflicts.py` (6).
+
+**Fase 3 entregada (2026-09-14)** — modo `investigate` sobre Cognitive OS (sin motor nuevo):
+- `CognitivePlanningService.create_run` + `CognitiveExecutor.execute_run` vía `_resolve_dep` (testeable con overrides).
+- Scope derivado de `NodeContext` (org/workspace/actor, grupos ACL best-effort, `source_ids` opcionales) y KB opcional: `investigate` funciona con o sin
+  `knowledge_base_id`; si viene, se valida ownership.
+- Budget del nodo (`config.budget` JSON) sobre `CognitiveBudget`; gate por `COGNITIVE_OS_ENABLED` (off → `not_supported` + `cognitive_disabled`).
+- Permiso a nivel **operación**: si falta `knowledge:write` → `status="permission_restricted"` (no `denied` de nodo, para no romper search/answer del mismo nodo).
+- Mapeo defensivo de mensajes: `answer` (final_candidate), `findings`, `claim_ids`, `evidence_ids`, `conflicts` (plan_patch), `metrics` (tokens/cost/specialists);
+  contribution con `knowledge` + refs de evidencia/claims reales (validadas por org al persistir).
+Tests: `tests/test_workflow_cognitive_investigate.py` (3: E2E con scope/budget/refs, permission_restricted, plan fallido tipado).
