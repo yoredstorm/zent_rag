@@ -283,11 +283,15 @@ async def test_finops_alerts_budget_and_ack(async_client: AsyncClient) -> None:
     assert budget.status_code == 200, budget.text
 
     check = await async_client.post(
-        "/api/v1/platform/finops/check", headers=plat, json={"organization_id": org["organization_id"]}
+        "/api/v1/platform/finops/check",
+        headers=plat,
+        params={"organization_id": org["organization_id"]},
     )
     assert check.status_code == 200, check.text
     check_dup = await async_client.post(
-        "/api/v1/platform/finops/check", headers=plat, json={"organization_id": org["organization_id"]}
+        "/api/v1/platform/finops/check",
+        headers=plat,
+        params={"organization_id": org["organization_id"]},
     )
     assert check_dup.status_code == 200, check_dup.text
 
@@ -316,7 +320,9 @@ async def test_finops_alerts_budget_and_ack(async_client: AsyncClient) -> None:
     assert sum(1 for a in body["alerts"] if a["alert_type"] == "budget_exceeded") == 1
     # Tras ack, un nuevo check puede re-alertar (semántica de alertas).
     check2 = await async_client.post(
-        "/api/v1/platform/finops/check", headers=plat, json={"organization_id": org["organization_id"]}
+        "/api/v1/platform/finops/check",
+        headers=plat,
+        params={"organization_id": org["organization_id"]},
     )
     assert check2.status_code == 200
     alerts3 = await async_client.get(
