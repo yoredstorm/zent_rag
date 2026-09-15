@@ -73,6 +73,23 @@ def _source_response(source, extra: dict | None = None) -> dict:
     return payload
 
 
+async def _enqueue_source_sync(ctx, jobs: IngestionJobRepository, source):
+    job = await jobs.create_job(
+        ctx.organization_id,
+        job_type=f"sync_source:{source.type}",
+        source_id=source.id,
+        knowledge_base_id=source.knowledge_base_id,
+    )
+    from src.knowledge.queue import enqueue_knowledge_job
+
+    await enqueue_knowledge_job(str(job.id))
+    await _audit().write(
+        ctx, "source.sync_enqueued", "source", source.id,
+        metadata={"job_id": str(job.id), "name": source.name},
+    )
+    return job
+
+
 async def _source_stats(organization_id: UUID, source_ids: list[UUID]) -> dict[UUID, dict]:
     if not source_ids:
         return {}
@@ -442,19 +459,7 @@ async def sync_source(
     if source is None:
         raise HTTPException(404, "Source not found")
 
-    job = await jobs.create_job(
-        ctx.organization_id,
-        job_type=f"sync_source:{source.type}",
-        source_id=sid,
-        knowledge_base_id=source.knowledge_base_id,
-    )
-    from src.knowledge.queue import enqueue_knowledge_job
-
-    await enqueue_knowledge_job(str(job.id))
-    await _audit().write(
-        ctx, "source.sync_enqueued", "source", sid,
-        metadata={"job_id": str(job.id), "name": source.name},
-    )
+    job = await _enqueue_source_sync(ctx, jobs, source)
     return {"job_id": str(job.id), "status": job.status.value, "source_id": str(sid)}
 
 
@@ -471,6 +476,7 @@ async def upload_file_source(
     source_type: str | None = Query(default=None, pattern=r"^(file|csv|excel)$"),
     name: str | None = Query(default=None, max_length=255),
     repo: SourceRepository = Depends(get_source_repo),
+    jobs: IngestionJobRepository = Depends(get_job_repo),
 ):
     from src.platform.rbac.policy import require_permission
 
@@ -511,7 +517,8 @@ async def upload_file_source(
         ctx, "source.created", "source", source.id,
         metadata={"name": source.name, "type": source.type, "object_key": object_key},
     )
-    return _source_response(source)
+    job = await _enqueue_source_sync(ctx, jobs, source)
+    return _source_response(source, extra={"job_id": str(job.id)})
 
 @router.post("/sources/{source_id}/profile", summary="Perfilizar fuente (SQL: null rates, cardinalidad, PII)")
 async def profile_source(

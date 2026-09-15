@@ -246,6 +246,8 @@ class KnowledgeIngestionEngine:
 
         try:
             await self._run(job)
+            if job.source_id:
+                await _set_source_status(job.organization_id, job.source_id, "indexed")
         except Exception as exc:
             await self._handle_failure(job_id, job, exc)
         return await self._jobs.get_job(None, job_id)
@@ -285,6 +287,7 @@ class KnowledgeIngestionEngine:
                 error=error_text,
                 success=False,
             )
+            await _set_source_status(job.organization_id, job.source_id, "error")
 
     # ------------------------------------------------------------------
     # Flujo principal
@@ -293,6 +296,8 @@ class KnowledgeIngestionEngine:
         source = await self._sources.get_source(job.organization_id, job.source_id) if job.source_id else None
         if source is None:
             raise ConnectorError(f"Source {job.source_id} not found for this organization")
+
+        await _set_source_status(job.organization_id, source.id, "ingesting")
 
         kb: KnowledgeBase | None = None
         if job.knowledge_base_id:

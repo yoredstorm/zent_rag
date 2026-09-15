@@ -134,6 +134,15 @@ async def test_upload_creates_file_source(async_client, org_a, isolated_settings
     source = response.json()
     assert source["type"] == "file"
     assert source["config"]["object_key"]
+    assert source.get("job_id")
+
+    listed = await async_client.get(
+        f"/api/v1/jobs?source_id={source['id']}",
+        headers=_headers(org_a),
+    )
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["count"] >= 1
+    assert listed.json()["jobs"][0]["id"] == source["job_id"]
 
     from src.knowledge.storage import resolve_path
 
@@ -222,6 +231,10 @@ async def test_sync_creates_job_and_engine_completes(
     job = await engine.execute_job(UUID(job_id))
     assert job.status.value == "completed"
     assert job.records_processed == 1
+
+    source = await async_client.get(f"/api/v1/sources/{source_id}", headers=_headers(org_a))
+    assert source.status_code == 200
+    assert source.json()["status"] == "indexed"
 
     status = await async_client.get(f"/api/v1/jobs/{job_id}", headers=_headers(org_a))
     assert status.status_code == 200
