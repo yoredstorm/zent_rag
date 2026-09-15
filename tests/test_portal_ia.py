@@ -57,13 +57,23 @@ def test_portal_agent_builder_has_tabs_and_playground() -> None:
     types = (PORTAL / "components" / "agentStudio" / "types.ts").read_text(encoding="utf-8")
     assert "search_knowledge" in types
     assert "query_database" in types
-    for tab in ("Readiness", "Versiones", "Despliegues", "Embed"):
-        assert tab in types, f"missing tab {tab}"
+    # La IA nueva agrupa los paneles legacy (readiness/versiones/despliegues/embed)
+    # en tres pestañas: cómo responde, qué puede hacer y publicar.
+    assert "ADVANCED_TABS" in types
+    assert "legacyTabToGroup" in types
+    for tab in ("behavior", "capabilities", "publish"):
+        assert f'"{tab}"' in types, f"missing tab {tab}"
 
     advanced = (PORTAL / "components" / "agentStudio" / "AgentAdvancedPanel.tsx").read_text(
         encoding="utf-8"
     )
-    assert "ReadinessScore" in advanced
+    for section in ("AgentBehaviorSection", "AgentCapabilitiesSection", "AgentPublishSection"):
+        assert section in advanced, f"missing section {section}"
+
+    publish = (PORTAL / "components" / "agentStudio" / "AgentPublishSection.tsx").read_text(
+        encoding="utf-8"
+    )
+    assert "ReadinessScore" in publish
 
     overview = (PORTAL / "pages" / "AgentOverview.tsx").read_text(encoding="utf-8")
     assert "/api/v1/billing/usage/agents" in overview
