@@ -132,7 +132,21 @@ jobs:
         run: alembic upgrade head
 
       - name: Run tests
-        run: pytest tests/ -v --tb=short --timeout=300 -x
+        run: |
+          set -o pipefail
+          pytest tests/ -v --tb=short --timeout=300 -x 2>&1 | tee /tmp/pytest.log
+
+      - name: Annotate test failure
+        if: failure()
+        run: |
+          # Los logs requieren auth: deja el primer fallo como annotation.
+          {
+            grep -E "^_{3,} .* _{3,}$" /tmp/pytest.log | tail -n 2 || true
+            grep -E "^(FAILED|ERROR) " /tmp/pytest.log | tail -n 3 || true
+            grep -E "^E   " /tmp/pytest.log | head -n 3 || true
+          } | while IFS= read -r line; do
+            echo "::error::$(echo "$line" | cut -c1-220)"
+          done
 
   sdk-python:
     runs-on: ubuntu-latest
@@ -277,7 +291,20 @@ jobs:
 
       - name: Run E2E (smoke + axe)
         working-directory: portal
-        run: npx playwright test
+        run: |
+          set -o pipefail
+          npx playwright test 2>&1 | tee /tmp/e2e.log
+
+      - name: Annotate E2E failures
+        if: failure()
+        run: |
+          # Los logs requieren auth: deja los tests fallidos como annotations.
+          {
+            grep -E "^\s+[0-9]+\) \[chromium\]" /tmp/e2e.log | head -n 6 || true
+            grep -E "Error: .*(Timeout|failed|expected)" /tmp/e2e.log | head -n 4 || true
+          } | while IFS= read -r line; do
+            echo "::error::$(echo "$line" | cut -c1-220)"
+          done
 
       - name: Upload API log on failure
         if: failure()
