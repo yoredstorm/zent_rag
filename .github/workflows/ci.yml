@@ -301,7 +301,8 @@ jobs:
           # Los logs requieren auth: deja los tests fallidos como annotations.
           {
             grep -E "^\s+[0-9]+\) \[chromium\]" /tmp/e2e.log | head -n 6 || true
-            grep -E "Error: .*(Timeout|failed|expected)" /tmp/e2e.log | head -n 4 || true
+            grep -E "Error: |expect\(|Received|Expected|Locator: |at .*spec\.ts" /tmp/e2e.log | head -n 10 || true
+            tail -n 6 /tmp/e2e.log || true
           } | while IFS= read -r line; do
             echo "::error::$(echo "$line" | cut -c1-220)"
           done
