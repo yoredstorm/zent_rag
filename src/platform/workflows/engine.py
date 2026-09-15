@@ -474,6 +474,17 @@ async def run_workflow(
 
     started = datetime.now(timezone.utc)
     wf_context = WorkflowContext.from_execution(exec_ctx, payload=payload or {}, event_type=trig)
+    try:
+        from src.platform.workflows.context_store import append_run_event
+
+        await append_run_event(
+            eff_org,
+            run_id,
+            "run_started",
+            payload={"run_mode": run_mode, "simulate": bool(simulate), "trigger": trig},
+        )
+    except Exception as exc:  # noqa: BLE001 — el timeline no rompe el run
+        logger.warning("run event persist failed", run_id=str(run_id), error=str(exc)[:200])
     source_context_id = None
     if resume:
         source_context_id = run_id
@@ -551,6 +562,19 @@ async def run_workflow(
             run_id=run_id,
             workspace_id=eff_ws,
             snapshot=result.context_snapshot,
+        )
+        from src.platform.workflows.context_store import append_run_event
+
+        await append_run_event(
+            eff_org,
+            run_id,
+            "run_finished",
+            payload={
+                "status": final_status,
+                "duration_ms": duration,
+                "error": result.error,
+                "simulate": bool(simulate),
+            },
         )
     except Exception as exc:  # noqa: BLE001 — no romper la respuesta del run
         logger.warning("run context persist failed", run_id=str(run_id), error=str(exc)[:200])
@@ -1132,11 +1156,17 @@ async def run_detail(organization_id: UUID, run_id: UUID) -> dict | None:
     ]
     run_context: dict = {}
     contributions: list = []
+    events: list = []
     try:
-        from src.platform.workflows.context_store import list_contributions, load_run_context
+        from src.platform.workflows.context_store import (
+            list_contributions,
+            list_run_events,
+            load_run_context,
+        )
 
         run_context = await load_run_context(organization_id, run_id) or {}
         contributions = await list_contributions(organization_id, run_id)
+        events = await list_run_events(organization_id, run_id)
     except Exception as exc:  # noqa: BLE001 — el inspector no rompe si falta la tabla
         logger.warning(
             "run inspector context unavailable",
@@ -1168,6 +1198,7 @@ async def run_detail(organization_id: UUID, run_id: UUID) -> dict | None:
         "findings": run_context.get("findings", []),
         "artifacts": run_context.get("artifacts", []),
         "actions": actions,
+        "events": events,
         "chain_of_thought_exposed": False,
     }
 

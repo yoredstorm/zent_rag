@@ -52,6 +52,10 @@ const RUN: RunDetail = {
     },
   ],
   chain_of_thought_exposed: false,
+  events: [
+    { id: "ev1", kind: "run_started", payload: { run_mode: "full" } },
+    { id: "ev2", kind: "node_finished", node_id: "br", payload: { status: "succeeded" } },
+  ],
 };
 
 describe("WorkflowRunInspector — Execution Inspector", () => {
@@ -65,6 +69,8 @@ describe("WorkflowRunInspector — Execution Inspector", () => {
     expect(screen.getByTestId("wf-run-artifacts")).toHaveTextContent("Artefactos (1)");
     expect(screen.getByTestId("wf-run-actions")).toHaveTextContent("Acciones del run (1)");
     expect(screen.getByTestId("wf-run-actions")).toHaveTextContent("business_result");
+    expect(screen.getByTestId("wf-run-events")).toHaveTextContent("Timeline del run (2)");
+    expect(screen.getByTestId("wf-run-events")).toHaveTextContent("run_started");
   });
 
   it("no rompe sin contexto extra ni CoT", () => {

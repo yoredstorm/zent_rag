@@ -299,3 +299,4 @@ async def test_semantic_core_end_to_end(
     assert any(action["node_id"] == "notify" for action in inspector["actions"])
     assert {c["node_id"] for c in inspector["contributions"]} >= {"q", "kb", "ask"}
     assert inspector["decisions"][0]["value"]["risk"] == "high"
+    assert any(event["kind"] == "run_started" for event in inspector["events"])

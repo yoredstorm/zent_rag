@@ -60,11 +60,31 @@ _CONTEXTS_INDEX = (
     "ON workflow_run_contexts(organization_id, updated_at)"
 )
 
+_RUN_EVENTS_DDL = """
+CREATE TABLE IF NOT EXISTS workflow_run_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    run_id UUID NOT NULL,
+    organization_id UUID NOT NULL,
+    seq BIGSERIAL,
+    kind VARCHAR(40) NOT NULL,
+    node_id VARCHAR(80),
+    payload JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+"""
+
+_RUN_EVENTS_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_wf_run_events_run "
+    "ON workflow_run_events(run_id, seq)",
+    "CREATE INDEX IF NOT EXISTS idx_wf_run_events_org "
+    "ON workflow_run_events(organization_id, created_at)",
+)
+
 _ENSURED = False
 
 
 async def ensure_context_tables() -> None:
-    """Paridad dev/test si la migración 115 aún no se aplicó (la migración manda)."""
+    """Paridad dev/test si la migración 115/116 aún no se aplicó (la migración manda)."""
     global _ENSURED
     if _ENSURED:
         return
@@ -72,7 +92,8 @@ async def ensure_context_tables() -> None:
     try:
         await session.execute(text(_CONTRIBUTIONS_DDL))
         await session.execute(text(_CONTEXTS_DDL))
-        for statement in (*_CONTRIBUTIONS_INDEXES, _CONTEXTS_INDEX):
+        await session.execute(text(_RUN_EVENTS_DDL))
+        for statement in (*_CONTRIBUTIONS_INDEXES, _CONTEXTS_INDEX, *_RUN_EVENTS_INDEXES):
             await session.execute(text(statement))
         await session.commit()
         _ENSURED = True
@@ -287,6 +308,91 @@ async def hydrate_context(context: Any, organization_id: UUID, run_id: UUID) -> 
     return restored
 
 
+async def validate_context_refs(context: Any, organization_id: UUID) -> dict[str, int]:
+    """Descarta refs de evidencia/claims ajenas antes de ensamblar para un LLM.
+
+    Fail-closed: una ref que no puede verificarse no llega al prompt.
+    """
+    dropped = {"evidence_refs": 0, "claim_refs": 0}
+    for section in ("evidence_refs", "claim_refs"):
+        entries = list(getattr(context, section, []) or [])
+        if not entries:
+            continue
+        valid: list[Any] = []
+        for entry in entries:
+            ref_id = _entry_ref_id({"section": section, "payload": entry})
+            if ref_id and not await _ref_exists(section, organization_id, ref_id):
+                dropped[section] += 1
+                logger.warning("context ref dropped before LLM", section=section, ref=str(ref_id))
+                continue
+            valid.append(entry)
+        setattr(context, section, valid)
+    return dropped
+
+
+async def append_run_event(
+    organization_id: UUID,
+    run_id: UUID,
+    kind: str,
+    *,
+    node_id: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    """Agrega un evento append-only al timeline del run (D6)."""
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "INSERT INTO workflow_run_events "
+                "(id, run_id, organization_id, kind, node_id, payload, created_at) "
+                "VALUES (gen_random_uuid(), :rid, :oid, :kind, :nid, "
+                "CAST(:payload AS jsonb), NOW())"
+            ),
+            {
+                "rid": str(run_id),
+                "oid": str(organization_id),
+                "kind": str(kind)[:40],
+                "nid": str(node_id)[:80] if node_id else None,
+                "payload": json.dumps(payload or {}, ensure_ascii=False, default=str),
+            },
+        )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
+async def list_run_events(
+    organization_id: UUID, run_id: UUID, *, limit: int = 500
+) -> list[dict[str, Any]]:
+    session = await get_async_session()
+    try:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT id, kind, node_id, payload, created_at FROM workflow_run_events "
+                    "WHERE run_id = :rid AND organization_id = :oid "
+                    "ORDER BY seq LIMIT :lim"
+                ),
+                {"rid": str(run_id), "oid": str(organization_id), "lim": min(int(limit), 1000)},
+            )
+        ).fetchall()
+    finally:
+        await session.close()
+    return [
+        {
+            "id": str(row.id),
+            "kind": row.kind,
+            "node_id": row.node_id,
+            "payload": dict(row.payload or {}),
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Internos
 # ---------------------------------------------------------------------------
@@ -323,11 +429,14 @@ async def _ref_exists(section: str, organization_id: UUID, ref_id: str) -> bool:
 
 
 __all__ = [
+    "append_run_event",
     "ensure_context_tables",
     "filter_persistable_applied",
     "hydrate_context",
     "list_contributions",
+    "list_run_events",
     "load_run_context",
     "save_contribution",
     "save_run_context",
+    "validate_context_refs",
 ]

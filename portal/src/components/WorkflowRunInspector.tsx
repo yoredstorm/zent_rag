@@ -39,6 +39,15 @@ export type RunAction = {
   summary?: Record<string, unknown>;
 };
 
+/** Evento append-only del timeline del run (D6). */
+export type RunEvent = {
+  id?: string;
+  kind: string;
+  node_id?: string | null;
+  payload?: Record<string, unknown>;
+  created_at?: string | null;
+};
+
 export type RunDetail = {
   id: string;
   status: string;
@@ -57,6 +66,7 @@ export type RunDetail = {
   findings?: RunContribution[];
   artifacts?: RunContribution[];
   actions?: RunAction[];
+  events?: RunEvent[];
   chain_of_thought_exposed?: boolean;
 };
 
@@ -190,6 +200,28 @@ function ActionsSection({ actions }: { actions: RunAction[] }) {
   );
 }
 
+function EventsSection({ events }: { events: RunEvent[] }) {
+  if (events.length === 0) return null;
+  return (
+    <details className="rounded-md border border-border bg-soft px-2 py-1.5" data-testid="wf-run-events">
+      <summary className="cursor-pointer text-[10px] font-semibold text-muted">
+        Timeline del run ({events.length})
+      </summary>
+      <ol className="mt-1.5 space-y-0.5">
+        {events.slice(0, 50).map((event, index) => (
+          <li key={event.id ?? index} className="flex items-center gap-2 text-[10px] text-muted">
+            <span className="shrink-0 font-mono text-[9px] text-faint">{event.kind}</span>
+            {event.node_id ? <span className="shrink-0 truncate text-text">{event.node_id}</span> : null}
+            <span className="min-w-0 flex-1 truncate text-[9px] text-faint">
+              {JSON.stringify(event.payload ?? {})}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
 /** Lista de pasos del run: inline en el dock, cada paso salta al nodo. */
 export function WorkflowRunInspector({
   run,
@@ -255,6 +287,7 @@ export function WorkflowRunInspector({
         emptyHint="Sin artefactos."
       />
       <ActionsSection actions={run.actions ?? []} />
+      <EventsSection events={run.events ?? []} />
     </div>
   );
 }

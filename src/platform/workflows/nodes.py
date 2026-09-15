@@ -817,6 +817,12 @@ async def _exec_llm(rctx: NodeContext) -> NodeOutcome:
         context_truncated: list[str] = []
         reads = cfg.get("context_reads")
         if rctx.context is not None and isinstance(reads, list) and reads:
+            try:
+                from src.platform.workflows.context_store import validate_context_refs
+
+                await validate_context_refs(rctx.context, rctx.organization_id)
+            except Exception as exc:  # noqa: BLE001 — validación best-effort
+                logger.warning("context ref validation failed", error=str(exc)[:200])
             from src.platform.workflows.context_assembler import WorkflowContextAssembler
 
             assembled = WorkflowContextAssembler().for_agent(

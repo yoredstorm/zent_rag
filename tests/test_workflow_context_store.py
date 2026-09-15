@@ -156,6 +156,58 @@ async def test_run_persists_contributions_and_context(async_client: AsyncClient)
     assert inspector["actions"]
     assert inspector["actions"][0]["node_type"] == "business_result"
     assert inspector["actions"][0]["summary"]["result_id"] == artifact["value"]["id"]
+    assert {"run_started", "node_finished", "run_finished"} <= {
+        event["kind"] for event in inspector["events"]
+    }
+
+
+@pytest.mark.asyncio
+async def test_validate_context_refs_drops_foreign(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.platform.workflows.context import TriggerSnapshot, WorkflowContext, WorkflowIdentity
+    from src.platform.workflows.context_store import validate_context_refs
+
+    valid = str(uuid4())
+
+    async def fake_ref_exists(section: str, organization_id: UUID, ref_id: str) -> bool:
+        return ref_id == valid
+
+    monkeypatch.setattr("src.platform.workflows.context_store._ref_exists", fake_ref_exists)
+    context = WorkflowContext(
+        identity=WorkflowIdentity(organization_id=uuid4(), workflow_id=uuid4(), run_id=uuid4()),
+        trigger=TriggerSnapshot(source="manual"),
+    )
+    context.evidence_refs = [
+        {"value": {"evidence_id": valid}},
+        {"value": {"evidence_id": str(uuid4())}},
+    ]
+    context.claim_refs = [{"value": {"claim_id": str(uuid4())}}]
+
+    dropped = await validate_context_refs(context, uuid4())
+    assert dropped == {"evidence_refs": 1, "claim_refs": 1}
+    assert len(context.evidence_refs) == 1
+    assert context.claim_refs == []
+
+
+@pytest.mark.asyncio
+async def test_run_events_round_trip() -> None:
+    from src.platform.workflows.context_store import (
+        append_run_event,
+        ensure_context_tables,
+        list_run_events,
+    )
+
+    await ensure_context_tables()
+    organization_id = uuid4()
+    run_id = uuid4()
+    await append_run_event(organization_id, run_id, "run_started", payload={"run_mode": "full"})
+    await append_run_event(
+        organization_id, run_id, "node_finished", node_id="n1", payload={"status": "succeeded"}
+    )
+    events = await list_run_events(organization_id, run_id)
+    assert [event["kind"] for event in events] == ["run_started", "node_finished"]
+    assert events[1]["node_id"] == "n1"
+    assert events[0]["payload"] == {"run_mode": "full"}
+    assert await list_run_events(uuid4(), run_id) == []
 
 
 @pytest.mark.asyncio

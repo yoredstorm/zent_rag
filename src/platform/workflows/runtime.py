@@ -306,6 +306,24 @@ async def execute_graph(
             datetime.now(timezone.utc), exec_.duration_ms,
             f"{ctx.correlation_id or ctx.run_id}:{node_id}:0",
         )
+        try:
+            from src.platform.workflows.context_store import append_run_event
+
+            await append_run_event(
+                ctx.organization_id,
+                ctx.run_id,
+                "node_finished",
+                node_id=node_id,
+                payload={
+                    "node_type": node_type,
+                    "status": exec_.status,
+                    "error": exec_.error,
+                    "duration_ms": exec_.duration_ms,
+                    "simulated": exec_.simulated,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — el timeline no rompe el run
+            logger.warning("run event persist failed", node_id=node_id, error=str(exc)[:200])
         step_index += 1
         if exec_.simulated and exec_.planned:
             planned_effects.append({"node_id": node_id, "node_type": node_type, "planned": exec_.planned})
@@ -457,6 +475,19 @@ async def execute_graph(
                 allowed_sections=getattr(node_def, "context_writes", None),
             )
             exec_.contribution = report.to_dict()
+            if report.rejected:
+                try:
+                    from src.platform.workflows.context_store import append_run_event
+
+                    await append_run_event(
+                        ctx.organization_id,
+                        ctx.run_id,
+                        "context_rejected",
+                        node_id=node_id,
+                        payload={"rejected": report.rejected[:20]},
+                    )
+                except Exception as exc:  # noqa: BLE001 — el timeline no rompe el run
+                    logger.warning("run event persist failed", node_id=node_id, error=str(exc)[:200])
             if exec_.contribution.get("applied"):
                 try:
                     from src.platform.workflows.context_store import save_contribution
