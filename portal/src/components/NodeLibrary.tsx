@@ -39,6 +39,8 @@ type Props = {
   usedTypes: string[];
   /** Catálogo backend (Fase 5). Sin él se usa NODE_LIBRARY local. */
   nodes?: Record<string, NodeMeta> | null;
+  /** Labels de categoría del catálogo backend (color local). */
+  categoryLabels?: Record<string, string> | null;
   marketplace?: MarketplaceContext | null;
   onAddMarketplaceAction?: (installId: string, action: MxInstall["actions"][number]) => void;
   onAddRecommendation?: (rec: MxRecommendation) => void;
@@ -62,7 +64,7 @@ const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
   disabled: { text: "deshabilitada", cls: "badge-muted" },
 };
 
-export function NodeLibrary({ onAdd, usedTypes, nodes, marketplace, onAddMarketplaceAction, onAddRecommendation, onInstall, className = "h-[560px]" }: Props) {
+export function NodeLibrary({ onAdd, usedTypes, nodes, categoryLabels, marketplace, onAddMarketplaceAction, onAddRecommendation, onInstall, className = "h-[560px]" }: Props) {
   const [q, setQ] = useState("");
   const items = useMemo(
     () => Object.values(nodes ?? NODE_LIBRARY).filter((m) => !m.type.startsWith("trigger_") || usedTypes.length === 0),
@@ -111,7 +113,7 @@ export function NodeLibrary({ onAdd, usedTypes, nodes, marketplace, onAddMarketp
           return (
             <div key={cat}>
               <p className={`px-1 text-[9px] font-semibold tracking-wider uppercase ${CATEGORY_META[cat].color}`}>
-                {CATEGORY_META[cat].label}
+                {categoryLabels?.[cat] ?? CATEGORY_META[cat].label}
               </p>
               <div className="mt-1 space-y-1">
                 {group.map((m) => (

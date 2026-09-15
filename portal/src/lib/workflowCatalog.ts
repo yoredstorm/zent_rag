@@ -170,6 +170,17 @@ export function catalogIndex(
   return index;
 }
 
+/** Labels de categoría del backend (el portal mantiene colores locales). */
+export function catalogCategoryLabels(
+  payload: NodeCatalogPayload | null | undefined
+): Record<string, string> {
+  const labels: Record<string, string> = {};
+  for (const category of payload?.categories ?? []) {
+    if (category?.id && category?.label) labels[category.id] = category.label;
+  }
+  return labels;
+}
+
 /** Une el catálogo backend con el fallback local (backend gana por tipo). */
 export function libraryWithCatalog(
   payload: NodeCatalogPayload | null | undefined,

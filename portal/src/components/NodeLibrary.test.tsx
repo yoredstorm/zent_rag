@@ -54,12 +54,14 @@ describe("NodeLibrary", () => {
             unavailableReason: "No hay agentes disponibles.",
           },
         }}
+        categoryLabels={{ ai: "Inteligencia (backend)" }}
       />
     );
     const button = screen.getByTestId("wf-add-llm");
     expect(button).toHaveTextContent("Agente backend");
     expect(button).toBeDisabled();
     expect(button).toHaveAttribute("title", "No hay agentes disponibles.");
+    expect(screen.getByText("Inteligencia (backend)")).toBeInTheDocument();
   });
 });
 

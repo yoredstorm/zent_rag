@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NODE_LIBRARY } from "./workflowGraph";
 import {
+  catalogCategoryLabels,
   catalogIndex,
   catalogNodeToMeta,
   clearNodeCatalogCache,
@@ -88,6 +89,12 @@ describe("workflowCatalog — normalización backend → NodeMeta", () => {
       { value: "true", label: "Sí" },
       { value: "false", label: "No" },
     ]);
+  });
+
+  it("catalogCategoryLabels usa los labels del backend", () => {
+    const labels = catalogCategoryLabels(PAYLOAD);
+    expect(labels.data).toBe("Datos");
+    expect(catalogCategoryLabels(null)).toEqual({});
   });
 });
 

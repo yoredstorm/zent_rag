@@ -109,6 +109,24 @@ describe("workflowGraph — IR del canvas", () => {
     expect(refs[0].ref).toBe("{{trigger.message}}");
     expect(refs.some((r) => r.ref === "{{trigger.query}}")).toBe(true);
   });
+
+  it("referenceOptions cubre los campos reales de los contratos", () => {
+    const g = emptyGraph("webhook");
+    const llm = makeNode("llm", { x: 1, y: 1 });
+    llm.id = "n_llm";
+    const notify = makeNode("notify", { x: 2, y: 2 });
+    notify.id = "n_notify";
+    const result = makeNode("business_result", { x: 3, y: 3 });
+    result.id = "n_result";
+    const query = makeNode("query_business_data", { x: 4, y: 4 });
+    query.id = "n_query";
+    g.nodes.push(llm, notify, result, query);
+    const refs = referenceOptions(g).map((r) => r.ref);
+    expect(refs).toContain("{{nodes.n_llm.output.cost}}");
+    expect(refs).toContain("{{nodes.n_notify.output.delivered}}");
+    expect(refs).toContain("{{nodes.n_result.output.result_id}}");
+    expect(refs).toContain("{{nodes.n_query.output.row_count}}");
+  });
 });
 
 describe("workflowGraph — nodo llm", () => {

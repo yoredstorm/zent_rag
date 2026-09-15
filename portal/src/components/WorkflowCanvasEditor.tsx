@@ -7,7 +7,7 @@ import type { DataCatalogPayload, NodeSamples } from "../lib/dataPicker";
 import type { MarketRec, ShopInstall } from "../lib/marketplaceCanvas";
 import type { GraphNode, NodeMeta, WorkflowGraph } from "../lib/workflowGraph";
 import { makeNode, newEdgeId, prepareGraphForSave, triggerConfigOf, triggerTypeOf } from "../lib/workflowGraph";
-import { fetchNodeCatalog, libraryWithCatalog } from "../lib/workflowCatalog";
+import { fetchNodeCatalog, libraryWithCatalog, catalogCategoryLabels } from "../lib/workflowCatalog";
 import { NodeConfigPanel } from "./NodeConfigPanel";
 import { NodeLibrary, type MarketplaceContext, type MxRecommendation } from "./NodeLibrary";
 import { WorkflowCanvas, type RunOverlay } from "./WorkflowCanvas";
@@ -68,6 +68,7 @@ export function WorkflowCanvasEditor({
   const [error, setError] = useState("");
   const [nodeSchemas, setNodeSchemas] = useState<Record<string, NodeBusinessSchema> | null>(null);
   const [catalogNodes, setCatalogNodes] = useState<Record<string, NodeMeta> | null>(null);
+  const [categoryLabels, setCategoryLabels] = useState<Record<string, string> | null>(null);
   const [samples, setSamples] = useState<NodeSamples | null>(null);
   const [dataCatalog, setDataCatalog] = useState<DataCatalogPayload | null>(null);
   const [mxInstalls, setMxInstalls] = useState<{ id: string; integration: { slug: string; name: string } }[]>([]);
@@ -117,7 +118,10 @@ export function WorkflowCanvasEditor({
         api<T>(path, { token: session.token, organizationId: session.organizationId }),
       session.organizationId,
     ).then((payload) => {
-      if (alive) setCatalogNodes(payload ? libraryWithCatalog(payload) : null);
+      if (alive) {
+        setCatalogNodes(payload ? libraryWithCatalog(payload) : null);
+        setCategoryLabels(payload ? catalogCategoryLabels(payload) : null);
+      }
     });
     return () => {
       alive = false;
@@ -460,6 +464,7 @@ export function WorkflowCanvasEditor({
         className="h-full"
         usedTypes={local ? local.nodes.map((n) => n.type) : []}
         nodes={catalogNodes}
+        categoryLabels={categoryLabels}
         onAdd={(meta) => insertNode(meta.type)}
         marketplace={mkt}
         onAddMarketplaceAction={addMarketplaceAction}
