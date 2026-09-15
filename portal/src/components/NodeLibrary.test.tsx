@@ -63,6 +63,18 @@ describe("NodeLibrary", () => {
     expect(button).toHaveAttribute("title", "No hay agentes disponibles.");
     expect(screen.getByText("Inteligencia (backend)")).toBeInTheDocument();
   });
+
+  it("modo negocio agrupa por propósito y avanzado por categoría", () => {
+    const { rerender } = render(
+      <NodeLibrary onAdd={() => undefined} usedTypes={["trigger_webhook"]} businessMode />
+    );
+    expect(screen.getByText("Pensar")).toBeInTheDocument();
+    expect(screen.getByText("Obtener información")).toBeInTheDocument();
+    expect(screen.queryByText("Empezar")).toBeNull();
+
+    rerender(<NodeLibrary onAdd={() => undefined} usedTypes={["trigger_webhook"]} />);
+    expect(screen.getByText("AI & Agents")).toBeInTheDocument();
+  });
 });
 
 describe("NodeLibrary marketplace", () => {

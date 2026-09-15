@@ -33,6 +33,12 @@ const PAYLOAD: NodeCatalogPayload = {
         { key: "ask", label: "¿Qué dato necesitas?", type: "textarea", required: true, data_source: "any" },
         { key: "limit", label: "Máximo", type: "integer", min_level: "guided" },
       ],
+      long_description: "Pregunta en lenguaje natural sobre tus datos.",
+      when_to_use: ["necesitas totales o filas"],
+      what_it_needs: ["¿Qué dato necesitas?"],
+      what_it_produces: ["Resultados", "Respuesta"],
+      example: { title: "Stock por producto" },
+      recommended_next: [{ node_type: "llm", label: "Preguntar a un agente" }],
       available: false,
       unavailable_reason: "No hay una base de datos de negocio conectada.",
     },
@@ -53,6 +59,12 @@ describe("workflowCatalog — normalización backend → NodeMeta", () => {
     expect(meta.available).toBe(false);
     expect(meta.unavailableReason).toBe("No hay una base de datos de negocio conectada.");
     expect(meta.description).toBe("Pregunta en lenguaje natural.");
+    expect(meta.longDescription).toBe("Pregunta en lenguaje natural sobre tus datos.");
+    expect(meta.whenToUse).toEqual(["necesitas totales o filas"]);
+    expect(meta.whatItNeeds).toEqual(["¿Qué dato necesitas?"]);
+    expect(meta.whatItProduces).toEqual(["Resultados", "Respuesta"]);
+    expect(meta.example).toEqual({ title: "Stock por producto" });
+    expect(meta.recommendedNext).toEqual([{ node_type: "llm", label: "Preguntar a un agente" }]);
     // Tipos visuales conservados del registry local.
     expect(meta.icon).toBe(NODE_LIBRARY.query_business_data.icon);
     expect(meta.color).toBe(NODE_LIBRARY.query_business_data.color);

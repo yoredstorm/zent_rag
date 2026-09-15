@@ -36,6 +36,44 @@ CATEGORIES: tuple[dict[str, Any], ...] = (
     {"id": "output", "label": "Salidas", "order": 7},
 )
 
+# Siguientes pasos sugeridos por tipo (brief §19). Sugiere; nunca restringe.
+NODE_NEXT_STEPS: dict[str, tuple[str, ...]] = {
+    "trigger_event": ("query_business_data", "kb_query", "condition", "llm"),
+    "trigger_schedule": ("query_business_data", "kb_query", "condition", "llm"),
+    "trigger_webhook": ("query_business_data", "kb_query", "condition", "llm"),
+    "query_business_data": ("llm", "condition", "filter", "join"),
+    "kb_query": ("llm", "condition", "notify", "join"),
+    "api_call": ("llm", "condition", "notify"),
+    "marketplace_action": ("llm", "condition", "notify", "business_result"),
+    "llm": ("condition", "human_approval", "notify", "business_result"),
+    "condition": ("llm", "notify", "human_approval", "stop"),
+    "human_approval": ("notify", "business_result", "stop"),
+    "filter": ("llm", "for_each", "notify"),
+    "for_each": ("join", "notify", "business_result"),
+    "join": ("llm", "condition", "notify"),
+    "merge": ("llm", "condition", "notify"),
+    "set_variable": ("condition", "llm"),
+    "notify": ("business_result", "stop"),
+    "business_result": ("notify", "stop"),
+    "business_node": ("condition", "notify", "business_result"),
+    "stop": (),
+    "end": (),
+}
+
+
+def recommended_next_nodes(node_type: str) -> list[dict[str, str]]:
+    """Siguientes nodos compatibles con nombre de negocio (brief §19)."""
+    out: list[dict[str, str]] = []
+    for candidate in NODE_NEXT_STEPS.get(str(node_type), ()):
+        meta = NODE_METADATA.get(candidate) or {}
+        out.append(
+            {
+                "node_type": candidate,
+                "label": str(meta.get("business_name") or candidate),
+            }
+        )
+    return out
+
 
 def _meta(
     business_name: str,
@@ -289,21 +327,22 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
     # Lógica
     # ------------------------------------------------------------------
     "condition": _meta(
-        "Si / si no",
+        "Tomar una decisión",
         "Divide el flujo según una regla de negocio.",
         long_description=(
             "Evalúa una referencia del trigger, variables o la salida de otro nodo "
-            "y elige la rama then/else."
+            "y elige la rama then/else. Úsalo cuando una regla determinística decide "
+            "el camino (sin LLM)."
         ),
         when_to_use=("hay que elegir una rama por un valor",),
         when_not_to_use=("necesitas muchas reglas anidadas; divide el flujo",),
         examples=(
             {
-                "title": "Stock crítico",
+                "title": "Riesgo alto pide aprobación",
                 "config": {
-                    "field": "{{nodes.stock.output.available}}",
-                    "operator": "<",
-                    "value": "10",
+                    "field": "{{nodes.riesgo.output.risk}}",
+                    "operator": "==",
+                    "value": "HIGH",
                 },
             },
         ),
@@ -311,7 +350,7 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         supports_simulation=False,
     ),
     "for_each": _meta(
-        "Para cada",
+        "Hacer esto por cada...",
         "Repite una parte del flujo por cada elemento de una lista.",
         long_description=(
             "Ejecuta el subgrafo declarado para cada ítem con concurrencia y "
@@ -333,7 +372,7 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         supports_simulation=False,
     ),
     "join": _meta(
-        "Unir resultados",
+        "Esperar todos los resultados",
         "Espera a todos los pasos anteriores.",
         long_description="Converge varias ramas del grafo antes de continuar.",
         when_to_use=("varias ramas deben converger antes del siguiente paso",),
@@ -341,7 +380,7 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         supports_simulation=False,
     ),
     "merge": _meta(
-        "Primer resultado",
+        "Usar el primer resultado disponible",
         "Continúa con el primer paso que termine.",
         long_description="Toma el primer predecesor resuelto y sigue el flujo.",
         when_to_use=("cualquiera de varias fuentes sirve para continuar",),
@@ -349,7 +388,7 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         supports_simulation=False,
     ),
     "filter": _meta(
-        "Filtrar",
+        "Quedarme solo con...",
         "Filtra una lista por una condición.",
         long_description="Reduce una lista antes de iterar, analizar o avisar.",
         when_to_use=("quieres reducir filas antes de un agente o un aviso",),
@@ -369,7 +408,7 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         supports_simulation=False,
     ),
     "set_variable": _meta(
-        "Guardar variable",
+        "Guardar un dato",
         "Guarda un dato para pasos posteriores.",
         long_description="Escribe una variable del run reutilizable por referencias.",
         when_to_use=("quieres reutilizar un valor calculado en varios pasos",),
@@ -405,7 +444,7 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         supports_simulation=True,
     ),
     "stop": _meta(
-        "Detener",
+        "Terminar el flujo",
         "Termina el flujo.",
         long_description="Corta el flujo con estado de éxito o fallo.",
         when_to_use=("una condición de negocio indica no continuar",),
@@ -627,6 +666,8 @@ async def build_node_catalog(
     for node_def in registry.all():
         schema = node_business_schema(node_def.node_type)
         available, reason = catalog_availability(node_def, capabilities, permissions=permissions)
+        parameters = [parameter.model_dump(mode="json") for parameter in (schema.parameters if schema else [])]
+        output_fields = [field.model_dump(mode="json") for field in (schema.outputs if schema else [])]
         nodes.append(
             {
                 "node_type": node_def.node_type,
@@ -651,13 +692,20 @@ async def build_node_catalog(
                 "when_to_use": list(node_def.when_to_use),
                 "when_not_to_use": list(node_def.when_not_to_use),
                 "examples": jsonable(list(node_def.examples)),
-                "parameters": [
-                    parameter.model_dump(mode="json")
-                    for parameter in (schema.parameters if schema else [])
+                # Ayuda contextual de negocio (Fase 8, brief §18).
+                "what_it_does": node_def.long_description or node_def.short_description,
+                "what_it_needs": [
+                    *[str(parameter["label"]) for parameter in parameters if parameter.get("required")],
+                    *list(node_def.requires),
                 ],
-                "output_fields": [
-                    field.model_dump(mode="json") for field in (schema.outputs if schema else [])
-                ],
+                "what_it_produces": [
+                    str(field.get("label") or field.get("key")) for field in output_fields
+                ]
+                or sorted(str(port) for port in (node_def.outputs or {})),
+                "example": (jsonable(list(node_def.examples)) or [None])[0],
+                "recommended_next": recommended_next_nodes(node_def.node_type),
+                "parameters": parameters,
+                "output_fields": output_fields,
                 "available": available,
                 "unavailable_reason": reason,
             }
@@ -674,10 +722,12 @@ __all__ = [
     "CATALOG_VERSION",
     "CATEGORIES",
     "NODE_METADATA",
+    "NODE_NEXT_STEPS",
     "REQUIREMENT_TOKENS",
     "build_node_catalog",
     "catalog_availability",
     "metadata_for",
     "planner_hints",
+    "recommended_next_nodes",
     "semantic_metadata",
 ]

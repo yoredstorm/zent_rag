@@ -245,6 +245,13 @@ async def test_node_catalog_endpoint_returns_tenant_catalog(async_client: AsyncC
     assert query_node["business_name"] == "Consultar datos de negocio"
     assert any(parameter["key"] == "ask" for parameter in query_node["parameters"])
     assert {"rows", "columns", "answer"} <= {field["key"] for field in query_node["output_fields"]}
+    # Ayuda contextual + siguientes pasos (Fase 8).
+    assert query_node["what_it_does"]
+    assert query_node["what_it_needs"]
+    assert query_node["what_it_produces"]
+    assert any(item["node_type"] == "llm" for item in query_node["recommended_next"])
+    assert by_type["condition"]["business_name"] == "Tomar una decisión"
+    assert by_type["join"]["business_name"] == "Esperar todos los resultados"
 
     for node in body["nodes"]:
         assert isinstance(node["available"], bool)

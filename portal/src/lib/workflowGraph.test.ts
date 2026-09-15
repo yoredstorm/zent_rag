@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
+  describeEdge,
   effectNodes,
   emptyGraph,
   graphIssues,
   layoutGraph,
   makeNode,
   nodeMeta,
+  NODE_LIBRARY,
   portCompatible,
   prepareGraphForSave,
+  PURPOSE_GROUPS,
   referenceOptions,
   triggerConfigOf,
   triggerTypeOf,
@@ -108,6 +111,35 @@ describe("workflowGraph — IR del canvas", () => {
     const refs = referenceOptions(emptyGraph("webhook"));
     expect(refs[0].ref).toBe("{{trigger.message}}");
     expect(refs.some((r) => r.ref === "{{trigger.query}}")).toBe(true);
+  });
+
+  it("describeEdge explica conexiones de negocio y ramas", () => {
+    const g = emptyGraph("webhook");
+    const kb = makeNode("kb_query", { x: 1, y: 1 });
+    kb.id = "kb1";
+    kb.label = "Política";
+    const ask = makeNode("llm", { x: 2, y: 2 });
+    ask.id = "ask1";
+    const cond = makeNode("condition", { x: 3, y: 3 });
+    cond.id = "c1";
+    cond.label = "Riesgo";
+    g.nodes.push(kb, ask, cond);
+    expect(
+      describeEdge(g, { id: "e1", from_node: "kb1", from_port: "out", to_node: "ask1", to_port: "in" })
+    ).toBe("Usa conocimiento de Política");
+    expect(
+      describeEdge(g, { id: "e2", from_node: "c1", from_port: "then", to_node: "ask1", to_port: "in" })
+    ).toBe("Rama sí de Riesgo");
+    expect(
+      describeEdge(g, { id: "e3", from_node: g.nodes[0].id, from_port: "out", to_node: "ask1", to_port: "in" })
+    ).toContain("Inicia desde");
+  });
+
+  it("PURPOSE_GROUPS cubre todos los tipos de la biblioteca", () => {
+    const covered = new Set(PURPOSE_GROUPS.flatMap((group) => group.types));
+    for (const type of Object.keys(NODE_LIBRARY)) {
+      expect(covered.has(type)).toBe(true);
+    }
   });
 
   it("referenceOptions cubre los campos reales de los contratos", () => {

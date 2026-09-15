@@ -487,6 +487,7 @@ export function WorkflowCanvasEditor({
         usedTypes={local ? local.nodes.map((n) => n.type) : []}
         nodes={catalogNodes}
         categoryLabels={categoryLabels}
+        businessMode={configLevel !== "advanced"}
         onAdd={(meta) => insertNode(meta.type)}
         marketplace={mkt}
         onAddMarketplaceAction={addMarketplaceAction}
@@ -642,6 +643,7 @@ export function WorkflowCanvasEditor({
               partialBusy={partialBusy}
               configLevel={configLevel}
               onConfigLevelChange={onConfigLevelChange}
+              onAddSuggested={insertNode}
             />
           </div>
         )}

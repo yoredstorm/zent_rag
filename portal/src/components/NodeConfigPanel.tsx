@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import type { GraphEdge, GraphNode, NodeMeta, WorkflowGraph } from "../lib/workflowGraph";
-import { nodeMeta, nodePorts, referenceOptions } from "../lib/workflowGraph";
+import { describeEdge, nodeMeta, nodePorts, referenceOptions } from "../lib/workflowGraph";
 import type {
   BusinessParameter,
   NodeBusinessSchema,
@@ -22,6 +22,7 @@ import type { ConditionGroupNode } from "../lib/conditionTree";
 import { BusinessParameterForm } from "./workflowStudio/BusinessParameterForm";
 import { ConditionBuilder } from "./workflowStudio/ConditionBuilder";
 import { DataView } from "./workflowStudio/DataView";
+import { NodeHelpCard } from "./workflowStudio/NodeHelpCard";
 import { NotificationBuilder } from "./workflowStudio/NotificationBuilder";
 import { ScheduleBuilder } from "./workflowStudio/ScheduleBuilder";
 import type { RunDetail, RunStep } from "./WorkflowRunInspector";
@@ -60,6 +61,8 @@ type Props = {
   /** El estudio lo monta como sheet flotante sobre el lienzo. */
   className?: string;
   onClose?: () => void;
+  /** Agregar un nodo sugerido después de este (brief §19). */
+  onAddSuggested?: (nodeType: string) => void;
 };
 
 const LEVELS: ParameterLevel[] = ["simple", "guided", "advanced"];
@@ -99,6 +102,7 @@ export function NodeConfigPanel({
   onConfigLevelChange,
   className = "w-72 shrink-0",
   onClose,
+  onAddSuggested,
 }: Props) {
   const { session } = useAuth();
   const [localLevel, setLocalLevel] = useState<ParameterLevel>("simple");
@@ -165,6 +169,9 @@ export function NodeConfigPanel({
         </div>
         <p className="mt-1 font-mono text-[10px] text-muted">
           {edge.from_node}.{edge.from_port} → {edge.to_node}.{edge.to_port}
+        </p>
+        <p className="mt-1 text-[10px] text-accent" data-testid="wf-edge-meaning">
+          {describeEdge(graph, edge)}
         </p>
         <button type="button" className="btn btn-ghost mt-3 min-h-8 w-full text-[11px] text-danger" onClick={() => onDeleteEdge(edge.id)}>
           <Trash size={13} /> Eliminar conexión
@@ -291,6 +298,8 @@ export function NodeConfigPanel({
             </button>
           ))}
         </div>
+
+        <NodeHelpCard meta={meta} onAddSuggested={onAddSuggested} />
 
         {tab === "config" && (
         <>

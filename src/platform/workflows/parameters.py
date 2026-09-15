@@ -114,9 +114,9 @@ def _notify_schema() -> NodeBusinessSchema:
 def _condition_schema() -> NodeBusinessSchema:
     return NodeBusinessSchema(
         node_type="condition",
-        label="Si / si no",
+        label="Tomar una decisión",
         category="logic",
-        description="Divide el flujo según una regla de negocio.",
+        description="Continúa por caminos distintos según una regla.",
         parameters=[
             _p(
                 "field",
@@ -561,7 +561,7 @@ def _register(registry: dict[str, NodeBusinessSchema]) -> None:
         _business_result_schema(),
         _logic_schema(
             "for_each",
-            "Para cada",
+            "Hacer esto por cada...",
             "Repite una parte del flujo por cada elemento de una lista.",
             [
                 _p("collection", "Lista", "data_reference", required=True, data_source="record_list"),
@@ -596,7 +596,7 @@ def _register(registry: dict[str, NodeBusinessSchema]) -> None:
         ),
         _logic_schema(
             "filter",
-            "Filtrar",
+            "Quedarme solo con...",
             "Filtra una lista con una o varias condiciones.",
             [
                 _p("items", "Lista", "data_reference", required=True, data_source="record_list"),
@@ -632,7 +632,7 @@ def _register(registry: dict[str, NodeBusinessSchema]) -> None:
         ),
         _logic_schema(
             "set_variable",
-            "Guardar variable",
+            "Guardar un dato",
             "Guarda un dato para pasos posteriores.",
             [
                 _p("name", "Nombre", "text", required=True),
@@ -642,7 +642,7 @@ def _register(registry: dict[str, NodeBusinessSchema]) -> None:
         ),
         _logic_schema(
             "join",
-            "Unir resultados",
+            "Esperar todos los resultados",
             "Espera a todos los pasos anteriores y conserva ramas con nombre.",
             [
                 _p(
@@ -657,7 +657,7 @@ def _register(registry: dict[str, NodeBusinessSchema]) -> None:
         ),
         _logic_schema(
             "merge",
-            "Primer resultado",
+            "Usar el primer resultado disponible",
             "Elige un resultado según la estrategia (primer disponible, primer éxito, preferido o respaldo).",
             [
                 _p(
@@ -703,7 +703,7 @@ def _register(registry: dict[str, NodeBusinessSchema]) -> None:
         ),
         _control_schema(
             "stop",
-            "Detener",
+            "Terminar el flujo",
             "Termina el flujo.",
             [
                 _p(

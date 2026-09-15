@@ -54,6 +54,11 @@ export type CatalogNode = {
   when_to_use?: string[];
   when_not_to_use?: string[];
   examples?: unknown[];
+  what_it_does?: string;
+  what_it_needs?: string[];
+  what_it_produces?: string[];
+  example?: unknown;
+  recommended_next?: { node_type: string; label: string }[];
   parameters?: CatalogParameter[];
   output_fields?: unknown[];
   available?: boolean;
@@ -156,6 +161,13 @@ export function catalogNodeToMeta(node: CatalogNode): NodeMeta {
     contextReads: node.context_reads ?? [],
     contextWrites: node.context_writes ?? [],
     requires: node.requires ?? [],
+    longDescription: node.long_description ?? undefined,
+    whenToUse: node.when_to_use ?? [],
+    whenNotToUse: node.when_not_to_use ?? [],
+    whatItNeeds: node.what_it_needs ?? [],
+    whatItProduces: node.what_it_produces ?? [],
+    example: node.example,
+    recommendedNext: node.recommended_next ?? [],
   };
 }
 

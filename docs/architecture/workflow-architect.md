@@ -1,7 +1,6 @@
 # Zent AI Workflow Architect — Phase 0 Architecture Audit
 
-> **Status:** Phase 0 (auditoría) completa. **Fases 1–5 implementadas** (first delivery) y **fases 6, 9 y 10** (clarificación, readiness/simulación y evaluación con métricas).
-> Faltan 7 (patching conversacional) y 8 (UX semántica de nodos).
+> **Status:** Phase 0 (auditoría) completa. **Fases 1–10 implementadas** (first delivery + clarificación, patching conversacional, UX semántica de nodos, readiness/simulación y evaluación con métricas).
 > **Fecha:** 2026-09-15
 > **Base:** `feat/knowledge-cognitive-os` @ `08803fe` (Workflow Semantic Core + Cognitive Workflows completos).
 > **Prerrequisitos verificados:** contexto compartido y nodos knowledge/agent/data con resultado tipado, evidencia y decisiones.
@@ -170,7 +169,7 @@ edges por `depends_on`, requisitos faltantes y plan válido.
 | 5 | Plan Validator | ✅ first delivery |
 | 6 | Clarification Engine + assumptions UI | ✅ (backend: clarifications/requirements en la respuesta) |
 | 7 | Conversational patching (`SemanticPlanPatch`) | ✅ (heurístico + LLM; endpoint `/architect/patch`) |
-| 8 | UX semántica de nodos (help contextual, biblioteca por propósito) | pendiente |
+| 8 | UX semántica de nodos (help contextual, biblioteca por propósito) | ✅ (help contextual, siguientes pasos, biblioteca por propósito, conexiones explicadas) |
 | 9 | Simulation + readiness desde el plan | ✅ (readiness + `simulation` sin efectos) |
 | 10 | Dataset ≥50 intents + métricas | ✅ (50 casos en `tests/data/workflow_architect_cases.json` + `architect_metrics.py`) |
 
@@ -223,3 +222,14 @@ casos de integración faltante quedan sin grafo con requirement).
 aplicación determinística con reescritura de dependencias y `when`, propuesta por LLM con fallback heurístico («cambia el umbral a 50000»,
 «quita la aprobación», «solo lunes a viernes»). Endpoint `POST /architect/patch` re-valida y recompila; métrica `revision_total`.
 Tests: `tests/test_workflow_architect_patch.py` (6).
+
+**Fase 8 (2026-09-15)** — UX semántica:
+- Backend: nombres de negocio de lógica reescritos («Tomar una decisión», «Hacer esto por cada...», «Esperar todos los resultados», «Usar el
+  primer resultado disponible», «Quedarme solo con...», «Guardar un dato», «Terminar el flujo»); el catálogo agrega por nodo
+  `what_it_does`, `what_it_needs`, `what_it_produces`, `example` y `recommended_next` (siguientes pasos sugeridos por tipo).
+- Portal: `NodeHelpCard` («¿Qué hace este paso?» con qué hace / cuándo / qué necesita / qué produce / ejemplo / siguientes pasos agregables),
+  chips de siguientes pasos en el panel de nodo, `describeEdge` (conexiones explicadas: «Usa conocimiento de…», «Rama sí de…») en el panel
+  de conexión, y biblioteca por propósito en modo negocio (`PURPOSE_GROUPS`: Empezar / Obtener información / Pensar / Decidir / Coordinar /
+  Actuar / Controlar) manteniendo categorías técnicas en Advanced.
+Tests: `NodeHelpCard.test.tsx` (3) + casos nuevos en `workflowGraph.test.ts`, `workflowCatalog.test.ts`, `NodeLibrary.test.tsx` y
+`tests/test_workflow_node_catalog.py`.

@@ -1,6 +1,6 @@
 import { MagnifyingGlass, Plus, Sparkle, WarningCircle } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
-import { CATEGORY_META, NODE_LIBRARY, type NodeCategory, type NodeMeta } from "../lib/workflowGraph";
+import { CATEGORY_META, NODE_LIBRARY, PURPOSE_GROUPS, type NodeCategory, type NodeMeta } from "../lib/workflowGraph";
 
 export type MxInstall = {
   install_id: string;
@@ -41,6 +41,8 @@ type Props = {
   nodes?: Record<string, NodeMeta> | null;
   /** Labels de categoría del catálogo backend (color local). */
   categoryLabels?: Record<string, string> | null;
+  /** Modo negocio: agrupa por propósito; Advanced usa categorías técnicas. */
+  businessMode?: boolean;
   marketplace?: MarketplaceContext | null;
   onAddMarketplaceAction?: (installId: string, action: MxInstall["actions"][number]) => void;
   onAddRecommendation?: (rec: MxRecommendation) => void;
@@ -64,7 +66,7 @@ const STATUS_LABEL: Record<string, { text: string; cls: string }> = {
   disabled: { text: "deshabilitada", cls: "badge-muted" },
 };
 
-export function NodeLibrary({ onAdd, usedTypes, nodes, categoryLabels, marketplace, onAddMarketplaceAction, onAddRecommendation, onInstall, className = "h-[560px]" }: Props) {
+export function NodeLibrary({ onAdd, usedTypes, nodes, categoryLabels, businessMode = false, marketplace, onAddMarketplaceAction, onAddRecommendation, onInstall, className = "h-[560px]" }: Props) {
   const [q, setQ] = useState("");
   const items = useMemo(
     () => Object.values(nodes ?? NODE_LIBRARY).filter((m) => !m.type.startsWith("trigger_") || usedTypes.length === 0),
@@ -74,6 +76,27 @@ export function NodeLibrary({ onAdd, usedTypes, nodes, categoryLabels, marketpla
     (m) => !q || m.label.toLowerCase().includes(q.toLowerCase()) || m.type.includes(q.toLowerCase())
   );
   const ql = q.trim().toLowerCase();
+  const groups = useMemo(() => {
+    if (businessMode) {
+      return PURPOSE_GROUPS.map((group) => ({
+        key: group.id,
+        label: group.label,
+        cls: "text-muted",
+        items: filtered.filter((meta) => group.types.includes(meta.type)),
+      }));
+    }
+    return ORDER.map((category) => ({
+      key: category,
+      label: categoryLabels?.[category] ?? CATEGORY_META[category].label,
+      cls: CATEGORY_META[category].color,
+      items: filtered
+        .filter((meta) => meta.category === category)
+        .sort(
+          (a, b) =>
+            Number(FIRST_IN_CATEGORY.includes(b.type)) - Number(FIRST_IN_CATEGORY.includes(a.type))
+        ),
+    }));
+  }, [businessMode, filtered, categoryLabels]);
 
   const mktVisible =
     !!marketplace &&
@@ -104,19 +127,15 @@ export function NodeLibrary({ onAdd, usedTypes, nodes, categoryLabels, marketpla
         </div>
       </div>
       <div className="flex-1 space-y-2 overflow-y-auto p-2">
-        {ORDER.map((cat) => {
-          const group = filtered
-            .filter((m) => m.category === cat)
-            .sort((a, b) => Number(FIRST_IN_CATEGORY.includes(b.type)) - Number(FIRST_IN_CATEGORY.includes(a.type)));
-          if (group.length === 0 && !(cat === "business" && ql)) return null;
-          if (group.length === 0) return null;
+        {groups.map((group) => {
+          if (group.items.length === 0) return null;
           return (
-            <div key={cat}>
-              <p className={`px-1 text-[9px] font-semibold tracking-wider uppercase ${CATEGORY_META[cat].color}`}>
-                {categoryLabels?.[cat] ?? CATEGORY_META[cat].label}
+            <div key={group.key}>
+              <p className={`px-1 text-[9px] font-semibold tracking-wider uppercase ${group.cls}`}>
+                {group.label}
               </p>
               <div className="mt-1 space-y-1">
-                {group.map((m) => (
+                {group.items.map((m) => (
                   <button
                     key={m.type}
                     type="button"

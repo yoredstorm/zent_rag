@@ -84,6 +84,14 @@ export type NodeMeta = {
   contextReads?: string[];
   contextWrites?: string[];
   requires?: string[];
+  /** Ayuda contextual de negocio (Fase 8). */
+  longDescription?: string;
+  whenToUse?: string[];
+  whenNotToUse?: string[];
+  whatItNeeds?: string[];
+  whatItProduces?: string[];
+  example?: unknown;
+  recommendedNext?: { node_type: string; label: string }[];
 };
 
 export const CATEGORY_META: Record<NodeCategory, { label: string; color: string }> = {
@@ -96,6 +104,39 @@ export const CATEGORY_META: Record<NodeCategory, { label: string; color: string 
   control: { label: "Control", color: "text-danger" },
   output: { label: "Output", color: "text-ok" },
 };
+
+/** Biblioteca por propósito (modo Simple). Advanced usa CATEGORY_META. */
+export type PurposeGroup = { id: string; label: string; types: string[] };
+
+export const PURPOSE_GROUPS: PurposeGroup[] = [
+  { id: "start", label: "Empezar", types: ["trigger_event", "trigger_schedule", "trigger_webhook"] },
+  {
+    id: "get",
+    label: "Obtener información",
+    types: ["query_business_data", "kb_query", "api_call", "marketplace_action"],
+  },
+  { id: "think", label: "Pensar", types: ["llm"] },
+  { id: "decide", label: "Decidir", types: ["condition", "filter", "for_each"] },
+  { id: "coordinate", label: "Coordinar", types: ["join", "merge", "set_variable"] },
+  { id: "act", label: "Actuar", types: ["notify", "business_node", "business_result"] },
+  { id: "control", label: "Controlar", types: ["human_approval", "stop", "end"] },
+];
+
+/** Explicación de negocio de una conexión (brief §21). */
+export function describeEdge(graph: WorkflowGraph, edge: GraphEdge): string {
+  const source = graph.nodes.find((n) => n.id === edge.from_node);
+  const sourceLabel = source?.label || (source ? nodeMeta(source.type).label : edge.from_node);
+  const sourceType = source?.type ?? "";
+  if (edge.from_port === "then" || edge.from_port === "else") {
+    return `Rama ${edge.from_port === "then" ? "sí" : "no"} de ${sourceLabel}`;
+  }
+  if (sourceType === "kb_query") return `Usa conocimiento de ${sourceLabel}`;
+  if (sourceType === "query_business_data") return `Usa datos de ${sourceLabel}`;
+  if (sourceType === "llm") return `Usa el análisis de ${sourceLabel}`;
+  if (sourceType === "marketplace_action") return `Usa el resultado de ${sourceLabel}`;
+  if (sourceType.startsWith("trigger_")) return `Inicia desde ${sourceLabel}`;
+  return `Usa resultados de ${sourceLabel}`;
+}
 
 const COND_OPS = [
   { value: "<", label: "<" }, { value: "<=", label: "<=" }, { value: ">", label: ">" },
@@ -264,7 +305,7 @@ export const NODE_LIBRARY: Record<string, NodeMeta> = {
   condition: {
     type: "condition",
     category: "logic",
-    label: "Si / si no",
+    label: "Tomar una decisión",
     icon: "🔀",
     color: "bg-warn",
     ports: { input: P_IN, output: P_COND },
@@ -287,7 +328,7 @@ export const NODE_LIBRARY: Record<string, NodeMeta> = {
   for_each: {
     type: "for_each",
     category: "logic",
-    label: "Para cada",
+    label: "Hacer esto por cada...",
     icon: "🔁",
     color: "bg-warn",
     ports: { input: P_IN, output: P_LOOP },
@@ -303,7 +344,7 @@ export const NODE_LIBRARY: Record<string, NodeMeta> = {
   join: {
     type: "join",
     category: "logic",
-    label: "Unir resultados",
+    label: "Esperar todos los resultados",
     icon: "🧩",
     color: "bg-warn",
     fields: [],
@@ -312,7 +353,7 @@ export const NODE_LIBRARY: Record<string, NodeMeta> = {
   merge: {
     type: "merge",
     category: "logic",
-    label: "Primer resultado",
+    label: "Usar el primer resultado disponible",
     icon: "⚡",
     color: "bg-warn",
     fields: [],
@@ -321,7 +362,7 @@ export const NODE_LIBRARY: Record<string, NodeMeta> = {
   filter: {
     type: "filter",
     category: "logic",
-    label: "Filtrar",
+    label: "Quedarme solo con...",
     icon: "🪝",
     color: "bg-warn",
     fields: [
@@ -336,7 +377,7 @@ export const NODE_LIBRARY: Record<string, NodeMeta> = {
   set_variable: {
     type: "set_variable",
     category: "logic",
-    label: "Guardar variable",
+    label: "Guardar un dato",
     icon: "📌",
     color: "bg-warn",
     fields: [
@@ -348,7 +389,7 @@ export const NODE_LIBRARY: Record<string, NodeMeta> = {
   stop: {
     type: "stop",
     category: "control",
-    label: "Detener",
+    label: "Terminar el flujo",
     icon: "🛑",
     color: "bg-danger",
     fields: [
