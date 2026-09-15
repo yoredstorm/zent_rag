@@ -160,12 +160,15 @@ class ContextMerger:
     def _wrap(self, write: ContextWrite, *, node_id: str, node_type: str) -> WorkflowValue:
         if isinstance(write.value, WorkflowValue):
             value = write.value
+            if value.provenance is None and write.provenance is not None:
+                value = replace(value, provenance=write.provenance)
         else:
             value = WorkflowValue.from_raw(
                 write.value,
                 value_type=write.value_type,
                 label=write.label,
                 unit=write.unit,
+                provenance=write.provenance,
                 redacted=write.redacted,
             )
         if value.provenance is None:
