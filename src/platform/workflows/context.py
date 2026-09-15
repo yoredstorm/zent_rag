@@ -78,6 +78,19 @@ WRITABLE_SECTIONS: tuple[str, ...] = (
     "variables",
 )
 
+# Secciones restaurables desde una proyección persistida (resume/parcial).
+RESTORABLE_SECTIONS: tuple[str, ...] = (
+    "data",
+    "knowledge",
+    "evidence_refs",
+    "claim_refs",
+    "entity_refs",
+    "findings",
+    "decisions",
+    "artifacts",
+    "variables",
+)
+
 # Alias cortos usados por los contratos de nodo (`context_writes`).
 SECTION_ALIASES: dict[str, str] = {
     "evidence": "evidence_refs",
@@ -236,12 +249,34 @@ class WorkflowContext:
         """Proyección persistible (sin `security`)."""
         return self.to_dict()
 
+    def apply_snapshot(self, snapshot: dict[str, Any] | None) -> int:
+        """Restaura secciones persistidas (resume/runs parciales).
+
+        No toca identity/trigger/execution/security. Devuelve cuántas
+        secciones se restauraron.
+        """
+        restored = 0
+        for name in RESTORABLE_SECTIONS:
+            value = (snapshot or {}).get(name)
+            if value is None:
+                continue
+            current = getattr(self, name, None)
+            if isinstance(value, dict) and isinstance(current, dict):
+                current.update(value)
+            elif isinstance(value, list) and isinstance(current, list):
+                current.extend(value)
+            else:
+                setattr(self, name, value)
+            restored += 1
+        return restored
+
 
 __all__ = [
     "CONTEXT_SCHEMA_VERSION",
     "CONTEXT_SECTIONS",
     "LLM_VISIBLE_SECTIONS",
     "PERSISTED_SECTIONS",
+    "RESTORABLE_SECTIONS",
     "RUNTIME_ONLY_SECTIONS",
     "SECTION_ALIASES",
     "TriggerSnapshot",

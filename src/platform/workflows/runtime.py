@@ -259,6 +259,12 @@ async def execute_graph(
     workflow_context.variables = dict(variables)
     workflow_context.execution.setdefault("nodes", {})
     merger = ContextMerger()
+    try:
+        from src.platform.workflows.context_store import hydrate_context
+
+        await hydrate_context(workflow_context, ctx.organization_id, ctx.run_id)
+    except Exception as exc:  # noqa: BLE001 — hidratación no rompe el run
+        logger.warning("context hydration failed", run_id=str(ctx.run_id), error=str(exc)[:200])
 
     def record_context(
         node_id: str,

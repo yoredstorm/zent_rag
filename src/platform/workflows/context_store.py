@@ -252,6 +252,41 @@ async def list_contributions(
     ]
 
 
+_APPEND_SECTIONS = frozenset(
+    {"evidence_refs", "claim_refs", "entity_refs", "findings", "decisions", "artifacts"}
+)
+_SLOT_SECTIONS = frozenset({"data", "knowledge"})
+
+
+async def hydrate_context(context: Any, organization_id: UUID, run_id: UUID) -> int:
+    """Reaplica contribuciones persistidas al contexto (resume/parcial).
+
+    Idempotente por dedupe de entradas; no toca identity/trigger/execution.
+    """
+    from src.platform.workflows.contributions import entry_dedupe_key
+
+    rows = await list_contributions(organization_id, run_id)
+    restored = 0
+    for row in rows:
+        section = str(row.get("section") or "")
+        payload = row.get("payload") or {}
+        if not isinstance(payload, dict) or not payload:
+            continue
+        entry = {key: value for key, value in payload.items() if key != "write_key"}
+        if section in _SLOT_SECTIONS:
+            slot = str(payload.get("write_key") or row.get("node_id") or "value")
+            getattr(context, section)[slot] = entry
+        elif section in _APPEND_SECTIONS:
+            target = getattr(context, section)
+            dedupe = entry_dedupe_key(section, entry)
+            if not any(entry_dedupe_key(section, existing) == dedupe for existing in target):
+                target.append(entry)
+        else:
+            continue
+        restored += 1
+    return restored
+
+
 # ---------------------------------------------------------------------------
 # Internos
 # ---------------------------------------------------------------------------
@@ -290,6 +325,7 @@ async def _ref_exists(section: str, organization_id: UUID, ref_id: str) -> bool:
 __all__ = [
     "ensure_context_tables",
     "filter_persistable_applied",
+    "hydrate_context",
     "list_contributions",
     "load_run_context",
     "save_contribution",

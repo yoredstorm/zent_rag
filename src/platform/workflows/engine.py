@@ -474,6 +474,24 @@ async def run_workflow(
 
     started = datetime.now(timezone.utc)
     wf_context = WorkflowContext.from_execution(exec_ctx, payload=payload or {}, event_type=trig)
+    source_context_id = None
+    if resume:
+        source_context_id = run_id
+    elif run_mode in ("node", "from_node") and source_run_id is not None:
+        source_context_id = source_run_id
+    if source_context_id is not None:
+        try:
+            from src.platform.workflows.context_store import load_run_context
+
+            snapshot = await load_run_context(eff_org, source_context_id)
+            if snapshot:
+                wf_context.apply_snapshot(snapshot)
+        except Exception as exc:  # noqa: BLE001 — el seed no rompe el run
+            logger.warning(
+                "context seed failed",
+                run_id=str(source_context_id),
+                error=str(exc)[:200],
+            )
     result = await execute_graph(
         graph,
         exec_ctx,

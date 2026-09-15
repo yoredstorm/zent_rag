@@ -148,7 +148,7 @@ class ContextMerger:
                 "key": write.key,
                 "value_type": value.value_type,
                 "label": value.label,
-                "payload": entry,
+                "payload": {**entry, "write_key": write.key} if write.key else entry,
             }
             applied.update(detail)
             report.applied.append(applied)
@@ -194,9 +194,9 @@ class ContextMerger:
         entry = value.to_dict()
         if section in _APPEND_SECTIONS:
             target = getattr(context, section)
-            dedupe_key = self._entry_key(section, entry)
+            dedupe_key = entry_dedupe_key(section, entry)
             for existing in target:
-                if self._entry_key(section, existing) == dedupe_key:
+                if entry_dedupe_key(section, existing) == dedupe_key:
                     return None, {"deduplicated": True}
             if len(target) >= self._max_values:
                 return "section_full", {}
@@ -218,19 +218,21 @@ class ContextMerger:
             return None, {}
         return "section_not_writable", {}
 
-    def _entry_key(self, section: str, entry: dict[str, Any]) -> str:
-        raw = entry.get("value")
-        raw = raw if isinstance(raw, dict) else {}
-        id_key = _ID_KEYS.get(section)
-        if id_key and raw.get(id_key):
-            return f"{id_key}:{raw[id_key]}"
-        if raw.get("id"):
-            return f"id:{raw['id']}"
-        if raw.get("text"):
-            digest_source = str(raw["text"])[:200]
-        else:
-            digest_source = json.dumps(entry.get("value"), ensure_ascii=False, sort_keys=True, default=str)
-        return hashlib.sha256(digest_source.encode("utf-8")).hexdigest()[:16]
+
+def entry_dedupe_key(section: str, entry: dict[str, Any]) -> str:
+    """Clave de dedupe de una entrada de contexto (id, texto o digest)."""
+    raw = entry.get("value")
+    raw = raw if isinstance(raw, dict) else {}
+    id_key = _ID_KEYS.get(section)
+    if id_key and raw.get(id_key):
+        return f"{id_key}:{raw[id_key]}"
+    if raw.get("id"):
+        return f"id:{raw['id']}"
+    if raw.get("text"):
+        digest_source = str(raw["text"])[:200]
+    else:
+        digest_source = json.dumps(entry.get("value"), ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(digest_source.encode("utf-8")).hexdigest()[:16]
 
 
 __all__ = [
@@ -240,4 +242,5 @@ __all__ = [
     "MAX_WRITE_CHARS",
     "MergeReport",
     "NodeContribution",
+    "entry_dedupe_key",
 ]
