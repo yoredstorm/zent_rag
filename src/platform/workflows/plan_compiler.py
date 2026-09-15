@@ -105,7 +105,7 @@ async def load_capabilities(organization_id: UUID, workspace_id: UUID | None = N
             await session.execute(
                 text(
                     "SELECT id, name FROM agents WHERE organization_id = :oid "
-                    "AND status IN ('configured', 'ready', 'deployed') "
+                    "AND (status IN ('configured', 'ready', 'deployed') OR is_active = true) "
                     "ORDER BY name LIMIT 200"
                 ),
                 {"oid": organization_id},
