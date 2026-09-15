@@ -17,6 +17,28 @@ export type RunStep = {
   attempt?: number;
 };
 
+/** Contribución de contexto persistida por un nodo (Fase 8). */
+export type RunContribution = {
+  id?: string;
+  node_id?: string | null;
+  node_type?: string | null;
+  section: string;
+  value_type?: string;
+  label?: string | null;
+  payload?: Record<string, unknown>;
+  provenance?: Record<string, unknown>;
+  created_at?: string | null;
+};
+
+/** Acción con efecto observada en el run (notify/api/marketplace/...). */
+export type RunAction = {
+  node_id?: string | null;
+  node_type?: string | null;
+  status: string;
+  simulated?: boolean;
+  summary?: Record<string, unknown>;
+};
+
 export type RunDetail = {
   id: string;
   status: string;
@@ -26,6 +48,16 @@ export type RunDetail = {
   steps?: RunStep[];
   planned_effects?: { node_id: string; node_type: string; planned: Record<string, unknown> }[];
   result?: { notifications?: unknown[]; errors?: unknown[]; cost_ms?: number };
+  /** Contexto proyectado del run (sin `security`). */
+  context?: Record<string, unknown>;
+  contributions?: RunContribution[];
+  evidence_refs?: RunContribution[];
+  claim_refs?: RunContribution[];
+  decisions?: RunContribution[];
+  findings?: RunContribution[];
+  artifacts?: RunContribution[];
+  actions?: RunAction[];
+  chain_of_thought_exposed?: boolean;
 };
 
 const STATUS_BADGE: Record<string, string> = {
@@ -91,6 +123,73 @@ function Step({ s, onSelectNode }: { s: RunStep; onSelectNode?: (id: string) => 
   );
 }
 
+function ContextSection({
+  title,
+  testId,
+  entries,
+  emptyHint,
+}: {
+  title: string;
+  testId: string;
+  entries: RunContribution[];
+  emptyHint: string;
+}) {
+  if (entries.length === 0) return null;
+  return (
+    <details className="rounded-md border border-border bg-soft px-2 py-1.5" data-testid={testId}>
+      <summary className="cursor-pointer text-[10px] font-semibold text-muted">
+        {title} ({entries.length})
+      </summary>
+      <div className="mt-1.5 space-y-1.5">
+        {entries.slice(0, 10).map((entry, index) => (
+          <div key={entry.id ?? `${entry.section}-${index}`} className="rounded border border-border bg-bg px-2 py-1">
+            <p className="truncate text-[10px] text-text">
+              {entry.label || entry.section}
+              {entry.provenance?.node_type ? (
+                <span className="text-faint"> · {String(entry.provenance.node_type)}</span>
+              ) : null}
+            </p>
+            <DataView
+              data={entry.payload?.value ?? entry.payload}
+              testId={`${testId}-${index}`}
+              emptyHint={emptyHint}
+            />
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function ActionsSection({ actions }: { actions: RunAction[] }) {
+  if (actions.length === 0) return null;
+  return (
+    <details className="rounded-md border border-border bg-soft px-2 py-1.5" data-testid="wf-run-actions">
+      <summary className="cursor-pointer text-[10px] font-semibold text-muted">
+        Acciones del run ({actions.length})
+      </summary>
+      <div className="mt-1.5 space-y-1">
+        {actions.map((action, index) => (
+          <div
+            key={action.node_id ?? index}
+            className="flex items-center gap-2 rounded border border-border bg-bg px-2 py-1"
+          >
+            <span className={`badge shrink-0 ${STATUS_BADGE[action.status] ?? "badge-muted"}`}>
+              {action.status}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[10px] text-text">
+              {action.node_type ?? action.node_id ?? "acción"}
+            </span>
+            <span className="max-w-[45%] shrink-0 truncate text-[9px] text-faint">
+              {JSON.stringify(action.summary ?? {})}
+            </span>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+
 /** Lista de pasos del run: inline en el dock, cada paso salta al nodo. */
 export function WorkflowRunInspector({
   run,
@@ -131,6 +230,31 @@ export function WorkflowRunInspector({
         <Step key={`${s.node_id ?? s.step_index}`} s={s} onSelectNode={onSelectNode} />
       ))}
       {steps.length === 0 && <p className="text-[10px] text-faint">Sin pasos registrados.</p>}
+      <ContextSection
+        title="Datos y conocimiento"
+        testId="wf-run-context"
+        entries={(run.contributions ?? []).filter((c) => c.section === "data" || c.section === "knowledge")}
+        emptyHint="Sin datos registrados."
+      />
+      <ContextSection
+        title="Evidencia y claims"
+        testId="wf-run-evidence"
+        entries={[...(run.evidence_refs ?? []), ...(run.claim_refs ?? [])]}
+        emptyHint="Sin evidencia."
+      />
+      <ContextSection
+        title="Decisiones y hallazgos"
+        testId="wf-run-decisions"
+        entries={[...(run.decisions ?? []), ...(run.findings ?? [])]}
+        emptyHint="Sin decisiones."
+      />
+      <ContextSection
+        title="Artefactos"
+        testId="wf-run-artifacts"
+        entries={run.artifacts ?? []}
+        emptyHint="Sin artefactos."
+      />
+      <ActionsSection actions={run.actions ?? []} />
     </div>
   );
 }

@@ -218,6 +218,40 @@ async def load_run_context(organization_id: UUID, run_id: UUID) -> dict[str, Any
         await session.close()
 
 
+async def list_contributions(
+    organization_id: UUID, run_id: UUID, *, limit: int = 200
+) -> list[dict[str, Any]]:
+    """Contribuciones del run ordenadas para el Execution Inspector."""
+    session = await get_async_session()
+    try:
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT id, node_id, node_type, section, value_type, payload, "
+                    "provenance, created_at FROM workflow_context_contributions "
+                    "WHERE run_id = :rid AND organization_id = :oid "
+                    "ORDER BY created_at, id LIMIT :lim"
+                ),
+                {"rid": str(run_id), "oid": str(organization_id), "lim": min(int(limit), 500)},
+            )
+        ).fetchall()
+    finally:
+        await session.close()
+    return [
+        {
+            "id": str(row.id),
+            "node_id": row.node_id,
+            "node_type": row.node_type,
+            "section": row.section,
+            "value_type": row.value_type,
+            "payload": dict(row.payload or {}),
+            "provenance": dict(row.provenance or {}),
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in rows
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Internos
 # ---------------------------------------------------------------------------
@@ -256,6 +290,7 @@ async def _ref_exists(section: str, organization_id: UUID, ref_id: str) -> bool:
 __all__ = [
     "ensure_context_tables",
     "filter_persistable_applied",
+    "list_contributions",
     "load_run_context",
     "save_contribution",
     "save_run_context",

@@ -1,6 +1,6 @@
 # Zent Workflow Semantic Core — Phase 0 Architecture Audit
 
-> **Status:** Phase 0 (auditoría) completa. D1–D4 confirmadas (2026-09-14). **Fases 1–7 implementadas** (contexto + contribuciones; valores y provenance; metadata semántica; catálogo backend; portal dinámico; DataReference + Data Catalog; evidencia/claims en nodos y persistencia por run con migración 115). Fase 8 pendiente.
+> **Status:** Phase 0 (auditoría) completa. D1–D4, D7–D8 confirmadas (2026-09-14). **Programa completo: Fases 1–8 implementadas** (contexto + contribuciones; valores y provenance; metadata semántica; catálogo backend; portal dinámico; DataReference + Data Catalog; evidencia y persistencia; Execution Inspector). D5–D6 quedan como mejoras opcionales.
 > **Fecha:** 2026-09-14
 > **Base:** `feat/knowledge-cognitive-os` @ `3efd894` (más cambios locales de trabajo no relacionados).
 > **Programa:** convertir el Workflow en el orquestador semántico central de Zent.
@@ -649,7 +649,7 @@ CREATE INDEX IF NOT EXISTS idx_wf_ctx_org ON workflow_run_contexts(organization_
 | 5 | `workflowCatalog.ts` (normalización + caché + fallback) + `NodeLibrary`/`NodeConfigPanel`/`WorkflowCanvasEditor` consumen el catálogo (nodos no disponibles deshabilitados con razón) + `NODE_LIBRARY` como fallback | `feat(portal): dynamic node catalog with local fallback` | vitest + e2e studio |
 | 6 | `references.py` (DataReference parse/render) + `data_catalog.py` + `GET /workflows/{id}/data-catalog` (trigger schema + contratos + samples + context_writes) + DataPicker backend-first con fallback local | `feat(workflows): data reference model and graph data catalog` | unit + API + vitest |
 | 7 | `kb_query` V2 (flag) con `citations` + `evidence_ids` del ledger; `query_business_data` expone `rows/columns/row_count` y registra evidencia SQL; contribuciones con refs reales; migración 115 (`workflow_context_contributions` + `workflow_run_contexts`) + `ensure_context_tables`; validación de refs por org (fail-closed) | `feat(workflows): evidence claim integration and context persistence` | integración + cross-tenant |
-| 8 | Inspector backend + UI + eventos de run (opcional) | `feat(workflows): execution inspector for semantic context` | API + vitest |
+| 8 | `run_detail` extendido (`context`, `contributions`, `evidence_refs`, `claim_refs`, `decisions`, `findings`, `artifacts`, `actions`, `chain_of_thought_exposed=false`) + `list_contributions` + inspector portal con secciones (datos/conocimiento, evidencia/claims, decisiones, artefactos, acciones) | `feat(workflows): execution inspector for semantic context` | API + vitest |
 
 Cada fase: sin romper tests existentes; migraciones solo aditivas; flags para lo que toca V2 (`KNOWLEDGE_V2_ENABLED`).
 
@@ -697,6 +697,13 @@ evidencia SQL (`table_reference`/`row_reference`/`database_reference`). Contribu
 + `ensure_context_tables()` de paridad dev/test. Refs de evidencia/claims se validan por organización antes de persistir (fail-closed).
 Tests: `tests/test_workflow_context_store.py` (2) + `tests/test_workflow_knowledge_evidence.py` (1, E2E V2 con fake retriever y ledger real).
 
+**Fase 8 entregada (2026-09-14)** — `engine.run_detail` extendido (aditivo): `context` (proyección sin `security`), `contributions`,
+`evidence_refs`, `claim_refs`, `decisions`, `findings`, `artifacts`, `actions` (nodos con efecto, con `summary` acotado) y
+`chain_of_thought_exposed=false`; `context_store.list_contributions()` ordena las contribuciones del run (fail-soft si falta la tabla).
+Portal: `WorkflowRunInspector` agrega secciones colapsables "Datos y conocimiento", "Evidencia y claims", "Decisiones y hallazgos",
+"Artefactos" y "Acciones del run" (solo datos estructurados; sin CoT). Tests: `tests/test_workflow_context_store.py` (+ aserciones de inspector)
+y `portal/src/components/WorkflowRunInspector.test.tsx` (2).
+
 ### Primer test end-to-end (brief §20)
 
 `tests/test_workflow_semantic_core.py`:
@@ -741,7 +748,7 @@ Confirmadas 2026-09-14: **D1, D2, D3**. Las demás siguen abiertas y se confirma
 | D2 | Persistir contribuciones desde Fase 1 o Fase 7 | **CONFIRMADA**: Fase 7. Fase 1 valida el modelo en memoria con tests; migración 115 en Fase 7 |
 | D3 | ¿Snapshot materializado por run o solo contribuciones? | **CONFIRMADA**: ambas. `workflow_context_contributions` append-only + `workflow_run_contexts` proyección reconstruible |
 | D4 | `kb_query` V2 dentro del nodo | **CONFIRMADA**: detrás de `RAG_KNOWLEDGE_V2_ENABLED`; V1 intacto si el flag está apagado |
-| D5 | Entity refs en Fase 7 | abierta: solo si hay identidad canónica real; si no, `kind/label` sin ID |
-| D6 | `workflow_run_events` | abierta: opcional Fase 8; primero derivar de steps si alcanza para el inspector |
-| D7 | Nombre del endpoint: `node-catalog` | abierta: `GET /api/v1/workflows/node-catalog` (sigue el naming real del repo) |
-| D8 | `workflow_version` del IR | abierta: no subir a 3; los cambios son de runtime/contratos, no del IR |
+| D5 | Entity refs en Fase 7 | pendiente (opcional): no se implementó; el contexto soporta `entity_refs`, se activará cuando exista identidad canónica en uso real |
+| D6 | `workflow_run_events` | pendiente (opcional): el inspector deriva de steps + contribuciones + proyección del run |
+| D7 | Nombre del endpoint: `node-catalog` | **CONFIRMADA e implementada** (Fase 4): `GET /api/v1/workflows/node-catalog` |
+| D8 | `workflow_version` del IR | **CONFIRMADA**: no se subió a 3; el IR sigue v2 |

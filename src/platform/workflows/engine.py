@@ -46,6 +46,27 @@ STEP_TYPES = (
 )
 TRIGGER_TYPES = ("webhook", "schedule", "event")
 
+# Nodos cuyos steps cuentan como "acción" en el Execution Inspector.
+_ACTION_NODE_TYPES = frozenset(
+    {"notify", "api_call", "marketplace_action", "business_node", "business_result", "human_approval"}
+)
+_ACTION_SUMMARY_KEYS = (
+    "sent",
+    "channel",
+    "evidence_id",
+    "result_id",
+    "approval_id",
+    "action_id",
+    "ok",
+    "status_code",
+)
+
+
+def _action_summary(output: object) -> dict:
+    if not isinstance(output, dict):
+        return {}
+    return {key: output.get(key) for key in _ACTION_SUMMARY_KEYS if output.get(key) is not None}
+
 
 class WorkflowAccessError(PermissionError):
     """Denegación de acceso cross-tenant / cross-workspace al ejecutar."""
@@ -1063,6 +1084,47 @@ async def run_detail(organization_id: UUID, run_id: UUID) -> dict | None:
         ).fetchall()
     finally:
         await session.close()
+    steps_payload = [
+        {
+            "step_index": int(s.step_index),
+            "step_type": s.step_type,
+            "node_id": s.node_id,
+            "node_type": s.node_type,
+            "status": s.status,
+            "input": s.input,
+            "output": s.output,
+            "error": s.error,
+            "retries": int(s.retries),
+            "attempt": int(s.attempt),
+            "idempotency_key": s.idempotency_key,
+            "duration_ms": int(s.duration_ms) if s.duration_ms is not None else None,
+        }
+        for s in steps
+    ]
+    actions = [
+        {
+            "node_id": step.get("node_id"),
+            "node_type": step.get("node_type"),
+            "status": step.get("status"),
+            "simulated": step.get("status") == "simulated",
+            "summary": _action_summary(step.get("output")),
+        }
+        for step in steps_payload
+        if step.get("node_type") in _ACTION_NODE_TYPES
+    ]
+    run_context: dict = {}
+    contributions: list = []
+    try:
+        from src.platform.workflows.context_store import list_contributions, load_run_context
+
+        run_context = await load_run_context(organization_id, run_id) or {}
+        contributions = await list_contributions(organization_id, run_id)
+    except Exception as exc:  # noqa: BLE001 — el inspector no rompe si falta la tabla
+        logger.warning(
+            "run inspector context unavailable",
+            run_id=str(run_id),
+            error=str(exc)[:200],
+        )
     return {
         "id": str(run.id),
         "workflow_id": str(run.workflow_id),
@@ -1079,23 +1141,16 @@ async def run_detail(organization_id: UUID, run_id: UUID) -> dict | None:
         "target_node_id": getattr(run, "target_node_id", None),
         "source_run_id": str(run.source_run_id) if getattr(run, "source_run_id", None) else None,
         "workspace_id": str(run.workspace_id) if run.workspace_id else None,
-        "steps": [
-            {
-                "step_index": int(s.step_index),
-                "step_type": s.step_type,
-                "node_id": s.node_id,
-                "node_type": s.node_type,
-                "status": s.status,
-                "input": s.input,
-                "output": s.output,
-                "error": s.error,
-                "retries": int(s.retries),
-                "attempt": int(s.attempt),
-                "idempotency_key": s.idempotency_key,
-                "duration_ms": int(s.duration_ms) if s.duration_ms is not None else None,
-            }
-            for s in steps
-        ],
+        "steps": steps_payload,
+        "context": run_context,
+        "contributions": contributions,
+        "evidence_refs": run_context.get("evidence_refs", []),
+        "claim_refs": run_context.get("claim_refs", []),
+        "decisions": run_context.get("decisions", []),
+        "findings": run_context.get("findings", []),
+        "artifacts": run_context.get("artifacts", []),
+        "actions": actions,
+        "chain_of_thought_exposed": False,
     }
 
 

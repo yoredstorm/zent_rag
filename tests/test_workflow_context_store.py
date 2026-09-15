@@ -144,3 +144,15 @@ async def test_run_persists_contributions_and_context(async_client: AsyncClient)
 
     # Sin cross-tenant: otra organización no ve el contexto del run.
     assert await load_run_context(uuid4(), UUID(body["run_id"])) is None
+
+    detail = await async_client.get(f"/api/v1/workflows/runs/{body['run_id']}", headers=h)
+    assert detail.status_code == 200, detail.text
+    inspector = detail.json()
+    assert inspector["chain_of_thought_exposed"] is False
+    assert inspector["context"]["artifacts"]
+    assert inspector["artifacts"][0]["value"]["id"] == artifact["value"]["id"]
+    assert inspector["contributions"]
+    assert any(item["section"] == "artifacts" for item in inspector["contributions"])
+    assert inspector["actions"]
+    assert inspector["actions"][0]["node_type"] == "business_result"
+    assert inspector["actions"][0]["summary"]["result_id"] == artifact["value"]["id"]
