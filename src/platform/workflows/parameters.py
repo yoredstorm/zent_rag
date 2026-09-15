@@ -688,13 +688,17 @@ def _register(registry: dict[str, NodeBusinessSchema]) -> None:
         _control_schema(
             "human_approval",
             "Esperar aprobación",
-            "Pausa hasta que una persona apruebe.",
+            "Pausa hasta que una persona apruebe; el revisor ve la decisión, evidencia y citas del run.",
             [
                 _p("action", "Acción a aprobar", "text", required=True, placeholder="Aprobar pago"),
                 _p("summary", "Resumen", "textarea", data_source="any"),
                 _p("expires_minutes", "Expira (minutos)", "number", min_level="advanced", default=1440),
             ],
-            [_out("approval_id", "Aprobación", "text"), _out("status", "Estado", "text")],
+            [
+                _out("approval_id", "Aprobación", "text"),
+                _out("status", "Estado", "text"),
+                _out("context", "Contexto mostrado", "json"),
+            ],
             risk_level="critical",
         ),
         _control_schema(

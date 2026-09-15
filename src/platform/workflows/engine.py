@@ -1479,7 +1479,7 @@ async def list_approvals(organization_id: UUID, run_id: UUID | None = None) -> d
         sql = (
             "SELECT id, run_id, workflow_id, workspace_id, node_id, action, summary, "
             "status, requested_by, decided_by, decision_comment, requested_at, "
-            "decided_at, expires_at FROM workflow_approvals WHERE organization_id = :oid"
+            "decided_at, expires_at, context FROM workflow_approvals WHERE organization_id = :oid"
         )
         params: dict = {"oid": organization_id}
         if run_id is not None:
@@ -1502,6 +1502,7 @@ async def list_approvals(organization_id: UUID, run_id: UUID | None = None) -> d
                 "requested_at": r.requested_at.isoformat(),
                 "decided_at": r.decided_at.isoformat() if r.decided_at else None,
                 "expires_at": r.expires_at.isoformat() if r.expires_at else None,
+                "context": dict(r.context or {}),
             }
             for r in rows
         ]

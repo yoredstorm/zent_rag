@@ -80,11 +80,16 @@ _RUN_EVENTS_INDEXES = (
     "ON workflow_run_events(organization_id, created_at)",
 )
 
+_APPROVAL_CONTEXT_DDL = (
+    "ALTER TABLE workflow_approvals "
+    "ADD COLUMN IF NOT EXISTS context JSONB NOT NULL DEFAULT '{}'"
+)
+
 _ENSURED = False
 
 
 async def ensure_context_tables() -> None:
-    """Paridad dev/test si la migración 115/116 aún no se aplicó (la migración manda)."""
+    """Paridad dev/test si las migraciones 115/116/117 aún no se aplicaron."""
     global _ENSURED
     if _ENSURED:
         return
@@ -93,6 +98,7 @@ async def ensure_context_tables() -> None:
         await session.execute(text(_CONTRIBUTIONS_DDL))
         await session.execute(text(_CONTEXTS_DDL))
         await session.execute(text(_RUN_EVENTS_DDL))
+        await session.execute(text(_APPROVAL_CONTEXT_DDL))
         for statement in (*_CONTRIBUTIONS_INDEXES, _CONTEXTS_INDEX, *_RUN_EVENTS_INDEXES):
             await session.execute(text(statement))
         await session.commit()

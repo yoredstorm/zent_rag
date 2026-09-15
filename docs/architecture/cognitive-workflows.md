@@ -1,6 +1,6 @@
 # Zent Cognitive Workflows — Phase 0 Architecture Audit
 
-> **Status:** Phase 0 (auditoría) completa. **Fases 1–5 implementadas** (modos de conocimiento; extract/compare/conflicts; investigate; contexto/presets del agente; join/merge/filter tipados y costo con IA). Fases 6–8 pendientes.
+> **Status:** Phase 0 (auditoría) completa. **Fases 1–6 implementadas** (modos de conocimiento; extract/compare/conflicts; investigate; contexto/presets del agente; join/merge/filter y costo; aprobación con evidencia). Fases 7–8 pendientes.
 > **Fecha:** 2026-09-14
 > **Base:** `feat/knowledge-cognitive-os` @ `33c238c` (Workflow Semantic Core Fases 0–8 + bloque 8.1).
 > **Prerrequisito verificado:** `docs/architecture/workflow-semantic-core.md` ya existe y está implementado:
@@ -402,3 +402,12 @@ Tests: `tests/test_workflow_agent_context.py` (8).
   `high_frequency_schedule`, `large_batch`); sin precisión monetaria falsa. UI muestra warnings como chips.
 - `NodeContext` expone `node_labels`/`node_types` (solo lectura) para nombrar ramas y advertir costos.
 Tests: `tests/test_workflow_join_merge.py` (6).
+
+**Fase 6 entregada (2026-09-14)** — aprobación con evidencia:
+- Migración `117_workflow_approval_context.py`: `workflow_approvals.context JSONB` (+ paridad en `ensure_context_tables`).
+- `human_approval` guarda snapshot acotado: decisiones (hasta 3), evidencia/claims por referencia (8), citas (5, truncadas), artefactos (3),
+  resumen de datos (5 claves + answer 240 chars). Nunca incluye `security` ni filas crudas.
+- `GET /runs/{run_id}/approvals` devuelve `context`; el output del nodo también lo expone.
+- Portal: `WorkflowApprovalPanel` (montado en el inspector cuando el run está `pending_approval`) muestra recomendación, evidencia,
+  claims, citas y datos, con Aprobar/Rechazar (`approved|rejected`); decide y oculta la tarjeta.
+Tests: `tests/test_workflow_approval_context.py` (1 E2E) + `WorkflowApprovalPanel.test.tsx` (2).

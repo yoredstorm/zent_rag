@@ -1,5 +1,6 @@
 import { CaretDown, CaretUp } from "@phosphor-icons/react";
 import { useState } from "react";
+import { WorkflowApprovalPanel } from "./WorkflowApprovalPanel";
 import { DataView } from "./workflowStudio/DataView";
 
 export type RunStep = {
@@ -246,6 +247,7 @@ export function WorkflowRunInspector({
           {run.error}
         </p>
       )}
+      {run.status === "pending_approval" && <WorkflowApprovalPanel runId={run.id} />}
       {plannedEffects && plannedEffects.length > 0 && (
         <div className="rounded-md border border-border bg-soft px-2 py-1.5">
           <p className="text-[10px] font-semibold text-muted">Efectos no ejecutados en la prueba</p>

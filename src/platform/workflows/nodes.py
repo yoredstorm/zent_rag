@@ -2794,8 +2794,15 @@ async def _exec_human_approval(rctx: NodeContext) -> NodeOutcome:
     summary = str(cfg.get("summary") or cfg.get("message") or "")
     expires_minutes = int(cfg.get("expires_minutes", 1440) or 1440)
     requested_by = rctx.execution.actor_id
+    snapshot = _approval_context_snapshot(rctx)
     approval_id = await _create_approval(
-        rctx.execution, rctx.node_id, action, summary, requested_by, expires_minutes
+        rctx.execution,
+        rctx.node_id,
+        action,
+        summary,
+        requested_by,
+        expires_minutes,
+        context=snapshot,
     )
     if rctx.simulate:
         return NodeOutcome(
@@ -2804,9 +2811,91 @@ async def _exec_human_approval(rctx: NodeContext) -> NodeOutcome:
             output={"approval_id": str(approval_id), "simulated": True, "status": "pending"},
         )
     return NodeOutcome(
-        output={"approval_id": str(approval_id), "status": "pending", "action": action, "summary": summary},
+        output={
+            "approval_id": str(approval_id),
+            "status": "pending",
+            "action": action,
+            "summary": summary,
+            "context": snapshot,
+        },
         control="wait_approval",
     )
+
+
+def _approval_context_snapshot(rctx: NodeContext) -> dict[str, Any]:
+    """Snapshot acotado para el revisor: decisión, evidencia, citas y datos.
+
+    Nunca incluye `security` ni filas crudas completas; todo se trunca.
+    """
+    ctx = rctx.context
+    if ctx is None:
+        return {}
+
+    def _value(entry: Any) -> Any:
+        if isinstance(entry, dict) and "value" in entry:
+            return entry.get("value")
+        return entry
+
+    decisions = [
+        value
+        for value in (_value(entry) for entry in (ctx.decisions or []))
+        if isinstance(value, dict)
+    ][:3]
+    evidence_refs = [
+        {
+            "evidence_id": value.get("evidence_id"),
+            "label": str(value.get("label") or "")[:160],
+        }
+        for value in (_value(entry) for entry in (ctx.evidence_refs or []))
+        if isinstance(value, dict) and value.get("evidence_id")
+    ][:8]
+    claim_refs = [
+        {
+            "claim_id": value.get("claim_id"),
+            "text": str(value.get("text") or "")[:200],
+            "status": value.get("status"),
+        }
+        for value in (_value(entry) for entry in (ctx.claim_refs or []))
+        if isinstance(value, dict) and value.get("claim_id")
+    ][:8]
+    artifacts = [
+        {"id": value.get("id"), "title": str(value.get("title") or "")[:160]}
+        for value in (_value(entry) for entry in (ctx.artifacts or []))
+        if isinstance(value, dict) and value.get("id")
+    ][:3]
+    citations: list[dict[str, Any]] = []
+    for slot in (ctx.knowledge or {}).values():
+        value = _value(slot)
+        if not isinstance(value, dict):
+            continue
+        for citation in (value.get("citations") or [])[:3]:
+            if not isinstance(citation, dict):
+                continue
+            citations.append(
+                {
+                    "document_name": str(citation.get("document_name") or "")[:160],
+                    "page": citation.get("page"),
+                    "section_path": list(citation.get("section_path") or [])[:4],
+                    "excerpt": str(citation.get("excerpt") or "")[:240],
+                }
+            )
+    data_summary: dict[str, Any] = {}
+    for key, slot in list((ctx.data or {}).items())[:5]:
+        value = _value(slot)
+        if not isinstance(value, dict):
+            continue
+        data_summary[str(key)] = {
+            "keys": sorted(str(item) for item in value.keys())[:10],
+            "answer": str(value.get("answer") or "")[:240] or None,
+        }
+    return {
+        "decisions": decisions,
+        "evidence_refs": evidence_refs,
+        "claim_refs": claim_refs,
+        "citations": citations[:5],
+        "artifacts": artifacts,
+        "data_summary": data_summary,
+    }
 
 
 async def _create_approval(
@@ -2816,6 +2905,8 @@ async def _create_approval(
     summary: str,
     requested_by: UUID | None,
     expires_minutes: int,
+    *,
+    context: dict[str, Any] | None = None,
 ) -> UUID:
     from datetime import datetime, timedelta, timezone
     from uuid import uuid4
@@ -2832,8 +2923,9 @@ async def _create_approval(
             text(
                 "INSERT INTO workflow_approvals "
                 "(id, run_id, workflow_id, organization_id, workspace_id, node_id, "
-                "action, summary, requested_by, expires_at) "
-                "VALUES (:id, :rid, :wid, :oid, :ws, :nid, :action, :summary, :by, :exp)"
+                "action, summary, requested_by, expires_at, context) "
+                "VALUES (:id, :rid, :wid, :oid, :ws, :nid, :action, :summary, :by, :exp, "
+                "CAST(:context AS jsonb))"
             ),
             {
                 "id": approval_id,
@@ -2846,6 +2938,7 @@ async def _create_approval(
                 "summary": summary,
                 "by": requested_by,
                 "exp": expires,
+                "context": json.dumps(context or {}, ensure_ascii=False, default=str),
             },
         )
         await session.commit()
