@@ -1,6 +1,6 @@
 # Zent Cognitive Workflows — Phase 0 Architecture Audit
 
-> **Status:** Phase 0 (auditoría) completa. **Fases 1–6 implementadas** (modos de conocimiento; extract/compare/conflicts; investigate; contexto/presets del agente; join/merge/filter y costo; aprobación con evidencia). Fases 7–8 pendientes.
+> **Status:** Phase 0 (auditoría) completa. **Fases 1–7 implementadas** (modos de conocimiento; extract/compare/conflicts; investigate; contexto/presets del agente; join/merge/filter y costo; aprobación con evidencia; panel de contexto del editor). Fase 8 pendiente.
 > **Fecha:** 2026-09-14
 > **Base:** `feat/knowledge-cognitive-os` @ `33c238c` (Workflow Semantic Core Fases 0–8 + bloque 8.1).
 > **Prerrequisito verificado:** `docs/architecture/workflow-semantic-core.md` ya existe y está implementado:
@@ -411,3 +411,9 @@ Tests: `tests/test_workflow_join_merge.py` (6).
 - Portal: `WorkflowApprovalPanel` (montado en el inspector cuando el run está `pending_approval`) muestra recomendación, evidencia,
   claims, citas y datos, con Aprobar/Rechazar (`approved|rejected`); decide y oculta la tarjeta.
 Tests: `tests/test_workflow_approval_context.py` (1 E2E) + `WorkflowApprovalPanel.test.tsx` (2).
+
+**Fase 7 entregada (2026-09-14)** — panel de contexto del editor:
+- `WorkflowContextPanel` (workflowStudio): solo lectura, combina Data Catalog (`sources`), `contextWrites` del catálogo de nodos y las
+  contribuciones del último run inspeccionado; agrupado por sección con conteos y vacíos claros.
+- `WorkflowCanvasEditor`: botón "Contexto" (`wf-context-toggle`) y overlay (`wf-context-panel`); se oculta cuando el inspector de nodo está abierto.
+Tests: `WorkflowContextPanel.test.tsx` (2).

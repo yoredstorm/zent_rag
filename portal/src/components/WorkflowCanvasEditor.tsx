@@ -12,6 +12,7 @@ import { NodeConfigPanel } from "./NodeConfigPanel";
 import { NodeLibrary, type MarketplaceContext, type MxRecommendation } from "./NodeLibrary";
 import { WorkflowCanvas, type RunOverlay } from "./WorkflowCanvas";
 import type { RunDetail } from "./WorkflowRunInspector";
+import { WorkflowContextPanel } from "./workflowStudio/WorkflowContextPanel";
 import { ErrorInline } from "./ui";
 
 type Props = {
@@ -89,6 +90,7 @@ export function WorkflowCanvasEditor({
     warnings?: { code: string; message: string }[];
   } | null>(null);
   const [emptyDismissed, setEmptyDismissed] = useState(false);
+  const [showContext, setShowContext] = useState(false);
 
   useEffect(() => {
     if (!session) return;
@@ -585,6 +587,28 @@ export function WorkflowCanvasEditor({
                 {warning.message}
               </span>
             ))}
+          </div>
+        )}
+
+        {!inspectorOpen && (
+          <button
+            type="button"
+            className="absolute top-3 left-3 z-20 rounded-md border border-border bg-surface/95 px-2 py-1 text-[10px] text-muted hover:border-accent/50"
+            data-testid="wf-context-toggle"
+            onClick={() => setShowContext((value) => !value)}
+          >
+            Contexto
+          </button>
+        )}
+
+        {showContext && !inspectorOpen && (
+          <div className="absolute top-12 bottom-3 left-3 z-30 w-[min(340px,calc(100%-1.5rem))]">
+            <WorkflowContextPanel
+              sources={dataCatalog?.sources}
+              contributions={run?.contributions}
+              nodes={catalogNodes}
+              onClose={() => setShowContext(false)}
+            />
           </div>
         )}
 
