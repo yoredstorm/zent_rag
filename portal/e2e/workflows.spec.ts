@@ -1,7 +1,19 @@
 import { expect, test } from "@playwright/test";
-import { loginAsTenant, suppressProductTour } from "./fixtures";
+import { AGENT_NAME, apiAsTenant, cleanupSmokeAgent, loginAsTenant, suppressProductTour } from "./fixtures";
 
 test.describe("Workflow Studio", () => {
+  test.beforeAll(async ({ request }) => {
+    // En CI puede no haber agentes: garantiza uno para el select del nodo llm.
+    await apiAsTenant(request, "/agents", {
+      method: "POST",
+      body: JSON.stringify({ name: AGENT_NAME, description: "E2E workflow studio" }),
+    });
+  });
+
+  test.afterAll(async ({ request }) => {
+    await cleanupSmokeAgent(request);
+  });
+
   test("crear, armar el canvas, probar con el agente y abrir API/Avanzado", async ({ page }) => {
     await suppressProductTour(page);
     await loginAsTenant(page);
