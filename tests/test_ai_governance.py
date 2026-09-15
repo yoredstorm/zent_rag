@@ -252,7 +252,7 @@ async def test_anomaly_detection_and_resolve(async_client: AsyncClient) -> None:
     check = await async_client.post(
         "/api/v1/platform/audit-intelligence/check",
         headers=plat,
-        json={"organization_id": oid},
+        params={"organization_id": oid},
     )
     assert check.status_code == 200, check.text
     types = {c["type"] for c in check.json()["anomalies_created"]}
@@ -263,7 +263,7 @@ async def test_anomaly_detection_and_resolve(async_client: AsyncClient) -> None:
     check2 = await async_client.post(
         "/api/v1/platform/audit-intelligence/check",
         headers=plat,
-        json={"organization_id": oid},
+        params={"organization_id": oid},
     )
     assert check2.json()["count"] == 0
 
