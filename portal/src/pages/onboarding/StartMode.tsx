@@ -21,9 +21,9 @@ const OPTIONS: {
     id: "demo",
     testId: "start-mode-demo",
     icon: Books,
-    title: "Explorar con datos de ejemplo",
-    body: "Cargamos un catálogo de prueba: podés preguntar en el Playground desde el primer minuto.",
-    next: "Después vas a poder conectar tus propias fuentes o migrar lo que ya probaste.",
+    title: "Crear un espacio de prueba",
+    body: "Workspace aislado para experimentar. Arranca vacío: cargá datos de ejemplo o reales sin mezclarlos con tu negocio.",
+    next: "Podés descartarlo cuando quieras, sin afectar tu organización.",
   },
   {
     id: "blank",

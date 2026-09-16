@@ -10,6 +10,10 @@ version: "3.9"
 x-common-env: &common-env
   TZ: ${TZ:-America/Lima}
   RAG_ENVIRONMENT: ${ENVIRONMENT:-development}
+  # Nada de datos demo: cada trial arranca con la base vacía. Con esto
+  # `provision_demo_kb` no encola el schema compartido (ni en el alta de trial
+  # ni en StartMode). Reencender con RAG_SEED_DEMO_DATA=true si se necesita.
+  RAG_SEED_DEMO_DATA: ${RAG_SEED_DEMO_DATA:-false}
   # Cada trial re-embebe el dataset demo completo (schema farmacia) y con LLM en
   # CPU eso deja el worker ocupado minutos por alta. Apagado en dev: el demo
   # sigue disponible por StartMode ("Probar con datos de ejemplo").
@@ -264,7 +268,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-rag_platform}
       POSTGRES_READONLY_PASSWORD: ${POSTGRES_READONLY_PASSWORD:-readonly_change_me}
       # Seeds demo (token admin dev) SOLO si se pide expl�citamente
-      RAG_SEED_DEMO_DATA: ${RAG_SEED_DEMO_DATA:-true}
+      RAG_SEED_DEMO_DATA: ${RAG_SEED_DEMO_DATA:-false}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       # Init solo en volumen vacío: SQL top-level 01–31 y 77–79 + scripts .sh.
