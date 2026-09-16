@@ -11,10 +11,12 @@ export const DEV_API_KEY =
 
 export const AGENT_NAME = "E2E Smoke Agent";
 
-export async function completeStartMode(page: Page, mode: "demo" | "blank") {
-  await expect(page).toHaveURL(/\/onboarding\/start/, { timeout: 30_000 });
-  const testId = mode === "demo" ? "start-mode-demo" : "start-mode-blank";
-  await page.getByTestId(testId).click();
+/**
+ * El alta ya no pregunta "espacio de prueba o de cero": el backend crea un
+ * workspace vacío y la app entra directo al panel. Se mantiene el helper para
+ * que los specs esperen ese aterrizaje.
+ */
+export async function completeStartMode(page: Page) {
   await expect(page).toHaveURL(/\/$/, { timeout: 30_000 });
 }
 

@@ -1,5 +1,4 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthProvider } from "../../auth";
@@ -19,10 +18,11 @@ afterEach(() => {
 });
 
 describe("StartModePage", () => {
-  it("elige blank y persiste el workspace business", async () => {
+  it("provisiona el workspace vacío solo, sin preguntar nada", async () => {
     window.sessionStorage.setItem("rag_portal_token", "rag_sess_start");
     window.localStorage.setItem("rag_portal_org", "org-1");
     window.localStorage.setItem("rag_portal_company", "Acme");
+    let startModeCalls = 0;
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/auth/me")) {
@@ -38,6 +38,7 @@ describe("StartModePage", () => {
         });
       }
       if (url.includes("/onboarding/start-mode")) {
+        startModeCalls += 1;
         expect(init?.method).toBe("POST");
         expect(JSON.parse(String(init?.body))).toEqual({ mode: "blank" });
         return json({
@@ -58,11 +59,12 @@ describe("StartModePage", () => {
       </MemoryRouter>
     );
 
-    await screen.findByRole("button", { name: /Empezar de cero/i });
-    await userEvent.click(screen.getByTestId("start-mode-blank"));
+    // Sin elección: la pantalla muestra el estado de preparación y resuelve sola.
+    expect(await screen.findByText(/Preparando tu espacio de trabajo/i)).toBeInTheDocument();
     await waitFor(() => {
       expect(window.localStorage.getItem("rag_portal_workspace")).toBe("ws-blank");
       expect(window.localStorage.getItem("rag_portal_workspace_kind")).toBe("business");
     });
+    expect(startModeCalls).toBe(1);
   });
 });

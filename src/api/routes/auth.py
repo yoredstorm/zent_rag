@@ -227,6 +227,25 @@ async def signup(
     except ValueError as exc:
         raise HTTPException(500, str(exc)) from exc
 
+    # Espacio de trabajo inicial vacío: la organización entra directo al panel,
+    # sin preguntar "espacio de prueba o de cero". Si falla, StartMode queda como
+    # red de seguridad y resuelve el workspace igual.
+    try:
+        from src.infrastructure.postgres.relational_db import PostgresWorkspaceRepository
+        from src.platform.workspaces.context import set_active_workspace
+        from src.platform.workspaces.service import ensure_default_workspace
+
+        ws = await ensure_default_workspace(
+            PostgresWorkspaceRepository(), organization_id, kind="business"
+        )
+        await set_active_workspace(organization_id, user.id, ws.id)
+    except Exception:  # noqa: BLE001
+        logger.warning(
+            "Initial workspace skipped",
+            organization_id=str(organization_id),
+            exc_info=True,
+        )
+
     access_token = encrypt_session(user.id, organization_id)
     await clear_auth_failures(email_key, ip_key)
 

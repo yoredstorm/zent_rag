@@ -1017,9 +1017,9 @@ class Settings(BaseSettings):
     )
     MAX_PROMPT_LENGTH_CHARS: int = Field(default=32000, ge=1)
     MAX_BODY_BYTES: int = Field(
-        default=1_048_576,
+        default=26_214_400,
         ge=1024,
-        description="Tamaño máximo del body HTTP (default 1 MB).",
+        description="Tamaño máximo del body HTTP (default 25 MB, para subir documentos).",
     )
     METRICS_TOKEN: SecretStr | None = Field(
         default=None,

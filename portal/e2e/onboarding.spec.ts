@@ -19,7 +19,7 @@ test.describe("Data onboarding wizard — org nueva CSV", () => {
     await page.getByLabel("Confirmar contraseña").fill(password);
     await page.getByRole("button", { name: "Empezar trial" }).click();
 
-    await completeStartMode(page, "blank");
+    await completeStartMode(page);
     const keyDialog = page.getByRole("dialog", { name: "Tu API key" });
     await expect(keyDialog).toBeVisible({ timeout: 20_000 });
     await page.getByRole("button", { name: "Ya la guardé" }).click();

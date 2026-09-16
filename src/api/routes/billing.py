@@ -267,33 +267,32 @@ async def _do_create_trial(
         logger.error("Failed to create trial subscription", error=str(exc), exc_info=True)
         raise HTTPException(500, "Failed to create trial")
 
+    from src.core.config import get_settings
     from src.infrastructure.postgres.relational_db import PostgresWorkspaceRepository
     from src.platform.workspaces.context import set_active_workspace
-    from src.platform.workspaces.service import ensure_demo_workspace
+    from src.platform.workspaces.service import ensure_default_workspace, ensure_demo_workspace
 
-    demo_ws = await ensure_demo_workspace(
-        PostgresWorkspaceRepository(), organization_id, created_by=user.id
-    )
-    await set_active_workspace(organization_id, user.id, demo_ws.id)
-    try:
-        from src.core.config import get_settings
-        from src.verticals.demo_farmacia.provisioning import provision_demo_kb
+    settings = get_settings()
+    workspace_repo = PostgresWorkspaceRepository()
+    if settings.SEED_DEMO_DATA:
+        # Modo demo explícito: workspace kind=demo y dataset compartido.
+        ws = await ensure_demo_workspace(workspace_repo, organization_id, created_by=user.id)
+        if settings.DEMO_PROVISION_ON_TRIAL:
+            try:
+                from src.verticals.demo_farmacia.provisioning import provision_demo_kb
 
-        # Cada trial re-embebe el dataset demo completo; en entornos con LLM
-        # lento eso satura la cola de ingesta (ver DEMO_PROVISION_ON_TRIAL).
-        if get_settings().DEMO_PROVISION_ON_TRIAL:
-            await provision_demo_kb(organization_id, workspace_id=demo_ws.id)
-        else:
-            logger.info(
-                "Demo provisioning omitido por configuración",
-                organization_id=str(organization_id),
-            )
-    except Exception:  # noqa: BLE001
-        logger.warning(
-            "Demo provisioning skipped",
-            organization_id=str(organization_id),
-            exc_info=True,
-        )
+                await provision_demo_kb(organization_id, workspace_id=ws.id)
+            except Exception:  # noqa: BLE001
+                logger.warning(
+                    "Demo provisioning skipped",
+                    organization_id=str(organization_id),
+                    exc_info=True,
+                )
+    else:
+        # Sin demo: la organización arranca con un workspace vacío y la persona
+        # entra directo al panel (ya no se pregunta "de prueba o de cero").
+        ws = await ensure_default_workspace(workspace_repo, organization_id, kind="business")
+    await set_active_workspace(organization_id, user.id, ws.id)
 
     return {
         "subscription_id": str(subscription.id),
