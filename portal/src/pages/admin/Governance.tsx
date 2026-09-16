@@ -1,12 +1,54 @@
-import { Fingerprint, Scales } from "@phosphor-icons/react";
+import {
+  CheckCircle,
+  Clock,
+  Fingerprint,
+  Info,
+  Minus,
+  Question,
+  Scales,
+  SealCheck,
+  XCircle,
+  type Icon,
+} from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api";
-import { ErrorInline, PageHeader, SkeletonBlock } from "../../components/ui";
+import {
+  Badge,
+  ErrorInline,
+  Metric,
+  MetricGrid,
+  PageHeader,
+  Panel,
+  PanelHeader,
+  SkeletonBlock,
+  type Tone,
+} from "../../components/ui";
+import { fmtDateTime } from "../../lib/format";
 import { usePlatformAuth } from "../../platformAuth";
 
 type Dash = { organizations_governing: number; audit_entries: number; decisions_by_status: { status: string; count: number }[]; certifications: { certification: string; count: number }[]; recent_audit: { actor: string; action: string; detail: string; created_at: string }[] };
 
-const ST: Record<string, string> = { pending: "badge-warning", approved: "badge-ok", rejected: "badge-danger" };
+/** Estado de una decisión de gobierno: pendiente / aprobada / rechazada. */
+const DECISION_STATUS_META: Record<string, { label: string; tone: Tone; icon: Icon }> = {
+  pending: { label: "Pendiente", tone: "warn", icon: Clock },
+  approved: { label: "Aprobada", tone: "ok", icon: CheckCircle },
+  rejected: { label: "Rechazada", tone: "danger", icon: XCircle },
+  escalated: { label: "Escalada", tone: "info", icon: Info },
+  revoked: { label: "Revocada", tone: "neutral", icon: Minus },
+};
+
+function DecisionStatusBadge({ status }: { status: string }) {
+  const meta = DECISION_STATUS_META[status] ?? {
+    label: status || "Sin dato",
+    tone: "neutral" as Tone,
+    icon: Question,
+  };
+  return (
+    <Badge tone={meta.tone} icon={meta.icon}>
+      {meta.label}
+    </Badge>
+  );
+}
 
 export default function AdminGovernancePage() {
   const { session } = usePlatformAuth();
@@ -34,55 +76,107 @@ export default function AdminGovernancePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
+  const decisionsTotal = (dash?.decisions_by_status ?? []).reduce((n, d) => n + d.count, 0);
+  const certsTotal = (dash?.certifications ?? []).reduce((n, c) => n + c.count, 0);
+
   return (
-    <div className="space-y-6">
-      <PageHeader title="AI Governance" subtitle="Juntas de gobierno en todas las organizaciones: políticas, decisiones y auditoría." />
+    <div className="space-y-4">
+      <PageHeader
+        title="AI Governance"
+        subtitle="Juntas de gobierno en todas las organizaciones: políticas, decisiones y auditoría."
+      />
       {error && <ErrorInline>{error}</ErrorInline>}
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <SkeletonBlock rows={6} />
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <div className="panel p-4"><p className="text-2xl font-bold text-text">{dash?.organizations_governing ?? 0}</p><p className="text-xs text-faint">Orgs con políticas</p></div>
-            <div className="panel p-4"><p className="text-2xl font-bold text-text">{dash?.audit_entries ?? 0}</p><p className="text-xs text-faint">Entradas de auditoría</p></div>
-            <div className="panel p-4"><p className="text-2xl font-bold text-text">{(dash?.decisions_by_status ?? []).reduce((n, d) => n + d.count, 0)}</p><p className="text-xs text-faint">Decisiones</p></div>
-            <div className="panel p-4"><p className="text-2xl font-bold text-text">{(dash?.certifications ?? []).reduce((n, c) => n + c.count, 0)}</p><p className="text-xs text-faint">Certificaciones</p></div>
-          </div>
+          <MetricGrid cols={4}>
+            <Metric label="Orgs con políticas" value={dash?.organizations_governing ?? 0} hint="Gobierno activo" />
+            <Metric label="Entradas de auditoría" value={dash?.audit_entries ?? 0} size="md" />
+            <Metric label="Decisiones" value={decisionsTotal} size="md" hint={(dash?.decisions_by_status ?? []).length ? `${(dash?.decisions_by_status ?? []).length} estados en uso` : undefined} />
+            <Metric label="Certificaciones" value={certsTotal} size="md" />
+          </MetricGrid>
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <section>
-              <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text"><Scales size={15} /> Decisiones por estado</h3>
-              <div className="panel flex flex-wrap gap-1 p-3">
-                {(dash?.decisions_by_status ?? []).map((d) => (
-                  <span key={d.status} className={`badge ${ST[d.status] ?? "badge-muted"}`}>{d.status} · {d.count}</span>
-                ))}
-                {(dash?.decisions_by_status ?? []).length === 0 && <p className="text-xs text-faint">Sin decisiones.</p>}
-              </div>
-              <h3 className="mb-2 mt-4 text-sm font-semibold text-text">Certificaciones vigentes</h3>
-              <div className="panel space-y-1 p-3">
-                {(dash?.certifications ?? []).map((c) => (
-                  <div key={c.certification} className="flex items-center gap-2 rounded-md bg-soft px-3 py-1 text-xs">
-                    <span className="flex-1 text-text">{c.certification}</span>
-                    <span className="text-faint">{c.count}</span>
-                  </div>
-                ))}
-                {(dash?.certifications ?? []).length === 0 && <p className="text-xs text-faint">Sin certificaciones.</p>}
-              </div>
-            </section>
-            <section className="lg:col-span-2">
-              <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text"><Fingerprint size={15} /> Auditoría reciente</h3>
-              <div className="panel space-y-1 p-3">
-                {(dash?.recent_audit ?? []).map((a, i) => (
-                  <div key={i} className="flex items-center gap-2 rounded-md bg-soft px-3 py-1.5 text-[11px]">
-                    <span className="font-semibold text-text">{a.actor}</span>
-                    <span className="text-faint">{a.action}</span>
-                    <span className="flex-1 truncate text-faint">{a.detail}</span>
-                    <span className="text-[10px] text-faint">{new Date(a.created_at).toLocaleTimeString()}</span>
-                  </div>
-                ))}
-                {(dash?.recent_audit ?? []).length === 0 && <p className="text-xs text-faint">Sin actividad de auditoría.</p>}
-              </div>
-            </section>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-start">
+            <div className="flex flex-col gap-4">
+              <Panel>
+                <PanelHeader
+                  title={
+                    <span className="flex items-center gap-2">
+                      <Scales size={15} className="text-faint" aria-hidden />
+                      Decisiones por estado
+                    </span>
+                  }
+                />
+                <ul className="divide-y divide-border-soft">
+                  {(dash?.decisions_by_status ?? []).map((d) => (
+                    <li key={d.status} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                      <DecisionStatusBadge status={d.status} />
+                      <span className="mono text-xs text-faint tabular-nums">{d.count}</span>
+                    </li>
+                  ))}
+                  {(dash?.decisions_by_status ?? []).length === 0 && (
+                    <li className="px-4 py-3 text-[13px] text-muted">Sin decisiones.</li>
+                  )}
+                </ul>
+              </Panel>
+
+              <Panel>
+                <PanelHeader title="Certificaciones vigentes" />
+                <ul className="divide-y divide-border-soft">
+                  {(dash?.certifications ?? []).map((c) => (
+                    <li key={c.certification} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                      <span className="flex min-w-0 items-center gap-2 text-xs text-text">
+                        <SealCheck size={13} className="shrink-0 text-ok" aria-hidden />
+                        <span className="truncate" title={c.certification}>
+                          {c.certification}
+                        </span>
+                      </span>
+                      <span className="mono shrink-0 text-xs text-faint tabular-nums">{c.count}</span>
+                    </li>
+                  ))}
+                  {(dash?.certifications ?? []).length === 0 && (
+                    <li className="px-4 py-3 text-[13px] text-muted">Sin certificaciones.</li>
+                  )}
+                </ul>
+              </Panel>
+            </div>
+
+            <Panel className="lg:col-span-2">
+              <PanelHeader
+                title={
+                  <span className="flex items-center gap-2">
+                    <Fingerprint size={15} className="text-faint" aria-hidden />
+                    Auditoría reciente
+                  </span>
+                }
+                description="Últimas acciones registradas por el gobierno."
+              />
+              {(dash?.recent_audit ?? []).length === 0 ? (
+                <p className="px-4 py-3 text-[13px] text-muted">Sin actividad de auditoría.</p>
+              ) : (
+                <ul className="px-4 py-1">
+                  {(dash?.recent_audit ?? []).map((a, i) => (
+                    <li
+                      key={`${a.actor}-${a.created_at}-${i}`}
+                      className="state-rail flex items-center gap-3 py-2.5"
+                      data-state="ready"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                          <span className="text-[13px] font-medium text-text">{a.actor}</span>
+                          <span className="mono text-xs text-muted">{a.action}</span>
+                        </span>
+                        <span className="mt-0.5 block truncate text-xs text-faint" title={a.detail}>
+                          {a.detail || "—"}
+                        </span>
+                      </span>
+                      <span className="shrink-0 text-xs text-faint tabular-nums">{fmtDateTime(a.created_at)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Panel>
           </div>
         </>
       )}

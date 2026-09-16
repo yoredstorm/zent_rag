@@ -38,9 +38,10 @@ export type PlatformNavGroup = { label: string; items: PlatformNavItem[] };
 
 const BASE = "/control-center";
 
+/** Labels en inglés (herramienta interna); la jerarquía visual la aplica el shell. */
 export const PLATFORM_NAV: PlatformNavGroup[] = [
   {
-    label: "BUSINESS",
+    label: "Business",
     items: [
       { to: `${BASE}`, label: "Overview", icon: Gauge, end: true },
       { to: `${BASE}/tenants`, label: "Tenants", icon: Buildings },
@@ -51,7 +52,7 @@ export const PLATFORM_NAV: PlatformNavGroup[] = [
     ],
   },
   {
-    label: "AI PLATFORM",
+    label: "AI Platform",
     items: [
       { to: `${BASE}/model-gateway`, label: "Model Gateway", icon: Coins },
       { to: `${BASE}/inference-proxy`, label: "Inference", icon: Cpu },
@@ -63,7 +64,7 @@ export const PLATFORM_NAV: PlatformNavGroup[] = [
     ],
   },
   {
-    label: "OBSERVABILITY",
+    label: "Observability",
     items: [
       { to: `${BASE}/analytics`, label: "Analytics", icon: ChartBar },
       { to: `${BASE}/usage`, label: "Usage", icon: ChartLineUp },
@@ -74,7 +75,7 @@ export const PLATFORM_NAV: PlatformNavGroup[] = [
     ],
   },
   {
-    label: "FINOPS",
+    label: "FinOps",
     items: [
       { to: `${BASE}/costs`, label: "AI Costs", icon: Coins },
       { to: `${BASE}/metering`, label: "Metering", icon: Gauge },
@@ -84,7 +85,7 @@ export const PLATFORM_NAV: PlatformNavGroup[] = [
     ],
   },
   {
-    label: "TRUST",
+    label: "Trust",
     items: [
       { to: `${BASE}/trust`, label: "Trust Overview", icon: ShieldCheck },
       { to: `${BASE}/security-center`, label: "Security Center", icon: ShieldWarning },
@@ -97,7 +98,7 @@ export const PLATFORM_NAV: PlatformNavGroup[] = [
     ],
   },
   {
-    label: "OPERATIONS",
+    label: "Operations",
     items: [
       { to: `${BASE}/status`, label: "System Status", icon: Pulse },
       { to: `${BASE}/ops-center`, label: "Ops Center", icon: ShieldCheck },
@@ -110,7 +111,7 @@ export const PLATFORM_NAV: PlatformNavGroup[] = [
     ],
   },
   {
-    label: "PLATFORM",
+    label: "Platform",
     items: [
       { to: `${BASE}/marketplace`, label: "Marketplace", icon: Storefront },
       { to: `${BASE}/marketplace-factory`, label: "Marketplace Factory", icon: Factory },
@@ -125,4 +126,18 @@ export const PLATFORM_NAV: PlatformNavGroup[] = [
 
 export function platformNavLeaves(): PlatformNavItem[] {
   return PLATFORM_NAV.flatMap((g) => g.items);
+}
+
+/** Grupo y hoja de navegación activos para una ruta del Control Center. */
+export function platformNavContextForPath(
+  pathname: string
+): { group: PlatformNavGroup; item: PlatformNavItem } | null {
+  for (const group of PLATFORM_NAV) {
+    for (const item of group.items) {
+      if (item.end ? pathname === item.to : pathname === item.to || pathname.startsWith(`${item.to}/`)) {
+        return { group, item };
+      }
+    }
+  }
+  return null;
 }

@@ -1751,12 +1751,12 @@ async def platform_finops_check(request: Request, organization_id: str | None = 
     return {"alerts_created": await check_organization(oid), "count": 0}
 
 
-@router.get("/finops/alerts", summary="Alertas FinOps de un tenant")
-async def platform_finops_alerts(request: Request, organization_id: str):
+@router.get("/finops/alerts", summary="Alertas FinOps (tenant o todas)")
+async def platform_finops_alerts(request: Request, organization_id: str | None = None):
     ctx = require_platform_permission(request, "billing.read")
     from src.platform.finops.alerts import list_alerts
 
-    oid = _parse_org(organization_id)
+    oid = _parse_org(organization_id) if organization_id else None
     alerts = await list_alerts(oid)
     return {"alerts": alerts, "count": len(alerts)}
 

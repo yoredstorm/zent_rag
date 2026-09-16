@@ -1,7 +1,30 @@
-import { Plus, Pulse } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { Plus, Pulse, ShieldCheck, WarningCircle } from "@phosphor-icons/react";
+import { useEffect, useMemo, useState } from "react";
 import { platformApi } from "../../api";
-import { ErrorInline, PageHeader, SkeletonBlock } from "../../components/ui";
+import {
+  Button,
+  DataTable,
+  EmptyState,
+  ErrorInline,
+  Field,
+  Input,
+  Metric,
+  MetricGrid,
+  PageHeader,
+  Panel,
+  PanelHeader,
+  SectionHeader,
+  Select,
+  Skeleton,
+  StatusBadge,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  Toolbar,
+  type Column,
+  type SortState,
+} from "../../components/ui";
+import { fmtCurrency, fmtNum } from "../../lib/format";
 import { usePlatformAuth } from "../../platformAuth";
 
 type Health = {
@@ -48,7 +71,33 @@ type Circuit = {
 
 const KINDS = ["toxicity", "pii", "banned_topics", "length_limit", "custom_pattern"];
 const ACTIONS = ["mask", "block", "warn"];
-const CIRCUIT = { open: "badge-danger", half_open: "badge-warning", closed: "badge-ok" } as Record<string, string>;
+const WINDOWS = [
+  { hours: 1, label: "1h" },
+  { hours: 6, label: "6h" },
+  { hours: 24, label: "24h" },
+] as const;
+
+/**
+ * Los estados de circuit breaker no existen en el vocabulario de StatusBadge
+ * (`components/ui/Badge.tsx`), así que se mapean a estados equivalentes.
+ */
+const CIRCUIT_STATUS: Record<string, { status: string; label: string }> = {
+  open: { status: "failed", label: "Abierto" },
+  half_open: { status: "degraded", label: "Semiabierto" },
+  closed: { status: "healthy", label: "Cerrado" },
+};
+
+function sortRows<T>(rows: T[], sort: SortState, get: (row: T, key: string) => string | number) {
+  if (!sort) return rows;
+  return [...rows].sort((a, b) => {
+    const left = get(a, sort.key);
+    const right = get(b, sort.key);
+    if (typeof left === "string" && typeof right === "string") {
+      return sort.dir === "asc" ? left.localeCompare(right) : right.localeCompare(left);
+    }
+    return sort.dir === "asc" ? Number(left) - Number(right) : Number(right) - Number(left);
+  });
+}
 
 export default function AdminModelHealthPage() {
   const { session } = usePlatformAuth();
@@ -63,6 +112,9 @@ export default function AdminModelHealthPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [sortHealth, setSortHealth] = useState<SortState>({ key: "requests", dir: "desc" });
+  const [sortBudgets, setSortBudgets] = useState<SortState>({ key: "usage_pct", dir: "desc" });
+  const [sortCircuits, setSortCircuits] = useState<SortState>({ key: "model", dir: "asc" });
 
   async function loadAll() {
     if (!session) return;
@@ -159,105 +211,439 @@ export default function AdminModelHealthPage() {
     }
   }
 
+  const openCircuits = circuits.filter((c) => c.state === "open").length;
+  const blockedBudgets = budgets.filter((b) => !b.allowed).length;
+  const activeGuardrails = guardrails.filter((g) => g.enabled).length;
+
+  const healthRows = useMemo(
+    () =>
+      sortRows(health, sortHealth, (row, key) =>
+        key === "model" ? row.model : key === "errors" ? row.errors : key === "cost" ? row.cost : key === "error_rate" ? row.error_rate : key === "p95_latency_ms" ? row.p95_latency_ms : key === "tokens" ? row.tokens : row.requests
+      ),
+    [health, sortHealth]
+  );
+  const budgetRows = useMemo(
+    () =>
+      sortRows(budgets, sortBudgets, (row, key) =>
+        key === "model" ? row.model : key === "budget_cents" ? (row.budget_cents ?? 0) : key === "allowed" ? String(row.allowed) : row.usage_pct
+      ),
+    [budgets, sortBudgets]
+  );
+  const circuitRows = useMemo(
+    () =>
+      sortRows(circuits, sortCircuits, (row, key) =>
+        key === "state" ? row.state : key === "failures" ? row.failures : row.model
+      ),
+    [circuits, sortCircuits]
+  );
+
+  const healthColumns: Column<Health>[] = [
+    {
+      key: "model",
+      header: "Modelo",
+      sortable: true,
+      render: (row) => (
+        <span className="flex items-center gap-2">
+          <span className="mono text-xs text-text">{row.model}</span>
+          <StatusBadge status={CIRCUIT_STATUS[row.circuit_state]?.status ?? row.circuit_state} label={CIRCUIT_STATUS[row.circuit_state]?.label} hideIcon />
+        </span>
+      ),
+    },
+    {
+      key: "requests",
+      header: "Requests",
+      align: "right",
+      sortable: true,
+      width: "110px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtNum(row.requests)}</span>,
+    },
+    {
+      key: "tokens",
+      header: "Tokens",
+      align: "right",
+      sortable: true,
+      hideBelow: "md",
+      width: "120px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtNum(row.tokens)}</span>,
+    },
+    {
+      key: "cost",
+      header: "Costo",
+      align: "right",
+      sortable: true,
+      hideBelow: "md",
+      width: "110px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtCurrency(row.cost, 3)}</span>,
+    },
+    {
+      key: "errors",
+      header: "Errores",
+      align: "right",
+      sortable: true,
+      width: "120px",
+      render: (row) => (
+        <span className={`mono text-xs ${row.errors > 0 ? "text-danger" : "text-muted"}`}>
+          {fmtNum(row.errors)} · {(row.error_rate * 100).toFixed(1)}%
+        </span>
+      ),
+    },
+    {
+      key: "p95_latency_ms",
+      header: "p95",
+      align: "right",
+      sortable: true,
+      hideBelow: "lg",
+      width: "110px",
+      render: (row) => <span className="mono text-xs text-muted">{row.p95_latency_ms.toFixed(0)}ms</span>,
+    },
+  ];
+
+  const budgetColumns: Column<Budget>[] = [
+    {
+      key: "model",
+      header: "Modelo",
+      sortable: true,
+      render: (row) => <span className="mono text-xs text-text">{row.model}</span>,
+    },
+    {
+      key: "budget_cents",
+      header: "Presupuesto",
+      align: "right",
+      sortable: true,
+      width: "120px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtCurrency((row.budget_cents ?? 0) / 100, 2)}</span>,
+    },
+    {
+      key: "usage_pct",
+      header: "Uso",
+      align: "right",
+      sortable: true,
+      width: "160px",
+      render: (row) => (
+        <span className="flex items-center justify-end gap-2">
+          <span className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-track" aria-hidden>
+            <span
+              className={`block h-full rounded-full ${row.allowed ? (row.throttle_factor < 1 ? "bg-warn" : "bg-accent") : "bg-danger"}`}
+              style={{ width: `${Math.min(100, row.usage_pct)}%` }}
+            />
+          </span>
+          <span className="mono text-xs text-muted">{row.usage_pct}%</span>
+        </span>
+      ),
+    },
+    {
+      key: "allowed",
+      header: "Estado",
+      align: "right",
+      sortable: true,
+      width: "130px",
+      render: (row) =>
+        row.allowed ? (
+          row.throttle_factor < 1 ? (
+            <StatusBadge status="degraded" label={`Throttled ×${row.throttle_factor}`} />
+          ) : (
+            <StatusBadge status="active" />
+          )
+        ) : (
+          <StatusBadge status="suspended" label="Bloqueado" />
+        ),
+    },
+    {
+      key: "note",
+      header: "Nota",
+      hideBelow: "lg",
+      render: (row) => (
+        <span className="block max-w-[220px] truncate text-xs text-faint" title={row.note ?? ""}>
+          {row.note ?? "—"}
+        </span>
+      ),
+    },
+  ];
+
+  const circuitColumns: Column<Circuit>[] = [
+    {
+      key: "model",
+      header: "Modelo",
+      sortable: true,
+      render: (row) => <span className="mono text-xs text-text">{row.model}</span>,
+    },
+    {
+      key: "state",
+      header: "Estado",
+      sortable: true,
+      width: "150px",
+      render: (row) => (
+        <StatusBadge
+          status={CIRCUIT_STATUS[row.state]?.status ?? row.state}
+          label={CIRCUIT_STATUS[row.state]?.label}
+        />
+      ),
+    },
+    {
+      key: "failures",
+      header: "Fallos",
+      align: "right",
+      sortable: true,
+      width: "110px",
+      render: (row) => (
+        <span className={`mono text-xs ${row.failures > 0 ? "text-warn" : "text-muted"}`}>
+          {row.failures}/{row.failure_threshold}
+        </span>
+      ),
+    },
+    {
+      key: "window",
+      header: "Ventana",
+      align: "right",
+      hideBelow: "md",
+      width: "120px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtNum(row.window_seconds)}s</span>,
+    },
+    {
+      key: "cooldown",
+      header: "Cooldown",
+      align: "right",
+      hideBelow: "md",
+      width: "110px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtNum(row.cooldown_seconds)}s</span>,
+    },
+    {
+      key: "opened_until",
+      header: "Abierto hasta",
+      align: "right",
+      hideBelow: "lg",
+      width: "170px",
+      render: (row) => (
+        <span className="text-xs text-faint">
+          {row.opened_until ? new Date(row.opened_until).toLocaleString("es-PE") : "—"}
+        </span>
+      ),
+    },
+  ];
+
   return (
     <div className="space-y-6">
       <PageHeader title="Model Health" subtitle="Budgets con throttling, guardrails de salida y circuit breakers por modelo." />
-      {error && <ErrorInline>{error}</ErrorInline>}
+      <ErrorInline message={error} />
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <div className="flex flex-col gap-3" aria-hidden>
+          <Skeleton className="h-[86px] rounded-lg" />
+          <Skeleton className="h-[300px] rounded-lg" />
+        </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            {health.map((m) => (
-              <div key={m.model} className={`panel p-4 ${m.circuit_state === "open" ? "border-danger" : ""}`}>
-                <div className="flex items-baseline justify-between">
-                  <p className="mono text-sm font-semibold text-text">{m.model}</p>
-                  <span className={`badge ${CIRCUIT[m.circuit_state] ?? "badge-muted"}`}>{m.circuit_state}</span>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+            <Metric
+              label="Circuitos abiertos"
+              value={openCircuits}
+              hint={openCircuits > 0 ? "Fallback activo en el router" : "Todos los modelos responden"}
+              icon={openCircuits > 0 ? WarningCircle : Pulse}
+              tone={openCircuits > 0 ? "danger" : "default"}
+            />
+            <MetricGrid cols={3} className="lg:grid-cols-3">
+              <Metric label="Modelos con tráfico" value={fmtNum(health.length)} size="md" hint={`Ventana ${hours}h`} />
+              <Metric label="Budgets bloqueados" value={fmtNum(blockedBudgets)} size="md" tone={blockedBudgets > 0 ? "warn" : "default"} />
+              <Metric label="Guardrails activos" value={fmtNum(activeGuardrails)} size="md" />
+            </MetricGrid>
+          </div>
+
+          <Toolbar>
+            <Select aria-label="Organización" className="w-48" value={orgId} onChange={(e) => setOrgId(e.target.value)}>
+              {orgs.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.id.slice(0, 8)}
+                </option>
+              ))}
+            </Select>
+            <Tabs variant="pill" value={String(hours)} onValueChange={(value) => setHours(Number(value))}>
+              <TabsList>
+                {WINDOWS.map((w) => (
+                  <TabsTrigger key={w.hours} value={String(w.hours)}>
+                    {w.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          </Toolbar>
+
+          <section className="min-w-0">
+            <SectionHeader
+              title="Salud por modelo"
+              description="Requests, errores y latencia en la ventana. El estado es el circuit breaker."
+              className="mb-3"
+            />
+            <DataTable
+              stickyHeader
+              columns={healthColumns}
+              rows={healthRows}
+              rowKey={(row) => row.model}
+              sort={sortHealth}
+              onSortChange={setSortHealth}
+              empty={
+                <EmptyState
+                  icon={Pulse}
+                  title="Sin tráfico en la ventana"
+                  body="No hay requests registrados para esta selección."
+                  hint="Ampliá la ventana o elegí otra organización."
+                />
+              }
+            />
+          </section>
+
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <section className="min-w-0">
+              <SectionHeader
+                title="Budgets por modelo (mes)"
+                description="Consumo real contra el límite configurado en Model Gateway."
+                className="mb-3"
+              />
+              <DataTable
+                stickyHeader
+                columns={budgetColumns}
+                rows={budgetRows}
+                rowKey={(row) => `${row.organization_id}:${row.model}`}
+                sort={sortBudgets}
+                onSortChange={setSortBudgets}
+                empty={
+                  <EmptyState compact icon={Pulse} title="Sin budgets configurados" body="Definí límites por modelo en Model Gateway." />
+                }
+              />
+            </section>
+
+            <section className="min-w-0">
+              <SectionHeader
+                title={
+                  <span className="flex items-center gap-2">
+                    <ShieldCheck size={15} aria-hidden /> Guardrails de salida
+                  </span>
+                }
+                description="Filtros aplicados a las respuestas antes de salir."
+                className="mb-3"
+              />
+              <Panel className="mb-4">
+                <PanelHeader
+                  title="Nuevo guardrail"
+                  description="Se aplica a la organización seleccionada."
+                />
+                <div className="panel-body">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Field label="Nombre">
+                      <Input
+                        value={grForm.name}
+                        onChange={(e) => setGrForm((f) => ({ ...f, name: e.target.value }))}
+                        placeholder="ej. PII en soporte"
+                      />
+                    </Field>
+                    <Field label="Tipo">
+                      <Select value={grForm.kind} onChange={(e) => setGrForm((f) => ({ ...f, kind: e.target.value }))}>
+                        {KINDS.map((k) => (
+                          <option key={k} value={k}>
+                            {k}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                    <Field label="Acción">
+                      <Select value={grForm.action} onChange={(e) => setGrForm((f) => ({ ...f, action: e.target.value }))}>
+                        {ACTIONS.map((a) => (
+                          <option key={a} value={a}>
+                            {a}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                    <Field label="Config JSON" hint='ej. {"words":["x"]}'>
+                      <Input
+                        className="font-mono text-xs"
+                        value={grForm.config}
+                        onChange={(e) => setGrForm((f) => ({ ...f, config: e.target.value }))}
+                        placeholder='{"words":["x"]}'
+                      />
+                    </Field>
+                  </div>
+                  <div className="mt-3">
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      leadingIcon={Plus}
+                      loading={busy === "gr"}
+                      disabled={!orgId || !grForm.name.trim()}
+                      onClick={() => void createGuardrail()}
+                    >
+                      Crear guardrail
+                    </Button>
+                  </div>
                 </div>
-                <p className="mt-1 text-[11px] text-faint">{m.requests} req · {m.tokens.toLocaleString()} tok · ${m.cost.toFixed(3)}</p>
-                <p className="text-[11px] text-faint">p95 {m.p95_latency_ms.toFixed(0)}ms · err {m.errors} ({(m.error_rate * 100).toFixed(1)}%)</p>
-              </div>
-            ))}
-            {health.length === 0 && <div className="panel p-4 text-xs text-faint">Sin tráfico en la ventana.</div>}
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <select className="rounded-md border border-border bg-soft px-2 py-2 text-sm" value={orgId} onChange={(e) => setOrgId(e.target.value)}>
-              {orgs.map((o) => (<option key={o.id} value={o.id}>{o.id.slice(0, 8)}</option>))}
-            </select>
-            {[1, 6, 24].map((h) => (
-              <button key={h} type="button" onClick={() => setHours(h)} className={`btn min-h-8 px-3 text-xs ${hours === h ? "btn-primary" : "btn-secondary"}`}>{h}h</button>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-            <section className="panel p-4">
-              <h3 className="mb-2 text-sm font-semibold text-text">Budgets por modelo (mes)</h3>
-              <div className="space-y-1">
-                {budgets.map((b) => (
-                  <div key={`${b.organization_id}:${b.model}`} className="rounded-md bg-soft px-3 py-1.5 text-[11px]">
-                    <div className="flex items-center justify-between">
-                      <span className="mono text-text">{b.model}</span>
-                      <span className={`badge ${b.allowed ? (b.throttle_factor < 1 ? "badge-warning" : "badge-ok") : "badge-danger"}`}>
-                        {b.allowed ? (b.throttle_factor < 1 ? `throttled ×${b.throttle_factor}` : "ok") : "bloqueado"}
-                      </span>
-                    </div>
-                    <p className="text-faint">${(b.budget_cents ?? 0) / 100} · {b.usage_pct}% usado · {b.note ?? ""}</p>
-                  </div>
-                ))}
-                {budgets.length === 0 && <p className="text-xs text-faint">Sin budgets configurados (Model Gateway).</p>}
-              </div>
-            </section>
-
-            <section className="panel p-4">
-              <h3 className="mb-2 text-sm font-semibold text-text">Guardrails de salida</h3>
-              <div className="grid grid-cols-2 gap-2">
-                <input className="rounded-md border border-border bg-soft px-2 py-2 text-xs" placeholder="nombre" value={grForm.name} onChange={(e) => setGrForm((f) => ({ ...f, name: e.target.value }))} />
-                <select className="rounded-md border border-border bg-soft px-2 py-2 text-xs" value={grForm.kind} onChange={(e) => setGrForm((f) => ({ ...f, kind: e.target.value }))}>
-                  {KINDS.map((k) => (<option key={k} value={k}>{k}</option>))}
-                </select>
-                <select className="rounded-md border border-border bg-soft px-2 py-2 text-xs" value={grForm.action} onChange={(e) => setGrForm((f) => ({ ...f, action: e.target.value }))}>
-                  {ACTIONS.map((a) => (<option key={a} value={a}>{a}</option>))}
-                </select>
-                <input className="rounded-md border border-border bg-soft px-2 py-2 text-xs" placeholder='config {"words":["x"]}' value={grForm.config} onChange={(e) => setGrForm((f) => ({ ...f, config: e.target.value }))} />
-              </div>
-              <button type="button" className="btn btn-primary mt-2 min-h-8 text-xs" disabled={!!busy || !orgId} onClick={() => void createGuardrail()}>
-                <Plus size={12} aria-hidden /> Crear
-              </button>
-              <div className="mt-2 space-y-1">
-                {guardrails.map((g) => (
-                  <div key={g.id} className="flex items-center justify-between rounded-md bg-soft px-3 py-1.5 text-[11px]">
-                    <span className="truncate text-text">{g.name}</span>
-                    <span className="text-faint">{g.kind} · {g.action}</span>
-                    <button type="button" className="btn btn-ghost min-h-6 px-1.5 text-[10px]" onClick={() => void toggle(g)}>
-                      {g.enabled ? "On" : "Off"}
-                    </button>
-                  </div>
-                ))}
-                {guardrails.length === 0 && <p className="text-xs text-faint">Sin guardrails.</p>}
-              </div>
-            </section>
-
-            <section className="panel p-4">
-              <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
-                <Pulse size={15} aria-hidden /> Circuit breakers
-              </h3>
-              <div className="space-y-1">
-                {circuits.map((c) => (
-                  <div key={c.model} className="flex items-center justify-between rounded-md bg-soft px-3 py-1.5 text-[11px]">
-                    <span className="mono text-text">{c.model}</span>
-                    <span className={`badge ${CIRCUIT[c.state] ?? "badge-muted"}`}>{c.state}</span>
-                    <span className="text-faint">{c.failures}/{c.failure_threshold} fallos</span>
-                    <span className="flex gap-1">
-                      <button type="button" className="btn btn-ghost min-h-6 px-1.5 text-[10px]" disabled={!!busy} onClick={() => void circuit(c.model, "trip")}>Trip</button>
-                      <button type="button" className="btn btn-ghost min-h-6 px-1.5 text-[10px]" disabled={!!busy} onClick={() => void circuit(c.model, "reset")}>Reset</button>
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <p className="mt-2 text-[10px] text-faint">Auto-fallback: el runtime salta al siguiente candidato del router si el modelo está open.</p>
+              </Panel>
+              {guardrails.length === 0 ? (
+                <Panel>
+                  <EmptyState compact icon={ShieldCheck} title="Sin guardrails" body="Creá el primero para filtrar salidas de esta organización." />
+                </Panel>
+              ) : (
+                <ul className="panel divide-y divide-border-soft">
+                  {guardrails.map((g) => (
+                    <li key={g.id} className="flex items-center gap-3 px-4 py-2.5">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] text-text" title={g.name}>
+                          {g.name}
+                        </p>
+                        <p className="text-xs text-faint">
+                          {g.kind} · {g.action}
+                        </p>
+                      </div>
+                      <StatusBadge status={g.enabled ? "active" : "inactive"} />
+                      <Button variant="ghost" size="sm" onClick={() => void toggle(g)}>
+                        {g.enabled ? "Desactivar" : "Activar"}
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
           </div>
+
+          <section className="min-w-0">
+            <SectionHeader
+              title={
+                <span className="flex items-center gap-2">
+                  <Pulse size={15} aria-hidden /> Circuit breakers
+                </span>
+              }
+              description="Auto-fallback: el runtime salta al siguiente candidato del router si el modelo está abierto."
+              className="mb-3"
+            />
+            <DataTable
+              stickyHeader
+              columns={circuitColumns}
+              rows={circuitRows}
+              rowKey={(row) => row.model}
+              sort={sortCircuits}
+              onSortChange={setSortCircuits}
+              rowActions={(row) => (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy === `trip-${row.model}`}
+                    onClick={() => void circuit(row.model, "trip")}
+                  >
+                    Trip
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy === `reset-${row.model}`}
+                    onClick={() => void circuit(row.model, "reset")}
+                  >
+                    Reset
+                  </Button>
+                </>
+              )}
+              empty={
+                <EmptyState compact icon={Pulse} title="Sin circuit breakers" body="Aparecen cuando el runtime registra fallos por modelo." />
+              }
+            />
+          </section>
         </>
       )}
     </div>

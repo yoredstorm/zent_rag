@@ -1,12 +1,20 @@
 import { ChartBar, Download, MagnifyingGlass } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { platformApi } from "../../api";
 import {
+  Button,
+  DataTable,
   EmptyState,
   ErrorInline,
+  Metric,
+  MetricGrid,
   PageHeader,
-  SkeletonBlock,
+  SectionHeader,
+  Skeleton,
+  type Column,
+  type SortState,
 } from "../../components/ui";
+import { fmtCurrency, fmtDateTime, fmtNum } from "../../lib/format";
 import { usePlatformAuth } from "../../platformAuth";
 
 type Totals = {
@@ -32,11 +40,33 @@ type OrgRow = {
 
 type Federated = { period_days: number; totals: Totals; by_organization: OrgRow[] };
 
+const numeric = (row: OrgRow, key: string): number => {
+  switch (key) {
+    case "errors":
+      return row.errors;
+    case "error_rate_pct":
+      return row.error_rate_pct;
+    case "tokens":
+      return row.tokens;
+    case "cost":
+      return row.cost;
+    case "agents":
+      return row.agents;
+    case "knowledge_bases":
+      return row.knowledge_bases;
+    case "deployments":
+      return row.deployments;
+    default:
+      return row.requests;
+  }
+};
+
 export default function AdminFederatedAnalyticsPage() {
   const { session } = usePlatformAuth();
   const [data, setData] = useState<Federated | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [sort, setSort] = useState<SortState>({ key: "requests", dir: "desc" });
 
   async function load() {
     if (!session) return;
@@ -78,7 +108,120 @@ export default function AdminFederatedAnalyticsPage() {
     }
   }
 
+  const rows = useMemo(() => {
+    const list = [...(data?.by_organization ?? [])];
+    if (!sort) return list;
+    if (sort.key === "organization_id") {
+      return list.sort((a, b) =>
+        sort.dir === "asc"
+          ? a.organization_id.localeCompare(b.organization_id)
+          : b.organization_id.localeCompare(a.organization_id)
+      );
+    }
+    return list.sort((a, b) =>
+      sort.dir === "asc"
+        ? numeric(a, sort.key) - numeric(b, sort.key)
+        : numeric(b, sort.key) - numeric(a, sort.key)
+    );
+  }, [data?.by_organization, sort]);
+
   const maxRequests = Math.max(1, ...(data?.by_organization ?? []).map((o) => o.requests));
+
+  const columns: Column<OrgRow>[] = [
+    {
+      key: "organization_id",
+      header: "Organización",
+      sortable: true,
+      render: (row) => (
+        <span className="mono text-xs text-faint" title={row.organization_id}>
+          {row.organization_id.slice(0, 13)}…
+        </span>
+      ),
+    },
+    {
+      key: "requests",
+      header: "Requests",
+      align: "right",
+      sortable: true,
+      width: "180px",
+      render: (row) => (
+        <span className="flex items-center justify-end gap-2">
+          <span className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-track" aria-hidden>
+            <span
+              className="block h-full rounded-full bg-accent/70"
+              style={{ width: `${(row.requests / maxRequests) * 100}%` }}
+            />
+          </span>
+          <span className="mono text-xs text-muted">{fmtNum(row.requests)}</span>
+        </span>
+      ),
+    },
+    {
+      key: "error_rate_pct",
+      header: "Error %",
+      align: "right",
+      sortable: true,
+      width: "110px",
+      render: (row) => (
+        <span className={`mono text-xs ${row.error_rate_pct > 0 ? "text-warn" : "text-muted"}`}>
+          {row.error_rate_pct}%
+        </span>
+      ),
+    },
+    {
+      key: "tokens",
+      header: "Tokens",
+      align: "right",
+      sortable: true,
+      hideBelow: "md",
+      width: "130px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtNum(row.tokens)}</span>,
+    },
+    {
+      key: "cost",
+      header: "Costo",
+      align: "right",
+      sortable: true,
+      hideBelow: "md",
+      width: "120px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtCurrency(row.cost)}</span>,
+    },
+    {
+      key: "agents",
+      header: "Agentes",
+      align: "right",
+      sortable: true,
+      hideBelow: "lg",
+      width: "100px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtNum(row.agents)}</span>,
+    },
+    {
+      key: "knowledge_bases",
+      header: "KBs",
+      align: "right",
+      sortable: true,
+      hideBelow: "lg",
+      width: "90px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtNum(row.knowledge_bases)}</span>,
+    },
+    {
+      key: "deployments",
+      header: "Deploys",
+      align: "right",
+      sortable: true,
+      hideBelow: "lg",
+      width: "100px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtNum(row.deployments)}</span>,
+    },
+    {
+      key: "last_activity",
+      header: "Última actividad",
+      align: "right",
+      hideBelow: "xl",
+      width: "170px",
+      render: (row) => <span className="text-xs text-muted">{fmtDateTime(row.last_activity)}</span>,
+    },
+  ];
 
   return (
     <div className="space-y-6">
@@ -86,87 +229,65 @@ export default function AdminFederatedAnalyticsPage() {
         title="Federated Analytics"
         subtitle="Métricas multi-tenant agregadas (30d) con drill-down por organización."
         actions={
-          <button type="button" className="btn btn-secondary min-h-11" onClick={() => void exportCsv()}>
-            <Download size={15} aria-hidden /> Export CSV
-          </button>
+          <Button variant="secondary" leadingIcon={Download} onClick={() => void exportCsv()}>
+            Export CSV
+          </Button>
         }
       />
-      {error && <ErrorInline>{error}</ErrorInline>}
+      <ErrorInline message={error} />
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <div className="flex flex-col gap-3" aria-hidden>
+          <Skeleton className="h-[86px] rounded-lg" />
+          <Skeleton className="h-[280px] rounded-lg" />
+        </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <div className="panel p-4">
-              <p className="stat-label">Requests (30d)</p>
-              <p className="stat-value">{data?.totals.requests ?? 0}</p>
-            </div>
-            <div className="panel p-4">
-              <p className="stat-label">Tokens</p>
-              <p className="stat-value">{(data?.totals.tokens ?? 0).toLocaleString()}</p>
-            </div>
-            <div className="panel p-4">
-              <p className="stat-label">Costo</p>
-              <p className="stat-value">${(data?.totals.cost ?? 0).toFixed(2)}</p>
-            </div>
-            <div className="panel p-4">
-              <p className="stat-label">Error rate</p>
-              <p className="stat-value">{data?.totals.error_rate_pct ?? 0}%</p>
-            </div>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,3fr)]">
+            <Metric
+              label="Requests (30d)"
+              value={(data?.totals.requests ?? 0).toLocaleString()}
+              hint={`${(data?.by_organization ?? []).length} organizaciones con la ventana`}
+              icon={ChartBar}
+            />
+            <MetricGrid cols={3} className="lg:grid-cols-3">
+              <Metric label="Tokens" value={(data?.totals.tokens ?? 0).toLocaleString()} size="md" />
+              <Metric label="Costo" value={fmtCurrency(data?.totals.cost ?? 0)} size="md" />
+              <Metric
+                label="Error rate"
+                value={`${data?.totals.error_rate_pct ?? 0}%`}
+                size="md"
+                tone={(data?.totals.errors ?? 0) > 0 ? "warn" : "default"}
+              />
+            </MetricGrid>
           </div>
 
-          <section>
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
-              <MagnifyingGlass size={15} aria-hidden /> Por organización
-            </h3>
-            <div className="panel overflow-x-auto">
-              {(data?.by_organization ?? []).length === 0 ? (
-                <EmptyState icon={ChartBar} title="Sin actividad" body="No hay uso en los últimos 30 días." />
-              ) : (
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Organización</th>
-                      <th>Requests</th>
-                      <th>Error %</th>
-                      <th>Tokens</th>
-                      <th>Costo</th>
-                      <th>Agentes</th>
-                      <th>KBs</th>
-                      <th>Deploys</th>
-                      <th>Última actividad</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(data?.by_organization ?? []).map((o) => (
-                      <tr key={o.organization_id}>
-                        <td className="mono text-xs text-faint">{o.organization_id.slice(0, 13)}…</td>
-                        <td className="text-xs">
-                          <div className="flex items-center gap-2">
-                            <div className="h-2 w-16 overflow-hidden rounded bg-soft">
-                              <div
-                                className="h-full bg-accent/70"
-                                style={{ width: `${(o.requests / maxRequests) * 100}%` }}
-                              />
-                            </div>
-                            {o.requests}
-                          </div>
-                        </td>
-                        <td className="text-xs">{o.error_rate_pct}%</td>
-                        <td className="text-xs">{o.tokens.toLocaleString()}</td>
-                        <td className="text-xs">${o.cost.toFixed(2)}</td>
-                        <td className="text-xs">{o.agents}</td>
-                        <td className="text-xs">{o.knowledge_bases}</td>
-                        <td className="text-xs">{o.deployments}</td>
-                        <td className="text-xs text-muted">
-                          {o.last_activity ? new Date(o.last_activity).toLocaleString("es-PE") : "—"}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
+          <section className="min-w-0">
+            <SectionHeader
+              title={
+                <span className="flex items-center gap-2">
+                  <MagnifyingGlass size={15} aria-hidden /> Por organización
+                </span>
+              }
+              description="Volumen, costo y superficie de cada tenant en el periodo."
+              className="mb-3"
+            />
+            <DataTable
+              stickyHeader
+              columns={columns}
+              rows={rows}
+              rowKey={(row) => row.organization_id}
+              sort={sort}
+              onSortChange={setSort}
+              caption="Métricas federadas por organización"
+              empty={
+                <EmptyState
+                  icon={ChartBar}
+                  title="Sin actividad"
+                  body="No hay uso en los últimos 30 días."
+                  hint="Cuando una organización genere requests, aparecerá en esta tabla."
+                />
+              }
+            />
           </section>
         </>
       )}

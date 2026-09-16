@@ -1,8 +1,21 @@
-import { Play } from "@phosphor-icons/react";
+import { Play, WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import { ErrorInline, PageHeader } from "../components/ui";
+import {
+  Badge,
+  Button,
+  CodeBlock,
+  EmptyState,
+  ErrorInline,
+  Field,
+  InfoInline,
+  PageHeader,
+  Panel,
+  PanelHeader,
+  Select,
+  Textarea,
+} from "../components/ui";
 
 type ApiKey = { id: string; name: string; prefix: string; is_active: boolean };
 type Deployment = { id: string; slug: string; status: string };
@@ -50,6 +63,16 @@ const ENDPOINTS = [
   },
 ];
 
+function isJson(value: string): boolean {
+  if (!value) return false;
+  try {
+    JSON.parse(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export default function PlaygroundPage() {
   const { session } = useAuth();
   const [keys, setKeys] = useState<ApiKey[]>([]);
@@ -63,6 +86,7 @@ export default function PlaygroundPage() {
   const [latency, setLatency] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [showCurl, setShowCurl] = useState(false);
 
   useEffect(() => {
     if (!session) return;
@@ -90,8 +114,6 @@ export default function PlaygroundPage() {
       setBusy(false);
       return;
     }
-    // La clave completa no se re-expone; usamos un token de demo si es la demo dev.
-    setError("Uso el token de la sesión del portal como Bearer (la API key completa solo se muestra al crearla).");
     const started = performance.now();
     try {
       const resp = await fetch(endpoint.path(slug), {
@@ -126,56 +148,149 @@ export default function PlaygroundPage() {
     setResponse("");
   }
 
+  const path = endpoint.path(slug);
+  const healthyDeployments = deployments.filter((d) => d.status === "healthy");
+  const curl = `curl -X ${endpoint.method} ${path} \\
+  -H "Authorization: Bearer $ZENT_TOKEN" \\
+  -H "X-Organization-Id: $ZENT_ORG" \\
+  -H "Content-Type: application/json"${
+    endpoint.body
+      ? ` \\
+  -d '${body}'`
+      : ""
+  }`;
+  const statusOk = status !== "" && Number(status) < 400;
+
   return (
-    <div>
+    <div className="flex flex-col gap-4">
       <PageHeader title="API Console" subtitle="Ejecuta las APIs en vivo con tu sesión y tus deployments." />
       <ErrorInline message={error} />
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="space-y-3">
-          <div className="panel grid grid-cols-1 gap-2 p-4">
-            <select className="rounded-md border border-border bg-soft px-2 py-2 text-sm" value={endpoint.key} onChange={(e) => selectEndpoint(ENDPOINTS.find((x) => x.key === e.target.value) ?? ENDPOINTS[0])}>
-              {ENDPOINTS.map((e) => (
-                <option key={e.key} value={e.key}>{e.method} · {e.label}</option>
-              ))}
-            </select>
-            <select className="rounded-md border border-border bg-soft px-2 py-2 text-sm" value={keyId} onChange={(e) => setKeyId(e.target.value)}>
-              <option value="">API key (demo de sesión)…</option>
-              {keys.map((k) => (
-                <option key={k.id} value={k.id}>{k.name} · {k.prefix}</option>
-              ))}
-            </select>
-            {endpoint.needsSlug && (
-              <select className="rounded-md border border-border bg-soft px-2 py-2 text-sm" value={slug} onChange={(e) => setSlug(e.target.value)}>
-                <option value="">Deployment…</option>
-                {deployments.filter((d) => d.status === "healthy").map((d) => (
-                  <option key={d.id} value={d.slug}>{d.slug}</option>
+      <InfoInline>
+        Las llamadas se autentican con el token de tu sesión del portal. La API key completa solo se
+        muestra al crearla, así que no se reenvía desde acá.
+      </InfoInline>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+        <Panel>
+          <PanelHeader
+            title="Solicitud"
+            description="Elige el endpoint, la identidad y el cuerpo que enviaremos."
+            actions={
+              <>
+                <Badge tone={endpoint.method === "GET" ? "info" : "accent"}>{endpoint.method}</Badge>
+                <span className="mono text-xs text-muted">{path}</span>
+              </>
+            }
+          />
+          <div className="panel-body flex flex-col gap-3">
+            <Field label="Endpoint" hint="Cada endpoint usa el mismo Bearer que tu sesión.">
+              <Select
+                value={endpoint.key}
+                onChange={(e) => selectEndpoint(ENDPOINTS.find((x) => x.key === e.target.value) ?? ENDPOINTS[0])}
+              >
+                {ENDPOINTS.map((e) => (
+                  <option key={e.key} value={e.key}>
+                    {e.method} · {e.label}
+                  </option>
                 ))}
-              </select>
+              </Select>
+            </Field>
+
+            <Field
+              label="API key"
+              hint="La clave completa no se vuelve a mostrar: el portal firma con tu sesión."
+            >
+              <Select value={keyId} onChange={(e) => setKeyId(e.target.value)} placeholder="Elegí una API key…">
+                {keys.map((k) => (
+                  <option key={k.id} value={k.id}>
+                    {k.name} · {k.prefix}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            {endpoint.needsSlug && (
+              <Field label="Deployment">
+                <Select value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="Elegí un deployment…">
+                  {healthyDeployments.map((d) => (
+                    <option key={d.id} value={d.slug}>
+                      {d.slug}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
             )}
-            <textarea
-              className="min-h-32 rounded-md border border-border bg-soft px-3 py-2 font-mono text-xs text-text"
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              disabled={!endpoint.body}
-            />
-            <button type="button" className="btn btn-primary min-h-9 text-xs" disabled={busy} onClick={() => void execute()}>
-              <Play size={13} aria-hidden /> Ejecutar
-            </button>
+
+            {endpoint.needsSlug && healthyDeployments.length === 0 && (
+              <p className="flex items-start gap-2 text-xs leading-relaxed text-warn">
+                <WarningCircle size={14} className="mt-px shrink-0" aria-hidden />
+                No hay deployments healthy. Despliega un agente o usa un endpoint que no dependa de uno.
+              </p>
+            )}
+
+            <Field
+              label="Cuerpo (JSON)"
+              hint={endpoint.body ? "Editable para esta llamada." : "Este endpoint no lleva cuerpo."}
+            >
+              <Textarea
+                className="min-h-32 font-mono text-xs"
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                disabled={!endpoint.body}
+                spellCheck={false}
+              />
+            </Field>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="primary" loading={busy} leadingIcon={Play} onClick={() => void execute()}>
+                Ejecutar
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-expanded={showCurl}
+                onClick={() => setShowCurl((v) => !v)}
+              >
+                {showCurl ? "Ocultar cURL" : "Ver como cURL"}
+              </Button>
+            </div>
+
+            {showCurl && <CodeBlock code={curl} language="bash" filename="request.sh" maxHeight={220} />}
           </div>
-        </div>
-        <div className="panel p-4">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-text">Respuesta</h3>
-            {status && (
-              <span className={`badge ${Number(status) < 400 ? "badge-ok" : "badge-danger"}`}>
-                {status} {latency != null ? `· ${latency}ms` : ""}
-              </span>
+        </Panel>
+
+        <Panel>
+          <PanelHeader
+            title="Respuesta"
+            actions={
+              status !== "" ? (
+                <>
+                  <Badge tone={statusOk ? "ok" : "danger"} dot>
+                    HTTP {status}
+                  </Badge>
+                  {latency != null && <span className="mono text-xs text-muted">{latency} ms</span>}
+                </>
+              ) : undefined
+            }
+          />
+          <div className="panel-body">
+            {response ? (
+              <CodeBlock
+                code={response}
+                language={isJson(response) ? "json" : "text"}
+                filename="response"
+                maxHeight={520}
+              />
+            ) : (
+              <EmptyState
+                compact
+                icon={Play}
+                title="Sin respuesta todavía"
+                body="Ejecuta una llamada para ver el cuerpo y su latencia."
+              />
             )}
           </div>
-          <pre className="max-h-[480px] min-h-64 overflow-auto whitespace-pre-wrap rounded-md bg-soft p-3 text-xs leading-relaxed text-text">
-            {response || "// ejecuta una llamada para ver la respuesta"}
-          </pre>
-        </div>
+        </Panel>
       </div>
     </div>
   );

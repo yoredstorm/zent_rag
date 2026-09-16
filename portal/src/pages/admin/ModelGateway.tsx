@@ -1,14 +1,32 @@
 import { ArrowsLeftRight, Coins, Plus, Scales } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
 import { platformApi } from "../../api";
-import { PageTabs } from "../../components/PageTabs";
 import {
+  Badge,
+  Button,
+  ButtonLink,
+  DataTable,
   EmptyState,
   ErrorInline,
+  Field,
+  Input,
+  Metric,
+  MetricGrid,
   PageHeader,
-  SkeletonBlock,
+  Panel,
+  PanelHeader,
+  SectionHeader,
+  Select,
+  Skeleton,
+  StatusBadge,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  type Column,
+  type SortState,
 } from "../../components/ui";
+import { fmtCurrency, fmtNum } from "../../lib/format";
 import { usePlatformAuth } from "../../platformAuth";
 
 type Route = {
@@ -44,6 +62,20 @@ type ModelStat = {
   fallbacks: number;
 };
 
+type QualityRow = { model: string; requests: number; cost: number; cost_per_request: number; quality: number | null; last_eval_at: string | null };
+
+function sortRows<T>(rows: T[], sort: SortState, get: (row: T, key: string) => string | number) {
+  if (!sort) return rows;
+  return [...rows].sort((a, b) => {
+    const left = get(a, sort.key);
+    const right = get(b, sort.key);
+    if (typeof left === "string" && typeof right === "string") {
+      return sort.dir === "asc" ? left.localeCompare(right) : right.localeCompare(left);
+    }
+    return sort.dir === "asc" ? Number(left) - Number(right) : Number(right) - Number(left);
+  });
+}
+
 export default function AdminModelGatewayPage() {
   const { session } = usePlatformAuth();
   const [tab, setTab] = useState<"routing" | "budgets" | "performance" | "quality">("routing");
@@ -62,6 +94,9 @@ export default function AdminModelGatewayPage() {
   const [budgetForm, setBudgetForm] = useState({ organization_id: "", model: "", cents: 1000 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [sortRoutes, setSortRoutes] = useState<SortState>({ key: "name", dir: "asc" });
+  const [sortBudgets, setSortBudgets] = useState<SortState>({ key: "usage_pct", dir: "desc" });
+  const [sortModels, setSortModels] = useState<SortState>({ key: "requests", dir: "desc" });
 
   async function load() {
     if (!session) return;
@@ -138,241 +173,492 @@ export default function AdminModelGatewayPage() {
     }
   }
 
+  const routeRows = useMemo(
+    () =>
+      sortRows(routes, sortRoutes, (row, key) =>
+        key === "organization_id"
+          ? row.organization_id
+          : key === "condition_type"
+            ? row.condition_type
+            : key === "model"
+              ? row.model
+              : key === "traffic_pct"
+                ? row.traffic_pct
+                : key === "active"
+                  ? String(row.active)
+                  : row.name
+      ),
+    [routes, sortRoutes]
+  );
+  const budgetRows = useMemo(
+    () =>
+      sortRows(budgets, sortBudgets, (row, key) =>
+        key === "organization_id"
+          ? row.organization_id
+          : key === "model"
+            ? row.model
+            : key === "monthly_budget_cents"
+              ? row.monthly_budget_cents
+              : key === "spent_cents"
+                ? row.spent_cents
+                : key === "blocked"
+                  ? String(row.blocked)
+                  : row.usage_pct
+      ),
+    [budgets, sortBudgets]
+  );
+  const modelRows = useMemo(
+    () =>
+      sortRows(analytics, sortModels, (row, key) =>
+        key === "model"
+          ? row.model
+          : key === "error_rate_pct"
+            ? row.error_rate_pct
+            : key === "p95_ms"
+              ? row.p95_ms
+              : key === "tokens"
+                ? row.tokens
+                : key === "cost"
+                  ? row.cost
+                  : key === "fallbacks"
+                    ? row.fallbacks
+                    : row.requests
+      ),
+    [analytics, sortModels]
+  );
+
+  const totals = analytics.reduce(
+    (acc, m) => {
+      acc.requests += m.requests;
+      acc.cost += m.cost;
+      acc.fallbacks += m.fallbacks;
+      acc.weightedErrors += m.requests * m.error_rate_pct;
+      return acc;
+    },
+    { requests: 0, cost: 0, fallbacks: 0, weightedErrors: 0 }
+  );
+  const weightedErrorRate = totals.requests > 0 ? totals.weightedErrors / totals.requests : 0;
+
+  const routeColumns: Column<Route>[] = [
+    {
+      key: "organization_id",
+      header: "Org",
+      sortable: true,
+      width: "110px",
+      render: (row) => <span className="mono text-xs text-faint">{row.organization_id.slice(0, 8)}</span>,
+    },
+    {
+      key: "name",
+      header: "Nombre",
+      sortable: true,
+      render: (row) => <span className="text-[13px] text-text">{row.name}</span>,
+    },
+    {
+      key: "condition_type",
+      header: "Condición",
+      sortable: true,
+      hideBelow: "md",
+      render: (row) => (
+        <span className="text-xs text-muted">
+          {row.condition_type}
+          {row.condition_value != null ? ` > ${row.condition_value}` : ""}
+        </span>
+      ),
+    },
+    {
+      key: "model",
+      header: "Modelo",
+      sortable: true,
+      render: (row) => <span className="mono text-xs text-text">{row.model}</span>,
+    },
+    {
+      key: "traffic_pct",
+      header: "Traffic",
+      align: "right",
+      sortable: true,
+      width: "100px",
+      render: (row) => <span className="mono text-xs text-muted">{row.traffic_pct}%</span>,
+    },
+    {
+      key: "active",
+      header: "Estado",
+      sortable: true,
+      width: "120px",
+      render: (row) => <StatusBadge status={row.active ? "active" : "inactive"} />,
+    },
+  ];
+
+  const budgetColumns: Column<Budget>[] = [
+    {
+      key: "organization_id",
+      header: "Org",
+      sortable: true,
+      width: "110px",
+      render: (row) => <span className="mono text-xs text-faint">{row.organization_id.slice(0, 8)}</span>,
+    },
+    {
+      key: "model",
+      header: "Modelo",
+      sortable: true,
+      render: (row) => <span className="mono text-xs text-text">{row.model}</span>,
+    },
+    {
+      key: "monthly_budget_cents",
+      header: "Presupuesto",
+      align: "right",
+      sortable: true,
+      width: "130px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtCurrency(row.monthly_budget_cents / 100)}</span>,
+    },
+    {
+      key: "spent_cents",
+      header: "Gastado",
+      align: "right",
+      sortable: true,
+      width: "120px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtCurrency(row.spent_cents / 100)}</span>,
+    },
+    {
+      key: "usage_pct",
+      header: "Uso",
+      align: "right",
+      sortable: true,
+      width: "160px",
+      render: (row) => (
+        <span className="flex items-center justify-end gap-2">
+          <span className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-track" aria-hidden>
+            <span
+              className={`block h-full rounded-full ${row.blocked ? "bg-danger" : "bg-accent"}`}
+              style={{ width: `${Math.min(100, row.usage_pct)}%` }}
+            />
+          </span>
+          <span className="mono text-xs text-muted">{row.usage_pct}%</span>
+        </span>
+      ),
+    },
+    {
+      key: "blocked",
+      header: "Estado",
+      sortable: true,
+      width: "130px",
+      render: (row) => <StatusBadge status={row.blocked ? "suspended" : "active"} label={row.blocked ? "Bloqueado" : "Activo"} />,
+    },
+  ];
+
+  const modelColumns: Column<ModelStat>[] = [
+    {
+      key: "model",
+      header: "Modelo",
+      sortable: true,
+      render: (row) => <span className="mono text-xs text-text">{row.model}</span>,
+    },
+    {
+      key: "requests",
+      header: "Requests",
+      align: "right",
+      sortable: true,
+      width: "110px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtNum(row.requests)}</span>,
+    },
+    {
+      key: "error_rate_pct",
+      header: "Error %",
+      align: "right",
+      sortable: true,
+      width: "110px",
+      render: (row) => (
+        <span className={`mono text-xs ${row.error_rate_pct > 0 ? "text-warn" : "text-muted"}`}>{row.error_rate_pct}%</span>
+      ),
+    },
+    {
+      key: "p50_ms",
+      header: "p50",
+      align: "right",
+      hideBelow: "md",
+      width: "100px",
+      render: (row) => <span className="mono text-xs text-muted">{row.p50_ms.toFixed(0)}ms</span>,
+    },
+    {
+      key: "p95_ms",
+      header: "p95",
+      align: "right",
+      sortable: true,
+      width: "100px",
+      render: (row) => <span className="mono text-xs text-muted">{row.p95_ms.toFixed(0)}ms</span>,
+    },
+    {
+      key: "tokens",
+      header: "Tokens",
+      align: "right",
+      sortable: true,
+      hideBelow: "md",
+      width: "120px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtNum(row.tokens)}</span>,
+    },
+    {
+      key: "cost",
+      header: "Costo",
+      align: "right",
+      sortable: true,
+      width: "110px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtCurrency(row.cost)}</span>,
+    },
+    {
+      key: "fallbacks",
+      header: "Fallbacks",
+      align: "right",
+      sortable: true,
+      hideBelow: "lg",
+      width: "110px",
+      render: (row) => (
+        <span className={`mono text-xs ${row.fallbacks > 0 ? "text-warn" : "text-muted"}`}>{fmtNum(row.fallbacks)}</span>
+      ),
+    },
+  ];
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Model Gateway"
         subtitle="Routing por condiciones, A/B por tráfico, presupuestos por modelo y analytics."
         actions={
-          <div className="flex flex-wrap gap-2">
-            <Link to="/control-center/inference-proxy" className="btn btn-secondary min-h-11">
+          <>
+            <ButtonLink to="/control-center/inference-proxy" variant="secondary">
               Models (Inference)
-            </Link>
-            <Link to="/control-center/model-health" className="btn btn-secondary min-h-11">
+            </ButtonLink>
+            <ButtonLink to="/control-center/model-health" variant="secondary">
               Policies (Guardrails)
-            </Link>
-          </div>
+            </ButtonLink>
+          </>
         }
       />
-      {error && <ErrorInline>{error}</ErrorInline>}
-      <div className="mb-4">
-        <PageTabs
-          idPrefix="gateway"
-          tabs={[
-            { id: "routing", label: "Routing" },
-            { id: "budgets", label: "Budgets" },
-            { id: "performance", label: "Performance" },
-            { id: "quality", label: "Costo vs Calidad" },
-          ]}
-          active={tab}
-          onChange={(next) => setTab(next as typeof tab)}
-        />
-      </div>
+      <ErrorInline message={error} />
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <div className="flex flex-col gap-3" aria-hidden>
+          <Skeleton className="h-10 w-96 rounded-lg" />
+          <Skeleton className="h-[320px] rounded-lg" />
+        </div>
       ) : (
-        <>
-          {tab === "routing" && (
-          <section>
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
-              <ArrowsLeftRight size={15} aria-hidden /> Rutas (usar alias zent-routed en el agente)
-            </h3>
-            <div className="panel">
-              <div className="flex justify-end p-2">
-                <button type="button" className="btn btn-primary min-h-9 text-xs" onClick={() => setShowRoute((s) => !s)}>
-                  <Plus size={13} aria-hidden /> Nueva ruta
-                </button>
-              </div>
+        <Tabs value={tab} onValueChange={(value) => setTab(value as typeof tab)}>
+          <TabsList>
+            <TabsTrigger value="routing">Routing</TabsTrigger>
+            <TabsTrigger value="budgets">Budgets</TabsTrigger>
+            <TabsTrigger value="performance">Performance</TabsTrigger>
+            <TabsTrigger value="quality">Costo vs Calidad</TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="routing">
+            <section className="min-w-0">
+              <SectionHeader
+                title={
+                  <span className="flex items-center gap-2">
+                    <ArrowsLeftRight size={15} aria-hidden /> Rutas
+                  </span>
+                }
+                description="Usá el alias zent-routed en el agente para que apliquen estas condiciones."
+                actions={
+                  <Button variant="primary" size="sm" leadingIcon={Plus} onClick={() => setShowRoute((s) => !s)}>
+                    Nueva ruta
+                  </Button>
+                }
+                className="mb-3"
+              />
               {showRoute && (
-                <div className="grid grid-cols-2 gap-2 p-3 lg:grid-cols-5">
-                  <select
-                    className="rounded-md border border-border bg-soft px-2 py-2 text-sm"
-                    value={routeForm.organization_id}
-                    onChange={(e) => setRouteForm((f) => ({ ...f, organization_id: e.target.value }))}
-                  >
-                    <option value="">Org…</option>
-                    {orgs.map((o) => (
-                      <option key={o.id} value={o.id}>{o.id.slice(0, 8)}</option>
-                    ))}
-                  </select>
-                  <input
-                    className="rounded-md border border-border bg-soft px-2 py-2 text-sm"
-                    placeholder="Nombre"
-                    value={routeForm.name}
-                    onChange={(e) => setRouteForm((f) => ({ ...f, name: e.target.value }))}
+                <Panel className="mb-4">
+                  <PanelHeader title="Nueva ruta" description="Condición de enrutamiento y porcentaje de tráfico." />
+                  <div className="panel-body">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      <Field label="Organización">
+                        <Select
+                          value={routeForm.organization_id}
+                          onChange={(e) => setRouteForm((f) => ({ ...f, organization_id: e.target.value }))}
+                          placeholder="Seleccionar…"
+                        >
+                          {orgs.map((o) => (
+                            <option key={o.id} value={o.id}>
+                              {o.id.slice(0, 8)}
+                            </option>
+                          ))}
+                        </Select>
+                      </Field>
+                      <Field label="Nombre">
+                        <Input
+                          value={routeForm.name}
+                          onChange={(e) => setRouteForm((f) => ({ ...f, name: e.target.value }))}
+                          placeholder="ej. cheap-first"
+                        />
+                      </Field>
+                      <Field label="Modelo o alias">
+                        <Input
+                          value={routeForm.model}
+                          onChange={(e) => setRouteForm((f) => ({ ...f, model: e.target.value }))}
+                          placeholder="zent-cheap"
+                        />
+                      </Field>
+                      <Field label="Tráfico (%)">
+                        <Input
+                          type="number"
+                          min={0}
+                          max={100}
+                          value={routeForm.traffic_pct}
+                          onChange={(e) => setRouteForm((f) => ({ ...f, traffic_pct: Number(e.target.value) }))}
+                        />
+                      </Field>
+                    </div>
+                    <div className="mt-3 flex items-center gap-2">
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        disabled={!routeForm.organization_id || !routeForm.name.trim()}
+                        onClick={() => void createRoute()}
+                      >
+                        Crear
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => setShowRoute(false)}>
+                        Cancelar
+                      </Button>
+                    </div>
+                  </div>
+                </Panel>
+              )}
+              <DataTable
+                stickyHeader
+                columns={routeColumns}
+                rows={routeRows}
+                rowKey={(row) => row.id}
+                sort={sortRoutes}
+                onSortChange={setSortRoutes}
+                rowActions={(row) => (
+                  <Button variant="ghost" size="sm" onClick={() => void toggleRoute(row)}>
+                    {row.active ? "Desactivar" : "Activar"}
+                  </Button>
+                )}
+                empty={
+                  <EmptyState
+                    icon={ArrowsLeftRight}
+                    title="Sin rutas"
+                    body="Creá rutas para A/B entre modelos por tenant."
+                    hint="Sin rutas, el gateway usa el modelo por defecto del agente."
                   />
-                  <input
-                    className="rounded-md border border-border bg-soft px-2 py-2 text-sm"
-                    placeholder="modelo (o alias)"
-                    value={routeForm.model}
-                    onChange={(e) => setRouteForm((f) => ({ ...f, model: e.target.value }))}
-                  />
-                  <input
-                    type="number"
-                    className="rounded-md border border-border bg-soft px-2 py-2 text-sm"
-                    placeholder="traffic %"
-                    value={routeForm.traffic_pct}
-                    onChange={(e) => setRouteForm((f) => ({ ...f, traffic_pct: Number(e.target.value) }))}
-                  />
-                  <button type="button" className="btn btn-secondary min-h-9 text-xs" onClick={() => void createRoute()}>
-                    Crear
-                  </button>
+                }
+              />
+            </section>
+          </TabsContent>
+
+          <TabsContent value="budgets">
+            <section className="min-w-0">
+              <SectionHeader
+                title={
+                  <span className="flex items-center gap-2">
+                    <Coins size={15} aria-hidden /> Presupuestos por modelo
+                  </span>
+                }
+                description="Al alcanzar el límite, el modelo se excluye del router."
+                className="mb-3"
+              />
+              <Panel className="mb-4">
+                <PanelHeader title="Fijar presupuesto" description="Mensual por organización y modelo." />
+                <div className="panel-body">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    <Field label="Organización">
+                      <Select
+                        value={budgetForm.organization_id}
+                        onChange={(e) => setBudgetForm((f) => ({ ...f, organization_id: e.target.value }))}
+                        placeholder="Seleccionar…"
+                      >
+                        {orgs.map((o) => (
+                          <option key={o.id} value={o.id}>
+                            {o.id.slice(0, 8)}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                    <Field label="Modelo">
+                      <Input
+                        value={budgetForm.model}
+                        onChange={(e) => setBudgetForm((f) => ({ ...f, model: e.target.value }))}
+                        placeholder="zent-cheap"
+                      />
+                    </Field>
+                    <Field label="Presupuesto (centavos USD)">
+                      <Input
+                        type="number"
+                        min={0}
+                        value={budgetForm.cents}
+                        onChange={(e) => setBudgetForm((f) => ({ ...f, cents: Number(e.target.value) }))}
+                      />
+                    </Field>
+                    <div className="flex items-end">
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        disabled={!budgetForm.organization_id || !budgetForm.model.trim()}
+                        onClick={() => void createBudget()}
+                      >
+                        Fijar presupuesto
+                      </Button>
+                    </div>
+                  </div>
                 </div>
-              )}
-              {routes.length === 0 ? (
-                <EmptyState icon={ArrowsLeftRight} title="Sin rutas" body="Crea rutas para A/B entre modelos por tenant." />
-              ) : (
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Org</th>
-                      <th>Nombre</th>
-                      <th>Condición</th>
-                      <th>Modelo</th>
-                      <th>Traffic</th>
-                      <th>Estado</th>
-                      <th className="text-right">Toggle</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {routes.map((r) => (
-                      <tr key={r.id}>
-                        <td className="mono text-xs text-faint">{r.organization_id.slice(0, 8)}</td>
-                        <td className="text-sm text-text">{r.name}</td>
-                        <td className="text-xs">
-                          {r.condition_type}
-                          {r.condition_value != null ? ` > ${r.condition_value}` : ""}
-                        </td>
-                        <td className="mono text-xs">{r.model}</td>
-                        <td className="text-xs">{r.traffic_pct}%</td>
-                        <td>
-                          <span className={`badge ${r.active ? "badge-ok" : "badge-muted"}`}>
-                            {r.active ? "activa" : "inactiva"}
-                          </span>
-                        </td>
-                        <td className="text-right">
-                          <button type="button" className="btn btn-ghost min-h-8 px-2 py-1 text-xs" onClick={() => void toggleRoute(r)}>
-                            {r.active ? "Desactivar" : "Activar"}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </section>
-        )}
-          {tab === "budgets" && (
-          <section>
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
-              <Coins size={15} aria-hidden /> Presupuestos por modelo
-            </h3>
-            <div className="panel">
-              <div className="grid grid-cols-2 gap-2 p-3 lg:grid-cols-4">
-                <select
-                  className="rounded-md border border-border bg-soft px-2 py-2 text-sm"
-                  value={budgetForm.organization_id}
-                  onChange={(e) => setBudgetForm((f) => ({ ...f, organization_id: e.target.value }))}
-                >
-                  <option value="">Org…</option>
-                  {orgs.map((o) => (
-                    <option key={o.id} value={o.id}>{o.id.slice(0, 8)}</option>
-                  ))}
-                </select>
-                <input
-                  className="rounded-md border border-border bg-soft px-2 py-2 text-sm"
-                  placeholder="modelo"
-                  value={budgetForm.model}
-                  onChange={(e) => setBudgetForm((f) => ({ ...f, model: e.target.value }))}
+              </Panel>
+              <DataTable
+                stickyHeader
+                columns={budgetColumns}
+                rows={budgetRows}
+                rowKey={(row) => row.id}
+                sort={sortBudgets}
+                onSortChange={setSortBudgets}
+                empty={
+                  <EmptyState
+                    icon={Coins}
+                    title="Sin presupuestos"
+                    body="Al alcanzar el límite, el modelo se excluye del router."
+                  />
+                }
+              />
+            </section>
+          </TabsContent>
+
+          <TabsContent value="performance">
+            <section className="min-w-0">
+              <SectionHeader
+                title="Analytics por modelo (30d)"
+                description="Agregados reales del periodo. La tasa de error se pondera por requests."
+                className="mb-3"
+              />
+              <MetricGrid cols={4} className="mb-4">
+                <Metric label="Requests" value={fmtNum(totals.requests)} size="md" hint="Suma de modelos" />
+                <Metric label="Costo" value={fmtCurrency(totals.cost)} size="md" hint="Suma de modelos" />
+                <Metric
+                  label="Error rate"
+                  value={`${weightedErrorRate.toFixed(2)}%`}
+                  size="md"
+                  tone={weightedErrorRate > 0 ? "warn" : "default"}
+                  hint="Ponderado por requests"
                 />
-                <input
-                  type="number"
-                  className="rounded-md border border-border bg-soft px-2 py-2 text-sm"
-                  placeholder="USD/mes"
-                  value={budgetForm.cents}
-                  onChange={(e) => setBudgetForm((f) => ({ ...f, cents: Number(e.target.value) }))}
+                <Metric
+                  label="Fallbacks"
+                  value={fmtNum(totals.fallbacks)}
+                  size="md"
+                  tone={totals.fallbacks > 0 ? "warn" : "default"}
                 />
-                <button type="button" className="btn btn-secondary min-h-9 text-xs" onClick={() => void createBudget()}>
-                  Fijar presupuesto
-                </button>
-              </div>
-              {budgets.length === 0 ? (
-                <EmptyState icon={Coins} title="Sin presupuestos" body="Al alcanzar el límite, el modelo se excluye del router." />
-              ) : (
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Org</th>
-                      <th>Modelo</th>
-                      <th>Presupuesto</th>
-                      <th>Gastado</th>
-                      <th>Uso</th>
-                      <th>Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {budgets.map((b) => (
-                      <tr key={b.id}>
-                        <td className="mono text-xs text-faint">{b.organization_id.slice(0, 8)}</td>
-                        <td className="mono text-xs">{b.model}</td>
-                        <td className="text-xs">${(b.monthly_budget_cents / 100).toFixed(2)}</td>
-                        <td className="text-xs">${(b.spent_cents / 100).toFixed(2)}</td>
-                        <td className="text-xs">{b.usage_pct}%</td>
-                        <td>
-                          <span className={`badge ${b.blocked ? "badge-danger" : "badge-ok"}`}>
-                            {b.blocked ? "bloqueado" : "activo"}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </section>
-        )}
-          {tab === "performance" && (
-          <section>
-            <h3 className="mb-2 text-sm font-semibold text-text">Analytics por modelo (30d)</h3>
-            <div className="panel overflow-x-auto">
-              {analytics.length === 0 ? (
-                <EmptyState icon={ArrowsLeftRight} title="Sin uso" body="Ejecuta consultas para ver métricas por modelo." />
-              ) : (
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Modelo</th>
-                      <th>Requests</th>
-                      <th>Error %</th>
-                      <th>p50</th>
-                      <th>p95</th>
-                      <th>Tokens</th>
-                      <th>Costo</th>
-                      <th>Fallbacks</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {analytics.map((m) => (
-                      <tr key={m.model}>
-                        <td className="mono text-xs">{m.model}</td>
-                        <td className="text-xs">{m.requests}</td>
-                        <td className="text-xs">{m.error_rate_pct}%</td>
-                        <td className="text-xs">{m.p50_ms.toFixed(0)}ms</td>
-                        <td className="text-xs">{m.p95_ms.toFixed(0)}ms</td>
-                        <td className="text-xs">{m.tokens.toLocaleString()}</td>
-                        <td className="text-xs">${m.cost.toFixed(2)}</td>
-                        <td className="text-xs">{m.fallbacks}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </section>
-        )}
-          {tab === "quality" && session && <QualityCostPanel session={session} />}
-        </>
+              </MetricGrid>
+              <DataTable
+                stickyHeader
+                columns={modelColumns}
+                rows={modelRows}
+                rowKey={(row) => row.model}
+                sort={sortModels}
+                onSortChange={setSortModels}
+                empty={
+                  <EmptyState icon={ArrowsLeftRight} title="Sin uso" body="Ejecutá consultas para ver métricas por modelo." />
+                }
+              />
+            </section>
+          </TabsContent>
+
+          <TabsContent value="quality">{session && <QualityCostPanel session={session} />}</TabsContent>
+        </Tabs>
       )}
     </div>
   );
@@ -380,69 +666,122 @@ export default function AdminModelGatewayPage() {
 
 /** FASE 03 (S10): costo vs calidad por modelo — solo datos reales. */
 function QualityCostPanel({ session }: { session: NonNullable<ReturnType<typeof usePlatformAuth>["session"]> }) {
-  const [rows, setRows] = useState<{ model: string; requests: number; cost: number; cost_per_request: number; quality: number | null; last_eval_at: string | null }[]>([]);
+  const [rows, setRows] = useState<QualityRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [sort, setSort] = useState<SortState>({ key: "cost", dir: "desc" });
 
   useEffect(() => {
     if (!session) return;
-    platformApi<{ models: typeof rows; note: string }>("/api/v1/platform/finops/quality-cost", { token: session.token })
+    platformApi<{ models: QualityRow[]; note: string }>("/api/v1/platform/finops/quality-cost", { token: session.token })
       .then((d) => setRows(d.models || []))
       .catch((e) => setError(e instanceof Error ? e.message : "Error"))
       .finally(() => setLoading(false));
   }, [session]);
 
+  const sorted = useMemo(
+    () =>
+      sortRows(rows, sort, (row, key) => {
+        if (key === "model") return row.model;
+        if (key === "requests") return row.requests;
+        if (key === "cost_per_request") return row.cost_per_request;
+        if (key === "quality") return row.quality ?? -1;
+        if (key === "last_eval_at") return row.last_eval_at ?? "";
+        return row.cost;
+      }),
+    [rows, sort]
+  );
+
+  const columns: Column<QualityRow>[] = [
+    {
+      key: "model",
+      header: "Modelo / target",
+      sortable: true,
+      render: (row) => <span className="mono text-xs text-text">{row.model}</span>,
+    },
+    {
+      key: "requests",
+      header: "Requests",
+      align: "right",
+      sortable: true,
+      width: "110px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtNum(row.requests)}</span>,
+    },
+    {
+      key: "cost",
+      header: "Costo total",
+      align: "right",
+      sortable: true,
+      width: "120px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtCurrency(row.cost)}</span>,
+    },
+    {
+      key: "cost_per_request",
+      header: "Costo / request",
+      align: "right",
+      sortable: true,
+      hideBelow: "md",
+      width: "150px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtCurrency(row.cost_per_request, 5)}</span>,
+    },
+    {
+      key: "quality",
+      header: "Calidad (composite)",
+      align: "right",
+      sortable: true,
+      width: "170px",
+      render: (row) =>
+        row.quality != null ? (
+          <Badge tone={row.quality >= 0.8 ? "ok" : row.quality >= 0.6 ? "warn" : "danger"}>
+            {(row.quality * 100).toFixed(1)}%
+          </Badge>
+        ) : (
+          <span className="text-xs text-faint">sin eval</span>
+        ),
+    },
+    {
+      key: "last_eval_at",
+      header: "Última eval",
+      align: "right",
+      sortable: true,
+      hideBelow: "lg",
+      width: "170px",
+      render: (row) => (
+        <span className="text-xs text-faint">{row.last_eval_at ? row.last_eval_at.slice(0, 16) : "—"}</span>
+      ),
+    },
+  ];
+
   return (
-    <section>
-      <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
-        <Scales size={15} aria-hidden /> Costo vs calidad
-      </h3>
-      <p className="mb-3 text-xs text-muted">
-        Solo datos reales. Los cambios de modelo requieren aprobación humana — aquí no se recomienda automáticamente nada.
-      </p>
-      {error && <ErrorInline>{error}</ErrorInline>}
+    <section className="min-w-0">
+      <SectionHeader
+        title={
+          <span className="flex items-center gap-2">
+            <Scales size={15} aria-hidden /> Costo vs calidad
+          </span>
+        }
+        description="Solo datos reales. Los cambios de modelo requieren aprobación humana — aquí no se recomienda automáticamente nada."
+        className="mb-3"
+      />
+      <ErrorInline message={error} />
       {loading ? (
-        <SkeletonBlock className="h-32" />
+        <Skeleton className="h-[240px] rounded-lg" />
       ) : (
-        <div className="panel overflow-x-auto">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Modelo / target</th>
-                <th>Requests</th>
-                <th>Costo total</th>
-                <th>Costo / request</th>
-                <th>Calidad (composite)</th>
-                <th>Última eval</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((m) => (
-                <tr key={m.model}>
-                  <td className="mono text-xs">{m.model}</td>
-                  <td className="text-xs">{m.requests.toLocaleString()}</td>
-                  <td className="text-xs">${m.cost.toFixed(2)}</td>
-                  <td className="text-xs">${m.cost_per_request.toFixed(5)}</td>
-                  <td className="text-xs">
-                    {m.quality != null ? (
-                      <span className={`badge ${m.quality >= 0.8 ? "badge-ok" : m.quality >= 0.6 ? "badge-warning" : "badge-danger"}`}>
-                        {(m.quality * 100).toFixed(1)}%
-                      </span>
-                    ) : (
-                      <span className="text-faint">sin eval</span>
-                    )}
-                  </td>
-                  <td className="text-xs text-faint">{m.last_eval_at ? m.last_eval_at.slice(0, 16) : "—"}</td>
-                </tr>
-              ))}
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="p-4 text-center text-xs text-faint">Sin datos de costo/calidad.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          stickyHeader
+          columns={columns}
+          rows={sorted}
+          rowKey={(row) => row.model}
+          sort={sort}
+          onSortChange={setSort}
+          empty={
+            <EmptyState
+              icon={Scales}
+              title="Sin datos de costo/calidad"
+              body="Cuando haya runs evaluados con costo asociado vas a ver el cruce acá."
+            />
+          }
+        />
       )}
     </section>
   );

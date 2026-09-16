@@ -1,19 +1,107 @@
-import { ShieldCheck } from "@phosphor-icons/react";
+import {
+  CheckCircle,
+  Clock,
+  LinkBreak,
+  LinkSimple,
+  Minus,
+  ShieldCheck,
+  XCircle,
+} from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api";
-import { ErrorInline, PageHeader, SkeletonBlock } from "../../components/ui";
+import {
+  Badge,
+  Drawer,
+  ErrorInline,
+  KeyValue,
+  PageHeader,
+  Panel,
+  PanelHeader,
+  Progress,
+  ResultCount,
+  Select,
+  DataTable,
+  SkeletonBlock,
+  Toolbar,
+  type Column,
+} from "../../components/ui";
+import { fmtDateTime } from "../../lib/format";
 import { usePlatformAuth } from "../../platformAuth";
 
 type Framework = { framework: string; pass: number; fail: number; review: number; na: number; score: number; controls: number };
 
+type Report = {
+  id: string;
+  organization_id: string;
+  report_type: string;
+  format: string;
+  integrity_hash: string;
+  prev_hash: string | null;
+  created_at: string;
+};
+
+const REPORT_COLUMNS: Column<Report>[] = [
+  {
+    key: "created_at",
+    header: "Fecha",
+    render: (r) => <span className="text-xs text-muted tabular-nums">{fmtDateTime(r.created_at)}</span>,
+    width: "160px",
+  },
+  {
+    key: "organization_id",
+    header: "Org",
+    render: (r) => (
+      <span className="mono text-xs text-muted" title={r.organization_id}>
+        {r.organization_id.slice(0, 8)}
+      </span>
+    ),
+  },
+  {
+    key: "report_type",
+    header: "Tipo",
+    render: (r) => <span className="mono text-xs text-text">{r.report_type}</span>,
+  },
+  {
+    key: "format",
+    header: "Formato",
+    hideBelow: "md",
+    render: (r) => <span className="text-xs uppercase text-muted">{r.format}</span>,
+  },
+  {
+    key: "integrity_hash",
+    header: "Hash",
+    hideBelow: "lg",
+    render: (r) => (
+      <span className="mono text-xs text-faint" title={r.integrity_hash}>
+        {r.integrity_hash.slice(0, 12)}…
+      </span>
+    ),
+  },
+  {
+    key: "chain",
+    header: "Cadena",
+    render: (r) =>
+      r.prev_hash ? (
+        <Badge tone="ok" icon={LinkSimple}>
+          Encadenado
+        </Badge>
+      ) : (
+        <Badge tone="neutral" icon={LinkBreak}>
+          Raíz
+        </Badge>
+      ),
+  },
+];
+
 export default function AdminCompliancePage() {
   const { session } = usePlatformAuth();
   const [frameworks, setFrameworks] = useState<Framework[]>([]);
-  const [reports, setReports] = useState<{ id: string; organization_id: string; report_type: string; format: string; integrity_hash: string; prev_hash: string | null; created_at: string }[]>([]);
+  const [reports, setReports] = useState<Report[]>([]);
   const [orgs, setOrgs] = useState<{ id: string }[]>([]);
   const [orgId, setOrgId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [selected, setSelected] = useState<Report | null>(null);
 
   async function loadAll() {
     if (!session) return;
@@ -22,7 +110,7 @@ export default function AdminCompliancePage() {
       const q = orgId ? `?organization_id=${orgId}` : "";
       const [f, r] = await Promise.all([
         platformApi<{ frameworks: Framework[] }>(`/api/v1/platform/compliance/dashboard${q}`, { token: session.token }),
-        platformApi<{ reports: typeof reports }>(`/api/v1/platform/audit/reports${q}`, { token: session.token }),
+        platformApi<{ reports: Report[] }>(`/api/v1/platform/audit/reports${q}`, { token: session.token }),
       ]);
       setFrameworks(f.frameworks || []);
       setReports(r.reports || []);
@@ -48,69 +136,135 @@ export default function AdminCompliancePage() {
   }, [session, orgId]);
 
   return (
-    <div className="space-y-6">
-      <PageHeader title="Compliance" subtitle="Estado por control (SOC2 / GDPR / ISO27001) y reportes de auditoría." />
+    <div className="space-y-4">
+      <PageHeader
+        title="Compliance"
+        subtitle="Estado por control (SOC2 / GDPR / ISO27001) y reportes de auditoría con integridad verificable."
+      />
       {error && <ErrorInline>{error}</ErrorInline>}
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <SkeletonBlock rows={6} />
       ) : (
         <>
-          <div className="flex items-center gap-2">
-            <select className="rounded-md border border-border bg-soft px-2 py-2 text-sm" value={orgId} onChange={(e) => setOrgId(e.target.value)}>
+          <Toolbar>
+            <Select
+              className="w-full sm:w-56"
+              aria-label="Organización"
+              value={orgId}
+              onChange={(e) => setOrgId(e.target.value)}
+            >
               <option value="">todas (plantilla)</option>
-              {orgs.map((o) => (<option key={o.id} value={o.id}>{o.id.slice(0, 8)}</option>))}
-            </select>
-          </div>
+              {orgs.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.id.slice(0, 8)}
+                </option>
+              ))}
+            </Select>
+            <span className="text-xs text-muted">
+              {orgId ? "Snapshots de la organización seleccionada." : "Vista plantilla: sin organización."}
+            </span>
+          </Toolbar>
 
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-start">
             {frameworks.map((f) => (
-              <div key={f.framework} className="panel p-4">
-                <div className="flex items-center justify-between">
-                  <p className="flex items-center gap-2 text-sm font-semibold text-text">
-                    <ShieldCheck size={15} /> {f.framework.toUpperCase()}
-                  </p>
-                  <span className="stat-value">{f.score}%</span>
+              <Panel key={f.framework}>
+                <PanelHeader
+                  title={
+                    <span className="flex items-center gap-2">
+                      <ShieldCheck size={15} className="text-faint" aria-hidden />
+                      {f.framework.toUpperCase()}
+                    </span>
+                  }
+                  actions={<span className="text-h2 tabular-nums">{f.score}%</span>}
+                  description={`${f.controls} controles evaluados`}
+                />
+                <div className="panel-body flex flex-col gap-3">
+                  <div className="flex flex-wrap gap-1.5">
+                    <Badge tone="ok" icon={CheckCircle}>
+                      {f.pass} pass
+                    </Badge>
+                    <Badge tone="danger" icon={XCircle}>
+                      {f.fail} fail
+                    </Badge>
+                    <Badge tone="warn" icon={Clock}>
+                      {f.review} review
+                    </Badge>
+                    <Badge tone="neutral" icon={Minus}>
+                      {f.na} n/a
+                    </Badge>
+                  </div>
+                  <Progress value={f.score} label={`Score ${f.framework.toUpperCase()}`} />
                 </div>
-                <p className="mt-1 text-xs text-faint">{f.controls} controles · {f.pass} pass · {f.fail} fail · {f.review} review · {f.na} n/a</p>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-soft">
-                  <div className="h-2 rounded-full bg-emerald-400" style={{ width: `${f.score}%` }} />
-                </div>
-              </div>
+              </Panel>
             ))}
+            {frameworks.length === 0 && (
+              <Panel className="lg:col-span-3">
+                <p className="px-4 py-3 text-[13px] text-muted">
+                  Sin snapshots de compliance para este alcance.
+                </p>
+              </Panel>
+            )}
           </div>
 
           <section>
-            <h3 className="mb-2 text-sm font-semibold text-text">Reportes de auditoría</h3>
-            <div className="panel overflow-x-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Fecha</th>
-                    <th>Org</th>
-                    <th>Tipo</th>
-                    <th>Formato</th>
-                    <th>Hash</th>
-                    <th>Cadena</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {reports.map((r) => (
-                    <tr key={r.id}>
-                      <td className="text-[10px] text-faint">{new Date(r.created_at).toLocaleString()}</td>
-                      <td className="mono text-[10px] text-faint">{r.organization_id.slice(0, 8)}</td>
-                      <td className="text-xs">{r.report_type}</td>
-                      <td className="text-xs">{r.format}</td>
-                      <td className="mono text-[10px] text-faint">{r.integrity_hash.slice(0, 12)}…</td>
-                      <td>{r.prev_hash ? <span className="badge badge-muted">encadenado</span> : <span className="text-xs text-faint">raíz</span>}</td>
-                    </tr>
-                  ))}
-                  {reports.length === 0 && <tr><td colSpan={6} className="p-4 text-center text-xs text-faint">Sin reportes.</td></tr>}
-                </tbody>
-              </table>
+            <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 className="text-h2">Reportes de auditoría</h2>
+                <p className="mt-1 text-[13px] leading-relaxed text-muted">
+                  Cada reporte está encadenado por hash con el anterior. Seleccioná una fila para inspeccionar la integridad.
+                </p>
+              </div>
             </div>
+            <DataTable
+              columns={REPORT_COLUMNS}
+              rows={reports}
+              rowKey={(r) => r.id}
+              caption="Reportes de auditoría"
+              stickyHeader
+              onRowClick={(r) => setSelected(r)}
+              empty={
+                <p className="px-4 py-6 text-center text-[13px] text-muted">
+                  Sin reportes para este alcance.
+                </p>
+              }
+              footer={reports.length > 0 ? <ResultCount shown={reports.length} total={reports.length} noun="reportes" /> : undefined}
+            />
           </section>
         </>
       )}
+
+      <Drawer
+        open={Boolean(selected)}
+        onOpenChange={(open) => !open && setSelected(null)}
+        title="Integridad del reporte"
+        description={selected ? `${selected.report_type} · ${selected.format.toUpperCase()}` : undefined}
+        width={480}
+      >
+        {selected && (
+          <div className="space-y-4">
+            <KeyValue
+              columns={2}
+              items={[
+                { key: "Organización", value: selected.organization_id, mono: true },
+                { key: "Creado", value: fmtDateTime(selected.created_at) },
+                { key: "Encadenado", value: selected.prev_hash ? "Sí, con el reporte anterior" : "No, es el primer reporte (raíz)" },
+              ]}
+            />
+            <div>
+              <p className="eyebrow mb-2">Hash de integridad</p>
+              <p className="mono break-all rounded-sm border border-border bg-control px-3 py-2 text-xs text-text">
+                {selected.integrity_hash}
+              </p>
+            </div>
+            <div>
+              <p className="eyebrow mb-2">Hash previo</p>
+              <p className="mono break-all rounded-sm border border-border bg-control px-3 py-2 text-xs text-muted">
+                {selected.prev_hash ?? "—"}
+              </p>
+            </div>
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 }

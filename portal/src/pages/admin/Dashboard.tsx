@@ -1,7 +1,25 @@
+import {
+  ChartLineUp,
+  Coins,
+  Flame,
+  PiggyBank,
+  Pulse,
+  Smiley,
+  Timer,
+  UsersThree,
+  Warning,
+} from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api";
 import { AttentionList } from "../../components/AttentionList";
-import { ErrorInline, PageHeader, SkeletonBlock, StatCard } from "../../components/ui";
+import {
+  ErrorInline,
+  Metric,
+  MetricGrid,
+  PageHeader,
+  Panel,
+  Skeleton,
+} from "../../components/ui";
 import { usePlatformAuth } from "../../platformAuth";
 
 type Metrics = {
@@ -41,6 +59,20 @@ function money(cents: number) {
     currency: "USD",
     maximumFractionDigits: 0,
   }).format(cents / 100);
+}
+
+function DashboardSkeleton() {
+  return (
+    <div className="flex flex-col gap-3" aria-hidden>
+      <Skeleton className="h-[116px] rounded-lg" />
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <Skeleton key={i} className="h-[104px] rounded-lg" />
+        ))}
+      </div>
+      <Skeleton className="h-[180px] rounded-lg" />
+    </div>
+  );
 }
 
 export default function AdminDashboardPage() {
@@ -107,63 +139,107 @@ export default function AdminDashboardPage() {
         subtitle="Cifras calculadas desde suscripciones y usage_events. No hay mocks de MRR."
       />
       <ErrorInline message={error} />
-      {loading && <SkeletonBlock />}
+      {loading && <DashboardSkeleton />}
       {data && (
-        <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard label="MRR" value={money(data.mrr_cents)} />
-            <StatCard label="ARR" value={money(data.arr_cents)} />
-            <StatCard label="Clientes" value={data.customers} hint="active + trialing" />
-            <StatCard label="Agentes activos" value={data.active_agents} />
-            <StatCard label="AI requests (30d)" value={data.ai_requests_30d} />
-            <StatCard
-              label="LLM cost (30d)"
-              value={new Intl.NumberFormat("es-CL", { style: "currency", currency: "USD" }).format(
-                data.llm_cost_30d
-              )}
+        <div className="flex flex-col gap-3">
+          {/* Foco: el MRR manda; el resto son métricas demotadas */}
+          <Panel className="p-4">
+            <p className="eyebrow">MRR · suscripciones activas</p>
+            <p className="mt-1.5 text-display tabular-nums">{money(data.mrr_cents)}</p>
+            <p className="mt-2 text-[13px] text-muted">
+              ARR <span className="mono text-text">{money(data.arr_cents)}</span>
+              <span className="mx-1.5 text-ghost">·</span>
+              {data.customers} clientes
+              <span className="mx-1.5 text-ghost">·</span>
+              {data.active_agents} agentes activos
+            </p>
+          </Panel>
+
+          <MetricGrid cols={4}>
+            <Metric
+              size="md"
+              label="Clientes"
+              value={data.customers}
+              hint="active + trialing"
+              icon={UsersThree}
             />
-            <StatCard
+            <Metric size="md" label="Agentes activos" value={data.active_agents} icon={Pulse} />
+            <Metric
+              size="md"
+              label="AI requests (30d)"
+              value={data.ai_requests_30d}
+              icon={ChartLineUp}
+            />
+            <Metric
+              size="md"
+              label="LLM cost (30d)"
+              value={new Intl.NumberFormat("es-CL", {
+                style: "currency",
+                currency: "USD",
+              }).format(data.llm_cost_30d)}
+              icon={Coins}
+            />
+            <Metric
+              size="md"
               label="Gross margin"
               value={data.gross_margin_pct == null ? "—" : `${data.gross_margin_pct}%`}
+              hint={data.gross_margin_pct == null ? "sin datos de costos" : undefined}
+              icon={PiggyBank}
             />
-            <StatCard
+            <Metric
+              size="md"
               label="Churn (30d)"
               value={data.churn_30d != null ? String(data.churn_30d) : "—"}
               hint={data.churn_rate_30d_pct != null ? `${data.churn_rate_30d_pct}%` : undefined}
+              icon={Flame}
             />
-            <StatCard label="ARPU (30d)" value={data.arpu_cents != null ? money(data.arpu_cents) : "—"} />
-            <StatCard
+            <Metric
+              size="md"
+              label="ARPU (30d)"
+              value={data.arpu_cents != null ? money(data.arpu_cents) : "—"}
+            />
+            <Metric
+              size="md"
               label="CSAT"
               value={data.csat_pct != null ? `${data.csat_pct}%` : "—"}
               hint="feedback up / total"
+              icon={Smiley}
             />
-            <StatCard
+            <Metric
+              size="md"
               label="Error rate (7d)"
               value={data.error_rate_7d_pct != null ? `${data.error_rate_7d_pct}%` : "—"}
+              tone={data.error_rate_7d_pct != null && data.error_rate_7d_pct > 0 ? "danger" : "default"}
+              icon={Warning}
             />
-            <StatCard
+            <Metric
+              size="md"
               label="p95 latencia"
               value={data.latency_p95_7d_ms != null ? `${data.latency_p95_7d_ms.toFixed(0)}ms` : "—"}
+              icon={Timer}
             />
             {evalSummary && (
-              <StatCard
+              <Metric
+                size="md"
                 label="Eval runs"
                 value={evalSummary.run_count}
                 hint={`${evalSummary.organizations.length} orgs · sin texto de casos`}
               />
             )}
-            <StatCard
+            <Metric
+              size="md"
               label="Incidentes abiertos"
               value={data.open_incidents != null ? String(data.open_incidents) : "—"}
+              tone={data.open_incidents != null && data.open_incidents > 0 ? "warn" : "default"}
               hint={data.critical_alerts != null ? `${data.critical_alerts} alertas críticas` : undefined}
             />
-          </div>
+          </MetricGrid>
 
           <AttentionList
             items={issues}
             emptyBody="Sin incidentes abiertos, alertas pendientes ni circuitos abiertos."
           />
-        </>
+        </div>
       )}
     </div>
   );

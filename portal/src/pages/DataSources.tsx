@@ -3,20 +3,32 @@ import {
   Database,
   FolderSimple,
   Globe,
+  MagnifyingGlass,
   Plugs,
   WebhooksLogo,
 } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { ComingSoonBadge } from "../components/ComingSoon";
 import {
+  Button,
+  ButtonLink,
+  DataTable,
+  Drawer,
   EmptyState,
   ErrorInline,
+  Input,
+  KeyValue,
   PageHeader,
+  Panel,
+  PanelHeader,
+  ResultCount,
   SkeletonBlock,
   StatusBadge,
+  Toolbar,
+  type Column,
 } from "../components/ui";
 import { fmtNum } from "../lib/format";
 
@@ -41,12 +53,74 @@ type ConnectorRow = {
 
 const FILE_TYPES = ["file", "csv", "excel"];
 
+const SOURCE_COLUMNS: Column<SourceRow>[] = [
+  {
+    key: "name",
+    header: "Fuente",
+    render: (s) => <span className="text-[13px] font-medium text-text">{s.name}</span>,
+  },
+  {
+    key: "type",
+    header: "Tipo",
+    width: "1%",
+    render: (s) => <span className="mono text-xs text-muted">{s.type}</span>,
+  },
+  {
+    key: "status",
+    header: "Estado",
+    render: (s) => (
+      <span className="flex flex-col items-start gap-1">
+        <StatusBadge status={s.status} />
+        {s.last_error && (
+          <span className="block max-w-[26rem] text-[11px] leading-relaxed text-danger">{s.last_error}</span>
+        )}
+      </span>
+    ),
+  },
+  {
+    key: "documents",
+    header: "Elementos",
+    align: "right",
+    render: (s) => <span className="mono text-xs text-text">{fmtNum(s.document_count)}</span>,
+  },
+  {
+    key: "errors",
+    header: "Errores",
+    align: "right",
+    hideBelow: "md",
+    render: (s) =>
+      s.error_count > 0 ? (
+        <span className="mono text-xs text-danger">{fmtNum(s.error_count)}</span>
+      ) : (
+        <span className="mono text-xs text-muted">0</span>
+      ),
+  },
+  {
+    key: "sync",
+    header: "Última sync",
+    hideBelow: "md",
+    render: (s) => (
+      <span className="text-xs text-faint">
+        {s.last_sync ? new Date(s.last_sync).toLocaleString("es-PE") : "—"}
+      </span>
+    ),
+  },
+];
+
+const UPCOMING = [
+  { label: "Salesforce", desc: "Sincroniza oportunidades, cuentas y casos." },
+  { label: "Notion", desc: "Docs y bases de conocimiento de tu equipo." },
+  { label: "ERP / SAP", desc: "Datos maestros y operaciones de negocio." },
+];
+
 export default function DataSourcesPage() {
   const { session } = useAuth();
   const [sources, setSources] = useState<SourceRow[]>([]);
   const [connectors, setConnectors] = useState<ConnectorRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [search, setSearch] = useState("");
+  const [detail, setDetail] = useState<SourceRow | null>(null);
 
   useEffect(() => {
     if (!session) return;
@@ -74,8 +148,7 @@ export default function DataSourcesPage() {
     })();
   }, [session]);
 
-const countBy = (types: string[]) =>
-  sources.filter((s) => types.includes(s.type)).length;
+  const countBy = (types: string[]) => sources.filter((s) => types.includes(s.type)).length;
 
   const cards: {
     icon: typeof Database;
@@ -83,7 +156,6 @@ const countBy = (types: string[]) =>
     desc: string;
     count: number;
     to: string;
-    types: string[];
   }[] = [
     {
       icon: Database,
@@ -93,7 +165,6 @@ const countBy = (types: string[]) =>
         ["postgres", "mysql", "mssql", "oracle", "db2"].includes(c.connector_type)
       ).length,
       to: "/knowledge/add",
-      types: ["sql"],
     },
     {
       icon: CloudArrowUp,
@@ -101,7 +172,6 @@ const countBy = (types: string[]) =>
       desc: "Documentos, CSV y Excel.",
       count: countBy(FILE_TYPES),
       to: "/knowledge/add",
-      types: FILE_TYPES,
     },
     {
       icon: Globe,
@@ -109,7 +179,6 @@ const countBy = (types: string[]) =>
       desc: "Una URL para que Zent lea el contenido de tu sitio.",
       count: countBy(["web"]),
       to: "/knowledge/add",
-      types: ["web"],
     },
     {
       icon: Plugs,
@@ -117,15 +186,23 @@ const countBy = (types: string[]) =>
       desc: "Conecta sistemas vía API.",
       count: countBy(["api"]),
       to: "/knowledge/add",
-      types: ["api"],
     },
   ];
 
-  const upcoming = [
-    { label: "Salesforce", desc: "Sincroniza oportunidades, cuentas y casos." },
-    { label: "Notion", desc: "Docs y bases de conocimiento de tu equipo." },
-    { label: "ERP / SAP", desc: "Datos maestros y operaciones de negocio." },
-  ];
+  const term = search.trim().toLowerCase();
+  const filteredSources = useMemo(() => {
+    if (!term) return sources;
+    return sources.filter(
+      (s) => s.name.toLowerCase().includes(term) || s.type.toLowerCase().includes(term)
+    );
+  }, [sources, term]);
+
+  const filteredConnectors = useMemo(() => {
+    if (!term) return connectors;
+    return connectors.filter(
+      (c) => c.name.toLowerCase().includes(term) || c.connector_type.toLowerCase().includes(term)
+    );
+  }, [connectors, term]);
 
   return (
     <div>
@@ -133,9 +210,9 @@ const countBy = (types: string[]) =>
         title="Fuentes de datos"
         subtitle="Conecta sistemas de negocio y datos estructurados a Zent para que tus agentes respondan con información de la empresa."
         actions={
-          <Link to="/knowledge/add" className="btn btn-primary">
+          <ButtonLink to="/knowledge/add" variant="primary">
             Añade conocimiento a Zent
-          </Link>
+          </ButtonLink>
         }
       />
       <ErrorInline message={error} />
@@ -143,9 +220,9 @@ const countBy = (types: string[]) =>
       {loading ? (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="panel space-y-3 p-4">
+            <Panel key={i} className="p-4">
               <SkeletonBlock rows={2} />
-            </div>
+            </Panel>
           ))}
         </div>
       ) : (
@@ -171,65 +248,65 @@ const countBy = (types: string[]) =>
             ))}
           </div>
 
-          <div className="mt-6 grid gap-4 xl:grid-cols-3">
-            <div className="panel xl:col-span-2">
-              <div className="flex items-center gap-2 border-b border-border px-5 py-4">
-                <FolderSimple size={16} className="text-accent" aria-hidden />
-                <h2 className="text-sm font-semibold text-text">Fuentes conectadas ({sources.length})</h2>
-              </div>
-              {sources.length === 0 ? (
-                <EmptyState
-                  icon={FolderSimple}
-                  title="Sin fuentes de datos"
-                  body="Conecta documentos, bases de datos o sitios web para que tus agentes respondan con información de la empresa."
-                  action={
-                    <Link to="/knowledge/add" className="btn btn-primary">
-                      Añadir fuente
-                    </Link>
-                  }
-                />
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="table min-w-[640px]">
-                    <thead>
-                      <tr>
-                        <th>Fuente</th>
-                        <th>Tipo</th>
-                        <th>Estado</th>
-                        <th>Elementos</th>
-                        <th>Última sync</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sources.map((s) => (
-                        <tr key={s.id}>
-                          <td className="font-medium text-text">{s.name}</td>
-                          <td className="mono text-xs text-muted">{s.type}</td>
-                          <td>
-                            <StatusBadge status={s.status} />
-                            {s.last_error && (
-                              <span className="block text-[11px] text-danger">{s.last_error}</span>
-                            )}
-                          </td>
-                          <td className="mono text-xs">{fmtNum(s.document_count)}</td>
-                          <td className="text-xs text-faint">
-                            {s.last_sync ? new Date(s.last_sync).toLocaleString("es-PE") : "—"}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+          <Toolbar className="mt-6 mb-3">
+            <Input
+              icon={MagnifyingGlass}
+              className="w-full sm:max-w-72"
+              placeholder="Buscar fuente o conector…"
+              aria-label="Buscar fuente o conector"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <ResultCount
+              shown={filteredSources.length + filteredConnectors.length}
+              total={sources.length + connectors.length}
+              noun="elementos"
+            />
+          </Toolbar>
+
+          <div className="grid gap-4 xl:grid-cols-3">
+            <div className="min-w-0 xl:col-span-2">
+              <DataTable
+                caption="Fuentes de datos conectadas"
+                columns={SOURCE_COLUMNS}
+                rows={filteredSources}
+                rowKey={(s) => s.id}
+                rowActions={(s) => (
+                  <Button variant="ghost" size="sm" onClick={() => setDetail(s)}>
+                    Detalle
+                  </Button>
+                )}
+                empty={
+                  sources.length === 0 ? (
+                    <EmptyState
+                      icon={FolderSimple}
+                      title="Sin fuentes de datos"
+                      body="Conecta documentos, bases de datos o sitios web para que tus agentes respondan con información de la empresa."
+                      action={
+                        <ButtonLink to="/knowledge/add" variant="primary">
+                          Añadir fuente
+                        </ButtonLink>
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      compact
+                      icon={MagnifyingGlass}
+                      title="Sin resultados"
+                      body="Ninguna fuente coincide con la búsqueda."
+                    />
+                  )
+                }
+              />
             </div>
 
-            <div className="panel">
-              <div className="flex items-center gap-2 border-b border-border px-5 py-4">
-                <WebhooksLogo size={16} className="text-accent" aria-hidden />
-                <h2 className="text-sm font-semibold text-text">Conectores enterprise</h2>
-              </div>
+            <Panel className="min-w-0 self-start">
+              <PanelHeader
+                title="Conectores enterprise"
+                description="Integraciones nativas en preparación."
+              />
               <div className="flex flex-col gap-2 p-4">
-                {connectors.map((c) => (
+                {filteredConnectors.map((c) => (
                   <div
                     key={c.id}
                     className="flex items-center justify-between gap-2 rounded-md border border-border bg-soft px-3 py-2.5"
@@ -241,7 +318,26 @@ const countBy = (types: string[]) =>
                     <StatusBadge status={c.status} />
                   </div>
                 ))}
-                {upcoming.map((u) => (
+                {filteredConnectors.length === 0 && (
+                  <EmptyState
+                    compact
+                    icon={WebhooksLogo}
+                    title={connectors.length === 0 ? "Sin conectores enterprise" : "Sin resultados"}
+                    body={
+                      connectors.length === 0
+                        ? "Los conectores nativos se administran en Conectores."
+                        : "Ningún conector coincide con la búsqueda."
+                    }
+                    action={
+                      connectors.length === 0 ? (
+                        <ButtonLink to="/connectors" variant="secondary" size="sm">
+                          Ir a Conectores
+                        </ButtonLink>
+                      ) : undefined
+                    }
+                  />
+                )}
+                {UPCOMING.map((u) => (
                   <div
                     key={u.label}
                     className="flex items-center justify-between gap-2 rounded-md border border-border/60 px-3 py-2.5"
@@ -254,10 +350,51 @@ const countBy = (types: string[]) =>
                   </div>
                 ))}
               </div>
-            </div>
+            </Panel>
           </div>
         </>
       )}
+
+      <Drawer
+        open={detail !== null}
+        onOpenChange={(open) => {
+          if (!open) setDetail(null);
+        }}
+        title={detail?.name ?? "Fuente de datos"}
+        description={detail ? `Tipo ${detail.type}` : undefined}
+        width={480}
+      >
+        {detail && (
+          <div className="flex flex-col gap-4">
+            <KeyValue
+              columns={2}
+              items={[
+                { key: "Estado", value: <StatusBadge status={detail.status} /> },
+                { key: "Tipo", value: detail.type, mono: true },
+                { key: "Elementos", value: fmtNum(detail.document_count) },
+                { key: "Errores", value: fmtNum(detail.error_count) },
+                {
+                  key: "Última sync",
+                  value: detail.last_sync
+                    ? new Date(detail.last_sync).toLocaleString("es-PE")
+                    : "Sin sincronizar",
+                },
+              ]}
+            />
+            {detail.last_error && (
+              <div>
+                <p className="eyebrow mb-2">Último error</p>
+                <p className="rounded-md border border-danger/25 bg-danger-soft px-3 py-2.5 text-[13px] leading-relaxed text-danger">
+                  {detail.last_error}
+                </p>
+              </div>
+            )}
+            <p className="text-xs leading-relaxed text-faint">
+              El detalle viene de la última sincronización registrada por el backend.
+            </p>
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 }

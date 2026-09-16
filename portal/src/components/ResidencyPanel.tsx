@@ -1,5 +1,7 @@
+import { WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { api, type Session } from "../api";
+import { Badge, KeyValue, Panel, PanelHeader, StatusBadge } from "./ui";
 
 type Residency = {
   primary_region: string | null;
@@ -23,24 +25,54 @@ export default function ResidencyPanel({ session }: { session: Session | null })
   }, [session]);
 
   if (!res) return null;
+
+  const declared = res.primary_region;
+  const applied = res.resolved_region;
+  const overridden = Boolean(declared) && declared !== applied;
+
   return (
-    <section className="panel mt-4 p-5">
-      <h2 className="mb-2 text-sm font-semibold text-text">Data residency</h2>
-      <dl className="space-y-1 text-[13px]">
-        <div className="flex justify-between gap-2">
-          <dt className="text-muted">Región primaria</dt>
-          <dd className="mono text-text">{res.primary_region ?? "—"}</dd>
+    <Panel className="mt-4">
+      <PanelHeader
+        title="Data residency"
+        description="Región declarada, región aplicada y regiones disponibles para esta organización."
+        actions={
+          overridden ? (
+            <Badge tone="warn" icon={WarningCircle}>
+              Se aplica {applied}
+            </Badge>
+          ) : undefined
+        }
+      />
+      <div className="panel-body">
+        <KeyValue
+          columns={2}
+          items={[
+            {
+              key: overridden ? "Región declarada (no aplicada)" : "Región primaria",
+              value: declared ?? "Sin declarar",
+              mono: Boolean(declared),
+            },
+            { key: "Región aplicada", value: applied, mono: true },
+          ]}
+        />
+        <div className="mt-4">
+          <p className="eyebrow mb-2">Regiones disponibles ({res.regions.length})</p>
+          {res.regions.length === 0 ? (
+            <p className="text-[13px] leading-relaxed text-muted">
+              La organización todavía no tiene regiones habilitadas. La plataforma resuelve una por defecto.
+            </p>
+          ) : (
+            <ul className="flex flex-wrap gap-1.5">
+              {res.regions.map((r) => (
+                <li key={r.code}>
+                  <StatusBadge status={r.status ?? ""} label={r.name ? `${r.code} · ${r.name}` : r.code} />
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
-        <div className="flex justify-between gap-2">
-          <dt className="text-muted">Región resuelta</dt>
-          <dd className="mono text-text">{res.resolved_region}</dd>
-        </div>
-        <div className="flex justify-between gap-2">
-          <dt className="text-muted">Regiones disponibles</dt>
-          <dd className="text-right text-text">{res.regions.map((r) => r.code).join(", ") || "—"}</dd>
-        </div>
-      </dl>
-      <p className="mt-2 text-[11px] text-faint">{res.note}</p>
-    </section>
+        {res.note && <p className="mt-3 text-xs leading-relaxed text-faint">{res.note}</p>}
+      </div>
+    </Panel>
   );
 }

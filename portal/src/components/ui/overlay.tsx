@@ -6,7 +6,8 @@ import { X } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import { cn } from "./cn";
 import { Button, IconButton } from "./Button";
-import type { HTMLAttributes } from "react";
+import { Field, Input } from "./form";
+import { useEffect, useState, type HTMLAttributes } from "react";
 
 /* ------------------------------------------------------------------ */
 /* Tooltip                                                             */
@@ -170,6 +171,8 @@ export type ModalProps = {
   /** Oculta el botón de cierre (para flujos que exigen decisión). */
   hideClose?: boolean;
   closeLabel?: string;
+  /** `alertdialog` para confirmaciones que exigen atención inmediata. */
+  role?: "dialog" | "alertdialog";
   className?: string;
 } & Omit<HTMLAttributes<HTMLDivElement>, "children">;
 
@@ -190,6 +193,7 @@ export function Modal({
   size = "md",
   hideClose = false,
   closeLabel = "Cerrar",
+  role = "dialog",
   className,
   ...rest
 }: ModalProps) {
@@ -198,6 +202,7 @@ export function Modal({
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="fixed inset-0 z-[var(--z-modal)] animate-fade-in bg-scrim backdrop-blur-[2px] data-[state=closed]:animate-fade-out" />
         <DialogPrimitive.Content
+          role={role}
           className={cn(
             "fixed top-1/2 left-1/2 z-[var(--z-modal)] flex max-h-[min(88dvh,900px)] w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 flex-col animate-pop-in rounded-xl border border-border bg-overlay shadow-pop data-[state=closed]:animate-pop-out",
             MODAL_SIZE[size],
@@ -334,10 +339,16 @@ export type ConfirmDialogProps = {
   cancelLabel?: string;
   tone?: "danger" | "primary";
   loading?: boolean;
+  /**
+   * Si se define, la persona debe escribir exactamente este texto para
+   * habilitar la confirmación (revocar, rotar, restaurar, borrar en duro).
+   */
+  requireText?: string;
+  requireTextLabel?: string;
   onConfirm: () => void;
 };
 
-/** Confirmación destructiva o irreversible. */
+/** Confirmación destructiva o irreversible, con confirmación escrita opcional. */
 export function ConfirmDialog({
   open,
   onOpenChange,
@@ -347,8 +358,17 @@ export function ConfirmDialog({
   cancelLabel = "Cancelar",
   tone = "danger",
   loading = false,
+  requireText,
+  requireTextLabel,
   onConfirm,
 }: ConfirmDialogProps) {
+  const [typed, setTyped] = useState("");
+  const matches = !requireText || typed.trim() === requireText;
+
+  useEffect(() => {
+    if (!open) setTyped("");
+  }, [open]);
+
   return (
     <Modal
       open={open}
@@ -361,11 +381,31 @@ export function ConfirmDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={loading}>
             {cancelLabel}
           </Button>
-          <Button variant={tone === "danger" ? "danger" : "primary"} onClick={onConfirm} loading={loading}>
+          <Button
+            variant={tone === "danger" ? "danger" : "primary"}
+            onClick={onConfirm}
+            loading={loading}
+            disabled={!matches}
+          >
             {confirmLabel}
           </Button>
         </>
       }
-    />
+    >
+      {requireText && (
+        <Field
+          label={requireTextLabel ?? `Escribí «${requireText}» para confirmar`}
+          hint="Esta acción no se puede deshacer."
+        >
+          <Input
+            autoFocus
+            value={typed}
+            onChange={(event) => setTyped(event.target.value)}
+            placeholder={requireText}
+            autoComplete="off"
+          />
+        </Field>
+      )}
+    </Modal>
   );
 }

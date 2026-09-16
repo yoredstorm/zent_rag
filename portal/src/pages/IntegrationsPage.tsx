@@ -11,8 +11,8 @@ import {
   CheckCircle,
   Flask,
   Key,
+  MagnifyingGlass,
   Plugs,
-  Trash,
   UploadSimple,
   X,
 } from "@phosphor-icons/react";
@@ -20,7 +20,35 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { Breadcrumb } from "../components/Breadcrumb";
-import { ErrorInline, PageHeader, SkeletonBlock, Spinner, SuccessInline } from "../components/ui";
+import {
+  Badge,
+  Button,
+  Checkbox,
+  CodeBlock,
+  DataTable,
+  Drawer,
+  EmptyState,
+  ErrorInline,
+  Field,
+  IconButton,
+  Input,
+  Modal,
+  PageHeader,
+  Panel,
+  PanelHeader,
+  PasswordInput,
+  ResultCount,
+  Select,
+  SkeletonBlock,
+  StatusBadge,
+  SuccessInline,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  Textarea,
+  WarningInline,
+  type Column,
+} from "../components/ui";
 import { BusinessParameterForm } from "../components/workflowStudio/BusinessParameterForm";
 import { DataView } from "../components/workflowStudio/DataView";
 import type { BusinessParameter, ParameterLevel } from "../lib/businessSchema";
@@ -89,22 +117,52 @@ type InstalledContext = {
   actions: { action_id: string; display_name: string; read_only: boolean }[];
 };
 
-const TAB = [
-  { key: "installed", label: "Instaladas" },
-  { key: "drafts", label: "Importaciones" },
-] as const;
-
 const LEVEL: ParameterLevel = "simple";
+
+/** Fila del catálogo de importaciones. */
+const DRAFT_COLUMNS: Column<DraftSummary>[] = [
+  {
+    key: "name",
+    header: "Importación",
+    render: (draft) => (
+      <span className="block min-w-0" data-testid={`api-draft-${draft.slug}`}>
+        <span className="block truncate text-[13px] font-medium text-text">{draft.name}</span>
+        <span className="mono block truncate text-[11px] text-faint">
+          {draft.base_url || draft.slug}
+        </span>
+      </span>
+    ),
+  },
+  {
+    key: "actions",
+    header: "Acciones",
+    align: "right",
+    width: "1%",
+    render: (draft) => <span className="mono text-xs text-muted">{draft.actions}</span>,
+  },
+  {
+    key: "status",
+    header: "Estado",
+    width: "1%",
+    render: (draft) => (
+      <StatusBadge status={draft.status} label={draft.status === "installed" ? "Instalada" : undefined} />
+    ),
+  },
+];
 
 export default function IntegrationsPage() {
   const { session } = useAuth();
-  const [tab, setTab] = useState<(typeof TAB)[number]["key"]>("installed");
+  const [tab, setTab] = useState("installed");
   const [installs, setInstalls] = useState<InstallRow[]>([]);
   const [context, setContext] = useState<InstalledContext[]>([]);
   const [drafts, setDrafts] = useState<DraftSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
+
+  // Catálogo
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("");
 
   // Consola de prueba
   const [testInstallId, setTestInstallId] = useState("");
@@ -369,6 +427,26 @@ export default function IntegrationsPage() {
     if (!importName) setImportName(file.name.replace(/\.(json|ya?ml)$/i, ""));
   }
 
+  const categories = useMemo(
+    () => Array.from(new Set(installs.map((i) => i.integration.category).filter(Boolean))).sort(),
+    [installs],
+  );
+
+  const term = search.trim().toLowerCase();
+  const filteredInstalls = useMemo(() => {
+    return installs.filter((install) => {
+      if (category && install.integration.category !== category) return false;
+      if (!term) return true;
+      return (
+        install.integration.name.toLowerCase().includes(term) ||
+        install.integration.provider.toLowerCase().includes(term) ||
+        install.integration.slug.toLowerCase().includes(term)
+      );
+    });
+  }, [installs, term, category]);
+
+  const testActions = installedById[testInstallId]?.actions ?? [];
+
   return (
     <div className="space-y-5">
       <Breadcrumb items={[{ label: "Construir", to: "/workflows" }, { label: "Integraciones API" }]} />
@@ -376,441 +454,519 @@ export default function IntegrationsPage() {
         title="Integraciones API"
         subtitle="Conecta APIs externas importando su OpenAPI, o usa las integraciones instaladas."
         actions={
-          <button
-            type="button"
-            className="btn btn-primary min-h-11 gap-1.5 px-3 text-xs"
+          <Button
+            variant="primary"
+            leadingIcon={UploadSimple}
             data-testid="api-import-open"
             onClick={() => setImportOpen(true)}
           >
-            <UploadSimple size={14} aria-hidden /> Conectar una API
-          </button>
+            Conectar una API
+          </Button>
         }
       />
       <ErrorInline message={error} />
       <SuccessInline message={success} />
 
-      <div className="flex rounded-md border border-border p-0.5" role="tablist" aria-label="Vista de integraciones">
-        {TAB.map((item) => (
-          <button
-            key={item.key}
-            type="button"
-            role="tab"
-            aria-selected={tab === item.key}
-            className={`flex-1 rounded px-2 py-1.5 text-[11px] ${
-              tab === item.key ? "bg-accent/15 font-medium text-text" : "text-faint hover:text-muted"
-            }`}
-            data-testid={`api-tab-${item.key}`}
-            onClick={() => setTab(item.key)}
-          >
-            {item.label}
-            {item.key === "drafts" && drafts.length > 0 && (
-              <span className="ml-1.5 rounded bg-soft px-1.5 text-[9px]">{drafts.length}</span>
-            )}
-          </button>
-        ))}
-      </div>
+      <Tabs value={tab} onValueChange={setTab} variant="pill">
+        <TabsList>
+          <TabsTrigger value="installed" data-testid="api-tab-installed">
+            Instaladas
+            {installs.length > 0 && <span className="mono text-[11px] text-faint">{installs.length}</span>}
+          </TabsTrigger>
+          <TabsTrigger value="drafts" data-testid="api-tab-drafts">
+            Importaciones
+            {drafts.length > 0 && <span className="mono text-[11px] text-faint">{drafts.length}</span>}
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {loading ? (
-        <div className="panel p-5"><SkeletonBlock rows={4} /></div>
+        <Panel className="p-4">
+          <SkeletonBlock rows={4} />
+        </Panel>
       ) : tab === "installed" ? (
-        <InstalledTab
-          installs={installs}
-          context={installedById}
-          onTest={(id) => void openTest(id)}
-          onCredentials={(install) => {
-            setCredInstall(install);
-            setCredKind("api_key");
-            setCredValues({});
-          }}
-          onConnectApi={() => setImportOpen(true)}
-        />
-      ) : (
-        <DraftsTab drafts={drafts} onReview={(id) => void openReview(id)} />
-      )}
-
-      {testInstallId && (
-        <section className="panel space-y-3 p-4" data-testid="api-test-console">
-          <div className="flex items-center gap-2">
-            <Flask size={16} className="text-accent" aria-hidden />
-            <h2 className="flex-1 text-sm font-semibold text-text">Probar acción</h2>
-            <button type="button" className="btn btn-ghost min-h-7 px-1.5" aria-label="Cerrar consola" onClick={() => setTestInstallId("")}>
-              <X size={14} />
-            </button>
-          </div>
-          <label className="block">
-            <span className="mb-0.5 block text-[10px] font-medium text-muted">Acción</span>
-            <select
-              className="w-full rounded-md border border-border bg-soft px-2 py-2 text-[11px]"
-              value={testActionId}
-              data-testid="api-test-action"
-              onChange={(e) => void pickAction(e.target.value)}
-            >
-              <option value="">Elige una acción…</option>
-              {(installedById[testInstallId]?.actions ?? []).map((action) => (
-                <option key={action.action_id} value={action.action_id}>{action.display_name}</option>
-              ))}
-            </select>
-          </label>
-          {testActionId && (
+        <section className="flex flex-col gap-4">
+          {installs.length === 0 ? (
+            <Panel className="p-2" data-testid="api-installed-empty">
+              <EmptyState
+                icon={Plugs}
+                title="Todavía no hay integraciones instaladas"
+                body="Importa el OpenAPI de una API o instala una del marketplace para probar sus acciones desde acá."
+                action={
+                  <Button variant="primary" leadingIcon={UploadSimple} onClick={() => setImportOpen(true)}>
+                    Conectar una API
+                  </Button>
+                }
+              />
+            </Panel>
+          ) : (
             <>
-              {testParams === null ? (
-                <p className="text-[10px] text-faint">Cargando formulario…</p>
-              ) : (
-                <BusinessParameterForm
-                  parameters={testParams}
-                  level={LEVEL}
-                  values={testValues}
-                  onChange={(key, value) => setTestValues((prev) => ({ ...prev, [key]: value }))}
-                  dataSources={[]}
-                  emptyHint="Esta acción no necesita parámetros."
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  icon={MagnifyingGlass}
+                  className="w-full sm:max-w-72"
+                  placeholder="Buscar por nombre, proveedor o slug…"
+                  aria-label="Buscar integración"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
                 />
-              )}
-              <button
-                type="button"
-                className="btn btn-primary min-h-9 w-full gap-1.5 text-xs"
-                disabled={testBusy}
-                data-testid="api-test-run"
-                onClick={() => void runTest()}
-              >
-                {testBusy ? <Spinner size={13} /> : <Flask size={13} aria-hidden />} Ejecutar
-              </button>
-              <ErrorInline message={testError} />
-              {testResult !== null && (
-                <div className="rounded-md border border-border bg-soft/40 p-2" data-testid="api-test-result">
-                  <p className="mb-1 text-[10px] font-medium text-muted">Resultado</p>
-                  <DataView data={testResult} />
+                {categories.length > 1 && (
+                  <div className="flex flex-wrap items-center gap-1">
+                    <Button
+                      variant={category === "" ? "secondary" : "ghost"}
+                      size="sm"
+                      aria-pressed={category === ""}
+                      onClick={() => setCategory("")}
+                    >
+                      Todas
+                    </Button>
+                    {categories.map((c) => (
+                      <Button
+                        key={c}
+                        variant={category === c ? "secondary" : "ghost"}
+                        size="sm"
+                        aria-pressed={category === c}
+                        onClick={() => setCategory(c)}
+                      >
+                        {c}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+                <span className="flex-1" aria-hidden />
+                <ResultCount shown={filteredInstalls.length} total={installs.length} noun="integraciones" />
+              </div>
+
+              {filteredInstalls.length === 0 ? (
+                <Panel>
+                  <EmptyState
+                    compact
+                    icon={MagnifyingGlass}
+                    title="Sin resultados"
+                    body="Ninguna integración coincide con la búsqueda o la categoría elegida."
+                    action={
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          setSearch("");
+                          setCategory("");
+                        }}
+                      >
+                        Limpiar filtros
+                      </Button>
+                    }
+                  />
+                </Panel>
+              ) : (
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                  {filteredInstalls.map((install) => {
+                    const ctx = installedById[install.id];
+                    const needsCredentials = (ctx?.status ?? []).includes("credentials_missing");
+                    const deprecated = ctx?.integration.manifest_status === "DEPRECATED";
+                    return (
+                      <Panel
+                        key={install.id}
+                        className="flex flex-col gap-3 p-4"
+                        data-testid={`api-install-${install.integration.slug}`}
+                      >
+                        <div className="flex items-start gap-2">
+                          <span
+                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-soft text-accent"
+                            aria-hidden
+                          >
+                            <Plugs size={15} />
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <h3 className="truncate text-[13px] font-medium text-text">
+                              {install.integration.name}
+                            </h3>
+                            <p className="truncate text-xs text-faint">
+                              {install.integration.provider} ·{" "}
+                              {ctx?.actions.length ?? install.enabled_actions.length} acciones
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap gap-1.5">
+                          {needsCredentials ? (
+                            <Badge tone="warn" icon={Key}>
+                              Requiere credenciales
+                            </Badge>
+                          ) : (
+                            <Badge tone="ok" icon={CheckCircle}>
+                              Conectada
+                            </Badge>
+                          )}
+                          {deprecated && <Badge tone="warn">Obsoleta</Badge>}
+                          {install.integration.category && (
+                            <Badge tone="neutral">{install.integration.category}</Badge>
+                          )}
+                        </div>
+
+                        <div className="mt-auto flex flex-wrap gap-2">
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            leadingIcon={Flask}
+                            data-testid={`api-test-${install.integration.slug}`}
+                            onClick={() => void openTest(install.id)}
+                          >
+                            Probar
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            leadingIcon={Key}
+                            data-testid={`api-creds-${install.integration.slug}`}
+                            onClick={() => {
+                              setCredInstall(install);
+                              setCredKind("api_key");
+                              setCredValues({});
+                            }}
+                          >
+                            Credenciales
+                          </Button>
+                        </div>
+                      </Panel>
+                    );
+                  })}
                 </div>
               )}
             </>
           )}
         </section>
+      ) : (
+        <DataTable
+          columns={DRAFT_COLUMNS}
+          rows={drafts}
+          rowKey={(draft) => draft.draft_id}
+          caption="Importaciones OpenAPI"
+          empty={
+            <div data-testid="api-drafts-empty">
+              <EmptyState
+                icon={UploadSimple}
+                title="Sin importaciones pendientes"
+                body="Usa “Conectar una API” para analizar un documento OpenAPI."
+                action={
+                  <Button variant="primary" leadingIcon={UploadSimple} onClick={() => setImportOpen(true)}>
+                    Conectar una API
+                  </Button>
+                }
+              />
+            </div>
+          }
+          rowActions={(draft) => (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void openReview(draft.draft_id)}
+            >
+              {draft.status === "installed" ? "Ver" : "Revisar"}
+            </Button>
+          )}
+        />
       )}
 
-      {credInstall && (
-        <section className="panel space-y-3 p-4" data-testid="api-credentials">
-          <div className="flex items-center gap-2">
-            <Key size={16} className="text-accent" aria-hidden />
-            <h2 className="flex-1 text-sm font-semibold text-text">Credenciales · {credInstall.integration.name}</h2>
-            <button type="button" className="btn btn-ghost min-h-7 px-1.5" aria-label="Cerrar credenciales" onClick={() => setCredInstall(null)}>
-              <X size={14} />
-            </button>
+      {testInstallId && (
+        <Panel data-testid="api-test-console">
+          <PanelHeader
+            title={
+              <span className="flex items-center gap-2">
+                <Flask size={16} className="text-accent" aria-hidden /> Probar acción
+              </span>
+            }
+            description={installedById[testInstallId]?.integration.name}
+            actions={
+              <IconButton
+                label="Cerrar consola"
+                icon={X}
+                variant="ghost"
+                onClick={() => setTestInstallId("")}
+              />
+            }
+          />
+          <div className="panel-body flex flex-col gap-3">
+            <Field label="Acción">
+              <Select
+                value={testActionId}
+                data-testid="api-test-action"
+                onChange={(e) => void pickAction(e.target.value)}
+                placeholder="Elige una acción…"
+              >
+                {testActions.map((action) => (
+                  <option key={action.action_id} value={action.action_id}>
+                    {action.display_name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+
+            {testActionId && (
+              <>
+                {testParams === null ? (
+                  <SkeletonBlock rows={2} />
+                ) : (
+                  <BusinessParameterForm
+                    parameters={testParams}
+                    level={LEVEL}
+                    values={testValues}
+                    onChange={(key, value) => setTestValues((prev) => ({ ...prev, [key]: value }))}
+                    dataSources={[]}
+                    emptyHint="Esta acción no necesita parámetros."
+                  />
+                )}
+                <div>
+                  <Button
+                    variant="primary"
+                    loading={testBusy}
+                    leadingIcon={Flask}
+                    data-testid="api-test-run"
+                    onClick={() => void runTest()}
+                  >
+                    Ejecutar
+                  </Button>
+                </div>
+                <ErrorInline message={testError} className="mb-0" />
+                {testResult !== null && (
+                  <div data-testid="api-test-result">
+                    <p className="eyebrow mb-2">Resultado</p>
+                    <DataView data={testResult} />
+                  </div>
+                )}
+              </>
+            )}
           </div>
-          <label className="block">
-            <span className="mb-0.5 block text-[10px] font-medium text-muted">Tipo de autenticación</span>
-            <select
-              className="w-full rounded-md border border-border bg-soft px-2 py-2 text-[11px]"
-              value={credKind}
-              onChange={(e) => setCredKind(e.target.value)}
-            >
+        </Panel>
+      )}
+
+      <Drawer
+        open={credInstall !== null}
+        onOpenChange={(open) => {
+          if (!open) setCredInstall(null);
+        }}
+        title={credInstall ? `Credenciales · ${credInstall.integration.name}` : "Credenciales"}
+        description="Se guardan cifradas en el SecretStore: nunca viajan al grafo ni vuelven al navegador."
+        width={480}
+        data-testid="api-credentials"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setCredInstall(null)} disabled={credBusy}>
+              Cancelar
+            </Button>
+            <Button variant="primary" loading={credBusy} onClick={() => void saveCredentials()}>
+              Guardar credenciales
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <Field label="Tipo de autenticación">
+            <Select value={credKind} onChange={(e) => setCredKind(e.target.value)}>
               <option value="api_key">API Key (header)</option>
               <option value="bearer">Bearer token</option>
               <option value="basic">Basic Auth (usuario y clave)</option>
               <option value="oauth2">Token OAuth2 temporal</option>
-            </select>
-          </label>
-          <label className="block">
-            <span className="mb-0.5 block text-[10px] font-medium text-muted">URL base de la API</span>
-            <input
-              className="w-full rounded-md border border-border bg-soft px-2 py-1.5 text-[11px]"
+            </Select>
+          </Field>
+
+          <Field label="URL base de la API">
+            <Input
               placeholder="https://api.miempresa.com/v1"
               value={credValues.endpoint_base_url ?? ""}
               onChange={(e) => setCredValues((v) => ({ ...v, endpoint_base_url: e.target.value }))}
+              autoComplete="off"
             />
-          </label>
+          </Field>
+
           {credKind === "api_key" && (
-            <SecretField
-              label="API Key"
-              value={credValues.api_key ?? ""}
-              onChange={(value) => setCredValues((v) => ({ ...v, api_key: value }))}
-            />
+            <Field label="API Key">
+              <PasswordInput
+                autoComplete="off"
+                value={credValues.api_key ?? ""}
+                onChange={(e) => setCredValues((v) => ({ ...v, api_key: e.target.value }))}
+              />
+            </Field>
           )}
+
           {(credKind === "bearer" || credKind === "oauth2") && (
-            <SecretField
-              label="Token"
-              value={credValues.oauth_token ?? ""}
-              onChange={(value) => setCredValues((v) => ({ ...v, oauth_token: value }))}
-            />
+            <Field label="Token">
+              <PasswordInput
+                autoComplete="off"
+                value={credValues.oauth_token ?? ""}
+                onChange={(e) => setCredValues((v) => ({ ...v, oauth_token: e.target.value }))}
+              />
+            </Field>
           )}
+
           {credKind === "basic" && (
             <>
-              <label className="block">
-                <span className="mb-0.5 block text-[10px] font-medium text-muted">Usuario</span>
-                <input
-                  className="w-full rounded-md border border-border bg-soft px-2 py-1.5 text-[11px]"
+              <Field label="Usuario">
+                <Input
+                  autoComplete="off"
                   value={credValues.basic_username ?? ""}
                   onChange={(e) => setCredValues((v) => ({ ...v, basic_username: e.target.value }))}
                 />
-              </label>
-              <SecretField
-                label="Clave"
-                value={credValues.basic_password ?? ""}
-                onChange={(value) => setCredValues((v) => ({ ...v, basic_password: value }))}
-              />
+              </Field>
+              <Field label="Clave">
+                <PasswordInput
+                  autoComplete="off"
+                  value={credValues.basic_password ?? ""}
+                  onChange={(e) => setCredValues((v) => ({ ...v, basic_password: e.target.value }))}
+                />
+              </Field>
             </>
           )}
-          <p className="text-[10px] text-faint">
-            Se guardan cifradas en el SecretStore. Nunca viajan al grafo del workflow ni vuelven al navegador.
+
+          <p className="text-xs leading-relaxed text-faint">
+            El valor guardado no se vuelve a mostrar: si necesitas rotarlo, vuelve a guardar uno nuevo.
           </p>
-          <button
-            type="button"
-            className="btn btn-primary min-h-9 w-full text-xs"
-            disabled={credBusy}
-            onClick={() => void saveCredentials()}
-          >
-            {credBusy ? <Spinner size={13} /> : null} Guardar credenciales
-          </button>
-        </section>
-      )}
+        </div>
+      </Drawer>
 
-      {review && (
-        <ReviewPanel
-          draft={review}
-          busy={reviewBusy}
-          onClose={() => setReview(null)}
-          onPatch={(patch) => void patchReview(patch)}
-          onInstall={() => void installReview()}
-          onDiscard={() => void discardReview()}
-        />
-      )}
+      <Drawer
+        open={review !== null}
+        onOpenChange={(open) => {
+          if (!open) setReview(null);
+        }}
+        title="Revisar importación"
+        description={review?.draft.base_url}
+        width={620}
+        data-testid="api-review"
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              data-testid="api-review-discard"
+              disabled={reviewBusy}
+              onClick={() => void discardReview()}
+            >
+              Descartar borrador
+            </Button>
+            <Button
+              variant="primary"
+              leadingIcon={CheckCircle}
+              loading={reviewBusy}
+              data-testid="api-review-install"
+              onClick={() => void installReview()}
+            >
+              Instalar integración
+            </Button>
+          </>
+        }
+      >
+        {review && <ReviewBody draft={review} onPatch={(patch) => void patchReview(patch)} />}
+      </Drawer>
 
-      {importOpen && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4" role="dialog" aria-label="Conectar una API">
-          <div className="mt-16 w-full max-w-lg rounded-lg border border-border bg-surface p-4 shadow-panel">
-            <div className="flex items-center gap-2">
-              <Plugs size={16} className="text-accent" aria-hidden />
-              <h2 className="flex-1 text-sm font-semibold text-text">Conectar una API</h2>
-              <button type="button" className="btn btn-ghost min-h-7 px-1.5" aria-label="Cerrar" onClick={() => setImportOpen(false)}>
-                <X size={14} />
-              </button>
-            </div>
-            <p className="mt-1 text-[11px] text-muted">
-              Pega la URL de un documento OpenAPI 3, o súbelo/pega su contenido. Zent analiza el documento
-              y nunca ejecuta los endpoints durante el análisis.
-            </p>
-            <label className="mt-3 block">
-              <span className="mb-0.5 block text-[10px] font-medium text-muted">URL del documento</span>
-              <input
-                className="w-full rounded-md border border-border bg-soft px-2 py-1.5 text-[11px]"
-                placeholder="https://api.miempresa.com/openapi.json"
-                value={importUrl}
-                data-testid="api-import-url"
-                onChange={(e) => {
-                  setImportUrl(e.target.value);
-                  setImportDoc("");
-                }}
-              />
-            </label>
-            <label className="mt-2 block">
-              <span className="mb-0.5 block text-[10px] font-medium text-muted">…o pega el JSON/YAML</span>
-              <textarea
-                className="h-24 w-full rounded-md border border-border bg-soft px-2 py-1.5 font-mono text-[10px]"
-                placeholder='{"openapi": "3.0.0", ...}'
-                value={importDoc}
-                data-testid="api-import-doc"
-                onChange={(e) => {
-                  setImportDoc(e.target.value);
-                  setImportUrl("");
-                }}
-              />
-            </label>
-            <div className="mt-2 flex items-center gap-2">
-              <label className="btn btn-secondary min-h-8 cursor-pointer px-2 text-[10px]">
-                <UploadSimple size={12} aria-hidden className="mr-1" /> Subir archivo
-                <input
-                  type="file"
-                  accept=".json,.yaml,.yml"
-                  className="hidden"
-                  data-testid="api-import-file"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    if (file) void readFile(file);
-                  }}
-                />
-              </label>
-              <label className="flex-1">
-                <input
-                  className="w-full rounded-md border border-border bg-soft px-2 py-1.5 text-[11px]"
-                  placeholder="Nombre (opcional)"
-                  value={importName}
-                  onChange={(e) => setImportName(e.target.value)}
-                />
-              </label>
-            </div>
-            <button
-              type="button"
-              className="btn btn-primary mt-3 min-h-10 w-full gap-1.5 text-xs"
-              disabled={importBusy}
+      <Modal
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        title="Conectar una API"
+        description="Pega la URL de un documento OpenAPI 3, o súbelo/pega su contenido. Zent analiza el documento y nunca ejecuta los endpoints durante el análisis."
+        size="lg"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setImportOpen(false)} disabled={importBusy}>
+              Cancelar
+            </Button>
+            <Button
+              variant="primary"
+              loading={importBusy}
+              leadingIcon={Plugs}
               data-testid="api-import-submit"
               onClick={() => void importOpenApi()}
             >
-              {importBusy ? <Spinner size={13} /> : <Plugs size={13} aria-hidden />} Analizar documento
-            </button>
+              Analizar documento
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-3">
+          <Field label="URL del documento">
+            <Input
+              placeholder="https://api.miempresa.com/openapi.json"
+              value={importUrl}
+              data-testid="api-import-url"
+              onChange={(e) => {
+                setImportUrl(e.target.value);
+                setImportDoc("");
+              }}
+              autoComplete="off"
+            />
+          </Field>
+
+          <Field label="…o pega el JSON/YAML" hint="Se analiza tal cual, sin ejecutar endpoints.">
+            <Textarea
+              className="h-32 font-mono text-xs"
+              placeholder='{"openapi": "3.0.0", ...}'
+              value={importDoc}
+              data-testid="api-import-doc"
+              onChange={(e) => {
+                setImportDoc(e.target.value);
+                setImportUrl("");
+              }}
+              spellCheck={false}
+            />
+          </Field>
+
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="btn btn-secondary btn-sm cursor-pointer">
+              <UploadSimple size={14} aria-hidden /> Subir archivo
+              <input
+                type="file"
+                accept=".json,.yaml,.yml"
+                className="hidden"
+                data-testid="api-import-file"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void readFile(file);
+                }}
+              />
+            </label>
+            <Field label="Nombre (opcional)" className="min-w-0 flex-1">
+              <Input
+                placeholder="ej. Acme Commerce"
+                value={importName}
+                onChange={(e) => setImportName(e.target.value)}
+                autoComplete="off"
+              />
+            </Field>
           </div>
         </div>
-      )}
+      </Modal>
     </div>
   );
 }
 
-function SecretField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  return (
-    <label className="block">
-      <span className="mb-0.5 block text-[10px] font-medium text-muted">{label}</span>
-      <input
-        type="password"
-        autoComplete="off"
-        className="w-full rounded-md border border-border bg-soft px-2 py-1.5 text-[11px]"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
-    </label>
-  );
-}
-
-function InstalledTab({
-  installs,
-  context,
-  onTest,
-  onCredentials,
-  onConnectApi,
-}: {
-  installs: InstallRow[];
-  context: Record<string, InstalledContext>;
-  onTest: (id: string) => void;
-  onCredentials: (install: InstallRow) => void;
-  onConnectApi: () => void;
-}) {
-  if (installs.length === 0) {
-    return (
-      <div className="panel space-y-2 p-5 text-sm text-muted" data-testid="api-installed-empty">
-        <p>Todavía no hay integraciones instaladas.</p>
-        <button type="button" className="btn btn-secondary min-h-9 text-xs" onClick={onConnectApi}>
-          Conectar una API
-        </button>
-      </div>
-    );
-  }
-  return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-      {installs.map((install) => {
-        const ctx = context[install.id];
-        const needsCredentials = (ctx?.status ?? []).includes("credentials_missing");
-        return (
-          <article key={install.id} className="panel flex flex-col gap-2 p-4" data-testid={`api-install-${install.integration.slug}`}>
-            <div className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-md bg-accent/15 text-accent" aria-hidden>
-                <Plugs size={14} />
-              </span>
-              <h3 className="flex-1 truncate text-sm font-semibold text-text">{install.integration.name}</h3>
-              {needsCredentials ? (
-                <span className="badge badge-warn">faltan credenciales</span>
-              ) : (
-                <span className="badge badge-ok"><CheckCircle size={10} className="mr-1" aria-hidden /> lista</span>
-              )}
-            </div>
-            <p className="text-[10px] text-faint">
-              {install.integration.provider} · {ctx?.actions.length ?? install.enabled_actions.length} acciones
-            </p>
-            <div className="mt-auto flex gap-2">
-              <button
-                type="button"
-                className="btn btn-secondary min-h-8 flex-1 text-[10px]"
-                data-testid={`api-test-${install.integration.slug}`}
-                onClick={() => onTest(install.id)}
-              >
-                <Flask size={11} aria-hidden className="mr-1" /> Probar
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost min-h-8 flex-1 text-[10px]"
-                data-testid={`api-creds-${install.integration.slug}`}
-                onClick={() => onCredentials(install)}
-              >
-                <Key size={11} aria-hidden className="mr-1" /> Credenciales
-              </button>
-            </div>
-          </article>
-        );
-      })}
-    </div>
-  );
-}
-
-function DraftsTab({ drafts, onReview }: { drafts: DraftSummary[]; onReview: (id: string) => void }) {
-  if (drafts.length === 0) {
-    return (
-      <div className="panel p-5 text-sm text-muted" data-testid="api-drafts-empty">
-        No hay importaciones pendientes. Usa “Conectar una API” para analizar un documento OpenAPI.
-      </div>
-    );
-  }
-  return (
-    <div className="space-y-2">
-      {drafts.map((draft) => (
-        <article key={draft.draft_id} className="panel flex items-center gap-3 p-3" data-testid={`api-draft-${draft.slug}`}>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium text-text">{draft.name}</p>
-            <p className="truncate text-[10px] text-faint">
-              {draft.base_url || draft.slug} · {draft.actions} acciones · {draft.status === "installed" ? "instalada" : "borrador"}
-            </p>
-          </div>
-          <button
-            type="button"
-            className="btn btn-secondary min-h-8 px-3 text-[10px]"
-            onClick={() => onReview(draft.draft_id)}
-          >
-            {draft.status === "installed" ? "Ver" : "Revisar"}
-          </button>
-        </article>
-      ))}
-    </div>
-  );
-}
-
-function ReviewPanel({
+function ReviewBody({
   draft,
-  busy,
-  onClose,
   onPatch,
-  onInstall,
-  onDiscard,
 }: {
   draft: DraftDetail;
-  busy: boolean;
-  onClose: () => void;
   onPatch: (patch: Record<string, unknown>) => void;
-  onInstall: () => void;
-  onDiscard: () => void;
 }) {
   const body = draft.draft;
   const [showTech, setShowTech] = useState(false);
   const [name, setName] = useState(draft.name);
   const [authKind, setAuthKind] = useState(body.auth?.kind || "none");
   const report = draft.report ?? {};
+  const technical = body.capabilities.flatMap((capability) =>
+    capability.actions.map((action) => `${action.method ?? "GET"} ${action.path_template ?? ""}`.trim()),
+  );
+
   return (
-    <section className="panel space-y-3 p-4" data-testid="api-review">
-      <div className="flex items-center gap-2">
-        <Plugs size={16} className="text-accent" aria-hidden />
-        <h2 className="flex-1 text-sm font-semibold text-text">Revisar importación</h2>
-        <button type="button" className="btn btn-ghost min-h-7 px-1.5" aria-label="Cerrar revisión" onClick={onClose}>
-          <X size={14} />
-        </button>
-      </div>
+    <div className="flex flex-col gap-4">
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="block">
-          <span className="mb-0.5 block text-[10px] font-medium text-muted">Nombre de la integración</span>
-          <input
-            className="w-full rounded-md border border-border bg-soft px-2 py-1.5 text-[11px]"
+        <Field label="Nombre de la integración">
+          <Input
             value={name}
             data-testid="api-review-name"
             onChange={(e) => setName(e.target.value)}
             onBlur={() => name.trim() && name !== draft.name && onPatch({ name })}
           />
-        </label>
-        <label className="block">
-          <span className="mb-0.5 block text-[10px] font-medium text-muted">Autenticación detectada</span>
-          <select
-            className="w-full rounded-md border border-border bg-soft px-2 py-2 text-[11px]"
+        </Field>
+        <Field label="Autenticación detectada">
+          <Select
             value={authKind}
             data-testid="api-review-auth"
             onChange={(e) => {
@@ -823,37 +979,50 @@ function ReviewPanel({
             <option value="bearer">Bearer token</option>
             <option value="basic">Basic Auth</option>
             <option value="oauth2">OAuth2 / token</option>
-          </select>
-        </label>
+          </Select>
+        </Field>
       </div>
-      <p className="text-[10px] text-faint">
-        Servidor: {body.base_url} · {report.actions_generated ?? 0} acciones en {body.capabilities.length} grupos
+
+      <p className="text-xs leading-relaxed text-faint">
+        Servidor: <span className="mono">{body.base_url}</span> · {report.actions_generated ?? 0} acciones
+        en {body.capabilities.length} grupos
         {report.operations_total ? ` (de ${report.operations_total} operaciones)` : ""}
       </p>
+
       {(report.warnings ?? []).length > 0 && (
-        <div className="rounded-md border border-warn/40 bg-warn-soft/40 p-2 text-[10px] text-text">
-          {(report.warnings ?? []).map((warning, index) => (
-            <p key={index}>· {warning.message}</p>
-          ))}
-        </div>
+        <WarningInline
+          className="mb-0"
+          message={
+            <ul className="flex flex-col gap-1">
+              {(report.warnings ?? []).map((warning, index) => (
+                <li key={index}>{warning.message}</li>
+              ))}
+            </ul>
+          }
+        />
       )}
-      <div className="space-y-2">
+
+      <div className="flex flex-col gap-3">
         {body.capabilities.map((capability) => (
-          <div key={capability.slug} className="rounded-md border border-border p-2">
-            <p className="text-[11px] font-medium text-text">{capability.name}</p>
-            <div className="mt-1 space-y-1">
+          <div key={capability.slug} className="rounded-md border border-border">
+            <p className="border-b border-border px-3 py-2 text-[13px] font-medium text-text">
+              {capability.name}
+            </p>
+            <div className="flex flex-col divide-y divide-border-soft">
               {capability.actions.map((action) => (
-                <div key={action.action_id} className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    className="accent-[var(--accent)]"
+                <div key={action.action_id} className="flex items-center gap-2 px-3 py-2">
+                  <Checkbox
                     checked={action.enabled !== false}
+                    onCheckedChange={(checked) =>
+                      onPatch({ actions: [{ action_id: action.action_id, enabled: checked }] })
+                    }
+                    label={<span className="sr-only">{action.display_name}</span>}
                     data-testid={`api-review-enable-${action.action_id}`}
-                    onChange={(e) => onPatch({ actions: [{ action_id: action.action_id, enabled: e.target.checked }] })}
                   />
-                  <input
-                    className="min-w-0 flex-1 rounded border border-transparent bg-transparent px-1 py-0.5 text-[11px] text-text hover:border-border focus:border-border"
+                  <Input
+                    className="min-w-0 flex-1 border-transparent bg-transparent"
                     defaultValue={action.display_name}
+                    aria-label={`Nombre visible de ${action.display_name}`}
                     data-testid={`api-review-label-${action.action_id}`}
                     onBlur={(e) => {
                       const value = e.target.value.trim();
@@ -862,49 +1031,35 @@ function ReviewPanel({
                       }
                     }}
                   />
-                  {!action.read_only && <span className="badge badge-warn">escritura</span>}
+                  {!action.read_only && <Badge tone="warn">escritura</Badge>}
                 </div>
               ))}
             </div>
           </div>
         ))}
       </div>
-      <button
-        type="button"
-        className="btn btn-ghost min-h-7 gap-1 px-1 text-[10px] text-muted"
-        data-testid="api-review-tech"
-        onClick={() => setShowTech((value) => !value)}
-      >
-        {showTech ? <CaretDown size={11} /> : <CaretRight size={11} />} Ver detalles técnicos (método y ruta)
-      </button>
-      {showTech && (
-        <div className="rounded-md border border-border bg-soft/30 p-2 font-mono text-[9px] text-faint">
-          {body.capabilities.flatMap((capability) =>
-            capability.actions.map((action) => (
-              <p key={action.action_id}>{action.method} {action.path_template}</p>
-            )),
-          )}
-        </div>
-      )}
-      <div className="flex gap-2">
-        <button
-          type="button"
-          className="btn btn-primary min-h-10 flex-1 text-xs"
-          disabled={busy}
-          data-testid="api-review-install"
-          onClick={onInstall}
+
+      <div>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-expanded={showTech}
+          data-testid="api-review-tech"
+          onClick={() => setShowTech((value) => !value)}
         >
-          {busy ? <Spinner size={13} /> : <CheckCircle size={13} aria-hidden className="mr-1" />} Instalar integración
-        </button>
-        <button
-          type="button"
-          className="btn btn-ghost min-h-10 px-3 text-xs text-danger"
-          data-testid="api-review-discard"
-          onClick={onDiscard}
-        >
-          <Trash size={13} aria-hidden />
-        </button>
+          {showTech ? <CaretDown size={12} aria-hidden /> : <CaretRight size={12} aria-hidden />}
+          Ver detalles técnicos (método y ruta)
+        </Button>
+        {showTech && (
+          <CodeBlock
+            className="mt-2"
+            code={technical.join("\n")}
+            language="http"
+            filename="endpoints"
+            maxHeight={220}
+          />
+        )}
       </div>
-    </section>
+    </div>
   );
 }

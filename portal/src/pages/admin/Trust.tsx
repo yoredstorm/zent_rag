@@ -1,14 +1,34 @@
 import {
   ArrowRight,
+  CheckCircle,
+  Clock,
+  Info,
+  Minus,
+  Prohibit,
+  Question,
   ShieldCheck,
   ShieldWarning,
   WarningCircle,
+  WarningOctagon,
+  type Icon,
 } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { platformApi } from "../../api";
 import { AttentionList } from "../../components/AttentionList";
-import { ErrorInline, PageHeader, SkeletonBlock, StatCard } from "../../components/ui";
+import {
+  Badge,
+  ButtonLink,
+  ErrorInline,
+  Metric,
+  MetricGrid,
+  PageHeader,
+  Panel,
+  PanelHeader,
+  Progress,
+  SkeletonBlock,
+  type Tone,
+} from "../../components/ui";
 import { usePlatformAuth } from "../../platformAuth";
 
 type SocDash = {
@@ -44,7 +64,50 @@ type Anomaly = {
   created_at: string;
 };
 
-const SEV: Record<string, string> = { low: "badge-muted", medium: "badge-warning", high: "badge-danger", critical: "badge-danger" };
+/**
+ * Escala única de severidad del bloque de seguridad y riesgo
+ * (crítica → alta → media → baja). Mismos valores que SecurityCenter y RiskCenter.
+ */
+const SEVERITY_META: Record<string, { label: string; tone: Tone; icon: Icon }> = {
+  critical: { label: "Crítica", tone: "danger", icon: WarningOctagon },
+  high: { label: "Alta", tone: "warn", icon: WarningCircle },
+  medium: { label: "Media", tone: "info", icon: Info },
+  low: { label: "Baja", tone: "neutral", icon: Minus },
+  info: { label: "Informativa", tone: "neutral", icon: Info },
+};
+
+function SeverityBadge({ severity }: { severity: string }) {
+  const meta = SEVERITY_META[severity] ?? {
+    label: severity || "Sin dato",
+    tone: "neutral" as Tone,
+    icon: Question,
+  };
+  return (
+    <Badge tone={meta.tone} icon={meta.icon}>
+      {meta.label}
+    </Badge>
+  );
+}
+
+/** Estado de una anomalía de auditoría. */
+const ANOMALY_STATUS_META: Record<string, { label: string; tone: Tone; icon: Icon }> = {
+  open: { label: "Abierta", tone: "warn", icon: Clock },
+  resolved: { label: "Resuelta", tone: "ok", icon: CheckCircle },
+  dismissed: { label: "Desestimada", tone: "neutral", icon: Prohibit },
+};
+
+function AnomalyStatusBadge({ status }: { status: string }) {
+  const meta = ANOMALY_STATUS_META[status] ?? {
+    label: status || "Sin dato",
+    tone: "neutral" as Tone,
+    icon: Question,
+  };
+  return (
+    <Badge tone={meta.tone} icon={meta.icon}>
+      {meta.label}
+    </Badge>
+  );
+}
 
 export default function AdminTrustPage() {
   const { session } = usePlatformAuth();
@@ -132,100 +195,232 @@ export default function AdminTrustPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
         title="Trust Center"
         subtitle="Postura de seguridad, riesgo de IA, compliance y auditoría en una sola vista. Datos reales de los módulos."
         actions={
-          <div className="flex flex-wrap gap-2">
-            <Link to="/control-center/security-center" className="btn btn-secondary min-h-11">Security Center</Link>
-            <Link to="/control-center/risk-center" className="btn btn-secondary min-h-11">AI Risk</Link>
-            <Link to="/control-center/compliance" className="btn btn-secondary min-h-11">Compliance</Link>
-            <Link to="/control-center/audit-intel" className="btn btn-secondary min-h-11">Audit Intelligence</Link>
-          </div>
+          <>
+            <ButtonLink to="/control-center/security-center" variant="secondary" size="sm">
+              Security Center
+            </ButtonLink>
+            <ButtonLink to="/control-center/risk-center" variant="secondary" size="sm">
+              AI Risk
+            </ButtonLink>
+            <ButtonLink to="/control-center/compliance" variant="secondary" size="sm">
+              Compliance
+            </ButtonLink>
+            <ButtonLink to="/control-center/audit-intel" variant="secondary" size="sm">
+              Audit Intelligence
+            </ButtonLink>
+          </>
         }
       />
       {error && <ErrorInline>{error}</ErrorInline>}
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <div className="space-y-4">
+          <SkeletonBlock rows={4} />
+          <SkeletonBlock rows={6} />
+        </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <StatCard label="Security posture" value={avgPosture != null ? `${avgPosture}%` : "—"} icon={ShieldCheck} tone={avgPosture != null && avgPosture < 70 ? "warn" : "ok"} />
-            <StatCard label="Riesgos abiertos" value={risk?.open_risks ?? 0} icon={WarningCircle} tone={(risk?.open_risks ?? 0) > 0 ? "warn" : "default"} />
-            <StatCard label="Compliance" value={avgCompliance != null ? `${avgCompliance}%` : "—"} icon={ShieldCheck} />
-            <StatCard label="Eventos SOC 7d" value={soc?.events_7d ?? 0} icon={ShieldWarning} />
-            <StatCard label="SOC abiertos" value={soc?.open_events ?? 0} icon={WarningCircle} tone={(soc?.open_events ?? 0) > 0 ? "danger" : "default"} />
-            <StatCard label="Anomalías" value={openAnomalies} icon={WarningCircle} tone={openAnomalies > 0 ? "warn" : "default"} />
-          </div>
-
-          <div className="grid gap-4 xl:grid-cols-3">
-            <div className="xl:col-span-2">
-              <AttentionList
-                items={issues}
-                emptyTitle="Postura sólida"
-                emptyBody="Sin riesgos abiertos, anomalías pendientes ni frameworks en fail."
+          <div className="grid gap-4 xl:grid-cols-3 xl:items-start">
+            <Panel className="xl:col-span-2">
+              <PanelHeader
+                title="Postura de confianza"
+                description="Promedio real de security posture y compliance entre las organizaciones."
+                actions={
+                  avgPosture != null && avgPosture < 70 ? (
+                    <Badge tone="warn" icon={WarningCircle}>
+                      Requiere atención
+                    </Badge>
+                  ) : (
+                    <Badge tone="ok" icon={CheckCircle}>
+                      Sobre el umbral
+                    </Badge>
+                  )
+                }
               />
-            </div>
-
-            <div className="panel">
-              <div className="border-b border-border px-5 py-4">
-                <h2 className="text-sm font-semibold text-text">Compliance por framework</h2>
-              </div>
-              <div className="space-y-2 p-4">
-                {frameworks.length === 0 && <p className="text-xs text-faint">Sin snapshots de compliance.</p>}
-                {frameworks.map((f) => (
-                  <div key={f.framework} className="flex items-center gap-2">
-                    <span className="w-24 shrink-0 text-xs text-text">{f.framework.toUpperCase()}</span>
-                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-soft">
-                      <div className="h-full rounded-full bg-accent" style={{ width: `${f.score}%` }} />
-                    </div>
-                    <span className="w-10 shrink-0 text-right text-xs text-faint">{f.score}%</span>
+              <div className="panel-body">
+                <div className="flex flex-wrap items-end gap-x-10 gap-y-4">
+                  <div className="min-w-40">
+                    <p className="eyebrow">Security posture</p>
+                    <p className="mt-1 text-display tabular-nums">
+                      {avgPosture != null ? `${avgPosture}%` : "—"}
+                    </p>
+                    <p className="mt-1.5 text-xs leading-relaxed text-muted">
+                      {posture.length === 0
+                        ? "Sin snapshots de posture todavía."
+                        : weakPosture > 0
+                          ? `${weakPosture} de ${scored.length} organizaciones por debajo de 70.`
+                          : `${scored.length} organizaciones en seguimiento, ninguna por debajo de 70.`}
+                    </p>
                   </div>
-                ))}
+                  <div className="min-w-48 flex-1">
+                    <p className="eyebrow">Compliance</p>
+                    <p className="mt-1 text-h2 tabular-nums">
+                      {avgCompliance != null ? `${avgCompliance}%` : "—"}
+                    </p>
+                    <p className="mt-1.5 text-xs leading-relaxed text-muted">
+                      {frameworks.length === 0
+                        ? "Sin snapshots de compliance."
+                        : `${frameworks.length} frameworks evaluados${failingFrameworks > 0 ? ` · ${failingFrameworks} con controles en fail` : ""}.`}
+                    </p>
+                  </div>
+                  <div className="min-w-32">
+                    <p className="eyebrow">Eventos SOC 7d</p>
+                    <p className="mt-1 text-h2 tabular-nums">{soc?.events_7d ?? 0}</p>
+                    <p className="mt-1.5 text-xs leading-relaxed text-muted">
+                      {soc?.open_events ?? 0} abiertos · {soc?.resolved_7d ?? 0} resueltos
+                    </p>
+                  </div>
+                </div>
               </div>
-            </div>
+            </Panel>
+
+            <AttentionList
+              items={issues}
+              emptyTitle="Postura sólida"
+              emptyBody="Sin riesgos abiertos, anomalías pendientes ni frameworks en fail."
+            />
           </div>
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <section>
-              <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text"><ShieldWarning size={15} /> Eventos SOC por tipo</h3>
-              <div className="panel space-y-1 p-3">
+          <MetricGrid cols={4}>
+            <Metric
+              label="Riesgos de IA abiertos"
+              value={risk?.open_risks ?? 0}
+              size="md"
+              tone={(risk?.open_risks ?? 0) > 0 ? "warn" : "default"}
+              icon={WarningCircle}
+              hint={`${risk?.mitigated_7d ?? 0} mitigados en 7d`}
+            />
+            <Metric label="Eventos SOC 7d" value={soc?.events_7d ?? 0} size="md" icon={ShieldWarning} hint={`Threat score medio ${soc?.avg_threat_score ?? 0}`} />
+            <Metric
+              label="SOC abiertos"
+              value={soc?.open_events ?? 0}
+              size="md"
+              tone={(soc?.open_events ?? 0) > 0 ? "danger" : "default"}
+              icon={WarningCircle}
+              hint={`${soc?.resolved_7d ?? 0} resueltos en 7d`}
+            />
+            <Metric
+              label="Anomalías sin revisar"
+              value={openAnomalies}
+              size="md"
+              tone={openAnomalies > 0 ? "warn" : "default"}
+              icon={ShieldWarning}
+              hint={`${anomalies.length} detectadas en total`}
+            />
+          </MetricGrid>
+
+          <Panel>
+            <PanelHeader
+              title="Compliance por framework"
+              description="Score real por framework evaluado; el detalle de controles vive en Compliance."
+              actions={
+                <ButtonLink to="/control-center/compliance" variant="ghost" size="sm" trailingIcon={ArrowRight}>
+                  Ver detalle
+                </ButtonLink>
+              }
+            />
+            <div className="panel-body flex flex-col gap-4">
+              {frameworks.length === 0 ? (
+                <p className="text-[13px] leading-relaxed text-muted">Sin snapshots de compliance.</p>
+              ) : (
+                frameworks.map((f) => (
+                  <Progress
+                    key={f.framework}
+                    label={f.framework.toUpperCase()}
+                    showValue
+                    value={f.score}
+                  />
+                ))
+              )}
+            </div>
+          </Panel>
+
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-start">
+            <Panel>
+              <PanelHeader
+                title={
+                  <span className="flex items-center gap-2">
+                    <ShieldWarning size={15} className="text-faint" aria-hidden />
+                    Eventos SOC por tipo
+                  </span>
+                }
+              />
+              <ul className="divide-y divide-border-soft">
                 {(soc?.by_type ?? []).map((t) => (
-                  <div key={t.event_type} className="flex items-center gap-2 rounded-md bg-soft px-3 py-1 text-xs">
-                    <span className="flex-1 text-text">{t.event_type}</span>
-                    <span className="text-faint">{t.count} · {t.criticals} críticos</span>
-                  </div>
+                  <li key={t.event_type} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                    <span className="mono min-w-0 truncate text-xs text-text" title={t.event_type}>
+                      {t.event_type}
+                    </span>
+                    <span className="shrink-0 text-xs text-faint tabular-nums">
+                      {t.count} · {t.criticals} críticos
+                    </span>
+                  </li>
                 ))}
-                {(soc?.by_type ?? []).length === 0 && <p className="text-xs text-faint">Sin eventos.</p>}
+                {(soc?.by_type ?? []).length === 0 && (
+                  <li className="px-4 py-3 text-[13px] text-muted">Sin eventos.</li>
+                )}
+              </ul>
+            </Panel>
+
+            <Panel>
+              <PanelHeader
+                title={
+                  <span className="flex items-center gap-2">
+                    <WarningCircle size={15} className="text-faint" aria-hidden />
+                    Riesgos por severidad
+                  </span>
+                }
+              />
+              <div className="panel-body">
+                {(risk?.by_severity ?? []).length === 0 ? (
+                  <p className="text-[13px] text-muted">Sin riesgos.</p>
+                ) : (
+                  <ul className="flex flex-col gap-2.5">
+                    {(risk?.by_severity ?? []).map((s) => (
+                      <li key={s.severity} className="flex items-center justify-between gap-3">
+                        <SeverityBadge severity={s.severity} />
+                        <span className="mono text-xs text-faint tabular-nums">{s.count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
-            </section>
-            <section>
-              <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text"><WarningCircle size={15} /> Riesgos por severidad</h3>
-              <div className="panel flex flex-wrap gap-1 p-3">
-                {(risk?.by_severity ?? []).map((s) => (
-                  <span key={s.severity} className={`badge ${SEV[s.severity] ?? "badge-muted"}`}>{s.severity} · {s.count}</span>
-                ))}
-                {(risk?.by_severity ?? []).length === 0 && <p className="text-xs text-faint">Sin riesgos.</p>}
-              </div>
-            </section>
-            <section>
-              <h3 className="mb-2 flex items-center justify-between gap-2 text-sm font-semibold text-text">
-                <span className="flex items-center gap-2"><WarningCircle size={15} /> Anomalías recientes</span>
-                <Link to="/control-center/audit-intel" className="flex items-center gap-1 text-xs text-accent hover:underline">
-                  Ver <ArrowRight size={12} aria-hidden />
-                </Link>
-              </h3>
-              <div className="panel space-y-1 p-3">
+            </Panel>
+
+            <Panel>
+              <PanelHeader
+                title={
+                  <span className="flex items-center gap-2">
+                    <ShieldCheck size={15} className="text-faint" aria-hidden />
+                    Anomalías recientes
+                  </span>
+                }
+                actions={
+                  <Link
+                    to="/control-center/audit-intel"
+                    className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline"
+                  >
+                    Ver todas <ArrowRight size={12} aria-hidden />
+                  </Link>
+                }
+              />
+              <ul className="divide-y divide-border-soft">
                 {anomalies.slice(0, 5).map((a) => (
-                  <div key={a.id} className="flex items-center gap-2 rounded-md bg-soft px-3 py-1 text-xs">
-                    <span className={`badge ${SEV[a.severity] ?? "badge-muted"}`}>{a.severity}</span>
-                    <span className="min-w-0 flex-1 truncate text-text" title={a.message}>{a.message || a.anomaly_type}</span>
-                  </div>
+                  <li key={a.id} className="flex items-center gap-2.5 px-4 py-2.5">
+                    <SeverityBadge severity={a.severity} />
+                    <span className="min-w-0 flex-1 truncate text-xs text-text" title={a.message}>
+                      {a.message || a.anomaly_type}
+                    </span>
+                    <AnomalyStatusBadge status={a.status} />
+                  </li>
                 ))}
-                {anomalies.length === 0 && <p className="text-xs text-faint">Sin anomalías.</p>}
-              </div>
-            </section>
+                {anomalies.length === 0 && <li className="px-4 py-3 text-[13px] text-muted">Sin anomalías.</li>}
+              </ul>
+            </Panel>
           </div>
         </>
       )}

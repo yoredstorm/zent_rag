@@ -1,15 +1,25 @@
-import { ArrowClockwise, Plus, Trash, WebhooksLogo } from "@phosphor-icons/react";
+import { Plus, Trash, WebhooksLogo } from "@phosphor-icons/react";
 import { FormEvent, useEffect, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { useToast } from "../Toast";
 import {
+  Button,
+  ConfirmDialog,
+  DataTable,
   EmptyState,
   ErrorInline,
+  Field,
+  IconButton,
+  Input,
+  Modal,
   PageHeader,
-  SkeletonBlock,
-  Spinner,
+  PasswordInput,
+  ResultCount,
+  Select,
+  StatusBadge,
   SuccessInline,
+  type Column,
 } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
 
@@ -37,7 +47,11 @@ type Webhook = {
   created_at: string;
 };
 
-export default function WebhooksPage() {
+/**
+ * Suscripciones de webhooks. `embedded` evita un segundo h1 cuando la página
+ * se muestra dentro de la pestaña Webhooks de API y Claves.
+ */
+export default function WebhooksPage({ embedded = false }: { embedded?: boolean }) {
   const { session } = useAuth();
   const { pushToast } = useToast();
   const [hooks, setHooks] = useState<Webhook[]>([]);
@@ -50,7 +64,8 @@ export default function WebhooksPage() {
   const [secret, setSecret] = useState("");
   const [creating, setCreating] = useState(false);
   const [testing, setTesting] = useState<string | null>(null);
-  const [deleting, setDeleting] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Webhook | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   function load() {
     if (!session) return;
@@ -115,7 +130,7 @@ export default function WebhooksPage() {
 
   async function deleteHook(hook: Webhook) {
     if (!session) return;
-    setDeleting(hook.id);
+    setDeleting(true);
     setError("");
     setMsg("");
     try {
@@ -125,170 +140,194 @@ export default function WebhooksPage() {
         organizationId: session.organizationId,
       });
       setMsg(`Webhook "${hook.event_type}" eliminado.`);
+      setPendingDelete(null);
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al eliminar");
     } finally {
-      setDeleting(null);
+      setDeleting(false);
     }
   }
 
+  const columns: Column<Webhook>[] = [
+    {
+      key: "event",
+      header: "Evento",
+      render: (hook) => <span className="mono text-xs text-text">{hook.event_type}</span>,
+    },
+    {
+      key: "url",
+      header: "URL",
+      render: (hook) => (
+        <span className="mono block max-w-[22rem] truncate text-xs text-muted" title={hook.url}>
+          {hook.url}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Estado",
+      width: "1%",
+      render: (hook) => <StatusBadge status={hook.enabled ? "active" : "inactive"} />,
+    },
+    {
+      key: "deliveries",
+      header: "Entregas",
+      align: "right",
+      render: (hook) => <span className="mono text-xs">{hook.delivery_count}</span>,
+    },
+    {
+      key: "failures",
+      header: "Fallos",
+      align: "right",
+      render: (hook) =>
+        hook.fail_count > 0 ? (
+          <span className="mono text-xs text-danger">{hook.fail_count}</span>
+        ) : (
+          <span className="mono text-xs text-muted">0</span>
+        ),
+    },
+    {
+      key: "last",
+      header: "Última entrega",
+      hideBelow: "md",
+      render: (hook) => (
+        <span className="text-xs text-muted">
+          {hook.last_delivered_at ? fmtDateTime(hook.last_delivered_at) : "—"}
+        </span>
+      ),
+    },
+    {
+      key: "created",
+      header: "Creado",
+      hideBelow: "lg",
+      render: (hook) => <span className="text-xs text-faint">{fmtDateTime(hook.created_at)}</span>,
+    },
+  ];
+
+  const subscribeButton = (
+    <Button variant="primary" leadingIcon={Plus} onClick={() => setShowCreate(true)}>
+      Suscribir webhook
+    </Button>
+  );
+
   return (
     <div>
-      <PageHeader
-        title="Webhooks"
-        subtitle="Recibe eventos de tu workspace en tus propios sistemas. Enviamos un POST firmado por cada evento suscrito."
-        actions={
-          <button type="button" className="btn btn-primary" onClick={() => setShowCreate((v) => !v)}>
-            <Plus size={15} aria-hidden />
-            Suscribir webhook
-          </button>
-        }
-      />
+      {embedded ? (
+        <div className="mb-3 flex justify-end">{subscribeButton}</div>
+      ) : (
+        <PageHeader
+          title="Webhooks"
+          subtitle="Recibe eventos de tu workspace en tus propios sistemas. Enviamos un POST firmado por cada evento suscrito."
+          actions={subscribeButton}
+        />
+      )}
       <ErrorInline message={error} />
       <SuccessInline message={msg} />
 
-      {showCreate && (
-        <form onSubmit={create} className="panel mb-4 border-accent/30">
-          <div className="border-b border-border px-5 py-4">
-            <h2 className="text-sm font-semibold text-text">Nuevo webhook</h2>
-          </div>
-          <div className="grid grid-cols-1 gap-3 p-5 sm:grid-cols-2">
-            <div className="field">
-              <label htmlFor="wh-event">Evento</label>
-              <select
-                id="wh-event"
-                value={eventType}
-                onChange={(e) => setEventType(e.target.value)}
-              >
-                {WEBHOOK_EVENTS.map((ev) => (
-                  <option key={ev} value={ev}>
-                    {ev}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor="wh-url">URL de destino</label>
-              <input
-                id="wh-url"
-                type="url"
-                required
-                placeholder="https://tu-sistema.example/hook"
-                value={url}
-                onChange={(e) => setUrl(e.target.value)}
-              />
-            </div>
-            <div className="field sm:col-span-2">
-              <label htmlFor="wh-secret">
-                Secreto <span className="text-faint">(opcional)</span>
-              </label>
-              <input
-                id="wh-secret"
-                type="password"
-                autoComplete="off"
-                placeholder="Si lo dejas vacío generamos uno automáticamente"
-                value={secret}
-                onChange={(e) => setSecret(e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => setShowCreate(false)}
-            >
-              Cancelar
-            </button>
-            <button type="submit" className="btn btn-primary" disabled={creating}>
-              {creating ? <Spinner size={14} /> : <Plus size={15} aria-hidden />}
-              Suscribir
-            </button>
-          </div>
-        </form>
-      )}
-
-      <div className="panel">
-        <div className="flex items-center gap-2 border-b border-border px-5 py-4">
-          <WebhooksLogo size={16} className="text-accent" aria-hidden />
-          <h2 className="text-sm font-semibold text-text">Suscripciones ({hooks.length})</h2>
-        </div>
-        {loading ? (
-          <div className="p-5">
-            <SkeletonBlock rows={4} />
-          </div>
-        ) : hooks.length === 0 ? (
+      <DataTable
+        columns={columns}
+        rows={hooks}
+        rowKey={(hook) => hook.id}
+        loading={loading}
+        toolbar={<ResultCount shown={hooks.length} total={hooks.length} noun="suscripciones" />}
+        empty={
           <EmptyState
             icon={WebhooksLogo}
             title="Sin webhooks configurados"
             body="Suscribe un evento para recibir notificaciones en tu infraestructura cuando ocurra."
           />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="table min-w-[720px]">
-              <thead>
-                <tr>
-                  <th>Evento</th>
-                  <th>URL</th>
-                  <th>Estado</th>
-                  <th>Entregas</th>
-                  <th>Fallos</th>
-                  <th>Última entrega</th>
-                  <th>Creado</th>
-                  <th className="text-right">Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {hooks.map((hook) => (
-                  <tr key={hook.id}>
-                    <td className="mono text-xs text-text">{hook.event_type}</td>
-                    <td className="max-w-[220px] truncate font-mono text-xs text-muted" title={hook.url}>
-                      {hook.url}
-                    </td>
-                    <td>
-                      {hook.enabled ? (
-                        <span className="badge badge-ok">Activo</span>
-                      ) : (
-                        <span className="badge badge-muted">Desactivado</span>
-                      )}
-                    </td>
-                    <td className="mono text-xs">{hook.delivery_count}</td>
-                    <td className="mono text-xs text-danger">{hook.fail_count}</td>
-                    <td className="text-xs text-muted">
-                      {hook.last_delivered_at ? fmtDateTime(hook.last_delivered_at) : "—"}
-                    </td>
-                    <td className="text-xs text-faint">{fmtDateTime(hook.created_at)}</td>
-                    <td className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <button
-                          type="button"
-                          className="btn btn-ghost min-h-10 px-2 py-1 text-xs"
-                          onClick={() => void testHook(hook)}
-                          disabled={testing === hook.id}
-                          title="Enviar ping de prueba"
-                        >
-                          {testing === hook.id ? <Spinner size={13} /> : <ArrowClockwise size={14} aria-hidden />}
-                          Probar
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-ghost min-h-10 px-2 py-1 text-xs"
-                          onClick={() => void deleteHook(hook)}
-                          disabled={deleting === hook.id}
-                          aria-label={`Eliminar webhook ${hook.event_type}`}
-                        >
-                          {deleting === hook.id ? <Spinner size={13} /> : <Trash size={14} aria-hidden />}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+        }
+        rowActions={(hook) => (
+          <>
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={testing === hook.id}
+              onClick={() => void testHook(hook)}
+            >
+              Probar
+            </Button>
+            <IconButton
+              label={`Eliminar webhook ${hook.event_type}`}
+              icon={Trash}
+              variant="ghost"
+              onClick={() => setPendingDelete(hook)}
+            />
+          </>
         )}
-      </div>
+      />
+
+      <Modal
+        open={showCreate}
+        onOpenChange={setShowCreate}
+        title="Nuevo webhook"
+        description="Enviamos un POST firmado a la URL cada vez que ocurra el evento suscrito."
+        size="md"
+      >
+        <form onSubmit={create} className="flex flex-col gap-3">
+          <Field label="Evento">
+            <Select id="wh-event" value={eventType} onChange={(e) => setEventType(e.target.value)}>
+              {WEBHOOK_EVENTS.map((ev) => (
+                <option key={ev} value={ev}>
+                  {ev}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="URL de destino" required>
+            <Input
+              id="wh-url"
+              type="url"
+              required
+              placeholder="https://tu-sistema.example/hook"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              autoComplete="off"
+            />
+          </Field>
+          <Field label="Secreto" hint="Si lo dejas vacío generamos uno automáticamente.">
+            <PasswordInput
+              id="wh-secret"
+              autoComplete="off"
+              value={secret}
+              onChange={(e) => setSecret(e.target.value)}
+            />
+          </Field>
+          <div className="mt-2 flex flex-wrap justify-end gap-2">
+            <Button variant="ghost" onClick={() => setShowCreate(false)} disabled={creating}>
+              Cancelar
+            </Button>
+            <Button
+              type="submit"
+              variant="primary"
+              loading={creating}
+              leadingIcon={Plus}
+              disabled={!url.trim()}
+            >
+              Suscribir
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        title={pendingDelete ? `Eliminar el webhook ${pendingDelete.event_type}` : "Eliminar webhook"}
+        body={
+          pendingDelete
+            ? `Se dejan de enviar los eventos a ${pendingDelete.url}. Esta acción no se puede deshacer.`
+            : undefined
+        }
+        confirmLabel="Eliminar"
+        loading={deleting}
+        onConfirm={() => {
+          if (pendingDelete) void deleteHook(pendingDelete);
+        }}
+      />
     </div>
   );
 }

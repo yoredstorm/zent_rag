@@ -10,6 +10,10 @@ version: "3.9"
 x-common-env: &common-env
   TZ: ${TZ:-America/Lima}
   RAG_ENVIRONMENT: ${ENVIRONMENT:-development}
+  # Cada trial re-embebe el dataset demo completo (schema farmacia) y con LLM en
+  # CPU eso deja el worker ocupado minutos por alta. Apagado en dev: el demo
+  # sigue disponible por StartMode ("Probar con datos de ejemplo").
+  RAG_DEMO_PROVISION_ON_TRIAL: ${RAG_DEMO_PROVISION_ON_TRIAL:-false}
   # Pydantic Settings usa prefijo RAG_ (ver src/config.py)
   RAG_POSTGRES_HOST: postgres
   RAG_POSTGRES_PORT: "5432"

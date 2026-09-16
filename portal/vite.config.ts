@@ -24,6 +24,20 @@ export default defineConfig({
     port: 4173,
     proxy,
   },
+  build: {
+    // Vendor separado: el chunk base baja de tamaño y el cache del navegador
+    // no se invalida en cada cambio de producto.
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          react: ["react", "react-dom", "react-router-dom"],
+          charts: ["recharts"],
+          motion: ["motion"],
+          markdown: ["marked", "dompurify"],
+        },
+      },
+    },
+  },
   test: {
     environment: "jsdom",
     globals: true,

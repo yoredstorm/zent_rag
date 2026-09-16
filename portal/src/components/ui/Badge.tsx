@@ -130,6 +130,26 @@ const STATUS_META: Record<string, StatusMeta> = {
   checking: { tone: "accent", label: "Revisando ahora", Icon: CircleNotch, spin: true },
   denied: { tone: "danger", label: "Denegado", Icon: XCircle },
   simulated: { tone: "neutral", label: "Simulado", Icon: Question },
+  // Seguridad / riesgo / cumplimiento (SOC, controles, políticas)
+  detected: { tone: "warn", label: "Detectado", Icon: WarningCircle },
+  contained: { tone: "info", label: "Contenido", Icon: Info },
+  false_positive: { tone: "neutral", label: "Falso positivo", Icon: Question },
+  accepted: { tone: "warn", label: "Aceptado", Icon: WarningCircle },
+  mitigated: { tone: "ok", label: "Mitigado", Icon: CheckCircle },
+  compliant: { tone: "ok", label: "Conforme", Icon: CheckCircle },
+  non_compliant: { tone: "danger", label: "No conforme", Icon: XCircle },
+  // Circuit breakers del gateway
+  circuit_open: { tone: "danger", label: "Abierto", Icon: XCircle },
+  half_open: { tone: "warn", label: "Semiabierto", Icon: WarningCircle },
+  circuit_closed: { tone: "ok", label: "Cerrado", Icon: CheckCircle },
+  // Integraciones / disponibilidad
+  installed: { tone: "ok", label: "Instalado", Icon: CheckCircle },
+  enabled: { tone: "ok", label: "Habilitado", Icon: CheckCircle },
+  ok: { tone: "ok", label: "Correcto", Icon: CheckCircle },
+  available: { tone: "info", label: "Disponible", Icon: Info },
+  unavailable: { tone: "neutral", label: "No disponible", Icon: Question },
+  disabled: { tone: "neutral", label: "Deshabilitado", Icon: Question },
+  expired: { tone: "danger", label: "Expirado", Icon: XCircle },
   created_ok: { tone: "info", label: "Creado", Icon: Info },
 };
 

@@ -29,6 +29,8 @@ docker-compose.override.yml
 # Root only — portal/src/pages/onboarding/data is source code and must be tracked
 /data/
 uploads/
+# Dumps de Postgres para verificación/rollback local (pg_dump)
+/backups/
 
 # Construction / internal docs (producto: solo README.md raíz)
 docs/*

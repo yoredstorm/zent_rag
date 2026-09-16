@@ -276,9 +276,18 @@ async def _do_create_trial(
     )
     await set_active_workspace(organization_id, user.id, demo_ws.id)
     try:
+        from src.core.config import get_settings
         from src.verticals.demo_farmacia.provisioning import provision_demo_kb
 
-        await provision_demo_kb(organization_id, workspace_id=demo_ws.id)
+        # Cada trial re-embebe el dataset demo completo; en entornos con LLM
+        # lento eso satura la cola de ingesta (ver DEMO_PROVISION_ON_TRIAL).
+        if get_settings().DEMO_PROVISION_ON_TRIAL:
+            await provision_demo_kb(organization_id, workspace_id=demo_ws.id)
+        else:
+            logger.info(
+                "Demo provisioning omitido por configuración",
+                organization_id=str(organization_id),
+            )
     except Exception:  # noqa: BLE001
         logger.warning(
             "Demo provisioning skipped",

@@ -1,7 +1,22 @@
 import { Cards } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
 import { platformApi } from "../../api";
-import { EmptyState, ErrorInline, PageHeader, SkeletonBlock } from "../../components/ui";
+import {
+  Badge,
+  Button,
+  EmptyState,
+  ErrorInline,
+  Field,
+  FormActions,
+  Input,
+  PageHeader,
+  Panel,
+  PanelHeader,
+  SaveStatus,
+  Skeleton,
+  Switch,
+  cn,
+} from "../../components/ui";
 import { usePlatformAuth } from "../../platformAuth";
 
 type Entitlements = Record<string, boolean | number | null>;
@@ -138,104 +153,122 @@ export default function AdminPlansPage() {
         subtitle="Límites y funciones. Los cambios aplican sin alterar el esquema."
       />
       <ErrorInline message={error} />
-      {loading && <SkeletonBlock />}
+      {loading && (
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,280px)_1fr]" aria-hidden>
+          <Skeleton className="h-[220px] rounded-lg" />
+          <Skeleton className="h-[320px] rounded-lg" />
+        </div>
+      )}
       {!loading && plans.length === 0 && (
-        <EmptyState icon={Cards} title="Sin planes" body="No hay planes cargados." />
+        <Panel>
+          <EmptyState
+            icon={Cards}
+            title="Sin planes"
+            body="La plataforma no devolvió planes configurados."
+          />
+        </Panel>
       )}
       {plans.length > 0 && (
-        <div className="grid gap-4 lg:grid-cols-[minmax(0,280px)_1fr]">
-          <div className="panel overflow-x-auto">
-            <table className="w-full min-w-[240px] text-left text-sm">
-              <thead className="text-xs uppercase tracking-wide text-faint">
-                <tr>
-                  <th className="px-4 py-3">Plan</th>
-                </tr>
-              </thead>
-              <tbody>
-                {plans.map((p) => (
-                  <tr key={p.id} className="border-t border-border">
-                    <td className="px-4 py-2">
-                      <button
-                        type="button"
-                        className={`min-h-11 w-full rounded-md px-3 text-left text-sm ${
-                          p.id === selectedId
-                            ? "bg-accent-soft text-text"
-                            : "text-muted hover:bg-soft hover:text-text"
-                        }`}
-                        onClick={() => selectPlan(p)}
-                      >
-                        {p.display_name || p.name}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {selected && (
-            <form
-              className="panel px-5 py-4"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void save();
-              }}
-            >
-              <h2 className="text-sm font-semibold text-text">
-                Entitlements — {selected.display_name}
-              </h2>
-              <p className="mt-1 text-xs text-faint">
-                Vacío en un número significa ilimitado.
-              </p>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                {Object.entries(INT_LABELS).map(([key, label]) => (
-                  <label key={key} className="block text-sm">
-                    <span className="mb-1 block text-muted">{label}</span>
-                    <input
-                      className="min-h-11 w-full rounded-md border border-border bg-bg px-3 text-sm"
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      value={draft[key] == null ? "" : String(draft[key])}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setDraft((prev) => ({
-                          ...prev,
-                          [key]: v === "" ? null : Number(v),
-                        }));
-                      }}
-                    />
-                  </label>
-                ))}
-              </div>
-              <fieldset className="mt-4">
-                <legend className="mb-2 text-sm text-muted">Funciones</legend>
-                <div className="grid gap-2 sm:grid-cols-2">
-                  {Object.entries(BOOL_LABELS).map(([key, label]) => (
-                    <label key={key} className="flex min-h-11 items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4"
-                        checked={Boolean(draft[key])}
-                        onChange={(e) =>
-                          setDraft((prev) => ({ ...prev, [key]: e.target.checked }))
-                        }
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,280px)_1fr]">
+          <Panel className="self-start overflow-hidden">
+            <PanelHeader title="Planes" description="Elegí un plan para editar sus entitlements." />
+            <nav aria-label="Planes" className="flex flex-col gap-0.5 p-2">
+              {plans.map((p) => {
+                const active = p.id === selectedId;
+                return (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => selectPlan(p)}
+                    aria-current={active ? "true" : undefined}
+                    className={cn(
+                      "group relative flex min-h-9 w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 text-left text-[13px]",
+                      active
+                        ? "bg-soft/70 font-medium text-text"
+                        : "text-muted hover:bg-soft/45 hover:text-text"
+                    )}
+                  >
+                    {active && (
+                      <span
+                        className="absolute top-1 bottom-1 -left-0.5 w-[2px] rounded-full bg-accent"
+                        aria-hidden
                       />
-                      {label}
-                    </label>
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{p.display_name || p.name}</span>
+                    {p.is_trial && <Badge tone="warn">trial</Badge>}
+                  </button>
+                );
+              })}
+            </nav>
+          </Panel>
+
+          {selected && (
+            <Panel>
+              <form
+                className="p-4"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void save();
+                }}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h2 className="text-h3">Entitlements — {selected.display_name}</h2>
+                    <p className="mt-0.5 text-xs leading-relaxed text-faint">
+                      Vacío en un número significa ilimitado.
+                    </p>
+                  </div>
+                  <SaveStatus
+                    state={saving ? "saving" : saved ? "saved" : "idle"}
+                    savedLabel="Cambios guardados."
+                  />
+                </div>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {Object.entries(INT_LABELS).map(([key, label]) => (
+                    <Field key={key} label={label}>
+                      <Input
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        value={draft[key] == null ? "" : String(draft[key])}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setDraft((prev) => ({
+                            ...prev,
+                            [key]: v === "" ? null : Number(v),
+                          }));
+                          setSaved(false);
+                        }}
+                      />
+                    </Field>
                   ))}
                 </div>
-              </fieldset>
-              <div className="mt-4 flex flex-wrap items-center gap-3">
-                <button type="submit" className="btn btn-primary min-h-11" disabled={saving}>
-                  {saving ? "Guardando…" : "Guardar"}
-                </button>
-                {saved && (
-                  <p className="text-sm text-muted" role="status">
-                    Cambios guardados.
-                  </p>
-                )}
-              </div>
-            </form>
+
+                <fieldset className="mt-4">
+                  <legend className="eyebrow mb-2">Funciones</legend>
+                  <div className="grid gap-2.5 sm:grid-cols-2">
+                    {Object.entries(BOOL_LABELS).map(([key, label]) => (
+                      <Switch
+                        key={key}
+                        label={label}
+                        checked={Boolean(draft[key])}
+                        onCheckedChange={(checked) => {
+                          setDraft((prev) => ({ ...prev, [key]: checked }));
+                          setSaved(false);
+                        }}
+                      />
+                    ))}
+                  </div>
+                </fieldset>
+
+                <FormActions className="mt-5">
+                  <Button type="submit" variant="primary" loading={saving}>
+                    Guardar
+                  </Button>
+                </FormActions>
+              </form>
+            </Panel>
           )}
         </div>
       )}

@@ -1,7 +1,16 @@
-import { BookOpen, Warning } from "@phosphor-icons/react";
+import { BookOpen, Database, Warning } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api";
-import { ErrorInline, PageHeader, SkeletonBlock } from "../../components/ui";
+import {
+  EmptyState,
+  ErrorInline,
+  Metric,
+  MetricGrid,
+  PageHeader,
+  Panel,
+  PanelHeader,
+  Skeleton,
+} from "../../components/ui";
 import { usePlatformAuth } from "../../platformAuth";
 
 type Dash = { total_sources: number; total_documents: number; duplicates_removed: number; failed_refreshes_7d: number; open_gaps: number; sources_by_type: { source_type: string; count: number }[]; top_gaps: { query: string; occurrences: number }[] };
@@ -32,46 +41,106 @@ export default function AdminKnowledgeHubPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
+  const sources = dash?.sources_by_type ?? [];
+  const gaps = dash?.top_gaps ?? [];
+
   return (
     <div className="space-y-6">
       <PageHeader title="Knowledge Hub" subtitle="Fuentes de conocimiento en todas las organizaciones: cobertura, deduplicación y huecos." />
-      {error && <ErrorInline>{error}</ErrorInline>}
+      <ErrorInline message={error} />
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <div className="flex flex-col gap-3" aria-hidden>
+          <Skeleton className="h-[86px] rounded-lg" />
+          <Skeleton className="h-[220px] rounded-lg" />
+        </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-            <div className="panel p-4"><p className="text-2xl font-bold text-text">{dash?.total_sources ?? 0}</p><p className="text-xs text-faint">Fuentes</p></div>
-            <div className="panel p-4"><p className="text-2xl font-bold text-text">{dash?.total_documents ?? 0}</p><p className="text-xs text-faint">Documentos</p></div>
-            <div className="panel p-4"><p className="text-2xl font-bold text-text">{dash?.duplicates_removed ?? 0}</p><p className="text-xs text-faint">Duplicados evitados</p></div>
-            <div className="panel p-4"><p className="text-2xl font-bold text-text">{dash?.failed_refreshes_7d ?? 0}</p><p className="text-xs text-faint">Refrescos fallidos 7d</p></div>
-            <div className="panel p-4"><p className="text-2xl font-bold text-text">{dash?.open_gaps ?? 0}</p><p className="text-xs text-faint">Huecos abiertos</p></div>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
+            <Metric
+              label="Documentos"
+              value={(dash?.total_documents ?? 0).toLocaleString()}
+              hint="Total vectorizado en todas las organizaciones"
+              icon={Database}
+            />
+            <MetricGrid cols={4} className="lg:grid-cols-4">
+              <Metric label="Fuentes" value={(dash?.total_sources ?? 0).toLocaleString()} size="md" />
+              <Metric
+                label="Duplicados evitados"
+                value={(dash?.duplicates_removed ?? 0).toLocaleString()}
+                size="md"
+                hint="Deduplicación activa"
+              />
+              <Metric
+                label="Refrescos fallidos 7d"
+                value={(dash?.failed_refreshes_7d ?? 0).toLocaleString()}
+                size="md"
+                tone={(dash?.failed_refreshes_7d ?? 0) > 0 ? "warn" : "default"}
+              />
+              <Metric
+                label="Huecos abiertos"
+                value={(dash?.open_gaps ?? 0).toLocaleString()}
+                size="md"
+                tone={(dash?.open_gaps ?? 0) > 0 ? "warn" : "default"}
+              />
+            </MetricGrid>
           </div>
 
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <section>
-              <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text"><BookOpen size={15} /> Fuentes por tipo</h3>
-              <div className="panel space-y-1 p-3">
-                {(dash?.sources_by_type ?? []).map((t) => (
-                  <div key={t.source_type} className="flex items-center gap-2 rounded-md bg-soft px-3 py-1 text-xs">
-                    <span className="flex-1 text-text">{t.source_type}</span>
-                    <span className="text-faint">{t.count}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-            <section>
-              <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text"><Warning size={15} /> Huecos más frecuentes</h3>
-              <div className="panel space-y-1 p-3">
-                {(dash?.top_gaps ?? []).map((g) => (
-                  <div key={g.query} className="flex items-center gap-2 rounded-md bg-soft px-3 py-1 text-xs">
-                    <span className="flex-1 truncate text-text">{g.query}</span>
-                    <span className="text-faint">×{g.occurrences}</span>
-                  </div>
-                ))}
-                {(dash?.top_gaps ?? []).length === 0 && <p className="text-xs text-faint">Sin huecos.</p>}
-              </div>
-            </section>
+            <Panel>
+              <PanelHeader
+                title={
+                  <span className="flex items-center gap-2">
+                    <BookOpen size={15} aria-hidden /> Fuentes por tipo
+                  </span>
+                }
+                description="Cómo se reparte la cobertura entre conectores."
+              />
+              {sources.length === 0 ? (
+                <EmptyState
+                  compact
+                  icon={BookOpen}
+                  title="Sin fuentes conectadas"
+                  body="Cuando una organización conecte su primera fuente, aparecerá acá con su tipo."
+                />
+              ) : (
+                <ul className="divide-y divide-border-soft">
+                  {sources.map((t) => (
+                    <li key={t.source_type} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                      <span className="min-w-0 truncate text-[13px] text-text">{t.source_type}</span>
+                      <span className="mono shrink-0 text-xs text-muted">{t.count.toLocaleString()}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Panel>
+
+            <Panel>
+              <PanelHeader
+                title={
+                  <span className="flex items-center gap-2">
+                    <Warning size={15} aria-hidden /> Huecos más frecuentes
+                  </span>
+                }
+                description="Consultas sin cobertura, ordenadas por ocurrencias."
+              />
+              {gaps.length === 0 ? (
+                <EmptyState
+                  compact
+                  icon={Warning}
+                  title="Sin huecos abiertos"
+                  body="No hay consultas sin cobertura en el periodo."
+                />
+              ) : (
+                <ul className="divide-y divide-border-soft">
+                  {gaps.map((g) => (
+                    <li key={g.query} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                      <span className="min-w-0 truncate text-[13px] text-text" title={g.query}>{g.query}</span>
+                      <span className="mono shrink-0 text-xs text-warn">×{g.occurrences}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Panel>
           </div>
         </>
       )}

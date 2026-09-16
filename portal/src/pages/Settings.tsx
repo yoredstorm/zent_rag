@@ -1,17 +1,31 @@
-import { Bell, Buildings, Code, GearSix, Sparkle } from "@phosphor-icons/react";
+import { ArrowCounterClockwise, Bell, Buildings, Code, GearSix, Sparkle } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import { ComingSoon } from "../components/ComingSoon";
-import { PageTabs } from "../components/PageTabs";
 import ResidencyPanel from "../components/ResidencyPanel";
 import {
+  Badge,
+  Button,
+  ButtonLink,
+  Checkbox,
+  ConfirmDialog,
+  EmptyState,
   ErrorInline,
+  Field,
+  FormActions,
+  Input,
+  KeyValue,
   PageHeader,
+  Panel,
+  PanelHeader,
+  SaveStatus,
   SkeletonBlock,
-  Spinner,
   SuccessInline,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  type SaveState,
 } from "../components/ui";
 
 type OrgProfile = {
@@ -20,6 +34,14 @@ type OrgProfile = {
   country: string | null;
   email: string | null;
   phone: string | null;
+};
+
+const EMPTY_PROFILE: OrgProfile = {
+  name: "",
+  company_name: "",
+  country: "",
+  email: "",
+  phone: "",
 };
 
 const TABS = [
@@ -35,43 +57,44 @@ type TabId = (typeof TABS)[number]["id"];
 export default function SettingsPage() {
   const { session } = useAuth();
   const [tab, setTab] = useState<TabId>("general");
-  const [profile, setProfile] = useState<OrgProfile>({
-    name: "",
-    company_name: "",
-    country: "",
-    email: "",
-    phone: "",
-  });
+  const [profile, setProfile] = useState<OrgProfile>(EMPTY_PROFILE);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-  const [msg, setMsg] = useState("");
+  const [loadError, setLoadError] = useState("");
+  const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [saveError, setSaveError] = useState("");
 
   useEffect(() => {
     if (!session) return;
     setLoading(true);
+    setLoadError("");
     api<OrgProfile>("/api/v1/organizations", {
       token: session.token,
       organizationId: session.organizationId,
     })
-      .then((data) =>
+      .then((data) => {
         setProfile({
           name: data.name || "",
           company_name: data.company_name || "",
           country: data.country || "",
           email: data.email || "",
           phone: data.phone || "",
-        })
-      )
-      .catch((err) => setError(err instanceof Error ? err.message : "Error"))
+        });
+        setSaveState("idle");
+      })
+      .catch((err) => setLoadError(err instanceof Error ? err.message : "Error"))
       .finally(() => setLoading(false));
   }, [session]);
 
+  function update(patch: Partial<OrgProfile>) {
+    setProfile((p) => ({ ...p, ...patch }));
+    setSaveState("dirty");
+    setSaveError("");
+  }
+
   async function save() {
     if (!session) return;
-    setSaving(true);
-    setError("");
-    setMsg("");
+    setSaveState("saving");
+    setSaveError("");
     try {
       await api("/api/v1/organizations", {
         method: "PUT",
@@ -85,13 +108,14 @@ export default function SettingsPage() {
           phone: profile.phone,
         }),
       });
-      setMsg("Organización actualizada.");
+      setSaveState("saved");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al guardar");
-    } finally {
-      setSaving(false);
+      setSaveError(err instanceof Error ? err.message : "Error al guardar");
+      setSaveState("error");
     }
   }
+
+  const canSave = saveState === "dirty" || saveState === "error";
 
   return (
     <div>
@@ -99,129 +123,206 @@ export default function SettingsPage() {
         title="Configuración"
         subtitle="Administra tu organización, workspace y preferencias de la plataforma."
       />
-      <PageTabs tabs={TABS} active={tab} onChange={(id) => setTab(id as TabId)} idPrefix="settings" />
-      <ErrorInline message={error} />
-      <SuccessInline message={msg} />
+      <Tabs value={tab} onValueChange={(value) => setTab(value as TabId)}>
+        <TabsList>
+          {TABS.map(({ id, label, icon }) => (
+            <TabsTrigger key={id} value={id} icon={icon}>
+              {label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-      {tab === "general" && (
-        <div className="panel mt-4 max-w-xl p-5">
-          <h2 className="mb-3 text-sm font-semibold text-text">Perfil de la organización</h2>
-          {loading ? (
-            <SkeletonBlock rows={4} />
-          ) : (
-            <form
-              className="space-y-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void save();
-              }}
-            >
-              <label className="block text-sm">
-                <span className="mb-1 block text-muted">Nombre</span>
-                <input
-                  className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
-                  value={profile.name}
-                  onChange={(e) => setProfile((p) => ({ ...p, name: e.target.value }))}
-                  autoComplete="organization"
-                />
-              </label>
-              <label className="block text-sm">
-                <span className="mb-1 block text-muted">Empresa</span>
-                <input
-                  className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
-                  value={profile.company_name || ""}
-                  onChange={(e) =>
-                    setProfile((p) => ({ ...p, company_name: e.target.value }))
-                  }
-                  autoComplete="organization"
-                />
-              </label>
-              <label className="block text-sm">
-                <span className="mb-1 block text-muted">País</span>
-                <input
-                  className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
-                  value={profile.country || ""}
-                  onChange={(e) => setProfile((p) => ({ ...p, country: e.target.value }))}
-                  autoComplete="country-name"
-                />
-              </label>
-              <label className="block text-sm">
-                <span className="mb-1 block text-muted">Email</span>
-                <input
-                  type="email"
-                  className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
-                  value={profile.email || ""}
-                  onChange={(e) => setProfile((p) => ({ ...p, email: e.target.value }))}
-                  autoComplete="email"
-                />
-              </label>
-              <button type="submit" className="btn btn-primary" disabled={saving}>
-                {saving ? <Spinner size={14} /> : null}
-                Guardar
-              </button>
-            </form>
-          )}
-        </div>
-      )}
+        <TabsContent value="general">
+          <ErrorInline message={loadError} className="mb-4" />
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start">
+            <Panel>
+              <PanelHeader
+                title="Perfil de la organización"
+                description="Datos legales y de contacto que Zent usa en la plataforma."
+                actions={<SaveStatus state={saveState} error={saveError} />}
+              />
+              {loading ? (
+                <div className="panel-body">
+                  <SkeletonBlock rows={4} />
+                </div>
+              ) : (
+                <form
+                  className="panel-body"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void save();
+                  }}
+                >
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field
+                      label="Nombre"
+                      hint="Nombre visible de la organización en el portal."
+                      className="sm:col-span-2"
+                    >
+                      <Input
+                        value={profile.name}
+                        onChange={(e) => update({ name: e.target.value })}
+                        autoComplete="organization"
+                        required
+                      />
+                    </Field>
+                    <Field label="Empresa">
+                      <Input
+                        value={profile.company_name || ""}
+                        onChange={(e) => update({ company_name: e.target.value })}
+                        autoComplete="organization"
+                      />
+                    </Field>
+                    <Field label="País">
+                      <Input
+                        value={profile.country || ""}
+                        onChange={(e) => update({ country: e.target.value })}
+                        autoComplete="country-name"
+                      />
+                    </Field>
+                    <Field label="Email">
+                      <Input
+                        type="email"
+                        value={profile.email || ""}
+                        onChange={(e) => update({ email: e.target.value })}
+                        autoComplete="email"
+                      />
+                    </Field>
+                    <Field label="Teléfono">
+                      <Input
+                        type="tel"
+                        value={profile.phone || ""}
+                        onChange={(e) => update({ phone: e.target.value })}
+                        autoComplete="tel"
+                      />
+                    </Field>
+                  </div>
+                  <FormActions sticky className="mt-6">
+                    <SaveStatus state={saveState} error={saveError} />
+                    <Button type="submit" variant="primary" loading={saveState === "saving"} disabled={!canSave}>
+                      Guardar cambios
+                    </Button>
+                  </FormActions>
+                </form>
+              )}
+            </Panel>
 
-      {tab === "workspace" && (
-        <div className="mt-4 max-w-xl space-y-4">
-          <Link to="/workspaces" className="text-accent underline underline-offset-2">
-            Administra tus workspaces aquí.
-          </Link>
-          <WorkspaceResetPanel />
+            <aside className="lg:sticky lg:top-6">
+              <Panel>
+                <PanelHeader title="Contexto" description="Los cambios aplican a toda la organización." />
+                <div className="panel-body">
+                  <KeyValue
+                    items={[
+                      { key: "Organización", value: session?.companyName || "—" },
+                      { key: "Workspace", value: session?.workspaceId || "—", mono: true },
+                      { key: "Rol", value: session?.roles?.join(", ") || "—" },
+                      { key: "ID de organización", value: session?.organizationId || "—", mono: true },
+                    ]}
+                  />
+                </div>
+              </Panel>
+            </aside>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="workspace" className="space-y-4">
+          <Panel>
+            <PanelHeader
+              title="Workspaces"
+              description="Espacios de trabajo: agrupa agentes, knowledge bases y conectores."
+              actions={
+                <ButtonLink to="/workspaces" variant="secondary">
+                  Administrar workspaces
+                </ButtonLink>
+              }
+            />
+            <div className="panel-body text-[13px] leading-relaxed text-muted">
+              Cada workspace define el alcance de tus agentes y fuentes. La configuración de
+              residencia de datos se resuelve por organización.
+            </div>
+          </Panel>
           <ResidencyPanel session={session} />
-        </div>
-      )}
+          <WorkspaceResetPanel />
+        </TabsContent>
 
-      {tab === "ai" && (
-        <div className="mt-4 max-w-xl">
-          <ComingSoon>
-            Configuración de IA: modelos por defecto, límites y parámetros de generación.
-            Disponible en una próxima fase.
-          </ComingSoon>
-        </div>
-      )}
+        <TabsContent value="ai">
+          <Panel>
+            <EmptyState
+              icon={Sparkle}
+              tone="accent"
+              title="Configuración de IA"
+              body="Modelos por defecto, límites y parámetros de generación."
+              hint="Disponible en una próxima fase."
+            />
+          </Panel>
+        </TabsContent>
 
-      {tab === "notifications" && (
-        <div className="mt-4 max-w-xl">
-          <ComingSoon>
-            <Link to="/notifications" className="text-accent underline underline-offset-2">
-              Revisa tus notificaciones aquí.
-            </Link>{" "}
-            Las preferencias de canales y frecuencia llegarán en una próxima fase.
-          </ComingSoon>
-        </div>
-      )}
+        <TabsContent value="notifications">
+          <Panel>
+            <EmptyState
+              icon={Bell}
+              title="Preferencias de notificación"
+              body="Canales, frecuencia y silencios por evento llegarán en una próxima fase."
+              hint="Mientras tanto, el centro de notificaciones sigue operativo."
+              action={
+                <ButtonLink to="/notifications" variant="secondary">
+                  Ver notificaciones
+                </ButtonLink>
+              }
+            />
+          </Panel>
+        </TabsContent>
 
-      {tab === "developer" && (
-        <div className="mt-4 max-w-xl">
-          <ComingSoon>
-            <Link to="/developers" className="text-accent underline underline-offset-2">
-              Centro de desarrolladores
-            </Link>{" "}
-            para credenciales, webhooks y documentación de la API.
-          </ComingSoon>
-        </div>
-      )}
+        <TabsContent value="developer">
+          <Panel>
+            <EmptyState
+              icon={Code}
+              title="Centro de desarrolladores"
+              body="Credenciales, webhooks y documentación de la API."
+              action={
+                <ButtonLink to="/developers" variant="secondary">
+                  Abrir centro de desarrolladores
+                </ButtonLink>
+              }
+            />
+          </Panel>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
 
+const RESET_SCOPES = [
+  { key: "documents", label: "Documentos subidos" },
+  { key: "sources", label: "Conexiones de fuentes" },
+  { key: "semantic", label: "Mapeos semánticos" },
+  { key: "agents", label: "Agentes" },
+  { key: "all_business_data", label: "Datos de negocio (reinicio total)" },
+] as const;
+
 function WorkspaceResetPanel() {
   const { session } = useAuth();
-  const [docs, setDocs] = useState(false);
-  const [sources, setSources] = useState(false);
-  const [semantic, setSemantic] = useState(false);
-  const [agents, setAgents] = useState(false);
-  const [full, setFull] = useState(false);
+  const [scopes, setScopes] = useState<Record<(typeof RESET_SCOPES)[number]["key"], boolean>>({
+    documents: false,
+    sources: false,
+    semantic: false,
+    agents: false,
+    all_business_data: false,
+  });
   const [confirm, setConfirm] = useState("");
-  const [msg, setMsg] = useState("");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
+
+  const selected = RESET_SCOPES.filter((scope) => scopes[scope.key]);
+  const ready = confirm.trim() === "RESET" && !busy;
 
   async function run() {
     if (!session) return;
+    setBusy(true);
     setErr("");
+    setMsg("");
     try {
       await api("/api/v1/demo-transition/reset", {
         method: "POST",
@@ -229,33 +330,91 @@ function WorkspaceResetPanel() {
         organizationId: session.organizationId,
         body: JSON.stringify({
           confirmation: confirm,
-          documents: docs,
-          sources,
-          semantic,
-          agents,
-          all_business_data: full,
+          documents: scopes.documents,
+          sources: scopes.sources,
+          semantic: scopes.semantic,
+          agents: scopes.agents,
+          all_business_data: scopes.all_business_data,
         }),
       });
-      setMsg("Reset ejecutado.");
+      setMsg("Reinicio ejecutado.");
+      setConfirm("");
+      setConfirmOpen(false);
     } catch (error) {
       setErr(error instanceof Error ? error.message : "Error");
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
-    <div className="rounded-md border border-border p-4 text-sm">
-      <h2 className="mb-2 font-medium">Reset Data</h2>
-      <label className="flex gap-2"><input type="checkbox" checked={docs} onChange={(e) => setDocs(e.target.checked)} /> Remove uploaded documents</label>
-      <label className="flex gap-2"><input type="checkbox" checked={sources} onChange={(e) => setSources(e.target.checked)} /> Remove source connections</label>
-      <label className="flex gap-2"><input type="checkbox" checked={semantic} onChange={(e) => setSemantic(e.target.checked)} /> Remove semantic mappings</label>
-      <label className="flex gap-2"><input type="checkbox" checked={agents} onChange={(e) => setAgents(e.target.checked)} /> Remove agents</label>
-      <label className="flex gap-2"><input type="checkbox" checked={full} onChange={(e) => setFull(e.target.checked)} /> Full reset</label>
-      <input className="input mt-2" placeholder="RESET" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
-      {err && <p className="text-danger">{err}</p>}
-      {msg && <p>{msg}</p>}
-      <button type="button" className="btn btn-primary mt-2" onClick={() => void run()}>
-        Reset
-      </button>
-    </div>
+    <Panel className="border-danger/25">
+      <PanelHeader
+        title={
+          <span className="flex items-center gap-2">
+            Reinicio de datos
+            <Badge tone="danger">Zona de riesgo</Badge>
+          </span>
+        }
+        description="Elimina datos de la organización de forma selectiva. No se puede deshacer."
+      />
+      <div className="panel-body">
+        <ErrorInline message={err} />
+        <SuccessInline message={msg} />
+        <fieldset className="grid gap-2.5 sm:grid-cols-2">
+          <legend className="eyebrow mb-2">Alcance</legend>
+          {RESET_SCOPES.map((scope) => (
+            <Checkbox
+              key={scope.key}
+              checked={scopes[scope.key]}
+              onCheckedChange={(checked) =>
+                setScopes((current) => ({ ...current, [scope.key]: checked }))
+              }
+              label={scope.label}
+            />
+          ))}
+        </fieldset>
+        <div className="mt-4 max-w-xs">
+          <Field
+            label="Confirmación"
+            hint={
+              <>
+                Escribí <span className="mono text-text">RESET</span> para habilitar la acción.
+              </>
+            }
+          >
+            <Input
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              autoComplete="off"
+              placeholder="RESET"
+            />
+          </Field>
+        </div>
+      </div>
+      <div className="panel-footer justify-end">
+        <Button
+          variant="danger"
+          leadingIcon={ArrowCounterClockwise}
+          disabled={!ready}
+          onClick={() => setConfirmOpen(true)}
+        >
+          Reiniciar datos
+        </Button>
+      </div>
+      <ConfirmDialog
+        open={confirmOpen}
+        onOpenChange={setConfirmOpen}
+        title="Reiniciar datos de la organización"
+        body={
+          selected.length > 0
+            ? `Se eliminarán: ${selected.map((scope) => scope.label).join(", ")}. Esta acción no se puede deshacer.`
+            : "No hay alcances seleccionados: el reinicio se ejecutará sin eliminar datos."
+        }
+        confirmLabel="Ejecutar reinicio"
+        loading={busy}
+        onConfirm={() => void run()}
+      />
+    </Panel>
   );
 }

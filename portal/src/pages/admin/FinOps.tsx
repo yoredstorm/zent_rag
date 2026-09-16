@@ -3,11 +3,19 @@ import { useEffect, useState } from "react";
 import { platformApi } from "../../api";
 import { PageTabs } from "../../components/PageTabs";
 import {
+  Badge,
+  Button,
   EmptyState,
   ErrorInline,
+  Metric,
+  MetricGrid,
   PageHeader,
-  SkeletonBlock,
-  StatCard,
+  Panel,
+  PanelHeader,
+  Progress,
+  SectionHeader,
+  SkeletonTable,
+  SuccessInline,
 } from "../../components/ui";
 import { usePlatformAuth } from "../../platformAuth";
 
@@ -60,6 +68,10 @@ function usd(amount: number, digits = 2) {
 
 function usdCents(cents: number) {
   return usd(cents / 100, 0);
+}
+
+function aiCost(summary: Summary) {
+  return (summary.costs?.llm ?? 0) + (summary.costs?.embedding ?? 0);
 }
 
 function asRows(value: unknown): Row[] {
@@ -136,45 +148,59 @@ function normalizeEconomics(
   };
 }
 
+/** Desglose denso: montos a la derecha y participación con barra real. */
 function CostTable({ title, rows }: { title: string; rows?: Row[] }) {
   const list = rows ?? [];
   const total = list.reduce((sum, row) => sum + row.cost, 0);
   return (
-    <div className="overflow-x-auto">
-      <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-faint">{title}</p>
-      <table className="table">
-        <thead>
-          <tr>
-            <th>Dimensión</th>
-            <th>Requests</th>
-            <th>Tokens</th>
-            <th>Costo</th>
-            <th>%</th>
-          </tr>
-        </thead>
-        <tbody>
-          {list.length === 0 ? (
+    <section className="min-w-0">
+      <h3 className="eyebrow mb-2">{title}</h3>
+      <div className="overflow-x-auto">
+        <table className="table">
+          <thead>
             <tr>
-              <td colSpan={5} className="text-sm text-muted">
-                Sin datos.
-              </td>
+              <th>Dimensión</th>
+              <th className="text-right">Requests</th>
+              <th className="text-right">Tokens</th>
+              <th className="text-right">Costo</th>
+              <th className="w-32">Participación</th>
             </tr>
-          ) : (
-            list.map((r) => (
-              <tr key={r.label}>
-                <td className="text-sm text-text">{r.label}</td>
-                <td className="text-xs text-muted">{r.requests}</td>
-                <td className="text-xs text-muted">{r.tokens.toLocaleString()}</td>
-                <td className="text-sm">{usd(r.cost, 4)}</td>
-                <td className="text-xs text-faint">
-                  {total > 0 ? ((r.cost / total) * 100).toFixed(1) : "0.0"}%
+          </thead>
+          <tbody>
+            {list.length === 0 ? (
+              <tr>
+                <td colSpan={5}>
+                  <p className="py-2 text-[13px] text-muted">Sin eventos de costo en el período.</p>
                 </td>
               </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
+            ) : (
+              list.map((r) => {
+                const share = total > 0 ? (r.cost / total) * 100 : 0;
+                return (
+                  <tr key={r.label}>
+                    <td className="max-w-56 truncate">{r.label}</td>
+                    <td className="text-right tabular-nums">{r.requests.toLocaleString()}</td>
+                    <td className="text-right tabular-nums">{r.tokens.toLocaleString()}</td>
+                    <td className="text-right font-mono tabular-nums">{usd(r.cost, 4)}</td>
+                    <td>
+                      <span className="flex items-center gap-2">
+                        <span className="h-1.5 w-14 shrink-0 overflow-hidden rounded-full bg-track" aria-hidden>
+                          <span
+                            className="block h-full rounded-full bg-accent"
+                            style={{ width: `${Math.min(share, 100)}%` }}
+                          />
+                        </span>
+                        <span className="text-xs text-faint tabular-nums">{share.toFixed(1)}%</span>
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -187,6 +213,7 @@ export default function AdminFinOpsPage() {
   const [alerts, setAlerts] = useState<FinOpsAlert[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [note, setNote] = useState("");
 
   async function load() {
     if (!session) return;
@@ -230,13 +257,15 @@ export default function AdminFinOpsPage() {
 
   async function runChecks() {
     if (!session) return;
+    setNote("");
     try {
       const out = await platformApi<{ alerts_created?: { type: string }[] }>(
         "/api/v1/platform/finops/check",
         { method: "POST", token: session.token, body: "{}" }
       );
       const created = out.alerts_created?.length ?? 0;
-      setError(created ? `${created} alertas creadas` : "Sin alertas nuevas");
+      setError("");
+      setNote(created ? `${created} alertas creadas.` : "Sin alertas nuevas.");
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
@@ -247,11 +276,25 @@ export default function AdminFinOpsPage() {
     ? [
         { title: "Por provider", rows: breakdown.by_provider ?? [] },
         { title: "Por modelo", rows: breakdown.by_model ?? [] },
-        { title: "Por workspace", rows: breakdown.by_workspace ?? [] },
+        { title: "Por tenant / workspace", rows: breakdown.by_workspace ?? [] },
         { title: "Por agente", rows: breakdown.by_agent ?? [] },
         { title: "Por deployment", rows: breakdown.by_deployment ?? [] },
       ]
     : [];
+
+  const aiCostValue = summary ? aiCost(summary) : null;
+  const revenue = summary ? summary.revenue_cents / 100 : null;
+  const aiSharePct = revenue != null && revenue > 0 && aiCostValue != null ? (aiCostValue / revenue) * 100 : null;
+  const marginTone =
+    summary?.gross_margin_pct == null
+      ? "default"
+      : summary.gross_margin_pct < 0
+        ? "danger"
+        : summary.gross_margin_pct < 20
+          ? "warn"
+          : "ok";
+  const shareTone = aiSharePct == null ? "accent" : aiSharePct > 60 ? "danger" : aiSharePct > 35 ? "warn" : "ok";
+  const pendingAlerts = alerts.filter((al) => !al.acknowledged).length;
 
   return (
     <div className="space-y-6">
@@ -259,104 +302,197 @@ export default function AdminFinOpsPage() {
         title="AI Costs (FinOps)"
         subtitle="Revenue, costos, margen y desglose por dimensión. Las alertas detectan budget, margen negativo y spikes."
         actions={
-          <button type="button" className="btn btn-primary min-h-11" onClick={() => void runChecks()}>
-            <Gauge size={15} aria-hidden /> Ejecutar checks
-          </button>
+          <Button variant="primary" leadingIcon={Gauge} onClick={() => void runChecks()}>
+            Ejecutar checks
+          </Button>
         }
       />
       <ErrorInline message={error} />
-      <div className="mb-4">
-        <PageTabs
-          idPrefix="finops"
-          tabs={[
-            { id: "overview", label: "Overview" },
-            { id: "costs", label: "Costs" },
-          ]}
-          active={tab}
-          onChange={(next) => setTab(next as "overview" | "costs")}
-        />
-      </div>
+      {note && <SuccessInline>{note}</SuccessInline>}
+      <PageTabs
+        idPrefix="finops"
+        tabs={[
+          { id: "overview", label: "Overview" },
+          { id: "costs", label: "Costs" },
+        ]}
+        active={tab}
+        onChange={(next) => setTab(next as "overview" | "costs")}
+      />
       {loading ? (
-        <SkeletonBlock />
+        <Panel className="overflow-hidden">
+          <SkeletonTable rows={6} cols={4} />
+        </Panel>
       ) : tab === "overview" ? (
         <>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            {summary && (
-              <>
-                <StatCard label="Revenue (cash)" value={usdCents(summary.revenue_cents)} />
-                <StatCard label="MRR" value={usdCents(summary.mrr_cents)} />
-                <StatCard label="AI cost" value={usd(summary.costs.llm + summary.costs.embedding, 2)} />
-                <StatCard
-                  label="Gross margin"
-                  value={summary.gross_margin_pct != null ? `${summary.gross_margin_pct.toFixed(1)}%` : "—"}
-                  tone={summary.gross_margin_pct != null && summary.gross_margin_pct < 0 ? "danger" : "default"}
-                />
-              </>
+          <Panel className="p-4">
+            {summary ? (
+              <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-4">
+                <div className="min-w-0">
+                  <p className="eyebrow">Margen bruto del período</p>
+                  <p className="mt-2 text-[30px] leading-none font-semibold tracking-[-0.025em] tabular-nums">
+                    <span
+                      className={
+                        marginTone === "danger"
+                          ? "text-danger"
+                          : marginTone === "warn"
+                            ? "text-warn"
+                            : "text-text"
+                      }
+                    >
+                      {summary.gross_margin_pct != null ? `${summary.gross_margin_pct.toFixed(1)}%` : "—"}
+                    </span>
+                  </p>
+                  <p className="mt-2 max-w-[68ch] text-[13px] leading-relaxed text-muted">
+                    {summary.gross_margin_pct == null
+                      ? "Todavía no hay revenue ni costos suficientes para calcular el margen."
+                      : summary.gross_margin_pct < 0
+                        ? "Los costos de AI superan los ingresos del período. Revisá el desglose antes de ampliar cuota."
+                        : `Revenue ${usdCents(summary.revenue_cents)} contra AI cost ${usd(aiCostValue ?? 0, 2)}.`}
+                  </p>
+                </div>
+                <div className="min-w-[220px] flex-1 sm:max-w-sm">
+                  {aiSharePct != null ? (
+                    <Progress
+                      value={aiSharePct}
+                      tone={shareTone === "danger" ? "danger" : shareTone === "warn" ? "warn" : "ok"}
+                      label="AI cost sobre revenue"
+                      showValue
+                    />
+                  ) : (
+                    <p className="text-xs text-faint">Sin revenue en el período para medir la proporción.</p>
+                  )}
+                  {summary.gross_margin_pct == null && (
+                    <p className="mt-2 text-xs text-faint">
+                      El margen se calcula cuando hay revenue y costos en la misma ventana.
+                    </p>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <EmptyState
+                icon={Coins}
+                compact
+                title="Sin resumen de FinOps"
+                body="El endpoint de summary no respondió. El desglose por dimensión sigue disponible en Costs."
+              />
             )}
-            {economics && (
-              <>
-                <StatCard label="Requests" value={economics.requests} />
-                <StatCard label="Cost/request" value={economics.cost_per_request != null ? usd(economics.cost_per_request, 6) : "—"} />
-                <StatCard
+          </Panel>
+
+          {(summary || economics) && (
+            <section>
+              <SectionHeader title="Ingresos y costos" className="mb-3" />
+              <MetricGrid cols={4}>
+                {summary && (
+                  <>
+                    <Metric size="md" label="Revenue (cash)" value={usdCents(summary.revenue_cents)} />
+                    <Metric size="md" label="MRR" value={usdCents(summary.mrr_cents)} />
+                    <Metric size="md" label="AI cost" value={usd(aiCostValue ?? 0, 2)} />
+                    <Metric
+                      size="md"
+                      label="Gross profit"
+                      value={usd(summary.gross_profit, 2)}
+                      tone={summary.gross_profit < 0 ? "danger" : "default"}
+                    />
+                  </>
+                )}
+              </MetricGrid>
+            </section>
+          )}
+
+          {economics && (
+            <section>
+              <SectionHeader title="Unit economics" className="mb-3" />
+              <MetricGrid cols={4}>
+                <Metric size="md" label="Requests" value={economics.requests.toLocaleString()} />
+                <Metric
+                  size="md"
+                  label="Cost/request"
+                  value={economics.cost_per_request != null ? usd(economics.cost_per_request, 6) : "—"}
+                />
+                <Metric
+                  size="md"
                   label="Cost/customer"
-                  value={summary?.economics.cost_per_customer != null ? usd(summary.economics.cost_per_customer, 4) : "—"}
+                  value={
+                    summary?.economics?.cost_per_customer != null
+                      ? usd(summary.economics.cost_per_customer, 4)
+                      : "—"
+                  }
                 />
-                <StatCard label="Tokens/request" value={economics.tokens_per_request ?? "—"} />
-              </>
-            )}
-          </div>
-          <p className="text-xs text-faint">
-            Desglose por provider, modelo, workspace, agente y deployment en la pestaña Costs.
-          </p>
-        </>
-      ) : (
-        <>
+                <Metric
+                  size="md"
+                  label="Tokens/request"
+                  value={economics.tokens_per_request != null ? economics.tokens_per_request.toFixed(0) : "—"}
+                />
+              </MetricGrid>
+            </section>
+          )}
+
           <section>
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
-              <Bell size={15} aria-hidden /> Alertas FinOps
-            </h3>
-            <div className="panel">
+            <SectionHeader
+              title="Atención"
+              description="Alertas de budget, margen y spikes detectadas por los checks."
+              className="mb-3"
+            />
+            <Panel>
               {alerts.length === 0 ? (
-                <EmptyState icon={Bell} title="Sin alertas" body="Ejecuta los checks para detectar problemas." />
+                <EmptyState
+                  icon={Bell}
+                  compact
+                  tone="accent"
+                  title="Sin alertas de costo"
+                  body="Ningún umbral de budget, margen o spike se disparó."
+                  hint="Ejecutá los checks para evaluar los umbrales ahora."
+                />
               ) : (
-                <ul className="space-y-2">
+                <ul className="divide-y divide-border-soft">
                   {alerts.map((al) => (
                     <li
                       key={al.id}
-                      className={`flex flex-wrap items-center justify-between gap-2 rounded-md border p-2.5 ${
-                        al.acknowledged ? "border-border bg-soft" : "border-warn-soft bg-warn-soft/30"
-                      }`}
+                      className="state-rail flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3"
+                      data-state={al.acknowledged ? "ready" : "warning"}
                     >
                       <div className="min-w-0">
-                        <p className="text-sm text-text">
-                          {!al.acknowledged && <WarningCircle size={14} className="mr-1 inline text-warn" aria-hidden />}
-                          {al.message}
-                        </p>
-                        <p className="text-xs text-faint">
-                          {al.alert_type} · {new Date(al.created_at).toLocaleString("es-PE")}
+                        <p className="text-sm text-text">{al.message}</p>
+                        <p className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-faint">
+                          <span className="mono">{al.alert_type}</span>
+                          <span aria-hidden>·</span>
+                          <span className="tabular-nums">{new Date(al.created_at).toLocaleString("es-PE")}</span>
+                          {al.actual_value != null && (
+                            <>
+                              <span aria-hidden>·</span>
+                              <span className="tabular-nums">
+                                actual {al.actual_value.toLocaleString()}
+                                {al.threshold_value != null ? ` / umbral ${al.threshold_value.toLocaleString()}` : ""}
+                              </span>
+                            </>
+                          )}
                         </p>
                       </div>
-                      {!al.acknowledged && (
-                        <span className="text-xs text-faint">Pendiente</span>
-                      )}
+                      <Badge tone={al.acknowledged ? "neutral" : "warn"} icon={WarningCircle}>
+                        {al.acknowledged ? "Reconocida" : "Pendiente"}
+                      </Badge>
                     </li>
                   ))}
                 </ul>
               )}
-            </div>
-          </section>
-
-          <section>
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
-              <Coins size={15} aria-hidden /> Desglose de costos
-            </h3>
-            <div className="panel grid grid-cols-1 gap-6 xl:grid-cols-2">
-              {groups.map((g) => (
-                <CostTable key={g.title} title={g.title} rows={g.rows} />
-              ))}
-            </div>
+            </Panel>
+            {pendingAlerts > 0 && (
+              <p className="text-xs text-warn">{pendingAlerts} alerta(s) sin reconocer.</p>
+            )}
           </section>
         </>
+      ) : (
+        <Panel>
+          <PanelHeader
+            title="Desglose de costos"
+            description="Costo, requests y tokens por dimensión en el período consultado."
+          />
+          <div className="grid grid-cols-1 gap-x-8 gap-y-6 p-4 xl:grid-cols-2">
+            {groups.map((g) => (
+              <CostTable key={g.title} title={g.title} rows={g.rows} />
+            ))}
+          </div>
+        </Panel>
       )}
     </div>
   );

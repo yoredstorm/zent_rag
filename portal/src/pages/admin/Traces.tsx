@@ -1,7 +1,34 @@
 import { GitBranch } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { platformApi } from "../../api";
-import { ErrorInline, PageHeader, SkeletonBlock } from "../../components/ui";
+import {
+  Badge,
+  Button,
+  CodeBlock,
+  DataTable,
+  Drawer,
+  EmptyState,
+  ErrorInline,
+  Input,
+  KeyValue,
+  Metric,
+  MetricGrid,
+  PageHeader,
+  Pagination,
+  Panel,
+  ResultCount,
+  SectionHeader,
+  Select,
+  Skeleton,
+  StatusBadge,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  Toolbar,
+  type Column,
+  type SortState,
+} from "../../components/ui";
+import { fmtLatency, fmtNum } from "../../lib/format";
 import { usePlatformAuth } from "../../platformAuth";
 
 type Trace = {
@@ -45,8 +72,35 @@ type Compare = {
 };
 type Stage = { stage: string; spans: number; avg_duration_ms: number; p95_duration_ms: number; tokens: number; errors: number; error_rate: number };
 
-const STAGE_COLOR: Record<string, string> = { llm: "bg-blue-500", retrieval: "bg-emerald-500", tool: "bg-amber-500", rerank: "bg-purple-500", sql: "bg-cyan-500", total: "bg-slate-400" };
 const STAGE_LABEL: Record<string, string> = { llm: "LLM", retrieval: "Retrieval", rerank: "Rerank", sql: "SQL", tool: "Tools", total: "Total" };
+const WINDOWS = [
+  { hours: 1, label: "1h" },
+  { hours: 24, label: "24h" },
+  { hours: 168, label: "7d" },
+] as const;
+const PAGE_SIZE = 20;
+
+function compareTraces(a: Trace, b: Trace, sort: NonNullable<SortState>): number {
+  const dir = sort.dir === "asc" ? 1 : -1;
+  switch (sort.key) {
+    case "status":
+      return a.status.localeCompare(b.status) * dir;
+    case "model":
+      return (a.model ?? "").localeCompare(b.model ?? "") * dir;
+    case "total_latency_ms":
+      return (a.total_latency_ms - b.total_latency_ms) * dir;
+    case "total_tokens":
+      return (a.total_tokens - b.total_tokens) * dir;
+    case "cost":
+      return (a.cost - b.cost) * dir;
+    case "input":
+      return a.input.localeCompare(b.input) * dir;
+    case "started_at":
+      return (Date.parse(a.started_at) - Date.parse(b.started_at)) * dir;
+    default:
+      return a.trace_id.localeCompare(b.trace_id) * dir;
+  }
+}
 
 export default function AdminTracesPage() {
   const { session } = usePlatformAuth();
@@ -62,6 +116,8 @@ export default function AdminTracesPage() {
   const [selA, setSelA] = useState("");
   const [selB, setSelB] = useState("");
   const [hours, setHours] = useState(24);
+  const [sort, setSort] = useState<SortState>({ key: "started_at", dir: "desc" });
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -148,185 +204,404 @@ export default function AdminTracesPage() {
     }
   }
 
+  const sorted = useMemo(() => {
+    const rows = [...traces];
+    if (!sort) return rows.reverse();
+    return rows.sort((a, b) => compareTraces(a, b, sort));
+  }, [traces, sort]);
+
+  const maxPage = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const safePage = Math.min(page, maxPage);
+  const pageRows = sorted.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
+  const columns: Column<Trace>[] = [
+    {
+      key: "trace_id",
+      header: "Trace",
+      sortable: true,
+      width: "140px",
+      render: (row) => (
+        <span className="mono text-xs text-faint" title={row.trace_id}>
+          {row.trace_id.slice(0, 12)}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Estado",
+      sortable: true,
+      width: "130px",
+      render: (row) => <StatusBadge status={row.status} />,
+    },
+    {
+      key: "model",
+      header: "Modelo",
+      sortable: true,
+      hideBelow: "md",
+      render: (row) => <span className="mono text-xs text-muted">{row.model ?? "—"}</span>,
+    },
+    {
+      key: "input",
+      header: "Input",
+      sortable: true,
+      hideBelow: "lg",
+      render: (row) => (
+        <span className="block max-w-[280px] truncate text-xs text-faint" title={row.input}>
+          {row.input}
+        </span>
+      ),
+    },
+    {
+      key: "total_latency_ms",
+      header: "Latencia",
+      align: "right",
+      sortable: true,
+      width: "110px",
+      render: (row) => <span className="mono text-xs text-muted">{row.total_latency_ms.toFixed(0)}ms</span>,
+    },
+    {
+      key: "total_tokens",
+      header: "Tokens",
+      align: "right",
+      sortable: true,
+      hideBelow: "md",
+      width: "100px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtNum(row.total_tokens)}</span>,
+    },
+    {
+      key: "cost",
+      header: "Costo",
+      align: "right",
+      sortable: true,
+      hideBelow: "md",
+      width: "100px",
+      render: (row) => <span className="mono text-xs text-muted">${row.cost.toFixed(4)}</span>,
+    },
+  ];
+
   return (
     <div className="space-y-6">
       <PageHeader title="Traces & Spans" subtitle="Trazado distribuido de runs, comparación side-by-side y correlación con billing." />
-      {error && <ErrorInline>{error}</ErrorInline>}
+      <ErrorInline message={error} />
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <div className="flex flex-col gap-3" aria-hidden>
+          <Skeleton className="h-[86px] rounded-lg" />
+          <Skeleton className="h-[320px] rounded-lg" />
+        </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            {stages.map((s) => (
-              <div key={s.stage} className="panel p-3">
-                <p className="flex items-center gap-1 text-[11px] font-medium text-text">
-                  <span className={`h-2 w-2 rounded-full ${STAGE_COLOR[s.stage] ?? "bg-slate-300"}`} />
-                  {s.stage} ({s.spans})
-                </p>
-                <p className="stat-value">{s.avg_duration_ms.toFixed(0)}ms</p>
-                <p className="text-[10px] text-faint">p95 {s.p95_duration_ms.toFixed(0)}ms · {s.errors} err · {s.tokens} tok</p>
-              </div>
-            ))}
-          </div>
+          <section>
+            <SectionHeader
+              title="Latencia por etapa"
+              description="Promedio y p95 de cada etapa del pipeline en la ventana."
+              className="mb-3"
+            />
+            {stages.length === 0 ? (
+              <Panel>
+                <EmptyState
+                  compact
+                  title="Sin spans en la ventana"
+                  body="Ejecutá consultas o ampliá la ventana temporal para ver etapas."
+                />
+              </Panel>
+            ) : (
+              <MetricGrid cols={4}>
+                {stages.map((s) => (
+                  <Metric
+                    key={s.stage}
+                    label={`${STAGE_LABEL[s.stage] ?? s.stage} · ${fmtNum(s.spans)} spans`}
+                    value={fmtLatency(s.avg_duration_ms)}
+                    size="md"
+                    tone={s.errors > 0 ? "danger" : "default"}
+                    hint={`p95 ${fmtLatency(s.p95_duration_ms)} · ${fmtNum(s.tokens)} tok · ${s.errors} err`}
+                  />
+                ))}
+              </MetricGrid>
+            )}
+          </section>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <select className="rounded-md border border-border bg-soft px-2 py-1.5 text-xs" value={filters.organization_id} onChange={(e) => setFilters((f) => ({ ...f, organization_id: e.target.value }))}>
-              <option value="">todas las orgs</option>
-              {orgs.map((o) => (<option key={o.id} value={o.id}>{o.id.slice(0, 8)}</option>))}
-            </select>
-            <select className="rounded-md border border-border bg-soft px-2 py-1.5 text-xs" value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
-              <option value="">todos</option>
-              {["completed", "error", "limit_reached"].map((s) => (<option key={s} value={s}>{s}</option>))}
-            </select>
-            <input className="rounded-md border border-border bg-soft px-2 py-1.5 text-xs" placeholder="modelo" value={filters.model} onChange={(e) => setFilters((f) => ({ ...f, model: e.target.value }))} />
-            <input className="rounded-md border border-border bg-soft px-2 py-1.5 text-xs" placeholder="buscar en input/output…" value={filters.q} onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))} />
-            <button type="button" className="btn btn-primary min-h-8 text-xs" onClick={() => void loadAll()}>Filtrar</button>
-            {[1, 24, 168].map((h) => (
-              <button key={h} type="button" onClick={() => setHours(h)} className={`btn min-h-8 px-2 text-xs ${hours === h ? "btn-primary" : "btn-secondary"}`}>{h === 168 ? "7d" : `${h}h`}</button>
-            ))}
-          </div>
+          <Toolbar>
+            <Select
+              aria-label="Organización"
+              className="w-40"
+              value={filters.organization_id}
+              onChange={(e) => {
+                setFilters((f) => ({ ...f, organization_id: e.target.value }));
+                setPage(1);
+              }}
+              placeholder="Todas las orgs"
+            >
+              {orgs.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.id.slice(0, 8)}
+                </option>
+              ))}
+            </Select>
+            <Select
+              aria-label="Estado"
+              className="w-36"
+              value={filters.status}
+              onChange={(e) => {
+                setFilters((f) => ({ ...f, status: e.target.value }));
+                setPage(1);
+              }}
+              placeholder="Todos los estados"
+            >
+              {["completed", "error", "limit_reached"].map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </Select>
+            <Input
+              aria-label="Modelo"
+              className="w-40"
+              placeholder="modelo"
+              value={filters.model}
+              onChange={(e) => setFilters((f) => ({ ...f, model: e.target.value }))}
+            />
+            <Input
+              aria-label="Buscar en input u output"
+              className="w-56"
+              placeholder="buscar en input/output…"
+              value={filters.q}
+              onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
+            />
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                setPage(1);
+                void loadAll();
+              }}
+            >
+              Filtrar
+            </Button>
+            <Tabs variant="pill" value={String(hours)} onValueChange={(value) => setHours(Number(value))}>
+              <TabsList>
+                {WINDOWS.map((w) => (
+                  <TabsTrigger key={w.hours} value={String(w.hours)}>
+                    {w.label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+          </Toolbar>
 
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-            <section className="lg:col-span-2">
-              <div className="mb-2 flex items-center gap-2">
-                <h3 className="text-sm font-semibold text-text">Traces ({traces.length})</h3>
-                <select className="rounded-md border border-border bg-soft px-2 py-1.5 text-xs" value={selA} onChange={(e) => setSelA(e.target.value)}>
-                  <option value="">A…</option>
-                  {traces.slice(0, 30).map((t) => (<option key={t.id} value={t.trace_id}>{t.trace_id.slice(0, 12)} · {t.input?.slice(0, 40)}</option>))}
-                </select>
-                <select className="rounded-md border border-border bg-soft px-2 py-1.5 text-xs" value={selB} onChange={(e) => setSelB(e.target.value)}>
-                  <option value="">B…</option>
-                  {traces.slice(0, 30).map((t) => (<option key={t.id} value={t.trace_id}>{t.trace_id.slice(0, 12)} · {t.input?.slice(0, 40)}</option>))}
-                </select>
-                <button type="button" className="btn btn-secondary min-h-8 px-2 text-xs" disabled={!selA || !selB} onClick={() => void doCompare()}>
-                  <GitBranch size={12} aria-hidden /> Comparar
-                </button>
-              </div>
-              <div className="panel overflow-x-auto">
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Trace</th>
-                      <th>Estado</th>
-                      <th>Modelo</th>
-                      <th>Input</th>
-                      <th>Latencia</th>
-                      <th>Tokens</th>
-                      <th>Costo</th>
-                      <th className="text-right">Detalle</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {traces.map((t) => (
-                      <tr key={t.id}>
-                        <td className="mono text-[10px] text-faint">{t.trace_id.slice(0, 12)}</td>
-                        <td><span className={`badge ${t.status === "completed" ? "badge-ok" : t.status === "error" ? "badge-danger" : "badge-warning"}`}>{t.status}</span></td>
-                        <td className="mono text-xs">{t.model ?? "—"}</td>
-                        <td className="max-w-52 truncate text-[10px] text-faint" title={t.input}>{t.input}</td>
-                        <td className="text-xs">{t.total_latency_ms.toFixed(0)}ms</td>
-                        <td className="text-xs">{t.total_tokens}</td>
-                        <td className="text-xs">${t.cost.toFixed(4)}</td>
-                        <td className="text-right">
-                          <button type="button" className="btn btn-ghost min-h-8 px-2 text-xs" onClick={() => void showDetail(t.trace_id)}>Ver</button>
-                        </td>
-                      </tr>
+          <section className="min-w-0">
+            <SectionHeader
+              title="Traces"
+              description={`${traces.length} trazas en la ventana seleccionada.`}
+              actions={
+                <>
+                  <Select
+                    aria-label="Trace A"
+                    className="w-52"
+                    value={selA}
+                    onChange={(e) => setSelA(e.target.value)}
+                    placeholder="Trace A…"
+                  >
+                    {traces.slice(0, 30).map((t) => (
+                      <option key={t.id} value={t.trace_id}>
+                        {t.trace_id.slice(0, 12)} · {t.input?.slice(0, 40)}
+                      </option>
                     ))}
-                    {traces.length === 0 && <tr><td colSpan={8} className="p-4 text-center text-xs text-faint">Sin trazas.</td></tr>}
-                  </tbody>
-                </table>
-              </div>
-            </section>
+                  </Select>
+                  <Select
+                    aria-label="Trace B"
+                    className="w-52"
+                    value={selB}
+                    onChange={(e) => setSelB(e.target.value)}
+                    placeholder="Trace B…"
+                  >
+                    {traces.slice(0, 30).map((t) => (
+                      <option key={t.id} value={t.trace_id}>
+                        {t.trace_id.slice(0, 12)} · {t.input?.slice(0, 40)}
+                      </option>
+                    ))}
+                  </Select>
+                  <Button variant="secondary" size="sm" disabled={!selA || !selB} onClick={() => void doCompare()}>
+                    <GitBranch size={13} aria-hidden /> Comparar
+                  </Button>
+                </>
+              }
+              className="mb-3"
+            />
+            <DataTable
+              stickyHeader
+              columns={columns}
+              rows={pageRows}
+              rowKey={(row) => row.id}
+              sort={sort}
+              onSortChange={(next) => {
+                setSort(next);
+                setPage(1);
+              }}
+              onRowClick={(row) => void showDetail(row.trace_id)}
+              rowActions={(row) => (
+                <Button variant="ghost" size="sm" onClick={() => void showDetail(row.trace_id)}>
+                  Ver
+                </Button>
+              )}
+              empty={
+                <EmptyState
+                  title="Sin trazas"
+                  body="No hay trazas con los filtros actuales."
+                  hint="Ampliá la ventana temporal o limpiá la búsqueda."
+                />
+              }
+              footer={
+                sorted.length > PAGE_SIZE ? (
+                  <>
+                    <ResultCount shown={pageRows.length} total={sorted.length} noun="trazas" />
+                    <Pagination page={safePage} pageSize={PAGE_SIZE} total={sorted.length} onPageChange={setPage} />
+                  </>
+                ) : (
+                  <ResultCount shown={sorted.length} total={sorted.length} noun="trazas" />
+                )
+              }
+            />
+          </section>
 
+          <Drawer
+            open={Boolean(detail)}
+            onOpenChange={(open) => {
+              if (!open) setDetail(null);
+            }}
+            title={detail ? `Trace · ${detail.trace_id.slice(0, 12)}` : "Trace"}
+            description={detail ? `Org ${detail.organization_id.slice(0, 8)} · ${detail.started_at ? new Date(detail.started_at).toLocaleString("es-PE") : ""}` : undefined}
+            width={560}
+            footer={
+              detail?.run_id ? (
+                <Button variant="secondary" loading={analyzing} onClick={() => void analyze()}>
+                  Root cause
+                </Button>
+              ) : undefined
+            }
+          >
             {detail && (
-              <section className="panel p-4">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold text-text">Trace · {detail.trace_id.slice(0, 12)}</h3>
-                  {detail.run_id && (
-                    <button type="button" className="btn btn-secondary min-h-8 px-2 text-xs" disabled={analyzing} onClick={() => void analyze()}>
-                      {analyzing ? "Analizando…" : "Root cause"}
-                    </button>
+              <div className="space-y-5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusBadge status={detail.status} />
+                  {detail.feedback && (
+                    <Badge tone={detail.feedback.rating === "down" ? "danger" : "ok"}>
+                      Feedback {detail.feedback.rating === "down" ? "negativo" : "positivo"}
+                      {detail.feedback.reason ? ` · ${detail.feedback.reason}` : ""}
+                    </Badge>
                   )}
                 </div>
 
-                {/* Waterfall (FASE 03, S2) */}
                 <TraceWaterfall spans={detail.spans} totalLatencyMs={detail.total_latency_ms} markers={detail.markers} />
 
-                {/* Campos del spec (cuando existan) */}
-                <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
-                  <Field k="Modelo" v={detail.model ?? "—"} mono />
-                  <Field k="Provider" v={detail.provider ?? "—"} mono />
-                  <Field k="Entorno" v={detail.environment ?? "—"} />
-                  <Field k="Versión" v={detail.version_id ? detail.version_id.slice(0, 8) : "—"} mono />
-                  <Field k="Estado" v={detail.status} />
-                  <Field k="Tokens" v={`${detail.total_tokens} (${detail.prompt_tokens} + ${detail.completion_tokens})`} />
-                  <Field k="Latencia" v={`${detail.total_latency_ms.toFixed(0)}ms`} />
-                  <Field k="Costo" v={`$${detail.cost.toFixed(5)}`} />
-                  {detail.feedback && (
-                    <div className="col-span-2 rounded-md bg-soft px-2 py-1">
-                      <span className={`font-medium ${detail.feedback.rating === "down" ? "text-danger" : "text-ok"}`}>
-                        Feedback: {detail.feedback.rating === "down" ? "negativo" : "positivo"}
-                      </span>
-                      {detail.feedback.reason && <span className="text-faint"> · {detail.feedback.reason}</span>}
-                      {detail.feedback.comment && <span className="block truncate text-faint" title={detail.feedback.comment}>{detail.feedback.comment}</span>}
-                    </div>
-                  )}
+                <KeyValue
+                  columns={2}
+                  items={[
+                    { key: "Modelo", value: detail.model ?? "—", mono: true },
+                    { key: "Provider", value: detail.provider ?? "—", mono: true },
+                    { key: "Entorno", value: detail.environment ?? "—" },
+                    { key: "Versión", value: detail.version_id ? detail.version_id.slice(0, 8) : "—", mono: true },
+                    { key: "Tokens", value: `${fmtNum(detail.total_tokens)} (${fmtNum(detail.prompt_tokens)} + ${fmtNum(detail.completion_tokens)})` },
+                    { key: "Latencia", value: fmtLatency(detail.total_latency_ms) },
+                    { key: "Costo", value: `$${detail.cost.toFixed(5)}`, mono: true },
+                    { key: "Spans", value: fmtNum(detail.spans.length) },
+                  ]}
+                />
+
+                {detail.feedback?.comment && (
+                  <p className="rounded-md bg-raised px-3 py-2 text-[13px] leading-relaxed text-muted">
+                    {detail.feedback.comment}
+                  </p>
+                )}
+
+                <div>
+                  <p className="eyebrow mb-2">Input</p>
+                  <CodeBlock code={detail.input} language="text" maxHeight={160} />
                 </div>
+                <div>
+                  <p className="eyebrow mb-2">Output</p>
+                  <CodeBlock code={detail.output ?? "—"} language="text" maxHeight={220} />
+                </div>
+                {detail.error && <ErrorInline className="mb-0">{detail.error}</ErrorInline>}
 
-                <p className="mb-1 mt-3 text-[11px] font-semibold text-text">Input</p>
-                <p className="mb-2 max-h-16 overflow-auto rounded-md bg-soft p-2 text-[10px] text-faint">{detail.input}</p>
-                <p className="mb-1 text-[11px] font-semibold text-text">Output</p>
-                <p className="mb-2 max-h-28 overflow-auto rounded-md bg-soft p-2 text-[10px] text-text">{detail.output ?? "—"}</p>
-
-                <h4 className="mb-1 text-[11px] font-semibold text-text">Correlación</h4>
-                <p className="text-[10px] text-faint">{usage?.usage_events.length ?? 0} usage events · {usage?.api_logs.length ?? 0} api logs</p>
+                <div>
+                  <p className="eyebrow mb-2">Correlación con billing</p>
+                  <p className="text-[13px] text-muted">
+                    {fmtNum(usage?.usage_events.length ?? 0)} usage events ·{" "}
+                    {fmtNum(usage?.api_logs.length ?? 0)} api logs
+                  </p>
+                </div>
 
                 {rootCause && <RootCausePanel data={rootCause} />}
-              </section>
+              </div>
             )}
-          </div>
+          </Drawer>
 
           {compare && (
-            <section className="panel p-4">
-              <h3 className="mb-2 text-sm font-semibold text-text">
-                Comparación {compare.same_input ? "(mismo input)" : "(inputs distintos)"}
-              </h3>
-              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div className="rounded-md bg-soft p-3 text-xs">
-                  <p className="mono font-medium text-text">A · {compare.a.trace_id.slice(0, 12)}</p>
-                  <p>estado {compare.a.status} · {compare.a.model} · {compare.a.latency_ms.toFixed(0)}ms · {compare.a.tokens} tok · ${compare.a.cost.toFixed(4)}</p>
-                  <p className="mt-1 max-h-20 overflow-auto text-[10px] text-faint">{compare.output_a}</p>
+            <section className="min-w-0">
+              <SectionHeader
+                title={`Comparación ${compare.same_input ? "(mismo input)" : "(inputs distintos)"}`}
+                description="Diferencias entre dos trazas del mismo recorte."
+                className="mb-3"
+              />
+              <Panel>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {[compare.a, compare.b].map((side, index) => (
+                    <div key={side.trace_id} className="min-w-0">
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <span className="mono text-[13px] font-medium text-text">
+                          {index === 0 ? "A" : "B"} · {side.trace_id.slice(0, 12)}
+                        </span>
+                        <StatusBadge status={side.status} />
+                      </div>
+                      <KeyValue
+                        columns={2}
+                        items={[
+                          { key: "Modelo", value: side.model ?? "—", mono: true },
+                          { key: "Latencia", value: fmtLatency(side.latency_ms) },
+                          { key: "Tokens", value: fmtNum(side.tokens) },
+                          { key: "Costo", value: `$${side.cost.toFixed(4)}`, mono: true },
+                          { key: "Spans", value: fmtNum(side.spans_count) },
+                        ]}
+                      />
+                      <div className="mt-3">
+                        <CodeBlock code={index === 0 ? compare.output_a : compare.output_b} language="text" maxHeight={140} />
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <div className="rounded-md bg-soft p-3 text-xs">
-                  <p className="mono font-medium text-text">B · {compare.b.trace_id.slice(0, 12)}</p>
-                  <p>estado {compare.b.status} · {compare.b.model} · {compare.b.latency_ms.toFixed(0)}ms · {compare.b.tokens} tok · ${compare.b.cost.toFixed(4)}</p>
-                  <p className="mt-1 max-h-20 overflow-auto text-[10px] text-faint">{compare.output_b}</p>
+                <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-3 text-xs text-muted">
+                  <span>
+                    Δ latencia{" "}
+                    <span className={`mono ${compare.deltas.latency_ms > 0 ? "text-danger" : "text-ok"}`}>
+                      {compare.deltas.latency_ms > 0 ? "+" : ""}
+                      {compare.deltas.latency_ms.toFixed(0)}ms
+                    </span>
+                  </span>
+                  <span className="mono">
+                    Δ tokens {compare.deltas.tokens > 0 ? "+" : ""}
+                    {fmtNum(compare.deltas.tokens)}
+                  </span>
+                  <span className="mono">
+                    Δ costo {compare.deltas.cost > 0 ? "+" : ""}${compare.deltas.cost.toFixed(4)}
+                  </span>
                 </div>
-              </div>
-              <p className="mt-2 text-[11px] text-faint">
-                Δ latencia <span className={compare.deltas.latency_ms > 0 ? "text-red-400" : "text-emerald-400"}>{compare.deltas.latency_ms > 0 ? "+" : ""}{compare.deltas.latency_ms.toFixed(0)}ms</span> · Δ tokens {compare.deltas.tokens > 0 ? "+" : ""}{compare.deltas.tokens} · Δ costo ${compare.deltas.cost.toFixed(4)}
-              </p>
-              <div className="mt-2 space-y-1">
-                {compare.spans_diff.map((s) => (
-                  <div key={s.stage} className="flex items-center justify-between rounded-md bg-soft px-3 py-1 text-[11px]">
-                    <span className="text-text">{s.stage}</span>
-                    <span className="mono text-faint">A: {s.a_duration_ms != null ? `${s.a_duration_ms.toFixed(0)}ms` : "—"}</span>
-                    <span className="mono text-faint">B: {s.b_duration_ms != null ? `${s.b_duration_ms.toFixed(0)}ms` : "—"}</span>
+                {compare.spans_diff.length > 0 && (
+                  <div className="mt-3 divide-y divide-border-soft">
+                    {compare.spans_diff.map((s) => (
+                      <div key={s.stage} className="flex items-center justify-between gap-3 py-2 text-xs">
+                        <span className="text-text">{s.stage}</span>
+                        <span className="mono text-faint">A: {s.a_duration_ms != null ? fmtLatency(s.a_duration_ms) : "—"}</span>
+                        <span className="mono text-faint">B: {s.b_duration_ms != null ? fmtLatency(s.b_duration_ms) : "—"}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                )}
+              </Panel>
             </section>
           )}
         </>
       )}
     </div>
-  );
-}
-function Field({ k, v, mono = false }: { k: string; v: string; mono?: boolean }) {
-  return (
-    <p className="flex items-baseline justify-between gap-2">
-      <span className="text-faint">{k}</span>
-      <span className={mono ? "mono text-right text-[11px] text-text" : "text-right text-text"}>{v}</span>
-    </p>
   );
 }
 
@@ -346,42 +621,49 @@ function TraceWaterfall({
     : totalLatencyMs;
   const total = Math.max(maxEnd - minStart, totalLatencyMs, 1);
   const mk = markers;
+  const bottleneckName = mk?.bottleneck?.name;
 
   return (
-    <div className="rounded-md border border-border bg-soft p-3">
-      <p className="mb-2 flex items-center gap-2 text-[11px] font-semibold text-text">Waterfall</p>
+    <div className="rounded-md border border-border bg-raised p-3">
+      <p className="eyebrow mb-2">Waterfall</p>
       {mk && (
-        <div className="mb-2 flex flex-wrap gap-1.5 text-[10px]">
+        <div className="mb-3 flex flex-wrap gap-1.5">
           {mk.bottleneck && (
-            <span className="badge badge-danger">bottleneck: {STAGE_LABEL[mk.bottleneck.stage] ?? mk.bottleneck.stage} · {mk.bottleneck.duration_ms.toFixed(0)}ms</span>
+            <Badge tone="warn">
+              Cuello de botella: {STAGE_LABEL[mk.bottleneck.stage] ?? mk.bottleneck.stage} ·{" "}
+              {fmtLatency(mk.bottleneck.duration_ms)}
+            </Badge>
           )}
-          {mk.retries > 0 && <span className="badge badge-warning">{mk.retries} retry(ies)</span>}
-          {mk.fallback_detected && <span className="badge badge-warning">fallback → {mk.models_used.join(", ")}</span>}
-          {mk.error_spans > 0 && <span className="badge badge-danger">{mk.error_spans} span(s) con error</span>}
+          {mk.retries > 0 && <Badge tone="warn">{mk.retries} reintentos</Badge>}
+          {mk.fallback_detected && <Badge tone="warn">Fallback · {mk.models_used.join(", ")}</Badge>}
+          {mk.error_spans > 0 && <Badge tone="danger">{mk.error_spans} spans con error</Badge>}
         </div>
       )}
-      <div className="space-y-1">
+      <div className="space-y-1.5">
         {ordered.map((s) => {
           const left = Math.max(0, ((s.started_ms - minStart) / total) * 100);
           const width = Math.max(1, (s.duration_ms / total) * 100);
           const isError = s.status === "error";
+          const isBottleneck = bottleneckName === s.name;
           return (
-            <div key={s.id} className="flex items-center gap-2 text-[10px]">
+            <div key={s.id} className="flex items-center gap-2 text-[11px]">
               <span className="w-20 shrink-0 truncate text-faint" title={s.name}>
                 {STAGE_LABEL[s.stage] ?? s.stage}
               </span>
               <div className="relative h-3.5 flex-1 rounded-sm bg-bg">
                 <div
-                  className={`absolute inset-y-0 rounded-sm ${isError ? "bg-danger" : STAGE_COLOR[s.stage] ?? "bg-slate-400"}`}
+                  className={`absolute inset-y-0 rounded-sm ${
+                    isError ? "bg-danger" : isBottleneck ? "bg-warn" : "bg-accent"
+                  }`}
                   style={{ left: `${left}%`, width: `${width}%` }}
-                  title={`${s.name} · ${s.duration_ms.toFixed(0)}ms · ${s.tokens} tok${isError ? " · error" : ""}`}
+                  title={`${s.name} · ${fmtLatency(s.duration_ms)} · ${fmtNum(s.tokens)} tok${isError ? " · error" : ""}`}
                 />
               </div>
-              <span className="mono w-16 shrink-0 text-right text-faint">{s.duration_ms.toFixed(0)}ms</span>
+              <span className="mono w-16 shrink-0 text-right text-faint">{fmtLatency(s.duration_ms)}</span>
             </div>
           );
         })}
-        {ordered.length === 0 && <p className="py-2 text-center text-[10px] text-faint">Sin spans.</p>}
+        {ordered.length === 0 && <p className="py-2 text-center text-xs text-faint">Sin spans registrados.</p>}
       </div>
     </div>
   );
@@ -389,14 +671,14 @@ function TraceWaterfall({
 
 function RootCausePanel({ data }: { data: RootCause }) {
   return (
-    <div className="mt-3 rounded-md border border-border bg-soft p-3">
-      <h4 className="mb-2 text-[11px] font-semibold text-text">Análisis de causa</h4>
+    <div className="rounded-md border border-border bg-raised p-3">
+      <p className="eyebrow mb-2">Análisis de causa</p>
       {data.probable_causes.length === 0 && data.possible_contributing_factors.length === 0 && (
-        <p className="text-[10px] text-faint">Sin señales claras de fallo en este run.</p>
+        <p className="text-xs text-faint">Sin señales claras de fallo en este run.</p>
       )}
       {data.probable_causes.length > 0 && (
         <div className="mb-2">
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-danger">Probable cause</p>
+          <p className="eyebrow mb-1 text-danger">Probable cause</p>
           {data.probable_causes.map((c) => (
             <CauseRow key={c.factor} label={c.label} evidence={c.evidence} tone="danger" />
           ))}
@@ -404,7 +686,7 @@ function RootCausePanel({ data }: { data: RootCause }) {
       )}
       {data.possible_contributing_factors.length > 0 && (
         <div>
-          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-warn">Possible contributing factor</p>
+          <p className="eyebrow mb-1 text-warn">Possible contributing factor</p>
           {data.possible_contributing_factors.map((c) => (
             <CauseRow key={c.factor} label={c.label} evidence={c.evidence} tone="warn" />
           ))}
@@ -416,9 +698,9 @@ function RootCausePanel({ data }: { data: RootCause }) {
 
 function CauseRow({ label, evidence, tone }: { label: string; evidence: string[]; tone: "danger" | "warn" }) {
   return (
-    <div className="mb-1.5 rounded-md bg-bg px-2 py-1.5">
-      <p className={`text-[11px] font-medium ${tone === "danger" ? "text-danger" : "text-warn"}`}>{label}</p>
-      <ul className="list-disc pl-4 text-[10px] text-faint">
+    <div className="mb-1.5 rounded-md bg-surface px-2 py-1.5">
+      <p className={`text-[13px] font-medium ${tone === "danger" ? "text-danger" : "text-warn"}`}>{label}</p>
+      <ul className="list-disc pl-4 text-xs text-faint">
         {evidence.map((e, i) => (
           <li key={i}>{e}</li>
         ))}

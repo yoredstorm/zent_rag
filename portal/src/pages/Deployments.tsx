@@ -10,13 +10,21 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import { ComingSoonBadge } from "../components/ComingSoon";
 import {
+  Badge,
+  Button,
+  ButtonLink,
+  DataTable,
+  Drawer,
   EmptyState,
   ErrorInline,
+  KeyValue,
   PageHeader,
+  Panel,
+  PanelHeader,
   SkeletonBlock,
   StatusBadge,
+  type Column,
 } from "../components/ui";
 import { fmtDateTime, fmtLatency, fmtNum } from "../lib/format";
 
@@ -85,6 +93,7 @@ export default function DeploymentsPage() {
   const [logs, setLogs] = useState<ApiLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [selected, setSelected] = useState<Deployment | null>(null);
 
   useEffect(() => {
     if (!session) return;
@@ -112,32 +121,74 @@ export default function DeploymentsPage() {
     })();
   }, [session]);
 
+  const columns: Column<Deployment>[] = [
+    {
+      key: "endpoint",
+      header: "Endpoint",
+      render: (d) => (
+        <div className="min-w-0">
+          <p className="mono truncate text-xs text-accent">{d.slug}</p>
+          {d.endpoint && (
+            <p className="mono mt-0.5 max-w-[48ch] truncate text-[11px] text-faint" title={d.endpoint}>
+              {d.endpoint}
+            </p>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "environment",
+      header: "Entorno",
+      hideBelow: "md",
+      render: (d) => (
+        <span className="mono text-xs text-muted">
+          {d.environment_id ? d.environment_id.slice(0, 8) : "—"}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Estado",
+      render: (d) => <StatusBadge status={d.status} />,
+    },
+    {
+      key: "deployed_at",
+      header: "Desplegado",
+      hideBelow: "md",
+      render: (d) => (
+        <span className="text-xs text-muted">
+          {d.deployed_at ? fmtDateTime(d.deployed_at) : fmtDateTime(d.created_at)}
+        </span>
+      ),
+    },
+  ];
+
   return (
     <div>
       <PageHeader
         title="Despliegues"
         subtitle="Despliega tus experiencias de IA en aplicaciones, APIs y sistemas empresariales."
         actions={
-          <Link to="/developers" className="btn btn-secondary">
+          <ButtonLink to="/developers" variant="secondary">
             Centro de desarrolladores
-          </Link>
+          </ButtonLink>
         }
       />
       <ErrorInline message={error} />
 
-      <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {TARGETS.map((t) => {
           const Content = (
             <>
-              <span className="flex h-9 w-9 items-center justify-center rounded-md border border-border bg-soft text-accent">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-raised text-faint">
                 <t.icon size={18} aria-hidden />
               </span>
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-medium text-text">{t.label}</p>
-                  {!t.ready && <ComingSoonBadge />}
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-[13.5px] font-medium text-text">{t.label}</p>
+                  {!t.ready && <Badge tone="warn">Próximamente</Badge>}
                 </div>
-                <p className="mt-0.5 text-[12px] leading-relaxed text-muted">{t.desc}</p>
+                <p className="mt-0.5 text-xs leading-relaxed text-muted">{t.desc}</p>
               </div>
             </>
           );
@@ -150,99 +201,69 @@ export default function DeploymentsPage() {
               {Content}
             </Link>
           ) : (
-            <div key={t.label} className="panel flex items-start gap-3 p-4">
+            <Panel key={t.label} className="flex items-start gap-3 p-4">
               {Content}
-            </div>
+            </Panel>
           );
         })}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-3">
-        <div className="panel xl:col-span-2">
-          <div className="flex items-center gap-2 border-b border-border px-5 py-4">
-            <RocketLaunch size={16} className="text-accent" aria-hidden />
-            <h2 className="text-sm font-semibold text-text">Deployments ({deployments.length})</h2>
-          </div>
-          {loading ? (
-            <div className="p-5">
-              <SkeletonBlock rows={4} />
-            </div>
-          ) : deployments.length === 0 ? (
-            <EmptyState
-              icon={RocketLaunch}
-              title="Sin deployments activos"
-              body="Despliega un agente desde su editor para obtener un endpoint público y comenzar a integrarlo."
-              action={
-                <Link to="/agents" className="btn btn-secondary">
-                  Ir a Agentes
-                </Link>
-              }
-            />
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="table min-w-[640px]">
-                <thead>
-                  <tr>
-                    <th>Endpoint</th>
-                    <th>Entorno</th>
-                    <th>Estado</th>
-                    <th>Desplegado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {deployments.map((d) => (
-                    <tr key={d.id}>
-                      <td>
-                        <span className="mono text-xs text-accent">{d.slug}</span>
-                        {d.endpoint && (
-                          <span className="block truncate font-mono text-[11px] text-faint" title={d.endpoint}>
-                            {d.endpoint}
-                          </span>
-                        )}
-                      </td>
-                      <td className="mono text-xs text-muted">
-                        {d.environment_id ? d.environment_id.slice(0, 8) : "—"}
-                      </td>
-                      <td>
-                        <StatusBadge status={d.status} />
-                      </td>
-                      <td className="text-xs text-faint">
-                        {d.deployed_at ? fmtDateTime(d.deployed_at) : fmtDateTime(d.created_at)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        <div className="xl:col-span-2">
+          <DataTable
+            columns={columns}
+            rows={deployments}
+            rowKey={(d) => d.id}
+            caption="Deployments"
+            loading={loading}
+            empty={
+              <EmptyState
+                icon={RocketLaunch}
+                title="Sin deployments activos"
+                body="Desplegá un agente desde su editor para obtener un endpoint público y comenzar a integrarlo."
+                action={
+                  <ButtonLink to="/agents" variant="primary">
+                    Ir a Agentes
+                  </ButtonLink>
+                }
+              />
+            }
+            onRowClick={(d) => setSelected(d)}
+            isRowSelected={(d) => selected?.id === d.id}
+            rowActions={(d) => (
+              <Button variant="ghost" size="sm" onClick={() => setSelected(d)}>
+                Detalle
+              </Button>
+            )}
+          />
         </div>
 
-        <div className="panel">
-          <div className="flex items-center gap-2 border-b border-border px-5 py-4">
-            <ListBullets size={16} className="text-accent" aria-hidden />
-            <h2 className="text-sm font-semibold text-text">Tráfico reciente</h2>
-          </div>
-          {logs.length === 0 ? (
+        <Panel>
+          <PanelHeader
+            title="Tráfico reciente"
+            description="Consultas registradas contra tus endpoints."
+          />
+          {loading ? (
+            <div className="panel-body">
+              <SkeletonBlock rows={5} />
+            </div>
+          ) : logs.length === 0 ? (
             <EmptyState
               icon={ListBullets}
               title="Sin llamadas"
               body="Las consultas a tus endpoints públicos aparecerán aquí."
             />
           ) : (
-            <div className="divide-y divide-border/60">
+            <div className="divide-y divide-border-soft">
               {logs.slice(0, 8).map((l) => (
-                <div key={l.id} className="flex items-center justify-between gap-2 px-5 py-2.5">
+                <div key={l.id} className="flex items-center justify-between gap-3 px-4 py-2.5">
                   <div className="min-w-0">
                     <p className="mono truncate text-xs text-text">{l.request_id.slice(0, 8)}</p>
                     <p className="truncate text-[11px] text-faint">{l.endpoint}</p>
                   </div>
-                  <div className="flex shrink-0 flex-col items-end">
-                    <span
-                      className={`badge ${l.status === 200 ? "badge-ok" : "badge-danger"}`}
-                    >
-                      {l.status}
-                    </span>
-                    <span className="mono mt-0.5 text-[11px] text-faint">
+                  <div className="flex shrink-0 flex-col items-end gap-0.5">
+                    <Badge tone={l.status === 200 ? "ok" : "danger"}>{l.status}</Badge>
+                    <span className="mono text-[11px] text-faint">
                       {fmtLatency(l.latency_ms ?? 0)} · {fmtNum(l.tokens)} tok
                     </span>
                   </div>
@@ -250,8 +271,47 @@ export default function DeploymentsPage() {
               ))}
             </div>
           )}
-        </div>
+        </Panel>
       </div>
+
+      <Drawer
+        open={selected !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelected(null);
+        }}
+        title={selected?.slug ?? "Deployment"}
+        description={selected?.deployed_at ? `Desplegado ${fmtDateTime(selected.deployed_at)}` : undefined}
+        width={480}
+      >
+        {selected && (
+          <div className="space-y-4">
+            <StatusBadge status={selected.status} />
+            <KeyValue
+              columns={2}
+              items={[
+                { key: "Entorno", value: selected.environment_id || "—", mono: true },
+                { key: "Agente", value: selected.agent_id, mono: true },
+                { key: "Versión", value: selected.agent_version_id, mono: true },
+                { key: "Desplegado por", value: selected.deployed_by || "—", mono: true },
+                { key: "Rollback desde", value: selected.rollback_from_id || "—", mono: true },
+                {
+                  key: "Desplegado",
+                  value: selected.deployed_at ? fmtDateTime(selected.deployed_at) : "—",
+                },
+                { key: "Creado", value: fmtDateTime(selected.created_at) },
+              ]}
+            />
+            {selected.endpoint && (
+              <div>
+                <p className="eyebrow mb-1.5">Endpoint</p>
+                <p className="mono break-all rounded-sm border border-border bg-control px-3 py-2 text-xs text-text">
+                  {selected.endpoint}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 }

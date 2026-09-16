@@ -1040,6 +1040,14 @@ class Settings(BaseSettings):
         default=True,
         description="Permite sembrar datos demo/dev (token admin) en la BD.",
     )
+    DEMO_PROVISION_ON_TRIAL: bool = Field(
+        default=True,
+        description=(
+            "Encola el demo compartido (schema farmacia) al crear un trial. "
+            "Apagalo en entornos con LLM lento: cada alta re-embebe el dataset "
+            "completo y satura la cola de ingesta."
+        ),
+    )
     DEMO_SQL_ORGANIZATION_ID: str = Field(
         default="00000000-0000-0000-0000-000000000001",
         description="Org dueña de los schemas demo compartidos.",

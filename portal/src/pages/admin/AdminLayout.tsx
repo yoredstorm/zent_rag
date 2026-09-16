@@ -2,20 +2,49 @@ import {
   Bell,
   List,
   MagnifyingGlass,
+  SidebarSimple,
   SignOut,
-  X,
 } from "@phosphor-icons/react";
-import { useCallback, useEffect, useId, useState } from "react";
+import { motion, useReducedMotion } from "motion/react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { platformApi } from "../../api";
 import { usePlatformAuth } from "../../platformAuth";
-import { PLATFORM_NAV, type PlatformNavItem, type PlatformNavGroup } from "../../lib/platformNav";
+import {
+  PLATFORM_NAV,
+  platformNavContextForPath,
+  type PlatformNavItem,
+} from "../../lib/platformNav";
 import { CommandPaletteRoot, openCommandPalette } from "../../components/CommandPalette";
 import { IdleSessionWarning } from "../../components/IdleSessionWarning";
 import { StepUpModal } from "../../components/StepUpModal";
 import { ThemeToggle } from "../../components/ThemeToggle";
+import { Brand, IdentityTile } from "../../components/Brand";
+import {
+  Badge,
+  Breadcrumbs,
+  Button,
+  Drawer,
+  IconButton,
+  Input,
+  Kbd,
+  Menu,
+  MenuItem,
+  MenuLabel,
+  MenuSeparator,
+  Popover,
+  Tooltip,
+  cn,
+  menuItemClass,
+  menuLabelClass,
+  menuSeparatorClass,
+} from "../../components/ui";
 
 const IDLE_SESSION_MINUTES = 30;
+
+const BASE = "/control-center";
+const SIDEBAR_COLLAPSED_KEY = "zent_sidebar_collapsed";
+const COLLAPSED_GROUPS_KEY = "zent_platform_nav_collapsed_groups";
 
 type Notice = {
   id: string;
@@ -28,98 +57,214 @@ type Notice = {
   read_at: string | null;
 };
 
-const BASE = "/control-center";
+function readSidebarCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
-const NAV = PLATFORM_NAV;
+function readCollapsedGroups(): string[] {
+  try {
+    const raw = window.localStorage.getItem(COLLAPSED_GROUPS_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
 
-function ControlNav({
-  groups,
-  query,
-  onQuery,
+/** Ítem de navegación: mismo lenguaje que el sidebar del workspace (rail + tooltip). */
+function ControlNavItem({
+  item,
+  collapsed,
+  instanceId,
   onNavigate,
 }: {
-  groups: PlatformNavGroup[];
-  query: string;
-  onQuery: (value: string) => void;
+  item: PlatformNavItem;
+  collapsed: boolean;
+  instanceId: string;
   onNavigate?: () => void;
 }) {
-  const searchId = useId();
-  const [open, setOpen] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(groups.map((g) => [g.label, true]))
+  const reduce = useReducedMotion();
+  const { to, label, icon: IconEl, end } = item;
+  const link = (
+    <NavLink
+      to={to}
+      end={end}
+      onClick={onNavigate}
+      aria-label={collapsed ? label : undefined}
+      className={({ isActive }) =>
+        cn(
+          "group relative flex min-h-8 items-center gap-2.5 rounded-sm text-[13px]",
+          collapsed ? "justify-center px-0 py-1.5" : "px-2.5 py-1.5",
+          isActive
+            ? "bg-soft/70 font-medium text-text"
+            : "text-muted hover:bg-soft/45 hover:text-text"
+        )
+      }
+    >
+      {({ isActive }) => (
+        <>
+          {isActive && (
+            <motion.span
+              layoutId={`${instanceId}-platform-nav-rail`}
+              className="absolute top-1 bottom-1 -left-1 w-[2px] rounded-full bg-accent"
+              transition={
+                reduce ? { duration: 0 } : { type: "spring", stiffness: 520, damping: 42, mass: 0.5 }
+              }
+              aria-hidden
+            />
+          )}
+          <IconEl
+            size={17}
+            weight={isActive ? "fill" : "regular"}
+            className={cn("shrink-0", isActive ? "text-accent" : "text-faint group-hover:text-muted")}
+            aria-hidden
+          />
+          {!collapsed && <span className="truncate">{label}</span>}
+        </>
+      )}
+    </NavLink>
   );
+
+  if (!collapsed) return link;
+  return (
+    <Tooltip label={label} side="right">
+      <span className="block">{link}</span>
+    </Tooltip>
+  );
+}
+
+function ControlNav({
+  collapsed,
+  instanceId,
+  onNavigate,
+}: {
+  collapsed: boolean;
+  instanceId: string;
+  onNavigate?: () => void;
+}) {
+  const { pathname } = useLocation();
+  const [query, setQuery] = useState("");
+  const [collapsedGroups, setCollapsedGroups] = useState<string[]>(readCollapsedGroups);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(COLLAPSED_GROUPS_KEY, JSON.stringify(collapsedGroups));
+    } catch {
+      // sin persistencia
+    }
+  }, [collapsedGroups]);
+
+  // Un grupo colapsado que contiene la ruta activa se abre solo.
+  useEffect(() => {
+    setCollapsedGroups((prev) => {
+      const hiddenActive = PLATFORM_NAV.filter((g) => prev.includes(g.label))
+        .filter((g) =>
+          g.items.some(
+            (item) =>
+              pathname === item.to || (item.to !== BASE && pathname.startsWith(`${item.to}/`))
+          )
+        )
+        .map((g) => g.label);
+      if (hiddenActive.length === 0) return prev;
+      return prev.filter((label) => !hiddenActive.includes(label));
+    });
+  }, [pathname]);
 
   const q = query.trim().toLowerCase();
   const flat = q
-    ? groups.flatMap((g) => g.items).filter((item) => item.label.toLowerCase().includes(q))
+    ? PLATFORM_NAV.flatMap((g) => g.items).filter((item) =>
+        item.label.toLowerCase().includes(q)
+      )
     : [];
 
-  function renderItem({ to, label, icon: Icon, end }: PlatformNavItem) {
-    return (
-      <NavLink
-        key={to}
-        to={to}
-        end={end}
-        onClick={onNavigate}
-        className={({ isActive }) =>
-          `flex min-h-11 items-center gap-2 rounded-md px-3 text-sm ${
-            isActive
-              ? "bg-accent-soft text-text"
-              : "text-muted hover:bg-soft hover:text-text"
-          }`
-        }
-      >
-        <Icon size={18} aria-hidden />
-        {label}
-      </NavLink>
+  function toggleGroup(label: string) {
+    setCollapsedGroups((prev) =>
+      prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label]
     );
   }
 
   return (
     <>
-      <div className="border-b border-border px-3 py-3">
-        <label className="sr-only" htmlFor={searchId}>
-          Buscar sección
-        </label>
-        <div className="relative">
-          <MagnifyingGlass
-            size={16}
-            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-faint"
-            aria-hidden
-          />
-          <input
-            id={searchId}
+      {!collapsed && (
+        <div className="px-3 pb-3">
+          <Input
             type="search"
-            value={query}
-            onChange={(e) => onQuery(e.target.value)}
+            icon={MagnifyingGlass}
+            aria-label="Buscar sección"
             placeholder="Buscar: costs, operations…"
-            className="w-full rounded-md border border-border bg-soft py-2 pl-8 pr-2 text-sm text-text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
           />
         </div>
-      </div>
-      <nav className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-3" aria-label="Control Center">
+      )}
+      <nav
+        aria-label="Control Center"
+        className={cn(
+          "flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-2.5 pb-3",
+          collapsed && "px-2"
+        )}
+      >
         {q ? (
-          <>
-            {flat.length === 0 && <p className="px-2 py-3 text-xs text-muted">Sin coincidencias.</p>}
-            {flat.map(renderItem)}
-          </>
+          flat.length === 0 ? (
+            <p className="px-2.5 py-2 text-xs text-muted">Sin coincidencias.</p>
+          ) : (
+            <div className="flex flex-col gap-0.5">
+              {flat.map((item) => (
+                <ControlNavItem
+                  key={item.to}
+                  item={item}
+                  collapsed={collapsed}
+                  instanceId={instanceId}
+                  onNavigate={onNavigate}
+                />
+              ))}
+            </div>
+          )
         ) : (
-          groups.map((group) => {
-            const expanded = open[group.label] ?? true;
+          PLATFORM_NAV.map((group) => {
+            const groupCollapsed = collapsedGroups.includes(group.label);
             return (
               <div key={group.label}>
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-between rounded-xs px-2 py-1 text-[10px] font-semibold tracking-wider text-faint uppercase transition-colors duration-150 hover:text-muted"
-                  aria-expanded={expanded}
-                  onClick={() => setOpen((v) => ({ ...v, [group.label]: !(v[group.label] ?? true) }))}
-                >
-                  {group.label}
-                  <span className={`transition-transform duration-150 ${expanded ? "rotate-90" : ""}`} aria-hidden>
-                    ▸
-                  </span>
-                </button>
-                {expanded && (
-                  <div className="flex flex-col gap-1">{group.items.map(renderItem)}</div>
+                {!collapsed && (
+                  <div className="mb-1 flex items-center justify-between px-2.5">
+                    <p className="eyebrow">{group.label}</p>
+                    <button
+                      type="button"
+                      className="inline-flex h-5 w-5 cursor-pointer items-center justify-center rounded-xs text-ghost transition-colors duration-150 hover:bg-soft hover:text-muted"
+                      aria-expanded={!groupCollapsed}
+                      aria-label={`${groupCollapsed ? "Mostrar" : "Ocultar"} ${group.label}`}
+                      onClick={() => toggleGroup(group.label)}
+                    >
+                      <span
+                        className={cn(
+                          "block transition-transform duration-200",
+                          groupCollapsed ? "" : "rotate-90"
+                        )}
+                        aria-hidden
+                      >
+                        ▸
+                      </span>
+                    </button>
+                  </div>
+                )}
+                {collapsed && <div className="mx-auto mb-1.5 h-px w-5 bg-border" aria-hidden />}
+                {!groupCollapsed && (
+                  <div className="flex flex-col gap-0.5">
+                    {group.items.map((item) => (
+                      <ControlNavItem
+                        key={item.to}
+                        item={item}
+                        collapsed={collapsed}
+                        instanceId={instanceId}
+                        onNavigate={onNavigate}
+                      />
+                    ))}
+                  </div>
                 )}
               </div>
             );
@@ -130,23 +275,112 @@ function ControlNav({
   );
 }
 
+function AdminSidebar({
+  collapsed,
+  onToggleCollapsed,
+  instanceId,
+  onNavigate,
+  showHeader = true,
+}: {
+  collapsed: boolean;
+  onToggleCollapsed?: () => void;
+  instanceId: string;
+  onNavigate?: () => void;
+  showHeader?: boolean;
+}) {
+  const { session, logout } = usePlatformAuth();
+  const identity = session?.email || "";
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-surface">
+      {showHeader && (
+        <>
+          <div className={cn("flex items-center gap-2 pt-4 pb-2", collapsed ? "px-2.5" : "px-4")}>
+            {collapsed ? (
+              <span className="mx-auto">
+                <Brand compact />
+              </span>
+            ) : (
+              <>
+                <Brand />
+                <span className="flex-1" />
+                {onToggleCollapsed && (
+                  <IconButton
+                    label="Ocultar menú"
+                    icon={SidebarSimple}
+                    iconSize={16}
+                    onClick={onToggleCollapsed}
+                    className="h-8 w-8 min-h-0"
+                  />
+                )}
+              </>
+            )}
+          </div>
+          {!collapsed && <p className="eyebrow px-4 pb-3">Control Center</p>}
+        </>
+      )}
+
+      <ControlNav collapsed={collapsed} instanceId={instanceId} onNavigate={onNavigate} />
+
+      <div className={cn("mt-2 border-t border-border py-3", collapsed ? "px-2" : "px-3")}>
+        {!collapsed && identity && (
+          <div className="mb-2 flex min-w-0 items-center gap-2.5 px-1">
+            <IdentityTile label={identity} kind="account" size={26} />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[12.5px] font-medium text-text">{identity}</span>
+              <span className="block truncate text-[11px] text-faint">Plataforma Zent</span>
+            </span>
+          </div>
+        )}
+        {collapsed ? (
+          <div className="flex justify-center">
+            <Tooltip label="Cerrar sesión" side="right">
+              <button
+                type="button"
+                aria-label="Cerrar sesión"
+                onClick={logout}
+                className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-soft hover:text-danger"
+              >
+                <SignOut size={17} aria-hidden />
+              </button>
+            </Tooltip>
+          </div>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={SignOut}
+            className="w-full justify-start gap-2 px-2"
+            onClick={logout}
+          >
+            Cerrar sesión
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function AdminLayout() {
   const { session, logout } = usePlatformAuth();
   const location = useLocation();
-  const [open, setOpen] = useState(false);
   const [drawer, setDrawer] = useState(false);
-  const [query, setQuery] = useState("");
+  const [collapsed, setCollapsed] = useState(readSidebarCollapsed);
   const [notices, setNotices] = useState<Notice[]>([]);
   const [unread, setUnread] = useState(0);
 
   useEffect(() => {
-    if (!open) return;
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
+    document.documentElement.setAttribute("data-sidebar", collapsed ? "collapsed" : "expanded");
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "1" : "0");
+    } catch {
+      // sin persistencia
     }
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [collapsed]);
+
+  useEffect(() => {
+    setDrawer(false);
+  }, [location.pathname]);
 
   const loadNotices = useCallback(async () => {
     if (!session) return;
@@ -193,137 +427,140 @@ export default function AdminLayout() {
     }
   }
 
+  const context = platformNavContextForPath(location.pathname);
+  const pageTitle = context?.item.label ?? "Overview";
+  const crumbs = [
+    { label: "Control Center", to: BASE },
+    ...(context ? [{ label: context.group.label }] : []),
+    { label: pageTitle },
+  ];
+
   return (
-    <div className="flex h-dvh max-h-dvh overflow-hidden">
-      <aside className="hidden h-full w-60 shrink-0 flex-col border-r border-border bg-surface lg:flex">
-        <div className="border-b border-border px-4 py-4">
-          <p className="text-xs font-medium uppercase tracking-wider text-faint">
-            Control Center
-          </p>
-          <p className="mt-1 text-sm font-semibold text-text">Zent plataforma</p>
-        </div>
-        <ControlNav groups={NAV} query={query} onQuery={setQuery} />
-        <div className="border-t border-border p-4">
-          <p className="mb-2 truncate text-xs text-faint" title={session.email}>
-            {session.email}
-          </p>
-          <button
-            type="button"
-            className="btn btn-ghost w-full justify-start gap-2 px-2 py-1.5 text-[13px]"
-            onClick={logout}
-          >
-            <SignOut size={16} aria-hidden />
-            Cerrar sesión
-          </button>
-        </div>
+    <div className="min-h-[100dvh]">
+      <a href="#plataforma-contenido" className="skip-link">
+        Saltar al contenido
+      </a>
+      <aside className="app-sidebar fixed inset-y-0 left-0 z-30 hidden border-r border-border bg-surface lg:block">
+        <AdminSidebar
+          collapsed={collapsed}
+          onToggleCollapsed={() => setCollapsed((v) => !v)}
+          instanceId="desktop"
+        />
       </aside>
-      {drawer && (
-        <div className="fixed inset-0 z-40 lg:hidden">
-          <div
-            className="absolute inset-0 bg-black/60"
-            onClick={() => setDrawer(false)}
-            aria-hidden
-          />
-          <div className="absolute inset-y-0 left-0 flex w-72 flex-col border-r border-border bg-surface shadow-pop">
-            <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <p className="text-sm font-semibold text-text">Control Center</p>
-              <button
-                type="button"
-                className="btn btn-ghost min-h-11 min-w-11"
-                aria-label="Cerrar menú"
-                onClick={() => setDrawer(false)}
-              >
-                <X size={18} aria-hidden />
-              </button>
-            </div>
-            <ControlNav
-              groups={NAV}
-              query={query}
-              onQuery={setQuery}
-              onNavigate={() => setDrawer(false)}
-            />
-          </div>
-        </div>
-      )}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex items-center justify-between border-b border-border px-4 py-3">
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="btn btn-ghost min-h-11 min-w-11 lg:hidden"
-              aria-label="Abrir menú"
+
+      <Drawer
+        open={drawer}
+        onOpenChange={setDrawer}
+        title="Control Center"
+        description="Navegación de plataforma"
+        side="left"
+        width={290}
+        closeLabel="Cerrar menú"
+        overlayClassName="lg:hidden"
+        className="lg:hidden"
+      >
+        <AdminSidebar
+          collapsed={false}
+          instanceId="mobile"
+          showHeader={false}
+          onNavigate={() => setDrawer(false)}
+        />
+      </Drawer>
+
+      <div className="app-main flex min-h-[100dvh] min-w-0 flex-col">
+        <header className="sticky top-0 z-20 flex items-center justify-between gap-4 border-b border-border bg-bg/85 px-4 py-2 backdrop-blur-md">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <IconButton
+              label="Abrir menú"
+              icon={List}
+              iconSize={18}
               aria-expanded={drawer}
               onClick={() => setDrawer(true)}
-            >
-              <List size={18} aria-hidden />
-            </button>
-            <span className="text-sm font-semibold lg:hidden">Control Center</span>
-            <span className="hidden text-sm text-muted lg:inline">Inbox de plataforma</span>
+              className="h-8 w-8 min-h-0 self-center lg:hidden"
+            />
+            {collapsed && (
+              <button
+                type="button"
+                onClick={() => setCollapsed(false)}
+                aria-label="Mostrar menú"
+                className="-ml-1 mr-0.5 hidden h-8 w-8 shrink-0 cursor-pointer items-center justify-center self-center rounded-sm text-muted transition-colors duration-150 hover:bg-soft hover:text-text lg:inline-flex"
+              >
+                <SidebarSimple size={16} aria-hidden />
+              </button>
+            )}
+            <Breadcrumbs items={crumbs} className="hidden min-w-0 sm:flex" />
+            <span className="truncate text-[15px] font-medium text-text sm:hidden" data-page-title>
+              {pageTitle}
+            </span>
           </div>
-          <div className="relative flex items-center gap-2">
+
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
-              className="btn btn-ghost hidden min-h-11 items-center gap-2 px-2 text-xs text-muted sm:flex"
+              className="mr-1 hidden h-9 min-w-[13rem] cursor-pointer items-center gap-2 rounded-sm border border-border bg-control px-2.5 text-[13px] text-faint transition-colors duration-200 hover:border-border-strong hover:text-muted sm:flex"
               onClick={() => openCommandPalette("platform")}
               aria-label="Buscar (Ctrl+K)"
             >
-              <MagnifyingGlass size={16} aria-hidden />
-              Buscar
-              <kbd className="rounded-xs border border-border bg-bg px-1 font-mono text-[10px] text-faint">Ctrl K</kbd>
+              <MagnifyingGlass size={14} aria-hidden />
+              <span className="flex-1 text-left">Buscar sección…</span>
+              <Kbd>Ctrl K</Kbd>
             </button>
-            <button
-              type="button"
-              className="btn btn-ghost relative min-h-11 min-w-11"
-              aria-label="Notificaciones"
-              aria-expanded={open}
-              onClick={() => setOpen((v) => !v)}
+
+            <Popover
+              align="end"
+              width={360}
+              trigger={
+                <button
+                  type="button"
+                  className="relative inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-sm text-muted transition-colors duration-150 hover:bg-soft hover:text-text"
+                  aria-label={`Notificaciones${unread > 0 ? ` (${unread} sin leer)` : ""}`}
+                >
+                  <Bell size={17} aria-hidden />
+                  {unread > 0 && (
+                    <span className="absolute top-1 right-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-accent-fg tabular-nums">
+                      {unread > 99 ? "99+" : unread}
+                    </span>
+                  )}
+                </button>
+              }
             >
-              <Bell size={18} aria-hidden />
-              {unread > 0 && (
-                <span className="absolute right-1 top-1 inline-flex min-w-5 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-accent-fg">
-                  {unread > 99 ? "99+" : unread}
-                </span>
-              )}
-            </button>
-            <ThemeToggle compact />
-            <button type="button" className="btn btn-ghost min-h-11 text-sm lg:hidden" onClick={logout}>
-              Salir
-            </button>
-            {open && (
-              <div
-                className="absolute right-0 top-12 z-20 w-[min(100vw-2rem,22rem)] rounded-md border border-border bg-surface p-2 shadow-lg"
-                role="dialog"
-                aria-label="Notificaciones"
-              >
-                {notices.length === 0 && (
-                  <p className="px-3 py-4 text-sm text-muted">Sin avisos.</p>
+              <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
+                <p className="eyebrow">Notificaciones</p>
+                {unread > 0 && (
+                  <span className="text-[11px] text-faint tabular-nums">{unread} sin leer</span>
                 )}
-                <ul className="max-h-80 overflow-y-auto">
+              </div>
+              {notices.length === 0 ? (
+                <p className="px-1 py-3 text-[13px] text-muted">Sin avisos.</p>
+              ) : (
+                <ul className="max-h-80 divide-y divide-border-soft overflow-y-auto">
                   {notices.map((n) => (
-                    <li key={n.id} className="border-b border-border last:border-0">
-                      <div className="px-3 py-2">
-                        <p className="text-sm font-medium text-text">{n.title}</p>
-                        {n.body && <p className="mt-0.5 text-xs text-muted">{n.body}</p>}
-                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                    <li key={n.id}>
+                      <div className="py-2.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <p className="text-[13px] font-medium text-text">{n.title}</p>
+                          {!n.read_at && <Badge tone="accent">nuevo</Badge>}
+                        </div>
+                        {n.body && (
+                          <p className="mt-0.5 text-xs leading-relaxed text-muted">{n.body}</p>
+                        )}
+                        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
                           {n.organization_id && (
                             <Link
                               className="text-accent hover:underline"
                               to={`${BASE}/tenants/${n.organization_id}`}
-                              onClick={() => setOpen(false)}
                             >
                               {n.organization_name || "Ver tenant"}
                             </Link>
                           )}
                           <span className="text-faint">
-                            {n.created_at
-                              ? new Date(n.created_at).toLocaleString("es-PE")
-                              : ""}
+                            {n.created_at ? new Date(n.created_at).toLocaleString("es-PE") : ""}
                           </span>
                         </div>
                         {!n.read_at && (
                           <button
                             type="button"
-                            className="mt-1 text-xs text-accent hover:underline"
+                            className="mt-1 cursor-pointer text-xs font-medium text-accent hover:underline"
                             onClick={() => void markRead(n.id)}
                           >
                             Marcar leído
@@ -333,11 +570,58 @@ export default function AdminLayout() {
                     </li>
                   ))}
                 </ul>
+              )}
+            </Popover>
+
+            <ThemeToggle compact />
+
+            <span className="mx-0.5 hidden h-5 w-px bg-border sm:block" aria-hidden />
+
+            <Menu
+              label="Cuenta"
+              align="end"
+              className="min-w-[15rem]"
+              trigger={
+                <button
+                  type="button"
+                  className="flex cursor-pointer items-center gap-2 rounded-sm p-1 transition-colors duration-150 hover:bg-soft"
+                  aria-label="Cuenta"
+                >
+                  <IdentityTile label={session.email || "Z"} kind="account" size={28} />
+                </button>
+              }
+            >
+              <div className="border-b border-border px-2.5 pt-1.5 pb-2.5">
+                <p className="truncate text-[13px] font-medium text-text">
+                  {session.email || "Cuenta"}
+                </p>
+                <p className="truncate text-[11px] text-faint">Plataforma Zent</p>
               </div>
-            )}
+              <MenuLabel className={menuLabelClass}>Sesión</MenuLabel>
+              <MenuItem
+                className={menuItemClass}
+                onSelect={() => openCommandPalette("platform")}
+              >
+                <MagnifyingGlass size={15} aria-hidden />
+                Buscar sección
+              </MenuItem>
+              <MenuSeparator className={menuSeparatorClass} />
+              <MenuItem
+                className={cn(menuItemClass, "text-danger data-[highlighted]:bg-danger-soft")}
+                onSelect={() => logout()}
+              >
+                <SignOut size={15} aria-hidden />
+                Cerrar sesión
+              </MenuItem>
+            </Menu>
           </div>
         </header>
-        <main className="min-h-0 flex-1 overflow-y-auto p-4 lg:p-6" tabIndex={-1}>
+
+        <main
+          id="plataforma-contenido"
+          className="mx-auto w-full max-w-[1360px] flex-1 px-4 py-5 sm:px-6 lg:px-8"
+          tabIndex={-1}
+        >
           <CommandPaletteRoot mode="platform" />
           <IdleSessionWarning minutes={IDLE_SESSION_MINUTES} onLogout={logout} />
           <StepUpModal />

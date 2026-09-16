@@ -1,8 +1,14 @@
-import { ArrowClockwise, Robot, Star } from "@phosphor-icons/react";
+import { ArrowClockwise, Robot, Star, WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { ErrorInline, SkeletonBlock } from "../components/ui";
 import { api } from "../api";
+import {
+  Badge,
+  CodeBlock,
+  EmptyState,
+  Panel,
+  SkeletonBlock,
+} from "../components/ui";
 
 type SharedAgent = {
   name: string;
@@ -28,49 +34,77 @@ export default function SharedAgentPage() {
   }, [token]);
 
   if (loading) return <SkeletonBlock className="mx-auto mt-16 h-40 max-w-2xl" />;
+
   if (error) {
     return (
-      <div className="mx-auto mt-16 max-w-md p-6">
-        <ErrorInline>{error}</ErrorInline>
+      <div className="mx-auto mt-16 max-w-2xl p-6">
+        <Panel>
+          <EmptyState
+            icon={WarningCircle}
+            title="No pudimos abrir este agente"
+            body={error}
+            hint="El link puede haber expirado o el agente ya no está compartido."
+          />
+        </Panel>
       </div>
     );
   }
+
   if (!agent) return null;
+
+  const hasConfig = Object.keys(agent.config ?? {}).length > 0;
 
   return (
     <div className="mx-auto max-w-2xl space-y-4 p-6">
-      <div className="panel flex flex-col gap-3 p-6">
-        <div className="flex items-center gap-3">
-          <Robot size={28} className="text-accent" aria-hidden />
-          <div>
-            <h1 className="text-lg font-semibold text-text">{agent.name}</h1>
-            <p className="text-sm text-muted">{agent.description || "Agente compartido"}</p>
+      <Panel className="flex flex-col gap-4 p-6">
+        <div className="flex items-start gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md border border-accent-line bg-accent-soft text-accent">
+            <Robot size={22} aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <h1 className="text-h1">{agent.name}</h1>
+            <p className="mt-0.5 text-[13px] text-muted">
+              {agent.description || "Agente compartido"}
+            </p>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <span className="badge badge-ok">{agent.model || "modelo default"}</span>
+
+        <div className="flex flex-wrap gap-1.5">
+          <Badge tone="accent">{agent.model || "modelo default"}</Badge>
           {agent.tools.map((t) => (
-            <span key={t} className="badge badge-muted">
+            <Badge key={t} tone="neutral">
               {t}
-            </span>
+            </Badge>
           ))}
         </div>
-        <div>
-          <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-faint">System prompt</p>
-          <pre className="whitespace-pre-wrap rounded-md bg-soft p-3 text-xs leading-relaxed text-text">
-            {agent.system_prompt}
-          </pre>
-        </div>
-        <div>
-          <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-faint">Configuración</p>
-          <pre className="whitespace-pre-wrap rounded-md bg-soft p-3 text-[11px] text-faint">
-            {JSON.stringify(agent.config, null, 2)}
-          </pre>
-        </div>
-        <p className="flex items-center gap-1 text-xs text-faint">
-          <Star size={12} aria-hidden /> Compartido vía Zent RAG
+
+        <section>
+          <p className="eyebrow mb-2">System prompt</p>
+          <CodeBlock
+            code={agent.system_prompt}
+            language="text"
+            filename="system_prompt"
+            maxHeight={320}
+          />
+        </section>
+
+        {hasConfig && (
+          <section>
+            <p className="eyebrow mb-2">Configuración</p>
+            <CodeBlock
+              code={JSON.stringify(agent.config, null, 2)}
+              language="json"
+              filename="config.json"
+              maxHeight={260}
+            />
+          </section>
+        )}
+
+        <p className="flex items-center gap-1.5 text-xs text-faint">
+          <Star size={12} aria-hidden />
+          Compartido vía Zent RAG
         </p>
-      </div>
+      </Panel>
       <p className="text-center text-xs text-faint">
         <ArrowClockwise size={11} className="mr-1 inline" aria-hidden />
         El agente puede clonarse en tu organización desde el portal.

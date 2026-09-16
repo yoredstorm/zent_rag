@@ -1,13 +1,28 @@
-import { Handshake, Plus, PuzzlePiece } from "@phosphor-icons/react";
+import { Handshake, Plus, Pulse, PuzzlePiece } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api";
 import {
+  Badge,
+  Button,
+  DataTable,
+  Drawer,
   EmptyState,
   ErrorInline,
+  Field,
+  Input,
+  Metric,
+  MetricGrid,
   PageHeader,
-  SkeletonBlock,
+  Panel,
+  PanelHeader,
+  SectionHeader,
+  Select,
+  Skeleton,
+  SuccessInline,
+  type Column,
 } from "../../components/ui";
 import { usePlatformAuth } from "../../platformAuth";
+import { fmtCurrency, fmtDateTime } from "../../lib/format";
 
 type Partner = {
   id: string;
@@ -34,9 +49,11 @@ export default function AdminPartnersPage() {
   const [usage, setUsage] = useState<Record<string, PartnerUsage>>({});
   const [commissions, setCommissions] = useState<Record<string, Commission[]>>({});
   const [subtenants, setSubtenants] = useState<Record<string, { organization_id: string; commission_share_pct: number }[]>>({});
+  const [detail, setDetail] = useState<Partner | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   async function load() {
     if (!session) return;
@@ -66,13 +83,14 @@ export default function AdminPartnersPage() {
     if (!session) return;
     setBusy("create");
     setError("");
+    setNotice("");
     try {
       const out = await platformApi<{ api_token: string }>("/api/v1/platform/partners", {
         method: "POST",
         token: session.token,
         body: JSON.stringify(form),
       });
-      setError(`Partner creado. TOKEN (una vez): ${out.api_token}`);
+      setNotice(`Partner creado. TOKEN (una vez): ${out.api_token}`);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
@@ -108,13 +126,14 @@ export default function AdminPartnersPage() {
     if (!session) return;
     setBusy(partnerId);
     setError("");
+    setNotice("");
     const period = new Date().toISOString().slice(0, 7);
     try {
       const out = await platformApi<{ commission: number; revenue: number }>(
         `/api/v1/platform/partners/${partnerId}/commission/calculate`,
         { method: "POST", token: session.token, body: JSON.stringify({ period }) }
       );
-      setError(`${period}: revenue $${out.revenue} → comisión $${out.commission}`);
+      setNotice(`${period}: revenue $${out.revenue} → comisión $${out.commission}`);
       await loadUsage(partnerId);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
@@ -123,107 +142,283 @@ export default function AdminPartnersPage() {
     }
   }
 
+  function openDetail(partner: Partner) {
+    setDetail(partner);
+    void loadUsage(partner.id);
+  }
+
+  const partnerColumns: Column<Partner>[] = [
+    {
+      key: "name",
+      header: "Partner",
+      render: (p) => (
+        <span className="flex min-w-0 flex-col">
+          <span className="truncate font-medium text-text">{p.name}</span>
+          {p.contact_email && <span className="truncate text-xs text-faint">{p.contact_email}</span>}
+        </span>
+      ),
+    },
+    {
+      key: "org",
+      header: "Org",
+      hideBelow: "lg",
+      render: (p) => <span className="mono text-xs text-muted">{p.organization_id.slice(0, 8)}…</span>,
+    },
+    {
+      key: "rev_share",
+      header: "Rev-share",
+      align: "right",
+      render: (p) => <span className="mono">{p.rev_share_pct}%</span>,
+    },
+    {
+      key: "status",
+      header: "Estado",
+      render: (p) => <Badge tone={p.status === "active" ? "ok" : "danger"}>{p.status}</Badge>,
+    },
+    {
+      key: "white_label",
+      header: "White-label",
+      hideBelow: "md",
+      render: (p) =>
+        p.white_label_enabled ? <Badge tone="warn">activo</Badge> : <span className="text-faint">—</span>,
+    },
+    {
+      key: "created",
+      header: "Creado",
+      hideBelow: "xl",
+      render: (p) => <span className="text-muted">{fmtDateTime(p.created_at)}</span>,
+    },
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-3">
       <PageHeader
         title="Partner Ecosystem"
         subtitle="Partners con rev-share, subtenants white-label y catálogo de integraciones."
       />
-      {error && <ErrorInline>{error}</ErrorInline>}
+      {error && <ErrorInline message={error} />}
+      {notice && <SuccessInline>{notice}</SuccessInline>}
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <div className="flex flex-col gap-3" aria-hidden>
+          <Skeleton className="h-[112px] rounded-lg" />
+          <Skeleton className="h-[220px] rounded-lg" />
+        </div>
       ) : (
         <>
-          <section>
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
-              <Handshake size={15} aria-hidden /> Partners
-            </h3>
-            <div className="panel grid grid-cols-1 gap-3 p-4 lg:grid-cols-5">
-              <select className="rounded-md border border-border bg-soft px-2 py-2 text-sm" value={form.organization_id} onChange={(e) => setForm((f) => ({ ...f, organization_id: e.target.value }))}>
-                <option value="">Org del partner…</option>
-                {orgs.map((o) => (
-                  <option key={o.id} value={o.id}>{o.id.slice(0, 8)}</option>
-                ))}
-              </select>
-              <input className="rounded-md border border-border bg-soft px-3 py-2 text-sm" placeholder="Nombre" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
-              <input className="rounded-md border border-border bg-soft px-3 py-2 text-sm" placeholder="Email" value={form.contact_email} onChange={(e) => setForm((f) => ({ ...f, contact_email: e.target.value }))} />
-              <input type="number" className="rounded-md border border-border bg-soft px-3 py-2 text-sm" placeholder="Rev-share %" value={form.rev_share_pct} onChange={(e) => setForm((f) => ({ ...f, rev_share_pct: Number(e.target.value) }))} />
-              <button type="button" className="btn btn-primary min-h-9 text-xs" disabled={!!busy} onClick={() => void create()}>
-                <Plus size={13} aria-hidden /> Crear (token)
-              </button>
-            </div>
+          <Panel>
+            <PanelHeader
+              title="Nuevo partner"
+              description="Genera un token dedicado; se muestra una sola vez."
+            />
+            <form
+              className="grid grid-cols-1 gap-3 p-4 lg:grid-cols-5 lg:items-end"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void create();
+              }}
+            >
+              <Field label="Organización">
+                <Select
+                  value={form.organization_id}
+                  placeholder="Elegir org…"
+                  onChange={(e) => setForm((f) => ({ ...f, organization_id: e.target.value }))}
+                >
+                  {orgs.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.id.slice(0, 8)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field label="Nombre">
+                <Input
+                  placeholder="Nombre del partner"
+                  value={form.name}
+                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                />
+              </Field>
+              <Field label="Email de contacto">
+                <Input
+                  type="email"
+                  placeholder="partner@empresa.com"
+                  value={form.contact_email}
+                  onChange={(e) => setForm((f) => ({ ...f, contact_email: e.target.value }))}
+                />
+              </Field>
+              <Field label="Rev-share %">
+                <Input
+                  type="number"
+                  min={0}
+                  value={form.rev_share_pct}
+                  onChange={(e) => setForm((f) => ({ ...f, rev_share_pct: Number(e.target.value) }))}
+                />
+              </Field>
+              <Button type="submit" variant="primary" leadingIcon={Plus} loading={busy === "create"}>
+                Crear (token)
+              </Button>
+            </form>
+          </Panel>
 
-            {partners.length === 0 ? (
-              <div className="panel mt-2">
-                <EmptyState icon={Handshake} title="Sin partners" body="Crea un partner para emitir su token dedicado." />
-              </div>
+          <section>
+            <SectionHeader
+              title="Partners"
+              description="Abrí el detalle para ver uso, comisiones y subtenants reales."
+              className="mb-3"
+            />
+            <DataTable
+              columns={partnerColumns}
+              rows={partners}
+              rowKey={(p) => p.id}
+              caption="Partners de la plataforma"
+              stickyHeader
+              onRowClick={(p) => openDetail(p)}
+              rowActions={(p) => (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy !== ""}
+                    onClick={() => openDetail(p)}
+                  >
+                    Uso
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={busy !== ""}
+                    onClick={() => {
+                      setDetail(p);
+                      void calcCommission(p.id);
+                    }}
+                  >
+                    Comisión
+                  </Button>
+                </>
+              )}
+              empty={
+                <EmptyState
+                  icon={Handshake}
+                  title="Sin partners"
+                  body="Creá un partner para emitir su token dedicado."
+                />
+              }
+            />
+          </section>
+
+          <section>
+            <SectionHeader
+              title="Catálogo de integraciones"
+              description="Integraciones soportadas por el ecosistema."
+              className="mb-3"
+            />
+            {integrations.length === 0 ? (
+              <Panel>
+                <EmptyState
+                  icon={PuzzlePiece}
+                  title="Sin integraciones"
+                  body="El catálogo no devolvió integraciones."
+                />
+              </Panel>
             ) : (
-              <div className="mt-2 space-y-3">
-                {partners.map((p) => (
-                  <div key={p.id} className="panel p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-semibold text-text">{p.name}</p>
-                        <p className="text-xs text-faint">
-                          org {p.organization_id.slice(0, 8)} · rev-share {p.rev_share_pct}% ·{" "}
-                          <span className={`badge ${p.status === "active" ? "badge-ok" : "badge-danger"}`}>{p.status}</span>{" "}
-                          {p.white_label_enabled && <span className="badge badge-pending">white-label</span>}
-                        </p>
-                      </div>
-                      <div className="flex gap-2">
-                        <button type="button" className="btn btn-ghost min-h-8 text-xs" disabled={!!busy} onClick={() => void loadUsage(p.id)}>
-                          Uso
-                        </button>
-                        <button type="button" className="btn btn-ghost min-h-8 text-xs" disabled={!!busy} onClick={() => void calcCommission(p.id)}>
-                          Comisión
-                        </button>
-                      </div>
+              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
+                {integrations.map((i) => (
+                  <Panel key={i.key} className="flex flex-col gap-1 p-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-[13px] font-medium text-text">{i.name}</p>
+                      <Badge tone={i.is_active ? "ok" : "neutral"}>
+                        {i.is_active ? "activa" : "inactiva"}
+                      </Badge>
                     </div>
-                    {usage[p.id] && (
-                      <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                        <span className="text-muted">Requests 30d: <b className="text-text">{usage[p.id].total_requests}</b></span>
-                        <span className="text-muted">Costo: <b className="text-text">${usage[p.id].total_cost.toFixed(2)}</b></span>
-                        <span className="text-muted">Subtenants: <b className="text-text">{subtenants[p.id]?.length ?? 0}</b></span>
-                      </div>
-                    )}
-                    {(commissions[p.id] ?? []).length > 0 && (
-                      <ul className="mt-2 space-y-1">
-                        {commissions[p.id]?.map((c) => (
-                          <li key={c.period} className="flex items-center justify-between text-xs">
-                            <span className="mono text-text">{c.period}</span>
-                            <span className="text-faint">revenue ${c.revenue} · <b>comisión ${c.commission}</b> · {c.status}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
+                    <p className="text-xs text-faint">
+                      {i.category} · {i.key}
+                    </p>
+                    {i.description && <p className="text-xs leading-relaxed text-muted">{i.description}</p>}
+                  </Panel>
                 ))}
               </div>
             )}
           </section>
-
-          <section>
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
-              <PuzzlePiece size={15} aria-hidden /> Catálogo de integraciones
-            </h3>
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 xl:grid-cols-3">
-              {integrations.map((i) => (
-                <div key={i.key} className="panel flex flex-col gap-1 p-4">
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-semibold text-text">{i.name}</p>
-                    <span className={`badge ${i.is_active ? "badge-ok" : "badge-muted"}`}>{i.is_active ? "activa" : "inactiva"}</span>
-                  </div>
-                  <p className="text-xs text-faint">{i.category} · {i.key}</p>
-                  <p className="text-xs text-muted">{i.description}</p>
-                  {i.oauth_url_template && (
-                    <p className="truncate text-[10px] text-faint">{i.oauth_url_template}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </section>
         </>
       )}
+
+      <Drawer
+        open={!!detail}
+        onOpenChange={(open) => {
+          if (!open) setDetail(null);
+        }}
+        title={detail?.name || "Partner"}
+        description={
+          detail
+            ? `org ${detail.organization_id.slice(0, 8)}… · rev-share ${detail.rev_share_pct}%`
+            : undefined
+        }
+        width={480}
+      >
+        {detail && (
+          <div className="flex flex-col gap-4">
+            {!usage[detail.id] ? (
+              <Skeleton className="h-[104px] rounded-lg" />
+            ) : (
+              <MetricGrid cols={3}>
+                <Metric
+                  size="md"
+                  label="Requests 30d"
+                  value={usage[detail.id].total_requests}
+                  icon={Pulse}
+                />
+                <Metric
+                  size="md"
+                  label="Costo 30d"
+                  value={fmtCurrency(usage[detail.id].total_cost)}
+                />
+                <Metric size="md" label="Subtenants" value={subtenants[detail.id]?.length ?? 0} />
+              </MetricGrid>
+            )}
+
+            <Panel>
+              <PanelHeader title="Comisiones" description="Comisiones calculadas por período." />
+              {(commissions[detail.id] ?? []).length === 0 ? (
+                <EmptyState
+                  compact
+                  title="Sin comisiones"
+                  body="Calculá una comisión para ver el período acá."
+                />
+              ) : (
+                <ul className="divide-y divide-border-soft px-4">
+                  {(commissions[detail.id] ?? []).map((c) => (
+                    <li key={c.period} className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-xs">
+                      <span className="mono text-text">{c.period}</span>
+                      <span className="text-muted">
+                        revenue ${c.revenue} · <b className="text-text">comisión ${c.commission}</b> · {c.status}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Panel>
+
+            <Panel>
+              <PanelHeader title="Subtenants" description="Organizaciones bajo este partner." />
+              {(subtenants[detail.id] ?? []).length === 0 ? (
+                <EmptyState
+                  compact
+                  title="Sin subtenants"
+                  body="Este partner todavía no tiene organizaciones asociadas."
+                />
+              ) : (
+                <ul className="divide-y divide-border-soft px-4">
+                  {(subtenants[detail.id] ?? []).map((s) => (
+                    <li key={s.organization_id} className="flex items-center justify-between gap-2 py-2.5 text-xs">
+                      <span className="mono text-muted">{s.organization_id.slice(0, 8)}…</span>
+                      <span className="mono text-text">{s.commission_share_pct}%</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Panel>
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 }

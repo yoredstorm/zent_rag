@@ -1,14 +1,33 @@
 import { RocketLaunch } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api";
-import { ErrorInline, PageHeader, SkeletonBlock } from "../../components/ui";
+import {
+  Badge,
+  DataTable,
+  EmptyState,
+  ErrorInline,
+  Metric,
+  MetricGrid,
+  PageHeader,
+  Panel,
+  PanelHeader,
+  SectionHeader,
+  Skeleton,
+  type Column,
+} from "../../components/ui";
 import { usePlatformAuth } from "../../platformAuth";
+import { fmtDateTime } from "../../lib/format";
 
 type Metrics = { total_orgs: number; completed: number; activation_rate: number; avg_time_to_first_value_seconds: number | null; funnel: { step: string; orgs: number }[] };
 type OrgRow = { organization_id: string; done_steps: string[]; current_step: string; started_at: string; completed_at: string | null; time_to_first_value_seconds: number | null };
 
 const STEPS = ["create_kb", "add_documents", "create_agent", "deploy_agent", "first_query"];
 const LABELS: Record<string, string> = { create_kb: "KB", add_documents: "Docs", create_agent: "Agente", deploy_agent: "Deploy", first_query: "Query" };
+
+function minutes(seconds: number | null | undefined) {
+  if (seconds == null) return "—";
+  return `${Math.round(seconds / 60)}m`;
+}
 
 export default function AdminOnboardingPage() {
   const { session } = usePlatformAuth();
@@ -41,86 +60,136 @@ export default function AdminOnboardingPage() {
 
   const maxFunnel = Math.max(...(metrics?.funnel ?? []).map((f) => f.orgs), 1);
 
+  const columns: Column<OrgRow>[] = [
+    {
+      key: "org",
+      header: "Org",
+      render: (o) => <span className="mono text-xs text-muted">{o.organization_id.slice(0, 8)}…</span>,
+    },
+    {
+      key: "steps",
+      header: "Pasos",
+      render: (o) => (
+        <span className="flex flex-wrap gap-1">
+          {STEPS.map((s) => (
+            <Badge key={s} tone={o.done_steps.includes(s) ? "ok" : "neutral"} title={s}>
+              {LABELS[s]}
+            </Badge>
+          ))}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Estado",
+      render: (o) =>
+        o.completed_at ? (
+          <Badge tone="ok">completado</Badge>
+        ) : (
+          <Badge tone="warn">{LABELS[o.current_step] ?? o.current_step}</Badge>
+        ),
+    },
+    {
+      key: "ttfv",
+      header: "TTFV",
+      align: "right",
+      render: (o) => <span className="mono text-xs">{minutes(o.time_to_first_value_seconds)}</span>,
+    },
+    {
+      key: "started",
+      header: "Inicio",
+      hideBelow: "md",
+      render: (o) => <span className="text-muted">{fmtDateTime(o.started_at)}</span>,
+    },
+  ];
+
   return (
-    <div className="space-y-6">
-      <PageHeader title="Onboarding & Activación" subtitle="TTFV, tasa de completación y funnel por paso." />
-      {error && <ErrorInline>{error}</ErrorInline>}
+    <div className="flex flex-col gap-3">
+      <PageHeader
+        title="Onboarding & Activación"
+        subtitle="TTFV, tasa de completación y funnel por paso."
+      />
+      {error && <ErrorInline message={error} />}
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <Skeleton className="h-[320px] rounded-lg" />
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <div className="panel p-4">
-              <p className="stat-label">Orgs</p>
-              <p className="stat-value">{metrics?.total_orgs ?? 0}</p>
-            </div>
-            <div className="panel p-4">
-              <p className="stat-label">Activadas</p>
-              <p className="stat-value">{(metrics?.activation_rate ?? 0) * 100}%</p>
-              <p className="text-xs text-faint">{metrics?.completed ?? 0} completaron</p>
-            </div>
-            <div className="panel p-4">
-              <p className="stat-label">TTFV promedio</p>
-              <p className="stat-value">{metrics?.avg_time_to_first_value_seconds != null ? `${Math.round(metrics.avg_time_to_first_value_seconds / 60)}m` : "—"}</p>
-            </div>
-            <div className="panel p-4">
-              <p className="stat-label">Funnel</p>
-              <p className="stat-value text-xs">{metrics?.funnel[0]?.orgs ?? 0} iniciaron</p>
-            </div>
-          </div>
+          {/* Foco: la tasa de activación; el resto es volumen de contexto */}
+          <Panel className="p-4">
+            <p className="eyebrow">Activación de organizaciones</p>
+            <p className="mt-1.5 text-display tabular-nums">
+              {((metrics?.activation_rate ?? 0) * 100).toFixed(1)}%
+            </p>
+            <p className="mt-2 text-[13px] text-muted">
+              {metrics?.completed ?? 0} de {metrics?.total_orgs ?? 0} organizaciones completaron el
+              flujo de activación
+            </p>
+          </Panel>
 
-          <section className="panel p-4">
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
-              <RocketLaunch size={15} /> Funnel de pasos
-            </h3>
-            <div className="space-y-2">
-              {(metrics?.funnel ?? []).map((f) => (
-                <div key={f.step} className="flex items-center gap-2 text-xs">
-                  <span className="w-24 text-text">{LABELS[f.step] ?? f.step}</span>
-                  <div className="h-3 flex-1 rounded-full bg-soft">
-                    <div className="h-3 rounded-full bg-accent" style={{ width: `${(f.orgs / maxFunnel) * 100}%` }} />
-                  </div>
-                  <span className="mono w-16 text-right text-faint">{f.orgs} orgs</span>
-                </div>
-              ))}
-            </div>
-          </section>
+          <MetricGrid cols={3}>
+            <Metric size="md" label="Orgs" value={metrics?.total_orgs ?? 0} icon={RocketLaunch} />
+            <Metric size="md" label="Completaron" value={metrics?.completed ?? 0} />
+            <Metric
+              size="md"
+              label="TTFV promedio"
+              value={minutes(metrics?.avg_time_to_first_value_seconds)}
+              hint="tiempo a primer valor"
+            />
+          </MetricGrid>
+
+          <Panel>
+            <PanelHeader
+              title="Funnel de pasos"
+              description="Organizaciones que alcanzaron cada paso del flujo."
+            />
+            {(metrics?.funnel ?? []).length === 0 ? (
+              <EmptyState
+                compact
+                title="Sin funnel"
+                body="No hay organizaciones que hayan iniciado el flujo de activación."
+              />
+            ) : (
+              <ul className="flex flex-col gap-3 p-4">
+                {(metrics?.funnel ?? []).map((f) => (
+                  <li key={f.step} className="flex items-center gap-3">
+                    <span className="w-24 shrink-0 text-xs text-text">
+                      {LABELS[f.step] ?? f.step}
+                    </span>
+                    <span className="progress-track flex-1">
+                      <span
+                        className="progress-fill block"
+                        style={{ width: `${(f.orgs / maxFunnel) * 100}%` }}
+                      />
+                    </span>
+                    <span className="mono w-20 shrink-0 text-right text-xs text-faint">
+                      {f.orgs} orgs
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Panel>
 
           <section>
-            <h3 className="mb-2 text-sm font-semibold text-text">Progreso por organización</h3>
-            <div className="panel overflow-x-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Org</th>
-                    <th>Pasos</th>
-                    <th>Estado</th>
-                    <th>TTFV</th>
-                    <th>Inicio</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {orgs.map((o) => (
-                    <tr key={o.organization_id}>
-                      <td className="mono text-[10px] text-faint">{o.organization_id.slice(0, 8)}</td>
-                      <td>
-                        <div className="flex gap-1">
-                          {STEPS.map((s) => (
-                            <span key={s} className={`badge ${o.done_steps.includes(s) ? "badge-ok" : "badge-muted"}`} title={s}>
-                              {LABELS[s]}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td>{o.completed_at ? <span className="badge badge-ok">completado</span> : <span className="badge badge-warning">{o.current_step}</span>}</td>
-                      <td className="text-xs">{o.time_to_first_value_seconds != null ? `${Math.round(o.time_to_first_value_seconds / 60)}m` : "—"}</td>
-                      <td className="text-[10px] text-faint">{new Date(o.started_at).toLocaleString()}</td>
-                    </tr>
-                  ))}
-                  {orgs.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-xs text-faint">Sin datos.</td></tr>}
-                </tbody>
-              </table>
-            </div>
+            <SectionHeader
+              title="Progreso por organización"
+              description="Paso actual y tiempo a primer valor de cada tenant."
+              className="mb-3"
+            />
+            <DataTable
+              columns={columns}
+              rows={orgs}
+              rowKey={(o) => o.organization_id}
+              caption="Onboarding por organización"
+              stickyHeader
+              empty={
+                <EmptyState
+                  icon={RocketLaunch}
+                  title="Sin organizaciones en onboarding"
+                  body="Todavía ninguna organización inició el flujo de activación."
+                />
+              }
+            />
           </section>
         </>
       )}

@@ -2,12 +2,24 @@ import { ChartBar, Envelope, Rocket } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api";
 import {
+  Badge,
+  Button,
+  ConfirmDialog,
+  DataTable,
   EmptyState,
   ErrorInline,
+  Metric,
+  MetricGrid,
   PageHeader,
-  SkeletonBlock,
+  Panel,
+  SectionHeader,
+  Skeleton,
+  StatusBadge,
+  SuccessInline,
+  type Column,
 } from "../../components/ui";
 import { usePlatformAuth } from "../../platformAuth";
+import { fmtDateTime } from "../../lib/format";
 
 type Conversion = {
   total_subscriptions: number;
@@ -34,6 +46,16 @@ type ReportSub = {
   last_sent_at: string | null;
 };
 
+function CustomerSuccessSkeleton() {
+  return (
+    <div className="flex flex-col gap-3" aria-hidden>
+      <Skeleton className="h-[112px] rounded-lg" />
+      <Skeleton className="h-[240px] rounded-lg" />
+      <Skeleton className="h-[240px] rounded-lg" />
+    </div>
+  );
+}
+
 export default function AdminCustomerSuccessPage() {
   const { session } = usePlatformAuth();
   const [conversion, setConversion] = useState<Conversion | null>(null);
@@ -42,6 +64,8 @@ export default function AdminCustomerSuccessPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [removing, setRemoving] = useState<ReportSub | null>(null);
 
   async function load() {
     if (!session) return;
@@ -79,12 +103,13 @@ export default function AdminCustomerSuccessPage() {
     if (!session) return;
     setBusy(subId);
     setError("");
+    setNotice("");
     try {
       const out = await platformApi<{ status: string }>(
         `/api/v1/platform/customer-success/reports/${subId}/send-now`,
         { method: "POST", token: session.token, body: "{}" }
       );
-      setError(`Reporte: ${out.status}`);
+      setNotice(`Reporte enviado: ${out.status}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
     } finally {
@@ -95,11 +120,13 @@ export default function AdminCustomerSuccessPage() {
   async function removeSub(subId: string) {
     if (!session) return;
     setBusy(subId);
+    setError("");
     try {
       await platformApi(`/api/v1/platform/customer-success/reports/${subId}`, {
         method: "DELETE",
         token: session.token,
       });
+      setRemoving(null);
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
@@ -108,149 +135,218 @@ export default function AdminCustomerSuccessPage() {
     }
   }
 
+  const planColumns: Column<Conversion["by_plan"][number]>[] = [
+    { key: "plan", header: "Plan", render: (p) => <span className="font-medium text-text">{p.plan}</span> },
+    { key: "total", header: "Totales", align: "right", render: (p) => <span className="mono">{p.total}</span> },
+    { key: "active", header: "Activas", align: "right", render: (p) => <span className="mono">{p.active}</span> },
+  ];
+
+  const onboardingColumns: Column<Onboarding>[] = [
+    {
+      key: "org",
+      header: "Tenant",
+      render: (o) => <span className="mono text-xs text-muted">{o.organization_id.slice(0, 13)}…</span>,
+    },
+    {
+      key: "steps",
+      header: "Pasos",
+      render: (o) => (
+        <span className="flex flex-wrap gap-1">
+          {(o.items ?? []).map((item) => (
+            <Badge key={item.key} tone={item.done ? "ok" : "neutral"} title={item.label}>
+              {item.label}
+            </Badge>
+          ))}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Estado",
+      render: (o) =>
+        o.completed ? (
+          <StatusBadge status="completed" />
+        ) : (
+          <Badge tone="warn">paso {o.step}/6</Badge>
+        ),
+    },
+    {
+      key: "completed",
+      header: "Completado",
+      hideBelow: "lg",
+      render: (o) => (
+        <span className="text-muted">{o.completed_at ? fmtDateTime(o.completed_at) : "—"}</span>
+      ),
+    },
+  ];
+
+  const reportColumns: Column<ReportSub>[] = [
+    {
+      key: "org",
+      header: "Tenant",
+      render: (s) => <span className="mono text-xs text-muted">{s.organization_id.slice(0, 8)}…</span>,
+    },
+    { key: "email", header: "Email", render: (s) => s.email },
+    {
+      key: "frequency",
+      header: "Frecuencia",
+      hideBelow: "md",
+      render: (s) => <span className="text-muted">{s.frequency}</span>,
+    },
+    {
+      key: "next",
+      header: "Próximo envío",
+      hideBelow: "lg",
+      render: (s) => <span className="text-muted">{fmtDateTime(s.next_send_at)}</span>,
+    },
+    {
+      key: "last",
+      header: "Último envío",
+      hideBelow: "xl",
+      render: (s) => <span className="text-muted">{s.last_sent_at ? fmtDateTime(s.last_sent_at) : "—"}</span>,
+    },
+  ];
+
+  const rate = conversion?.conversion_rate_pct;
+
   return (
-    <div className="space-y-6">
+    <div className="flex flex-col gap-3">
       <PageHeader
         title="Customer Success"
         subtitle="Conversión trial→paid, onboarding por tenant y reportes de uso por email."
       />
       {error && <ErrorInline>{error}</ErrorInline>}
+      <SuccessInline>{notice}</SuccessInline>
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <CustomerSuccessSkeleton />
       ) : (
         <>
-          <section>
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
-              <Rocket size={15} aria-hidden /> Conversión trial → paid
-            </h3>
-            <div className="panel grid grid-cols-2 gap-3 p-4 lg:grid-cols-4">
-              <div>
-                <p className="stat-label">Trials</p>
-                <p className="stat-value">{conversion?.trials ?? 0}</p>
-              </div>
-              <div>
-                <p className="stat-label">Paid activos</p>
-                <p className="stat-value">{conversion?.paid_active ?? 0}</p>
-              </div>
-              <div>
-                <p className="stat-label">Conversión</p>
-                <p className="stat-value">
-                  {conversion?.conversion_rate_pct != null ? `${conversion.conversion_rate_pct}%` : "—"}
-                </p>
-              </div>
-              <div>
-                <p className="stat-label">Subs totales</p>
-                <p className="stat-value">{conversion?.total_subscriptions ?? 0}</p>
-              </div>
-            </div>
-            <div className="panel mt-2 overflow-x-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Plan</th>
-                    <th>Totales</th>
-                    <th>Activas</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(conversion?.by_plan ?? []).map((p) => (
-                    <tr key={p.plan}>
-                      <td className="text-sm text-text">{p.plan}</td>
-                      <td className="text-xs">{p.total}</td>
-                      <td className="text-xs">{p.active}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          <section className="flex flex-col gap-3">
+            {/* Foco: la conversión trial→paid; el volumen queda demotado */}
+            <Panel className="p-4">
+              <p className="eyebrow">Conversión trial → paid</p>
+              <p className="mt-1.5 text-display tabular-nums">
+                {rate != null ? `${rate}%` : "—"}
+              </p>
+              <p className="mt-2 text-[13px] text-muted">
+                {conversion?.trials ?? 0} trials
+                <span className="mx-1.5 text-ghost">·</span>
+                {conversion?.paid_active ?? 0} paid activos
+                <span className="mx-1.5 text-ghost">·</span>
+                {conversion?.total_subscriptions ?? 0} suscripciones totales
+              </p>
+            </Panel>
+
+            <MetricGrid cols={3}>
+              <Metric size="md" label="Trials" value={conversion?.trials ?? 0} icon={Rocket} />
+              <Metric size="md" label="Paid activos" value={conversion?.paid_active ?? 0} />
+              <Metric size="md" label="Subs totales" value={conversion?.total_subscriptions ?? 0} />
+            </MetricGrid>
           </section>
 
           <section>
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
-              <ChartBar size={15} aria-hidden /> Onboarding por tenant
-            </h3>
-            <div className="panel grid grid-cols-1 gap-3 lg:grid-cols-2">
-              {onboarding.map((o) => (
-                <div key={o.organization_id} className="rounded-md border border-border p-3">
-                  <div className="flex items-center justify-between">
-                    <p className="mono text-xs text-faint">{o.organization_id.slice(0, 13)}…</p>
-                    <span className={`badge ${o.completed ? "badge-ok" : "badge-pending"}`}>
-                      {o.completed ? "completado" : `paso ${o.step}/6`}
-                    </span>
-                  </div>
-                  <ul className="mt-2 space-y-1">
-                    {o.items.map((item) => (
-                      <li key={item.key} className="flex items-center justify-between text-xs">
-                        <span className="text-muted">{item.label}</span>
-                        <span className={`badge ${item.done ? "badge-ok" : "badge-muted"}`}>
-                          {item.done ? "✓" : "·"}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
+            <SectionHeader title="Por plan" description="Suscripciones totales y activas por plan." className="mb-3" />
+            <DataTable
+              columns={planColumns}
+              rows={conversion?.by_plan ?? []}
+              rowKey={(p) => p.plan}
+              caption="Suscripciones por plan"
+              empty={
+                <EmptyState
+                  icon={ChartBar}
+                  title="Sin datos por plan"
+                  body="Todavía no hay suscripciones agrupadas por plan."
+                />
+              }
+            />
           </section>
 
           <section>
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
-              <Envelope size={15} aria-hidden /> Reportes de uso por email
-            </h3>
-            <div className="panel overflow-x-auto">
-              {subs.length === 0 ? (
-                <EmptyState icon={Envelope} title="Sin suscripciones" body="Nadie se ha suscrito a reportes de uso." />
-              ) : (
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Tenant</th>
-                      <th>Email</th>
-                      <th>Frecuencia</th>
-                      <th>Próximo envío</th>
-                      <th>Último envío</th>
-                      <th className="text-right">Acciones</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {subs.map((s) => (
-                      <tr key={s.id}>
-                        <td className="mono text-xs text-faint">{s.organization_id.slice(0, 8)}</td>
-                        <td className="text-sm text-text">{s.email}</td>
-                        <td className="text-xs">{s.frequency}</td>
-                        <td className="text-xs text-muted">{new Date(s.next_send_at).toLocaleString("es-PE")}</td>
-                        <td className="text-xs text-muted">
-                          {s.last_sent_at ? new Date(s.last_sent_at).toLocaleString("es-PE") : "—"}
-                        </td>
-                        <td className="text-right">
-                          <div className="flex justify-end gap-1">
-                            <button
-                              type="button"
-                              className="btn btn-ghost min-h-9 px-2 py-1.5 text-xs"
-                              disabled={!!busy}
-                              onClick={() => void sendNow(s.id)}
-                            >
-                              Enviar ahora
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-ghost min-h-9 px-2 py-1.5 text-xs text-danger"
-                              disabled={!!busy}
-                              onClick={() => void removeSub(s.id)}
-                            >
-                              Quitar
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            <SectionHeader
+              title="Onboarding por tenant"
+              description="Pasos completados del flujo de activación."
+              className="mb-3"
+            />
+            <DataTable
+              columns={onboardingColumns}
+              rows={onboarding}
+              rowKey={(o) => o.organization_id}
+              caption="Onboarding por organización"
+              stickyHeader
+              empty={
+                <EmptyState
+                  icon={Rocket}
+                  title="Sin organizaciones en onboarding"
+                  body="Todavía ninguna organización inició el flujo de activación."
+                />
+              }
+            />
+          </section>
+
+          <section>
+            <SectionHeader
+              title="Reportes de uso por email"
+              description="Suscripciones al resumen periódico de uso."
+              className="mb-3"
+            />
+            <DataTable
+              columns={reportColumns}
+              rows={subs}
+              rowKey={(s) => s.id}
+              caption="Suscripciones a reportes de uso"
+              stickyHeader
+              rowActions={(s) => (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    loading={busy === s.id}
+                    disabled={busy !== ""}
+                    onClick={() => void sendNow(s.id)}
+                  >
+                    Enviar ahora
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-danger"
+                    disabled={busy !== ""}
+                    onClick={() => setRemoving(s)}
+                  >
+                    Quitar
+                  </Button>
+                </>
               )}
-            </div>
+              empty={
+                <EmptyState
+                  icon={Envelope}
+                  title="Sin suscripciones"
+                  body="Nadie se ha suscrito a reportes de uso."
+                />
+              }
+            />
           </section>
         </>
       )}
+
+      <ConfirmDialog
+        open={!!removing}
+        onOpenChange={(open) => {
+          if (!open) setRemoving(null);
+        }}
+        title="Quitar reporte de uso"
+        body={
+          removing
+            ? `Vas a quitar el reporte de ${removing.email}. Dejará de enviarse.`
+            : undefined
+        }
+        confirmLabel="Quitar"
+        tone="danger"
+        loading={!!removing && busy === removing.id}
+        onConfirm={() => {
+          if (removing) void removeSub(removing.id);
+        }}
+      />
     </div>
   );
 }

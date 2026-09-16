@@ -1,10 +1,24 @@
-import { ChartLineUp, Queue, Rocket } from "@phosphor-icons/react";
+import { ChartLineUp, Queue, Rocket, Warning } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api";
 import {
+  Badge,
+  Button,
+  CodeBlock,
+  ConfirmDialog,
+  EmptyState,
   ErrorInline,
+  Field,
+  Input,
+  Metric,
+  MetricGrid,
   PageHeader,
-  SkeletonBlock,
+  Panel,
+  Progress,
+  SectionHeader,
+  Select,
+  SkeletonTable,
+  StatusDot,
 } from "../../components/ui";
 import { usePlatformAuth } from "../../platformAuth";
 
@@ -27,6 +41,17 @@ type CapacityOrg = {
 
 type QueueDepth = { queue: string; depth: number; backend: string; error?: string };
 
+/** Regla del backend para marcar presión de capacidad: soft/forecast ≥80% o ≤15 días. */
+const SOFT_LIMIT_PCT = 80;
+const NEAR_DAYS = 15;
+const QUEUE_DEPTH_ALERT = 50;
+
+function utilizationTone(pct: number): "ok" | "warn" | "danger" {
+  if (pct >= 100) return "danger";
+  if (pct >= SOFT_LIMIT_PCT) return "warn";
+  return "ok";
+}
+
 export default function AdminCapacityPage() {
   const { session } = usePlatformAuth();
   const [summary, setSummary] = useState<{ near_limit: CapacityOrg[]; queues: QueueDepth[]; scaling_events: unknown[] } | null>(null);
@@ -34,6 +59,7 @@ export default function AdminCapacityPage() {
   const [simulate, setSimulate] = useState({ org: "", growth_pct: 50, days: 30 });
   const [simResult, setSimResult] = useState("");
   const [autoScale, setAutoScale] = useState(false);
+  const [confirmScale, setConfirmScale] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
@@ -88,13 +114,14 @@ export default function AdminCapacityPage() {
     }
   }
 
-  async function toggleAutoScale() {
+  async function toggleAutoScale(next: boolean) {
     if (!session) return;
+    setConfirmScale(false);
     try {
       const out = await platformApi<{ enabled: boolean }>("/api/v1/platform/capacity/workers/auto-scale", {
         method: "POST",
         token: session.token,
-        body: JSON.stringify({ enabled: !autoScale }),
+        body: JSON.stringify({ enabled: next }),
       });
       setAutoScale(out.enabled);
     } catch (e) {
@@ -102,135 +129,313 @@ export default function AdminCapacityPage() {
     }
   }
 
+  const nearLimit = summary?.near_limit ?? [];
+  const queues = summary?.queues ?? [];
+  const knowledgeQueue = queues.find((q) => q.queue === "knowledge");
+  const ingestionQueue = queues.find((q) => q.queue === "ingestion_pending");
+  const worst = nearLimit.reduce<CapacityOrg | null>(
+    (acc, o) => (!acc || o.utilization_pct.requests > acc.utilization_pct.requests ? o : acc),
+    null
+  );
+  const worstTone = worst ? utilizationTone(worst.utilization_pct.requests) : "ok";
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Capacity Planning"
-        subtitle="Forecast vs límites de plan, colas de workers y simulación de crecimiento."
+        subtitle="Uso real contra los límites de cada plan, colas de workers y simulación de crecimiento."
         actions={
-          <button type="button" className={`btn min-h-11 ${autoScale ? "btn-danger" : "btn-secondary"}`} onClick={() => void toggleAutoScale()}>
-            <Rocket size={15} aria-hidden /> Auto-scaling: {autoScale ? "ON" : "OFF"}
-          </button>
+          <Button
+            variant="secondary"
+            leadingIcon={Rocket}
+            onClick={() => (autoScale ? void toggleAutoScale(false) : setConfirmScale(true))}
+          >
+            <StatusDot tone={autoScale ? "warn" : "neutral"} />
+            Auto-scaling {autoScale ? "activo" : "inactivo"}
+          </Button>
         }
       />
-      {error && <ErrorInline>{error}</ErrorInline>}
+      <ErrorInline message={error} />
+      {autoScale && (
+        <p className="flex items-center gap-2 text-xs text-warn" role="status">
+          <Warning size={13} aria-hidden />
+          Auto-scaling activo: el orquestador ajusta workers por su cuenta.
+        </p>
+      )}
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <Panel className="overflow-hidden">
+          <SkeletonTable rows={5} cols={4} />
+        </Panel>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <div className="panel p-4">
-              <p className="stat-label">Org cerca del límite</p>
-              <p className="stat-value">{summary?.near_limit.length ?? 0}</p>
-            </div>
-            <div className="panel p-4">
-              <p className="stat-label">Cola knowledge</p>
-              <p className="stat-value">{summary?.queues.find((q) => q.queue === "knowledge")?.depth ?? 0}</p>
-            </div>
-            <div className="panel p-4">
-              <p className="stat-label">Ingestión pending</p>
-              <p className="stat-value">{summary?.queues.find((q) => q.queue === "ingestion_pending")?.depth ?? 0}</p>
-            </div>
-            <div className="panel p-4">
-              <p className="stat-label">Eventos de escala</p>
-              <p className="stat-value">{summary?.scaling_events.length ?? 0}</p>
-            </div>
-          </div>
+          <Panel className="p-4">
+            {worst ? (
+              <div className="flex flex-wrap items-start justify-between gap-x-8 gap-y-4">
+                <div className="min-w-0">
+                  <p className="eyebrow">Mayor uso de límite de plan</p>
+                  <p className="mt-2 text-[30px] leading-none font-semibold tracking-[-0.025em] tabular-nums text-text">
+                    {worst.utilization_pct.requests.toFixed(1)}%
+                  </p>
+                  <p className="mt-2 max-w-[68ch] text-[13px] leading-relaxed text-muted">
+                    <span className="mono">{worst.organization_id.slice(0, 13)}…</span> usó{" "}
+                    {worst.usage.used_requests.toLocaleString()} de{" "}
+                    {worst.plan_limits.requests_per_month.toLocaleString()} requests del plan
+                    {worst.days_until_limit != null ? ` · ${worst.days_until_limit} día(s) al límite` : ""}.
+                  </p>
+                </div>
+                <div className="min-w-[220px] flex-1 sm:max-w-sm">
+                  <Progress
+                    value={worst.utilization_pct.requests}
+                    tone={worstTone}
+                    label="Uso del límite mensual de requests"
+                    showValue
+                  />
+                </div>
+              </div>
+            ) : (
+              <EmptyState
+                icon={ChartLineUp}
+                compact
+                tone="accent"
+                title="Sin tenants cerca del límite"
+                body={`Ningún plan supera ${SOFT_LIMIT_PCT}% de uso ni proyecta alcanzar el límite en ${NEAR_DAYS} días.`}
+              />
+            )}
+          </Panel>
+
+          <MetricGrid cols={4}>
+            <Metric
+              size="md"
+              label="Tenants en presión"
+              value={nearLimit.length.toLocaleString()}
+              tone={nearLimit.length > 0 ? "warn" : "default"}
+              hint={`Umbral: ≥${SOFT_LIMIT_PCT}% o ≤${NEAR_DAYS} días`}
+            />
+            <Metric
+              size="md"
+              label="Cola knowledge"
+              value={(knowledgeQueue?.depth ?? 0).toLocaleString()}
+              tone={(knowledgeQueue?.depth ?? 0) >= QUEUE_DEPTH_ALERT ? "warn" : "default"}
+              hint={knowledgeQueue ? `Backend ${knowledgeQueue.backend}` : "Sin lectura"}
+            />
+            <Metric
+              size="md"
+              label="Ingestión pending"
+              value={(ingestionQueue?.depth ?? 0).toLocaleString()}
+              tone={(ingestionQueue?.depth ?? 0) >= QUEUE_DEPTH_ALERT ? "warn" : "default"}
+              hint={ingestionQueue ? `Backend ${ingestionQueue.backend}` : "Sin lectura"}
+            />
+            <Metric
+              size="md"
+              label="Eventos de escala"
+              value={(summary?.scaling_events?.length ?? 0).toLocaleString()}
+              hint="Registrados por el orquestador"
+            />
+          </MetricGrid>
 
           <section>
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
-              <ChartLineUp size={15} aria-hidden /> Tenants cerca del límite
-            </h3>
-            <div className="panel overflow-x-auto">
-              {(summary?.near_limit ?? []).length === 0 ? (
-                <p className="p-4 text-sm text-muted">Ningún tenant cerca del límite (soft ≥80% o forecast ≥80% o ≤15 días).</p>
+            <SectionHeader
+              title="Tenants cerca del límite"
+              description={`Se listan los que superan ${SOFT_LIMIT_PCT}% de uso, proyectan ese uso o están a ${NEAR_DAYS} días o menos del límite.`}
+              className="mb-3"
+            />
+            <Panel className="overflow-x-auto">
+              {nearLimit.length === 0 ? (
+                <EmptyState
+                  icon={ChartLineUp}
+                  compact
+                  title="Ningún tenant en presión"
+                  body="No hay organizaciones que cumplan los criterios de alerta de capacidad."
+                />
               ) : (
-                <table className="table">
+                <table className="table min-w-[880px]">
                   <thead>
                     <tr>
-                      <th>Org</th>
-                      <th>Requests</th>
-                      <th>Uso</th>
-                      <th>Soft</th>
-                      <th>Hard</th>
-                      <th>Forecast 30d</th>
-                      <th>Días a límite</th>
+                      <th>Organización</th>
+                      <th className="text-right">Requests usados</th>
+                      <th className="w-44">Uso del plan</th>
+                      <th>Límites</th>
+                      <th className="text-right">Forecast 30d</th>
+                      <th className="text-right">Días al límite</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {(summary?.near_limit ?? []).map((o) => (
-                      <tr key={o.organization_id}>
-                        <td className="mono text-xs text-faint">{o.organization_id.slice(0, 13)}…</td>
-                        <td className="text-xs">
-                          {o.usage.used_requests.toLocaleString()} / {o.plan_limits.requests_per_month.toLocaleString()}
-                        </td>
-                        <td className="text-xs">
-                          <div className="flex items-center gap-2">
-                            <div className="h-2 w-20 overflow-hidden rounded bg-soft">
-                              <div className={`h-full ${o.utilization_pct.requests >= 80 ? "bg-danger" : "bg-accent/70"}`} style={{ width: `${Math.min(o.utilization_pct.requests, 100)}%` }} />
-                            </div>
-                            {o.utilization_pct.requests}%
-                          </div>
-                        </td>
-                        <td className="text-xs">{o.soft_limit_exceeded ? "✓" : "—"}</td>
-                        <td className="text-xs">{o.hard_limit_exceeded ? "⚠" : "—"}</td>
-                        <td className="text-xs">{o.forecast_30d.utilization_pct}%</td>
-                        <td className="text-xs">{o.days_until_limit ?? "—"}</td>
-                      </tr>
-                    ))}
+                    {nearLimit.map((o) => {
+                      const tone = utilizationTone(o.utilization_pct.requests);
+                      return (
+                        <tr key={o.organization_id}>
+                          <td className="mono text-xs text-faint" title={o.organization_id}>
+                            {o.organization_id.slice(0, 13)}…
+                          </td>
+                          <td className="text-right tabular-nums">
+                            {o.usage.used_requests.toLocaleString()}{" "}
+                            <span className="text-faint">/ {o.plan_limits.requests_per_month.toLocaleString()}</span>
+                          </td>
+                          <td>
+                            <Progress
+                              value={o.utilization_pct.requests}
+                              tone={tone}
+                              label={`Uso de requests de ${o.organization_id.slice(0, 8)}`}
+                              showValue
+                            />
+                          </td>
+                          <td>
+                            <span className="flex flex-wrap items-center gap-1">
+                              <Badge tone={o.soft_limit_exceeded ? "warn" : "neutral"} dot>
+                                {o.soft_limit_exceeded ? "Soft superado" : "Soft OK"}
+                              </Badge>
+                              <Badge tone={o.hard_limit_exceeded ? "danger" : "neutral"} dot>
+                                {o.hard_limit_exceeded ? "Hard superado" : "Hard OK"}
+                              </Badge>
+                            </span>
+                          </td>
+                          <td
+                            className={`text-right tabular-nums ${
+                              o.forecast_30d.utilization_pct >= SOFT_LIMIT_PCT ? "text-warn" : "text-muted"
+                            }`}
+                            title="Proyección calculada por el backend con el consumo actual"
+                          >
+                            {o.forecast_30d.utilization_pct}%
+                          </td>
+                          <td
+                            className={`text-right tabular-nums ${
+                              o.days_until_limit != null && o.days_until_limit <= NEAR_DAYS ? "text-warn" : "text-muted"
+                            }`}
+                          >
+                            {o.days_until_limit ?? "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
-            </div>
+            </Panel>
+            {nearLimit.some((o) => o.projected_exceed_date) && (
+              <p className="mt-2 text-xs text-faint">
+                Fechas proyectadas por el backend:{" "}
+                {nearLimit
+                  .filter((o) => o.projected_exceed_date)
+                  .map((o) => `${o.organization_id.slice(0, 8)} → ${new Date(o.projected_exceed_date as string).toLocaleDateString("es-PE")}`)
+                  .join(" · ")}
+              </p>
+            )}
           </section>
 
           <section>
-            <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
-              <Queue size={15} aria-hidden /> Colas de workers
-            </h3>
-            <div className="panel overflow-x-auto">
+            <SectionHeader
+              title="Colas de workers"
+              description={`Profundidad en vivo. Se marca en rojo desde ${QUEUE_DEPTH_ALERT} trabajos pendientes.`}
+              className="mb-3"
+            />
+            <Panel className="overflow-x-auto">
               <table className="table">
                 <thead>
                   <tr>
                     <th>Cola</th>
                     <th>Backend</th>
-                    <th>Profundidad</th>
+                    <th className="text-right">Profundidad</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(summary?.queues ?? []).map((q) => (
+                  {queues.map((q) => (
                     <tr key={q.queue}>
                       <td className="mono text-xs">{q.queue}</td>
-                      <td className="text-xs">{q.backend}</td>
-                      <td className={`text-xs ${q.depth >= 50 ? "font-semibold text-danger" : ""}`}>{q.depth}</td>
+                      <td className="text-xs text-muted">
+                        {q.backend}
+                        {q.error ? ` · ${q.error}` : ""}
+                      </td>
+                      <td
+                        className={`text-right tabular-nums ${
+                          q.depth >= QUEUE_DEPTH_ALERT ? "font-medium text-danger" : ""
+                        }`}
+                      >
+                        {q.depth.toLocaleString()}
+                      </td>
                     </tr>
                   ))}
+                  {queues.length === 0 && (
+                    <tr>
+                      <td colSpan={3}>
+                        <EmptyState
+                          icon={Queue}
+                          compact
+                          title="Sin colas reportadas"
+                          body="El orquestador no devolvió profundidades de cola en esta lectura."
+                        />
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
-            </div>
+            </Panel>
           </section>
 
           <section>
-            <h3 className="mb-2 text-sm font-semibold text-text">Simulación de crecimiento</h3>
-            <div className="panel grid grid-cols-1 gap-3 p-4 lg:grid-cols-4">
-              <select className="rounded-md border border-border bg-soft px-2 py-2 text-sm" value={simulate.org} onChange={(e) => setSimulate((f) => ({ ...f, org: e.target.value }))}>
-                <option value="">Organización…</option>
-                {orgs.map((o) => (
-                  <option key={o.id} value={o.id}>{o.id.slice(0, 8)}</option>
-                ))}
-              </select>
-              <input type="number" className="rounded-md border border-border bg-soft px-3 py-2 text-sm" placeholder="Growth %" value={simulate.growth_pct} onChange={(e) => setSimulate((f) => ({ ...f, growth_pct: Number(e.target.value) }))} />
-              <input type="number" className="rounded-md border border-border bg-soft px-3 py-2 text-sm" placeholder="Días" value={simulate.days} onChange={(e) => setSimulate((f) => ({ ...f, days: Number(e.target.value) }))} />
-              <button type="button" className="btn btn-secondary min-h-9 text-xs" disabled={!!busy} onClick={() => void doSimulate()}>
-                Simular
-              </button>
-            </div>
-            {simResult && (
-              <pre className="mt-2 whitespace-pre-wrap rounded-md bg-soft p-3 text-xs text-text">{simResult}</pre>
-            )}
+            <SectionHeader
+              title="Simulación de crecimiento"
+              description="Escenario calculado por el backend: no reemplaza el uso real."
+              className="mb-3"
+            />
+            <Panel className="p-4">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 lg:items-end">
+                <Field label="Organización">
+                  <Select
+                    value={simulate.org}
+                    placeholder="Organización…"
+                    onChange={(e) => setSimulate((f) => ({ ...f, org: e.target.value }))}
+                  >
+                    {orgs.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.id.slice(0, 8)}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="Crecimiento %">
+                  <Input
+                    type="number"
+                    value={simulate.growth_pct}
+                    onChange={(e) => setSimulate((f) => ({ ...f, growth_pct: Number(e.target.value) }))}
+                  />
+                </Field>
+                <Field label="Días">
+                  <Input
+                    type="number"
+                    value={simulate.days}
+                    onChange={(e) => setSimulate((f) => ({ ...f, days: Number(e.target.value) }))}
+                  />
+                </Field>
+                <Button
+                  variant="secondary"
+                  loading={busy === "sim"}
+                  disabled={!simulate.org}
+                  onClick={() => void doSimulate()}
+                >
+                  Simular
+                </Button>
+              </div>
+              {simResult ? (
+                <CodeBlock className="mt-4" code={simResult} language="json" filename="Resultado de la simulación" maxHeight={320} />
+              ) : (
+                <p className="mt-3 text-xs text-faint">
+                  Elegí una organización y corré la simulación para ver el escenario que devuelve el backend.
+                </p>
+              )}
+            </Panel>
           </section>
         </>
       )}
+
+      <ConfirmDialog
+        open={confirmScale}
+        onOpenChange={setConfirmScale}
+        title="Activar auto-scaling"
+        body="El orquestador podrá crear y liberar workers según la carga real. Revisá las colas y los límites antes de activarlo."
+        confirmLabel="Activar"
+        tone="primary"
+        onConfirm={() => void toggleAutoScale(true)}
+      />
     </div>
   );
 }

@@ -1,15 +1,24 @@
-import { ShieldCheck } from "@phosphor-icons/react";
+import { CheckCircle, Clock, Question, ShieldCheck } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api";
 import { usePlatformAuth } from "../../platformAuth";
-import { Spinner } from "../../components/ui";
 import {
+  Badge,
+  Button,
+  DataTable,
   EmptyState,
   ErrorInline,
+  Field,
+  Input,
   PageHeader,
+  Panel,
+  PanelHeader,
   PermissionMatrix,
+  ResultCount,
   RoleBadge,
   SkeletonBlock,
+  SuccessInline,
+  type Column,
 } from "../../components/ui";
 
 type PlatformUser = {
@@ -26,6 +35,38 @@ type PlatformRole = {
   is_system: boolean;
   permissions: string[];
 };
+
+const USER_COLUMNS: Column<PlatformUser>[] = [
+  {
+    key: "email",
+    header: "Email",
+    render: (u) => <span className="text-[13px] text-text">{u.email || u.id}</span>,
+  },
+  {
+    key: "roles",
+    header: "Roles",
+    render: (u) => (
+      <span className="inline-flex flex-wrap gap-1">
+        {u.roles.length === 0 && <span className="text-xs text-faint">sin rol</span>}
+        {u.roles.map((r) => (
+          <RoleBadge key={r} role={r} />
+        ))}
+      </span>
+    ),
+  },
+  {
+    key: "legacy",
+    header: "Legacy admin",
+    render: (u) =>
+      u.is_platform_admin ? (
+        <Badge tone="ok" icon={CheckCircle}>
+          sí
+        </Badge>
+      ) : (
+        <Badge tone="neutral">no</Badge>
+      ),
+  },
+];
 
 /** FASE 07 — panel de MFA del platform admin (TOTP). */
 function MfaPanel() {
@@ -121,70 +162,66 @@ function MfaPanel() {
   }
 
   return (
-    <section>
-      <h3 className="mb-2 text-sm font-semibold text-text">MFA (TOTP)</h3>
-      <div className="panel p-5">
-        <p className="mb-3 text-[13px] text-muted">
-          Protege tu cuenta de plataforma con un autenticador. Las operaciones críticas
-          (impersonar, suspender, cancelar, resetear uso, routing de modelos) requieren MFA
-          reciente.
-        </p>
-        {msg && <SuccessInline>{msg}</SuccessInline>}
-        {error && <ErrorInline>{error}</ErrorInline>}
-        {status?.enabled ? (
-          <span className="badge badge-ok">Habilitado</span>
-        ) : status?.pending ? (
-          <span className="badge badge-pending">Pendiente de confirmar</span>
-        ) : (
-          <span className="badge badge-muted">Deshabilitado</span>
-        )}
-        <div className="mt-4 flex flex-wrap gap-2">
+    <Panel>
+      <PanelHeader
+        title="MFA (TOTP)"
+        description="Protege tu cuenta de plataforma con un autenticador. Las operaciones críticas (impersonar, suspender, cancelar, resetear uso, routing de modelos) requieren MFA reciente."
+        actions={
+          status?.enabled ? (
+            <Badge tone="ok" icon={CheckCircle}>
+              Habilitado
+            </Badge>
+          ) : status?.pending ? (
+            <Badge tone="warn" icon={Clock}>
+              Pendiente de confirmar
+            </Badge>
+          ) : (
+            <Badge tone="neutral" icon={Question}>
+              Deshabilitado
+            </Badge>
+          )
+        }
+      />
+      <div className="panel-body flex flex-col gap-4">
+        {msg && <SuccessInline message={msg} className="mb-0" />}
+        {error && <ErrorInline className="mb-0">{error}</ErrorInline>}
+        <div className="flex flex-wrap gap-2">
           {!status?.enabled && (
-            <button type="button" className="btn btn-secondary min-h-10" disabled={busy} onClick={() => void enroll()}>
-              {busy ? <Spinner size={14} /> : "Configurar"}
-            </button>
+            <Button variant="secondary" loading={busy} onClick={() => void enroll()}>
+              Configurar
+            </Button>
           )}
           {status?.enabled && (
-            <button type="button" className="btn btn-ghost min-h-10 text-danger" disabled={busy} onClick={() => void disable()}>
+            <Button variant="ghost" className="text-danger" disabled={busy} onClick={() => void disable()}>
               Deshabilitar
-            </button>
+            </Button>
           )}
         </div>
         {otpAuthUrl && (
-          <div className="mt-4 rounded-md border border-border bg-soft p-3">
-            <p className="mb-2 text-xs text-muted">
+          <div className="rounded-md border border-border bg-raised p-3">
+            <p className="mb-2 text-xs leading-relaxed text-muted">
               Escanea el QR o agrega el secreto manualmente en tu autenticador:
             </p>
-            <p className="break-all font-mono text-xs text-accent">{secret}</p>
+            <p className="mono rounded-sm bg-control px-2.5 py-1.5 text-xs break-all text-accent">{secret}</p>
             <div className="mt-3 flex flex-wrap items-end gap-2">
-              <label className="block text-xs text-muted">
-                Código de confirmación
-                <input
+              <Field label="Código de confirmación" className="w-40">
+                <Input
                   type="text"
                   inputMode="numeric"
                   value={code}
                   onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ""))}
-                  className="mt-1 w-40 rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm"
+                  className="font-mono"
                   placeholder="123456"
                 />
-              </label>
-              <button type="button" className="btn btn-primary min-h-10" disabled={busy || !code.trim()} onClick={() => void verify()}>
+              </Field>
+              <Button variant="primary" disabled={busy || !code.trim()} onClick={() => void verify()}>
                 Confirmar
-              </button>
+              </Button>
             </div>
           </div>
         )}
       </div>
-    </section>
-  );
-}
-
-function SuccessInline({ children }: { children: string }) {
-  if (!children) return null;
-  return (
-    <div className="mb-3 rounded-md border border-ok/25 bg-ok-soft px-3 py-2 text-sm text-ok" role="status">
-      {children}
-    </div>
+    </Panel>
   );
 }
 
@@ -210,56 +247,54 @@ export default function Security() {
   }, [session]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
         title="Security"
         subtitle="Usuarios de plataforma, roles granulares y matriz de permisos."
       />
       {error && <ErrorInline>{error}</ErrorInline>}
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <SkeletonBlock rows={6} />
       ) : (
         <>
           <MfaPanel />
+
           <section>
-            <h3 className="mb-2 text-sm font-semibold text-text">Usuarios de plataforma</h3>
-            <div className="panel overflow-x-auto">
-              {users.length === 0 ? (
-                <EmptyState icon={ShieldCheck} title="Sin usuarios" body="No hay usuarios de plataforma." />
-              ) : (
-                <table className="table">
-                  <thead>
-                    <tr>
-                      <th>Email</th>
-                      <th>Roles</th>
-                      <th>Legacy admin</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {users.map((u) => (
-                      <tr key={u.id}>
-                        <td className="text-sm">{u.email || u.id}</td>
-                        <td>
-                          <span className="inline-flex flex-wrap gap-1">
-                            {u.roles.length === 0 && <span className="text-xs text-faint">sin rol</span>}
-                            {u.roles.map((r) => (
-                              <RoleBadge key={r} role={r} />
-                            ))}
-                          </span>
-                        </td>
-                        <td className="text-sm text-muted">{u.is_platform_admin ? "sí" : "no"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+            <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <h2 className="text-h2">Usuarios de plataforma</h2>
+                <p className="mt-1 text-[13px] leading-relaxed text-muted">
+                  Cuentas con acceso al Control Center y sus roles asignados.
+                </p>
+              </div>
             </div>
+            <DataTable
+              columns={USER_COLUMNS}
+              rows={users}
+              rowKey={(u) => u.id}
+              caption="Usuarios de plataforma"
+              stickyHeader
+              empty={
+                <EmptyState
+                  icon={ShieldCheck}
+                  title="Sin usuarios"
+                  body="No hay usuarios de plataforma registrados."
+                />
+              }
+              footer={users.length > 0 ? <ResultCount shown={users.length} total={users.length} noun="usuarios" /> : undefined}
+            />
           </section>
+
           <section>
-            <h3 className="mb-2 text-sm font-semibold text-text">Matriz de permisos por rol</h3>
-            <div className="panel">
-              <PermissionMatrix roles={roles} />
+            <div className="mb-3">
+              <h2 className="text-h2">Matriz de permisos por rol</h2>
+              <p className="mt-1 text-[13px] leading-relaxed text-muted">
+                Permisos efectivos de cada rol de plataforma: ✓ incluido · · fuera del rol.
+              </p>
             </div>
+            <Panel>
+              <PermissionMatrix roles={roles} />
+            </Panel>
           </section>
         </>
       )}

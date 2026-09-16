@@ -6,6 +6,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import UUID
 
@@ -43,9 +44,12 @@ class BusinessDefinitionRegistry:
             try:
                 cached = await self._cache.get(cache_key)
                 if cached:
+                    # El cache guarda JSON: iterar el string crudo devolvería
+                    # caracteres y una lista vacía silenciosa.
+                    items = json.loads(cached)
                     return [
                         BusinessDefinition(**item)
-                        for item in cached
+                        for item in items
                         if isinstance(item, dict)
                     ]
             except Exception as exc:  # noqa: BLE001
@@ -56,7 +60,9 @@ class BusinessDefinitionRegistry:
             try:
                 await self._cache.set(
                     cache_key,
-                    [d.__dict__ for d in definitions],
+                    # UUID/datetime no son JSON-serializables: `default=str` los
+                    # deja como texto y pydantic los reconvierte al leer.
+                    json.dumps([d.__dict__ for d in definitions], default=str),
                     ttl_seconds=self._ttl,
                 )
             except Exception as exc:  # noqa: BLE001

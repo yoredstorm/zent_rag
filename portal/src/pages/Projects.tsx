@@ -1,14 +1,24 @@
-import { FolderPlus, Folders, Trash } from "@phosphor-icons/react";
+import { FolderPlus, Folders, Plus, Trash, X } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import {
+  Button,
+  ConfirmDialog,
+  DataTable,
+  Drawer,
   EmptyState,
   ErrorInline,
+  Field,
+  FormActions,
+  IconButton,
+  Input,
+  KeyValue,
   PageHeader,
-  SkeletonBlock,
-  Spinner,
+  Panel,
+  PanelHeader,
   SuccessInline,
+  type Column,
 } from "../components/ui";
 import { fmtDateTime } from "../lib/format";
 
@@ -29,6 +39,9 @@ export default function ProjectsPage() {
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [selected, setSelected] = useState<Project | null>(null);
+  const [toRemove, setToRemove] = useState<Project | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   function load() {
     if (!session) return;
@@ -37,7 +50,7 @@ export default function ProjectsPage() {
       token: session.token,
       organizationId: session.organizationId,
     })
-      .then((data) => setProjects(data.projects))
+      .then((data) => setProjects(data.projects || []))
       .catch((err) => setError(err instanceof Error ? err.message : "Error"))
       .finally(() => setLoading(false));
   }
@@ -45,7 +58,7 @@ export default function ProjectsPage() {
   useEffect(load, [session]);
 
   async function create() {
-    if (!session) return;
+    if (!session || !name.trim()) return;
     setError("");
     setMsg("");
     setCreating(true);
@@ -68,109 +81,195 @@ export default function ProjectsPage() {
     }
   }
 
-  async function remove(projectId: string, projectName: string) {
-    if (!session) return;
+  async function remove() {
+    if (!session || !toRemove) return;
     setError("");
     setMsg("");
+    setRemoving(true);
     try {
-      await api(`/api/v1/projects/${projectId}`, {
+      await api(`/api/v1/projects/${toRemove.id}`, {
         method: "DELETE",
         token: session.token,
         organizationId: session.organizationId,
       });
-      setMsg(`Proyecto "${projectName}" eliminado.`);
+      setMsg(`Proyecto "${toRemove.name}" eliminado.`);
+      setToRemove(null);
+      setSelected(null);
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al eliminar");
+    } finally {
+      setRemoving(false);
     }
   }
+
+  const columns: Column<Project>[] = [
+    {
+      key: "name",
+      header: "Proyecto",
+      render: (p) => (
+        <div className="min-w-0">
+          <p className="truncate text-[13.5px] text-text">{p.name}</p>
+          {p.description && (
+            <p className="mt-0.5 line-clamp-1 max-w-[60ch] text-xs text-muted">{p.description}</p>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: "created_at",
+      header: "Creado",
+      hideBelow: "md",
+      render: (p) => <span className="text-xs text-muted">{fmtDateTime(p.created_at)}</span>,
+    },
+  ];
 
   return (
     <div>
       <PageHeader
         title="Proyectos"
         subtitle="Agrupa knowledge bases, agentes y conectores dentro de tu organización."
+        actions={
+          <Button
+            variant="primary"
+            leadingIcon={showCreate ? X : FolderPlus}
+            onClick={() => setShowCreate((s) => !s)}
+          >
+            {showCreate ? "Cerrar alta" : "Nuevo proyecto"}
+          </Button>
+        }
       />
-      <ErrorInline message={error} />
-      <SuccessInline message={msg} />
+      <div className="flex flex-col gap-4">
+        <ErrorInline message={error} className="mb-0" />
+        <SuccessInline message={msg} className="mb-0" />
 
-      <div className="mb-4 flex justify-end">
-        <button
-          className="btn btn-primary"
-          type="button"
-          onClick={() => setShowCreate((s) => !s)}
-        >
-          <FolderPlus size={15} aria-hidden />
-          Nuevo proyecto
-        </button>
+        {showCreate && (
+          <Panel className="border-accent/25">
+            <PanelHeader
+              title="Crear proyecto"
+              description="Un proyecto agrupa recursos relacionados bajo el mismo alcance."
+            />
+            <form
+              className="panel-body flex flex-col gap-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void create();
+              }}
+            >
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Nombre">
+                  <Input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    autoComplete="off"
+                    required
+                  />
+                </Field>
+                <Field label="Descripción" hint="Opcional.">
+                  <Input
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    autoComplete="off"
+                  />
+                </Field>
+              </div>
+              <FormActions>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  leadingIcon={Plus}
+                  loading={creating}
+                  disabled={!name.trim()}
+                >
+                  Crear proyecto
+                </Button>
+              </FormActions>
+            </form>
+          </Panel>
+        )}
+
+        <DataTable
+          columns={columns}
+          rows={projects}
+          rowKey={(p) => p.id}
+          caption="Proyectos"
+          loading={loading}
+          empty={
+            <EmptyState
+              icon={Folders}
+              title="Sin proyectos"
+              body="Creá tu primer proyecto para organizar tus recursos."
+              action={
+                <Button variant="primary" leadingIcon={FolderPlus} onClick={() => setShowCreate(true)}>
+                  Nuevo proyecto
+                </Button>
+              }
+            />
+          }
+          onRowClick={(p) => setSelected(p)}
+          isRowSelected={(p) => selected?.id === p.id}
+          rowActions={(p) => (
+            <span className="flex items-center justify-end gap-1">
+              <Button variant="ghost" size="sm" onClick={() => setSelected(p)}>
+                Detalle
+              </Button>
+              <IconButton
+                label={`Eliminar ${p.name}`}
+                icon={Trash}
+                className="text-danger"
+                onClick={() => setToRemove(p)}
+              />
+            </span>
+          )}
+        />
       </div>
 
-      {showCreate && (
-        <div className="panel mb-4 border-accent/30">
-          <div className="border-b border-border px-5 py-4">
-            <h2 className="text-sm font-semibold text-text">Crear proyecto</h2>
-          </div>
-          <div className="flex flex-col gap-3 p-5">
-            <input
-              className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
-              placeholder="Nombre"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-            <input
-              className="w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus:border-accent"
-              placeholder="Descripción (opcional)"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-            <div>
-              <button
-                className="btn btn-primary"
-                type="button"
-                disabled={creating || !name.trim()}
-                onClick={() => void create()}
-              >
-                {creating ? <Spinner size={14} /> : <FolderPlus size={15} aria-hidden />}
-                Crear
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {loading ? (
-        <div className="panel p-5">
-          <SkeletonBlock rows={4} />
-        </div>
-      ) : projects.length === 0 ? (
-        <div className="panel">
-          <EmptyState
-            icon={Folders}
-            title="Sin proyectos"
-            body="Crea tu primer proyecto para organizar tus recursos."
+      <Drawer
+        open={selected !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelected(null);
+        }}
+        title={selected?.name ?? "Proyecto"}
+        description="Detalle del proyecto"
+        width={440}
+        footer={
+          selected ? (
+            <Button
+              variant="danger"
+              leadingIcon={Trash}
+              onClick={() => setToRemove(selected)}
+            >
+              Eliminar proyecto
+            </Button>
+          ) : undefined
+        }
+      >
+        {selected && (
+          <KeyValue
+            items={[
+              { key: "Descripción", value: selected.description || "Sin descripción." },
+              { key: "Creado", value: fmtDateTime(selected.created_at) },
+              { key: "ID", value: selected.id, mono: true },
+            ]}
           />
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
-          {projects.map((p) => (
-            <div key={p.id} className="panel p-5">
-              <div className="mb-2 flex items-start justify-between gap-2">
-                <h3 className="font-semibold text-text">{p.name}</h3>
-                <button
-                  type="button"
-                  className="btn btn-ghost px-2 py-1.5 text-xs text-danger"
-                  aria-label={`Eliminar ${p.name}`}
-                  onClick={() => void remove(p.id, p.name)}
-                >
-                  <Trash size={14} aria-hidden />
-                </button>
-              </div>
-              <p className="mb-3 text-sm text-muted">{p.description || "—"}</p>
-              <p className="text-xs text-faint">Creado {fmtDateTime(p.created_at)}</p>
-            </div>
-          ))}
-        </div>
-      )}
+        )}
+      </Drawer>
+
+      <ConfirmDialog
+        open={toRemove !== null}
+        onOpenChange={(open) => {
+          if (!open) setToRemove(null);
+        }}
+        title="Eliminar proyecto"
+        body={
+          toRemove
+            ? `El proyecto "${toRemove.name}" y su agrupación se eliminan. Los recursos vinculados conservan sus datos.`
+            : undefined
+        }
+        confirmLabel="Eliminar"
+        loading={removing}
+        onConfirm={() => void remove()}
+      />
     </div>
   );
 }

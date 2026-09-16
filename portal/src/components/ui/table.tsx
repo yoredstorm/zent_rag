@@ -1,5 +1,5 @@
 import { CaretDown, CaretUp, CaretLeft, CaretRight } from "@phosphor-icons/react";
-import type { ReactNode } from "react";
+import type { HTMLAttributes, ReactNode } from "react";
 import { cn } from "./cn";
 import { ErrorInline, SkeletonTable } from "./states";
 import { IconButton } from "./Button";
@@ -44,6 +44,8 @@ export type DataTableProps<T> = {
   stickyHeader?: boolean;
   onRowClick?: (row: T) => void;
   isRowSelected?: (row: T) => boolean;
+  /** Props extra por fila (por ejemplo `data-testid`). */
+  rowProps?: (row: T) => HTMLAttributes<HTMLTableRowElement>;
   rowActions?: (row: T) => ReactNode;
   sort?: SortState;
   onSortChange?: (sort: SortState) => void;
@@ -69,6 +71,7 @@ export function DataTable<T>({
   stickyHeader = false,
   onRowClick,
   isRowSelected,
+  rowProps,
   rowActions,
   sort,
   onSortChange,
@@ -86,6 +89,9 @@ export function DataTable<T>({
   }
 
   const cellPad = dense ? "px-3 py-2" : "px-3 py-2.5";
+  // Defensivo: una respuesta inesperada (payload de error, objeto en vez de
+  // lista) no debe tumbar la página entera vía ErrorBoundary.
+  const safeRows = Array.isArray(rows) ? rows : [];
 
   return (
     <div className={cn("min-w-0", className)}>
@@ -94,9 +100,9 @@ export function DataTable<T>({
         <ErrorInline message={error} />
       ) : loading ? (
         <div className="panel overflow-hidden">
-          <SkeletonTable rows={6} cols={Math.min(columns.length, 5)} />
+          <SkeletonTable rows={6} cols={Math.min(Array.isArray(columns) ? columns.length : 1, 5)} />
         </div>
-      ) : rows.length === 0 ? (
+      ) : safeRows.length === 0 ? (
         <div className="panel">{empty}</div>
       ) : (
         <div className="panel overflow-x-auto">
@@ -150,7 +156,7 @@ export function DataTable<T>({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => {
+              {safeRows.map((row) => {
                 const key = rowKey(row);
                 const selected = isRowSelected?.(row) ?? false;
                 return (
@@ -159,6 +165,7 @@ export function DataTable<T>({
                     data-selected={selected || undefined}
                     onClick={onRowClick ? () => onRowClick(row) : undefined}
                     className={cn(onRowClick && "cursor-pointer")}
+                    {...(rowProps?.(row) ?? {})}
                   >
                     {columns.map((col) => (
                       <td

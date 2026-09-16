@@ -1,8 +1,38 @@
-import { ArrowClockwise, CheckCircle, Package, Plus, Storefront, Trash } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import {
+  ArrowClockwise,
+  Briefcase,
+  CheckCircle,
+  MagnifyingGlass,
+  Package,
+  Plus,
+  Sparkle,
+  Stack,
+  Storefront,
+  Trash,
+  WarningCircle,
+} from "@phosphor-icons/react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import { ErrorInline, PageHeader, SkeletonBlock } from "../components/ui";
+import {
+  Badge,
+  Button,
+  CodeBlock,
+  Drawer,
+  EmptyState,
+  ErrorInline,
+  Input,
+  KeyValue,
+  PageHeader,
+  Panel,
+  PanelHeader,
+  ResultCount,
+  Select,
+  Skeleton,
+  StatusBadge,
+  Toolbar,
+} from "../components/ui";
+import { fmtDateTime } from "../lib/format";
 
 type Product = {
   id: string;
@@ -50,7 +80,45 @@ const TYPE_ICON: Record<string, React.ComponentType<{ size?: number; className?:
   INTEGRATION: Package,
   WORKFLOW_TEMPLATE: ArrowClockwise,
   AGENT_TEMPLATE: Plus,
+  INTELLIGENCE_PACK: Sparkle,
+  BUSINESS_PACK: Briefcase,
+  SEMANTIC_PACK: MagnifyingGlass,
+  COMPOSITE_PACK: Stack,
 };
+
+/** `pricing.model` llega como enum del backend; no se inventan montos. */
+function priceLabel(pricing: Record<string, unknown>): string {
+  const model = typeof pricing?.model === "string" ? pricing.model : "";
+  if (!model) return "Gratis";
+  return model === "FREE" || model.toUpperCase() === "FREE" ? "Gratis" : model;
+}
+
+/** Error de carga del catálogo o de las instalaciones: no se disfraza de "sin datos". */
+function LoadErrorPanel({
+  title,
+  message,
+  onRetry,
+}: {
+  title: string;
+  message: string;
+  onRetry: () => void;
+}) {
+  return (
+    <Panel>
+      <EmptyState
+        icon={WarningCircle}
+        title={title}
+        body={message}
+        hint="Revisá la conexión y volvé a intentar."
+        action={
+          <Button variant="secondary" leadingIcon={ArrowClockwise} onClick={onRetry}>
+            Reintentar
+          </Button>
+        }
+      />
+    </Panel>
+  );
+}
 
 export default function MarketplaceProductsPage() {
   const { session } = useAuth();
@@ -59,12 +127,17 @@ export default function MarketplaceProductsPage() {
   const [installs, setInstalls] = useState<Install[]>([]);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [lastResult, setLastResult] = useState<{ product: string; result: InstallResult } | null>(null);
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("");
+  const [type, setType] = useState("");
+  const [selected, setSelected] = useState<Product | null>(null);
 
   async function load() {
     if (!session) return;
-    setError("");
+    setLoadError("");
     try {
       const [catalog, mine] = await Promise.all([
         api<{ products: Product[] }>("/api/v1/products", {
@@ -80,7 +153,7 @@ export default function MarketplaceProductsPage() {
       setInstalls(mine.installs || []);
       setLoaded(true);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Error");
+      setLoadError(e instanceof Error ? e.message : "Error");
       setLoaded(true);
     }
   }
@@ -129,131 +202,391 @@ export default function MarketplaceProductsPage() {
     }
   }
 
+  const categories = useMemo(
+    () => Array.from(new Set(products.map((p) => p.category).filter(Boolean))).sort(),
+    [products],
+  );
+  const types = useMemo(
+    () => Array.from(new Set(products.map((p) => p.product_type).filter(Boolean))).sort(),
+    [products],
+  );
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return products.filter((p) => {
+      if (category && p.category !== category) return false;
+      if (type && p.product_type !== type) return false;
+      if (!q) return true;
+      return (
+        p.name.toLowerCase().includes(q) ||
+        (p.short_description ?? "").toLowerCase().includes(q) ||
+        p.slug.toLowerCase().includes(q)
+      );
+    });
+  }, [products, query, category, type]);
+
+  const installedProductIds = useMemo(
+    () => new Set(installs.map((i) => i.product_id)),
+    [installs],
+  );
+
   return (
     <div className="space-y-6">
       <PageHeader
         title="Marketplace"
         subtitle="Capacidades de negocio de Zent: integraciones, workflows, agentes y packs listos para activar."
       />
-      {error && <ErrorInline>{error}</ErrorInline>}
+      <ErrorInline message={error} />
+      <ErrorInline
+        message={loadError && (products.length > 0 || installs.length > 0) ? loadError : ""}
+      />
       {lastResult && (
-        <div className="rounded-md border border-border bg-surface p-3 text-sm" data-testid="install-result">
+        <Panel className="p-4" data-testid="install-result">
           <div className="flex items-center gap-2 font-medium text-text">
-            <CheckCircle size={16} className="text-accent" aria-hidden />
+            <CheckCircle size={16} className="text-ok" aria-hidden />
             {lastResult.product} instalado
             {lastResult.result.reused ? " (ya estaba activo)" : ""}
           </div>
-          <pre className="mt-2 overflow-auto rounded-md border border-border bg-bg p-2 font-mono text-[11px] text-muted">
-            {JSON.stringify(lastResult.result.installed_assets, null, 2)}
-          </pre>
-        </div>
+          <CodeBlock
+            className="mt-3"
+            language="json"
+            filename="assets instalados"
+            code={JSON.stringify(lastResult.result.installed_assets, null, 2)}
+            maxHeight={200}
+          />
+        </Panel>
       )}
 
-      <div className="flex flex-wrap gap-1 border-b border-border pb-2">
-        {(
-          [
-            ["discover", "Descubrir", Storefront],
-            ["installed", "Instalados", CheckCircle],
-          ] as const
-        ).map(([id, label, Icon]) => (
-          <button
-            key={id}
-            type="button"
-            className={`btn min-h-10 gap-1.5 rounded-md px-3 text-sm ${tab === id ? "btn-primary" : "btn-ghost text-muted"}`}
-            onClick={() => setTab(id)}
-          >
-            <Icon size={16} aria-hidden />
-            {label}
-            {id === "installed" && installs.length > 0 && (
-              <span className="badge badge-muted">{installs.length}</span>
-            )}
-          </button>
-        ))}
+      <div className="tabs">
+        <button
+          type="button"
+          className="tab"
+          aria-current={tab === "discover" ? "page" : undefined}
+          onClick={() => setTab("discover")}
+        >
+          <Storefront size={16} aria-hidden />
+          Descubrir
+        </button>
+        <button
+          type="button"
+          className="tab"
+          aria-current={tab === "installed" ? "page" : undefined}
+          onClick={() => setTab("installed")}
+        >
+          <CheckCircle size={16} aria-hidden />
+          Instalados
+          {installs.length > 0 && <Badge>{installs.length}</Badge>}
+        </button>
       </div>
 
       {tab === "discover" && (
-        <div data-testid="product-catalog" className="space-y-3">
+        <div data-testid="product-catalog" className="flex flex-col gap-3">
           {!loaded ? (
-            <SkeletonBlock className="h-28" />
+            <Skeleton className="h-[420px] rounded-lg" />
+          ) : products.length === 0 && loadError ? (
+            <LoadErrorPanel
+              title="No pudimos cargar el catálogo"
+              message={loadError}
+              onRetry={() => void load()}
+            />
           ) : products.length === 0 ? (
-            <p className="rounded-md border border-border bg-surface p-6 text-sm text-muted">
-              El catálogo aún no tiene productos publicados. El Control Center los publica desde el Marketplace Factory.
-            </p>
+            <Panel>
+              <EmptyState
+                icon={Storefront}
+                title="El catálogo está vacío"
+                body="El Control Center publica los productos desde el Marketplace Factory."
+                hint="Cuando se publique el primero, va a aparecer acá para instalar."
+              />
+            </Panel>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {products.map((p) => {
-                const Icon = TYPE_ICON[p.product_type] ?? Package;
-                const model = (p.pricing as { model?: string })?.model ?? "FREE";
-                return (
-                  <div key={p.id} className="flex flex-col rounded-md border border-border bg-surface p-4">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Icon size={16} className="text-faint" aria-hidden />
-                        <span className={`badge ${TYPE_LABEL[p.product_type] ? "badge-info" : "badge-muted"}`}>
-                          {TYPE_LABEL[p.product_type] ?? p.product_type}
-                        </span>
-                        <span className="badge badge-success">{model}</span>
-                      </div>
-                    </div>
-                    <p className="mt-2 text-sm font-semibold text-text">{p.name}</p>
-                    <p className="mt-1 line-clamp-3 flex-1 text-xs text-muted">{p.short_description || "—"}</p>
-                    <button
-                      type="button"
-                      className="btn btn-primary mt-3 min-h-9 gap-1.5 text-sm"
-                      disabled={busy === p.id}
-                      onClick={() => void install(p)}
-                    >
-                      <Plus size={15} aria-hidden />
-                      {busy === p.id ? "Instalando…" : "Instalar"}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
+            <>
+              <Toolbar className="justify-between">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    icon={MagnifyingGlass}
+                    aria-label="Buscar productos"
+                    placeholder="Buscar por nombre, descripción o slug…"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    className="w-64"
+                  />
+                  <Select
+                    aria-label="Categoría"
+                    className="w-44"
+                    value={category}
+                    onChange={(e) => setCategory(e.target.value)}
+                  >
+                    <option value="">Todas las categorías</option>
+                    {categories.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </Select>
+                  <Select
+                    aria-label="Tipo de producto"
+                    className="w-44"
+                    value={type}
+                    onChange={(e) => setType(e.target.value)}
+                  >
+                    <option value="">Todos los tipos</option>
+                    {types.map((t) => (
+                      <option key={t} value={t}>
+                        {TYPE_LABEL[t] ?? t}
+                      </option>
+                    ))}
+                  </Select>
+                </div>
+                <ResultCount shown={filtered.length} total={products.length} noun="productos" />
+              </Toolbar>
+
+              {filtered.length === 0 ? (
+                <Panel>
+                  <EmptyState
+                    compact
+                    icon={MagnifyingGlass}
+                    title="Sin resultados"
+                    body="Ningún producto coincide con la búsqueda y los filtros actuales."
+                    action={
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          setQuery("");
+                          setCategory("");
+                          setType("");
+                        }}
+                      >
+                        Limpiar filtros
+                      </Button>
+                    }
+                  />
+                </Panel>
+              ) : (
+                <Panel className="overflow-hidden">
+                  <ul className="divide-y divide-border-soft">
+                    {filtered.map((p) => {
+                      const Icon = TYPE_ICON[p.product_type] ?? Package;
+                      const installed = installedProductIds.has(p.id);
+                      return (
+                        <li key={p.id}>
+                          <div className="flex flex-col gap-3 px-4 py-3.5 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="flex min-w-0 gap-3">
+                              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border-soft bg-raised text-accent">
+                                <Icon size={17} aria-hidden />
+                              </span>
+                              <div className="min-w-0">
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                  <button
+                                    type="button"
+                                    className="text-left text-sm font-semibold text-text transition-colors duration-150 hover:text-accent"
+                                    onClick={() => setSelected(p)}
+                                  >
+                                    {p.name}
+                                  </button>
+                                  <StatusBadge status={p.status.toLowerCase()} />
+                                  {installed && <Badge tone="ok">Instalado</Badge>}
+                                  <Badge tone="info">{TYPE_LABEL[p.product_type] ?? p.product_type}</Badge>
+                                  <span className="badge badge-muted">v{p.version}</span>
+                                </div>
+                                <p className="mt-1 line-clamp-2 max-w-[68ch] text-[13px] leading-relaxed text-muted">
+                                  {p.short_description || "Sin descripción todavía."}
+                                </p>
+                                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-faint">
+                                  <span className="chip">{p.category || "general"}</span>
+                                  <span>{priceLabel(p.pricing)}</span>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2 sm:pl-4">
+                              <Button size="sm" variant="secondary" onClick={() => setSelected(p)}>
+                                Ver detalle
+                              </Button>
+                              {!installed && (
+                                <Button
+                                  size="sm"
+                                  variant="primary"
+                                  leadingIcon={Plus}
+                                  loading={busy === p.id}
+                                  onClick={() => void install(p)}
+                                >
+                                  Instalar
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </Panel>
+              )}
+            </>
           )}
         </div>
       )}
 
       {tab === "installed" && (
-        <div className="space-y-3" data-testid="product-installs">
-          {installs.length === 0 && (
-            <p className="rounded-md border border-border bg-surface p-6 text-sm text-muted">
-              Aún no instalaste productos del catálogo.
-            </p>
+        <div className="flex flex-col gap-3" data-testid="product-installs">
+          {!loaded ? (
+            <Skeleton className="h-[280px] rounded-lg" />
+          ) : installs.length === 0 && loadError ? (
+            <LoadErrorPanel
+              title="No pudimos cargar tus instalaciones"
+              message={loadError}
+              onRetry={() => void load()}
+            />
+          ) : installs.length === 0 ? (
+            <Panel>
+              <EmptyState
+                icon={CheckCircle}
+                title="Aún no instalaste productos"
+                body="Activá una integración, un workflow o un pack desde la pestaña Descubrir."
+                action={
+                  <Button variant="secondary" leadingIcon={Storefront} onClick={() => setTab("discover")}>
+                    Ver catálogo
+                  </Button>
+                }
+              />
+            </Panel>
+          ) : (
+            <Panel className="overflow-hidden">
+              <PanelHeader
+                title={`Instalados (${installs.length})`}
+                description="Versión activa, estado real y assets que dejó cada instalación."
+              />
+              <ul className="divide-y divide-border-soft">
+                {installs.map((i) => {
+                  const assets = Object.entries(i.installed_assets ?? {});
+                  return (
+                    <li
+                      key={i.id}
+                      className="state-rail px-4 py-3.5"
+                      data-state={i.status === "active" ? "ready" : "warning"}
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <p className="text-sm font-semibold text-text">{i.product.name}</p>
+                            <StatusBadge status={i.status} />
+                            <span className="badge badge-muted">v{i.product_version}</span>
+                            <Badge tone="info">
+                              {TYPE_LABEL[i.product.product_type] ?? i.product.product_type}
+                            </Badge>
+                          </div>
+                          <p className="mt-1 max-w-[68ch] text-[13px] leading-relaxed text-muted">
+                            {i.product.short_description || "Sin descripción."}
+                          </p>
+                          <p className="mt-1 text-xs text-faint">
+                            Instalado {fmtDateTime(i.created_at)}
+                          </p>
+                          {assets.length > 0 && (
+                            <details className="mt-2">
+                              <summary className="cursor-pointer text-xs text-muted transition-colors duration-150 hover:text-text">
+                                Ver {assets.length === 1 ? "1 asset" : `${assets.length} assets`} instalados
+                              </summary>
+                              <CodeBlock
+                                className="mt-2"
+                                language="json"
+                                code={JSON.stringify(i.installed_assets, null, 2)}
+                                maxHeight={180}
+                              />
+                            </details>
+                          )}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            leadingIcon={Trash}
+                            className="text-danger"
+                            loading={busy === `u-${i.id}`}
+                            onClick={() => void uninstall(i)}
+                          >
+                            Desinstalar
+                          </Button>
+                        </div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </Panel>
           )}
-          {installs.map((i) => (
-            <div key={i.id} className="rounded-md border border-border bg-surface p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-sm font-semibold text-text">{i.product.name}</p>
-                    <span className="badge badge-muted">{TYPE_LABEL[i.product.product_type] ?? i.product.product_type}</span>
-                    <span className="badge badge-muted">v{i.product_version}</span>
-                    <span className={`badge ${i.status === "active" ? "badge-success" : "badge-warning"}`}>
-                      {i.status}
-                    </span>
-                  </div>
-                  <p className="mt-1 text-xs text-muted">{i.product.short_description || "—"}</p>
-                  {Object.keys(i.installed_assets).length > 0 && (
-                    <pre className="mt-2 max-h-32 overflow-auto rounded-md border border-border bg-bg p-2 font-mono text-[11px] text-muted">
-                      {JSON.stringify(i.installed_assets, null, 2)}
-                    </pre>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-ghost min-h-9 gap-1.5 text-sm text-danger"
-                  disabled={busy === `u-${i.id}`}
-                  onClick={() => void uninstall(i)}
-                >
-                  <Trash size={15} aria-hidden />
-                  Desinstalar
-                </button>
-              </div>
-            </div>
-          ))}
         </div>
       )}
+
+      <Drawer
+        open={selected !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelected(null);
+        }}
+        title={selected?.name ?? "Producto"}
+        description={selected ? TYPE_LABEL[selected.product_type] ?? selected.product_type : undefined}
+        width={480}
+        footer={
+          selected ? (
+            installedProductIds.has(selected.id) ? (
+              <Badge tone="ok" icon={CheckCircle}>
+                Ya instalado
+              </Badge>
+            ) : (
+              <Button
+                variant="primary"
+                leadingIcon={Plus}
+                loading={busy === selected.id}
+                onClick={() => void install(selected)}
+              >
+                Instalar
+              </Button>
+            )
+          ) : undefined
+        }
+      >
+        {selected && (
+          <div className="flex flex-col gap-5">
+            <p className="text-[13px] leading-relaxed text-muted">
+              {selected.short_description || "Sin descripción todavía."}
+            </p>
+            <KeyValue
+              columns={2}
+              items={[
+                { key: "Estado", value: <StatusBadge status={selected.status.toLowerCase()} /> },
+                { key: "Categoría", value: selected.category || "general" },
+                { key: "Versión", value: `v${selected.version}` },
+                { key: "Precio", value: priceLabel(selected.pricing) },
+                { key: "Slug", value: selected.slug, mono: true },
+                {
+                  key: "Publicado",
+                  value: selected.published_at ? fmtDateTime(selected.published_at) : "sin publicar",
+                },
+              ]}
+            />
+            {(() => {
+              const installed = installs.find((i) => i.product_id === selected.id);
+              if (!installed) return null;
+              return (
+                <div className="rounded-md border border-border bg-raised p-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusBadge status={installed.status} />
+                    <span className="text-xs text-faint">
+                      Instalado {fmtDateTime(installed.created_at)}
+                    </span>
+                  </div>
+                  {Object.keys(installed.installed_assets ?? {}).length > 0 && (
+                    <CodeBlock
+                      className="mt-3"
+                      language="json"
+                      filename="assets instalados"
+                      code={JSON.stringify(installed.installed_assets, null, 2)}
+                      maxHeight={200}
+                    />
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 }

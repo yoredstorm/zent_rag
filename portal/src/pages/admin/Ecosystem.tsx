@@ -1,7 +1,16 @@
 import { Storefront, TrendUp } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { platformApi } from "../../api";
-import { ErrorInline, PageHeader, SkeletonBlock } from "../../components/ui";
+import {
+  Badge,
+  ErrorInline,
+  Metric,
+  MetricGrid,
+  PageHeader,
+  Panel,
+  PanelHeader,
+  SkeletonBlock,
+} from "../../components/ui";
 import { usePlatformAuth } from "../../platformAuth";
 
 type Dash = { listings_total: number; listings_published: number; total_installs: number; gmv_cents: number; platform_fees_cents: number; publisher_payouts_cents: number; orders_count: number; avg_rating: number; by_category: { category: string; count: number; installs: number }[]; top_publishers: { publisher: string; listings: number; earned_cents: number; badge: string }[] };
@@ -32,48 +41,97 @@ export default function AdminEcosystemPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session]);
 
+  const published = dash?.listings_published ?? 0;
+  const total = dash?.listings_total ?? 0;
+  const drafts = Math.max(0, total - published);
+
   return (
-    <div className="space-y-6">
-      <PageHeader title="Agent Ecosystem" subtitle="Marketplace público: adopción por categoría, ingresos con revenue sharing y top publicadores." />
+    <div className="space-y-4">
+      <PageHeader
+        title="Agent Ecosystem"
+        subtitle="Marketplace público: adopción por categoría, ingresos con revenue sharing y top publicadores."
+      />
       {error && <ErrorInline>{error}</ErrorInline>}
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <SkeletonBlock rows={6} />
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-            <div className="panel p-4"><p className="text-2xl font-bold text-text">{dash?.listings_total ?? 0}</p><p className="text-xs text-faint">Listings</p></div>
-            <div className="panel p-4"><p className="text-2xl font-bold text-text">{dash?.listings_published ?? 0}</p><p className="text-xs text-faint">Publicados</p></div>
-            <div className="panel p-4"><p className="text-2xl font-bold text-text">{dash?.total_installs ?? 0}</p><p className="text-xs text-faint">Instalaciones</p></div>
-            <div className="panel p-4"><p className="text-2xl font-bold text-text">${((dash?.gmv_cents ?? 0) / 100).toFixed(0)}</p><p className="text-xs text-faint">GMV · fees ${((dash?.platform_fees_cents ?? 0) / 100).toFixed(0)}</p></div>
-            <div className="panel p-4"><p className="text-2xl font-bold text-text">★ {dash?.avg_rating ?? 0}</p><p className="text-xs text-faint">Rating medio</p></div>
-          </div>
+          <MetricGrid className="xl:grid-cols-5">
+            <Metric
+              label="Listings"
+              value={total}
+              hint={drafts > 0 ? `${drafts} fuera de publicación` : "Todos publicados"}
+            />
+            <Metric label="Publicados" value={published} size="md" tone={published > 0 ? "ok" : "default"} icon={Storefront} />
+            <Metric label="Instalaciones" value={dash?.total_installs ?? 0} size="md" hint={`${dash?.orders_count ?? 0} órdenes`} />
+            <Metric
+              label="GMV"
+              value={`$${((dash?.gmv_cents ?? 0) / 100).toFixed(0)}`}
+              size="md"
+              hint={`Fees $${((dash?.platform_fees_cents ?? 0) / 100).toFixed(0)} · payouts $${((dash?.publisher_payouts_cents ?? 0) / 100).toFixed(0)}`}
+            />
+            <Metric label="Rating medio" value={dash?.avg_rating ?? 0} size="md" />
+          </MetricGrid>
 
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <section>
-              <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text"><TrendUp size={15} /> Adopción por categoría</h3>
-              <div className="panel space-y-1 p-3">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+            <Panel>
+              <PanelHeader
+                title={
+                  <span className="flex items-center gap-2">
+                    <TrendUp size={15} className="text-faint" aria-hidden />
+                    Adopción por categoría
+                  </span>
+                }
+                description="Listings publicados e instalaciones acumuladas."
+              />
+              <ul className="divide-y divide-border-soft">
                 {(dash?.by_category ?? []).map((c) => (
-                  <div key={c.category} className="flex items-center gap-2 rounded-md bg-soft px-3 py-1 text-xs">
-                    <span className="flex-1 text-text">{c.category}</span>
-                    <span className="text-faint">{c.count} listings · {c.installs} installs</span>
-                  </div>
+                  <li key={c.category} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                    <span className="min-w-0 truncate text-xs text-text" title={c.category}>
+                      {c.category}
+                    </span>
+                    <span className="shrink-0 text-xs text-faint tabular-nums">
+                      {c.count} listings · {c.installs} installs
+                    </span>
+                  </li>
                 ))}
-                {(dash?.by_category ?? []).length === 0 && <p className="text-xs text-faint">Sin listings.</p>}
-              </div>
-            </section>
-            <section>
-              <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text"><Storefront size={15} /> Top publicadores</h3>
-              <div className="panel space-y-1 p-3">
+                {(dash?.by_category ?? []).length === 0 && (
+                  <li className="px-4 py-3 text-[13px] text-muted">Sin listings.</li>
+                )}
+              </ul>
+            </Panel>
+
+            <Panel>
+              <PanelHeader
+                title={
+                  <span className="flex items-center gap-2">
+                    <Storefront size={15} className="text-faint" aria-hidden />
+                    Top publicadores
+                  </span>
+                }
+                description="Ingresos acumulados y catálogo publicado."
+              />
+              <ul className="divide-y divide-border-soft">
                 {(dash?.top_publishers ?? []).map((p) => (
-                  <div key={p.publisher} className="flex items-center gap-2 rounded-md bg-soft px-3 py-1 text-xs">
-                    <span className="flex-1 truncate text-text">{p.publisher}</span>
-                    {p.badge !== "sin badge" && <span className="badge badge-warning">{p.badge}</span>}
-                    <span className="text-faint">{p.listings} listings · ${(p.earned_cents / 100).toFixed(0)}</span>
-                  </div>
+                  <li key={p.publisher} className="flex items-center gap-3 px-4 py-2.5">
+                    <span className="min-w-0 flex-1 truncate text-xs text-text" title={p.publisher}>
+                      {p.publisher}
+                    </span>
+                    {p.badge !== "sin badge" && (
+                      <Badge tone="warn" icon={Storefront}>
+                        {p.badge}
+                      </Badge>
+                    )}
+                    <span className="shrink-0 text-xs text-faint tabular-nums">
+                      {p.listings} listings · ${(p.earned_cents / 100).toFixed(0)}
+                    </span>
+                  </li>
                 ))}
-                {(dash?.top_publishers ?? []).length === 0 && <p className="text-xs text-faint">Sin publicadores.</p>}
-              </div>
-            </section>
+                {(dash?.top_publishers ?? []).length === 0 && (
+                  <li className="px-4 py-3 text-[13px] text-muted">Sin publicadores.</li>
+                )}
+              </ul>
+            </Panel>
           </div>
         </>
       )}

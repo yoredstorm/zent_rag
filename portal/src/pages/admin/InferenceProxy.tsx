@@ -1,7 +1,34 @@
 import { ListMagnifyingGlass, Plus } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { platformApi } from "../../api";
-import { ErrorInline, PageHeader, SkeletonBlock } from "../../components/ui";
+import {
+  Badge,
+  Button,
+  DataTable,
+  EmptyState,
+  ErrorInline,
+  Field,
+  Input,
+  Metric,
+  MetricGrid,
+  PageHeader,
+  Pagination,
+  Panel,
+  PanelHeader,
+  ResultCount,
+  SectionHeader,
+  Select,
+  Skeleton,
+  StatusBadge,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+  Toolbar,
+  type Column,
+  type SortState,
+} from "../../components/ui";
+import { fmtCurrency, fmtLatency, fmtNum } from "../../lib/format";
 import { usePlatformAuth } from "../../platformAuth";
 
 type Model = {
@@ -39,6 +66,25 @@ type Log = {
 
 type Queue = { plan: string; model: string; depth: number; priority: number };
 
+const WINDOWS = [
+  { hours: 1, label: "1h" },
+  { hours: 6, label: "6h" },
+  { hours: 24, label: "24h" },
+] as const;
+const LOG_PAGE_SIZE = 25;
+
+function sortRows<T>(rows: T[], sort: SortState, get: (row: T, key: string) => string | number) {
+  if (!sort) return rows;
+  return [...rows].sort((a, b) => {
+    const left = get(a, sort.key);
+    const right = get(b, sort.key);
+    if (typeof left === "string" && typeof right === "string") {
+      return sort.dir === "asc" ? left.localeCompare(right) : right.localeCompare(left);
+    }
+    return sort.dir === "asc" ? Number(left) - Number(right) : Number(right) - Number(left);
+  });
+}
+
 export default function AdminInferenceProxyPage() {
   const { session } = usePlatformAuth();
   const [models, setModels] = useState<Model[]>([]);
@@ -51,6 +97,9 @@ export default function AdminInferenceProxyPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
+  const [sortModels, setSortModels] = useState<SortState>({ key: "model_name", dir: "asc" });
+  const [sortLogs, setSortLogs] = useState<SortState>({ key: "created_at", dir: "desc" });
+  const [logPage, setLogPage] = useState(1);
 
   async function load() {
     if (!session) return;
@@ -100,125 +149,372 @@ export default function AdminInferenceProxyPage() {
   }
 
   const shown = perf.filter((p) => !modelFilter || p.model === modelFilter);
+  const totals = shown.reduce(
+    (acc, p) => {
+      acc.requests += p.requests;
+      acc.tokens += p.tokens;
+      acc.cost += p.cost;
+      acc.errors += p.errors;
+      return acc;
+    },
+    { requests: 0, tokens: 0, cost: 0, errors: 0 }
+  );
+
+  const modelRows = useMemo(
+    () =>
+      sortRows(models, sortModels, (row, key) =>
+        key === "backend" ? row.backend : key === "capacity" ? row.capacity : key === "status" ? row.status : row.model_name
+      ),
+    [models, sortModels]
+  );
+  const logRows = useMemo(
+    () =>
+      sortRows(logs, sortLogs, (row, key) => {
+        if (key === "model") return row.model;
+        if (key === "status") return row.status;
+        if (key === "total_tokens") return row.total_tokens;
+        if (key === "latency_ms") return row.latency_ms;
+        if (key === "queue_wait_ms") return row.queue_wait_ms;
+        if (key === "cost") return row.cost;
+        return row.created_at;
+      }),
+    [logs, sortLogs]
+  );
+  const maxLogPage = Math.max(1, Math.ceil(logRows.length / LOG_PAGE_SIZE));
+  const safeLogPage = Math.min(logPage, maxLogPage);
+  const pageLogs = logRows.slice((safeLogPage - 1) * LOG_PAGE_SIZE, safeLogPage * LOG_PAGE_SIZE);
+
+  const modelColumns: Column<Model>[] = [
+    {
+      key: "model_name",
+      header: "Modelo",
+      sortable: true,
+      render: (row) => <span className="mono text-xs text-text">{row.model_name}</span>,
+    },
+    {
+      key: "backend",
+      header: "Backend",
+      sortable: true,
+      width: "120px",
+      render: (row) => <Badge tone="neutral">{row.backend}</Badge>,
+    },
+    {
+      key: "capacity",
+      header: "Capacidad",
+      align: "right",
+      sortable: true,
+      width: "120px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtNum(row.capacity)}</span>,
+    },
+    {
+      key: "status",
+      header: "Estado",
+      sortable: true,
+      width: "130px",
+      render: (row) => <StatusBadge status={row.status} />,
+    },
+  ];
+
+  const logColumns: Column<Log>[] = [
+    {
+      key: "created_at",
+      header: "Hora",
+      sortable: true,
+      width: "120px",
+      render: (row) => <span className="mono text-xs text-faint">{new Date(row.created_at).toLocaleTimeString()}</span>,
+    },
+    {
+      key: "model",
+      header: "Modelo",
+      sortable: true,
+      render: (row) => <span className="mono text-xs text-text">{row.model}</span>,
+    },
+    {
+      key: "backend",
+      header: "Backend",
+      hideBelow: "md",
+      width: "110px",
+      render: (row) => <span className="text-xs text-muted">{row.backend}</span>,
+    },
+    {
+      key: "total_tokens",
+      header: "Tokens",
+      align: "right",
+      sortable: true,
+      width: "110px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtNum(row.total_tokens)}</span>,
+    },
+    {
+      key: "latency_ms",
+      header: "Latencia",
+      align: "right",
+      sortable: true,
+      width: "110px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtLatency(row.latency_ms)}</span>,
+    },
+    {
+      key: "queue_wait_ms",
+      header: "Cola",
+      align: "right",
+      sortable: true,
+      hideBelow: "md",
+      width: "100px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtLatency(row.queue_wait_ms)}</span>,
+    },
+    {
+      key: "cost",
+      header: "Costo",
+      align: "right",
+      sortable: true,
+      hideBelow: "lg",
+      width: "110px",
+      render: (row) => <span className="mono text-xs text-muted">{fmtCurrency(row.cost, 5)}</span>,
+    },
+    {
+      key: "status",
+      header: "Estado",
+      sortable: true,
+      width: "130px",
+      render: (row) => <StatusBadge status={row.status} />,
+    },
+  ];
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Inference Proxy" subtitle="Cola por plan, routing por capacidad, logs e inferencia y performance por modelo." />
-      {error && <ErrorInline>{error}</ErrorInline>}
+      <PageHeader title="Inference Proxy" subtitle="Cola por plan, routing por capacidad, logs de inferencia y performance por modelo." />
+      <ErrorInline message={error} />
       {loading ? (
-        <SkeletonBlock className="h-40" />
+        <div className="flex flex-col gap-3" aria-hidden>
+          <Skeleton className="h-[86px] rounded-lg" />
+          <Skeleton className="h-[320px] rounded-lg" />
+        </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            {shown.map((p) => (
-              <div key={p.model} className="panel p-4">
-                <div className="flex items-baseline justify-between">
-                  <p className="mono text-sm font-semibold text-text">{p.model}</p>
-                  <span className="badge badge-muted">{p.backend}</span>
-                </div>
-                <p className="mt-2 text-[11px] text-faint">p95 <span className="text-text">{p.p95_latency_ms.toFixed(0)}ms</span> · avg {p.avg_latency_ms.toFixed(0)}ms · cola {p.avg_queue_ms.toFixed(0)}ms</p>
-                <p className="text-[11px] text-faint">{p.requests} req ({p.throughput_per_min}/min) · {p.errors} err · ${p.cost.toFixed(3)}</p>
-              </div>
-            ))}
-            {shown.length === 0 && (
-              <div className="panel p-4 text-xs text-faint">Sin tráfico en la ventana.</div>
-            )}
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,3fr)]">
+            <Metric
+              label={`Requests (${hours}h)`}
+              value={fmtNum(totals.requests)}
+              hint={modelFilter ? `Filtrado: ${modelFilter}` : `${shown.length} modelos con tráfico`}
+            />
+            <MetricGrid cols={4} className="lg:grid-cols-4">
+              <Metric label="Tokens" value={fmtNum(totals.tokens)} size="md" />
+              <Metric label="Costo" value={fmtCurrency(totals.cost, 3)} size="md" />
+              <Metric
+                label="Errores"
+                value={fmtNum(totals.errors)}
+                size="md"
+                tone={totals.errors > 0 ? "danger" : "default"}
+              />
+              <Metric label="Modelos en catálogo" value={fmtNum(models.length)} size="md" />
+            </MetricGrid>
           </div>
 
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-            <section className="panel p-4">
-              <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">
-                <ListMagnifyingGlass size={15} aria-hidden /> Cola viva por plan
-              </h3>
-              <div className="space-y-1">
-                {queue.length === 0 && <p className="text-xs text-faint">Cola vacía.</p>}
-                {queue.map((q) => (
-                  <div key={`${q.plan}:${q.model}`} className="flex items-center justify-between rounded-md bg-soft px-3 py-1.5 text-xs">
-                    <span className="font-medium text-text">{q.plan}</span>
-                    <span className="mono text-faint">{q.model}</span>
-                    <span className={`badge ${q.depth > 10 ? "badge-danger" : "badge-muted"}`}>{q.depth} esperando</span>
-                  </div>
+          <Toolbar>
+            <Tabs variant="pill" value={String(hours)} onValueChange={(value) => setHours(Number(value))}>
+              <TabsList>
+                {WINDOWS.map((w) => (
+                  <TabsTrigger key={w.hours} value={String(w.hours)}>
+                    {w.label}
+                  </TabsTrigger>
                 ))}
-              </div>
-              <h3 className="mb-2 mt-4 flex items-center gap-2 text-sm font-semibold text-text">
-                <Plus size={15} aria-hidden /> Modelo del proxy
-              </h3>
-              <div className="grid grid-cols-2 gap-2">
-                <input className="rounded-md border border-border bg-soft px-3 py-2 text-sm" placeholder="modelo (ej. zent-fast)" value={modelForm.model_name} onChange={(e) => setModelForm((f) => ({ ...f, model_name: e.target.value }))} />
-                <select className="rounded-md border border-border bg-soft px-2 py-2 text-sm" value={modelForm.backend} onChange={(e) => setModelForm((f) => ({ ...f, backend: e.target.value }))}>
-                  {["openai", "vllm", "tgi"].map((b) => (<option key={b} value={b}>{b}</option>))}
-                </select>
-                <input type="number" className="rounded-md border border-border bg-soft px-3 py-2 text-sm" placeholder="capacidad" value={modelForm.capacity} onChange={(e) => setModelForm((f) => ({ ...f, capacity: Number(e.target.value) }))} />
-                <button type="button" className="btn btn-primary min-h-9 text-xs" disabled={!!busy} onClick={() => void upsertModel()}>Guardar</button>
-              </div>
-            </section>
+              </TabsList>
+            </Tabs>
+            <Select
+              aria-label="Filtrar por modelo"
+              className="w-48"
+              value={modelFilter}
+              onChange={(e) => {
+                setModelFilter(e.target.value);
+                setLogPage(1);
+              }}
+              placeholder="Todos los modelos"
+            >
+              {perf.map((p) => (
+                <option key={p.model} value={p.model}>
+                  {p.model}
+                </option>
+              ))}
+            </Select>
+          </Toolbar>
 
-            <section className="panel p-4">
-              <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold text-text">Catálogo</h3>
-              <div className="overflow-x-auto">
-                <table className="table">
-                  <thead>
-                    <tr><th>Modelo</th><th>Backend</th><th>Capacidad</th><th>Estado</th></tr>
-                  </thead>
-                  <tbody>
-                    {models.map((m) => (
-                      <tr key={m.id}>
-                        <td className="mono text-xs">{m.model_name}</td>
-                        <td className="text-xs">{m.backend}</td>
-                        <td className="text-xs">{m.capacity}</td>
-                        <td><span className={`badge ${m.status === "active" ? "badge-ok" : "badge-muted"}`}>{m.status}</span></td>
-                      </tr>
+          <Tabs defaultValue="traffic">
+            <TabsList>
+              <TabsTrigger value="traffic">Tráfico</TabsTrigger>
+              <TabsTrigger value="catalog">Catálogo</TabsTrigger>
+              <TabsTrigger value="logs">Logs</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="traffic">
+              <section className="min-w-0">
+                <SectionHeader
+                  title="Performance por modelo"
+                  description="Latencia p95, volumen, cola y costo de la ventana seleccionada."
+                  className="mb-3"
+                />
+                {shown.length === 0 ? (
+                  <Panel className="mb-4">
+                    <EmptyState
+                      icon={ListMagnifyingGlass}
+                      title="Sin tráfico en la ventana"
+                      body="No hay requests registrados para esta selección."
+                      hint="Ampliá la ventana o quitá el filtro de modelo."
+                    />
+                  </Panel>
+                ) : (
+                  <MetricGrid cols={4} className="mb-4">
+                    {shown.map((p) => (
+                      <Metric
+                        key={p.model}
+                        label={`${p.model} · ${p.backend}`}
+                        value={fmtLatency(p.p95_latency_ms)}
+                        size="md"
+                        tone={p.errors > 0 ? "warn" : "default"}
+                        hint={`${fmtNum(p.requests)} req · ${p.throughput_per_min}/min · cola ${fmtLatency(p.avg_queue_ms)} · ${p.errors} err · ${fmtCurrency(p.cost, 3)}`}
+                        help={`p95 en la ventana; promedio ${fmtLatency(p.avg_latency_ms)}.`}
+                      />
                     ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="mt-3 flex items-center gap-2">
-                <label className="text-xs text-faint">Ventana:</label>
-                {[1, 6, 24].map((h) => (
-                  <button key={h} type="button" onClick={() => setHours(h)} className={`btn min-h-8 px-3 text-xs ${hours === h ? "btn-primary" : "btn-secondary"}`}>{h}h</button>
-                ))}
-                <select className="ml-2 rounded-md border border-border bg-soft px-2 py-1.5 text-xs" value={modelFilter} onChange={(e) => setModelFilter(e.target.value)}>
-                  <option value="">todos los modelos</option>
-                  {perf.map((p) => (<option key={p.model} value={p.model}>{p.model}</option>))}
-                </select>
-              </div>
-            </section>
-          </div>
+                  </MetricGrid>
+                )}
 
-          <section>
-            <h3 className="mb-2 text-sm font-semibold text-text">Logs de inferencia (últimas 50)</h3>
-            <div className="panel overflow-x-auto">
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Hora</th>
-                    <th>Modelo</th>
-                    <th>Backend</th>
-                    <th>Tokens</th>
-                    <th>Latencia</th>
-                    <th>Cola</th>
-                    <th>Costo</th>
-                    <th>Estado</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {logs.map((l) => (
-                    <tr key={l.id}>
-                      <td className="mono text-[10px] text-faint">{new Date(l.created_at).toLocaleTimeString()}</td>
-                      <td className="mono text-xs">{l.model}</td>
-                      <td className="text-xs">{l.backend}</td>
-                      <td className="text-xs">{l.total_tokens}</td>
-                      <td className="text-xs">{l.latency_ms.toFixed(0)}ms</td>
-                      <td className="text-xs">{l.queue_wait_ms.toFixed(0)}ms</td>
-                      <td className="text-xs">${l.cost.toFixed(5)}</td>
-                      <td><span className={`badge ${l.status === "completed" ? "badge-ok" : "badge-danger"}`}>{l.status}</span></td>
-                    </tr>
-                  ))}
-                  {logs.length === 0 && <tr><td colSpan={8} className="p-4 text-center text-xs text-faint">Sin logs en la ventana.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </section>
+                <Panel>
+                  <PanelHeader
+                    title={
+                      <span className="flex items-center gap-2">
+                        <ListMagnifyingGlass size={15} aria-hidden /> Cola viva por plan
+                      </span>
+                    }
+                    description="Profundidad actual y prioridad de atención."
+                  />
+                  {queue.length === 0 ? (
+                    <EmptyState compact icon={ListMagnifyingGlass} title="Cola vacía" body="No hay trabajos esperando en este momento." />
+                  ) : (
+                    <ul className="divide-y divide-border-soft">
+                      {queue.map((q) => (
+                        <li key={`${q.plan}:${q.model}`} className="flex items-center gap-3 px-4 py-2.5">
+                          <span className="min-w-0 flex-1 truncate text-[13px] text-text">{q.plan}</span>
+                          <span className="mono min-w-0 truncate text-xs text-muted">{q.model}</span>
+                          <Badge tone={q.depth > 10 ? "danger" : "neutral"}>{q.depth} esperando</Badge>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </Panel>
+              </section>
+            </TabsContent>
+
+            <TabsContent value="catalog">
+              <section className="min-w-0">
+                <SectionHeader
+                  title={
+                    <span className="flex items-center gap-2">
+                      <Plus size={15} aria-hidden /> Modelo del proxy
+                    </span>
+                  }
+                  description="Alta o actualización de un modelo del catálogo."
+                  className="mb-3"
+                />
+                <Panel className="mb-4">
+                  <PanelHeader title="Upsert de modelo" description="Se identifica por nombre; la capacidad es el cupo concurrente." />
+                  <div className="panel-body">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <Field label="Modelo">
+                        <Input
+                          value={modelForm.model_name}
+                          onChange={(e) => setModelForm((f) => ({ ...f, model_name: e.target.value }))}
+                          placeholder="ej. zent-fast"
+                        />
+                      </Field>
+                      <Field label="Backend">
+                        <Select
+                          value={modelForm.backend}
+                          onChange={(e) => setModelForm((f) => ({ ...f, backend: e.target.value }))}
+                        >
+                          {["openai", "vllm", "tgi"].map((b) => (
+                            <option key={b} value={b}>
+                              {b}
+                            </option>
+                          ))}
+                        </Select>
+                      </Field>
+                      <Field label="Capacidad">
+                        <Input
+                          type="number"
+                          min={1}
+                          value={modelForm.capacity}
+                          onChange={(e) => setModelForm((f) => ({ ...f, capacity: Number(e.target.value) }))}
+                        />
+                      </Field>
+                    </div>
+                    <div className="mt-3">
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        loading={busy === "model"}
+                        disabled={!modelForm.model_name.trim()}
+                        onClick={() => void upsertModel()}
+                      >
+                        Guardar
+                      </Button>
+                    </div>
+                  </div>
+                </Panel>
+                <DataTable
+                  stickyHeader
+                  columns={modelColumns}
+                  rows={modelRows}
+                  rowKey={(row) => row.id}
+                  sort={sortModels}
+                  onSortChange={setSortModels}
+                  empty={
+                    <EmptyState
+                      icon={ListMagnifyingGlass}
+                      title="Catálogo vacío"
+                      body="Agregá el primer modelo para que el proxy pueda enrutar."
+                    />
+                  }
+                />
+              </section>
+            </TabsContent>
+
+            <TabsContent value="logs">
+              <section className="min-w-0">
+                <SectionHeader
+                  title="Logs de inferencia"
+                  description="Últimas 50 inferencias servidas por el proxy."
+                  className="mb-3"
+                />
+                <DataTable
+                  stickyHeader
+                  columns={logColumns}
+                  rows={pageLogs}
+                  rowKey={(row) => row.id}
+                  sort={sortLogs}
+                  onSortChange={(next) => {
+                    setSortLogs(next);
+                    setLogPage(1);
+                  }}
+                  empty={
+                    <EmptyState
+                      icon={ListMagnifyingGlass}
+                      title="Sin logs en la ventana"
+                      body="No hay inferencias registradas."
+                      hint="Cuando el proxy reciba tráfico vas a verlas acá."
+                    />
+                  }
+                  footer={
+                    logRows.length > LOG_PAGE_SIZE ? (
+                      <>
+                        <ResultCount shown={pageLogs.length} total={logRows.length} noun="logs" />
+                        <Pagination page={safeLogPage} pageSize={LOG_PAGE_SIZE} total={logRows.length} onPageChange={setLogPage} />
+                      </>
+                    ) : (
+                      <ResultCount shown={logRows.length} total={logRows.length} noun="logs" />
+                    )
+                  }
+                />
+              </section>
+            </TabsContent>
+          </Tabs>
         </>
       )}
     </div>

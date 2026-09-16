@@ -213,19 +213,32 @@ async def check_organization(organization_id: UUID) -> list[dict]:
     return created
 
 
-async def list_alerts(organization_id: UUID, limit: int = 50) -> list[dict]:
+async def list_alerts(organization_id: UUID | None = None, limit: int = 50) -> list[dict]:
+    """Alertas FinOps de un tenant, o de todos cuando no se filtra por org."""
     session = await get_async_session()
     try:
-        rows = (
-            await session.execute(
-                text(
-                    "SELECT id, alert_type, message, threshold_value, actual_value, "
-                    "acknowledged, created_at FROM finops_alerts "
-                    "WHERE organization_id = :oid ORDER BY created_at DESC LIMIT :limit"
-                ),
-                {"oid": organization_id, "limit": limit},
-            )
-        ).fetchall()
+        if organization_id is None:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT id, alert_type, message, threshold_value, actual_value, "
+                        "acknowledged, created_at FROM finops_alerts "
+                        "ORDER BY created_at DESC LIMIT :limit"
+                    ),
+                    {"limit": limit},
+                )
+            ).fetchall()
+        else:
+            rows = (
+                await session.execute(
+                    text(
+                        "SELECT id, alert_type, message, threshold_value, actual_value, "
+                        "acknowledged, created_at FROM finops_alerts "
+                        "WHERE organization_id = :oid ORDER BY created_at DESC LIMIT :limit"
+                    ),
+                    {"oid": organization_id, "limit": limit},
+                )
+            ).fetchall()
     finally:
         await session.close()
     return [
