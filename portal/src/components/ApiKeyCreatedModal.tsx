@@ -27,17 +27,17 @@ print(client.chat("What is our refund policy?").answer)`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center">
-      <div className="absolute inset-0 bg-black/60" aria-hidden />
+      <div className="absolute inset-0 bg-scrim backdrop-blur-[2px]" aria-hidden />
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="api-key-modal-title"
-        className="relative m-4 w-full max-w-lg rounded-lg border border-accent/30 bg-surface p-5 shadow-pop"
+        className="relative m-4 w-full max-w-lg rounded-xl border border-border bg-overlay p-5 shadow-pop"
       >
         <div className="mb-3 flex items-start justify-between gap-3">
           <div className="flex items-center gap-2">
             <KeyIcon size={18} className="text-accent" aria-hidden />
-            <h2 id="api-key-modal-title" className="text-base font-semibold text-text">
+            <h2 id="api-key-modal-title" className="text-h2">
               Tu API key
             </h2>
           </div>
@@ -59,7 +59,7 @@ print(client.chat("What is our refund policy?").answer)`;
         </label>
         <input
           id="signup-api-key"
-          className="mb-3 w-full rounded-md border border-border bg-soft px-3 py-2.5 font-mono text-sm text-text"
+          className="mb-3 w-full rounded-md border border-border bg-control px-3 py-2.5 font-mono text-sm text-text"
           readOnly
           value={revealed ? apiKey : "•".repeat(48)}
         />

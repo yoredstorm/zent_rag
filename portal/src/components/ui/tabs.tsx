@@ -1,6 +1,14 @@
 import * as TabsPrimitive from "@radix-ui/react-tabs";
 import { motion, useReducedMotion } from "motion/react";
-import { createContext, useContext, useId, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useId,
+  useState,
+  type ButtonHTMLAttributes,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+} from "react";
 import type { Icon } from "@phosphor-icons/react";
 import { cn } from "./cn";
 
@@ -18,7 +26,10 @@ export type TabsProps = {
   variant?: TabVariant;
   children: ReactNode;
   className?: string;
-};
+} & Omit<
+  ComponentPropsWithoutRef<typeof TabsPrimitive.Root>,
+  "value" | "defaultValue" | "onValueChange" | "className" | "children"
+>;
 
 /**
  * Tabs con indicador animado (layout transition real, no un borde que salta).
@@ -31,6 +42,7 @@ export function Tabs({
   variant = "underline",
   children,
   className,
+  ...rest
 }: TabsProps) {
   const uid = useId();
   const [internal, setInternal] = useState(defaultValue);
@@ -45,6 +57,7 @@ export function Tabs({
           onValueChange?.(next);
         }}
         className={className}
+        {...rest}
       >
         {children}
       </TabsPrimitive.Root>
@@ -74,7 +87,7 @@ export type TabsTriggerProps = {
   icon?: Icon;
   disabled?: boolean;
   className?: string;
-};
+} & Omit<ButtonHTMLAttributes<HTMLButtonElement>, "value" | "disabled" | "className">;
 
 export function TabsTrigger({
   value,
@@ -82,6 +95,7 @@ export function TabsTrigger({
   icon: IconEl,
   disabled,
   className,
+  ...rest
 }: TabsTriggerProps) {
   const { uid, variant, current } = useContext(TabsContext);
   const active = current === value;
@@ -103,6 +117,7 @@ export function TabsTrigger({
         active ? "text-text" : "text-muted hover:text-text",
         className
       )}
+      {...rest}
     >
       {active && variant === "underline" && (
         <motion.span

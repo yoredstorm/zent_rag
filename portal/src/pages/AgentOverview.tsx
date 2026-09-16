@@ -14,15 +14,21 @@ import { useAuth } from "../auth";
 import { Breadcrumb } from "../components/Breadcrumb";
 import OutcomesPanel from "../components/OutcomesPanel";
 import {
+  Badge,
+  ButtonLink,
   EmptyState,
   EnvironmentBadge,
   ErrorInline,
+  Metric,
+  MetricGrid,
   PageHeader,
+  Panel,
+  PanelHeader,
   ReadinessScore,
   SkeletonBlock,
-  StatCard,
   StatusBadge,
   VersionBadge,
+  cn,
 } from "../components/ui";
 import { fmtDateTime, fmtLatency, fmtNum } from "../lib/format";
 
@@ -79,6 +85,20 @@ type AssistantAutomations = {
   summary: { automations: number; active: number; actions_today: number; last_activity: string | null; health: string };
   automations: AssistantAutomation[];
 };
+
+const HEALTH_LABEL: Record<string, string> = {
+  healthy: "Saludable",
+  needs_attention: "Necesita atención",
+  paused: "Pausado",
+  idle: "Sin automatizaciones",
+};
+
+/** Estado real de una automatización para el activity rail. */
+function automationRailState(status: string): "ready" | "queued" | "failed" {
+  if (status === "active") return "ready";
+  if (status === "failed" || status === "error") return "failed";
+  return "queued";
+}
 
 export default function AgentOverviewPage() {
   const { id } = useParams<{ id: string }>();
@@ -163,17 +183,17 @@ export default function AgentOverviewPage() {
 
   if (loading) {
     return (
-      <div className="panel p-5">
+      <Panel className="p-4">
         <SkeletonBlock rows={6} />
-      </div>
+      </Panel>
     );
   }
 
   if (error || !agent) {
     return (
-      <div className="panel p-5">
-        <ErrorInline message={error || "No se encontró el agente."} />
-      </div>
+      <Panel className="p-4">
+        <ErrorInline message={error || "No se encontró el agente."} className="mb-0" />
+      </Panel>
     );
   }
 
@@ -185,12 +205,17 @@ export default function AgentOverviewPage() {
     null;
   const healthyDeployment =
     deployments.find((d) => d.status === "healthy") || deployments[0] || null;
+  const environmentName = healthyDeployment
+    ? environments.find((x) => x.id === healthyDeployment.environment_id)?.name ||
+      healthyDeployment.environment_id
+    : "";
   const workspace = workspaces.find((w) => w.id === agent.workspace_id);
-  const kbNames = (agent.config.knowledge_base_ids || [])
-    .map((kbId) => kbs.find((kb) => kb.id === kbId)?.name || kbId.slice(0, 8));
+  const kbNames = (agent.config.knowledge_base_ids || []).map(
+    (kbId) => kbs.find((kb) => kb.id === kbId)?.name || kbId.slice(0, 8),
+  );
 
   return (
-    <div>
+    <div className="flex flex-col gap-4">
       <Breadcrumb
         items={[
           { label: "Agentes", to: "/agents" },
@@ -198,231 +223,240 @@ export default function AgentOverviewPage() {
         ]}
       />
       <PageHeader
+        className="mb-0"
         title={agent.name || "Agente"}
         subtitle={agent.description || "Vista general del agente, su estado y su despliegue."}
         actions={
-          <div className="flex flex-wrap gap-2">
-            <Link to={`/agents/${agent.id}/builder`} className="btn btn-secondary min-h-11">
-              <PencilSimple size={16} aria-hidden />
-              Edit
-            </Link>
-            <Link to={`/agents/${agent.id}/builder?tab=playground`} className="btn btn-secondary min-h-11">
-              <Play size={16} aria-hidden />
-              Test
-            </Link>
-            <Link to="/evaluation/runs" className="btn btn-secondary min-h-11">
-              <Flask size={16} aria-hidden />
-              Evaluate
-            </Link>
-            <Link to={`/agents/${agent.id}/builder?tab=deployments`} className="btn btn-primary min-h-11">
-              <PaperPlaneRight size={16} aria-hidden />
-              Deploy
-            </Link>
-            <Link to="/developers" className="btn btn-secondary min-h-11">
-              View API
-            </Link>
-            <Link to="/agents" className="btn btn-ghost min-h-11">
-              <ArrowLeft size={16} aria-hidden />
+          <>
+            <ButtonLink to={`/agents/${agent.id}/builder`} leadingIcon={PencilSimple}>
+              Editar
+            </ButtonLink>
+            <ButtonLink to={`/agents/${agent.id}/builder?tab=playground`} leadingIcon={Play}>
+              Probar
+            </ButtonLink>
+            <ButtonLink to="/evaluation/runs" leadingIcon={Flask}>
+              Evaluar
+            </ButtonLink>
+            <ButtonLink
+              to={`/agents/${agent.id}/builder?tab=deployments`}
+              variant="primary"
+              leadingIcon={PaperPlaneRight}
+            >
+              Publicar
+            </ButtonLink>
+            <ButtonLink to="/developers">Ver API</ButtonLink>
+            <ButtonLink to="/agents" variant="ghost" leadingIcon={ArrowLeft}>
               Volver
-            </Link>
-          </div>
+            </ButtonLink>
+          </>
         }
       />
-      <ErrorInline message={error} />
+      <ErrorInline message={error} className="mb-0" />
+
+      <Panel>
+        <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 gap-3">
+            <span
+              className={cn(
+                "flex h-10 w-10 shrink-0 items-center justify-center rounded-md border",
+                agent.is_active
+                  ? "border-ok/25 bg-ok-soft text-ok"
+                  : "border-border bg-raised text-faint",
+              )}
+              aria-hidden
+            >
+              <Robot size={20} />
+            </span>
+            <div className="min-w-0">
+              <h2 className="text-h2">{agent.is_active ? "Agente activo" : "Agente inactivo"}</h2>
+              <p className="prose-measure mt-1.5 text-sm leading-relaxed text-muted">
+                {healthyDeployment
+                  ? `Atiende en ${environmentName} con la versión ${
+                      latestVersion ? `v${latestVersion.version_number}` : "más reciente"
+                    }.`
+                  : "Todavía no tiene una publicación activa. Publica una versión lista para que empiece a atender."}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+            {healthyDeployment && <StatusBadge status={healthyDeployment.status} />}
+            {healthyDeployment && <EnvironmentBadge name={environmentName} />}
+            {latestVersion && (
+              <VersionBadge versionNumber={latestVersion.version_number} status={latestVersion.status} />
+            )}
+            <Badge tone="neutral">{agent.model || "zent-default"}</Badge>
+            {workspace?.name && <Badge tone="neutral">{workspace.name}</Badge>}
+          </div>
+        </div>
+      </Panel>
+
+      <MetricGrid cols={4}>
+        <Metric size="md" label="Requests" value={usage ? fmtNum(usage.requests) : "—"} icon={ChartLineUp} />
+        <Metric size="md" label="Tokens" value={usage ? fmtNum(usage.tokens) : "—"} />
+        <Metric size="md" label="Latencia media" value={usage ? fmtLatency(usage.avg_latency_ms) : "—"} />
+        <Metric
+          size="md"
+          label="Costo estimado"
+          value={usage ? `$${usage.estimated_cost.toFixed(4)}` : "—"}
+        />
+      </MetricGrid>
 
       {assistant && (
-        <section className="panel mb-4 space-y-3 p-4" data-testid="agent-automations">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-sm font-semibold text-text">Asistente activo</h2>
-            <span
-              className={`badge ${
-                assistant.summary.health === "healthy"
-                  ? "badge-ok"
-                  : assistant.summary.health === "needs_attention"
-                    ? "badge-danger"
-                    : "badge-muted"
-              }`}
-            >
-              {assistant.summary.health === "healthy"
-                ? "Saludable"
-                : assistant.summary.health === "needs_attention"
-                  ? "Necesita atención"
-                  : assistant.summary.health === "paused"
-                    ? "Pausado"
-                    : "Sin automatizaciones"}
-            </span>
-            <span className="text-[11px] text-faint">
-              {assistant.summary.active} activas · {assistant.summary.actions_today} ejecuciones hoy
-              {assistant.summary.last_activity ? ` · última actividad ${new Date(assistant.summary.last_activity).toLocaleString()}` : ""}
-            </span>
-            <Link to="/workflows/new/ask" className="btn btn-secondary ml-auto min-h-8 px-2 text-[11px]">
-              Agregar automatización
-            </Link>
+        <Panel data-testid="agent-automations">
+          <PanelHeader
+            title="Asistente activo"
+            description="Automatizaciones que mantienen este agente trabajando solo."
+            actions={
+              <>
+                <Badge
+                  tone={
+                    assistant.summary.health === "healthy"
+                      ? "ok"
+                      : assistant.summary.health === "needs_attention"
+                        ? "danger"
+                        : "neutral"
+                  }
+                >
+                  {HEALTH_LABEL[assistant.summary.health] ?? assistant.summary.health}
+                </Badge>
+                <ButtonLink to="/workflows/new/ask" size="sm">
+                  Agregar automatización
+                </ButtonLink>
+              </>
+            }
+          />
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border px-4 py-2.5 text-xs text-faint">
+            <span className="tabular-nums">{assistant.summary.active} activas</span>
+            <span className="tabular-nums">{assistant.summary.actions_today} ejecuciones hoy</span>
+            {assistant.summary.last_activity && (
+              <span>Última actividad {fmtDateTime(assistant.summary.last_activity)}</span>
+            )}
           </div>
           {assistant.automations.length === 0 ? (
-            <p className="text-xs text-muted">
-              Este agente todavía no tiene automatizaciones. Cuéntale a Zent qué debe vigilar y quedará asociado.
-            </p>
+            <EmptyState
+              icon={Robot}
+              title="Sin automatizaciones"
+              body="Este agente todavía no tiene automatizaciones. Cuéntale a Zent qué debe vigilar y quedará asociado."
+              compact
+            />
           ) : (
-            <ul className="space-y-1.5">
+            <ul className="p-2">
               {assistant.automations.map((automation) => (
-                <li key={automation.workflow_id} className="flex flex-wrap items-center gap-2 rounded-md bg-soft px-2.5 py-1.5 text-[11px]">
+                <li
+                  key={automation.workflow_id}
+                  data-state={automationRailState(automation.status)}
+                  className="state-rail flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md py-2.5 pr-2 pl-4 text-[13px]"
+                >
                   <Link to={`/workflows/${automation.workflow_id}`} className="font-medium text-text hover:text-accent">
                     {automation.name}
                   </Link>
-                  <span className="badge badge-muted">{automation.status}</span>
+                  <StatusBadge status={automation.status} />
                   <span className="text-muted">Cuando {automation.when.toLowerCase()}</span>
-                  <span className="ml-auto text-faint">
+                  <span className="ml-auto text-xs text-faint tabular-nums">
                     {automation.runs_7d} ejecuciones · {automation.success_rate ?? "—"}% éxito
                   </span>
                 </li>
               ))}
             </ul>
           )}
-        </section>
+        </Panel>
       )}
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <StatCard
-          label="Estado"
-          value={agent.is_active ? "Activo" : "Inactivo"}
-          icon={Robot}
-          tone={agent.is_active ? "ok" : "default"}
-        />
-        <StatCard label="Modelo" value={agent.model || "zent-default"} />
-        <StatCard
-          label="Versión actual"
-          value={latestVersion ? <VersionBadge versionNumber={latestVersion.version_number} status={latestVersion.status} /> : "—"}
-        />
-        <StatCard
-          label="Deployment"
-          value={
-            healthyDeployment ? (
-              <span className="flex items-center gap-2">
-                <StatusBadge status={healthyDeployment.status} />
-                <EnvironmentBadge
-                  name={environments.find((x) => x.id === healthyDeployment.environment_id)?.slug || "env"}
-                />
-              </span>
-            ) : (
-              "Sin desplegar"
-            )
-          }
-        />
-        <StatCard label="Workspace" value={workspace?.name || "default"} />
-        <StatCard
-          label="Última actualización"
-          value={latestVersion ? fmtDateTime(latestVersion.created_at) : "—"}
-        />
-      </div>
-
-      <div className="mt-4 grid gap-4 xl:grid-cols-3">
-        <div className="xl:col-span-2">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatCard label="Requests" value={usage ? fmtNum(usage.requests) : "—"} icon={ChartLineUp} />
-            <StatCard label="Tokens" value={usage ? fmtNum(usage.tokens) : "—"} />
-            <StatCard
-              label="Latencia media"
-              value={usage ? fmtLatency(usage.avg_latency_ms) : "—"}
-            />
-            <StatCard
-              label="Costo estimado"
-              value={usage ? `$${usage.estimated_cost.toFixed(4)}` : "—"}
-            />
-          </div>
-
-          <div className="mt-4">
-            {readiness ? (
-              <ReadinessScore score={readiness.score} items={readiness.items} />
-            ) : (
-              <div className="panel">
-                <EmptyState
-                  icon={ChartLineUp}
-                  title="Sin puntaje todavía"
-                  body="Guarda y configura el agente para calcular su puntaje de producción."
-                />
-              </div>
-            )}
-          </div>
-
+      <div className="grid gap-4 xl:grid-cols-3">
+        <div className="flex flex-col gap-4 xl:col-span-2">
+          {readiness ? (
+            <ReadinessScore score={readiness.score} items={readiness.items} />
+          ) : (
+            <Panel>
+              <EmptyState
+                icon={ChartLineUp}
+                title="Sin puntaje todavía"
+                body="Guarda y configura el agente para calcular su puntaje de producción."
+              />
+            </Panel>
+          )}
           <OutcomesPanel agentId={agent.id} session={session} />
         </div>
 
         <div className="flex flex-col gap-4">
-          <div className="panel p-5">
-            <h2 className="mb-2 text-sm font-semibold text-text">Conocimiento conectado</h2>
-            {kbNames.length === 0 ? (
-              <p className="text-sm text-muted">Sin knowledge bases asignadas.</p>
-            ) : (
-              <ul className="space-y-1.5">
-                {kbNames.map((name) => (
-                  <li key={name} className="flex items-center gap-2 text-[13px] text-text">
-                    <span className="status-dot bg-accent" aria-hidden />
-                    {name}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
+          <Panel>
+            <PanelHeader title="Conocimiento conectado" />
+            <div className="p-4">
+              {kbNames.length === 0 ? (
+                <p className="text-[13px] text-muted">Sin knowledge bases asignadas.</p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {kbNames.map((name) => (
+                    <li key={name} className="flex items-center gap-2 text-[13px] text-text">
+                      <span className="status-dot bg-accent" aria-hidden />
+                      {name}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </Panel>
 
-          <div className="panel p-5">
-            <h2 className="mb-2 text-sm font-semibold text-text">Tools</h2>
-            {agent.tools.length === 0 ? (
-              <p className="text-sm text-muted">Sin tools habilitadas.</p>
-            ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {agent.tools.map((t) => (
-                  <span key={t} className="badge badge-muted">{t}</span>
-                ))}
-              </div>
-            )}
-          </div>
+          <Panel>
+            <PanelHeader title="Herramientas" />
+            <div className="p-4">
+              {agent.tools.length === 0 ? (
+                <p className="text-[13px] text-muted">Sin tools habilitadas.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {agent.tools.map((t) => (
+                    <Badge key={t} tone="neutral">
+                      {t}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Panel>
         </div>
       </div>
 
-      <div className="panel mt-4 overflow-x-auto">
-        <div className="border-b border-border px-5 py-4">
-          <h2 className="text-sm font-semibold text-text">Deployments</h2>
-        </div>
+      <Panel>
+        <PanelHeader title="Publicaciones" description="Versiones desplegadas y su endpoint." />
         {deployments.length === 0 ? (
           <EmptyState
             icon={PaperPlaneRight}
-            title="Sin deployments"
-            body="Despliega una versión desde el builder para exponer el endpoint público."
+            title="Sin publicaciones"
+            body="Despliega una versión desde el estudio para exponer el endpoint público."
           />
         ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Deployment</th>
-                <th>Entorno</th>
-                <th>Estado</th>
-                <th>Endpoint</th>
-                <th>Desplegado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {deployments.map((d) => (
-                <tr key={d.id}>
-                  <td className="font-mono text-xs">{d.slug}</td>
-                  <td>
-                    <EnvironmentBadge
-                      name={environments.find((x) => x.id === d.environment_id)?.name || d.environment_id}
-                    />
-                  </td>
-                  <td>
-                    <StatusBadge status={d.status} />
-                  </td>
-                  <td className="font-mono text-xs text-muted">{d.endpoint || "—"}</td>
-                  <td className="text-sm text-muted">
-                    {d.deployed_at ? fmtDateTime(d.deployed_at) : "—"}
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th scope="col">Publicación</th>
+                  <th scope="col">Entorno</th>
+                  <th scope="col">Estado</th>
+                  <th scope="col">Endpoint</th>
+                  <th scope="col">Publicada</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {deployments.map((d) => (
+                  <tr key={d.id}>
+                    <td className="mono text-xs">{d.slug}</td>
+                    <td>
+                      <EnvironmentBadge
+                        name={environments.find((x) => x.id === d.environment_id)?.name || d.environment_id}
+                      />
+                    </td>
+                    <td>
+                      <StatusBadge status={d.status} />
+                    </td>
+                    <td className="mono text-xs text-muted">{d.endpoint || "—"}</td>
+                    <td className="text-muted">{d.deployed_at ? fmtDateTime(d.deployed_at) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
-      </div>
+      </Panel>
     </div>
   );
 }

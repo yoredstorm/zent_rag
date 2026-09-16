@@ -126,6 +126,10 @@ const STATUS_META: Record<string, StatusMeta> = {
   skipped: { tone: "neutral", label: "Omitido", Icon: Question },
   not_found: { tone: "neutral", label: "Sin datos", Icon: Question },
   connected: { tone: "info", label: "Conectado", Icon: Info },
+  listening: { tone: "ok", label: "Escuchando", Icon: CheckCircle },
+  checking: { tone: "accent", label: "Revisando ahora", Icon: CircleNotch, spin: true },
+  denied: { tone: "danger", label: "Denegado", Icon: XCircle },
+  simulated: { tone: "neutral", label: "Simulado", Icon: Question },
   created_ok: { tone: "info", label: "Creado", Icon: Info },
 };
 

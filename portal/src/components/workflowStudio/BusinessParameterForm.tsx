@@ -5,11 +5,12 @@
  * Simple/Guided/Advanced, tipos de negocio, opciones dinámicas y secretos.
  * No conoce nodos concretos ni escribe Graph IR.
  */
-import { Code, LockSimple, WarningCircle } from "@phosphor-icons/react";
-import { useState } from "react";
+import { LockSimple, WarningCircle } from "@phosphor-icons/react";
+import { useId, useState } from "react";
 import type { BusinessParameter, ParameterLevel, SelectOption } from "../../lib/businessSchema";
 import { fromInputValue, staticOptions, toInputValue, visibleParameters } from "../../lib/businessSchema";
 import type { DataSourceOption } from "../../lib/dataPicker";
+import { Button, Input, Popover, Select, Textarea, cn } from "../ui";
 import { DataPicker } from "./DataPicker";
 
 type Props = {
@@ -58,83 +59,98 @@ export function BusinessParameterForm({
   className = "",
   emptyHint = "Este paso no tiene parámetros configurables.",
 }: Props) {
-  const [refOpen, setRefOpen] = useState<string | null>(null);
+  const uid = useId();
+  const [refAnchor, setRefAnchor] = useState<string | null>(null);
   const visible = visibleParameters(parameters, level, includeSecret);
 
   function appendRef(param: BusinessParameter, ref: string) {
     const current = toInputValue(values[param.key]);
     onChange(param.key, current ? `${current} ${ref}` : ref, param);
-    setRefOpen(null);
+    setRefAnchor(null);
   }
 
   if (visible.length === 0) {
-    return <p className={`px-0.5 text-[10px] text-faint ${className}`}>{emptyHint}</p>;
+    return <p className={cn("px-0.5 text-[12px] text-faint", className)}>{emptyHint}</p>;
   }
 
   return (
-    <div className={`space-y-2.5 ${className}`} data-testid="wf-business-form">
+    <div className={cn("space-y-3", className)} data-testid="wf-business-form">
       {visible.map((param) => {
+        const id = `${uid}-${param.key}`;
         const value = values[param.key];
         const hasValue = value !== undefined && value !== null && value !== "";
+        const invalid = Boolean(param.required && !hasValue);
         const options = optionList(param, optionsFor);
         const isSelect = param.type === "enum" || options.length > 0 || param.type === "boolean";
+        const help = param.help || param.description;
+        const helpId = help ? `${id}-help` : undefined;
+        const requiredId = invalid ? `${id}-required` : undefined;
+        const describedBy = [requiredId, helpId].filter(Boolean).join(" ") || undefined;
+        const usesDataPicker = Boolean(dataSources && dataSources.length > 0 && acceptsReferences(param));
+        const usesRefs = !usesDataPicker && Boolean(referenceOptions?.length) && acceptsReferences(param);
         return (
-          <label key={param.key} className="block">
-            <span className="mb-0.5 flex items-center gap-1 text-[10px] font-medium text-muted">
-              <span>
+          <div key={param.key} className="space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <label htmlFor={id} className="text-[13px] font-medium text-text">
                 {param.label}
-                {param.required && <span className="ml-1 text-danger">*</span>}
-              </span>
-              {param.secret && <LockSimple size={11} className="text-warn" aria-label="Secreto" />}
-              {param.unit && <span className="text-faint">({param.unit})</span>}
-              {dataSources && dataSources.length > 0 && acceptsReferences(param) ? (
-                <span className="ml-auto">
-                  <DataPicker
-                    sources={dataSources}
-                    label="dato"
-                    testId={`wf-param-${param.key}-refs`}
-                    onPick={(field) => appendRef(param, field.ref)}
-                  />
+              </label>
+              {param.required && (
+                <span className="text-danger" aria-hidden>
+                  *
                 </span>
-              ) : (
-                referenceOptions &&
-                referenceOptions.length > 0 &&
-                acceptsReferences(param) && (
-                  <span className="relative ml-auto">
-                    <button
-                      type="button"
-                      className="btn btn-ghost min-h-5 gap-0.5 px-1 text-[9px]"
-                      data-testid={`wf-param-${param.key}-refs`}
-                      aria-label={`Insertar dato en ${param.label}`}
-                      onClick={() => setRefOpen(refOpen === param.key ? null : param.key)}
+              )}
+              {param.secret && <LockSimple size={12} className="shrink-0 text-warn" aria-label="Secreto" />}
+              {param.unit && <span className="text-[11px] text-faint">({param.unit})</span>}
+              {(usesDataPicker || usesRefs) && (
+                <span className="ml-auto">
+                  {usesDataPicker ? (
+                    <DataPicker
+                      sources={dataSources ?? []}
+                      label="dato"
+                      testId={`wf-param-${param.key}-refs`}
+                      onPick={(field) => appendRef(param, field.ref)}
+                    />
+                  ) : (
+                    <Popover
+                      open={refAnchor === param.key}
+                      onOpenChange={(open) => setRefAnchor(open ? param.key : null)}
+                      width={264}
+                      trigger={
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="px-1.5 text-[11px]"
+                          aria-label={`Insertar dato en ${param.label}`}
+                          data-testid={`wf-param-${param.key}-refs`}
+                        >
+                          Dato
+                        </Button>
+                      }
                     >
-                      <Code size={10} aria-hidden /> dato
-                    </button>
-                    {refOpen === param.key && (
-                      <span className="absolute top-5 right-0 z-30 max-h-48 w-52 overflow-y-auto rounded-md border border-border bg-raised p-1 shadow-pop">
-                        {referenceOptions.map((r) => (
+                      <div className="max-h-56 space-y-0.5 overflow-y-auto">
+                        {(referenceOptions ?? []).map((r) => (
                           <button
                             key={r.value}
                             type="button"
-                            className="block w-full truncate rounded px-2 py-1 text-left text-[10px] text-text hover:bg-soft"
+                            className="block w-full truncate rounded-sm px-2 py-1.5 text-left text-[12px] text-text transition-colors duration-150 hover:bg-soft"
                             onClick={() => appendRef(param, r.value)}
                           >
                             {r.label}
                           </button>
                         ))}
-                      </span>
-                    )}
-                  </span>
-                )
+                      </div>
+                    </Popover>
+                  )}
+                </span>
               )}
-            </span>
+            </div>
 
             {isSelect ? (
-              <select
-                className={`w-full rounded-md border bg-soft px-2 py-2 text-[11px] ${
-                  param.required && !hasValue ? "border-warn/60" : "border-border"
-                }`}
+              <Select
+                id={id}
                 value={toInputValue(value)}
+                aria-invalid={invalid || undefined}
+                aria-describedby={describedBy}
                 data-testid={`wf-param-${param.key}`}
                 onChange={(e) => onChange(param.key, fromInputValue(param, e.target.value), param)}
               >
@@ -144,13 +160,14 @@ export function BusinessParameterForm({
                     {o.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             ) : param.type === "textarea" || param.type === "json" ? (
-              <textarea
-                className={`w-full rounded-md border border-border bg-soft px-2 py-1.5 ${
-                  param.type === "json" ? "font-mono text-[10px]" : "text-[11px]"
-                }`}
+              <Textarea
+                id={id}
+                className={param.type === "json" ? "font-mono text-[12px]" : undefined}
                 rows={param.type === "json" ? 2 : 3}
+                aria-invalid={invalid || undefined}
+                aria-describedby={describedBy}
                 placeholder={param.placeholder ?? (param.type === "json" ? "{}" : undefined)}
                 value={
                   param.type === "json" && typeof value === "object"
@@ -170,19 +187,9 @@ export function BusinessParameterForm({
                   }
                 }}
               />
-            ) : param.type === "boolean" ? (
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={value === true}
-                data-testid={`wf-param-${param.key}`}
-                onChange={(e) => onChange(param.key, e.target.checked, param)}
-              />
             ) : (
-              <input
-                className={`w-full rounded-md border bg-soft px-2 py-1.5 text-[11px] ${
-                  param.required && !hasValue ? "border-warn/60" : "border-border"
-                }`}
+              <Input
+                id={id}
                 type={
                   param.type === "number" || param.type === "integer" || param.type === "money" || param.type === "percentage"
                     ? "number"
@@ -196,22 +203,34 @@ export function BusinessParameterForm({
                             ? "password"
                             : "text"
                 }
-                placeholder={param.placeholder ?? (param.examples.length > 0 ? String(param.examples[0]) : undefined)}
+                aria-invalid={invalid || undefined}
+                aria-describedby={describedBy}
+                placeholder={
+                  param.placeholder ?? (param.examples.length > 0 ? String(param.examples[0]) : undefined)
+                }
                 value={toInputValue(value)}
                 data-testid={`wf-param-${param.key}`}
                 onChange={(e) => onChange(param.key, fromInputValue(param, e.target.value), param)}
               />
             )}
 
-            {param.help && <span className="mt-0.5 block text-[9px] text-faint">{param.help}</span>}
-            {param.description && <span className="mt-0.5 block text-[9px] text-faint">{param.description}</span>}
-            {isSelect && options.length === 0 && (
-              <span className="mt-0.5 flex items-center gap-1 text-[9px] text-warn" data-testid={`wf-param-${param.key}-no-options`}>
-                <WarningCircle size={10} aria-hidden />
-                No hay opciones disponibles todavía.
-              </span>
+            {help && (
+              <p id={helpId} className="field-hint">
+                {help}
+              </p>
             )}
-          </label>
+            {invalid && (
+              <p id={requiredId} className="field-error" role="status">
+                Campo obligatorio.
+              </p>
+            )}
+            {isSelect && options.length === 0 && (
+              <p className="flex items-center gap-1.5 text-[11px] text-warn" data-testid={`wf-param-${param.key}-no-options`}>
+                <WarningCircle size={11} aria-hidden />
+                No hay opciones disponibles todavía.
+              </p>
+            )}
+          </div>
         );
       })}
     </div>

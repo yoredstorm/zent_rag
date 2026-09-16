@@ -14,6 +14,7 @@ import {
   type FriendlySchedule,
   type ScheduleMode,
 } from "../../lib/scheduleBuilder";
+import { Input, Select } from "../ui";
 
 type Props = {
   config: Record<string, unknown>;
@@ -25,11 +26,13 @@ export function ScheduleBuilder({ config, onChange }: Props) {
   const update = (patch: Partial<FriendlySchedule>) => onChange({ schedule: { ...schedule, ...patch } });
 
   return (
-    <div className="space-y-2.5" data-testid="wf-schedule-builder">
-      <label className="block">
-        <span className="mb-0.5 block text-[10px] font-medium text-muted">¿Cuándo debe ejecutarse?</span>
-        <select
-          className="w-full rounded-md border border-border bg-soft px-2 py-2 text-[11px]"
+    <div className="space-y-3" data-testid="wf-schedule-builder">
+      <div className="space-y-1.5">
+        <label htmlFor="wf-schedule-mode" className="text-[13px] font-medium text-text">
+          ¿Cuándo debe ejecutarse?
+        </label>
+        <Select
+          id="wf-schedule-mode"
           value={schedule.mode}
           data-testid="wf-schedule-mode"
           onChange={(e) => update({ mode: e.target.value as ScheduleMode })}
@@ -37,58 +40,64 @@ export function ScheduleBuilder({ config, onChange }: Props) {
           {SCHEDULE_MODES.map((mode) => (
             <option key={mode.value} value={mode.value}>{mode.label}</option>
           ))}
-        </select>
-      </label>
+        </Select>
+      </div>
 
       {schedule.mode === "interval" && (
-        <div className="flex items-center gap-2">
-          <input
-            className="w-20 rounded-md border border-border bg-soft px-2 py-1.5 text-[11px]"
-            type="number"
-            min={1}
-            value={intervalValue(schedule)}
-            data-testid="wf-schedule-interval"
-            aria-label="Intervalo"
-            onChange={(e) => {
-              const raw = Math.max(1, Number(e.target.value || 1));
-              update(
-                intervalUnit(schedule) === "hours"
-                  ? { every_minutes: raw * 60 }
-                  : { every_minutes: raw },
-              );
-            }}
-          />
-          <select
-            className="rounded-md border border-border bg-soft px-2 py-1.5 text-[11px]"
-            value={intervalUnit(schedule)}
-            aria-label="Unidad"
-            onChange={(e) => {
-              const base = intervalValue(schedule);
-              update({ every_minutes: e.target.value === "hours" ? base * 60 : base });
-            }}
-          >
-            <option value="minutes">minutos</option>
-            <option value="hours">horas</option>
-          </select>
+        <div className="space-y-1.5">
+          <span className="text-[13px] font-medium text-text">Cada</span>
+          <div className="flex items-center gap-2">
+            <Input
+              className="w-20"
+              type="number"
+              min={1}
+              value={intervalValue(schedule)}
+              data-testid="wf-schedule-interval"
+              aria-label="Intervalo"
+              onChange={(e) => {
+                const raw = Math.max(1, Number(e.target.value || 1));
+                update(
+                  intervalUnit(schedule) === "hours"
+                    ? { every_minutes: raw * 60 }
+                    : { every_minutes: raw },
+                );
+              }}
+            />
+            <Select
+              className="w-auto"
+              value={intervalUnit(schedule)}
+              aria-label="Unidad"
+              onChange={(e) => {
+                const base = intervalValue(schedule);
+                update({ every_minutes: e.target.value === "hours" ? base * 60 : base });
+              }}
+            >
+              <option value="minutes">minutos</option>
+              <option value="hours">horas</option>
+            </Select>
+          </div>
         </div>
       )}
 
       {(schedule.mode === "daily" || schedule.mode === "weekly" || schedule.mode === "monthly") && (
-        <label className="block">
-          <span className="mb-0.5 block text-[10px] font-medium text-muted">Hora</span>
-          <input
-            className="w-32 rounded-md border border-border bg-soft px-2 py-1.5 text-[11px]"
+        <div className="space-y-1.5">
+          <label htmlFor="wf-schedule-time" className="text-[13px] font-medium text-text">
+            Hora
+          </label>
+          <Input
+            id="wf-schedule-time"
+            className="w-32"
             type="time"
             value={schedule.time ?? "08:00"}
             data-testid="wf-schedule-time"
             onChange={(e) => update({ time: e.target.value })}
           />
-        </label>
+        </div>
       )}
 
       {schedule.mode === "weekly" && (
-        <div>
-          <span className="mb-1 block text-[10px] font-medium text-muted">Días</span>
+        <div className="space-y-1.5">
+          <span className="text-[13px] font-medium text-text">Días</span>
           <div className="flex flex-wrap gap-1" data-testid="wf-schedule-days">
             {DAY_NAMES.map((name, index) => {
               const active = (schedule.days ?? []).includes(index);
@@ -96,8 +105,10 @@ export function ScheduleBuilder({ config, onChange }: Props) {
                 <button
                   key={name}
                   type="button"
-                  className={`rounded border px-1.5 py-0.5 text-[10px] ${
-                    active ? "border-accent bg-accent/15 text-text" : "border-border text-muted hover:text-text"
+                  className={`min-h-7 cursor-pointer rounded-sm border px-2 text-[12px] transition-colors duration-150 ${
+                    active
+                      ? "border-accent-line bg-accent-soft text-accent"
+                      : "border-border text-muted hover:border-border-strong hover:text-text"
                   }`}
                   aria-pressed={active}
                   data-testid={`wf-schedule-day-${index}`}
@@ -117,10 +128,13 @@ export function ScheduleBuilder({ config, onChange }: Props) {
       )}
 
       {schedule.mode === "monthly" && (
-        <label className="block">
-          <span className="mb-0.5 block text-[10px] font-medium text-muted">Día del mes</span>
-          <input
-            className="w-20 rounded-md border border-border bg-soft px-2 py-1.5 text-[11px]"
+        <div className="space-y-1.5">
+          <label htmlFor="wf-schedule-day-of-month" className="text-[13px] font-medium text-text">
+            Día del mes
+          </label>
+          <Input
+            id="wf-schedule-day-of-month"
+            className="w-20"
             type="number"
             min={1}
             max={31}
@@ -128,25 +142,30 @@ export function ScheduleBuilder({ config, onChange }: Props) {
             data-testid="wf-schedule-day-of-month"
             onChange={(e) => update({ day_of_month: Math.max(1, Math.min(31, Number(e.target.value || 1))) })}
           />
-        </label>
+        </div>
       )}
 
       {schedule.mode === "cron" && (
-        <label className="block">
-          <span className="mb-0.5 block text-[10px] font-medium text-muted">Expresión cron (min hora día mes día-semana)</span>
-          <input
-            className="w-full rounded-md border border-border bg-soft px-2 py-1.5 font-mono text-[10px]"
+        <div className="space-y-1.5">
+          <label htmlFor="wf-schedule-cron" className="text-[13px] font-medium text-text">
+            Expresión cron (min hora día mes día-semana)
+          </label>
+          <Input
+            id="wf-schedule-cron"
+            className="font-mono text-[12px]"
             value={schedule.cron ?? "0 9 * * *"}
             data-testid="wf-schedule-cron"
             onChange={(e) => update({ cron: e.target.value })}
           />
-        </label>
+        </div>
       )}
 
-      <label className="block">
-        <span className="mb-0.5 block text-[10px] font-medium text-muted">Zona horaria</span>
-        <select
-          className="w-full rounded-md border border-border bg-soft px-2 py-2 text-[11px]"
+      <div className="space-y-1.5">
+        <label htmlFor="wf-schedule-timezone" className="text-[13px] font-medium text-text">
+          Zona horaria
+        </label>
+        <Select
+          id="wf-schedule-timezone"
           value={schedule.timezone}
           data-testid="wf-schedule-timezone"
           onChange={(e) => update({ timezone: e.target.value })}
@@ -154,11 +173,14 @@ export function ScheduleBuilder({ config, onChange }: Props) {
           {TIMEZONES.map((tz) => (
             <option key={tz.value} value={tz.value}>{tz.label}</option>
           ))}
-        </select>
-      </label>
+        </Select>
+      </div>
 
-      <p className="flex items-start gap-1 rounded-md border border-accent/30 bg-accent/5 px-2 py-1.5 text-[10px] text-muted" data-testid="wf-schedule-preview">
-        <Clock size={12} className="mt-0.5 shrink-0 text-accent" aria-hidden />
+      <p
+        className="flex items-start gap-1.5 rounded-md border border-accent-line bg-accent-soft/60 px-2.5 py-2 text-[12px] leading-relaxed text-muted"
+        data-testid="wf-schedule-preview"
+      >
+        <Clock size={13} className="mt-0.5 shrink-0 text-accent" aria-hidden />
         <span>
           Se ejecutará {describeSchedule(schedule)}
           {describeSchedule(schedule).endsWith(".") ? "" : "."}

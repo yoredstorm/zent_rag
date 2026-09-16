@@ -1,10 +1,27 @@
-import { ArrowLeft, ChatCircleDots, Code, FloppyDisk, Lightning, MagicWand, SlidersHorizontal, X } from "@phosphor-icons/react";
+import { ArrowLeft, ChatCircleDots, Code, FloppyDisk, Lightning, MagicWand, SlidersHorizontal } from "@phosphor-icons/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { Breadcrumb } from "../components/Breadcrumb";
-import { ErrorInline, PageHeader, SkeletonBlock, Spinner, SuccessInline } from "../components/ui";
+import {
+  Button,
+  ButtonLink,
+  ConfirmDialog,
+  Drawer,
+  ErrorInline,
+  Field,
+  FormActions,
+  IconButton,
+  InlineFlash,
+  Input,
+  PageHeader,
+  SaveStatus,
+  SkeletonBlock,
+  StatusBadge,
+  Switch,
+} from "../components/ui";
+import type { SaveState } from "../components/ui";
 import { WorkflowCanvasEditor } from "../components/WorkflowCanvasEditor";
 import type { RunOverlay } from "../components/WorkflowCanvas";
 import type { RunDetail } from "../components/WorkflowRunInspector";
@@ -14,7 +31,6 @@ import { WorkflowPatchPanel } from "../components/workflowStudio/WorkflowPatchPa
 import { WorkflowTestPanel } from "../components/workflowStudio/WorkflowTestPanel";
 import { WorkflowVersionsPanel } from "../components/workflowStudio/WorkflowVersionsPanel";
 import {
-  STATUS_BADGE,
   STUDIO_DRAWER_LABELS,
   isStudioDrawer,
   type AgentOption,
@@ -85,10 +101,20 @@ export default function WorkflowStudioPage() {
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [configLevel, setConfigLevel] = useState<ParameterLevel>("simple");
   const [run, setRun] = useState<RunDetail | null>(null);
-  const [dockOpen, setDockOpen] = useState(panel === "test");
+  // El dock de prueba es la hoja móvil: en desktop el panel ya vive en la columna derecha,
+  // así que `?panel=test` no debe abrir un scrim que bloquee el lienzo.
+  const [dockOpen, setDockOpen] = useState(
+    panel === "test" &&
+      typeof window !== "undefined" &&
+      !window.matchMedia("(min-width: 1024px)").matches
+  );
   const [patchOpen, setPatchOpen] = useState(false);
   const [pinnedNodes, setPinnedNodes] = useState<string[]>([]);
   const [partialBusy, setPartialBusy] = useState("");
+  /** Feedback de persistencia: guardado reciente / error de guardado. */
+  const [saveFlash, setSaveFlash] = useState<"idle" | "saved">("idle");
+  const [saveError, setSaveError] = useState("");
+  const [confirmLeave, setConfirmLeave] = useState(false);
 
   const status = detail?.status ?? "draft";
 
@@ -97,6 +123,21 @@ export default function WorkflowStudioPage() {
     [name, description, graph],
   );
   const dirty = !isNew && savedSignature !== "" && signature !== savedSignature;
+  const saveIndicator: SaveState = saving
+    ? "saving"
+    : saveError
+      ? "error"
+      : saveFlash === "saved"
+        ? "saved"
+        : dirty
+          ? "dirty"
+          : "idle";
+
+  useEffect(() => {
+    if (saveFlash !== "saved") return;
+    const t = window.setTimeout(() => setSaveFlash("idle"), 2600);
+    return () => window.clearTimeout(t);
+  }, [saveFlash]);
 
   const issues = useMemo(() => graphIssues(graph), [graph]);
   const effectLabels = useMemo(
@@ -248,6 +289,8 @@ export default function WorkflowStudioPage() {
     setSaving(true);
     setError("");
     setMsg("");
+    setSaveError("");
+    setSaveFlash("idle");
     try {
       const g = prepareGraphForSave(graph);
       const ttype = triggerTypeOf(g);
@@ -279,11 +322,13 @@ export default function WorkflowStudioPage() {
           }),
         }).catch(() => undefined);
       }
-      setMsg("Guardado ✓");
+      setSaveFlash("saved");
       await load(true);
       return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Error");
+      const message = e instanceof Error ? e.message : "Error";
+      setError(message);
+      setSaveError(message);
       return false;
     } finally {
       setSaving(false);
@@ -374,7 +419,10 @@ export default function WorkflowStudioPage() {
   }
 
   function back() {
-    if (dirty && !window.confirm("Hay cambios sin guardar. ¿Salir sin guardar?")) return;
+    if (dirty) {
+      setConfirmLeave(true);
+      return;
+    }
     navigate("/workflows");
   }
 
@@ -399,42 +447,38 @@ export default function WorkflowStudioPage() {
           title="Nuevo workflow"
           subtitle="Ponle nombre: el lienzo se abre con el trigger listo para conectar nodos."
         />
-        <ErrorInline message={error} />
+        <ErrorInline message={error} className="mb-4" />
         <div className="panel max-w-xl space-y-4 p-5">
-          <label className="block text-sm text-muted">
-            Nombre
-            <input
-              className="mt-1 w-full rounded-md border border-border bg-soft px-3 py-2 text-sm"
+          <Field label="Nombre" required>
+            <Input
               placeholder="Alerta de stock bajo"
               value={name}
               onChange={(e) => setName(e.target.value)}
               data-testid="wf-new-name"
             />
-          </label>
-          <label className="block text-sm text-muted">
-            Qué hace (opcional)
-            <input
-              className="mt-1 w-full rounded-md border border-border bg-soft px-3 py-2 text-sm"
+          </Field>
+          <Field label="Qué hace (opcional)" hint="Una línea sobre el resultado, no sobre la implementación.">
+            <Input
               placeholder="Avisa al equipo cuando queden menos de 5 unidades"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
             />
-          </label>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="btn btn-primary min-h-11 text-sm"
-              disabled={saving || !name.trim()}
+          </Field>
+          <FormActions className="justify-start">
+            <Button
+              variant="primary"
+              loading={saving}
+              leadingIcon={Lightning}
+              disabled={!name.trim()}
               onClick={() => void create()}
               data-testid="wf-create"
             >
-              {saving ? <Spinner size={14} /> : <Lightning size={15} aria-hidden />}
               Crear y abrir el lienzo
-            </button>
-            <button type="button" className="btn btn-ghost min-h-11 text-sm" onClick={back}>
-              <ArrowLeft size={16} aria-hidden /> Volver
-            </button>
-          </div>
+            </Button>
+            <Button variant="ghost" leadingIcon={ArrowLeft} onClick={back}>
+              Volver
+            </Button>
+          </FormActions>
         </div>
       </div>
     );
@@ -445,24 +489,22 @@ export default function WorkflowStudioPage() {
     // aquí solo repartimos la altura entre cabecera, lienzo y dock.
     <div className="flex h-[calc(100dvh-5.5rem)] min-h-[34rem] min-w-0 flex-col gap-2 lg:h-[calc(100dvh-1.5rem)]">
       <header className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border pb-3">
-        <button
-          type="button"
-          className="btn btn-ghost min-h-11 shrink-0 px-2"
+        <IconButton
+          label="Volver a workflows"
+          icon={ArrowLeft}
+          className="shrink-0"
           onClick={back}
-          aria-label="Volver a workflows"
-        >
-          <ArrowLeft size={16} aria-hidden />
-        </button>
+        />
         <div className="min-w-[12rem] flex-1">
-          <input
-            className="w-full rounded-md border border-transparent bg-transparent px-1.5 py-1 text-[17px] font-semibold text-text hover:border-border focus:border-border focus:bg-soft"
+          <Input
+            className="h-9 border-transparent bg-transparent px-1.5 text-[17px] font-semibold hover:border-border focus:border-border focus:bg-soft"
             value={name}
             onChange={(e) => setName(e.target.value)}
             aria-label="Nombre del workflow"
             data-testid="wf-name"
           />
-          <input
-            className="w-full rounded-md border border-transparent bg-transparent px-1.5 py-0.5 text-xs text-muted hover:border-border focus:border-border focus:bg-soft"
+          <Input
+            className="h-8 border-transparent bg-transparent px-1.5 text-xs text-muted hover:border-border focus:border-border focus:bg-soft"
             value={description}
             placeholder="Añade una descripción corta"
             onChange={(e) => setDescription(e.target.value)}
@@ -470,76 +512,64 @@ export default function WorkflowStudioPage() {
           />
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {dirty && <span className="badge badge-pending">Cambios sin guardar</span>}
-          <span className={`badge ${STATUS_BADGE[status] ?? "badge-muted"}`}>{status}</span>
-          <label className="flex min-h-11 items-center gap-2 text-sm text-muted">
-            <input
-              type="checkbox"
+          <SaveStatus state={saveIndicator} error={saveError || undefined} dirtyLabel="Cambios sin guardar" />
+          <StatusBadge status={status} />
+          <span data-testid="wf-active-toggle" className="inline-flex items-center">
+            <Switch
               checked={status === "active"}
               disabled={statusBusy}
-              onChange={(e) => void toggleStatus(e.target.checked)}
-              data-testid="wf-active-toggle"
+              onCheckedChange={(checked) => void toggleStatus(checked)}
+              label="Activo"
             />
-            Activo
-          </label>
-          <button
-            type="button"
-            className="btn btn-secondary min-h-11 px-2.5 text-xs"
-            onClick={() => openDrawer("api")}
-            data-testid="wf-open-api"
-          >
-            <Code size={15} aria-hidden /> API
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary min-h-11 px-2.5 text-xs"
+          </span>
+          <Button variant="secondary" size="sm" leadingIcon={Code} onClick={() => openDrawer("api")} data-testid="wf-open-api">
+            API
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            leadingIcon={SlidersHorizontal}
             onClick={() => openDrawer("advanced")}
             data-testid="wf-open-advanced"
           >
-            <SlidersHorizontal size={15} aria-hidden /> Avanzado
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary min-h-11 px-2.5 text-xs"
-            onClick={() => setPatchOpen(true)}
-            data-testid="wf-open-patch"
-          >
-            <MagicWand size={15} aria-hidden /> Editar con IA
-          </button>
-          <Link
+            Avanzado
+          </Button>
+          <Button variant="secondary" size="sm" leadingIcon={MagicWand} onClick={() => setPatchOpen(true)} data-testid="wf-open-patch">
+            Editar con IA
+          </Button>
+          <ButtonLink
             to={`/chat?target=workflow&id=${id}`}
-            className="btn btn-ghost min-h-11 px-2.5 text-xs"
+            variant="ghost"
+            size="sm"
+            leadingIcon={ChatCircleDots}
           >
-            <ChatCircleDots size={15} aria-hidden />
             Probar en Playground
-          </Link>
-          <button
-            type="button"
-            className="btn btn-ghost min-h-11 px-2.5 text-xs lg:hidden"
+          </ButtonLink>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="lg:hidden"
             onClick={() => setDockOpen(true)}
             data-testid="wf-open-dock"
           >
             Probar
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary min-h-11 px-3 text-xs"
-            disabled={saving || !name.trim()}
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            loading={saving}
+            leadingIcon={FloppyDisk}
+            disabled={!name.trim()}
             onClick={() => void save()}
             data-testid="wf-save"
           >
-            {saving ? <Spinner size={14} /> : <FloppyDisk size={15} aria-hidden />}
             Guardar
-          </button>
+          </Button>
         </div>
       </header>
 
-      {(error || msg) && (
-        <div className="shrink-0">
-          <ErrorInline message={error} />
-          <SuccessInline message={msg} />
-        </div>
-      )}
+      {msg && <InlineFlash className="shrink-0">{msg}</InlineFlash>}
+      {error && <ErrorInline message={error} className="mb-0 shrink-0" />}
 
       {id && <WorkflowHealthBar workflowId={id} refreshKey={detail?.updated_at ?? ""} />}
 
@@ -584,103 +614,102 @@ export default function WorkflowStudioPage() {
       </div>
 
       {/* Mobile: el dock de prueba es una hoja inferior. */}
-      {dockOpen && id && (
-        <div className="fixed inset-0 z-40 flex items-end bg-black/40 lg:hidden" onClick={() => setDockOpen(false)}>
-          <div
-            className="max-h-[85dvh] w-full"
-            onClick={(e) => e.stopPropagation()}
-            data-testid="wf-dock-sheet"
-          >
-            <div className="flex h-[80dvh] flex-col">
-              <WorkflowTestPanel
-                workflowId={id}
-                status={status}
-                effectLabels={effectLabels}
-                issues={issues}
-                dirty={dirty}
-                onRun={setRun}
-                onSelectNode={selectFromDock}
-                onRan={() => void load(true)}
-                onSaveBeforeRun={save}
+      {id && (
+        <Drawer
+          open={dockOpen}
+          onOpenChange={setDockOpen}
+          title="Probar"
+          description="Simula y ejecuta el flujo sin salir del lienzo."
+          side="bottom"
+          className="lg:hidden"
+          overlayClassName="lg:hidden"
+        >
+          <div className="grid h-[66dvh] w-full max-w-3xl" data-testid="wf-dock-sheet">
+            <WorkflowTestPanel
+              workflowId={id}
+              status={status}
+              effectLabels={effectLabels}
+              issues={issues}
+              dirty={dirty}
+              onRun={setRun}
+              onSelectNode={selectFromDock}
+              onRan={() => void load(true)}
+              onSaveBeforeRun={save}
               graph={graph}
-              />
-            </div>
+              embedded
+            />
           </div>
-        </div>
+        </Drawer>
       )}
 
       {drawer && id && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={() => openDrawer(null)}>
-          <div
-            className="flex h-full w-full max-w-xl flex-col border-l border-border bg-bg"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-label={STUDIO_DRAWER_LABELS[drawer]}
-            data-testid={`wf-drawer-${drawer}`}
-          >
-            <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-              <h2 className="flex-1 text-sm font-semibold text-text">{STUDIO_DRAWER_LABELS[drawer]}</h2>
-              <button
-                type="button"
-                className="btn btn-ghost min-h-9 px-2"
-                aria-label="Cerrar"
-                onClick={() => openDrawer(null)}
-              >
-                <X size={16} aria-hidden />
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              {drawer === "api" ? (
-                <WorkflowApiPanel
-                  workflowId={id}
-                  status={status}
-                  triggerType={detail?.trigger_type ?? "webhook"}
-                  hookPath={detail?.hook_url || `/api/v1/public/workflows/${id}/hook`}
-                  hasHookSecret={Boolean(detail?.has_hook_secret) || Boolean(secret)}
-                  secret={secret}
-                  onSecret={setSecret}
-                />
-              ) : (
-                <WorkflowVersionsPanel workflowId={id} status={status} onChanged={() => void load(true)} />
-              )}
-            </div>
+        <Drawer
+          open
+          onOpenChange={(open) => {
+            if (!open) openDrawer(null);
+          }}
+          title={STUDIO_DRAWER_LABELS[drawer]}
+          description={
+            drawer === "api"
+              ? "Dispara este workflow desde cualquier sistema con un POST autenticado."
+              : "Snapshots, publicación y restauración del grafo y el trigger."
+          }
+          width={drawer === "api" ? 600 : 560}
+        >
+          <div className="space-y-4" data-testid={`wf-drawer-${drawer}`}>
+            {drawer === "api" ? (
+              <WorkflowApiPanel
+                workflowId={id}
+                status={status}
+                triggerType={detail?.trigger_type ?? "webhook"}
+                hookPath={detail?.hook_url || `/api/v1/public/workflows/${id}/hook`}
+                hasHookSecret={Boolean(detail?.has_hook_secret) || Boolean(secret)}
+                secret={secret}
+                onSecret={setSecret}
+              />
+            ) : (
+              <WorkflowVersionsPanel workflowId={id} status={status} onChanged={() => void load(true)} />
+            )}
+            <Button variant="ghost" className="w-full" onClick={() => openDrawer(null)}>
+              Cerrar
+            </Button>
           </div>
-        </div>
+        </Drawer>
       )}
 
-      {patchOpen && id && (
-        <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={() => setPatchOpen(false)}>
-          <div
-            className="flex h-full w-full max-w-lg flex-col border-l border-border bg-bg"
-            onClick={(e) => e.stopPropagation()}
-            role="dialog"
-            aria-label="Editar con IA"
-            data-testid="wf-patch-drawer"
-          >
-            <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-              <h2 className="flex-1 text-sm font-semibold text-text">Editar con IA</h2>
-              <button
-                type="button"
-                className="btn btn-ghost min-h-9 px-2"
-                aria-label="Cerrar"
-                onClick={() => setPatchOpen(false)}
-              >
-                <X size={16} aria-hidden />
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-4">
-              <WorkflowPatchPanel
-                workflowId={id}
-                onClose={() => setPatchOpen(false)}
-                onApplied={() => {
-                  setPatchOpen(false);
-                  void load(true);
-                }}
-              />
-            </div>
+      {id && (
+        <Drawer
+          open={patchOpen}
+          onOpenChange={setPatchOpen}
+          title="Editar con IA"
+          description="Pide el cambio en lenguaje natural; Zent te muestra el diff antes de aplicar."
+          width={520}
+        >
+          <div data-testid="wf-patch-drawer">
+            <WorkflowPatchPanel
+              workflowId={id}
+              onClose={() => setPatchOpen(false)}
+              onApplied={() => {
+                setPatchOpen(false);
+                void load(true);
+              }}
+            />
           </div>
-        </div>
+        </Drawer>
       )}
+
+      <ConfirmDialog
+        open={confirmLeave}
+        onOpenChange={setConfirmLeave}
+        title="Hay cambios sin guardar"
+        body="Si sales ahora, el lienzo vuelve a la última versión guardada."
+        confirmLabel="Salir sin guardar"
+        cancelLabel="Seguir editando"
+        onConfirm={() => {
+          setConfirmLeave(false);
+          navigate("/workflows");
+        }}
+      />
     </div>
   );
 }

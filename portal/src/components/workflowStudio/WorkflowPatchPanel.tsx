@@ -3,11 +3,11 @@
  * Muestra el diff semántico antes de aplicar; nunca regenera el flujo completo
  * ni publica: al aplicar solo persiste el grafo editado.
  */
-import { ArrowRight, MagicWand, WarningCircle } from "@phosphor-icons/react";
+import { ArrowRight, Check, MagicWand, WarningCircle } from "@phosphor-icons/react";
 import { useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
-import { ErrorInline, Spinner } from "../ui";
+import { Button, ErrorInline, Textarea } from "../ui";
 
 type DiffEntry = {
   op: string;
@@ -104,28 +104,28 @@ export function WorkflowPatchPanel({ workflowId, onApplied, onClose }: Props) {
   const warnings = preview?.issues.filter((i) => i.severity !== "error") ?? [];
 
   return (
-    <div className="space-y-3" data-testid="wf-patch-panel">
-      <div className="flex items-start gap-2">
-        <MagicWand size={16} className="mt-0.5 text-accent" aria-hidden />
-        <p className="text-xs text-muted">
+    <div className="space-y-4" data-testid="wf-patch-panel">
+      <div className="flex items-start gap-2.5">
+        <MagicWand size={16} className="mt-0.5 shrink-0 text-accent" aria-hidden />
+        <p className="text-[13px] leading-relaxed text-muted">
           Pide el cambio como se lo dirías a una persona. Zent te muestra el diff y tú confirmas.
         </p>
       </div>
 
-      <textarea
-        className="w-full resize-y rounded-md border border-border bg-soft px-2.5 py-2 text-xs"
+      <Textarea
         rows={3}
         placeholder="Cambia 10 por 5…"
         value={prompt}
         data-testid="wf-patch-prompt"
         onChange={(e) => setPrompt(e.target.value)}
+        aria-label="Qué quieres cambiar"
       />
       <div className="flex flex-wrap gap-1.5">
         {EXAMPLES.map((example) => (
           <button
             key={example}
             type="button"
-            className="rounded-full border border-border px-2 py-0.5 text-[10px] text-muted hover:border-accent/40 hover:text-text"
+            className="chip max-w-full cursor-pointer truncate transition-colors duration-150 hover:bg-raised hover:text-text"
             onClick={() => setPrompt(example)}
           >
             {example}
@@ -133,75 +133,80 @@ export function WorkflowPatchPanel({ workflowId, onApplied, onClose }: Props) {
         ))}
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          className="btn btn-primary min-h-9 gap-1.5 px-3 text-xs"
-          disabled={busy || prompt.trim().length < 4}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant="primary"
+          leadingIcon={ArrowRight}
+          loading={busy}
+          disabled={prompt.trim().length < 4}
           data-testid="wf-patch-preview"
           onClick={() => void ask()}
         >
-          {busy ? <Spinner size={13} /> : <ArrowRight size={14} aria-hidden />}
           Ver cambios
-        </button>
-        <button type="button" className="btn btn-ghost min-h-9 px-3 text-xs" onClick={onClose}>
+        </Button>
+        <Button variant="ghost" onClick={onClose}>
           Cerrar
-        </button>
+        </Button>
       </div>
 
-      <ErrorInline message={error} />
+      <ErrorInline message={error} className="mb-0" />
 
       {preview && preview.diff.length > 0 && (
-        <div className="space-y-2 rounded-md border border-accent/30 bg-accent/5 p-3" data-testid="wf-patch-diff">
-          <p className="text-[11px] font-medium text-text">{preview.summary || "Cambios propuestos"}</p>
+        <div className="space-y-3 rounded-lg border border-accent-line bg-accent-soft/40 p-3" data-testid="wf-patch-diff">
+          <p className="text-[13px] font-medium text-text">{preview.summary || "Cambios propuestos"}</p>
           <ul className="space-y-1.5">
             {preview.diff.map((entry, index) => (
-              <li key={`${entry.op}-${index}`} className="rounded-md bg-surface/70 px-2 py-1.5 text-[10px]">
+              <li key={`${entry.op}-${index}`} className="rounded-md border border-border-soft bg-surface px-2.5 py-2 text-[12px]">
                 <p className="text-faint">
                   {entry.node_label || entry.node_id} · {entry.label}
                 </p>
-                <p className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                  <span className="text-danger line-through">{renderValue(entry.before)}</span>
-                  <ArrowRight size={10} className="text-faint" aria-hidden />
-                  <span className="font-medium text-ok">{renderValue(entry.after)}</span>
+                <p className="mt-1 flex flex-wrap items-center gap-1.5">
+                  <span className="font-mono text-danger line-through">{renderValue(entry.before)}</span>
+                  <ArrowRight size={11} className="shrink-0 text-faint" aria-hidden />
+                  <span className="font-mono font-medium text-ok">{renderValue(entry.after)}</span>
                 </p>
               </li>
             ))}
           </ul>
           {(errors.length > 0 || warnings.length > 0) && (
-            <ul className="space-y-1">
+            <ul className="space-y-1.5">
               {[...errors, ...warnings].map((issue) => (
                 <li
                   key={`${issue.code}-${issue.message}`}
-                  className={`flex items-start gap-1 text-[10px] ${issue.severity === "error" ? "text-danger" : "text-warn"}`}
+                  className={`flex items-start gap-1.5 text-[12px] leading-relaxed ${
+                    issue.severity === "error" ? "text-danger" : "text-warn"
+                  }`}
                 >
-                  <WarningCircle size={11} className="mt-0.5 shrink-0" aria-hidden />
+                  <WarningCircle size={12} className="mt-0.5 shrink-0" aria-hidden />
                   {issue.message}
                 </li>
               ))}
             </ul>
           )}
-          <button
-            type="button"
-            className="btn btn-primary min-h-9 gap-1.5 px-3 text-xs"
-            disabled={applying || errors.length > 0}
+          <Button
+            variant="primary"
+            leadingIcon={Check}
+            loading={applying}
+            disabled={errors.length > 0}
             data-testid="wf-patch-apply"
             onClick={() => void apply()}
           >
-            {applying ? <Spinner size={13} /> : null}
             Aplicar cambios
-          </button>
+          </Button>
         </div>
       )}
 
       {preview && preview.diff.length === 0 && !error && (
-        <p className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-[11px] text-muted" data-testid="wf-patch-empty">
+        <p
+          className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2.5 text-[12px] leading-relaxed text-muted"
+          data-testid="wf-patch-empty"
+        >
           No detecté un cambio aplicable. Prueba con algo como «Cambia el asunto a …».
         </p>
       )}
 
       {preview?.questions && preview.questions.length > 0 && (
-        <ul className="list-disc space-y-0.5 pl-4 text-[10px] text-muted">
+        <ul className="list-disc space-y-1 pl-4 text-[12px] leading-relaxed text-muted">
           {preview.questions.map((question) => (
             <li key={question}>{question}</li>
           ))}

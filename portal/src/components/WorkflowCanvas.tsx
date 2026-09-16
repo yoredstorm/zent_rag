@@ -443,7 +443,7 @@ export function WorkflowCanvas({
               key={n.id}
               data-testid="wf-canvas-node"
               data-node-id={n.id}
-              className={`absolute flex select-none flex-col rounded-lg border bg-raised shadow-pop transition-colors ${
+              className={`absolute flex select-none flex-col rounded-lg border bg-surface shadow-panel transition-colors ${
                 selected ? "border-accent ring-2 ring-accent/30" : "border-border"
               } ${STATUS_CLS[run?.status ?? ""] ?? ""}`}
               style={{ left: n.position.x, top: n.position.y, width: NODE_W, minHeight: NODE_H, cursor: "default" }}
@@ -451,7 +451,7 @@ export function WorkflowCanvas({
             >
               <div className="flex items-center gap-2 border-b border-border px-2.5 py-2">
                 <span
-                  className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[13px] ${meta.color} bg-opacity-20`}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-border-soft bg-soft text-[13px] text-muted"
                   aria-hidden
                 >
                   {meta.icon}

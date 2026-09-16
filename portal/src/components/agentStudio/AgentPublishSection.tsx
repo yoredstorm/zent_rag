@@ -1,21 +1,27 @@
 import { ChartLineUp, FloppyDisk, PaperPlaneRight, Robot, Sparkle } from "@phosphor-icons/react";
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import { Link } from "react-router-dom";
 import type { Session } from "../../api";
 import { fmtDateTime } from "../../lib/format";
 import QualityGatesPanel from "../QualityGatesPanel";
 import {
+  Button,
+  CodeBlock,
+  CopyButton,
   EmptyState,
   EnvironmentBadge,
   ErrorInline,
+  Input,
+  Panel,
+  PanelHeader,
   ReadinessScore,
+  Select,
   SkeletonBlock,
-  Spinner,
   StatusBadge,
   SuccessInline,
   VersionBadge,
 } from "../ui";
-import { AgentField, AgentFieldGroup, FIELD_INPUT_CLASS } from "./AgentField";
+import { AgentDisclosure, AgentField } from "./AgentField";
 import { COPY } from "./advancedCopy";
 import type { AgentVersion, Deployment, Environment } from "./types";
 
@@ -29,7 +35,15 @@ export type DeploymentEvents = {
   events: { event: string; created_at: string | null; metadata: Record<string, unknown> }[];
 };
 
-const DEPLOYMENT_COLUMNS = 7;
+const DEPLOYMENT_COLUMNS = [
+  "Publicación",
+  "Entorno",
+  "Estado",
+  "Endpoint",
+  "Publicada",
+  "Historial",
+  "Acciones",
+];
 
 /** Pestaña "Publicar": readiness, versiones, despliegue, widget y evaluación. */
 export function AgentPublishSection({
@@ -93,49 +107,68 @@ export function AgentPublishSection({
   onCreateEmbed: () => void;
   onRevokeEmbed: () => void;
 }) {
+  const [evaluationOpen, setEvaluationOpen] = useState(false);
+  const [gatesOpen, setGatesOpen] = useState(false);
+
   return (
-    <div className="mt-4 grid gap-6">
+    <div className="grid gap-4">
       <section>
         {isNew || !readiness ? (
           <EmptyState
             icon={ChartLineUp}
             title="Guarda el agente primero"
             body="El puntaje se calcula con el propósito, las fuentes y el despliegue."
+            compact
+            className="panel"
           />
         ) : (
           <ReadinessScore score={readiness.score} items={readiness.items} />
         )}
       </section>
 
-      {deployMsg && <SuccessInline message={deployMsg} />}
-      {deployError && <ErrorInline message={deployError} />}
+      <SuccessInline message={deployMsg} className="mb-0" />
+      <ErrorInline message={deployError} className="mb-0" />
 
-      <AgentFieldGroup title={COPY.publish.versionsTitle} hint={COPY.publish.versionsHint}>
-        <div>
-          <button
-            type="button"
-            className="btn btn-primary min-h-10"
-            disabled={deployBusy || !id}
-            onClick={onCreateSnapshot}
-          >
-            {deployBusy ? <Spinner size={14} /> : <FloppyDisk size={15} aria-hidden />}
-            Crear versión
-          </button>
-        </div>
+      <Panel>
+        <PanelHeader
+          title={COPY.publish.versionsTitle}
+          description={COPY.publish.versionsHint}
+          actions={
+            <Button
+              variant="primary"
+              size="sm"
+              leadingIcon={FloppyDisk}
+              loading={deployBusy}
+              disabled={!id}
+              onClick={onCreateSnapshot}
+            >
+              Crear versión
+            </Button>
+          }
+        />
         {versionsLoading ? (
-          <SkeletonBlock rows={3} />
+          <div className="p-4">
+            <SkeletonBlock rows={3} />
+          </div>
         ) : versions.length === 0 ? (
-          <EmptyState icon={Robot} title="Sin versiones" body="Guarda el agente y crea la primera versión." />
+          <EmptyState
+            icon={Robot}
+            title="Sin versiones"
+            body="Guarda el agente y crea la primera versión."
+            compact
+          />
         ) : (
-          <div className="panel overflow-x-auto">
+          <div className="overflow-x-auto">
             <table className="table">
               <thead>
                 <tr>
-                  <th>Versión</th>
-                  <th>Estado</th>
-                  <th>Notas</th>
-                  <th>Creada</th>
-                  <th>Acciones</th>
+                  <th scope="col">Versión</th>
+                  <th scope="col">Estado</th>
+                  <th scope="col">Notas</th>
+                  <th scope="col">Creada</th>
+                  <th scope="col" className="text-right">
+                    Acciones
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -147,49 +180,31 @@ export function AgentPublishSection({
                     <td>
                       <StatusBadge status={v.status} />
                     </td>
-                    <td className="text-sm text-muted">{v.notes || "—"}</td>
-                    <td className="text-sm text-muted">{fmtDateTime(v.created_at)}</td>
-                    <td>
-                      {v.status === "draft" && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost min-h-8 text-xs"
-                          disabled={deployBusy}
-                          onClick={() => onPromote(v.id, "ready")}
-                        >
-                          Marcar como lista
-                        </button>
-                      )}
-                      {v.status === "ready" && (
-                        <span className="inline-flex gap-2">
-                          <button
-                            type="button"
-                            className="btn btn-ghost min-h-8 text-xs"
-                            disabled={deployBusy}
-                            onClick={() => onPromote(v.id, "staging")}
-                          >
-                            En pruebas
-                          </button>
-                          <button
-                            type="button"
-                            className="btn btn-ghost min-h-8 text-xs"
-                            disabled={deployBusy}
-                            onClick={() => onPromote(v.id, "production")}
-                          >
-                            En producción
-                          </button>
-                        </span>
-                      )}
-                      {(v.status === "staging" || v.status === "production") && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost min-h-8 text-xs"
-                          disabled={deployBusy}
-                          onClick={() => onPromote(v.id, "archived")}
-                        >
-                          Archivar
-                        </button>
-                      )}
+                    <td className="text-muted">{v.notes || "—"}</td>
+                    <td className="text-muted">{fmtDateTime(v.created_at)}</td>
+                    <td className="text-right whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1">
+                        {v.status === "draft" && (
+                          <Button size="sm" variant="ghost" disabled={deployBusy} onClick={() => onPromote(v.id, "ready")}>
+                            Marcar como lista
+                          </Button>
+                        )}
+                        {v.status === "ready" && (
+                          <>
+                            <Button size="sm" variant="ghost" disabled={deployBusy} onClick={() => onPromote(v.id, "staging")}>
+                              En pruebas
+                            </Button>
+                            <Button size="sm" variant="ghost" disabled={deployBusy} onClick={() => onPromote(v.id, "production")}>
+                              En producción
+                            </Button>
+                          </>
+                        )}
+                        {(v.status === "staging" || v.status === "production") && (
+                          <Button size="sm" variant="ghost" disabled={deployBusy} onClick={() => onPromote(v.id, "archived")}>
+                            Archivar
+                          </Button>
+                        )}
+                      </span>
                     </td>
                   </tr>
                 ))}
@@ -197,14 +212,14 @@ export function AgentPublishSection({
             </table>
           </div>
         )}
-      </AgentFieldGroup>
+      </Panel>
 
-      <AgentFieldGroup title={COPY.publish.deployTitle} hint={COPY.publish.deployHint}>
-        <div className="flex flex-wrap items-end gap-3">
-          <AgentField id="agent-deploy-version" label="Versión a publicar">
-            <select
+      <Panel>
+        <PanelHeader title={COPY.publish.deployTitle} description={COPY.publish.deployHint} />
+        <div className="flex flex-wrap items-end gap-3 border-b border-border p-4">
+          <AgentField id="agent-deploy-version" label="Versión a publicar" className="w-52">
+            <Select
               id="agent-deploy-version"
-              className={`${FIELD_INPUT_CLASS} min-w-44`}
               value={deployVersionId}
               onChange={(e) => setDeployVersionId(e.target.value)}
             >
@@ -214,59 +229,48 @@ export function AgentPublishSection({
                   v{v.version_number} · {v.status}
                 </option>
               ))}
-            </select>
+            </Select>
           </AgentField>
-          <AgentField id="agent-deploy-env" label="Entorno">
-            <select
-              id="agent-deploy-env"
-              className={`${FIELD_INPUT_CLASS} min-w-44`}
-              value={deployEnvId}
-              onChange={(e) => setDeployEnvId(e.target.value)}
-            >
+          <AgentField id="agent-deploy-env" label="Entorno" className="w-52">
+            <Select id="agent-deploy-env" value={deployEnvId} onChange={(e) => setDeployEnvId(e.target.value)}>
               {environments.length === 0 && <option value="">Sin entornos</option>}
               {environments.map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </AgentField>
-          <button
-            type="button"
-            className="btn btn-primary min-h-10"
-            disabled={deployBusy || !deployVersionId || !deployEnvId || !id}
+          <Button
+            variant="primary"
+            leadingIcon={PaperPlaneRight}
+            loading={deployBusy}
+            disabled={!deployVersionId || !deployEnvId || !id}
             onClick={onDeploy}
           >
-            {deployBusy ? <Spinner size={14} /> : <PaperPlaneRight size={15} aria-hidden />}
             Publicar
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary min-h-10"
-            disabled={deployBusy || !id}
-            onClick={onGoLive}
-          >
+          </Button>
+          <Button disabled={deployBusy || !id} onClick={onGoLive}>
             Publicar en producción
-          </button>
+          </Button>
         </div>
         {deployments.length === 0 ? (
           <EmptyState
             icon={ChartLineUp}
             title="Sin publicaciones"
             body="Publica una versión lista en un entorno para que empiece a atender."
+            compact
           />
         ) : (
-          <div className="panel overflow-x-auto">
+          <div className="overflow-x-auto">
             <table className="table">
               <thead>
                 <tr>
-                  <th>Publicación</th>
-                  <th>Entorno</th>
-                  <th>Estado</th>
-                  <th>Endpoint</th>
-                  <th>Publicada</th>
-                  <th>Historial</th>
-                  <th>Acciones</th>
+                  {DEPLOYMENT_COLUMNS.map((label) => (
+                    <th key={label} scope="col">
+                      {label}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
@@ -275,7 +279,7 @@ export function AgentPublishSection({
                   return (
                     <Fragment key={d.id}>
                       <tr>
-                        <td className="font-mono text-xs">{d.slug}</td>
+                        <td className="mono text-xs">{d.slug}</td>
                         <td>
                           <EnvironmentBadge
                             name={environments.find((e) => e.id === d.environment_id)?.name || d.environment_id}
@@ -284,34 +288,29 @@ export function AgentPublishSection({
                         <td>
                           <StatusBadge status={d.status} />
                         </td>
-                        <td className="font-mono text-xs text-muted">{d.endpoint || "—"}</td>
-                        <td className="text-sm text-muted">{fmtDateTime(d.deployed_at)}</td>
+                        <td className="mono text-xs text-muted">{d.endpoint || "—"}</td>
+                        <td className="text-muted">{fmtDateTime(d.deployed_at)}</td>
                         <td>
-                          <button
-                            type="button"
-                            className="btn btn-ghost min-h-8 text-xs"
+                          <Button
+                            size="sm"
+                            variant="ghost"
                             aria-expanded={eventsOpen}
                             onClick={() => onLoadEvents(d.id)}
                           >
                             {eventsOpen ? "Ocultar historial" : "Ver historial"}
-                          </button>
+                          </Button>
                         </td>
                         <td>
                           {(d.status === "healthy" || d.status === "degraded") && (
-                            <button
-                              type="button"
-                              className="btn btn-ghost min-h-8 text-xs"
-                              disabled={deployBusy}
-                              onClick={() => onRollback(d.id)}
-                            >
+                            <Button size="sm" variant="ghost" disabled={deployBusy} onClick={() => onRollback(d.id)}>
                               Volver atrás
-                            </button>
+                            </Button>
                           )}
                         </td>
                       </tr>
                       {eventsOpen && (
                         <tr>
-                          <td colSpan={DEPLOYMENT_COLUMNS}>
+                          <td colSpan={DEPLOYMENT_COLUMNS.length}>
                             {eventsFor.events.length === 0 ? (
                               <p className="text-xs text-muted">Sin movimientos registrados.</p>
                             ) : (
@@ -337,93 +336,89 @@ export function AgentPublishSection({
             </table>
           </div>
         )}
-      </AgentFieldGroup>
+      </Panel>
 
-      <AgentFieldGroup title={COPY.publish.embedTitle} hint={COPY.publish.embedHint}>
+      <Panel>
+        <PanelHeader title={COPY.publish.embedTitle} description={COPY.publish.embedHint} />
         {isNew ? (
           <EmptyState
             icon={Robot}
             title="Guarda el agente primero"
             body="El widget necesita un agente guardado para generar su token."
+            compact
           />
         ) : (
-          <>
+          <div className="grid gap-4 p-4">
             <AgentField
               id="agent-embed-origins"
               label="Sitios donde puede aparecer"
               hint="Dominios separados por coma. Solo desde ahí funcionará el widget."
+              className="max-w-xl"
             >
-              <input
+              <Input
                 id="agent-embed-origins"
-                aria-describedby="agent-embed-origins-hint"
-                className={FIELD_INPUT_CLASS}
                 value={embedOrigins}
                 onChange={(e) => setEmbedOrigins(e.target.value)}
                 placeholder="https://farmacia.cl, https://www.farmacia.cl"
               />
             </AgentField>
             <div className="flex flex-wrap gap-2">
-              <button type="button" className="btn btn-primary min-h-11" disabled={embedBusy} onClick={onCreateEmbed}>
-                {embedBusy ? <Spinner size={14} /> : "Crear token"}
-              </button>
-              <button type="button" className="btn btn-secondary min-h-11" disabled={embedBusy} onClick={onRevokeEmbed}>
+              <Button variant="primary" loading={embedBusy} onClick={onCreateEmbed}>
+                Crear token
+              </Button>
+              <Button disabled={embedBusy} onClick={onRevokeEmbed}>
                 Revocar
-              </button>
+              </Button>
             </div>
             {embedToken && (
-              <p className="break-all rounded-md border border-border bg-soft p-3 font-mono text-xs">{embedToken}</p>
+              <div className="flex items-start gap-2">
+                <p className="min-w-0 flex-1 rounded-sm border border-border bg-control p-3 font-mono text-xs break-all">
+                  {embedToken}
+                </p>
+                <CopyButton value={embedToken} label="Copiar token" copiedLabel="Token copiado" variant="secondary" />
+              </div>
             )}
             {embedScript && (
-              <AgentField
-                id="agent-embed-snippet"
-                label="Código para pegar en tu web"
-                hint="Cópialo tal cual antes de cerrar la etiqueta body."
-              >
-                <textarea
-                  id="agent-embed-snippet"
-                  aria-describedby="agent-embed-snippet-hint"
-                  readOnly
-                  className={`${FIELD_INPUT_CLASS} min-h-20 font-mono text-xs`}
-                  value={embedScript}
-                />
-              </AgentField>
+              <div className="grid gap-1.5">
+                <p className="text-[13px] font-medium text-text">Código para pegar en tu web</p>
+                <p className="text-xs text-faint">Cópialo tal cual antes de cerrar la etiqueta body.</p>
+                <CodeBlock code={embedScript} language="html" filename="embed.html" maxHeight={160} />
+              </div>
             )}
-          </>
-        )}
-      </AgentFieldGroup>
-
-      <details className="rounded-md border border-border">
-        <summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-medium text-text">
-          {COPY.publish.evaluationTitle}
-          <span className="ml-2 text-xs font-normal text-muted">{COPY.publish.evaluationHint}</span>
-        </summary>
-        <div className="border-t border-border px-3 py-3">
-          <div className="flex flex-wrap gap-2">
-            <Link to="/evaluation/datasets" className="btn btn-secondary min-h-11">
-              <Sparkle size={15} aria-hidden />
-              Conjuntos de prueba
-            </Link>
-            <Link to="/evaluation/runs" className="btn btn-secondary min-h-11">
-              Ejecuciones
-            </Link>
-            <Link to="/evaluation/compare" className="btn btn-secondary min-h-11">
-              Comparar regresiones
-            </Link>
           </div>
-        </div>
-      </details>
+        )}
+      </Panel>
 
-      <details className="rounded-md border border-border">
-        <summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-medium text-text">
-          {COPY.publish.gatesTitle}
-          <span className="ml-2 text-xs font-normal text-muted">
-            se aplican a toda la organización
-          </span>
-        </summary>
-        <div className="border-t border-border px-3 py-3">
-          <QualityGatesPanel session={session} />
+      <AgentDisclosure
+        id="agent-publish-evaluation"
+        title={COPY.publish.evaluationTitle}
+        hint={COPY.publish.evaluationHint}
+        open={evaluationOpen}
+        onToggle={setEvaluationOpen}
+      >
+        <div className="flex flex-wrap gap-2">
+          <Link to="/evaluation/datasets" className="btn btn-secondary">
+            <Sparkle size={15} aria-hidden />
+            Conjuntos de prueba
+          </Link>
+          <Link to="/evaluation/runs" className="btn btn-secondary">
+            Ejecuciones
+          </Link>
+          <Link to="/evaluation/compare" className="btn btn-secondary">
+            Comparar regresiones
+          </Link>
         </div>
-      </details>
+      </AgentDisclosure>
+
+      <AgentDisclosure
+        id="agent-publish-gates"
+        title={COPY.publish.gatesTitle}
+        hint="se aplican a toda la organización"
+        open={gatesOpen}
+        onToggle={setGatesOpen}
+      >
+        <QualityGatesPanel session={session} />
+      </AgentDisclosure>
     </div>
   );
 }

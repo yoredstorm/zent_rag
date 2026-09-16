@@ -3,8 +3,8 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { fmtDateTime } from "../../lib/format";
-import { ErrorInline, SuccessInline } from "../ui";
-import { STATUS_BADGE, type WorkflowVersion } from "./types";
+import { Button, ConfirmDialog, ErrorInline, Field, Input, StatusBadge, SuccessInline } from "../ui";
+import { type WorkflowVersion } from "./types";
 
 type Props = {
   workflowId: string;
@@ -37,6 +37,7 @@ export function WorkflowVersionsPanel({ workflowId, status, onChanged }: Props) 
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
+  const [restoreTarget, setRestoreTarget] = useState<WorkflowVersion | null>(null);
 
   const load = useCallback(async () => {
     if (!session) return;
@@ -88,27 +89,27 @@ export function WorkflowVersionsPanel({ workflowId, status, onChanged }: Props) 
     <div className="space-y-4" data-testid="wf-advanced-panel">
       <section className="panel space-y-3 p-4">
         <div>
-          <h2 className="text-sm font-semibold text-text">Versiones y publicación</h2>
-          <p className="mt-0.5 text-xs text-muted">
+          <h2 className="text-h3">Versiones y publicación</h2>
+          <p className="mt-0.5 text-[12px] leading-relaxed text-muted">
             Una versión congela el grafo y el trigger. Publicar guarda una versión en producción y
             activa el workflow; restaurar devuelve el grafo vivo a esa versión.
           </p>
         </div>
-        <label className="block text-xs text-muted">
-          Nota de la versión (opcional)
-          <input
-            className="mt-1 w-full rounded-md border border-border bg-soft px-2 py-2 text-sm"
+        <Field label="Nota de la versión (opcional)" hint="Ayuda a reconocerla en el historial.">
+          <Input
             placeholder="añade el nodo de notificación…"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             maxLength={500}
           />
-        </label>
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            className="btn btn-primary min-h-11 text-xs"
+        </Field>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="primary"
+            leadingIcon={RocketLaunch}
+            loading={busy === "publish"}
             disabled={!!busy}
+            data-testid="wf-publish"
             onClick={() =>
               void call(
                 `/api/v1/workflows/${workflowId}/publish`,
@@ -118,14 +119,15 @@ export function WorkflowVersionsPanel({ workflowId, status, onChanged }: Props) 
                 true,
               )
             }
-            data-testid="wf-publish"
           >
-            <RocketLaunch size={15} aria-hidden /> Publicar
-          </button>
-          <button
-            type="button"
-            className="btn btn-secondary min-h-11 text-xs"
+            Publicar
+          </Button>
+          <Button
+            variant="secondary"
+            leadingIcon={Camera}
+            loading={busy === "snapshot"}
             disabled={!!busy}
+            data-testid="wf-snapshot"
             onClick={() =>
               void call(
                 `/api/v1/workflows/${workflowId}/versions`,
@@ -135,36 +137,42 @@ export function WorkflowVersionsPanel({ workflowId, status, onChanged }: Props) 
                 false,
               )
             }
-            data-testid="wf-snapshot"
           >
-            <Camera size={15} aria-hidden /> Crear snapshot
-          </button>
+            Crear snapshot
+          </Button>
         </div>
-        <p className="text-[11px] text-muted">
-          Estado actual del workflow: <span className="font-medium text-text">{status}</span>
+        <p className="flex items-center gap-2 text-[12px] text-muted">
+          Estado actual del workflow: <StatusBadge status={status} />
         </p>
-        <ErrorInline message={error} />
-        <SuccessInline message={msg} />
+        <ErrorInline message={error} className="mb-0" />
+        <SuccessInline message={msg} className="mb-0" />
       </section>
 
       <section className="panel p-4">
-        <h3 className="mb-2 text-sm font-semibold text-text">Historial ({versions.length})</h3>
-        <div className="space-y-2">
+        <h3 className="text-h3 mb-3">Historial ({versions.length})</h3>
+        <div className="space-y-2.5">
           {versions.map((v) => (
-            <div key={v.id} className="rounded-md border border-border bg-soft/50 p-3" data-testid="wf-version-row">
+            <div
+              key={v.id}
+              className="rounded-md border border-border bg-soft/50 p-3"
+              data-testid="wf-version-row"
+            >
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium text-text">v{v.version_number}</span>
-                <span className={`badge ${STATUS_BADGE[v.status] ?? "badge-muted"}`}>{v.status}</span>
+                <span className="font-mono text-[13px] font-semibold text-text tabular-nums">
+                  v{v.version_number}
+                </span>
+                <StatusBadge status={v.status} />
                 <span className="flex-1" />
-                <span className="text-[10px] text-faint">{fmtDateTime(v.created_at)}</span>
+                <span className="font-mono text-[11px] text-faint">{fmtDateTime(v.created_at)}</span>
               </div>
-              {v.notes && <p className="mt-1 text-xs text-muted">{v.notes}</p>}
-              <div className="mt-2 flex flex-wrap gap-2">
+              {v.notes && <p className="mt-1.5 text-[12px] leading-relaxed text-muted">{v.notes}</p>}
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
                 {(NEXT_STATUS[v.status] ?? []).map((next) => (
-                  <button
+                  <Button
                     key={next.status}
-                    type="button"
-                    className="btn btn-ghost min-h-8 px-2 text-[10px]"
+                    variant="ghost"
+                    size="sm"
+                    className="text-[11px]"
                     disabled={!!busy}
                     onClick={() =>
                       void call(
@@ -177,42 +185,53 @@ export function WorkflowVersionsPanel({ workflowId, status, onChanged }: Props) 
                     }
                   >
                     {next.label}
-                  </button>
+                  </Button>
                 ))}
-                <button
-                  type="button"
-                  className="btn btn-ghost min-h-8 px-2 text-[10px]"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  leadingIcon={ArrowCounterClockwise}
+                  className="text-[11px]"
                   disabled={!!busy}
-                  onClick={() => {
-                    if (
-                      !window.confirm(
-                        `Restaurar v${v.version_number} sobrescribe el grafo y el trigger actuales. ¿Continuar?`,
-                      )
-                    ) {
-                      return;
-                    }
-                    void call(
-                      `/api/v1/workflows/${workflowId}/versions/${v.id}/restore`,
-                      undefined,
-                      `restore-${v.id}`,
-                      `v${v.version_number} restaurada en el workflow vivo.`,
-                      true,
-                    );
-                  }}
                   data-testid={`wf-restore-${v.version_number}`}
+                  onClick={() => setRestoreTarget(v)}
                 >
-                  <ArrowCounterClockwise size={12} aria-hidden /> Restaurar
-                </button>
+                  Restaurar
+                </Button>
               </div>
             </div>
           ))}
           {versions.length === 0 && (
-            <p className="text-xs text-faint">
+            <p className="text-[12px] leading-relaxed text-faint">
               Sin versiones. Publica o crea un snapshot para tener a dónde volver.
             </p>
           )}
         </div>
       </section>
+
+      <ConfirmDialog
+        open={Boolean(restoreTarget)}
+        onOpenChange={(open) => {
+          if (!open) setRestoreTarget(null);
+        }}
+        title={`Restaurar v${restoreTarget?.version_number ?? ""}`}
+        body="Sobrescribe el grafo y el trigger actuales del workflow vivo. ¿Continuar?"
+        confirmLabel="Restaurar"
+        tone="danger"
+        loading={busy === `restore-${restoreTarget?.id}`}
+        onConfirm={() => {
+          const target = restoreTarget;
+          if (!target) return;
+          setRestoreTarget(null);
+          void call(
+            `/api/v1/workflows/${workflowId}/versions/${target.id}/restore`,
+            undefined,
+            `restore-${target.id}`,
+            `v${target.version_number} restaurada en el workflow vivo.`,
+            true,
+          );
+        }}
+      />
     </div>
   );
 }

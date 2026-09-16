@@ -78,13 +78,13 @@ export function ConfirmDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60" onClick={onCancel} aria-hidden />
+      <div className="absolute inset-0 bg-scrim backdrop-blur-[2px]" onClick={onCancel} aria-hidden />
       <div
         ref={dialogRef}
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="confirm-dialog-title"
-        className="relative w-full max-w-md rounded-md border border-border bg-surface p-5 shadow-pop"
+        className="relative w-full max-w-md rounded-xl border border-border bg-overlay p-5 shadow-pop"
       >
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-2.5">
@@ -93,7 +93,7 @@ export function ConfirmDialog({
                 <WarningCircle size={17} aria-hidden />
               </span>
             )}
-            <h2 id="confirm-dialog-title" className="text-base font-semibold text-text">
+            <h2 id="confirm-dialog-title" className="text-h2">
               {title}
             </h2>
           </div>
@@ -117,7 +117,7 @@ export function ConfirmDialog({
               value={typed}
               onChange={(e) => setTyped(e.target.value)}
               autoComplete="off"
-              className="w-full rounded-md border border-border bg-soft px-3 py-2 text-sm text-text outline-none focus:border-accent"
+              className="w-full rounded-md border border-border bg-control px-3 py-2 text-sm text-text outline-none focus:border-accent"
             />
           </label>
         )}

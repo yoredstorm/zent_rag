@@ -1,6 +1,5 @@
 import { CaretDown, Code, LockSimple, PushPin, Trash, X } from "@phosphor-icons/react";
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import type { GraphEdge, GraphNode, NodeMeta, WorkflowGraph } from "../lib/workflowGraph";
@@ -26,6 +25,19 @@ import { NodeHelpCard } from "./workflowStudio/NodeHelpCard";
 import { NotificationBuilder } from "./workflowStudio/NotificationBuilder";
 import { ScheduleBuilder } from "./workflowStudio/ScheduleBuilder";
 import type { RunDetail, RunStep } from "./WorkflowRunInspector";
+import {
+  Button,
+  ButtonLink,
+  CodeBlock,
+  Field,
+  IconButton,
+  Input,
+  Popover,
+  Select,
+  StatusBadge,
+  Textarea,
+  cn,
+} from "./ui";
 
 type Props = {
   graph: WorkflowGraph;
@@ -77,6 +89,9 @@ const NODE_TABS = [
 /** Claves que el NotificationBuilder edita; el resto las cubre el schema. */
 const NOTIFY_BUILDER_KEYS = new Set(["channel", "title", "message"]);
 
+/** Controles segmentados del panel (tabs de nodo y nivel de configuración). */
+const SEGMENT_BASE = "min-h-7 flex-1 cursor-pointer rounded-sm px-2 text-[12px] font-medium transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-45";
+
 export function NodeConfigPanel({
   graph,
   node,
@@ -106,7 +121,6 @@ export function NodeConfigPanel({
 }: Props) {
   const { session } = useAuth();
   const [localLevel, setLocalLevel] = useState<ParameterLevel>("simple");
-  const [refOpen, setRefOpen] = useState<string | null>(null);
   const [actionPorts, setActionPorts] = useState<BusinessParameter[] | null>(null);
   const [portsError, setPortsError] = useState("");
 
@@ -158,24 +172,28 @@ export function NodeConfigPanel({
 
   if (edge && !node) {
     return (
-      <aside className={`rounded-lg border border-border bg-surface p-3 shadow-panel ${className}`} data-testid="wf-edge-config">
-        <div className="flex items-start gap-2">
-          <h3 className="flex-1 text-sm font-semibold text-text">Conexión</h3>
-          {onClose && (
-            <button type="button" className="btn btn-ghost min-h-7 px-1.5" aria-label="Cerrar" onClick={onClose}>
-              <X size={14} aria-hidden />
-            </button>
-          )}
+      <aside className={cn("panel p-3", className)} data-testid="wf-edge-config">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h3 className="text-h3">Conexión</h3>
+            <p className="mt-1 font-mono text-[11px] break-all text-muted">
+              {edge.from_node}.{edge.from_port} → {edge.to_node}.{edge.to_port}
+            </p>
+          </div>
+          {onClose && <IconButton label="Cerrar configuración" icon={X} className="-mt-1 -mr-1 h-8 w-8" onClick={onClose} />}
         </div>
-        <p className="mt-1 font-mono text-[10px] text-muted">
-          {edge.from_node}.{edge.from_port} → {edge.to_node}.{edge.to_port}
-        </p>
-        <p className="mt-1 text-[10px] text-accent" data-testid="wf-edge-meaning">
+        <p className="mt-2 rounded-sm bg-soft px-2 py-1.5 text-[12px] text-muted" data-testid="wf-edge-meaning">
           {describeEdge(graph, edge)}
         </p>
-        <button type="button" className="btn btn-ghost mt-3 min-h-8 w-full text-[11px] text-danger" onClick={() => onDeleteEdge(edge.id)}>
-          <Trash size={13} /> Eliminar conexión
-        </button>
+        <Button
+          variant="ghost"
+          size="sm"
+          leadingIcon={Trash}
+          className="mt-3 w-full text-danger"
+          onClick={() => onDeleteEdge(edge.id)}
+        >
+          Eliminar conexión
+        </Button>
       </aside>
     );
   }
@@ -226,7 +244,6 @@ export function NodeConfigPanel({
   function insertRef(field: string, ref: string) {
     const cur = String(current.config[field] ?? "");
     setField(field, cur ? `${cur} ${ref}` : ref);
-    setRefOpen(null);
   }
 
   const dynamicOptions = (param: BusinessParameter): SelectOption[] | undefined => {
@@ -251,6 +268,7 @@ export function NodeConfigPanel({
   const needsAgent = current.type === "llm" && !current.config.agent_id;
   const showPolicies = level === "advanced";
   const legacyFields = meta.fields.filter((f) => (f.adv ? showPolicies : true));
+  const hasAdvancedOptions = meta.fields.some((f) => f.adv);
 
   function chooseLevel(next: ParameterLevel) {
     setLocalLevel(next);
@@ -258,39 +276,54 @@ export function NodeConfigPanel({
   }
 
   return (
-    <aside className={`flex flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-panel ${className}`} data-testid="wf-node-config">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2.5">
-        <span className={`flex h-7 w-7 items-center justify-center rounded-md text-[13px] ${meta.color} bg-opacity-20`} aria-hidden>
+    <aside className={cn("panel flex flex-col overflow-hidden", className)} data-testid="wf-node-config">
+      <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5">
+        <span
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-sm border border-border-soft bg-soft text-[13px] text-muted"
+          aria-hidden
+        >
           {meta.icon}
         </span>
         <div className="min-w-0 flex-1">
           <h3 className="truncate text-[13px] font-semibold text-text">{business?.label || meta.label}</h3>
-          <p className="truncate font-mono text-[9px] text-faint">{current.type} · v{current.version}</p>
+          <p className="truncate font-mono text-[10px] text-faint">{current.type} · v{current.version}</p>
         </div>
         {current.type !== "end" && !current.type.startsWith("trigger_") && (
-          <button type="button" className="btn btn-ghost min-h-7 px-1.5 text-danger" aria-label="Eliminar nodo" onClick={() => onDeleteNode(current.id)}>
-            <Trash size={14} />
-          </button>
+          <IconButton
+            label="Eliminar nodo"
+            icon={Trash}
+            className="h-8 w-8 shrink-0 text-danger"
+            onClick={() => onDeleteNode(current.id)}
+          />
         )}
         {onClose && (
-          <button type="button" className="btn btn-ghost min-h-7 px-1.5" aria-label="Cerrar configuración" onClick={onClose}>
-            <X size={14} aria-hidden />
-          </button>
+          <IconButton
+            label="Cerrar configuración"
+            icon={X}
+            className="-mr-1 h-8 w-8 shrink-0"
+            onClick={onClose}
+          />
         )}
-      </div>
+      </header>
 
-      <div className="flex-1 space-y-2.5 overflow-y-auto p-3">
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
         {/* Pestañas del nodo: configurar / input / output / run (Fase 1). */}
-        <div className="flex rounded-md border border-border p-0.5" role="tablist" aria-label="Vista del nodo" data-testid="wf-node-tabs">
+        <div
+          className="flex items-center gap-0.5 rounded-md border border-border bg-soft p-0.5"
+          role="tablist"
+          aria-label="Vista del nodo"
+          data-testid="wf-node-tabs"
+        >
           {NODE_TABS.map((nodeTab) => (
             <button
               key={nodeTab.key}
               type="button"
               role="tab"
               aria-selected={tab === nodeTab.key}
-              className={`flex-1 rounded px-1.5 py-1 text-[10px] ${
-                tab === nodeTab.key ? "bg-accent/15 font-medium text-text" : "text-faint hover:text-muted"
-              }`}
+              className={cn(
+                SEGMENT_BASE,
+                tab === nodeTab.key ? "bg-surface text-text shadow-panel" : "text-muted hover:text-text",
+              )}
               data-testid={`wf-tab-${nodeTab.key}`}
               onClick={() => setTab(nodeTab.key)}
             >
@@ -299,274 +332,326 @@ export function NodeConfigPanel({
           ))}
         </div>
 
-        <NodeHelpCard meta={meta} onAddSuggested={onAddSuggested} />
-
         {tab === "config" && (
-        <>
-        {/* Nivel de configuración: mismo grafo, distinta vista. */}
-        <div className="flex rounded-md border border-border p-0.5" data-testid="wf-level-toggle" role="tablist" aria-label="Nivel de configuración">
-          {LEVELS.map((l) => (
-            <button
-              key={l}
-              type="button"
-              role="tab"
-              aria-selected={level === l}
-              className={`flex-1 rounded px-1.5 py-1 text-[10px] ${
-                level === l ? "bg-accent/15 font-medium text-text" : "text-faint hover:text-muted"
-              }`}
-              data-testid={`wf-level-${l}`}
-              onClick={() => chooseLevel(l)}
+          <>
+            <NodeHelpCard meta={meta} onAddSuggested={onAddSuggested} />
+
+            {/* Nivel de configuración: mismo grafo, distinta vista. */}
+            <div
+              className="flex items-center gap-0.5 rounded-md border border-border p-0.5"
+              role="tablist"
+              aria-label="Nivel de configuración"
+              data-testid="wf-level-toggle"
             >
-              {LEVEL_LABELS[l]}
-            </button>
-          ))}
-        </div>
-
-        {business?.description && level !== "advanced" && (
-          <p className="text-[10px] text-muted">{business.description}</p>
-        )}
-
-        {needsAgent && (
-          <div className="rounded-md border border-warn/40 bg-warn-soft px-2.5 py-2 text-[10px] text-text" data-testid="wf-agent-required">
-            {agents.length === 0 ? (
-              <>
-                No tienes agentes todavía. Crea uno y vuelve: sin agente este nodo solo devuelve un
-                eco del prompt.
-                <Link to="/agents/new" className="btn btn-secondary mt-2 min-h-8 w-full text-[10px]" data-testid="wf-agent-cta">
-                  Crear un agente
-                </Link>
-              </>
-            ) : (
-              "Elige el agente que va a responder. Sin agente el nodo devuelve un eco, no una respuesta."
-            )}
-          </div>
-        )}
-
-        {business ? (
-          current.type === "condition" ? (
-            <ConditionBuilder
-              config={current.config}
-              sources={dataSources}
-              onChange={(tree: ConditionGroupNode) => {
-                const next = { ...current.config };
-                delete next.field;
-                delete next.operator;
-                delete next.value;
-                next.rules = tree;
-                replaceConfig(next);
-              }}
-            />
-          ) : current.type === "notify" ? (
-            <>
-              <NotificationBuilder
-                config={current.config}
-                dataSources={dataSources}
-                onChange={patchConfig}
-              />
-              {business.parameters.some((p) => !NOTIFY_BUILDER_KEYS.has(p.key)) && (
-                <BusinessParameterForm
-                  parameters={business.parameters.filter((p) => !NOTIFY_BUILDER_KEYS.has(p.key))}
-                  level={level}
-                  values={current.config}
-                  onChange={(key, value) => setField(key, value)}
-                  optionsFor={dynamicOptions}
-                  referenceOptions={referenceSelectOptions}
-                  dataSources={dataSources}
-                />
-              )}
-            </>
-          ) : current.type === "trigger_schedule" ? (
-            <ScheduleBuilder config={current.config} onChange={patchConfig} />
-          ) : (
-            <>
-              <BusinessParameterForm
-                parameters={business.parameters}
-                level={level}
-                values={current.config}
-                onChange={(key, value) => setField(key, value)}
-                optionsFor={dynamicOptions}
-                referenceOptions={referenceSelectOptions}
-                dataSources={dataSources}
-              />
-              {current.type === "marketplace_action" && actionId && (
-                <div className="space-y-2 rounded-md border border-border bg-soft/40 p-2" data-testid="wf-action-params">
-                  <p className="text-[10px] font-medium text-text">Parámetros de la acción</p>
-                  {portsError ? (
-                    <p className="text-[10px] text-danger">{portsError}</p>
-                  ) : actionPorts === null ? (
-                    <p className="text-[10px] text-faint">Cargando parámetros…</p>
-                  ) : (
-                    <BusinessParameterForm
-                      parameters={actionPorts}
-                      level={level}
-                      values={(current.config.inputs as Record<string, unknown>) ?? {}}
-                      onChange={(key, value) => setConfigPath(`inputs.${key}`, value)}
-                      optionsFor={dynamicOptions}
-                      referenceOptions={referenceSelectOptions}
-                      dataSources={dataSources}
-                      emptyHint="Esta acción no declara parámetros."
-                    />
+              {LEVELS.map((l) => (
+                <button
+                  key={l}
+                  type="button"
+                  role="tab"
+                  aria-selected={level === l}
+                  className={cn(
+                    SEGMENT_BASE,
+                    level === l ? "bg-accent-soft text-accent" : "text-faint hover:text-text",
                   )}
-                </div>
-              )}
-            </>
-          )
-        ) : (
-          legacyFields.map((f) => {
-            const value = current.config[f.key];
-            return (
-              <label key={f.key} className="block">
-                <span className="mb-0.5 flex items-center justify-between gap-1 text-[10px] font-medium text-muted">
-                  <span>
-                    {f.label}
-                    {f.key === "agent_id" && <span className="ml-1 text-danger">*</span>}
-                  </span>
-                  {f.refs && refs.length > 0 && (
-                    <span className="relative">
-                      <button type="button" className="btn btn-ghost min-h-5 px-1 text-[9px]" onClick={() => setRefOpen(refOpen === f.key ? null : f.key)} aria-label={`Insertar referencia en ${f.label}`}>
-                        <Code size={10} /> datos
-                      </button>
-                      {refOpen === f.key && (
-                        <span className="absolute top-5 right-0 z-30 max-h-48 w-52 overflow-y-auto rounded-md border border-border bg-raised p-1 shadow-pop">
-                          {refs.map((r) => (
-                            <button
-                              key={r.ref}
-                              type="button"
-                              className="block w-full truncate rounded px-2 py-1 text-left text-[10px] text-text hover:bg-soft"
-                              onClick={() => insertRef(f.key, r.ref)}
-                            >
-                              <span className="block font-medium">{r.label}</span>
-                              <span className="block font-mono text-[8px] text-faint">{r.ref}</span>
-                            </button>
-                          ))}
+                  data-testid={`wf-level-${l}`}
+                  onClick={() => chooseLevel(l)}
+                >
+                  {LEVEL_LABELS[l]}
+                </button>
+              ))}
+            </div>
+
+            {business?.description && level !== "advanced" && (
+              <p className="text-[12px] leading-relaxed text-muted">{business.description}</p>
+            )}
+
+            {needsAgent && (
+              <div
+                className="rounded-md border border-warn/40 bg-warn-soft px-2.5 py-2 text-[12px] leading-relaxed text-text"
+                data-testid="wf-agent-required"
+              >
+                {agents.length === 0 ? (
+                  <>
+                    No tienes agentes todavía. Crea uno y vuelve: sin agente este nodo solo devuelve
+                    un eco del prompt.
+                    <ButtonLink
+                      to="/agents/new"
+                      variant="secondary"
+                      size="sm"
+                      className="mt-2 w-full"
+                      data-testid="wf-agent-cta"
+                    >
+                      Crear un agente
+                    </ButtonLink>
+                  </>
+                ) : (
+                  "Elige el agente que va a responder. Sin agente el nodo devuelve un eco, no una respuesta."
+                )}
+              </div>
+            )}
+
+            {business ? (
+              current.type === "condition" ? (
+                <ConditionBuilder
+                  config={current.config}
+                  sources={dataSources}
+                  onChange={(tree: ConditionGroupNode) => {
+                    const next = { ...current.config };
+                    delete next.field;
+                    delete next.operator;
+                    delete next.value;
+                    next.rules = tree;
+                    replaceConfig(next);
+                  }}
+                />
+              ) : current.type === "notify" ? (
+                <>
+                  <NotificationBuilder
+                    config={current.config}
+                    dataSources={dataSources}
+                    onChange={patchConfig}
+                  />
+                  {business.parameters.some((p) => !NOTIFY_BUILDER_KEYS.has(p.key)) && (
+                    <div className="border-t border-border pt-3">
+                      <BusinessParameterForm
+                        parameters={business.parameters.filter((p) => !NOTIFY_BUILDER_KEYS.has(p.key))}
+                        level={level}
+                        values={current.config}
+                        onChange={(key, value) => setField(key, value)}
+                        optionsFor={dynamicOptions}
+                        referenceOptions={referenceSelectOptions}
+                        dataSources={dataSources}
+                      />
+                    </div>
+                  )}
+                </>
+              ) : current.type === "trigger_schedule" ? (
+                <ScheduleBuilder config={current.config} onChange={patchConfig} />
+              ) : (
+                <>
+                  <BusinessParameterForm
+                    parameters={business.parameters}
+                    level={level}
+                    values={current.config}
+                    onChange={(key, value) => setField(key, value)}
+                    optionsFor={dynamicOptions}
+                    referenceOptions={referenceSelectOptions}
+                    dataSources={dataSources}
+                  />
+                  {current.type === "marketplace_action" && actionId && (
+                    <div className="space-y-2.5 rounded-md border border-border bg-soft/50 p-3" data-testid="wf-action-params">
+                      <p className="eyebrow">Parámetros de la acción</p>
+                      {portsError ? (
+                        <p className="field-error">{portsError}</p>
+                      ) : actionPorts === null ? (
+                        <p className="text-[12px] text-faint">Cargando parámetros…</p>
+                      ) : (
+                        <BusinessParameterForm
+                          parameters={actionPorts}
+                          level={level}
+                          values={(current.config.inputs as Record<string, unknown>) ?? {}}
+                          onChange={(key, value) => setConfigPath(`inputs.${key}`, value)}
+                          optionsFor={dynamicOptions}
+                          referenceOptions={referenceSelectOptions}
+                          dataSources={dataSources}
+                          emptyHint="Esta acción no declara parámetros."
+                        />
+                      )}
+                    </div>
+                  )}
+                </>
+              )
+            ) : (
+              legacyFields.map((f) => {
+                const id = `${current.id}-${f.key}`;
+                const value = current.config[f.key];
+                const invalid = f.key === "agent_id" && !value;
+                return (
+                  <div key={f.key} className="space-y-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <label htmlFor={id} className="text-[13px] font-medium text-text">
+                        {f.label}
+                      </label>
+                      {invalid && (
+                        <span className="text-danger" aria-hidden>
+                          *
                         </span>
                       )}
-                    </span>
-                  )}
-                </span>
-                {f.type === "textarea" ? (
-                  <textarea
-                    className="w-full rounded-md border border-border bg-soft px-2 py-1.5 text-[11px]"
-                    rows={3}
-                    placeholder={f.placeholder}
-                    value={String(value ?? "")}
-                    onChange={(e) => setField(f.key, e.target.value)}
-                  />
-                ) : f.type === "json" ? (
-                  <textarea
-                    className="w-full rounded-md border border-border bg-soft px-2 py-1.5 font-mono text-[10px]"
-                    rows={2}
-                    placeholder={f.placeholder ?? "{}"}
-                    value={typeof value === "object" ? JSON.stringify(value ?? {}, null, 0) : String(value ?? "")}
-                    onChange={(e) => {
-                      try {
-                        setField(f.key, JSON.parse(e.target.value || "{}"));
-                      } catch {
-                        setField(f.key, e.target.value);
-                      }
-                    }}
-                  />
-                ) : f.type === "select" ? (
-                  <select
-                    className={`w-full rounded-md border bg-soft px-2 py-2 text-[11px] ${
-                      f.key === "agent_id" && !value ? "border-warn/60" : "border-border"
-                    }`}
-                    value={String(value ?? "")}
-                    data-testid={f.key === "agent_id" ? "wf-agent-select" : undefined}
-                    onChange={(e) => setField(f.key, e.target.value)}
-                  >
-                    <option value="">{f.key === "agent_id" ? "Elige un agente…" : "—"}</option>
-                    {selectOptions(f.key, current, kbs, agents, mxInstalls, mxActions).map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
-                ) : (
-                  <input
-                    className="w-full rounded-md border border-border bg-soft px-2 py-1.5 text-[11px]"
-                    type={f.type === "number" ? "number" : "text"}
-                    placeholder={f.placeholder}
-                    value={String(value ?? "")}
-                    onChange={(e) => setField(f.key, f.type === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)}
-                  />
-                )}
-              </label>
-            );
-          })
-        )}
-
-        {!business && meta.fields.some((f) => f.adv) && (
-          <p className="text-[10px] text-faint">Cambia a Avanzado para ver más opciones.</p>
-        )}
-
-        {/* Avanzado (Fase 6): potencia disponible, complejidad progresiva. */}
-        <details className="rounded-md border border-border" data-testid="wf-advanced">
-          <summary className="cursor-pointer list-none px-2 py-1.5 text-[10px] text-faint">
-            Avanzado · ejecución, errores, seguridad y developer
-          </summary>
-          <div className="space-y-2 border-t border-border p-2">
-            <p className="text-[9px] font-semibold tracking-wide text-faint uppercase">Seguridad</p>
-            <div className="rounded-md border border-border p-2 text-[9px] text-faint">
-              {ports.input.length > 0 && <p>in: {ports.input.map((p) => `${p.name}:${p.type}`).join(", ")}</p>}
-              {ports.output.length > 0 && <p>out: {ports.output.map((p) => `${p.name}:${p.type}`).join(", ")}</p>}
-              <p>riesgo: {meta.risk ?? "normal"}</p>
-            </div>
-
-            <p className="text-[9px] font-semibold tracking-wide text-faint uppercase">Ejecución y errores</p>
-            <div className="space-y-1.5">
-              <label className="flex items-center justify-between gap-2 text-[10px] text-muted">
-                Reintentos (max_attempts)
-                <input
-                  className="w-16 rounded border border-border bg-soft px-1 py-0.5 text-[10px]"
-                  type="number" min={1} max={10}
-                  value={String((current.retry_policy.max_attempts as number) ?? 1)}
-                  onChange={(e) => setPolicy("retry_policy", { max_attempts: Math.max(1, Number(e.target.value || 1)) })}
-                />
-              </label>
-              <label className="flex items-center justify-between gap-2 text-[10px] text-muted">
-                Timeout (ms)
-                <input
-                  className="w-16 rounded border border-border bg-soft px-1 py-0.5 text-[10px]"
-                  type="number" min={100}
-                  value={String(current.timeout_ms ?? 60_000)}
-                  onChange={(e) => setPolicy("timeout_ms", Math.max(100, Number(e.target.value || 60_000)))}
-                />
-              </label>
-              <label className="flex items-center justify-between gap-2 text-[10px] text-muted">
-                Si falla
-                <select
-                  className="rounded border border-border bg-soft px-1 py-0.5 text-[10px]"
-                  value={current.error_policy}
-                  onChange={(e) => setPolicy("error_policy", e.target.value)}
-                >
-                  <option value="fail">detener flujo</option>
-                  <option value="continue">continuar</option>
-                  <option value="stop">detener (stop)</option>
-                </select>
-              </label>
-            </div>
-
-            <p className="text-[9px] font-semibold tracking-wide text-faint uppercase">Developer</p>
-            <details className="rounded-md border border-border p-2">
-              <summary className="flex cursor-pointer list-none items-center gap-1 text-[10px] text-faint">
-                <CaretDown size={10} aria-hidden /> Configuración técnica (JSON)
-              </summary>
-              <pre className="mt-1.5 max-h-40 overflow-auto rounded bg-soft p-1.5 font-mono text-[9px] text-muted">
-                {JSON.stringify(current.config, null, 2)}
-              </pre>
-            </details>
-            {business && (
-              <p className="flex items-center gap-1 text-[9px] text-faint">
-                <LockSimple size={10} aria-hidden /> Los secretos se guardan en SecretStore, nunca en el grafo.
-              </p>
+                      {f.refs && refs.length > 0 && (
+                        <span className="ml-auto">
+                          <Popover
+                            width={264}
+                            trigger={
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                leadingIcon={Code}
+                                className="px-1.5 text-[11px]"
+                                aria-label={`Insertar dato en ${f.label}`}
+                              >
+                                Dato
+                              </Button>
+                            }
+                          >
+                            <div className="max-h-56 space-y-0.5 overflow-y-auto">
+                              {refs.map((r) => (
+                                <button
+                                  key={r.ref}
+                                  type="button"
+                                  className="block w-full truncate rounded-sm px-2 py-1.5 text-left text-[12px] text-text transition-colors duration-150 hover:bg-soft"
+                                  onClick={() => insertRef(f.key, r.ref)}
+                                >
+                                  <span className="block truncate font-medium">{r.label}</span>
+                                  <span className="block truncate font-mono text-[10px] text-faint">{r.ref}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </Popover>
+                        </span>
+                      )}
+                    </div>
+                    {f.type === "textarea" ? (
+                      <Textarea
+                        id={id}
+                        rows={3}
+                        placeholder={f.placeholder}
+                        value={String(value ?? "")}
+                        onChange={(e) => setField(f.key, e.target.value)}
+                      />
+                    ) : f.type === "json" ? (
+                      <Textarea
+                        id={id}
+                        rows={2}
+                        className="font-mono text-[12px]"
+                        placeholder={f.placeholder ?? "{}"}
+                        value={typeof value === "object" ? JSON.stringify(value ?? {}, null, 0) : String(value ?? "")}
+                        onChange={(e) => {
+                          try {
+                            setField(f.key, JSON.parse(e.target.value || "{}"));
+                          } catch {
+                            setField(f.key, e.target.value);
+                          }
+                        }}
+                      />
+                    ) : f.type === "select" ? (
+                      <Select
+                        id={id}
+                        value={String(value ?? "")}
+                        aria-invalid={invalid || undefined}
+                        data-testid={f.key === "agent_id" ? "wf-agent-select" : undefined}
+                        onChange={(e) => setField(f.key, e.target.value)}
+                      >
+                        <option value="">{f.key === "agent_id" ? "Elige un agente…" : "—"}</option>
+                        {selectOptions(f.key, current, kbs, agents, mxInstalls, mxActions).map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))}
+                      </Select>
+                    ) : (
+                      <Input
+                        id={id}
+                        type={f.type === "number" ? "number" : "text"}
+                        placeholder={f.placeholder}
+                        value={String(value ?? "")}
+                        onChange={(e) =>
+                          setField(
+                            f.key,
+                            f.type === "number"
+                              ? e.target.value === ""
+                                ? ""
+                                : Number(e.target.value)
+                              : e.target.value,
+                          )
+                        }
+                      />
+                    )}
+                    {invalid && (
+                      <p className="field-hint text-warn">
+                        Elige un agente activo o crea uno: sin agente la respuesta es un eco.
+                      </p>
+                    )}
+                  </div>
+                );
+              })
             )}
-          </div>
-        </details>
-        </>
+
+            {!business && hasAdvancedOptions && !showPolicies && (
+              <p className="text-[12px] text-faint">Cambia a Avanzado para ver más opciones.</p>
+            )}
+
+            {/* Avanzado (Fase 6): potencia disponible, complejidad progresiva. */}
+            <details className="group rounded-md border border-border" data-testid="wf-advanced">
+              <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2.5 py-2 text-[12px] font-medium text-muted transition-colors duration-150 hover:text-text">
+                <CaretDown
+                  size={11}
+                  className="transition-transform duration-150 group-open:rotate-180"
+                  aria-hidden
+                />
+                Avanzado · ejecución, errores y developer
+              </summary>
+              <div className="space-y-3 border-t border-border p-2.5">
+                <div>
+                  <p className="eyebrow">Contrato</p>
+                  <div className="mt-1.5 rounded-sm border border-border px-2 py-1.5 font-mono text-[11px] text-muted">
+                    {ports.input.length > 0 && <p>in: {ports.input.map((p) => `${p.name}:${p.type}`).join(", ")}</p>}
+                    {ports.output.length > 0 && <p>out: {ports.output.map((p) => `${p.name}:${p.type}`).join(", ")}</p>}
+                    <p>riesgo: {meta.risk ?? "normal"}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="eyebrow">Ejecución y errores</p>
+                  <Field label="Reintentos">
+                    <Input
+                      type="number"
+                      min={1}
+                      max={10}
+                      className="max-w-24"
+                      value={String((current.retry_policy.max_attempts as number) ?? 1)}
+                      onChange={(e) =>
+                        setPolicy("retry_policy", { max_attempts: Math.max(1, Number(e.target.value || 1)) })
+                      }
+                    />
+                  </Field>
+                  <Field label="Timeout (ms)">
+                    <Input
+                      type="number"
+                      min={100}
+                      className="max-w-32"
+                      value={String(current.timeout_ms ?? 60_000)}
+                      onChange={(e) => setPolicy("timeout_ms", Math.max(100, Number(e.target.value || 60_000)))}
+                    />
+                  </Field>
+                  <Field label="Si falla">
+                    <Select
+                      value={current.error_policy}
+                      onChange={(e) => setPolicy("error_policy", e.target.value)}
+                    >
+                      <option value="fail">detener flujo</option>
+                      <option value="continue">continuar</option>
+                      <option value="stop">detener (stop)</option>
+                    </Select>
+                  </Field>
+                </div>
+
+                <div className="space-y-1.5">
+                  <p className="eyebrow">Developer</p>
+                  <CodeBlock code={JSON.stringify(current.config, null, 2)} language="json" maxHeight={220} />
+                </div>
+                {business && (
+                  <p className="flex items-center gap-1.5 text-[11px] text-faint">
+                    <LockSimple size={11} aria-hidden /> Los secretos se guardan en SecretStore, nunca en el grafo.
+                  </p>
+                )}
+              </div>
+            </details>
+          </>
         )}
 
         {tab === "input" && (
           <div className="space-y-2" data-testid="wf-node-input">
-            <p className="text-[10px] text-muted">Datos con los que corrió este paso en el run seleccionado.</p>
+            <p className="text-[12px] text-muted">Datos con los que corrió este paso en el run seleccionado.</p>
             <DataView
               data={runStep?.input ?? null}
               testId="wf-input-view"
@@ -576,13 +661,13 @@ export function NodeConfigPanel({
         )}
 
         {tab === "output" && (
-          <div className="space-y-2" data-testid="wf-node-output">
+          <div className="space-y-3" data-testid="wf-node-output">
             {pinned && (
               <p
-                className="flex items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 py-1 text-[10px] text-text"
+                className="flex items-center gap-1.5 rounded-md border border-warn/40 bg-warn-soft px-2.5 py-2 text-[11px] text-text"
                 data-testid="wf-pinned-badge"
               >
-                <PushPin size={11} aria-hidden /> Datos fijados para pruebas (no aplican en producción)
+                <PushPin size={12} aria-hidden /> Datos fijados para pruebas (no aplican en producción)
               </p>
             )}
             <DataView
@@ -594,119 +679,129 @@ export function NodeConfigPanel({
               const planned = (run?.planned_effects ?? []).filter((effect) => effect.node_id === current.id);
               if (planned.length === 0) return null;
               return (
-                <div className="rounded-md border border-border bg-soft px-2 py-1.5">
-                  <p className="text-[10px] font-semibold text-muted">Efectos planeados (simulación)</p>
+                <div className="rounded-md border border-border bg-soft/50 px-2.5 py-2">
+                  <p className="text-[11px] font-semibold text-muted">Efectos planeados (simulación)</p>
                   <DataView data={planned.map((effect) => effect.planned)} testId="wf-output-planned" />
                 </div>
               );
             })()}
             <div className="flex flex-wrap gap-1.5">
               {onPinData && runStep?.output && !pinned && (
-                <button
-                  type="button"
-                  className="btn btn-secondary min-h-7 gap-1 px-2 text-[10px]"
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  leadingIcon={PushPin}
+                  className="text-[11px]"
                   data-testid="wf-pin-data"
                   onClick={() => onPinData(current.id, runStep.output ?? {})}
                 >
-                  <PushPin size={11} aria-hidden /> Fijar datos para pruebas
-                </button>
+                  Fijar datos para pruebas
+                </Button>
               )}
               {pinned && onUnpinData && (
-                <button
-                  type="button"
-                  className="btn btn-ghost min-h-7 gap-1 px-2 text-[10px] text-danger"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  leadingIcon={Trash}
+                  className="text-[11px] text-danger"
                   data-testid="wf-unpin-data"
                   onClick={() => onUnpinData(current.id)}
                 >
-                  <Trash size={11} aria-hidden /> Quitar datos fijados
-                </button>
+                  Quitar datos fijados
+                </Button>
               )}
             </div>
           </div>
         )}
 
         {tab === "run" && (
-          <div className="space-y-2" data-testid="wf-node-run">
+          <div className="space-y-3" data-testid="wf-node-run">
             {runStep ? (
               <>
-                <dl className="grid grid-cols-2 gap-x-2 gap-y-1 text-[10px]">
+                <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-[12px]">
                   <div>
-                    <dt className="text-faint">Estado</dt>
-                    <dd className="text-text">{runStep.status}</dd>
+                    <dt className="eyebrow">Estado</dt>
+                    <dd className="mt-0.5 text-text">{runStep.status}</dd>
                   </div>
                   <div>
-                    <dt className="text-faint">Duración</dt>
-                    <dd className="text-text">{runStep.duration_ms != null ? `${runStep.duration_ms} ms` : "—"}</dd>
+                    <dt className="eyebrow">Duración</dt>
+                    <dd className="mt-0.5 text-text tabular-nums">
+                      {runStep.duration_ms != null ? `${runStep.duration_ms} ms` : "—"}
+                    </dd>
                   </div>
                   <div>
-                    <dt className="text-faint">Intentos</dt>
-                    <dd className="text-text">{runStep.attempt ?? 1}</dd>
+                    <dt className="eyebrow">Intentos</dt>
+                    <dd className="mt-0.5 text-text tabular-nums">{runStep.attempt ?? 1}</dd>
                   </div>
                   <div>
-                    <dt className="text-faint">Reintentos</dt>
-                    <dd className="text-text">{runStep.retries ?? 0}</dd>
+                    <dt className="eyebrow">Reintentos</dt>
+                    <dd className="mt-0.5 text-text tabular-nums">{runStep.retries ?? 0}</dd>
                   </div>
                   {typeof runStep.output?.cost === "number" && runStep.output.cost > 0 && (
                     <div>
-                      <dt className="text-faint">Costo</dt>
-                      <dd className="text-text">S/ {Number(runStep.output.cost).toFixed(4)}</dd>
+                      <dt className="eyebrow">Costo</dt>
+                      <dd className="mt-0.5 text-text tabular-nums">S/ {Number(runStep.output.cost).toFixed(4)}</dd>
                     </div>
                   )}
                   {typeof runStep.output?.model === "string" && (
-                    <div>
-                      <dt className="text-faint">Modelo</dt>
-                      <dd className="truncate text-text">{String(runStep.output.model)}</dd>
+                    <div className="col-span-2">
+                      <dt className="eyebrow">Modelo</dt>
+                      <dd className="mt-0.5 truncate text-text">{String(runStep.output.model)}</dd>
                     </div>
                   )}
                 </dl>
                 {runStep.error && (
-                  <p className="rounded-md border border-danger/40 bg-danger-soft px-2 py-1.5 text-[10px] text-danger">
+                  <p className="rounded-md border border-danger/40 bg-danger-soft px-2.5 py-2 text-[12px] leading-relaxed text-danger">
                     {runStep.error}
                   </p>
                 )}
-                <p className="text-[9px] text-faint">
-                  Run {run?.id} · {run?.status}
-                  {run?.duration_ms != null ? ` · ${run.duration_ms} ms` : ""}
-                </p>
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-faint">
+                  <span className="font-mono">Run {run?.id}</span>
+                  {run?.status && <StatusBadge status={run.status} />}
+                  {run?.duration_ms != null && <span className="tabular-nums">{run.duration_ms} ms</span>}
+                </div>
               </>
             ) : (
-              <p className="text-[11px] text-faint" data-testid="wf-node-run-empty">
+              <p className="text-[12px] text-faint" data-testid="wf-node-run-empty">
                 Este nodo no participó en el último run (o fue saltado).
               </p>
             )}
             {onRunPartial && !current.type.startsWith("trigger_") && current.type !== "end" && (
-              <div className="space-y-1.5 border-t border-border pt-2">
-                <p className="text-[9px] font-semibold tracking-wide text-faint uppercase">Ejecución parcial (pruebas)</p>
+              <div className="space-y-2 border-t border-border pt-3">
+                <p className="eyebrow">Ejecución parcial (pruebas)</p>
                 <div className="flex flex-wrap gap-1.5">
-                  <button
-                    type="button"
-                    className="btn btn-secondary min-h-7 px-2 text-[10px]"
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="text-[11px]"
                     disabled={!!partialBusy}
                     data-testid="wf-run-node"
                     onClick={() => onRunPartial(current.id, "node")}
                   >
                     Ejecutar este nodo
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary min-h-7 px-2 text-[10px]"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="text-[11px]"
                     disabled={!!partialBusy}
                     data-testid="wf-run-until"
                     onClick={() => onRunPartial(current.id, "until_node")}
                   >
                     Ejecutar hasta aquí
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-secondary min-h-7 px-2 text-[10px]"
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="text-[11px]"
                     disabled={!!partialBusy}
                     data-testid="wf-run-from"
                     onClick={() => onRunPartial(current.id, "from_node")}
                   >
                     Ejecutar desde aquí
-                  </button>
+                  </Button>
                 </div>
-                <p className="text-[9px] text-faint">
+                <p className="text-[11px] leading-relaxed text-faint">
                   Usa datos del último run o de los datos fijados. Nada se publica ni se activa.
                 </p>
               </div>

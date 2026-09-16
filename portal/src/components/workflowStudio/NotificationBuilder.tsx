@@ -4,12 +4,12 @@
  * no conectados muestra el CTA "Conectar …". Escribe el mismo config que ya
  * ejecuta el nodo `notify`.
  */
-import { Link } from "react-router-dom";
 import { PaperPlaneTilt, Plus, Trash, WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import type { DataSourceOption } from "../../lib/dataPicker";
+import { Button, ButtonLink, Input, Select, Textarea } from "../ui";
 import { DataPicker } from "./DataPicker";
 
 type ChannelOption = {
@@ -92,11 +92,13 @@ export function NotificationBuilder({ config, dataSources, onChange, targets: pr
   }
 
   return (
-    <div className="space-y-2.5" data-testid="wf-notification-builder">
-      <label className="block">
-        <span className="mb-0.5 block text-[10px] font-medium text-muted">Enviar por</span>
-        <select
-          className="w-full rounded-md border border-border bg-soft px-2 py-2 text-[11px]"
+    <div className="space-y-3" data-testid="wf-notification-builder">
+      <div className="space-y-1.5">
+        <label htmlFor="wf-notify-channel" className="text-[13px] font-medium text-text">
+          Enviar por
+        </label>
+        <Select
+          id="wf-notify-channel"
           value={channel}
           data-testid="wf-notify-channel"
           onChange={(e) => onChange({ channel: e.target.value })}
@@ -107,59 +109,65 @@ export function NotificationBuilder({ config, dataSources, onChange, targets: pr
               {!c.available ? " (no disponible)" : ""}
             </option>
           ))}
-        </select>
+        </Select>
         {targets && (
-          <span className="mt-0.5 block text-[9px] text-faint" data-testid="wf-notify-channel-detail">
+          <p className="field-hint" data-testid="wf-notify-channel-detail">
             {targets.channels.find((c) => c.value === channel)?.detail}
-          </span>
+          </p>
         )}
-      </label>
+      </div>
 
       {unavailable.length > 0 && (
-        <div className="space-y-1 rounded-md border border-border bg-soft/40 p-2" data-testid="wf-notify-unavailable">
+        <div className="space-y-1.5 rounded-md border border-border bg-soft/50 p-2.5" data-testid="wf-notify-unavailable">
           {unavailable.map((c) => (
-            <div key={c.value} className="flex items-center gap-1.5 text-[10px]">
-              <WarningCircle size={11} className="shrink-0 text-warn" aria-hidden />
+            <div key={c.value} className="flex items-center gap-2 text-[11px]">
+              <WarningCircle size={12} className="shrink-0 text-warn" aria-hidden />
               <span className="min-w-0 flex-1 truncate text-muted">{c.detail}</span>
               {c.requires && (
-                <Link
+                <ButtonLink
                   to="/connectors"
-                  className="btn btn-ghost min-h-6 shrink-0 px-1.5 text-[9px] text-accent"
+                  variant="ghost"
+                  size="sm"
+                  className="shrink-0 text-[11px] text-accent"
                   data-testid={`wf-notify-connect-${c.value}`}
                 >
                   Conectar {c.label}
-                </Link>
+                </ButtonLink>
               )}
             </div>
           ))}
         </div>
       )}
 
-      <div>
-        <span className="mb-0.5 block text-[10px] font-medium text-muted">Destinatarios</span>
+      <div className="space-y-1.5">
+        <span className="text-[13px] font-medium text-text">Destinatarios</span>
         {recipients.length > 0 && (
-          <ul className="mb-1.5 space-y-1" data-testid="wf-notify-recipients">
+          <ul className="space-y-1" data-testid="wf-notify-recipients">
             {recipients.map((r, index) => (
-              <li key={`${r.kind}-${r.value}-${index}`} className="flex items-center gap-1.5 rounded-md bg-soft px-2 py-1 text-[10px]">
+              <li
+                key={`${r.kind}-${r.value}-${index}`}
+                className="flex items-center gap-2 rounded-sm bg-soft px-2 py-1.5 text-[12px]"
+              >
                 <span className="min-w-0 flex-1 truncate text-text">{r.label || r.value}</span>
-                <span className="text-[9px] text-faint">
+                <span className="text-[10px] text-faint">
                   {r.kind === "person" ? "Persona" : r.kind === "team" ? "Equipo" : r.kind === "email" ? "Correo" : "Webhook"}
                 </span>
-                <button
-                  type="button"
-                  className="btn btn-ghost min-h-5 px-1 text-danger"
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 w-6 min-h-0 px-0 text-danger"
                   aria-label={`Quitar ${r.label || r.value}`}
                   onClick={() => removeRecipient(index)}
                 >
-                  <Trash size={10} aria-hidden />
-                </button>
+                  <Trash size={11} aria-hidden />
+                </Button>
               </li>
             ))}
           </ul>
         )}
-        <div className="flex flex-wrap items-center gap-1">
-          <select
-            className="rounded-md border border-border bg-soft px-1.5 py-1 text-[10px]"
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Select
+            className="w-auto text-[12px]"
             value={recipientKind}
             data-testid="wf-notify-recipient-kind"
             aria-label="Tipo de destinatario"
@@ -172,11 +180,11 @@ export function NotificationBuilder({ config, dataSources, onChange, targets: pr
             <option value="team">Equipo</option>
             <option value="email">Correo</option>
             <option value="webhook">Webhook</option>
-          </select>
+          </Select>
 
           {recipientKind === "person" ? (
-            <select
-              className="min-w-0 flex-1 rounded-md border border-border bg-soft px-1.5 py-1 text-[10px]"
+            <Select
+              className="min-w-0 flex-1 text-[12px]"
               value={recipientValue}
               data-testid="wf-notify-recipient-value"
               aria-label="Persona"
@@ -186,10 +194,10 @@ export function NotificationBuilder({ config, dataSources, onChange, targets: pr
               {(targets?.people ?? []).map((p) => (
                 <option key={p.id} value={p.id}>{p.label}</option>
               ))}
-            </select>
+            </Select>
           ) : recipientKind === "team" ? (
-            <select
-              className="min-w-0 flex-1 rounded-md border border-border bg-soft px-1.5 py-1 text-[10px]"
+            <Select
+              className="min-w-0 flex-1 text-[12px]"
               value={recipientValue}
               data-testid="wf-notify-recipient-value"
               aria-label="Equipo"
@@ -199,10 +207,10 @@ export function NotificationBuilder({ config, dataSources, onChange, targets: pr
               {(targets?.teams ?? []).map((t) => (
                 <option key={t.id} value={t.id}>{t.label}</option>
               ))}
-            </select>
+            </Select>
           ) : (
-            <input
-              className="min-w-0 flex-1 rounded-md border border-border bg-soft px-1.5 py-1 text-[10px]"
+            <Input
+              className="min-w-0 flex-1 text-[12px]"
               placeholder={recipientKind === "email" ? "correo@empresa.com" : "https://…"}
               value={recipientValue}
               data-testid="wf-notify-recipient-value"
@@ -210,32 +218,38 @@ export function NotificationBuilder({ config, dataSources, onChange, targets: pr
               onChange={(e) => setRecipientValue(e.target.value)}
             />
           )}
-          <button
-            type="button"
-            className="btn btn-secondary min-h-7 gap-1 px-1.5 text-[10px]"
+          <Button
+            variant="secondary"
+            size="sm"
+            leadingIcon={Plus}
+            className="text-[11px]"
             data-testid="wf-notify-recipient-add"
             onClick={addRecipient}
             disabled={!recipientValue.trim()}
           >
-            <Plus size={11} aria-hidden /> Añadir
-          </button>
+            Añadir
+          </Button>
         </div>
       </div>
 
-      <label className="block">
-        <span className="mb-0.5 block text-[10px] font-medium text-muted">Asunto</span>
-        <input
-          className="w-full rounded-md border border-border bg-soft px-2 py-1.5 text-[11px]"
+      <div className="space-y-1.5">
+        <label htmlFor="wf-notify-subject" className="text-[13px] font-medium text-text">
+          Asunto
+        </label>
+        <Input
+          id="wf-notify-subject"
           placeholder="Stock bajo"
           value={String(config.title ?? "")}
           data-testid="wf-notify-subject"
           onChange={(e) => onChange({ title: e.target.value })}
         />
-      </label>
+      </div>
 
-      <label className="block">
-        <span className="mb-0.5 flex items-center gap-1 text-[10px] font-medium text-muted">
-          Mensaje
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2">
+          <label htmlFor="wf-notify-message" className="text-[13px] font-medium text-text">
+            Mensaje
+          </label>
           <span className="ml-auto">
             <DataPicker
               sources={dataSources}
@@ -248,9 +262,9 @@ export function NotificationBuilder({ config, dataSources, onChange, targets: pr
               }}
             />
           </span>
-        </span>
-        <textarea
-          className="w-full rounded-md border border-border bg-soft px-2 py-1.5 text-[11px]"
+        </div>
+        <Textarea
+          id="wf-notify-message"
           rows={3}
           placeholder="Producto: {{Producto → Nombre}} · Stock: {{Inventario → Stock}}"
           value={messageValue}
@@ -260,10 +274,10 @@ export function NotificationBuilder({ config, dataSources, onChange, targets: pr
             onChange({ message: e.target.value });
           }}
         />
-      </label>
+      </div>
 
-      <p className="flex items-center gap-1 text-[9px] text-faint">
-        <PaperPlaneTilt size={10} aria-hidden /> En simulación no se envía nada: solo se listan los envíos.
+      <p className="flex items-center gap-1.5 text-[11px] text-faint">
+        <PaperPlaneTilt size={11} aria-hidden /> En simulación no se envía nada: solo se listan los envíos.
       </p>
     </div>
   );

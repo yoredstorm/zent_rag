@@ -1,5 +1,7 @@
-import { CaretDown, CaretUp } from "@phosphor-icons/react";
-import { useState } from "react";
+import { CaretRight, Crosshair, WarningCircle } from "@phosphor-icons/react";
+import { useState, type ReactNode } from "react";
+import { fmtLatency } from "../lib/format";
+import { Button, Drawer, ErrorInline, IconButton, StatusBadge } from "./ui";
 import { WorkflowApprovalPanel } from "./WorkflowApprovalPanel";
 import { DataView } from "./workflowStudio/DataView";
 
@@ -73,66 +75,117 @@ export type RunDetail = {
   chain_of_thought_exposed?: boolean;
 };
 
-const STATUS_BADGE: Record<string, string> = {
-  succeeded: "badge-ok",
-  simulated: "badge-muted",
-  skipped: "badge-muted",
-  failed: "badge-danger",
-  denied: "badge-danger",
-  pending: "badge-pending",
-  pending_approval: "badge-pending",
-  running: "badge-pending",
-  approved: "badge-ok",
+type RailState = "queued" | "running" | "ready" | "warning" | "failed";
+
+/**
+ * Estados del run/paso → vocabulario de StatusBadge (tono + icono).
+ * `denied` y `simulated` no existen en el vocabulario central: se traducen acá.
+ */
+const RUN_STATUS_META: Record<string, { status: string; label?: string }> = {
+  succeeded: { status: "succeeded" },
+  failed: { status: "failed" },
+  denied: { status: "failed", label: "Denegado" },
+  skipped: { status: "skipped" },
+  pending: { status: "pending" },
+  running: { status: "running" },
+  simulated: { status: "succeeded", label: "Simulado" },
+  pending_approval: { status: "pending_approval" },
+  approved: { status: "approved" },
 };
 
-function Step({ s, onSelectNode }: { s: RunStep; onSelectNode?: (id: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const label = (s.node_type || s.step_type || s.node_id) as string;
-  const text = typeof (s.output ?? {})?.text === "string" ? String((s.output ?? {}).text) : "";
+/** Estado real del paso → rail de actividad. */
+function stepRail(status: string): RailState {
+  if (status === "failed" || status === "denied") return "failed";
+  if (status === "running") return "running";
+  if (status === "succeeded" || status === "approved") return "ready";
+  return "queued";
+}
+
+function stepLabel(step: RunStep): string {
+  return step.node_type || step.step_type || step.node_id || `paso ${step.step_index + 1}`;
+}
+
+function StepStatusBadge({ status }: { status: string }) {
+  const meta = RUN_STATUS_META[status] ?? { status };
+  return <StatusBadge status={meta.status} label={meta.label} className="shrink-0" />;
+}
+
+function StepRow({
+  step,
+  onSelectNode,
+  onInspect,
+}: {
+  step: RunStep;
+  onSelectNode?: (id: string) => void;
+  onInspect: (step: RunStep) => void;
+}) {
+  const label = stepLabel(step);
+  const text = typeof step.output?.text === "string" ? String(step.output.text) : "";
   return (
-    <div className={`rounded-md border ${s.status === "failed" || s.status === "denied" ? "border-danger/40" : "border-border"}`}>
-      <div className="flex items-center gap-2 px-2 py-1.5">
-        <span className={`badge shrink-0 ${STATUS_BADGE[s.status] ?? "badge-muted"}`}>{s.status}</span>
-        <button
-          type="button"
-          className="min-w-0 flex-1 truncate text-left text-[11px] text-text hover:text-accent"
-          title={s.node_id ? `Ver ${label} en el lienzo` : label}
-          data-testid="wf-step-jump"
-          onClick={() => s.node_id && onSelectNode?.(s.node_id)}
-        >
-          {label}
-        </button>
-        <span className="shrink-0 text-[10px] text-faint">
-          {s.duration_ms != null && `${s.duration_ms}ms`}
-          {s.retries != null && s.retries > 0 && ` · ${s.retries} reintentos`}
+    <li data-state={stepRail(step.status)} className="state-rail py-2.5">
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+        <StepStatusBadge status={step.status} />
+        {step.node_id ? (
+          <button
+            type="button"
+            className="min-w-0 flex-1 truncate rounded-xs text-left text-[12px] font-medium text-text transition-colors duration-150 hover:text-accent"
+            title={`Ver ${label} en el lienzo`}
+            data-testid="wf-step-jump"
+            onClick={() => onSelectNode?.(step.node_id as string)}
+          >
+            {label}
+          </button>
+        ) : (
+          <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-text">{label}</span>
+        )}
+        <span className="ml-auto shrink-0 text-[11px] text-faint tabular-nums">
+          {step.duration_ms != null ? fmtLatency(step.duration_ms) : ""}
+          {step.retries ? ` · ${step.retries} reintentos` : ""}
         </span>
-        <button
-          type="button"
-          className="btn btn-ghost min-h-6 shrink-0 px-1"
-          aria-label={open ? "Ocultar detalle" : "Ver detalle"}
-          onClick={() => setOpen((v) => !v)}
-        >
-          {open ? <CaretUp size={11} /> : <CaretDown size={11} />}
-        </button>
+        <IconButton
+          label={`Ver detalle del paso ${label}`}
+          icon={CaretRight}
+          iconSize={13}
+          className="h-7 w-7 min-h-0"
+          onClick={() => onInspect(step)}
+        />
       </div>
-      {s.error && <p className="border-t border-danger/30 px-2 py-1 text-[10px] text-danger">{s.error}</p>}
-      {!s.error && text && !open && (
-        <p className="border-t border-border px-2 py-1 text-[10px] text-muted line-clamp-2">{text}</p>
+      {step.error && (
+        <p className="mt-1.5 flex items-start gap-2 rounded-md border border-danger/25 bg-danger-soft px-2.5 py-2 text-[11px] leading-relaxed text-danger">
+          <WarningCircle size={13} className="mt-px shrink-0" aria-hidden />
+          <span>{step.error}</span>
+        </p>
       )}
-      {open && (
-        <div className="space-y-2 border-t border-border px-2 py-2">
-          <div>
-            <p className="mb-1 text-[9px] font-semibold tracking-wide text-faint uppercase">Entrada</p>
-            <DataView data={s.input} testId={`wf-step-input-${s.node_id ?? s.step_index}`} emptyHint="Sin entrada registrada." />
-          </div>
-          <div>
-            <p className="mb-1 text-[9px] font-semibold tracking-wide text-faint uppercase">Salida</p>
-            <DataView data={s.output} testId={`wf-step-output-${s.node_id ?? s.step_index}`} emptyHint="Sin salida registrada." />
-          </div>
-          {s.idempotency_key && <p className="font-mono text-[9px] text-faint">idem: {s.idempotency_key}</p>}
-        </div>
+      {!step.error && text && (
+        <p className="mt-1 line-clamp-2 text-[11px] leading-relaxed text-muted">{text}</p>
       )}
-    </div>
+    </li>
+  );
+}
+
+function Disclosure({
+  title,
+  testId,
+  count,
+  children,
+}: {
+  title: string;
+  testId: string;
+  count: number;
+  children: ReactNode;
+}) {
+  return (
+    <details className="group rounded-md border border-border bg-raised/50" data-testid={testId}>
+      <summary className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-[11px] font-medium text-muted transition-colors duration-150 select-none hover:bg-soft/60 [&::-webkit-details-marker]:hidden">
+        <CaretRight
+          size={11}
+          className="shrink-0 text-ghost transition-transform duration-200 group-open:rotate-90"
+          aria-hidden
+        />
+        {title} ({count})
+      </summary>
+      <div className="border-t border-border-soft px-3 py-2.5">{children}</div>
+    </details>
   );
 }
 
@@ -149,79 +202,79 @@ function ContextSection({
 }) {
   if (entries.length === 0) return null;
   return (
-    <details className="rounded-md border border-border bg-soft px-2 py-1.5" data-testid={testId}>
-      <summary className="cursor-pointer text-[10px] font-semibold text-muted">
-        {title} ({entries.length})
-      </summary>
-      <div className="mt-1.5 space-y-1.5">
+    <Disclosure title={title} testId={testId} count={entries.length}>
+      <div className="flex flex-col gap-2">
         {entries.slice(0, 10).map((entry, index) => (
-          <div key={entry.id ?? `${entry.section}-${index}`} className="rounded border border-border bg-bg px-2 py-1">
-            <p className="truncate text-[10px] text-text">
+          <div
+            key={entry.id ?? `${entry.section}-${index}`}
+            className="rounded-md border border-border bg-surface px-2.5 py-2"
+          >
+            <p className="truncate text-[11px] text-text">
               {entry.label || entry.section}
               {entry.provenance?.node_type ? (
                 <span className="text-faint"> · {String(entry.provenance.node_type)}</span>
               ) : null}
             </p>
-            <DataView
-              data={entry.payload?.value ?? entry.payload}
-              testId={`${testId}-${index}`}
-              emptyHint={emptyHint}
-            />
+            <div className="mt-1.5">
+              <DataView
+                data={entry.payload?.value ?? entry.payload}
+                testId={`${testId}-${index}`}
+                emptyHint={emptyHint}
+              />
+            </div>
           </div>
         ))}
       </div>
-    </details>
+    </Disclosure>
   );
 }
 
 function ActionsSection({ actions }: { actions: RunAction[] }) {
   if (actions.length === 0) return null;
   return (
-    <details className="rounded-md border border-border bg-soft px-2 py-1.5" data-testid="wf-run-actions">
-      <summary className="cursor-pointer text-[10px] font-semibold text-muted">
-        Acciones del run ({actions.length})
-      </summary>
-      <div className="mt-1.5 space-y-1">
+    <Disclosure title="Acciones del run" testId="wf-run-actions" count={actions.length}>
+      <ul className="flex flex-col gap-1.5">
         {actions.map((action, index) => (
-          <div
+          <li
             key={action.node_id ?? index}
-            className="flex items-center gap-2 rounded border border-border bg-bg px-2 py-1"
+            className="flex items-center gap-2 rounded-md border border-border bg-surface px-2.5 py-1.5"
           >
-            <span className={`badge shrink-0 ${STATUS_BADGE[action.status] ?? "badge-muted"}`}>
-              {action.status}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-[10px] text-text">
+            <StepStatusBadge status={action.status} />
+            <span className="min-w-0 flex-1 truncate text-[11px] text-text">
               {action.node_type ?? action.node_id ?? "acción"}
             </span>
-            <span className="max-w-[45%] shrink-0 truncate text-[9px] text-faint">
+            <span
+              className="max-w-[45%] shrink-0 truncate font-mono text-[10px] text-faint"
+              title={JSON.stringify(action.summary ?? {})}
+            >
               {JSON.stringify(action.summary ?? {})}
             </span>
-          </div>
+          </li>
         ))}
-      </div>
-    </details>
+      </ul>
+    </Disclosure>
   );
 }
 
 function EventsSection({ events }: { events: RunEvent[] }) {
   if (events.length === 0) return null;
   return (
-    <details className="rounded-md border border-border bg-soft px-2 py-1.5" data-testid="wf-run-events">
-      <summary className="cursor-pointer text-[10px] font-semibold text-muted">
-        Timeline del run ({events.length})
-      </summary>
-      <ol className="mt-1.5 space-y-0.5">
+    <Disclosure title="Timeline del run" testId="wf-run-events" count={events.length}>
+      <ol className="flex flex-col gap-1">
         {events.slice(0, 50).map((event, index) => (
-          <li key={event.id ?? index} className="flex items-center gap-2 text-[10px] text-muted">
-            <span className="shrink-0 font-mono text-[9px] text-faint">{event.kind}</span>
+          <li key={event.id ?? index} className="flex items-center gap-2 text-[11px] text-muted">
+            <span className="shrink-0 font-mono text-[10px] text-faint">{event.kind}</span>
             {event.node_id ? <span className="shrink-0 truncate text-text">{event.node_id}</span> : null}
-            <span className="min-w-0 flex-1 truncate text-[9px] text-faint">
+            <span
+              className="min-w-0 flex-1 truncate font-mono text-[10px] text-ghost"
+              title={JSON.stringify(event.payload ?? {})}
+            >
               {JSON.stringify(event.payload ?? {})}
             </span>
           </li>
         ))}
       </ol>
-    </details>
+    </Disclosure>
   );
 }
 
@@ -235,49 +288,87 @@ export function WorkflowRunInspector({
   plannedEffects?: { node_id: string; node_type: string; planned: Record<string, unknown> }[];
   onSelectNode?: (id: string) => void;
 }) {
+  const [detail, setDetail] = useState<RunStep | null>(null);
   if (!run) return null;
   const steps = run.steps ?? [];
+  const status = RUN_STATUS_META[run.status] ?? { status: run.status };
+  const failed = steps.filter((s) => s.status === "failed" || s.status === "denied").length;
+
   return (
-    <div className="space-y-1.5" data-testid="wf-run-inspector">
-      <div className="flex items-center gap-2">
-        <span className={`badge ${STATUS_BADGE[run.status] ?? "badge-muted"}`}>{run.status}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[10px] text-faint">{run.id}</span>
-        {run.duration_ms != null && <span className="text-[10px] text-faint">{run.duration_ms}ms</span>}
+    <div className="flex flex-col gap-2.5" data-testid="wf-run-inspector">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <StatusBadge status={status.status} label={status.label} />
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-faint" title={run.id}>
+          {run.id}
+        </span>
+        {run.duration_ms != null && (
+          <span className="shrink-0 text-[11px] text-faint tabular-nums">
+            {fmtLatency(run.duration_ms)}
+          </span>
+        )}
       </div>
-      {run.error && (
-        <p className="rounded-md border border-danger/30 bg-danger-soft px-2 py-1 text-[10px] text-danger">
-          {run.error}
+      {run.correlation_id && (
+        <p className="truncate font-mono text-[10px] text-ghost" title={run.correlation_id}>
+          corr {run.correlation_id}
         </p>
       )}
+
+      <ErrorInline message={run.error} className="mb-0" />
+
       {run.status === "pending_approval" && <WorkflowApprovalPanel runId={run.id} />}
+
       {(run.story ?? []).length > 0 && (
         <ol
-          className="space-y-0.5 rounded-md border border-border bg-soft/60 px-2 py-1.5"
+          className="flex flex-col gap-1 rounded-md border border-border bg-raised/50 px-3 py-2.5"
           data-testid="wf-run-story"
         >
           {(run.story ?? []).map((line, index) => (
-            <li key={index} className="text-[10px] text-muted">
-              {index + 1}. {line}
+            <li key={index} className="flex gap-2 text-[11px] leading-relaxed text-muted">
+              <span className="mono shrink-0 text-[10px] text-ghost">{index + 1}</span>
+              <span className="min-w-0">{line}</span>
             </li>
           ))}
         </ol>
       )}
+
       {plannedEffects && plannedEffects.length > 0 && (
-        <div className="rounded-md border border-border bg-soft px-2 py-1.5">
-          <p className="text-[10px] font-semibold text-muted">Efectos no ejecutados en la prueba</p>
-          <ul className="mt-1 space-y-0.5">
+        <div className="rounded-md border border-border bg-raised/50 px-3 py-2.5">
+          <p className="text-[11px] font-medium text-muted">Efectos no ejecutados en la prueba</p>
+          <ul className="mt-1.5 flex flex-col gap-1">
             {plannedEffects.map((p) => (
-              <li key={p.node_id} className="truncate text-[10px] text-faint">
-                {p.node_type} — {JSON.stringify(p.planned).slice(0, 90)}
+              <li key={p.node_id} className="truncate text-[11px] text-faint" title={`${p.node_type} — ${JSON.stringify(p.planned)}`}>
+                <span className="text-muted">{p.node_type}</span> — {JSON.stringify(p.planned)}
               </li>
             ))}
           </ul>
         </div>
       )}
-      {steps.map((s) => (
-        <Step key={`${s.node_id ?? s.step_index}`} s={s} onSelectNode={onSelectNode} />
-      ))}
-      {steps.length === 0 && <p className="text-[10px] text-faint">Sin pasos registrados.</p>}
+
+      {steps.length === 0 ? (
+        <p className="text-[11px] text-faint">Sin pasos registrados.</p>
+      ) : (
+        <div>
+          <div className="mb-1 flex items-center gap-2">
+            <p className="eyebrow">Pasos ({steps.length})</p>
+            {failed > 0 && (
+              <span className="text-[11px] font-medium text-danger">
+                {failed === 1 ? "1 paso falló" : `${failed} pasos fallaron`}
+              </span>
+            )}
+          </div>
+          <ol className="divide-y divide-border-soft border-y border-border-soft">
+            {steps.map((s) => (
+              <StepRow
+                key={`${s.node_id ?? s.step_index}`}
+                step={s}
+                onSelectNode={onSelectNode}
+                onInspect={setDetail}
+              />
+            ))}
+          </ol>
+        </div>
+      )}
+
       <ContextSection
         title="Datos y conocimiento"
         testId="wf-run-context"
@@ -304,6 +395,79 @@ export function WorkflowRunInspector({
       />
       <ActionsSection actions={run.actions ?? []} />
       <EventsSection events={run.events ?? []} />
+
+      <Drawer
+        open={detail !== null}
+        onOpenChange={(open) => {
+          if (!open) setDetail(null);
+        }}
+        title={detail ? stepLabel(detail) : "Paso"}
+        description={
+          detail
+            ? `Paso ${detail.step_index + 1}${detail.duration_ms != null ? ` · ${fmtLatency(detail.duration_ms)}` : ""}`
+            : undefined
+        }
+        width={520}
+        footer={
+          detail?.node_id && onSelectNode ? (
+            <>
+              <Button variant="ghost" onClick={() => setDetail(null)}>
+                Cerrar
+              </Button>
+              <Button
+                variant="secondary"
+                leadingIcon={Crosshair}
+                onClick={() => {
+                  onSelectNode(detail.node_id as string);
+                  setDetail(null);
+                }}
+              >
+                Ver en el lienzo
+              </Button>
+            </>
+          ) : undefined
+        }
+      >
+        {detail && (
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <StepStatusBadge status={detail.status} />
+              {detail.attempt != null && (
+                <span className="text-[11px] text-faint tabular-nums">intento {detail.attempt}</span>
+              )}
+              {detail.retries ? (
+                <span className="text-[11px] text-faint tabular-nums">
+                  {detail.retries} reintentos
+                </span>
+              ) : null}
+            </div>
+
+            {detail.error && <ErrorInline message={detail.error} className="mb-0" />}
+
+            <section>
+              <p className="eyebrow mb-1.5">Entrada</p>
+              <DataView
+                data={detail.input}
+                testId={`wf-step-input-${detail.node_id ?? detail.step_index}`}
+                emptyHint="Sin entrada registrada."
+              />
+            </section>
+            <section>
+              <p className="eyebrow mb-1.5">Salida</p>
+              <DataView
+                data={detail.output}
+                testId={`wf-step-output-${detail.node_id ?? detail.step_index}`}
+                emptyHint="Sin salida registrada."
+              />
+            </section>
+            {detail.idempotency_key && (
+              <p className="font-mono text-[10px] break-all text-faint">
+                idem: {detail.idempotency_key}
+              </p>
+            )}
+          </div>
+        )}
+      </Drawer>
     </div>
   );
 }

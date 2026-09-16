@@ -9,7 +9,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
-import { ErrorInline, Spinner } from "../ui";
+import { Badge, Button, ErrorInline, Textarea } from "../ui";
 
 type Issue = { code: string; severity: "error" | "warning" | "info"; message: string; hint?: string | null };
 
@@ -172,27 +172,28 @@ export function AskZent({ initialPrompt = "", agentId = "", agentName = "" }: {
   return (
     <section className="panel space-y-4 p-5" data-testid="ask-zent">
       <div>
-        <h2 className="flex items-center gap-2 text-lg font-semibold text-text">
+        <h2 className="flex items-center gap-2 text-h2">
           <MagicWand size={18} className="text-accent" aria-hidden /> ¿Qué quieres automatizar?
         </h2>
-        <p className="mt-1 text-xs text-muted">
+        <p className="mt-1 text-[13px] leading-relaxed text-muted">
           Descríbelo como se lo dirías a una persona. Zent te dirá primero qué entendió.
         </p>
         {agentName && (
-          <p className="mt-1 rounded-md border border-border bg-soft/40 px-2 py-1.5 text-[10px] text-muted" data-testid="ask-agent-note">
+          <p className="mt-2 rounded-md border border-border bg-soft/50 px-2.5 py-2 text-[12px] leading-relaxed text-muted" data-testid="ask-agent-note">
             Quedará asociado al asistente <strong className="text-text">{agentName}</strong>. Si el flujo no necesita
             razonamiento, puede funcionar sin IA y ahorrar costo.
           </p>
         )}
       </div>
 
-      <textarea
-        className="min-h-28 w-full resize-y rounded-lg border border-border bg-soft px-3 py-2.5 text-sm"
+      <Textarea
+        className="min-h-28 resize-y"
         rows={4}
         placeholder="Cuando tengamos una venta mayor a S/ 20,000, avisa al gerente comercial y haz que el agente revise si el cliente es nuevo."
         value={prompt}
         data-testid="ask-prompt"
         onChange={(e) => setPrompt(e.target.value)}
+        aria-label="Qué quieres automatizar"
       />
 
       <div className="flex flex-wrap gap-1.5">
@@ -200,7 +201,7 @@ export function AskZent({ initialPrompt = "", agentId = "", agentName = "" }: {
           <button
             key={example}
             type="button"
-            className="rounded-full border border-border px-2.5 py-1 text-[10px] text-muted hover:border-accent/40 hover:text-text"
+            className="chip max-w-full cursor-pointer truncate transition-colors duration-150 hover:bg-raised hover:text-text"
             onClick={() => setPrompt(example)}
           >
             {example}
@@ -209,31 +210,31 @@ export function AskZent({ initialPrompt = "", agentId = "", agentName = "" }: {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          className="btn btn-primary min-h-11 gap-1.5 text-sm"
-          disabled={busy || prompt.trim().length < 8}
+        <Button
+          variant="primary"
+          leadingIcon={Sparkle}
+          loading={busy}
+          disabled={prompt.trim().length < 8}
           data-testid="ask-submit"
           onClick={() => void interpret()}
         >
-          {busy ? <Spinner size={14} /> : <Sparkle size={15} aria-hidden />}
           {busy ? "Interpretando…" : "Continuar"}
-        </button>
-        <span className="text-[10px] text-faint">Todavía no se crea nada: primero revisas lo que Zent entendió.</span>
+        </Button>
+        <span className="text-[12px] text-faint">
+          Todavía no se crea nada: primero revisas lo que Zent entendió.
+        </span>
       </div>
 
-      <ErrorInline message={error} />
+      <ErrorInline message={error} className="mb-0" />
 
       {proposal?.summary && (
-        <div className="space-y-3 rounded-lg border border-accent/30 bg-accent/5 p-4" data-testid="ask-understanding">
+        <div className="space-y-3.5 rounded-lg border border-accent-line bg-accent-soft/40 p-4" data-testid="ask-understanding">
           <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold tracking-wide text-text uppercase">Entendí esto</h3>
-            <span className="badge badge-info" data-testid="ask-confidence">
-              confianza {Math.round((proposal.confidence ?? 0) * 100)}%
+            <h3 className="text-h3">Entendí esto</h3>
+            <span data-testid="ask-confidence">
+              <Badge tone="info">confianza {Math.round((proposal.confidence ?? 0) * 100)}%</Badge>
             </span>
-            {proposal.source === "heuristics" && (
-              <span className="badge badge-warning">borrador por reglas</span>
-            )}
+            {proposal.source === "heuristics" && <Badge tone="warn">borrador por reglas</Badge>}
           </div>
 
           <dl className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -247,22 +248,22 @@ export function AskZent({ initialPrompt = "", agentId = "", agentName = "" }: {
             )}
           </dl>
 
-          <p className="rounded-md bg-surface/60 px-3 py-2 text-xs text-muted" data-testid="ask-summary">
+          <p className="rounded-md border border-border-soft bg-surface px-3 py-2.5 text-[13px] leading-relaxed text-muted" data-testid="ask-summary">
             {proposal.summary.text}
           </p>
 
           {proposal.notes.length > 0 && (
-            <p className="flex items-center gap-1 text-[10px] text-warn">
-              <WarningCircle size={11} aria-hidden /> {proposal.notes.join(" ")}
+            <p className="flex items-center gap-1.5 text-[12px] text-warn">
+              <WarningCircle size={12} aria-hidden /> {proposal.notes.join(" ")}
             </p>
           )}
 
           {(proposal.questions.length > 0 || warnings.length > 0 || errors.length > 0) && (
-            <div className="space-y-1 rounded-md border border-warn/40 bg-warn-soft px-3 py-2" data-testid="ask-questions">
-              <p className="text-[11px] font-medium text-text">
+            <div className="space-y-1.5 rounded-md border border-warn/40 bg-warn-soft px-3 py-2.5" data-testid="ask-questions">
+              <p className="text-[13px] font-medium text-text">
                 {errors.length > 0 ? "Necesito resolver esto antes de crear:" : "Necesito dos cosas:"}
               </p>
-              <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-muted">
+              <ul className="list-disc space-y-1 pl-4 text-[12px] leading-relaxed text-muted">
                 {[...errors, ...warnings].map((issue) => (
                   <li key={`${issue.code}-${issue.message}`}>
                     {issue.message}
@@ -277,19 +278,19 @@ export function AskZent({ initialPrompt = "", agentId = "", agentName = "" }: {
           )}
 
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="btn btn-primary min-h-9 gap-1.5 px-3 text-xs"
+            <Button
+              variant="primary"
+              leadingIcon={FloppyDisk}
+              loading={creating === "simple"}
               disabled={!!creating}
               data-testid="ask-create"
               onClick={() => void create("simple")}
             >
-              {creating === "simple" ? <Spinner size={13} /> : <FloppyDisk size={14} aria-hidden />}
               Crear automatización
-            </button>
-            <button
-              type="button"
-              className="btn btn-secondary min-h-9 gap-1.5 px-3 text-xs"
+            </Button>
+            <Button
+              variant="secondary"
+              leadingIcon={PencilSimple}
               data-testid="ask-change"
               onClick={() => {
                 setProposal(null);
@@ -297,46 +298,50 @@ export function AskZent({ initialPrompt = "", agentId = "", agentName = "" }: {
                 setShowFlow(false);
               }}
             >
-              <PencilSimple size={14} aria-hidden /> Cambiar algo
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost min-h-9 gap-1.5 px-3 text-xs"
+              Cambiar algo
+            </Button>
+            <Button
+              variant="ghost"
+              leadingIcon={Code}
               data-testid="ask-details"
+              aria-expanded={showDetails}
               onClick={() => setShowDetails((v) => !v)}
             >
-              <Code size={14} aria-hidden /> Ver detalles
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost min-h-9 gap-1.5 px-3 text-xs"
+              Ver detalles
+            </Button>
+            <Button
+              variant="ghost"
+              leadingIcon={ArrowRight}
+              loading={creating === "preview"}
               disabled={!!creating}
               data-testid="ask-advanced"
               onClick={() => void previewFlow()}
             >
-              {creating === "preview" ? <Spinner size={13} /> : <ArrowRight size={14} aria-hidden />}
               Ver flujo avanzado
-            </button>
+            </Button>
             {showFlow && compiledPreview?.valid && (
-              <button
-                type="button"
-                className="btn btn-secondary min-h-9 gap-1.5 px-3 text-xs"
+              <Button
+                variant="secondary"
+                leadingIcon={Checks}
                 disabled={!!creating}
                 data-testid="ask-create-advanced"
                 onClick={() => void create("advanced")}
               >
-                <Checks size={14} aria-hidden /> Abrir en el canvas
-              </button>
+                Abrir en el canvas
+              </Button>
             )}
           </div>
 
           {showDetails && (
-            <pre className="max-h-64 overflow-auto rounded-md bg-surface/70 p-3 font-mono text-[10px] text-muted" data-testid="ask-plan-json">
+            <pre
+              className="max-h-64 overflow-auto rounded-md border border-border-soft bg-control p-3 font-mono text-[11px] leading-relaxed text-muted"
+              data-testid="ask-plan-json"
+            >
               {JSON.stringify({ intent: proposal.intent, plan: proposal.plan }, null, 2)}
             </pre>
           )}
           {showFlow && compiledPreview && (
-            <div className="text-[10px] text-muted" data-testid="ask-flow-preview">
+            <div className="text-[12px] text-muted" data-testid="ask-flow-preview">
               {compiledPreview.valid ? (
                 <span>
                   Flujo listo: {compiledPreview.graph.nodes.map((n) => n.type).join(" → ")}
@@ -357,12 +362,14 @@ export function AskZent({ initialPrompt = "", agentId = "", agentName = "" }: {
 function UnderstandingBlock({ label, value, items }: { label: string; value?: string; items?: string[] }) {
   return (
     <div>
-      <dt className="text-[10px] font-semibold tracking-wider text-faint uppercase">{label}</dt>
-      {value && <dd className="mt-0.5 text-xs text-text">{value}</dd>}
+      <dt className="eyebrow">{label}</dt>
+      {value && <dd className="mt-0.5 text-[13px] leading-relaxed text-text">{value}</dd>}
       {items && (
         <dd className="mt-0.5 space-y-0.5">
           {items.map((item) => (
-            <p key={item} className="text-xs text-text">• {item}</p>
+            <p key={item} className="text-[13px] leading-relaxed text-text">
+              • {item}
+            </p>
           ))}
         </dd>
       )}

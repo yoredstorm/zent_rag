@@ -20,6 +20,7 @@ import {
   newGroup,
   newRule,
 } from "../../lib/conditionTree";
+import { Button, Input, Select } from "../ui";
 import { DataPicker } from "./DataPicker";
 
 type Props = {
@@ -32,10 +33,13 @@ type Props = {
 export function ConditionBuilder({ config, sources, onChange }: Props) {
   const tree = useMemo(() => normalizeConditionConfig(config), [config]);
   return (
-    <div className="space-y-2" data-testid="wf-condition-builder">
+    <div className="space-y-2.5" data-testid="wf-condition-builder">
       <GroupView node={tree} path={[]} depth={0} root={tree} sources={sources} onChange={onChange} />
       {describeCondition(tree) && (
-        <p className="rounded-md border border-accent/30 bg-accent/5 px-2 py-1.5 text-[10px] text-muted" data-testid="wf-condition-preview">
+        <p
+          className="rounded-md border border-accent-line bg-accent-soft/60 px-2.5 py-2 text-[12px] leading-relaxed text-muted"
+          data-testid="wf-condition-preview"
+        >
           Se ejecutará cuando {describeCondition(tree)}.
         </p>
       )}
@@ -55,10 +59,10 @@ type GroupProps = {
 function GroupView({ node, path, depth, root, sources, onChange }: GroupProps) {
   const update = (nextPath: number[], next: ConditionNode | null) => onChange(updateAtPath(root, nextPath, next));
   return (
-    <div className={`space-y-1.5 ${depth > 0 ? "rounded-md border border-dashed border-border p-2" : ""}`}>
+    <div className={depth > 0 ? "space-y-2 rounded-md border border-dashed border-border-strong p-2.5" : "space-y-2"}>
       <div className="flex items-center gap-1.5">
-        <select
-          className="rounded border border-border bg-soft px-1.5 py-1 text-[10px]"
+        <Select
+          className="min-h-8 w-auto text-[12px]"
           value={node.op}
           data-testid={`wf-cond-op-${path.join("-") || "root"}`}
           aria-label="Todas o alguna condición"
@@ -66,17 +70,18 @@ function GroupView({ node, path, depth, root, sources, onChange }: GroupProps) {
         >
           <option value="and">Se cumplen todas</option>
           <option value="or">Se cumple al menos una</option>
-        </select>
+        </Select>
         {depth > 0 && (
-          <button
-            type="button"
-            className="btn btn-ghost min-h-5 px-1 text-[9px] text-danger"
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 min-h-0 px-0 text-danger"
             aria-label="Quitar grupo"
             data-testid={`wf-cond-remove-group-${path.join("-")}`}
             onClick={() => update(path, null)}
           >
-            <X size={11} aria-hidden />
-          </button>
+            <X size={12} aria-hidden />
+          </Button>
         )}
       </div>
 
@@ -103,23 +108,27 @@ function GroupView({ node, path, depth, root, sources, onChange }: GroupProps) {
       )}
 
       <div className="flex flex-wrap gap-1.5">
-        <button
-          type="button"
-          className="btn btn-ghost min-h-6 gap-1 px-1.5 text-[9px]"
+        <Button
+          variant="ghost"
+          size="sm"
+          leadingIcon={Plus}
+          className="text-[11px]"
           data-testid={`wf-cond-add-${path.join("-") || "root"}`}
           onClick={() => update(path, appendToGroup(root, path, newRule()))}
         >
-          <Plus size={10} aria-hidden /> Condición
-        </button>
+          Condición
+        </Button>
         {depth < 2 && (
-          <button
-            type="button"
-            className="btn btn-ghost min-h-6 gap-1 px-1.5 text-[9px]"
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={Plus}
+            className="text-[11px]"
             data-testid={`wf-cond-add-group-${path.join("-") || "root"}`}
             onClick={() => update(path, appendToGroup(root, path, newGroup("or")))}
           >
-            <Plus size={10} aria-hidden /> Grupo (Y/O)
-          </button>
+            Grupo (Y/O)
+          </Button>
         )}
       </div>
     </div>
@@ -148,7 +157,7 @@ function ConditionRow({ rule, path, sources, onUpdate }: RowProps) {
   const valueless = VALUELESS_OPERATORS.has(rule.operator);
 
   return (
-    <div className="space-y-1 rounded-md border border-border bg-soft/50 p-1.5" data-testid={`wf-cond-row-${path.join("-")}`}>
+    <div className="space-y-1.5 rounded-md border border-border bg-soft/50 p-2" data-testid={`wf-cond-row-${path.join("-")}`}>
       <div className="flex items-center gap-1">
         <DataPicker
           sources={sources}
@@ -160,32 +169,34 @@ function ConditionRow({ rule, path, sources, onUpdate }: RowProps) {
           }}
         />
         {rule.field && (
-          <button
-            type="button"
-            className="btn btn-ghost min-h-5 px-1 text-[9px] text-faint"
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 w-7 min-h-0 px-0 text-faint"
             aria-label="Quitar dato"
             onClick={() => {
               setPickedLabel(null);
               onUpdate({ ...rule, field: "", label: undefined });
             }}
           >
-            <X size={10} aria-hidden />
-          </button>
+            <X size={11} aria-hidden />
+          </Button>
         )}
-        <button
-          type="button"
-          className="btn btn-ghost ml-auto min-h-5 px-1 text-[9px] text-danger"
+        <Button
+          variant="ghost"
+          size="sm"
+          className="ml-auto h-7 w-7 min-h-0 px-0 text-danger"
           aria-label="Eliminar condición"
           data-testid={`wf-cond-delete-${path.join("-")}`}
           onClick={() => onUpdate(null)}
         >
-          <Trash size={11} aria-hidden />
-        </button>
+          <Trash size={12} aria-hidden />
+        </Button>
       </div>
 
-      <div className="flex items-center gap-1">
-        <select
-          className="min-w-0 flex-1 rounded border border-border bg-bg px-1.5 py-1 text-[10px]"
+      <div className="flex items-center gap-1.5">
+        <Select
+          className="min-w-0 flex-1 text-[12px]"
           value={rule.operator}
           aria-label="Operador"
           data-testid={`wf-cond-operator-${path.join("-")}`}
@@ -201,10 +212,10 @@ function ConditionRow({ rule, path, sources, onUpdate }: RowProps) {
           {CONDITION_OPERATORS.map((op) => (
             <option key={op.value} value={op.value}>{op.label}</option>
           ))}
-        </select>
+        </Select>
         {!valueless && (
-          <input
-            className="w-24 rounded border border-border bg-bg px-1.5 py-1 text-[10px]"
+          <Input
+            className="w-24 text-[12px]"
             placeholder="Valor"
             aria-label="Valor"
             data-testid={`wf-cond-value-${path.join("-")}`}

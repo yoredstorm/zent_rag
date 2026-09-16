@@ -6,6 +6,7 @@ import { X } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
 import { cn } from "./cn";
 import { Button, IconButton } from "./Button";
+import type { HTMLAttributes } from "react";
 
 /* ------------------------------------------------------------------ */
 /* Tooltip                                                             */
@@ -170,7 +171,7 @@ export type ModalProps = {
   hideClose?: boolean;
   closeLabel?: string;
   className?: string;
-};
+} & Omit<HTMLAttributes<HTMLDivElement>, "children">;
 
 const MODAL_SIZE: Record<NonNullable<ModalProps["size"]>, string> = {
   sm: "max-w-[400px]",
@@ -190,6 +191,7 @@ export function Modal({
   hideClose = false,
   closeLabel = "Cerrar",
   className,
+  ...rest
 }: ModalProps) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
@@ -201,6 +203,7 @@ export function Modal({
             MODAL_SIZE[size],
             className
           )}
+          {...rest}
         >
           <div className="flex items-start justify-between gap-4 px-5 pt-5 pb-4">
             <div className="min-w-0">
@@ -244,8 +247,10 @@ export type DrawerProps = {
   /** Ancho en px para side right/left. */
   width?: number;
   className?: string;
+  /** Clases del scrim (permite ocultarlo por breakpoint cuando el panel es solo móvil). */
+  overlayClassName?: string;
   closeLabel?: string;
-};
+} & Omit<HTMLAttributes<HTMLDivElement>, "children">;
 
 const DRAWER_SIDE: Record<NonNullable<DrawerProps["side"]>, string> = {
   right:
@@ -269,12 +274,19 @@ export function Drawer({
   side = "right",
   width = 440,
   className,
+  overlayClassName,
   closeLabel = "Cerrar panel",
+  ...rest
 }: DrawerProps) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Overlay className="fixed inset-0 z-[var(--z-drawer)] animate-fade-in bg-scrim data-[state=closed]:animate-fade-out" />
+        <DialogPrimitive.Overlay
+          className={cn(
+            "fixed inset-0 z-[var(--z-drawer)] animate-fade-in bg-scrim data-[state=closed]:animate-fade-out",
+            overlayClassName
+          )}
+        />
         <DialogPrimitive.Content
           className={cn(
             "fixed z-[var(--z-drawer)] flex flex-col border-border bg-overlay shadow-pop outline-none",
@@ -282,6 +294,7 @@ export function Drawer({
             className
           )}
           style={side === "bottom" ? undefined : { maxWidth: width }}
+          {...rest}
         >
           <div className="flex items-start justify-between gap-4 border-b border-border px-5 py-4">
             <div className="min-w-0">

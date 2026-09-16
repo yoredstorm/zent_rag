@@ -1,6 +1,6 @@
 import { Database, Files } from "@phosphor-icons/react";
 import { Link } from "react-router-dom";
-import { EmptyState, SkeletonBlock } from "../ui";
+import { Button, Checkbox, EmptyState, SkeletonBlock, cn } from "../ui";
 import type { IngestionJob, KnowledgeSource } from "./types";
 
 export const INDEXING_COPY =
@@ -18,6 +18,18 @@ function humanStatus(source: KnowledgeSource, job: IngestionJob | undefined): st
   if (job?.status === "running") return "Indexando";
   if (job?.status === "failed" || job?.status === "dead") return "Falló el indexado";
   return "Sin indexar";
+}
+
+/** Estado real de la fuente: alimenta el activity rail de cada fila. */
+function railState(
+  source: KnowledgeSource,
+  job: IngestionJob | undefined,
+): "ready" | "queued" | "running" | "warning" | "failed" {
+  if (job?.status === "failed" || job?.status === "dead") return "failed";
+  if (job?.status === "running") return "running";
+  if (job?.status === "pending") return "queued";
+  if (source.document_count > 0) return "ready";
+  return "warning";
 }
 
 export function AgentSourcePicker({
@@ -52,7 +64,7 @@ export function AgentSourcePicker({
         title="Sin fuentes cargadas"
         body="Carga documentos o conectores en Fuentes y vuelve para asignarlos a este agente."
         action={
-          <Link to="/knowledge/sources" className="btn btn-secondary min-h-11">
+          <Link to="/knowledge/sources" className="btn btn-secondary">
             Cargar fuentes
           </Link>
         }
@@ -63,15 +75,21 @@ export function AgentSourcePicker({
   const waiting = sources.some((source) => selectedIds.includes(source.id) && !source.document_count);
 
   return (
-    <fieldset>
-      <legend className="mb-2 text-sm font-medium text-text">Fuentes que ya cargaste</legend>
-      <p className="mb-3 text-xs text-muted">Elige con qué material responde este agente.</p>
+    <fieldset className="min-w-0">
+      <legend className="text-h3">Fuentes que ya cargaste</legend>
+      <p className="mt-0.5 text-xs leading-relaxed text-muted">
+        Elige con qué material responde este agente.
+      </p>
       {waiting && (
-        <p className="mb-3 text-xs text-warn" data-testid="source-indexing-copy">
+        <p
+          className="mt-3 rounded-md border border-warn/25 bg-warn-soft px-3 py-2.5 text-xs leading-relaxed text-warn"
+          data-testid="source-indexing-copy"
+          role="status"
+        >
           {INDEXING_COPY}
         </p>
       )}
-      <div className="grid gap-2">
+      <div className="mt-3 grid gap-2">
         {sources.map((source) => {
           const checked = selectedIds.includes(source.id);
           const job = latestJobForSource(source.id, jobs);
@@ -81,49 +99,51 @@ export function AgentSourcePicker({
           return (
             <div
               key={source.id}
-              className={`flex min-h-11 items-start gap-3 rounded-md border px-3 py-2.5 ${
-                checked ? "border-accent bg-accent-soft/40" : "border-border"
-              }`}
+              data-state={railState(source, job)}
+              className={cn(
+                "state-rail flex items-start gap-2 rounded-md border py-2.5 pr-3 pl-4",
+                checked ? "border-accent-line bg-accent-soft/40" : "border-border",
+              )}
             >
-              <label className="flex min-w-0 flex-1 cursor-pointer items-start gap-3">
-                <input
-                  type="checkbox"
-                  className="mt-1"
-                  checked={checked}
-                  onChange={() => onToggle(source.id)}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-2 text-sm font-medium text-text">
-                    <Files size={14} className="text-accent" aria-hidden />
-                    {source.name}
+              <Checkbox
+                className="min-w-0 flex-1"
+                id={`agent-source-${source.id}`}
+                checked={checked}
+                onCheckedChange={() => onToggle(source.id)}
+                label={
+                  <span className="block min-w-0">
+                    <span className="flex items-center gap-2 font-medium text-text">
+                      <Files size={14} className="shrink-0 text-accent" aria-hidden />
+                      <span className="truncate">{source.name}</span>
+                    </span>
+                    <span className="mt-0.5 block text-xs text-faint">
+                      {source.type} · {humanStatus(source, job)}
+                    </span>
+                    {empty && active && (
+                      <span className="progress-track mt-2 block" data-testid={`source-progress-${source.id}`}>
+                        {progress > 0 ? (
+                          <span className="progress-fill block" style={{ width: `${progress}%` }} />
+                        ) : (
+                          <span className="progress-fill block w-1/3 animate-pulse" />
+                        )}
+                      </span>
+                    )}
+                    {empty && !active && (
+                      <span className="mt-1 block text-xs text-warn">Aún no indexada</span>
+                    )}
                   </span>
-                  <span className="mt-0.5 block text-xs text-faint">
-                    {source.type} · {humanStatus(source, job)}
-                  </span>
-                  {empty && active && (
-                    <div className="progress-track mt-2" data-testid={`source-progress-${source.id}`}>
-                      {progress > 0 ? (
-                        <div className="progress-fill" style={{ width: `${progress}%` }} />
-                      ) : (
-                        <div className="progress-fill w-1/3 animate-pulse" />
-                      )}
-                    </div>
-                  )}
-                  {empty && !active && (
-                    <span className="mt-1 block text-xs text-warn">Aún no indexada</span>
-                  )}
-                </span>
-              </label>
+                }
+              />
               {empty && !active && (
-                <button
-                  type="button"
-                  className="btn btn-secondary min-h-9 shrink-0 px-2 text-xs"
-                  disabled={indexingId === source.id}
+                <Button
+                  size="sm"
+                  className="shrink-0"
+                  loading={indexingId === source.id}
                   data-testid={`source-index-${source.id}`}
                   onClick={() => onIndex(source.id)}
                 >
                   Indexar ahora
-                </button>
+                </Button>
               )}
             </div>
           );

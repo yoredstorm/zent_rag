@@ -43,7 +43,7 @@ export function PanelHeader({
   description?: ReactNode;
   actions?: ReactNode;
   className?: string;
-} & HTMLAttributes<HTMLDivElement>) {
+} & Omit<HTMLAttributes<HTMLDivElement>, "title">) {
   return (
     <div className={cn("panel-header", className)} {...rest}>
       <div className="min-w-0">

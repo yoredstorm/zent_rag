@@ -22,7 +22,19 @@ import {
   buildAgentPayload,
 } from "../components/agentStudio/types";
 import { Breadcrumb } from "../components/Breadcrumb";
-import { ErrorInline, PageHeader, SkeletonBlock, Spinner, SuccessInline } from "../components/ui";
+import {
+  Button,
+  ConfirmDialog,
+  ErrorInline,
+  PageHeader,
+  Panel,
+  PanelHeader,
+  SaveStatus,
+  SkeletonBlock,
+  SuccessInline,
+  Switch,
+  type SaveState,
+} from "../components/ui";
 
 type StudioLocationState = { pendingMessage?: string };
 
@@ -85,6 +97,8 @@ export default function AgentStudioPage() {
   } | null>(null);
   const [workspaceId, setWorkspaceId] = useState("");
   const [savedPayload, setSavedPayload] = useState("");
+  const [nameTouched, setNameTouched] = useState(false);
+  const [leaveOpen, setLeaveOpen] = useState(false);
   const pendingRun = useRef<string | null>(null);
 
   const payload = useMemo(
@@ -622,14 +636,15 @@ export default function AgentStudioPage() {
 
   if (loading) {
     return (
-      <div className="panel p-5">
+      <Panel className="p-4">
         <SkeletonBlock rows={6} />
-      </div>
+      </Panel>
     );
   }
 
   const configureVisible = panel !== "test";
   const testVisible = panel !== "configure";
+  const saveState: SaveState = saving ? "saving" : dirty ? "dirty" : "idle";
 
   return (
     <div>
@@ -639,40 +654,50 @@ export default function AgentStudioPage() {
           { label: isNew ? "Nuevo agente" : name || "Agente" },
         ]}
       />
-      <div className="sticky top-0 z-10 mb-4 border-b border-border bg-bg/90 py-3 backdrop-blur-md motion-reduce:backdrop-blur-none">
+      <div className="sticky top-0 z-20 mb-4 border-b border-border bg-bg py-3">
         <PageHeader
+          className="mb-0"
           title={isNew ? "Nuevo agente" : name || "Agente"}
           subtitle="Dile qué hace, elige fuentes y pruébalo. Siempre puedes volver a editar."
+          meta={<SaveStatus state={saveState} dirtyLabel="Cambios sin guardar" />}
           actions={
             <div className="flex flex-wrap items-center gap-2">
-              {dirty && <span className="badge badge-pending">Cambios sin guardar</span>}
               {!isNew && (
-                <label className="flex min-h-11 items-center gap-2 text-sm text-muted">
-                  <input type="checkbox" checked={isActive} onChange={(e) => setIsActive(e.target.checked)} />
-                  Activo
-                </label>
+                <Switch
+                  checked={isActive}
+                  onCheckedChange={setIsActive}
+                  label="Activo"
+                  className="w-auto items-center gap-2 rounded-md border border-border bg-raised px-3 py-2"
+                />
               )}
               {!isNew && id && (
-                <Link to={`/chat?target=agent&id=${id}`} className="btn btn-ghost min-h-11">
+                <Link to={`/chat?target=agent&id=${id}`} className="btn btn-ghost">
                   <ChatCircleDots size={16} aria-hidden />
                   Probar en Playground
                 </Link>
               )}
-              <button type="button" className="btn btn-primary min-h-11" disabled={saving || !name.trim()} onClick={() => void saveAndStay()}>
-                {saving ? <Spinner size={14} /> : <FloppyDisk size={15} aria-hidden />}
+              <Button
+                variant="primary"
+                leadingIcon={FloppyDisk}
+                loading={saving}
+                disabled={!name.trim()}
+                onClick={() => void saveAndStay()}
+              >
                 {isNew ? "Crear agente" : "Guardar"}
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost min-h-11"
+              </Button>
+              <Button
+                variant="ghost"
+                leadingIcon={ArrowLeft}
                 onClick={() => {
-                  if (dirty && !window.confirm("Hay cambios sin guardar. ¿Salir sin guardar?")) return;
+                  if (dirty) {
+                    setLeaveOpen(true);
+                    return;
+                  }
                   navigate("/agents");
                 }}
               >
-                <ArrowLeft size={16} aria-hidden />
                 Volver
-              </button>
+              </Button>
             </div>
           }
         />
@@ -680,37 +705,59 @@ export default function AgentStudioPage() {
       <ErrorInline message={error} />
       <SuccessInline message={msg} />
 
-      <div className="mb-4 flex gap-2 lg:hidden" role="tablist" aria-label="Estudio">
-        <button type="button" role="tab" aria-selected={panel !== "test"} className="tab min-h-11" onClick={() => goPanel("configure")}>
+      <div className="tabs mb-4 lg:hidden" role="tablist" aria-label="Estudio">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={panel !== "test"}
+          className="tab"
+          onClick={() => goPanel("configure")}
+        >
           Configurar
         </button>
-        <button type="button" role="tab" aria-selected={panel === "test"} className="tab min-h-11" onClick={() => goPanel("test")}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={panel === "test"}
+          className="tab"
+          onClick={() => goPanel("test")}
+        >
           Probar
         </button>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
-        <div className={`panel p-5 ${configureVisible ? "" : "hidden lg:block"}`}>
-          <AgentPurposeForm
-            name={name}
-            purpose={config.purpose || ""}
-            instructions={systemPrompt}
-            onName={setName}
-            onPurpose={(value) => setConfig({ ...config, purpose: value })}
-            onInstructions={setSystemPrompt}
+        <Panel className={configureVisible ? "" : "hidden lg:block"}>
+          <PanelHeader
+            title="Contexto"
+            description="Qué hace este agente y con qué material responde."
           />
-          <div className="mt-6">
-            <AgentSourcePicker
-              sources={sources}
-              selectedIds={config.source_ids}
-              jobs={jobs}
-              loading={sourcesLoading}
-              indexingId={indexingId}
-              onToggle={toggleSource}
-              onIndex={(sourceId) => void indexSource(sourceId)}
+          <div className="grid gap-5 p-4">
+            <AgentPurposeForm
+              name={name}
+              purpose={config.purpose || ""}
+              instructions={systemPrompt}
+              nameError={nameTouched && !name.trim() ? "Necesitas un nombre para guardar." : undefined}
+              onName={(value) => {
+                setNameTouched(true);
+                setName(value);
+              }}
+              onPurpose={(value) => setConfig({ ...config, purpose: value })}
+              onInstructions={setSystemPrompt}
             />
+            <div className="border-t border-border pt-4">
+              <AgentSourcePicker
+                sources={sources}
+                selectedIds={config.source_ids}
+                jobs={jobs}
+                loading={sourcesLoading}
+                indexingId={indexingId}
+                onToggle={toggleSource}
+                onIndex={(sourceId) => void indexSource(sourceId)}
+              />
+            </div>
           </div>
-        </div>
+        </Panel>
         <div className={testVisible ? "" : "hidden lg:block"}>
           <AgentTestChat
             turns={turns}
@@ -819,6 +866,19 @@ export default function AgentStudioPage() {
             })
             .catch((err) => setError(err instanceof Error ? err.message : "Error"))
             .finally(() => setEmbedBusy(false));
+        }}
+      />
+
+      <ConfirmDialog
+        open={leaveOpen}
+        onOpenChange={setLeaveOpen}
+        title="Salir sin guardar"
+        body="Hay cambios sin guardar en este agente. Si sales ahora, se pierden."
+        confirmLabel="Salir sin guardar"
+        cancelLabel="Seguir editando"
+        onConfirm={() => {
+          setLeaveOpen(false);
+          navigate("/agents");
         }}
       />
     </div>

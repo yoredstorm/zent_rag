@@ -1,39 +1,42 @@
+import { CaretDown } from "@phosphor-icons/react";
 import type { ReactNode } from "react";
+import { Checkbox, Field, Panel, cn } from "../ui";
 
-/** Estilo compartido de los controles del panel (el portal no define `.input`). */
-export const FIELD_INPUT_CLASS =
-  "w-full rounded-md border border-border bg-soft px-3 py-2.5 text-sm text-text outline-none focus-visible:ring-2 focus-visible:ring-accent";
+const LABEL_CLASS = "text-[13px] font-medium text-text";
 
 /**
- * Campo del panel de ajustes: etiqueta visible + una línea que explica para qué
- * sirve. El control lo pasa quien lo usa, con `id` y `aria-describedby`
- * apuntando al hint (`<id>-hint`).
+ * Campo del panel de ajustes. Envuelve la primitiva `Field`: label real siempre
+ * visible, hint y error conectados por `aria-describedby`, control con el id del
+ * campo (los inputs del panel usan las primitivas Input/Textarea/Select).
  */
 export function AgentField({
   id,
   label,
   hint,
+  error,
+  required,
   className,
   children,
 }: {
   id: string;
   label: string;
-  hint?: string;
+  hint?: ReactNode;
+  error?: ReactNode;
+  required?: boolean;
   className?: string;
   children: ReactNode;
 }) {
   return (
-    <div className={className}>
-      <label className={`block text-sm font-medium text-text ${hint ? "" : "mb-1"}`} htmlFor={id}>
-        {label}
-      </label>
-      {hint && (
-        <p id={`${id}-hint`} className="mt-0.5 mb-1.5 text-xs text-muted">
-          {hint}
-        </p>
-      )}
+    <Field
+      id={id}
+      label={<span className={LABEL_CLASS}>{label}</span>}
+      hint={hint}
+      error={error}
+      required={required}
+      className={className}
+    >
       {children}
-    </div>
+    </Field>
   );
 }
 
@@ -50,15 +53,18 @@ export function AgentFieldGroup({
   return (
     <section className="grid gap-3">
       <div>
-        <h3 className="text-sm font-semibold text-text">{title}</h3>
-        {hint && <p className="mt-0.5 text-xs text-muted">{hint}</p>}
+        <h3 className="text-h3">{title}</h3>
+        {hint && <p className="mt-0.5 text-xs leading-relaxed text-muted">{hint}</p>}
       </div>
       {children}
     </section>
   );
 }
 
-/** Permiso del agente: nombre en claro, qué implica y el id de la tool. */
+/**
+ * Permiso del agente: nombre en claro, qué implica y el id de la tool.
+ * El toggle es la primitiva Checkbox (foco visible y estado por `aria-checked`).
+ */
 export function AgentToggleCard({
   id,
   label,
@@ -75,22 +81,72 @@ export function AgentToggleCard({
   onChange: (value: boolean) => void;
 }) {
   return (
-    <label
-      htmlFor={id}
-      className="flex min-h-11 cursor-pointer items-start gap-3 rounded-md border border-border bg-soft p-3 hover:border-border-strong"
+    <div
+      className={cn(
+        "rounded-md border bg-raised p-3 transition-colors duration-150",
+        checked ? "border-accent-line bg-accent-soft/40" : "border-border hover:border-border-strong",
+      )}
     >
-      <input
+      <Checkbox
         id={id}
-        type="checkbox"
-        className="mt-0.5"
         checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
+        onCheckedChange={onChange}
+        label={<span className="font-medium">{label}</span>}
+        hint={hint}
       />
-      <span className="min-w-0">
-        <span className="block text-sm font-medium text-text">{label}</span>
-        <span className="mt-0.5 block text-xs text-muted">{hint}</span>
-        <span className="mt-0.5 block font-mono text-[11px] text-faint">{tech}</span>
-      </span>
-    </label>
+      <p className="mt-1 pl-[26px] font-mono text-[11px] text-faint">{tech}</p>
+    </div>
+  );
+}
+
+/**
+ * Progressive disclosure del estudio: el título resume y el detalle aparece
+ * solo cuando se pide. Sin `<details>` para mantener el control desde la URL.
+ */
+export function AgentDisclosure({
+  id,
+  title,
+  hint,
+  open,
+  onToggle,
+  children,
+  className,
+}: {
+  id: string;
+  title: string;
+  hint?: ReactNode;
+  open: boolean;
+  onToggle: (open: boolean) => void;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <Panel className={className}>
+      <button
+        type="button"
+        className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-lg px-4 py-3 text-left"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => onToggle(!open)}
+      >
+        <span className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <span className="text-h3">{title}</span>
+          {hint && <span className="text-xs text-muted">{hint}</span>}
+        </span>
+        <CaretDown
+          size={15}
+          aria-hidden
+          className={cn(
+            "shrink-0 text-faint transition-transform duration-200",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+      {open && (
+        <div id={id} className="animate-rise border-t border-border p-4">
+          {children}
+        </div>
+      )}
+    </Panel>
   );
 }

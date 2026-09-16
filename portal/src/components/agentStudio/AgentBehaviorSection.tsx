@@ -1,4 +1,4 @@
-import { AgentField, FIELD_INPUT_CLASS } from "./AgentField";
+import { AgentField } from "./AgentField";
 import {
   COPY,
   CUSTOM_MODEL_VALUE,
@@ -6,9 +6,8 @@ import {
   TONE_CHOICES,
   choiceOptionLabel,
 } from "./advancedCopy";
+import { Input, Select, Textarea } from "../ui";
 import { type AgentConfig, parseSchema } from "./types";
-
-const INPUT_CLASS = FIELD_INPUT_CLASS;
 
 const KNOWN_ROUTES = GATEWAY_ROUTES.map((route) => route.value);
 
@@ -38,12 +37,10 @@ export function AgentBehaviorSection({
   const schemaInvalid = outputSchema.trim() !== "" && !parseSchema(outputSchema);
 
   return (
-    <section className="mt-4 grid gap-5">
+    <section className="grid gap-5">
       <AgentField id="agent-model-route" label={COPY.model.label} hint={COPY.model.hint}>
-        <select
+        <Select
           id="agent-model-route"
-          aria-describedby="agent-model-route-hint"
-          className={INPUT_CLASS}
           value={gatewayValue}
           onChange={(e) => {
             const next = e.target.value;
@@ -67,15 +64,13 @@ export function AgentBehaviorSection({
               </option>
             ))}
           {canCustomModel && <option value={CUSTOM_MODEL_VALUE}>Modelo propio…</option>}
-        </select>
+        </Select>
       </AgentField>
 
       {showCustomModel && (
         <AgentField id="agent-model-custom" label={COPY.model.customLabel} hint={COPY.model.customHint}>
-          <input
+          <Input
             id="agent-model-custom"
-            aria-describedby="agent-model-custom-hint"
-            className={INPUT_CLASS}
             placeholder="openai/gpt-4o-mini"
             value={isKnownRoute ? "" : model}
             onChange={(e) => setModel(e.target.value)}
@@ -97,19 +92,17 @@ export function AgentBehaviorSection({
           step={0.05}
           value={config.temperature}
           onChange={(e) => setConfig({ ...config, temperature: Number(e.target.value) })}
-          className="w-full"
+          className="h-9 w-full cursor-pointer accent-accent"
         />
-        <div className="mt-1 flex justify-between text-xs text-faint">
+        <div className="flex justify-between text-xs text-faint">
           <span>{COPY.temperature.min}</span>
           <span>{COPY.temperature.max}</span>
         </div>
       </AgentField>
 
       <AgentField id="agent-tone" label={COPY.tone.label} hint={COPY.tone.hint}>
-        <select
+        <Select
           id="agent-tone"
-          aria-describedby="agent-tone-hint"
-          className={INPUT_CLASS}
           value={config.tone}
           onChange={(e) => setConfig({ ...config, tone: e.target.value as AgentConfig["tone"] })}
         >
@@ -118,25 +111,23 @@ export function AgentBehaviorSection({
               {tone.label} · {tone.hint}
             </option>
           ))}
-        </select>
+        </Select>
       </AgentField>
 
-      <AgentField id="agent-output-schema" label={COPY.output.label} hint={COPY.output.hint}>
-        <textarea
+      <AgentField
+        id="agent-output-schema"
+        label={COPY.output.label}
+        hint={COPY.output.hint}
+        error={schemaInvalid ? COPY.output.invalid : undefined}
+      >
+        <Textarea
           id="agent-output-schema"
-          aria-describedby="agent-output-schema-hint"
-          aria-invalid={schemaInvalid}
-          className={`${INPUT_CLASS} min-h-52 font-mono text-xs`}
+          className="min-h-52 font-mono text-xs"
           value={outputSchema}
           onChange={(e) => setOutputSchema(e.target.value)}
           placeholder={'{"product": "string", "warehouse": "string", "stock": "integer"}'}
           spellCheck={false}
         />
-        {schemaInvalid && (
-          <p className="mt-2 text-xs text-danger" role="alert">
-            {COPY.output.invalid}
-          </p>
-        )}
       </AgentField>
     </section>
   );

@@ -1,5 +1,6 @@
-import { AgentField, AgentFieldGroup, AgentToggleCard, FIELD_INPUT_CLASS } from "./AgentField";
+import { AgentField, AgentFieldGroup, AgentToggleCard } from "./AgentField";
 import { COPY, RETRIEVAL_STRATEGIES, TOOL_CHOICES, choiceOptionLabel } from "./advancedCopy";
+import { Input, Select } from "../ui";
 import type { AgentConfig } from "./types";
 
 const DEFAULT_LIMITS = { max_steps: 8, max_tokens: 4000, max_cost_usd: 0.5 };
@@ -42,7 +43,7 @@ export function AgentCapabilitiesSection({
   }
 
   return (
-    <div className="mt-4 grid gap-6">
+    <div className="grid gap-6">
       <AgentFieldGroup title={COPY.tools.title} hint={COPY.tools.hint}>
         <div className="grid gap-2 sm:grid-cols-2">
           {TOOL_CHOICES.map((tool) => (
@@ -57,7 +58,7 @@ export function AgentCapabilitiesSection({
             />
           ))}
         </div>
-        <p className="text-xs text-faint">
+        <p className="text-xs leading-relaxed text-faint">
           Consultar la base de datos y Llamar APIs externas son permisos sensibles: al activarlos
           también quedan habilitados en la seguridad del agente.
         </p>
@@ -70,10 +71,8 @@ export function AgentCapabilitiesSection({
             label={COPY.retrieval.strategyLabel}
             hint={COPY.retrieval.strategyHint}
           >
-            <select
+            <Select
               id="agent-retrieval-strategy"
-              aria-describedby="agent-retrieval-strategy-hint"
-              className={FIELD_INPUT_CLASS}
               value={retrieval.strategy}
               onChange={(e) => setRetrieval({ ...retrieval, strategy: e.target.value })}
             >
@@ -82,15 +81,14 @@ export function AgentCapabilitiesSection({
                   {choiceOptionLabel(strategy)}
                 </option>
               ))}
-            </select>
+            </Select>
           </AgentField>
 
           <AgentField id="agent-retrieval-topk" label={COPY.retrieval.topKLabel} hint={COPY.retrieval.topKHint}>
-            <input
+            <Input
               id="agent-retrieval-topk"
-              aria-describedby="agent-retrieval-topk-hint"
               type="number"
-              className={FIELD_INPUT_CLASS}
+              className="tabular-nums"
               min={1}
               max={50}
               value={retrieval.top_k}
@@ -103,11 +101,10 @@ export function AgentCapabilitiesSection({
             label={COPY.retrieval.thresholdLabel}
             hint={COPY.retrieval.thresholdHint}
           >
-            <input
+            <Input
               id="agent-retrieval-threshold"
-              aria-describedby="agent-retrieval-threshold-hint"
               type="number"
-              className={FIELD_INPUT_CLASS}
+              className="tabular-nums"
               step={0.05}
               min={0}
               max={1}
@@ -121,38 +118,35 @@ export function AgentCapabilitiesSection({
       <AgentFieldGroup title={COPY.limits.title} hint={COPY.limits.hint}>
         <div className="grid gap-4 sm:grid-cols-3">
           <AgentField id="agent-limit-steps" label={COPY.limits.stepsLabel} hint={COPY.limits.stepsHint}>
-            <input
+            <Input
               id="agent-limit-steps"
-              aria-describedby="agent-limit-steps-hint"
               type="number"
+              className="tabular-nums"
               min={1}
               max={100}
-              className={FIELD_INPUT_CLASS}
               value={config.limits?.max_steps ?? DEFAULT_LIMITS.max_steps}
               onChange={(e) => setLimit("max_steps", Number(e.target.value))}
             />
           </AgentField>
 
           <AgentField id="agent-limit-tokens" label={COPY.limits.tokensLabel} hint={COPY.limits.tokensHint}>
-            <input
+            <Input
               id="agent-limit-tokens"
-              aria-describedby="agent-limit-tokens-hint"
               type="number"
+              className="tabular-nums"
               min={1}
-              className={FIELD_INPUT_CLASS}
               value={config.limits?.max_tokens ?? DEFAULT_LIMITS.max_tokens}
               onChange={(e) => setLimit("max_tokens", Number(e.target.value))}
             />
           </AgentField>
 
           <AgentField id="agent-limit-cost" label={COPY.limits.costLabel} hint={COPY.limits.costHint}>
-            <input
+            <Input
               id="agent-limit-cost"
-              aria-describedby="agent-limit-cost-hint"
               type="number"
+              className="tabular-nums"
               min={0}
               step={0.01}
-              className={FIELD_INPUT_CLASS}
               value={config.limits?.max_cost_usd ?? DEFAULT_LIMITS.max_cost_usd}
               onChange={(e) => setLimit("max_cost_usd", Number(e.target.value))}
             />

@@ -99,11 +99,11 @@ export default function SqlRunnerModal({
       aria-label="Ejecutar consulta SQL"
     >
       <div
-        className="absolute inset-0 animate-fade-in bg-black/70 backdrop-blur-sm"
+        className="absolute inset-0 animate-fade-in bg-scrim backdrop-blur-[2px]"
         onClick={onClose}
         aria-hidden
       />
-      <div className="panel relative flex max-h-[85dvh] w-full max-w-[860px] animate-page-in flex-col overflow-hidden shadow-pop">
+      <div className="relative flex max-h-[85dvh] w-full max-w-[860px] animate-pop-in flex-col overflow-hidden rounded-xl border border-border bg-overlay shadow-pop">
         <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-text">
             <Table size={16} className="text-accent" aria-hidden />

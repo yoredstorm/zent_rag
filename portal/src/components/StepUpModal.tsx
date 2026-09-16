@@ -53,8 +53,8 @@ export function StepUpModal() {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="alertdialog" aria-modal="true" aria-label="Confirmar con MFA">
-      <div className="absolute inset-0 bg-black/60" onClick={() => setOpen(false)} aria-hidden />
-      <div className="relative w-full max-w-sm rounded-md border border-border bg-surface p-5 shadow-pop">
+      <div className="absolute inset-0 bg-scrim backdrop-blur-[2px]" onClick={() => setOpen(false)} aria-hidden />
+      <div className="relative w-full max-w-sm rounded-xl border border-border bg-overlay p-5 shadow-pop">
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-2.5">
             <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-accent/25 bg-accent-soft text-accent">
@@ -79,7 +79,7 @@ export function StepUpModal() {
             autoComplete="one-time-code"
             value={code}
             onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ""))}
-            className="w-full rounded-md border border-border bg-soft px-3 py-2 font-mono text-lg tracking-[0.4em] text-text outline-none focus:border-accent"
+            className="w-full rounded-md border border-border bg-control px-3 py-2 font-mono text-lg tracking-[0.4em] text-text outline-none focus:border-accent"
             placeholder="••••••"
           />
         </label>

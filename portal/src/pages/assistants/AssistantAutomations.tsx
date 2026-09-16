@@ -1,6 +1,14 @@
 import { Plus } from "@phosphor-icons/react";
 import { Link } from "react-router-dom";
+import { Badge, Button, EmptyState, Field, Panel, PanelHeader, Textarea } from "../../components/ui";
 import { COPY, workflowStatusLabel, type AutomationsPayload } from "./assistantCopy";
+
+/** Estado real del flujo para el activity rail. */
+function railState(status: string): "ready" | "queued" | "failed" {
+  if (status === "active") return "ready";
+  if (status === "failed" || status === "error") return "failed";
+  return "queued";
+}
 
 export function AssistantAutomations({
   agentName,
@@ -16,45 +24,69 @@ export function AssistantAutomations({
   onAdd: () => void;
 }) {
   return (
-    <section className="space-y-3" data-testid="assistant-automations">
-      <div className="panel space-y-2 p-4">
-        <h2 className="text-sm font-semibold text-text">{COPY.automationsTitle}</h2>
-        <textarea
-          className="min-h-20 w-full resize-y rounded-md border border-border bg-soft px-3 py-2 text-xs"
-          placeholder="Cuando un producto se quede sin stock, analiza su nivel de ventas y avisa al gerente."
-          value={prompt}
-          data-testid="assistant-automation-prompt"
-          onChange={(e) => onPromptChange(e.target.value)}
+    <section className="grid gap-4" data-testid="assistant-automations">
+      <Panel>
+        <PanelHeader
+          title={COPY.automationsTitle}
+          description="Describe qué debe vigilar. El copiloto propone el flujo."
         />
-        <p className="text-[10px] text-faint">
-          {COPY.automationsHint.replace("este asistente", agentName)}
-        </p>
-        <button
-          type="button"
-          className="btn btn-primary min-h-9 gap-1.5 text-xs"
-          disabled={prompt.trim().length < 8}
-          data-testid="assistant-add-automation"
-          onClick={onAdd}
-        >
-          <Plus size={13} aria-hidden /> Agregar automatización
-        </button>
-      </div>
+        <div className="grid gap-3 p-4">
+          <Field
+            id="assistant-automation-prompt"
+            label="Qué debe vigilar"
+            hint={COPY.automationsHint.replace("este asistente", agentName)}
+          >
+            <Textarea
+              id="assistant-automation-prompt"
+              className="min-h-20 text-[13px]"
+              placeholder="Cuando un producto se quede sin stock, analiza su nivel de ventas y avisa al gerente."
+              value={prompt}
+              data-testid="assistant-automation-prompt"
+              onChange={(e) => onPromptChange(e.target.value)}
+            />
+          </Field>
+          <div className="flex justify-end">
+            <Button
+              variant="primary"
+              leadingIcon={Plus}
+              disabled={prompt.trim().length < 8}
+              data-testid="assistant-add-automation"
+              onClick={onAdd}
+            >
+              Agregar automatización
+            </Button>
+          </div>
+        </div>
+      </Panel>
+
       {(automations?.automations.length ?? 0) === 0 ? (
-        <p className="panel p-4 text-xs text-muted">{COPY.automationsEmpty}</p>
+        <Panel>
+          <EmptyState icon={Plus} title="Sin automatizaciones" body={COPY.automationsEmpty} compact />
+        </Panel>
       ) : (
-        <ul className="space-y-2">
+        <ul className="grid gap-3">
           {automations?.automations.map((automation) => (
-            <li key={automation.workflow_id} className="panel flex flex-wrap items-center gap-2 p-3 text-[11px]">
-              <Link to={`/workflows/${automation.workflow_id}`} className="font-medium text-text hover:text-accent">
-                {automation.name}
-              </Link>
-              <span className={`badge ${automation.status === "active" ? "badge-ok" : "badge-muted"}`}>
-                {workflowStatusLabel(automation.status)}
-              </span>
-              <span className="text-muted">Cuando {automation.when.toLowerCase()}</span>
-              <span className="ml-auto text-faint">
-                {automation.runs_7d} ejecuciones · {automation.success_rate ?? "—"}% éxito
-              </span>
+            <li key={automation.workflow_id}>
+              <article className="panel" data-state={railState(automation.status)}>
+                <div className="state-rail flex flex-wrap items-center gap-x-3 gap-y-2 p-4 pl-5 text-[13px]">
+                  <Link
+                    to={`/workflows/${automation.workflow_id}`}
+                    className="font-medium text-text hover:text-accent"
+                  >
+                    {automation.name}
+                  </Link>
+                  <Badge tone={automation.status === "active" ? "ok" : "neutral"}>
+                    {workflowStatusLabel(automation.status)}
+                  </Badge>
+                  <span className="min-w-0 flex-1 text-muted">
+                    Cuando {automation.when.toLowerCase()}
+                  </span>
+                  <span className="text-xs text-faint tabular-nums">
+                    {automation.runs_7d} ejecuciones · {automation.success_rate ?? "—"}% éxito
+                    {automation.failed_runs > 0 ? ` · ${automation.failed_runs} con fallos` : ""}
+                  </span>
+                </div>
+              </article>
             </li>
           ))}
         </ul>

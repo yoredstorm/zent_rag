@@ -47,8 +47,8 @@ export function TenantStepUpModal() {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="w-full max-w-sm rounded-md border border-border bg-surface p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
+      <div className="w-full max-w-sm rounded-xl border border-border bg-overlay p-5 shadow-pop">
         <h2 className="mb-2 font-semibold">Confirma para continuar</h2>
         <input
           type="password"

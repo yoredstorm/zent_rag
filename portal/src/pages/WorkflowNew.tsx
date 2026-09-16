@@ -1,11 +1,30 @@
 import { FlowArrow, MagicWand, PencilSimple, SquaresFour } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
-import { Breadcrumb } from "../components/Breadcrumb";
-import { ErrorInline, PageHeader, SkeletonBlock } from "../components/ui";
+import {
+  Button,
+  ButtonLink,
+  EmptyState,
+  ErrorInline,
+  PageHeader,
+  Panel,
+  PanelHeader,
+  Skeleton,
+} from "../components/ui";
 import type { WorkflowTemplate } from "../components/workflowStudio/types";
+
+/** Mismo vocabulario humano que la lista de workflows. */
+const TRIGGER_LABEL: Record<string, string> = {
+  webhook: "cuando llega una llamada al hook",
+  schedule: "según calendario",
+  event: "cuando ocurre un evento",
+};
+
+function triggerLabel(trigger: string): string {
+  return TRIGGER_LABEL[trigger] ?? trigger;
+}
 
 export default function WorkflowNewPage() {
   const { session } = useAuth();
@@ -51,75 +70,166 @@ export default function WorkflowNewPage() {
   }
 
   return (
-    <div className="space-y-5">
-      <Breadcrumb items={[{ label: "Workflows", to: "/workflows" }, { label: "Nuevo workflow" }]} />
+    <div>
       <PageHeader
+        breadcrumbs={[{ label: "Workflows", to: "/workflows" }, { label: "Nuevo workflow" }]}
         title="¿Cómo quieres crear tu automatización?"
-        subtitle="La opción recomendada es contar qué necesitas; el lienzo avanzado sigue disponible."
+        subtitle="Contar qué necesitas es el camino recomendado; el lienzo avanzado y las plantillas siguen disponibles."
       />
       <ErrorInline message={error} />
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Link
-          to="/workflows/new/ask"
-          className="panel group relative flex flex-col gap-2 border-accent/40 p-5 hover:border-accent"
-          data-testid="wf-mode-ai"
-        >
-          <span className="badge badge-info absolute top-3 right-3">Recomendado</span>
-          <MagicWand size={22} className="text-accent" aria-hidden />
-          <h2 className="text-base font-semibold text-text">Crear con IA</h2>
-          <p className="text-xs text-muted">
-            Describe qué quieres automatizar. Zent lo explica en lenguaje de negocio y tú confirmas
-            antes de crear nada.
-          </p>
-          <span className="mt-auto text-[11px] font-medium text-accent group-hover:underline">
-            Empezar a describir →
-          </span>
-        </Link>
+      {/* Camino principal: describir en lenguaje de negocio */}
+      <Panel className="border-accent/35 p-4 sm:p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <p className="eyebrow mb-2">Camino recomendado</p>
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-accent-line bg-accent-soft text-accent">
+                <MagicWand size={18} weight="regular" aria-hidden />
+              </span>
+              <h2 className="text-h2">Crear con IA</h2>
+            </div>
+            <p className="prose-measure mt-3 text-[13px] leading-relaxed text-muted">
+              Describe qué quieres automatizar con tus palabras. Zent lo traduce a un flujo y te lo
+              muestra primero en lenguaje de negocio.
+            </p>
+            <ol className="mt-4 flex flex-col gap-2.5">
+              <li className="flex items-start gap-2.5 text-[13px] text-muted">
+                <span className="mono mt-px text-[11px] text-ghost">1</span>
+                <span>
+                  <span className="font-medium text-text">Escribes la necesidad</span> — por ejemplo
+                  &ldquo;cuando una venta supere S/ 20,000, avisar al gerente comercial&rdquo;.
+                </span>
+              </li>
+              <li className="flex items-start gap-2.5 text-[13px] text-muted">
+                <span className="mono mt-px text-[11px] text-ghost">2</span>
+                <span>
+                  <span className="font-medium text-text">Zent te muestra lo que entendió</span>:
+                  cuándo corre, qué condiciones evalúa y qué acciones ejecuta.
+                </span>
+              </li>
+              <li className="flex items-start gap-2.5 text-[13px] text-muted">
+                <span className="mono mt-px text-[11px] text-ghost">3</span>
+                <span>
+                  <span className="font-medium text-text">Tú confirmas</span> y recién ahí se crea.
+                  Nada se ejecuta antes de tu aprobación.
+                </span>
+              </li>
+            </ol>
+          </div>
+          <div className="flex shrink-0 flex-col gap-2 lg:w-[220px]">
+            <ButtonLink
+              to="/workflows/new/ask"
+              variant="primary"
+              leadingIcon={MagicWand}
+              data-testid="wf-mode-ai"
+            >
+              Empezar a describir
+            </ButtonLink>
+            <p className="text-xs leading-relaxed text-faint">
+              Sin nodos ni configuración técnica. Puedes volver al lienzo después.
+            </p>
+          </div>
+        </div>
+      </Panel>
 
-        <Link
-          to="/workflows/new/manual"
-          className="panel group flex flex-col gap-2 p-5 hover:border-accent/50"
-          data-testid="wf-mode-manual"
-        >
-          <PencilSimple size={22} className="text-muted" aria-hidden />
-          <h2 className="text-base font-semibold text-text">Diseñar manualmente</h2>
-          <p className="text-xs text-muted">
-            Lienzo avanzado: nodos, puertos, condiciones, reintentos y control total del grafo.
-          </p>
-          <span className="mt-auto text-[11px] font-medium text-accent group-hover:underline">
-            Abrir el lienzo →
-          </span>
-        </Link>
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        {/* Alternativa manual */}
+        <Panel className="flex flex-col">
+          <PanelHeader
+            title="Diseñar manualmente"
+            description="Lienzo avanzado: nodos, puertos, condiciones, reintentos y control total del grafo."
+          />
+          <div className="flex min-w-0 flex-1 flex-col gap-3 p-4">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-raised text-muted">
+                <PencilSimple size={18} weight="regular" aria-hidden />
+              </span>
+              <p className="text-[13px] text-muted">
+                Para flujos que ya sabes cómo armar y quieres ajustar a mano cada paso.
+              </p>
+            </div>
+            <p className="rounded-md bg-raised px-3 py-2 text-[12px] leading-relaxed text-faint">
+              Elige este camino si necesitas condiciones compuestas, reintentos o llamar a la API de
+              un sistema propio.
+            </p>
+            <ol className="flex flex-col gap-1.5 border-t border-border-soft pt-3">
+              <li className="text-[12px] text-faint">
+                1. Nombra el workflow — se abre el lienzo con el nodo de disparo listo.
+              </li>
+              <li className="text-[12px] text-faint">
+                2. Arrastra nodos desde la biblioteca y conéctalos.
+              </li>
+              <li className="text-[12px] text-faint">
+                3. Prueba con un payload real antes de activarlo.
+              </li>
+            </ol>
+            <div className="mt-auto pt-1">
+              <ButtonLink
+                to="/workflows/new/manual"
+                variant="secondary"
+                leadingIcon={PencilSimple}
+                data-testid="wf-mode-manual"
+              >
+                Abrir el lienzo
+              </ButtonLink>
+            </div>
+          </div>
+        </Panel>
 
-        <section className="panel flex flex-col gap-2 p-5" data-testid="wf-mode-templates">
-          <SquaresFour size={22} className="text-info" aria-hidden />
-          <h2 className="text-base font-semibold text-text">Usar una plantilla</h2>
-          <p className="text-xs text-muted">Recetas listas para configurar y adaptar.</p>
+        {/* Plantillas */}
+        <Panel className="flex flex-col" data-testid="wf-mode-templates">
+          <PanelHeader
+            title="Usar una plantilla"
+            description="Recetas listas para configurar y adaptar."
+            actions={
+              <ButtonLink to="/workflows/new/ask" variant="ghost" size="sm" leadingIcon={MagicWand}>
+                Prefiero describirlo
+              </ButtonLink>
+            }
+          />
           {loading ? (
-            <SkeletonBlock rows={3} />
+            <div className="flex flex-col gap-2 p-4" aria-hidden>
+              {Array.from({ length: 3 }).map((_, i) => (
+                <Skeleton key={i} className="h-10 rounded-md" />
+              ))}
+            </div>
           ) : templates.length === 0 ? (
-            <p className="text-[11px] text-faint">Sin plantillas disponibles todavía.</p>
+            <EmptyState
+              compact
+              icon={SquaresFour}
+              title="Sin plantillas disponibles"
+              body="Todavía no hay recetas publicadas para este workspace. Descríbelo con IA o arma el flujo en el lienzo."
+            />
           ) : (
-            <ul className="mt-1 space-y-1">
-              {templates.slice(0, 5).map((template) => (
-                <li key={template.slug} className="flex items-center gap-2 rounded-md bg-soft px-2 py-1.5">
-                  <FlowArrow size={12} className="shrink-0 text-info" aria-hidden />
-                  <span className="min-w-0 flex-1 truncate text-[11px] text-text">{template.name}</span>
-                  <button
-                    type="button"
-                    className="btn btn-ghost min-h-7 px-1.5 text-[10px]"
-                    disabled={!!busy}
+            <ul className="divide-y divide-border-soft">
+              {templates.slice(0, 6).map((template) => (
+                <li key={template.slug} className="flex items-center gap-3 px-4 py-3">
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-soft text-faint">
+                    <FlowArrow size={15} aria-hidden />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13px] font-medium text-text">
+                      {template.name}
+                    </span>
+                    <span className="mt-0.5 block truncate text-xs text-faint">
+                      {template.steps.length} pasos · {triggerLabel(template.trigger_type)}
+                    </span>
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    loading={busy === template.slug}
                     data-testid={`wf-new-install-${template.slug}`}
                     onClick={() => void install(template.slug)}
                   >
-                    {busy === template.slug ? "…" : "Usar"}
-                  </button>
+                    {busy === template.slug ? "Instalando…" : "Usar"}
+                  </Button>
                 </li>
               ))}
             </ul>
           )}
-        </section>
+        </Panel>
       </div>
     </div>
   );

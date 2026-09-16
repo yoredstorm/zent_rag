@@ -2,6 +2,7 @@ import { Check, X } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useAuth } from "../auth";
+import { Button, ErrorInline, Panel, StatusBadge } from "./ui";
 import { DataView } from "./workflowStudio/DataView";
 
 export type WorkflowApprovalContext = {
@@ -33,6 +34,7 @@ export type WorkflowApproval = {
 /**
  * Panel de aprobación humana con evidencia (Fase 6): el revisor ve la
  * recomendación del agente, evidencia/claims del ledger, citas y datos del run.
+ * Es una decisión: se queda inline, no se esconde en un drawer.
  */
 export function WorkflowApprovalPanel({
   runId,
@@ -43,7 +45,10 @@ export function WorkflowApprovalPanel({
 }) {
   const { session } = useAuth();
   const [approvals, setApprovals] = useState<WorkflowApproval[] | null>(null);
-  const [busy, setBusy] = useState("");
+  const [pendingAction, setPendingAction] = useState<{
+    id: string;
+    decision: "approved" | "rejected";
+  } | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -66,7 +71,7 @@ export function WorkflowApprovalPanel({
 
   async function decide(approval: WorkflowApproval, decision: "approved" | "rejected") {
     if (!session) return;
-    setBusy(approval.id);
+    setPendingAction({ id: approval.id, decision });
     setError("");
     try {
       await api(`/api/v1/workflows/runs/${runId}/approvals/${approval.id}/decide`, {
@@ -84,7 +89,7 @@ export function WorkflowApprovalPanel({
     } catch (e) {
       setError(e instanceof Error ? e.message : "No pude registrar la decisión.");
     } finally {
-      setBusy("");
+      setPendingAction(null);
     }
   }
 
@@ -92,7 +97,12 @@ export function WorkflowApprovalPanel({
   if (!approvals || pending.length === 0) return null;
 
   return (
-    <div className="space-y-2" data-testid="wf-approval-panel">
+    <div className="flex flex-col gap-3" data-testid="wf-approval-panel">
+      <p className="eyebrow">
+        {pending.length === 1
+          ? "1 decisión pendiente"
+          : `${pending.length} decisiones pendientes`}
+      </p>
       {pending.map((approval) => {
         const context = approval.context ?? {};
         const decisions = context.decisions ?? [];
@@ -100,73 +110,103 @@ export function WorkflowApprovalPanel({
         const claims = context.claim_refs ?? [];
         const citations = context.citations ?? [];
         const dataSummary = Object.entries(context.data_summary ?? {});
+        const deciding = pendingAction?.id === approval.id;
+        const approving = deciding && pendingAction?.decision === "approved";
+        const rejecting = deciding && pendingAction?.decision === "rejected";
         return (
-          <div
+          <Panel
             key={approval.id}
-            className="rounded-md border border-warn/40 bg-warn-soft/40 px-2 py-2"
+            className="border-warn/30"
             data-testid={`wf-approval-${approval.id}`}
           >
-            <p className="text-[11px] font-semibold text-text">
-              Aprobación: {approval.action || "acción sensible"}
-            </p>
-            {approval.summary && <p className="mt-0.5 text-[10px] text-muted">{approval.summary}</p>}
-
-            {decisions.length > 0 && (
-              <div className="mt-1.5" data-testid="wf-approval-decision">
-                <p className="text-[9px] font-semibold tracking-wide text-faint uppercase">Recomendación</p>
-                <DataView data={decisions[0]} testId="wf-approval-decision-data" />
-              </div>
-            )}
-            {evidence.length > 0 && (
-              <p className="mt-1 text-[10px] text-muted" data-testid="wf-approval-evidence">
-                Evidencia: {evidence.length} {evidence.length === 1 ? "fuente" : "fuentes"}
-                {evidence[0]?.label ? ` · ${evidence[0].label}` : ""}
-              </p>
-            )}
-            {claims.length > 0 && (
-              <p className="mt-0.5 text-[10px] text-muted" data-testid="wf-approval-claims">
-                Claims propuestos: {claims.length}
-              </p>
-            )}
-            {citations.length > 0 && (
-              <ul className="mt-1 space-y-0.5" data-testid="wf-approval-citations">
-                {citations.slice(0, 3).map((citation, index) => (
-                  <li key={index} className="truncate text-[10px] text-faint">
-                    {citation.document_name || "documento"}
-                    {citation.page ? ` · pág. ${citation.page}` : ""}
-                    {citation.excerpt ? ` · ${citation.excerpt.slice(0, 80)}` : ""}
-                  </li>
-                ))}
-              </ul>
-            )}
-            {dataSummary.length > 0 && (
-              <p className="mt-1 text-[10px] text-faint" data-testid="wf-approval-data">
-                Datos: {dataSummary.map(([key]) => key).join(", ")}
-              </p>
-            )}
-
-            <div className="mt-2 flex gap-2">
-              <button
-                type="button"
-                className="btn btn-primary min-h-8 flex-1 text-[11px]"
-                disabled={busy === approval.id}
-                data-testid={`wf-approval-approve-${approval.id}`}
-                onClick={() => void decide(approval, "approved")}
-              >
-                <Check size={12} aria-hidden /> Aprobar
-              </button>
-              <button
-                type="button"
-                className="btn btn-secondary min-h-8 flex-1 text-[11px]"
-                disabled={busy === approval.id}
-                data-testid={`wf-approval-reject-${approval.id}`}
-                onClick={() => void decide(approval, "rejected")}
-              >
-                <X size={12} aria-hidden /> Rechazar
-              </button>
+            <div className="flex flex-wrap items-center gap-2 border-b border-border-soft px-3 py-2.5">
+              <StatusBadge status="pending" />
+              <h3 className="min-w-0 flex-1 truncate text-h3">
+                {approval.action || "Acción sensible"}
+              </h3>
             </div>
-            {error && <p className="mt-1 text-[10px] text-danger">{error}</p>}
-          </div>
+
+            <div className="flex flex-col gap-3 p-3">
+              {approval.summary && (
+                <p className="text-[13px] leading-relaxed text-muted">{approval.summary}</p>
+              )}
+
+              {decisions.length > 0 && (
+                <div data-testid="wf-approval-decision">
+                  <p className="eyebrow mb-1.5">Recomendación</p>
+                  <DataView data={decisions[0]} testId="wf-approval-decision-data" />
+                </div>
+              )}
+
+              {(evidence.length > 0 || claims.length > 0 || citations.length > 0) && (
+                <div className="flex flex-col gap-1.5 rounded-md bg-raised px-2.5 py-2">
+                  <p className="eyebrow">Evidencia</p>
+                  {evidence.length > 0 && (
+                    <p className="text-xs text-muted" data-testid="wf-approval-evidence">
+                      Evidencia: {evidence.length} {evidence.length === 1 ? "fuente" : "fuentes"}
+                      {evidence[0]?.label ? (
+                        <span className="text-text"> · {evidence[0].label}</span>
+                      ) : null}
+                    </p>
+                  )}
+                  {claims.length > 0 && (
+                    <p className="text-xs text-muted" data-testid="wf-approval-claims">
+                      Claims propuestos: {claims.length}
+                      {claims[0]?.text ? (
+                        <span className="text-faint"> · {claims[0].text}</span>
+                      ) : null}
+                    </p>
+                  )}
+                  {citations.length > 0 && (
+                    <ul className="flex flex-col gap-1" data-testid="wf-approval-citations">
+                      {citations.slice(0, 3).map((citation, index) => (
+                        <li key={index} className="min-w-0 text-xs text-faint">
+                          <span className="text-muted">{citation.document_name || "documento"}</span>
+                          {citation.page ? ` · pág. ${citation.page}` : ""}
+                          {citation.excerpt ? ` · ${citation.excerpt.slice(0, 80)}` : ""}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  {dataSummary.length > 0 && (
+                    <p className="text-xs text-faint" data-testid="wf-approval-data">
+                      Datos: {dataSummary.map(([key]) => key).join(", ")}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              <ErrorInline message={error} className="mb-0" />
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  leadingIcon={Check}
+                  loading={approving}
+                  disabled={rejecting}
+                  data-testid={`wf-approval-approve-${approval.id}`}
+                  onClick={() => void decide(approval, "approved")}
+                >
+                  Aprobar
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  leadingIcon={X}
+                  loading={rejecting}
+                  disabled={approving}
+                  data-testid={`wf-approval-reject-${approval.id}`}
+                  onClick={() => void decide(approval, "rejected")}
+                >
+                  Rechazar
+                </Button>
+                <span className="text-[11px] text-faint">
+                  El run queda esperando esta decisión.
+                </span>
+              </div>
+            </div>
+          </Panel>
         );
       })}
     </div>

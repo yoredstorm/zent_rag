@@ -5,9 +5,9 @@ import { useAuth } from "../../auth";
 import type { WorkflowGraph } from "../../lib/workflowGraph";
 import { humanizeWorkflowError } from "../../lib/workflowErrors";
 import type { GraphIssue } from "../../lib/workflowGraph";
-import { ErrorInline, Spinner } from "../ui";
+import { Button, ErrorInline, StatusBadge, Textarea } from "../ui";
 import { WorkflowRunInspector, type RunDetail } from "../WorkflowRunInspector";
-import { STATUS_BADGE, answerFromSteps, normalizeTestPayload, type WorkflowRun } from "./types";
+import { answerFromSteps, normalizeTestPayload, type WorkflowRun } from "./types";
 
 type Props = {
   workflowId: string;
@@ -28,6 +28,8 @@ type Props = {
   onSaveBeforeRun?: () => Promise<boolean>;
   /** Grafo actual: genera ejemplos de prueba coherentes con el flujo. */
   graph?: WorkflowGraph | null;
+  /** El estudio lo monta dentro del Drawer inferior: oculta el encabezado propio. */
+  embedded?: boolean;
 };
 
 type RunOut = {
@@ -53,6 +55,7 @@ export function WorkflowTestPanel({
   onRan,
   onSaveBeforeRun,
   graph,
+  embedded = false,
 }: Props) {
   const { session } = useAuth();
   const [raw, setRaw] = useState("");
@@ -203,20 +206,27 @@ export function WorkflowTestPanel({
 
   return (
     <section
-      className="flex min-h-0 w-full flex-col overflow-hidden rounded-lg border border-border bg-surface"
+      className="panel flex min-h-0 w-full flex-col overflow-hidden"
       data-testid="wf-test-panel"
       aria-label="Probar el workflow"
     >
-      <header className="flex items-center gap-2 border-b border-border px-3 py-2.5">
-        <h2 className="flex-1 text-[13px] font-semibold text-text">Probar automatización</h2>
-        {dirty && (
+      {!embedded && (
+        <header className="panel-header">
+          <h2 className="text-h3">Probar automatización</h2>
+          {dirty && (
+            <span className="badge badge-pending" title="El motor corre la versión guardada">
+              se guarda al probar
+            </span>
+          )}
+        </header>
+      )}
+
+      <div ref={feedRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+        {embedded && dirty && (
           <span className="badge badge-pending" title="El motor corre la versión guardada">
             se guarda al probar
           </span>
         )}
-      </header>
-
-      <div ref={feedRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
         {messages.length === 0 && (
           <div className="rounded-md border border-border bg-soft px-3 py-2.5 text-[11px] text-muted">
             <p className="font-medium text-text">Escribe una pregunta y pulsa Probar.</p>
@@ -317,10 +327,10 @@ export function WorkflowTestPanel({
                 <button
                   key={r.id}
                   type="button"
-                  className="flex w-full items-center gap-2 rounded-md bg-soft px-2 py-1.5 text-left text-[10px] hover:bg-raised"
+                  className="flex w-full items-center gap-2 rounded-sm bg-soft px-2 py-1.5 text-left text-[10px] transition-colors duration-150 hover:bg-raised"
                   onClick={() => void showRun(r.id)}
                 >
-                  <span className={`badge ${STATUS_BADGE[r.status] ?? "badge-muted"}`}>{r.status}</span>
+                  <StatusBadge status={r.status} />
                   <span className="min-w-0 flex-1 truncate text-text">
                     {new Date(r.started_at).toLocaleTimeString()}
                   </span>
@@ -333,29 +343,32 @@ export function WorkflowTestPanel({
       </div>
 
       <footer className="space-y-2 border-t border-border p-3">
-        <ErrorInline message={error} />
+        <ErrorInline message={error} className="mb-0" />
         <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            type="button"
-            className="btn btn-ghost min-h-7 gap-1 px-1.5 text-[10px]"
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={MagicWand}
+            className="text-[11px]"
             data-testid="wf-sample-generate"
             onClick={generateSample}
           >
-            <MagicWand size={11} aria-hidden /> Generar ejemplo
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost min-h-7 gap-1 px-1.5 text-[10px]"
+            Generar ejemplo
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-[11px]"
             data-testid="wf-sample-last"
             onClick={() => void loadLastSample()}
           >
             Usar último
-          </button>
-          <span className="text-[9px] text-faint">o edita los valores abajo</span>
+          </Button>
+          <span className="text-[10px] text-faint">o edita los valores abajo</span>
         </div>
         <div className="flex items-end gap-2">
-          <textarea
-            className="min-h-11 w-full flex-1 resize-none rounded-md border border-border bg-soft px-2.5 py-2.5 text-[12px]"
+          <Textarea
+            className="min-h-11 flex-1 resize-none text-[12px]"
             rows={2}
             placeholder="¿Quién es el gerente?"
             value={raw}
@@ -369,16 +382,16 @@ export function WorkflowTestPanel({
             data-testid="wf-test-payload"
             aria-label="Pregunta o payload de prueba"
           />
-          <button
-            type="button"
-            className="btn btn-primary min-h-11 px-3"
+          <Button
+            variant="primary"
+            className="min-h-11 px-3"
+            loading={busy === "test"}
+            leadingIcon={ArrowUp}
             disabled={!!busy}
             onClick={() => void execute(true)}
             data-testid="wf-test"
             aria-label="Probar"
-          >
-            {busy === "test" ? <Spinner size={14} /> : <ArrowUp size={16} aria-hidden />}
-          </button>
+          />
         </div>
         {normalized.wrapped && (
           <p className="text-[10px] text-faint" data-testid="wf-payload-wrapped">
@@ -386,16 +399,17 @@ export function WorkflowTestPanel({
           </p>
         )}
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className="btn btn-secondary min-h-9 px-2 text-[11px]"
+          <Button
+            variant="secondary"
+            size="sm"
+            loading={busy === "run"}
+            leadingIcon={Lightning}
             disabled={!!busy}
             onClick={() => void execute(false)}
             data-testid="wf-run"
           >
-            {busy === "run" ? <Spinner size={13} /> : <Lightning size={14} aria-hidden />}
             Ejecutar de verdad
-          </button>
+          </Button>
           {effectLabels.length > 0 && (
             <span className="text-[10px] text-faint">
               {effectLabels.length} nodo(s) con efectos: {effectLabels.join(", ")}

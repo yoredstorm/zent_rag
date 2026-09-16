@@ -6,6 +6,7 @@ import {
   useContext,
   useId,
   useState,
+  type ComponentPropsWithoutRef,
   type InputHTMLAttributes,
   type ReactNode,
   type SelectHTMLAttributes,
@@ -211,7 +212,7 @@ export type CheckboxProps = {
   disabled?: boolean;
   className?: string;
   id?: string;
-};
+} & Omit<ComponentPropsWithoutRef<typeof CheckboxPrimitive.Root>, "checked" | "onCheckedChange" | "id" | "className">;
 
 export function Checkbox({
   checked,
@@ -221,6 +222,7 @@ export function Checkbox({
   disabled,
   className,
   id: idProp,
+  ...rest
 }: CheckboxProps) {
   const auto = useId();
   const id = idProp ?? auto;
@@ -234,6 +236,7 @@ export function Checkbox({
         disabled={disabled}
         aria-describedby={hintId}
         className="mt-px inline-flex h-[18px] w-[18px] shrink-0 cursor-pointer items-center justify-center rounded-xs border border-border-strong bg-control transition-colors duration-150 hover:border-faint data-[state=checked]:border-accent data-[state=checked]:bg-accent data-[state=checked]:text-accent-fg data-[state=indeterminate]:border-accent data-[state=indeterminate]:bg-accent data-[state=indeterminate]:text-accent-fg disabled:cursor-not-allowed disabled:opacity-45"
+        {...rest}
       >
         <CheckboxPrimitive.Indicator>
           {checked === "indeterminate" ? (
@@ -262,6 +265,7 @@ export function Switch({
   hint,
   disabled,
   className,
+  ...rest
 }: {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
@@ -269,7 +273,7 @@ export function Switch({
   hint?: ReactNode;
   disabled?: boolean;
   className?: string;
-}) {
+} & Omit<ComponentPropsWithoutRef<typeof SwitchPrimitive.Root>, "checked" | "onCheckedChange" | "disabled" | "className">) {
   const id = useId();
   const hintId = hint ? `${id}-hint` : undefined;
   return (
@@ -289,6 +293,7 @@ export function Switch({
         disabled={disabled}
         aria-describedby={hintId}
         className="relative h-[22px] w-[38px] shrink-0 cursor-pointer rounded-full border border-border bg-control transition-colors duration-200 data-[state=checked]:border-accent data-[state=checked]:bg-accent disabled:cursor-not-allowed disabled:opacity-45"
+        {...rest}
       >
         <SwitchPrimitive.Thumb className="block h-4 w-4 translate-x-[3px] rounded-full bg-faint transition-transform duration-200 ease-[var(--ease-out)] data-[state=checked]:translate-x-[19px] data-[state=checked]:bg-accent-fg" />
       </SwitchPrimitive.Root>

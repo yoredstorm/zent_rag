@@ -1,14 +1,19 @@
-import { Plus, SquaresFour } from "@phosphor-icons/react";
+import { ArrowRight, Plus, SquaresFour } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import {
+  Badge,
+  Button,
   EmptyState,
   ErrorInline,
+  Field,
+  Input,
+  Modal,
   PageHeader,
-  SkeletonBlock,
-  Spinner,
+  Panel,
+  Skeleton,
   StatusBadge,
 } from "../../components/ui";
 
@@ -35,12 +40,19 @@ export default function KnowledgeWorkspacesPage() {
   const load = useCallback(() => {
     if (!session) return;
     setLoading(true);
+    setError("");
     api<CorpusList>("/api/v1/knowledge/workspaces", {
       token: session.token,
       organizationId: session.organizationId,
     })
       .then((data) => setCorpora(data.corpora ?? []))
-      .catch((err) => setError(err instanceof Error ? err.message : "Error"))
+      .catch((err) =>
+        setError(
+          err instanceof Error
+            ? err.message
+            : "No pudimos cargar tus workspaces de conocimiento."
+        )
+      )
       .finally(() => setLoading(false));
   }, [session]);
 
@@ -49,99 +61,84 @@ export default function KnowledgeWorkspacesPage() {
   }, [load]);
 
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8">
+    <div>
       <PageHeader
         title="Knowledge Workspaces"
-        subtitle="El centro del conocimiento de tu organización."
+        subtitle="Agrupá contratos, manuales, bases de datos y APIs en universos separados. Cada workspace tiene sus propias fuentes, cobertura y conflictos."
+        actions={<NewWorkspaceModal session={session} onCreated={load} />}
       />
 
-      {/* Hero amigable */}
-      <div className="mb-6 flex flex-col gap-4 rounded-2xl border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-white p-6 sm:flex-row sm:items-center">
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-indigo-600 text-white">
-          <SquaresFour size={22} />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-base font-semibold text-zinc-900">
-            Aquí se carga todo tu conocimiento
-          </h2>
-          <p className="mt-0.5 text-sm text-zinc-500">
-            Agrupa contratos, manuales, databases y APIs en un mismo universo.
-            Pregunta con citas verificables, estudia cada fuente e inspírate
-            con artefactos reales.
-          </p>
-        </div>
-        <NewWorkspaceModal session={session} onCreated={load} />
-      </div>
-
-      {error && <ErrorInline message={error} />}
+      <ErrorInline message={error} />
 
       {loading ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <SkeletonBlock rows={4} className="h-36" />
-          <SkeletonBlock rows={4} className="h-36" />
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-hidden>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-[148px] rounded-lg" />
+          ))}
         </div>
       ) : corpora.length === 0 ? (
-        <EmptyState
-          icon={SquaresFour}
-          title="Empieza en 3 pasos"
-          body="Crea un Knowledge Workspace, sube tus fuentes (PDF, Word, texto) y haz tu primera pregunta. Las respuestas llegan con la página y la sección exactas."
-          action={
-            <div className="flex flex-col items-center gap-2">
-              <NewWorkspaceModal session={session} onCreated={load} />
+        <Panel>
+          <EmptyState
+            icon={SquaresFour}
+            tone="accent"
+            title="Creá tu primer workspace de conocimiento"
+            body="Un workspace agrupa las fuentes de un mismo tema o cliente. Dentro podés cargar PDF, Word, texto, base de datos o API, y preguntar con citas verificables."
+            hint="Paso 1: creá el workspace. Paso 2: sumá fuentes. Paso 3: preguntá en el Playground."
+            action={<NewWorkspaceModal session={session} onCreated={load} />}
+            secondaryAction={
               <Link
                 to="/knowledge/sources"
-                className="text-sm font-medium text-indigo-600 hover:text-indigo-500"
+                className="text-[13px] font-medium text-muted transition-colors hover:text-text"
               >
-                o añade fuentes primero (¿PDF? ¿DOCX? ¿texto?) →
+                Ver mis fuentes
               </Link>
-            </div>
-          }
-        />
+            }
+          />
+        </Panel>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           {corpora.map((corpus) => (
             <Link
               key={corpus.id}
               to={`/knowledge/workspaces/${corpus.id}`}
-              className="group rounded-xl border border-zinc-200 bg-white p-5 shadow-sm transition hover:border-indigo-300 hover:shadow-md"
+              className="panel group flex flex-col gap-3 p-4 transition-[border-color,transform] duration-200 ease-[var(--ease-out)] hover:-translate-y-px hover:border-border-strong"
             >
               <div className="flex items-start justify-between gap-3">
-                <h3 className="text-base font-semibold text-zinc-900 group-hover:text-indigo-700">
-                  {corpus.name}
-                </h3>
+                <h2 className="min-w-0 truncate text-h3">{corpus.name}</h2>
                 <StatusBadge status={corpus.status} />
               </div>
-              {corpus.description ? (
-                <p className="mt-1 text-sm text-zinc-500">{corpus.description}</p>
-              ) : (
-                <p className="mt-1 text-sm text-zinc-400">
-                  {corpus.source_count === 0
-                    ? "Comienza adjuntando fuentes."
-                    : "Workspace de conocimiento."}
-                </p>
-              )}
-              <div className="mt-4 flex items-center gap-4 text-xs text-zinc-500">
+
+              <p className="line-clamp-2 min-h-9 text-[12.5px] leading-relaxed text-muted">
+                {corpus.description ||
+                  (corpus.source_count === 0
+                    ? "Todavía no tiene fuentes: empezá adjuntando una."
+                    : "Workspace de conocimiento.")}
+              </p>
+
+              <div className="mt-auto flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border-soft pt-3 text-xs text-muted">
                 <span>
-                  <strong className="text-zinc-800">{corpus.source_count}</strong>{" "}
-                  sources
+                  <span className="mono text-text">{corpus.source_count}</span>{" "}
+                  {corpus.source_count === 1 ? "fuente" : "fuentes"}
                 </span>
                 {corpus.coverage !== null ? (
                   <span>
-                    <strong className="text-zinc-800">{corpus.coverage}%</strong>{" "}
-                    knowledge
+                    cobertura <span className="mono text-text">{corpus.coverage}%</span>
                   </span>
                 ) : (
-                  <span className="text-zinc-400">knowledge —</span>
+                  <span className="text-faint">cobertura —</span>
                 )}
-                <span
-                  className={
-                    corpus.conflicts > 0 ? "font-medium text-red-600" : undefined
-                  }
-                >
-                  {corpus.conflicts > 0
-                    ? `${corpus.conflicts} ${corpus.conflicts === 1 ? "conflicto" : "conflictos"}`
-                    : "sin conflictos"}
-                </span>
+                {corpus.conflicts > 0 ? (
+                  <Badge tone="warn">
+                    {corpus.conflicts} {corpus.conflicts === 1 ? "conflicto" : "conflictos"}
+                  </Badge>
+                ) : (
+                  <span className="text-faint">sin conflictos</span>
+                )}
+                <ArrowRight
+                  size={14}
+                  className="ml-auto text-ghost transition-transform duration-200 group-hover:translate-x-0.5 group-hover:text-muted"
+                  aria-hidden
+                />
               </div>
             </Link>
           ))}
@@ -179,65 +176,57 @@ function NewWorkspaceModal({
         onCreated();
       })
       .catch((err) =>
-        setError(err instanceof Error ? err.message : "Error al crear")
+        setError(err instanceof Error ? err.message : "No pudimos crear el workspace.")
       )
       .finally(() => setCreating(false));
   };
 
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-indigo-500"
+      <Button variant="primary" leadingIcon={Plus} onClick={() => setOpen(true)}>
+        Nuevo workspace
+      </Button>
+      <Modal
+        open={open}
+        onOpenChange={(next) => {
+          setOpen(next);
+          if (!next) setError("");
+        }}
+        title="Nuevo workspace de conocimiento"
+        description="Después vas a poder sumarle fuentes y colecciones."
+        size="sm"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setOpen(false)} disabled={creating}>
+              Cancelar
+            </Button>
+            <Button
+              variant="primary"
+              onClick={create}
+              loading={creating}
+              disabled={!name.trim()}
+            >
+              Crear
+            </Button>
+          </>
+        }
       >
-        <Plus size={14} weight="bold" /> New Knowledge Workspace
-      </button>
-      {open ? (
-        <div
-          className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4"
-          onClick={() => setOpen(false)}
+        <Field
+          label="Nombre"
+          hint="Usá un nombre que reconozcas, por ejemplo el cliente o el área."
+          error={error || undefined}
         >
-          <div
-            className="w-full max-w-sm rounded-xl bg-white p-5 shadow-lg"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <h3 className="text-base font-semibold text-zinc-900">
-              New Knowledge Workspace
-            </h3>
-            <label className="mt-4 block text-sm font-medium text-zinc-700">
-              Nombre
-              <input
-                autoFocus
-                className="mt-1 w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-                placeholder="Ej. Operaciones Aeroméxico"
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") create();
-                }}
-              />
-            </label>
-            {error && (
-              <p className="mt-2 text-sm text-red-600">{error}</p>
-            )}
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => setOpen(false)}
-                className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
-              >
-                Cancelar
-              </button>
-              <button
-                disabled={!name.trim() || creating}
-                onClick={create}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-              >
-                {creating ? <Spinner size={14} /> : "Crear"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+          <Input
+            autoFocus
+            placeholder="Ej. Operaciones Aeroméxico"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") create();
+            }}
+          />
+        </Field>
+      </Modal>
     </>
   );
 }

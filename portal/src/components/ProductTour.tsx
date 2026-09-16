@@ -151,7 +151,7 @@ export function ProductTour({ steps, open, onSkip, onComplete, remeasureKey }: P
           }}
         />
       ) : (
-        <div className="absolute inset-0 bg-black/55" aria-hidden />
+        <div className="absolute inset-0 bg-scrim" aria-hidden />
       )}
       <div
         ref={dialogRef}
@@ -159,7 +159,7 @@ export function ProductTour({ steps, open, onSkip, onComplete, remeasureKey }: P
         aria-modal="true"
         aria-labelledby="product-tour-title"
         aria-describedby="product-tour-body"
-        className="absolute w-[min(100%-24px,340px)] rounded-md border border-border bg-surface p-4 shadow-pop"
+        className="absolute w-[min(100%-24px,340px)] rounded-lg border border-border bg-overlay p-4 shadow-pop"
         style={{ top: pos.top, left: pos.left }}
       >
         <p className="mb-1 text-[11px] font-medium tracking-wide text-faint uppercase">

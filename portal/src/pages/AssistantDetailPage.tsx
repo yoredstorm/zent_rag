@@ -4,11 +4,11 @@
  */
 import { ArrowLeft, ChatCircleDots, PencilSimple } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { Breadcrumb } from "../components/Breadcrumb";
-import { ErrorInline, PageHeader, SkeletonBlock } from "../components/ui";
+import { ButtonLink, ErrorInline, PageHeader, Panel, SkeletonBlock } from "../components/ui";
 import { AssistantActivity } from "./assistants/AssistantActivity";
 import { AssistantAutomations } from "./assistants/AssistantAutomations";
 import { AssistantOverview } from "./assistants/AssistantOverview";
@@ -83,11 +83,23 @@ export default function AssistantDetailPage() {
     navigate(`/workflows/new/ask?${query.toString()}`);
   }
 
-  if (loading) return <div className="panel p-5"><SkeletonBlock rows={6} /></div>;
-  if (error || !agent) return <div className="panel p-5"><ErrorInline message={error || "Asistente no encontrado"} /></div>;
+  if (loading) {
+    return (
+      <Panel className="p-4">
+        <SkeletonBlock rows={6} />
+      </Panel>
+    );
+  }
+  if (error || !agent) {
+    return (
+      <Panel className="p-4">
+        <ErrorInline message={error || "Asistente no encontrado"} className="mb-0" />
+      </Panel>
+    );
+  }
 
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col gap-4">
       <Breadcrumb
         items={[
           { label: "Operar", to: "/assistants" },
@@ -96,35 +108,33 @@ export default function AssistantDetailPage() {
         ]}
       />
       <PageHeader
+        className="mb-0"
         title={agent.name}
         subtitle={COPY.tagline}
         actions={
-          <div className="flex flex-wrap gap-2">
-            <Link
-              to={`/chat?target=agent&id=${agent.id}`}
-              className="btn btn-secondary min-h-11 text-xs"
-            >
-              <ChatCircleDots size={14} aria-hidden className="mr-1" /> {COPY.playground}
-            </Link>
-            <Link to={`/agents/${agent.id}`} className="btn btn-secondary min-h-11 text-xs">
-              <PencilSimple size={14} aria-hidden className="mr-1" /> {COPY.editAgent}
-            </Link>
-            <Link to="/assistants" className="btn btn-ghost min-h-11 text-xs">
-              <ArrowLeft size={14} aria-hidden className="mr-1" /> Volver
-            </Link>
-          </div>
+          <>
+            <ButtonLink to={`/chat?target=agent&id=${agent.id}`} size="sm" leadingIcon={ChatCircleDots}>
+              {COPY.playground}
+            </ButtonLink>
+            <ButtonLink to={`/agents/${agent.id}`} size="sm" leadingIcon={PencilSimple}>
+              {COPY.editAgent}
+            </ButtonLink>
+            <ButtonLink to="/assistants" size="sm" variant="ghost" leadingIcon={ArrowLeft}>
+              Volver
+            </ButtonLink>
+          </>
         }
       />
-      <ErrorInline message={error} />
+      <ErrorInline message={error} className="mb-0" />
 
-      <div className="flex flex-wrap gap-1 rounded-md border border-border p-0.5" role="tablist" aria-label="Secciones del asistente">
+      <div className="tabs" role="tablist" aria-label="Secciones del asistente">
         {ASSISTANT_TABS.map((key) => (
           <button
             key={key}
             type="button"
             role="tab"
             aria-selected={tab === key}
-            className={`rounded px-2.5 py-1.5 text-[11px] ${tab === key ? "bg-accent/15 font-medium text-text" : "text-faint hover:text-muted"}`}
+            className="tab"
             data-testid={`assistant-tab-${key}`}
             onClick={() => setTab(key)}
           >
@@ -133,26 +143,28 @@ export default function AssistantDetailPage() {
         ))}
       </div>
 
-      {tab === "resumen" && (
-        <AssistantOverview
-          agent={agent}
-          automations={automations}
-          kbNames={kbNames}
-          permissions={permissions}
-        />
-      )}
-      {tab === "automatizaciones" && (
-        <AssistantAutomations
-          agentName={agent.name}
-          automations={automations}
-          prompt={prompt}
-          onPromptChange={setPrompt}
-          onAdd={addAutomation}
-        />
-      )}
-      {tab === "actividad" && (
-        <AssistantActivity activity={activity} openTech={openTech} onToggleTech={setOpenTech} />
-      )}
+      <div role="tabpanel" aria-label={ASSISTANT_TAB_LABEL[tab]}>
+        {tab === "resumen" && (
+          <AssistantOverview
+            agent={agent}
+            automations={automations}
+            kbNames={kbNames}
+            permissions={permissions}
+          />
+        )}
+        {tab === "automatizaciones" && (
+          <AssistantAutomations
+            agentName={agent.name}
+            automations={automations}
+            prompt={prompt}
+            onPromptChange={setPrompt}
+            onAdd={addAutomation}
+          />
+        )}
+        {tab === "actividad" && (
+          <AssistantActivity activity={activity} openTech={openTech} onToggleTech={setOpenTech} />
+        )}
+      </div>
     </div>
   );
 }

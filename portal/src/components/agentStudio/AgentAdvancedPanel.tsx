@@ -1,5 +1,6 @@
 import type { Session } from "../../api";
-import { PageTabs } from "../PageTabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui";
+import { AgentDisclosure } from "./AgentField";
 import { AgentBehaviorSection } from "./AgentBehaviorSection";
 import { AgentCapabilitiesSection } from "./AgentCapabilitiesSection";
 import {
@@ -22,7 +23,8 @@ const TABS = ADVANCED_TABS.map((id) => ({ id, label: ADVANCED_TAB_LABELS[id] }))
 
 /**
  * Ajustes extra del agente en tres grupos: cómo responde, qué puede hacer y
- * cómo se publica. Cada sección vive en su propio archivo.
+ * cómo se publica. Colapsado por defecto: la vista principal es propósito,
+ * fuentes y prueba. Cada sección vive en su propio archivo.
  */
 export function AgentAdvancedPanel({
   tab,
@@ -126,90 +128,85 @@ export function AgentAdvancedPanel({
   onRevokeEmbed: () => void;
 }) {
   return (
-    <details
-      className="mt-6 rounded-md border border-border bg-surface"
+    <AgentDisclosure
+      id="agent-advanced"
+      className="mt-4"
+      title={ADVANCED_SUMMARY_TITLE}
+      hint={ADVANCED_SUMMARY_HINT}
       open={open}
-      onToggle={(e) => {
-        const next = (e.target as HTMLDetailsElement).open;
-        if (next !== open) onToggle(next);
-      }}
+      onToggle={onToggle}
     >
-      <summary className="cursor-pointer list-none px-4 py-3 text-sm font-semibold text-text">
-        {ADVANCED_SUMMARY_TITLE}
-        <span className="ml-2 text-xs font-normal text-muted">{ADVANCED_SUMMARY_HINT}</span>
-      </summary>
-      <div className="border-t border-border px-4 py-4">
-        <PageTabs
-          idPrefix="agent-advanced"
-          tabs={TABS}
-          active={tab}
-          onChange={(next) => onTab(next as AdvancedTab)}
-        />
+      <Tabs value={tab} onValueChange={(next) => onTab(next as AdvancedTab)}>
+        <TabsList>
+          {TABS.map((item) => (
+            <TabsTrigger key={item.id} value={item.id}>
+              {item.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
 
-        <div id={`agent-advanced-panel-${tab}`} role="tabpanel" aria-labelledby={`agent-advanced-${tab}`}>
-          {tab === "behavior" && (
-            <AgentBehaviorSection
-              model={model}
-              setModel={setModel}
-              routes={routes}
-              canCustomModel={canCustomModel}
-              config={config}
-              setConfig={setConfig}
-              outputSchema={outputSchema}
-              setOutputSchema={setOutputSchema}
-            />
-          )}
+        <TabsContent value="behavior">
+          <AgentBehaviorSection
+            model={model}
+            setModel={setModel}
+            routes={routes}
+            canCustomModel={canCustomModel}
+            config={config}
+            setConfig={setConfig}
+            outputSchema={outputSchema}
+            setOutputSchema={setOutputSchema}
+          />
+        </TabsContent>
 
-          {tab === "capabilities" && (
-            <AgentCapabilitiesSection
-              config={config}
-              setConfig={setConfig}
-              semantic={semantic}
-              setSemantic={setSemantic}
-              sql={sql}
-              setSql={setSql}
-              apiCalls={apiCalls}
-              setApiCalls={setApiCalls}
-              retrieval={retrieval}
-              setRetrieval={setRetrieval}
-            />
-          )}
+        <TabsContent value="capabilities">
+          <AgentCapabilitiesSection
+            config={config}
+            setConfig={setConfig}
+            semantic={semantic}
+            setSemantic={setSemantic}
+            sql={sql}
+            setSql={setSql}
+            apiCalls={apiCalls}
+            setApiCalls={setApiCalls}
+            retrieval={retrieval}
+            setRetrieval={setRetrieval}
+          />
+        </TabsContent>
 
-          {tab === "publish" && (
-            <AgentPublishSection
-              isNew={isNew}
-              id={id}
-              session={session}
-              readiness={readiness}
-              versions={versions}
-              versionsLoading={versionsLoading}
-              deployments={deployments}
-              environments={environments}
-              deployVersionId={deployVersionId}
-              setDeployVersionId={setDeployVersionId}
-              deployEnvId={deployEnvId}
-              setDeployEnvId={setDeployEnvId}
-              deployBusy={deployBusy}
-              deployMsg={deployMsg}
-              deployError={deployError}
-              eventsFor={eventsFor}
-              embedOrigins={embedOrigins}
-              setEmbedOrigins={setEmbedOrigins}
-              embedToken={embedToken}
-              embedScript={embedScript}
-              embedBusy={embedBusy}
-              onCreateSnapshot={onCreateSnapshot}
-              onPromote={onPromote}
-              onDeploy={onDeploy}
-              onGoLive={onGoLive}
-              onRollback={onRollback}
-              onLoadEvents={onLoadEvents}
-              onCreateEmbed={onCreateEmbed}
-              onRevokeEmbed={onRevokeEmbed}
-            />
-          )}
-        </div>
-      </div>
-    </details>
+        <TabsContent value="publish">
+          <AgentPublishSection
+            isNew={isNew}
+            id={id}
+            session={session}
+            readiness={readiness}
+            versions={versions}
+            versionsLoading={versionsLoading}
+            deployments={deployments}
+            environments={environments}
+            deployVersionId={deployVersionId}
+            setDeployVersionId={setDeployVersionId}
+            deployEnvId={deployEnvId}
+            setDeployEnvId={setDeployEnvId}
+            deployBusy={deployBusy}
+            deployMsg={deployMsg}
+            deployError={deployError}
+            eventsFor={eventsFor}
+            embedOrigins={embedOrigins}
+            setEmbedOrigins={setEmbedOrigins}
+            embedToken={embedToken}
+            embedScript={embedScript}
+            embedBusy={embedBusy}
+            onCreateSnapshot={onCreateSnapshot}
+            onPromote={onPromote}
+            onDeploy={onDeploy}
+            onGoLive={onGoLive}
+            onRollback={onRollback}
+            onLoadEvents={onLoadEvents}
+            onCreateEmbed={onCreateEmbed}
+            onRevokeEmbed={onRevokeEmbed}
+          />
+        </TabsContent>
+      </Tabs>
+    </AgentDisclosure>
   );
 }
