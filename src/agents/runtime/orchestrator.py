@@ -134,9 +134,32 @@ def sql_mode_from_result(sql_result, question: str) -> bool:
         return False
     if sql_result.row_count > 0:
         return True
+    metadata = getattr(sql_result, "metadata", None) or {}
+    if str(metadata.get("strategy", "")).startswith("tabular_"):
+        # Respuesta tabular determinista (aunque sea count=0): es exacta.
+        return True
     from src.agents.tools.sql_router import SqlIntentRouter
 
     return not SqlIntentRouter.is_catalog_intent(question)
+
+
+def _metadata_scope(
+    metadata_filters: dict[str, str] | None,
+) -> tuple[list[UUID], UUID | None]:
+    """Extrae source_ids/knowledge_base_id de metadata_filters (best-effort)."""
+    sources: list[UUID] = []
+    kb_id: UUID | None = None
+    for key, value in (metadata_filters or {}).items():
+        if not value:
+            continue
+        try:
+            if key in ("source_id", "metadata.source_id"):
+                sources.append(UUID(str(value)))
+            elif key in ("knowledge_base_id", "metadata.knowledge_base_id"):
+                kb_id = UUID(str(value))
+        except (ValueError, TypeError):
+            continue
+    return sources, kb_id
 
 
 def _format_sql_result(result, question: str) -> str:
@@ -174,6 +197,8 @@ class RAGOrchestrator:
         learning: object | None = None,
         structured_retriever: object | None = None,
         promote_v2: bool = False,
+        tabular_query: object | None = None,
+        tabular_sql_first: bool = True,
     ) -> None:
         self._organization_repo = organization_repo
         self._vector_store = vector_store
@@ -199,6 +224,10 @@ class RAGOrchestrator:
         self._structured_retriever = structured_retriever
         # Phase G: override productivo del retriever (contexto real = V2).
         self._promote_v2 = promote_v2
+        # Knowledge Tabular V2: SQL-first sobre Excel/CSV (lookup/agregación/filtro
+        # exactos sobre la representación estructurada) + auto-ingesta al consultar.
+        self._tabular_query = tabular_query
+        self._tabular_sql_first = tabular_sql_first
         # Align anti-hallucination gate with configured score threshold (min 0.1 when threshold is 0)
         self._min_meaningful_score = max(score_threshold, 0.1) if score_threshold > 0 else 0.1
 
@@ -792,19 +821,69 @@ class RAGOrchestrator:
                     intelligence_plan is None
                     or getattr(intelligence_plan, "needs_sql", True)
                 )
-                if self._sql_expert and plan_needs_sql:
+                retrieval_context = None
+                sql_result = None
+                tabular_scope_sources, tabular_scope_kb = _metadata_scope(metadata_filters)
+
+                # SQL-first tabular: Excel/CSV resueltos por la representación
+                # estructurada (lookup/agregación/filtro exactos) ANTES de
+                # vector + SQL Expert LLM. Si no hay señal, cae al flujo normal.
+                if (
+                    self._tabular_query is not None
+                    and self._tabular_sql_first
+                    and plan_needs_sql
+                ):
+                    try:
+                        retrieval_context, sql_result = await asyncio.gather(
+                            _vector_search_full(),
+                            self._tabular_query.try_answer(  # type: ignore[union-attr]
+                                organization_id,
+                                query,
+                                source_ids=tabular_scope_sources or None,
+                                knowledge_base_id=tabular_scope_kb,
+                                role=role,
+                                user_id=user_id,
+                            ),
+                        )
+                        if sql_result is not None:
+                            logger.info(
+                                "Tabular SQL-first answered",
+                                organization_id=str(organization_id),
+                                strategy=(sql_result.metadata or {}).get("strategy"),
+                                tables=(sql_result.metadata or {}).get("tables"),
+                            )
+                    except Exception as _tabular_err:
+                        logger.warning(
+                            "Tabular SQL-first failed, falling back",
+                            error=str(_tabular_err)[:300],
+                        )
+                        retrieval_context = None
+                        sql_result = None
+
+                if (
+                    sql_result is None
+                    and self._sql_expert
+                    and plan_needs_sql
+                ):
                     try:
                         if self._sql_router is not None:
                             # Router en paralelo con retrieval: si no hay
                             # intención analítica, se ahorra el LLM de SQL.
-                            retrieval_context, sql_intent = await asyncio.gather(
-                                _vector_search_full(),
-                                self._sql_router.is_sql_intent(  # type: ignore[union-attr]
+                            if retrieval_context is None:
+                                retrieval_context, sql_intent = await asyncio.gather(
+                                    _vector_search_full(),
+                                    self._sql_router.is_sql_intent(  # type: ignore[union-attr]
+                                        organization_id=organization_id,
+                                        question=query,
+                                        role=role,
+                                    ),
+                                )
+                            else:
+                                sql_intent = await self._sql_router.is_sql_intent(  # type: ignore[union-attr]
                                     organization_id=organization_id,
                                     question=query,
                                     role=role,
-                                ),
-                            )
+                                )
                             if sql_intent:
                                 try:
                                     sql_result = await self._sql_expert.execute(
@@ -823,26 +902,35 @@ class RAGOrchestrator:
                             else:
                                 sql_result = None
                         else:
-                            retrieval_context, sql_result = await asyncio.gather(
-                                _vector_search_full(),
-                                self._sql_expert.execute(
+                            if retrieval_context is None:
+                                retrieval_context, sql_result = await asyncio.gather(
+                                    _vector_search_full(),
+                                    self._sql_expert.execute(
+                                        organization_id=organization_id,
+                                        question=query,
+                                        role=role,
+                                        permissions=sql_permissions,
+                                        user_id=user_id,
+                                    ),
+                                )
+                            else:
+                                sql_result = await self._sql_expert.execute(
                                     organization_id=organization_id,
                                     question=query,
                                     role=role,
                                     permissions=sql_permissions,
                                     user_id=user_id,
-                                ),
-                            )
+                                )
                     except Exception as _sql_err:
                         logger.warning(
                             "SQL Expert failed in parallel, falling back to vector-only",
                             error=str(_sql_err),
                         )
-                        retrieval_context = await _vector_search_full()
+                        retrieval_context = None
                         sql_result = None
-                else:
+
+                if retrieval_context is None:
                     retrieval_context = await _vector_search_full()
-                    sql_result = None
 
             result.retrieval_context = retrieval_context
             rag_vector_search_latency.labels(organization_id=str(organization_id)).observe(

@@ -127,6 +127,83 @@ knowledge_parse_latency = Histogram(
     buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
 )
 
+# Knowledge Tabular V2 (Excel/CSV): profiling, detección, dual indexing.
+knowledge_tabular_ingestion_total = Counter(
+    "knowledge_tabular_ingestion_total",
+    "Workbooks tabulares procesados (Excel/CSV)",
+    labelnames=["organization_id", "format", "outcome"],
+)
+
+knowledge_tabular_parse_latency = Histogram(
+    "knowledge_tabular_parse_latency_seconds",
+    "Latencia de parseo+persistencia estructurada tabular",
+    labelnames=["organization_id", "format"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0),
+)
+
+knowledge_tabular_tables_detected = Histogram(
+    "knowledge_tabular_tables_detected",
+    "Tablas detectadas por workbook",
+    labelnames=["organization_id", "format"],
+    buckets=(0, 1, 2, 3, 5, 8, 13, 21, 50),
+)
+
+knowledge_tabular_rows_processed = Counter(
+    "knowledge_tabular_rows_processed_total",
+    "Filas tabulares procesadas por operación de fingerprint",
+    labelnames=["organization_id", "format", "operation"],
+)
+
+knowledge_tabular_rows_upserted = Counter(
+    "knowledge_tabular_rows_upserted_total",
+    "Filas tabulares escritas en la representación estructurada",
+    labelnames=["organization_id", "format"],
+)
+
+knowledge_tabular_cells_processed = Counter(
+    "knowledge_tabular_cells_processed_total",
+    "Celdas no vacías procesadas",
+    labelnames=["organization_id", "format"],
+)
+
+knowledge_tabular_chunks_created = Counter(
+    "knowledge_tabular_chunks_created_total",
+    "Chunks tabulares creados por nivel jerárquico",
+    labelnames=["organization_id", "format", "level"],
+)
+
+knowledge_tabular_embeddings_created = Counter(
+    "knowledge_tabular_embeddings_created_total",
+    "Embeddings tabulares generados (incluye parents)",
+    labelnames=["organization_id", "format"],
+)
+
+knowledge_tabular_parse_errors = Counter(
+    "knowledge_tabular_parse_errors_total",
+    "Errores del pipeline tabular por etapa",
+    labelnames=["organization_id", "format", "stage"],
+)
+
+knowledge_tabular_schema_changes = Counter(
+    "knowledge_tabular_schema_changes_total",
+    "Tablas con schema_hash distinto en re-ingesta",
+    labelnames=["organization_id", "format"],
+)
+
+knowledge_tabular_quality_warnings = Counter(
+    "knowledge_tabular_quality_warnings_total",
+    "Warnings del reporte de calidad tabular por código",
+    labelnames=["organization_id", "format", "code"],
+)
+
+# Retrieval: latencia por etapa (query embedding, dense/sparse, rerank, total).
+rag_retrieval_stage_latency = Histogram(
+    "rag_retrieval_stage_latency_seconds",
+    "Latencia por etapa del retrieval (tool-level y orquestador)",
+    labelnames=["organization_id", "stage"],
+    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
+)
+
 # Phase F: retrieval V2 en sombra (comparar contra V1 sin cambiar la respuesta)
 knowledge_shadow_retrievals_total = Counter(
     "knowledge_shadow_retrievals_total",

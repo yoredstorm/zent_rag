@@ -601,6 +601,7 @@ export default function OnboardingWizardPage() {
           readyHeadline={readiness.ready_headline}
           readySubtitle={readiness.ready_subtitle}
           readyActions={readiness.ready_actions}
+          tabular={readiness.tabular}
         />
       )}
       </div>

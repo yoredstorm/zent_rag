@@ -29,6 +29,7 @@ from src.core.ports.rag_ports import (  # noqa: F401
     VectorStore,
 )
 from src.core.ports.secret_store import SecretStore  # noqa: F401
+from src.core.ports.tabular import TabularRepository  # noqa: F401
 
 __all__ = [
     "AgentRepository",
@@ -53,6 +54,7 @@ __all__ = [
     "SecretStore",
     "SourceRepository",
     "SyncStateRepository",
+    "TabularRepository",
     "UserRepository",
     "WorkspaceRepository",
     "VectorStore",

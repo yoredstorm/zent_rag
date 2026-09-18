@@ -89,7 +89,7 @@ export default function AgentStudioPage() {
     deploymentId: string;
     events: { event: string; created_at: string | null; metadata: Record<string, unknown> }[];
   } | null>(null);
-  const [retrieval, setRetrieval] = useState({ strategy: "vector", top_k: 8, score_threshold: 0.0 });
+  const [retrieval, setRetrieval] = useState({ strategy: "hybrid", top_k: 10, score_threshold: 0.0 });
   const [outputSchema, setOutputSchema] = useState("");
   const [readiness, setReadiness] = useState<{
     score: number;
@@ -251,8 +251,8 @@ export default function AgentStudioPage() {
     const sqlOn = data.tools.includes("query_database");
     const apiOn = data.tools.includes("call_api");
     const retrievalNext = {
-      strategy: data.config?.retrieval?.strategy || "vector",
-      top_k: data.config?.retrieval?.top_k ?? 8,
+      strategy: data.config?.retrieval?.strategy || "hybrid",
+      top_k: data.config?.retrieval?.top_k ?? 10,
       score_threshold: data.config?.retrieval?.score_threshold ?? 0,
     };
     const outputNext = data.config?.output_schema ? JSON.stringify(data.config.output_schema, null, 2) : "";

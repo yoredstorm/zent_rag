@@ -19,10 +19,12 @@ from src.knowledge.structure.chunker import (
     assign_blocks_to_sections,
     chunk_structured_document,
 )
+from src.knowledge.structure.csv_parser import CsvParser
 from src.knowledge.structure.docx_parser import DocxParser
 from src.knowledge.structure.html_parser import HtmlParser
 from src.knowledge.structure.pdf_parser import PdfParser
 from src.knowledge.structure.text_parser import TextParser
+from src.knowledge.structure.xlsx_parser import XlsxParser
 
 _text = TextParser()
 for ext in ("txt", "md", "markdown"):
@@ -33,6 +35,12 @@ register_parser("docx", DocxParser())
 _html = HtmlParser()
 register_parser("html", _html)
 register_parser("htm", _html)
+_xlsx = XlsxParser()
+register_parser("xlsx", _xlsx)
+register_parser("xlsm", _xlsx)
+_csv = CsvParser()
+register_parser("csv", _csv)
+register_parser("tsv", _csv)
 
 __all__ = [
     "StructuredParser",
@@ -44,8 +52,10 @@ __all__ = [
     "ChunkingConfig",
     "assign_blocks_to_sections",
     "chunk_structured_document",
+    "CsvParser",
     "DocxParser",
     "HtmlParser",
     "PdfParser",
     "TextParser",
+    "XlsxParser",
 ]

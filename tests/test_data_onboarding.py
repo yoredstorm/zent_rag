@@ -507,6 +507,109 @@ async def test_pending_review_scoped_to_session(async_client: AsyncClient) -> No
 
 
 @pytest.mark.asyncio
+async def test_readiness_uses_tabular_representation_for_xlsx(
+    async_client: AsyncClient,
+) -> None:
+    """El readiness de spreadsheets sale de la representación tabular real.
+
+    Antes: catálogo file-virtual sin columnas → estructura/mappings/relaciones 0%
+    y overall 5%. Ahora: estructura 96%, mappings por semántica de columnas y
+    relaciones 100% cuando hay una sola tabla (nada que unir).
+    """
+    from src.infrastructure.postgres.tabular import PostgresTabularRepository
+    from src.knowledge.structure import get_parser
+    from src.knowledge.tabular.persistence import persist_tabular_workbook
+    from tests import tabular_fixtures as fx
+
+    org = await _create_org(async_client, "Tabular Readiness Co")
+    headers = await _owner_headers(org)
+    created = await async_client.post(
+        f"{PREFIX}/sessions", headers=headers, json={"kind": "spreadsheets"}
+    )
+    sid = created.json()["id"]
+    upload = await async_client.post(
+        f"{PREFIX}/sessions/{sid}/connect/upload",
+        headers={k: v for k, v in headers.items() if k != "Content-Type"},
+        files={
+            "file": (
+                "ATPCO_TEST.xlsx",
+                BytesIO(fx.atpco_workbook_bytes()),
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+    )
+    assert upload.status_code == 200, upload.text
+    kb_source_id = upload.json()["kb_source_id"]
+    analyzed = await async_client.post(
+        f"{PREFIX}/sessions/{sid}/analyze", headers=headers
+    )
+    assert analyzed.status_code == 200, analyzed.text
+
+    # Sin representación tabular todavía: estado "en análisis", nunca 0 real.
+    pending = (
+        await async_client.get(f"{PREFIX}/sessions/{sid}/readiness", headers=headers)
+    ).json()
+    assert pending["scores"]["structure_understood"] == 40.0
+    assert pending["tabular"]["indexing"] == "pending"
+
+    # Simula el worker: parser + persistencia estructurada.
+    parser = get_parser("xlsx")
+    document = parser.parse(
+        fx.atpco_workbook_bytes(),
+        organization_id=UUID(org["organization_id"]),
+        external_id="obj/ATPCO_TEST.xlsx",
+        source_id=UUID(kb_source_id),
+        source_name="ATPCO_TEST.xlsx",
+    )
+    repository = PostgresTabularRepository()
+    await persist_tabular_workbook(repository, document.tabular)
+
+    ready = (
+        await async_client.get(f"{PREFIX}/sessions/{sid}/readiness", headers=headers)
+    ).json()
+    scores = ready["scores"]
+    assert scores["structure_understood"] == 100.0
+    assert scores["business_mappings"] > 0
+    assert scores["relationships"] == 100.0  # una sola tabla: sin joins pendientes
+    assert ready["overall"] > 50
+    assert ready["tabular"]["tables"] == 1
+    assert ready["tabular"]["columns"] == 5
+    assert ready["tabular"]["rows"] == 4
+
+    # Al confirmar la indexación semántica desaparece el aviso de "en curso".
+    await repository.set_representations(
+        UUID(org["organization_id"]),
+        document.tabular.id,
+        {"structured": True, "semantic": True, "lexical": True},
+    )
+    indexed = (
+        await async_client.get(f"{PREFIX}/sessions/{sid}/readiness", headers=headers)
+    ).json()
+    assert indexed["tabular"]["indexing"] == "completed"
+    assert not any("Indexación" in item for item in indexed["improvements"])
+
+
+def test_profile_excel_returns_columns(tmp_path) -> None:
+    """El profiler ligero de Excel debe exponer columnas (antes solo sheets)."""
+    from src.platform.data_onboarding.profile import _profile_excel
+    from tests import tabular_fixtures as fx
+
+    path = tmp_path / "multi.xlsx"
+    path.write_bytes(fx.multi_sheet_workbook_bytes())
+    result = _profile_excel(path, "multi.xlsx")
+    assert result["kind"] == "spreadsheet"
+    assert [sheet["name"] for sheet in result["sheets"]] == ["Rules", "Carriers"]
+    assert [column["physical_name"] for column in result["columns"]] == [
+        "Code",
+        "Description",
+        "Start",
+        "Length",
+    ]
+    assert result["columns"][2]["inferred_type"] == "integer"
+    assert result["likely_entity"]
+
+
+@pytest.mark.asyncio
 async def test_upload_csv_happy_and_exe_rejected(
     async_client: AsyncClient,
 ) -> None:

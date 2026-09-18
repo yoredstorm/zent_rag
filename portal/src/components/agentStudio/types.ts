@@ -119,7 +119,7 @@ export function defaultConfig(): AgentConfig {
 
 export function toolsFromCapabilities(semantic: boolean, sql: boolean, apiCalls: boolean): string[] {
   const tools: string[] = [];
-  if (semantic) tools.push("search_knowledge");
+  if (semantic) tools.push("search_knowledge", "query_tabular_data");
   if (sql) tools.push("query_database");
   if (apiCalls) tools.push("call_api");
   return tools;

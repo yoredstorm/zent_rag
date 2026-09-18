@@ -236,21 +236,28 @@ def query_runtime_secrets(secrets: dict) -> dict:
     return {k: v for k, v in (secrets or {}).items() if k not in blocked}
 
 
-async def get_managed_database(organization_id: UUID, workspace_id: UUID) -> dict | None:
+async def get_managed_database(
+    organization_id: UUID, workspace_id: UUID | None = None
+) -> dict | None:
+    """Managed DB del workspace; sin workspace, la más reciente de la org.
+
+    Fuentes subidas por API pueden no tener workspace asignado: el fallback
+    permite materializar igual (una Managed DB por org en el caso típico).
+    """
     await ensure_managed_schema()
     session = await get_async_session()
     try:
-        row = (
-            await session.execute(
-                text(
-                    "SELECT id, db_name, status, connector_id, size_quota_mb, "
-                    "backup_retention_days, restore_ready, last_backup_at "
-                    "FROM managed_databases "
-                    "WHERE organization_id = :oid AND workspace_id = :wid"
-                ),
-                {"oid": organization_id, "wid": workspace_id},
-            )
-        ).fetchone()
+        sql = (
+            "SELECT id, db_name, status, connector_id, size_quota_mb, "
+            "backup_retention_days, restore_ready, last_backup_at "
+            "FROM managed_databases WHERE organization_id = :oid"
+        )
+        params: dict = {"oid": organization_id}
+        if workspace_id is not None:
+            sql += " AND workspace_id = :wid"
+            params["wid"] = workspace_id
+        sql += " ORDER BY created_at DESC LIMIT 1"
+        row = (await session.execute(text(sql), params)).fetchone()
         return _row(row) if row else None
     finally:
         await session.close()

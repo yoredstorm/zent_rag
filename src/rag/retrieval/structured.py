@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from uuid import UUID
 
 from src.core.domain.entities import RetrievalChunk
@@ -38,6 +38,20 @@ V2_CHUNK_FILTER_KEY = "metadata.v2_chunk"
 V2_CHUNK_FILTER = {V2_CHUNK_FILTER_KEY: "true"}
 
 
+def observe_stage(organization_id: UUID, stage: str, seconds: float) -> None:
+    """Histograma de latencia por etapa (fail-silent)."""
+    try:
+        from src.infrastructure.observability.metrics import (
+            rag_retrieval_stage_latency,
+        )
+
+        rag_retrieval_stage_latency.labels(
+            organization_id=str(organization_id), stage=stage
+        ).observe(max(0.0, seconds))
+    except Exception:  # pragma: no cover - métricas nunca rompen retrieval
+        pass
+
+
 @dataclass(frozen=True, kw_only=True)
 class V2RetrievalOptions:
     """Presupuestos del pipeline V2 (brief §13)."""
@@ -61,6 +75,7 @@ class AssembledContext:
     options: V2RetrievalOptions
     retrieval_latency_ms: float = 0.0
     deduped_count: int = 0
+    stage_ms: dict = field(default_factory=dict)
 
     @property
     def total_chars(self) -> int:
@@ -93,6 +108,7 @@ class StructuredRetriever:
         options: V2RetrievalOptions | None = None,
     ) -> AssembledContext:
         start = time.perf_counter()
+        stage_ms: dict[str, float] = {}
         options = options or V2RetrievalOptions()
         v2_query = replace(
             query,
@@ -105,7 +121,9 @@ class StructuredRetriever:
             strategy = STRATEGY_HYBRID if self._lexical is not None else STRATEGY_VECTOR
             v2_query = replace(v2_query, strategy=strategy)
 
+        candidates_start = time.perf_counter()
         children = await self._candidates(v2_query, options)
+        stage_ms["candidates_ms"] = (time.perf_counter() - candidates_start) * 1000
         before_dedupe = len(children)
         children = dedupe_chunks(children)
         children = filter_by_threshold(children, v2_query.score_threshold)
@@ -113,6 +131,7 @@ class StructuredRetriever:
             children = self._diversify(children, options)
 
         if self._reranker is not None and children:
+            rerank_start = time.perf_counter()
             try:
                 children = await self._reranker.rerank(
                     query=query.query,
@@ -126,18 +145,28 @@ class StructuredRetriever:
                     error=str(exc),
                     organization_id=str(query.organization_id),
                 )
+            stage_ms["rerank_ms"] = (time.perf_counter() - rerank_start) * 1000
 
         parents: tuple[RetrievalChunk, ...] = ()
         if options.parent_expansion:
+            parents_start = time.perf_counter()
             parents = tuple(
                 await self._expand_parents(query, children)
             )
+            stage_ms["parent_expansion_ms"] = (
+                time.perf_counter() - parents_start
+            ) * 1000
 
+        context_start = time.perf_counter()
         combined = list(children) + list(parents)
         bounded = self._builder.fit_budget(combined)
         context = tuple(bounded[: options.final_context_k])
+        stage_ms["context_build_ms"] = (time.perf_counter() - context_start) * 1000
 
         elapsed_ms = (time.perf_counter() - start) * 1000
+        stage_ms["total_ms"] = elapsed_ms
+        for stage, value in stage_ms.items():
+            observe_stage(query.organization_id, stage.removesuffix("_ms"), value / 1000.0)
         logger.info(
             "V2 structured retrieval completed",
             strategy=strategy,
@@ -146,6 +175,7 @@ class StructuredRetriever:
             parents=len(parents),
             context=len(context),
             retrieval_latency_ms=round(elapsed_ms, 2),
+            **{key: round(value, 2) for key, value in stage_ms.items()},
             organization_id=str(query.organization_id),
         )
         return AssembledContext(
@@ -155,6 +185,7 @@ class StructuredRetriever:
             options=options,
             retrieval_latency_ms=elapsed_ms,
             deduped_count=before_dedupe - len(children),
+            stage_ms=stage_ms,
         )
 
     # ------------------------------------------------------------------
@@ -164,6 +195,7 @@ class StructuredRetriever:
         self, query: RetrievalQuery, options: V2RetrievalOptions
     ) -> list[RetrievalChunk]:
         if self._hybrid is not None and query.query_embedding is not None:
+            started = time.perf_counter()
             ctx = await self._hybrid.search_hybrid(
                 organization_id=query.organization_id,
                 query_text=query.query,
@@ -178,13 +210,17 @@ class StructuredRetriever:
                 knowledge_base_id=query.knowledge_base_id,
                 workspace_id=query.workspace_id,
             )
+            observe_stage(
+                query.organization_id, "hybrid_search", time.perf_counter() - started
+            )
             return ctx.chunks
 
         if query.query_embedding is None:
             raise ValueError("StructuredRetriever requires query_embedding")
 
-        dense_task = asyncio.ensure_future(
-            self._vector.search(
+        async def dense_search():
+            started = time.perf_counter()
+            ctx = await self._vector.search(
                 organization_id=query.organization_id,
                 query_embedding=query.query_embedding,
                 top_k=options.candidate_k,
@@ -197,24 +233,31 @@ class StructuredRetriever:
                 knowledge_base_id=query.knowledge_base_id,
                 workspace_id=query.workspace_id,
             )
-        )
-        if self._lexical is not None and query.query:
-            lexical_task = asyncio.ensure_future(
-                self._lexical.search_sparse(
-                    organization_id=query.organization_id,
-                    query_text=query.query,
-                    top_k=options.candidate_k,
-                    filters=query.filters or None,
-                    exclude_filters=query.exclude_filters or None,
-                    score_threshold=query.score_threshold,
-                    role=query.role,
-                    user_id=query.user_id,
-                    groups=query.groups,
-                    knowledge_base_id=query.knowledge_base_id,
-                    workspace_id=query.workspace_id,
-                )
+            return ctx, (time.perf_counter() - started) * 1000
+
+        async def lexical_search():
+            started = time.perf_counter()
+            ctx = await self._lexical.search_sparse(
+                organization_id=query.organization_id,
+                query_text=query.query,
+                top_k=options.candidate_k,
+                filters=query.filters or None,
+                exclude_filters=query.exclude_filters or None,
+                score_threshold=query.score_threshold,
+                role=query.role,
+                user_id=query.user_id,
+                groups=query.groups,
+                knowledge_base_id=query.knowledge_base_id,
+                workspace_id=query.workspace_id,
             )
-            dense_ctx, lexical_ctx = await asyncio.gather(dense_task, lexical_task)
+            return ctx, (time.perf_counter() - started) * 1000
+
+        if self._lexical is not None and query.query:
+            (dense_ctx, dense_ms), (lexical_ctx, lexical_ms) = await asyncio.gather(
+                dense_search(), lexical_search()
+            )
+            observe_stage(query.organization_id, "dense_search", dense_ms / 1000.0)
+            observe_stage(query.organization_id, "lexical_search", lexical_ms / 1000.0)
             if query.fusion == FUSION_RRF:
                 return rrf_fusion(
                     [dense_ctx.chunks, lexical_ctx.chunks],
@@ -222,7 +265,8 @@ class StructuredRetriever:
                 )
             return dedupe_chunks(list(dense_ctx.chunks) + lexical_ctx.chunks)
 
-        dense_ctx = await dense_task
+        dense_ctx, dense_ms = await dense_search()
+        observe_stage(query.organization_id, "dense_search", dense_ms / 1000.0)
         return dense_ctx.chunks
 
     # ------------------------------------------------------------------

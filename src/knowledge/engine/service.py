@@ -34,6 +34,7 @@ from src.core.ports import (
     VectorStore,
 )
 from src.core.ports.structured import StructuredDocumentRepository
+from src.core.ports.tabular import TabularRepository
 from src.infrastructure.observability.logging_config import get_logger
 from src.knowledge.connectors.base import ConnectorError, Record
 from src.knowledge.connectors.registry import build_connector
@@ -205,6 +206,7 @@ class KnowledgeIngestionEngine:
         backoff_base_seconds: int = 10,
         max_attempts_default: int = 3,
         structured_doc_repo: StructuredDocumentRepository | None = None,
+        tabular_repo: TabularRepository | None = None,
         summarizer: object | None = None,
         usage_tracker: object | None = None,
     ) -> None:
@@ -219,6 +221,8 @@ class KnowledgeIngestionEngine:
         self._max_attempts_default = max_attempts_default
         # Knowledge V2 (Phase B): paralelo, opcional, nunca rompe el camino V1.
         self._structured_v2 = structured_doc_repo
+        # Knowledge Tabular V2: representación estructurada de Excel/CSV.
+        self._tabular_v2 = tabular_repo
         # Phase C3: summarizer shadow (mode=shadow) — calcula, NO persiste.
         self._summarizer = summarizer
         # Phase G (brief §41): registro de costos por corpus/source.
@@ -347,6 +351,9 @@ class KnowledgeIngestionEngine:
         records_processed = 0
         records_failed = 0
         seen_external_ids: set[str] = set()
+        # Knowledge V2/Tabular: external_ids de documentos estructurados
+        # (un workbook Excel/CSV produce un documento, no un record por fila).
+        v2_external_ids: set[str] = set()
         pending_chunks: list[tuple[str, str]] = []  # (external_id, chunk_text)
         chunk_indexes: dict[str, int] = {}
 
@@ -362,6 +369,24 @@ class KnowledgeIngestionEngine:
             embeddings = await self._embeddings.embed(texts, model=kb.embedding_model if kb else None)
             if embeddings and not isinstance(embeddings[0], list):
                 embeddings = [embeddings]  # provider devolvió un solo vector
+            if self._usage_tracker is not None:
+                # Gap de observabilidad cerrado: el camino V1 también registra
+                # tokens de embedding (antes solo lo hacía V2).
+                try:
+                    from src.knowledge.structure.base import token_count as _tokens
+
+                    batch_tokens = sum(_tokens(text) for text in texts)
+                    await self._usage_tracker.record_embedding_tokens(
+                        job.organization_id,
+                        batch_tokens,
+                        workspace_id=source.workspace_id,
+                        source_id=source_id,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Knowledge usage tracking (V1 embeddings) failed",
+                        error=str(exc)[:200],
+                    )
             points: list[tuple[UUID, list[float], str, dict | None]] = []
             for (external_id, text), vector in zip(pending_chunks, embeddings):
                 chunk_index = next_index(external_id)
@@ -401,7 +426,7 @@ class KnowledgeIngestionEngine:
             if error:
                 records_failed += 1
                 continue
-            await self._maybe_structured_v2(job, source, record)
+            await self._maybe_structured_v2(job, source, record, v2_external_ids)
             chunks = chunker.chunk(record.content)
             if not chunks:
                 records_failed += 1
@@ -424,25 +449,39 @@ class KnowledgeIngestionEngine:
 
         await flush()
 
-        # Delete detection: registry marca 'deleted' lo no visto y retorna ids
-        deleted = await self._registry.mark_missing_deleted(source_id, seen_external_ids)
+        # Delete detection: registry marca 'deleted' lo no visto y retorna ids.
+        # El keep-set incluye los documentos estructurados V2/Tabular (workbook
+        # completo) además de los records V1.
+        keep_external_ids = seen_external_ids | v2_external_ids
+        deleted = await self._registry.mark_missing_deleted(source_id, keep_external_ids)
         if deleted:
             ids = [str(d) for d in deleted]
             await self._vectors.delete_points(job.organization_id, ids)
 
         # F5: purga V2 (Qdrant + Postgres) de documentos que ya no existen en
-        # la fuente. La lista `seen_external_ids` define qué queda vivo.
+        # la fuente. La lista `keep_external_ids` define qué queda vivo.
         if self._structured_v2 is not None:
             try:
                 await self._vectors.delete_stale_v2_documents(
-                    job.organization_id, source_id, seen_external_ids
+                    job.organization_id, source_id, keep_external_ids
                 )
                 await self._structured_v2.delete_missing_documents(
-                    job.organization_id, source_id, seen_external_ids
+                    job.organization_id, source_id, keep_external_ids
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "Knowledge V2 stale purge failed",
+                    source_id=str(source_id),
+                    error=str(exc)[:300],
+                )
+        if self._tabular_v2 is not None:
+            try:
+                await self._tabular_v2.delete_missing_workbooks(
+                    job.organization_id, source_id, v2_external_ids
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Knowledge Tabular stale purge failed",
                     source_id=str(source_id),
                     error=str(exc)[:300],
                 )
@@ -461,12 +500,22 @@ class KnowledgeIngestionEngine:
             progress=100,
         )
 
-    async def _maybe_structured_v2(self, job, source, record: Record) -> None:
+    async def _maybe_structured_v2(
+        self,
+        job,
+        source,
+        record: Record,
+        v2_external_ids: set[str] | None = None,
+    ) -> None:
         """Phase B: parsea a StructuredDocument y persiste EN PARALELO a V1.
 
         Nunca interrumpe el camino V1: errores de parseo/persistencia son warn
         y se contabilizan (v2_failed). Requiere que el conector entregue los
         bytes originales (record.raw_data + record.format).
+
+        Knowledge Tabular V2: si el documento trae árbol tabular (Excel/CSV),
+        se persiste la representación estructurada y los chunks se generan con
+        TabularChunker (multinivel) en lugar del chunker de secciones.
         """
         if self._structured_v2 is None:
             return
@@ -488,31 +537,68 @@ class KnowledgeIngestionEngine:
             knowledge_parse_total,
         )
 
+        # El conector puede declarar el external_id del documento (una sola
+        # vez por archivo) aunque el record sea la fila N.
+        external_id = str(
+            record.metadata.get("document_external_id") or record.external_id
+        )
         started = time.perf_counter()
         outcome = "parse_error"
         try:
             document = parser.parse(
                 raw_data,
                 organization_id=job.organization_id,
-                external_id=record.external_id,
+                external_id=external_id,
                 source_id=source.id,
                 workspace_id=source.workspace_id,
-                source_name=str(record.metadata.get("filename") or record.external_id),
+                source_name=str(record.metadata.get("filename") or external_id),
             )
             document.check_consistency()
             outcome = "persist_error"
             change_kind = await self._structured_v2.upsert_document(document)
+            if v2_external_ids is not None:
+                v2_external_ids.add(external_id)
             logger.info(
                 "Knowledge V2 document upserted",
                 document_id=str(document.id),
-                external_id=document.external_id,
+                external_id=external_id,
                 change_kind=change_kind or "unknown",
+                tabular=document.tabular is not None,
             )
             outcome = "chunk_index"
-            await self._index_v2_chunks(
+            tabular_diff = await self._persist_tabular_v2(
+                job, source, document, change_kind=change_kind
+            )
+            index_result = await self._index_v2_chunks(
                 job, source, document, change_kind=change_kind,
                 acl=_acl_payload(record.metadata),
+                tabular_diff=tabular_diff,
             )
+            if index_result and self._tabular_v2 is not None and document.tabular is not None:
+                try:
+                    policy = self._chunking_policy_key(self._tabular_chunking_config())
+                    await self._tabular_v2.set_runtime_metadata(
+                        job.organization_id,
+                        document.tabular.id,
+                        {
+                            "chunking_policy": policy,
+                            "chunk_count": int(index_result),
+                        },
+                    )
+                    await self._tabular_v2.set_representations(
+                        job.organization_id,
+                        document.tabular.id,
+                        {
+                            "structured": True,
+                            "semantic": True,
+                            "lexical": True,
+                        },
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Knowledge Tabular representations update failed",
+                        error=str(exc)[:200],
+                    )
             outcome = "summarize"
             await self._shadow_summarize(document, change_kind=change_kind)
             outcome = "ok"
@@ -521,7 +607,7 @@ class KnowledgeIngestionEngine:
             self.v2_failed += 1
             logger.warning(
                 "Knowledge V2 structured pipeline failed",
-                external_id=record.external_id,
+                external_id=external_id,
                 stage=outcome,
                 error=str(exc)[:500],
             )
@@ -536,10 +622,248 @@ class KnowledgeIngestionEngine:
                 format=record_format,
             ).observe(time.perf_counter() - started)
 
+    @staticmethod
+    def _chunking_policy_key(config) -> str:
+        """Hash de la política de chunking tabular (invalida puntos al cambiar)."""
+        import hashlib
+        import json
+
+        payload = {
+            "rv": 3,  # v3: KEY corto + columnas cortas (posiciones) en grupos
+            "rg": config.row_group_size,
+            "rgo": config.row_group_overlap,
+            "gr": config.max_group_rows,
+            "kc": config.key_columns_for_wide_tables,
+            "wt": config.wide_table_columns,
+            "mkc": config.max_group_key_columns,
+            "ft": config.max_free_text_chars_in_groups,
+            "rows": config.max_embedding_rows_per_table,
+            "cells": config.include_cells,
+        }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True).encode("utf-8")
+        ).hexdigest()[:16]
+
+    def _tabular_chunking_config(self):
+        """Config única del TabularChunker (ingesta y fingerprint de política)."""
+        from src.knowledge.tabular.chunker import TabularChunkingConfig
+        from src.knowledge.tabular.limits import tabular_limits
+
+        settings = None
+        try:
+            from src.core.config import get_settings
+
+            settings = get_settings()
+        except Exception:  # pragma: no cover - settings siempre disponible
+            settings = None
+        limits = tabular_limits() if settings is not None else None
+        return TabularChunkingConfig(
+            row_group_size=limits.row_group_size if limits else 40,
+            row_group_overlap=limits.row_group_overlap if limits else 2,
+            max_embedding_rows_per_table=limits.max_embedding_rows if limits else 5_000,
+            max_group_rows=int(
+                getattr(settings, "KNOWLEDGE_TABULAR_MAX_GROUP_ROWS", 20_000)
+            ),
+            key_columns_for_wide_tables=bool(
+                getattr(settings, "KNOWLEDGE_TABULAR_GROUP_KEY_COLUMNS", True)
+            ),
+            wide_table_columns=int(
+                getattr(settings, "KNOWLEDGE_TABULAR_WIDE_TABLE_COLUMNS", 12)
+            ),
+            max_group_key_columns=int(
+                getattr(settings, "KNOWLEDGE_TABULAR_MAX_GROUP_KEY_COLUMNS", 5)
+            ),
+            max_free_text_chars_in_groups=int(
+                getattr(settings, "KNOWLEDGE_TABULAR_MAX_FREE_TEXT_CHARS", 160)
+            ),
+            include_cells=bool(
+                getattr(settings, "KNOWLEDGE_TABULAR_CELL_CHUNKS_ENABLED", False)
+            ),
+            max_cell_chunks_per_table=int(
+                getattr(settings, "KNOWLEDGE_TABULAR_MAX_CELL_CHUNKS", 200)
+            ),
+        )
+
+    async def _persist_tabular_v2(self, job, source, document, *, change_kind):
+        """Persiste el árbol tabular y emite métricas (fail-soft → raise).
+
+        Devuelve el WorkbookDiff (None si el documento no es tabular o no hay
+        repositorio tabular configurado).
+        """
+        workbook = document.tabular
+        if workbook is None or self._tabular_v2 is None:
+            return None
+
+        import time
+
+        from src.infrastructure.observability.logging_config import get_logger as _get_logger
+        from src.infrastructure.observability.metrics import (
+            knowledge_tabular_cells_processed,
+            knowledge_tabular_parse_errors,
+            knowledge_tabular_parse_latency,
+            knowledge_tabular_quality_warnings,
+            knowledge_tabular_rows_processed,
+            knowledge_tabular_rows_upserted,
+            knowledge_tabular_schema_changes,
+            knowledge_tabular_tables_detected,
+        )
+        from src.knowledge.tabular.persistence import persist_tabular_workbook
+
+        _logger = _get_logger(__name__)
+        started = time.perf_counter()
+        organization_id = str(job.organization_id)
+        tabular_format = workbook.format.value
+        try:
+            diff = await persist_tabular_workbook(
+                self._tabular_v2,
+                workbook,
+                knowledge_base_id=job.knowledge_base_id,
+                chunking_policy=self._chunking_policy_key(
+                    self._tabular_chunking_config()
+                ),
+            )
+        except Exception:
+            knowledge_tabular_parse_errors.labels(
+                organization_id=organization_id,
+                format=tabular_format,
+                stage="tabular_persist",
+            ).inc()
+            raise
+
+        profile = workbook.profile
+        knowledge_tabular_tables_detected.labels(
+            organization_id=organization_id, format=tabular_format
+        ).observe(workbook.table_count)
+        if profile is not None:
+            knowledge_tabular_cells_processed.labels(
+                organization_id=organization_id, format=tabular_format
+            ).inc(profile.non_empty_cells)
+        knowledge_tabular_parse_latency.labels(
+            organization_id=organization_id, format=tabular_format
+        ).observe(time.perf_counter() - started)
+        for key, value in diff.row_stats.items():
+            if value:
+                knowledge_tabular_rows_processed.labels(
+                    organization_id=organization_id,
+                    format=tabular_format,
+                    operation=key,
+                ).inc(value)
+                if key in ("inserted", "updated"):
+                    knowledge_tabular_rows_upserted.labels(
+                        organization_id=organization_id, format=tabular_format
+                    ).inc(value)
+        schema_changes = sum(1 for table_diff in diff.table_diffs if table_diff.schema_changed)
+        if schema_changes:
+            knowledge_tabular_schema_changes.labels(
+                organization_id=organization_id, format=tabular_format
+            ).inc(schema_changes)
+        if workbook.quality is not None:
+            for warning in workbook.quality.warnings:
+                knowledge_tabular_quality_warnings.labels(
+                    organization_id=organization_id,
+                    format=tabular_format,
+                    code=warning.code,
+                ).inc()
+        _logger.info(
+            "Knowledge Tabular workbook persisted",
+            workbook_id=str(workbook.id),
+            document_change_kind=change_kind or "unknown",
+            change_kind=diff.change_kind.value,
+            tables=workbook.table_count,
+            rows=workbook.row_count,
+            changed_tables=len(diff.changed_table_ids),
+            deleted_tables=len(diff.deleted_table_ids),
+            rows_inserted=diff.row_stats["inserted"],
+            rows_updated=diff.row_stats["updated"],
+            rows_deleted=diff.row_stats["deleted"],
+        )
+        await self._maybe_materialize_managed_db(
+            source, workbook, diff, logger=_logger
+        )
+        return diff
+
+    async def _maybe_materialize_managed_db(self, source, workbook, diff, *, logger) -> None:
+        """Materialización opcional en Managed Database (flag + DB existente).
+
+        Best-effort: cualquier fallo es warning; la representación canónica
+        (tabular_* en la plataforma) ya quedó persistida. Recuperación: si el
+        workbook nunca se materializó (flag recién activado), se materializa
+        aunque el diff venga UNCHANGED.
+        """
+        try:
+            from src.core.config import get_settings
+
+            if not get_settings().KNOWLEDGE_TABULAR_MANAGED_DB_ENABLED:
+                return
+            metadata = dict(diff.metadata or {})
+            stored_policy = str(metadata.get("stored_materialization_policy") or "")
+            stored_tables = list(metadata.get("stored_materialized_tables") or [])
+            # v2: nombre SQL limpio (sin sufijo de rango del detector) y CSV.
+            materialization_policy = "v2"
+            changed = set(diff.changed_table_ids or [])
+            needs = (
+                stored_policy != materialization_policy
+                or not stored_tables
+                or bool(changed)
+            )
+            if not needs:
+                return
+            from src.knowledge.tabular.managed_materializer import materialize_tables
+
+            wanted = changed if changed else {table.id for table in workbook.tables()}
+            tables = [
+                (table, workbook.filename, sheet.name)
+                for sheet in workbook.sheets
+                for table in sheet.tables
+                if table.id in wanted
+            ]
+            if not tables:
+                return
+            results = await materialize_tables(
+                tables,
+                organization_id=workbook.organization_id,
+                workspace_id=source.workspace_id,
+                source_id=source.id,
+            )
+            applied = [
+                {"name": result.table_name, "rows": result.rows_written}
+                for result in results
+                if result.status == "applied"
+            ]
+            status = "applied" if applied else ("skipped" if results else "none")
+            detail = next(
+                (result.detail for result in results if result.detail), ""
+            )
+            values: dict = {
+                "materialization_status": status,
+                "materialized_tables": applied,
+                "materialization_detail": detail[:200],
+            }
+            if applied:
+                # Solo se fija la política con materialización efectiva: si la
+                # DB no existe todavía, el próximo sync reintenta.
+                values["materialization_policy"] = materialization_policy
+            if self._tabular_v2 is not None:
+                await self._tabular_v2.set_runtime_metadata(
+                    workbook.organization_id, workbook.id, values
+                )
+            logger.info(
+                "Knowledge Tabular managed-db materialization",
+                results=[result.status for result in results],
+                rows=sum(result.rows_written for result in results),
+                detail=detail[:120],
+            )
+        except Exception as exc:  # noqa: BLE001 - nunca rompe la ingesta
+            logger.warning(
+                "Knowledge Tabular managed-db materialization failed",
+                error=str(exc)[:300],
+            )
+
     async def _index_v2_chunks(
         self, job, source, document, *, change_kind: str | None = None,
         acl: dict | None = None,
-    ) -> None:
+        tabular_diff: object | None = None,
+    ) -> bool | None:
         """Phase C: embebe los chunks V2 (children + parents) y los upserta.
 
         Dual-write aditivo: misma colección rag_documents y MISMO contrato ACL
@@ -554,7 +878,16 @@ class KnowledgeIngestionEngine:
 
         Fingerprinting (§41): contenido sin cambios (change_kind=unchanged) →
         chunks idénticos → se SKIPEA el re-embed y se registra la decisión.
+
+        Knowledge Tabular V2: los documentos Excel/CSV usan TabularChunker y
+        un pipeline de índice propio (point keys deterministas + borrado por
+        tabla) que permite re-embeder SOLO las tablas cambiadas.
         """
+        if document.tabular is not None:
+            return await self._index_tabular_chunks(
+                job, source, document, tabular_diff=tabular_diff, acl=acl
+            )
+
         from src.knowledge.structure import (
             ChunkingConfig as _ChunkingConfig,
         )
@@ -648,6 +981,188 @@ class KnowledgeIngestionEngine:
                 knowledge_base_id=knowledge_base_id,
                 workspace_id=source.workspace_id,
             )
+
+    async def _index_tabular_chunks(
+        self,
+        job,
+        source,
+        document,
+        *,
+        tabular_diff: object | None = None,
+        acl: dict | None = None,
+    ) -> bool:
+        """Representación semántica tabular multinivel (niveles 0-5).
+
+        - Point IDs deterministas (`point_key` del chunker) → upsert idempotente.
+        - Borra los puntos de las tablas cambiadas/eliminadas y re-embebe SOLO
+          esas tablas (workbook/sheet/schema se re-upsertan siempre, son pocos).
+        - Tablas sin cambios: sus puntos quedan intactos (no delete, no embed).
+        """
+        from src.core.domain.tabular import TabularChangeKind
+        from src.knowledge.tabular.chunker import (
+            chunk_tabular_workbook,
+        )
+        from src.knowledge.tabular.ids import point_id_for
+
+        changed_table_ids = None
+        if tabular_diff is not None:
+            metadata = tabular_diff.metadata or {}
+            is_unchanged = (
+                tabular_diff.change_kind is TabularChangeKind.UNCHANGED
+            )
+            needs_index = (not is_unchanged) or bool(
+                metadata.get("needs_semantic_index")
+            )
+            if not needs_index:
+                logger.info(
+                    "Knowledge Tabular chunks skipped (content unchanged — fingerprint)",
+                    document_id=str(document.id),
+                )
+                return 0
+            changed_table_ids = tabular_diff.changed_table_ids
+            if is_unchanged:
+                # Recuperación: el archivo no cambió pero faltan chunks (p. ej.
+                # el worker murió a mitad de indexar). Re-indexa TODAS las
+                # tablas; el upsert por point_key es idempotente.
+                changed_table_ids = None
+                logger.info(
+                    "Knowledge Tabular re-indexing (semantic representation missing)",
+                    document_id=str(document.id),
+                    stored_representations=metadata.get("stored_representations"),
+                )
+            if metadata.get("policy_changed"):
+                # La política de chunking cambió (tamaño de grupos, columnas
+                # clave...): los point_keys/serialización anteriores quedan
+                # obsoletos → purga total del documento y re-index completo.
+                changed_table_ids = None
+                try:
+                    await self._vectors.delete_v2_document(
+                        job.organization_id, document.id
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Knowledge Tabular policy purge failed",
+                        document_id=str(document.id),
+                        error=str(exc)[:300],
+                    )
+                logger.info(
+                    "Knowledge Tabular full re-index (chunking policy changed)",
+                    document_id=str(document.id),
+                    stored_policy=metadata.get("stored_chunking_policy"),
+                )
+        if tabular_diff is not None and changed_table_ids is not None:
+            scope = list(changed_table_ids) + list(tabular_diff.deleted_table_ids)
+            if scope:
+                try:
+                    await self._vectors.delete_v2_tables(
+                        job.organization_id, document.id, scope
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Knowledge Tabular point purge failed",
+                        document_id=str(document.id),
+                        error=str(exc)[:300],
+                    )
+
+        config = self._tabular_chunking_config()
+        policy = self._chunking_policy_key(config)
+        chunks = chunk_tabular_workbook(
+            document,
+            config=config,
+            changed_table_ids=changed_table_ids,
+        )
+        if not chunks:
+            return 0
+
+        knowledge_base_id = job.knowledge_base_id
+        embedded = 0
+        level_counts: dict[int, int] = {}
+        for start in range(0, len(chunks), _EMBED_BATCH):
+            batch_chunks = chunks[start : start + _EMBED_BATCH]
+            embeddings = await self._embeddings.embed(
+                [c.content for c in batch_chunks]
+            )
+            if embeddings and not isinstance(embeddings[0], list):
+                embeddings = [embeddings]
+            if self._usage_tracker is not None:
+                try:
+                    batch_tokens = sum(c.token_count for c in batch_chunks)
+                    await self._usage_tracker.record_embedding_tokens(
+                        job.organization_id,
+                        batch_tokens,
+                        workspace_id=source.workspace_id,
+                        source_id=source.id,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Knowledge Tabular usage tracking failed",
+                        error=str(exc)[:200],
+                    )
+            points: list[tuple[UUID, list[float], str, dict | None]] = []
+            for chunk, vector in zip(batch_chunks, embeddings):
+                metadata = chunk.metadata
+                level = int(metadata.get("level") or 0)
+                level_counts[level] = level_counts.get(level, 0) + 1
+                is_parent = level <= 2
+                point_key = metadata.get("point_key")
+                point_id = (
+                    point_id_for(str(point_key))
+                    if point_key
+                    else _v2_chunk_id(source.id, document.external_id, chunk.chunk_index)
+                )
+                chunk_metadata: dict = {
+                    **metadata,
+                    "chunk_id": str(chunk.id),
+                    "chunk_type": chunk.chunk_type.value,
+                    "content_hash": chunk.content_hash,
+                    "document_id": str(document.id),
+                    "knowledge_base_id": (
+                        str(knowledge_base_id) if knowledge_base_id else None
+                    ),
+                    "workspace_id": (
+                        str(source.workspace_id) if source.workspace_id else None
+                    ),
+                    "page_start": None,
+                    "page_end": None,
+                    "v2_chunk": "false" if is_parent else "true",
+                    "v2_parent": "true" if is_parent else "false",
+                    "v2_doc": "true",
+                    "v2_tabular": "true",
+                    **(acl or {}),
+                }
+                points.append((point_id, list(vector), chunk.content, chunk_metadata))
+            await self._vectors.upsert_batch(
+                job.organization_id,
+                points,
+                knowledge_base_id=knowledge_base_id,
+                workspace_id=source.workspace_id,
+            )
+            embedded += len(batch_chunks)
+
+        from src.infrastructure.observability.metrics import (
+            knowledge_tabular_chunks_created,
+            knowledge_tabular_embeddings_created,
+        )
+
+        organization_id = str(job.organization_id)
+        tabular_format = document.tabular.format.value if document.tabular else "xlsx"
+        for level, count in level_counts.items():
+            knowledge_tabular_chunks_created.labels(
+                organization_id=organization_id,
+                format=tabular_format,
+                level=str(level),
+            ).inc(count)
+        knowledge_tabular_embeddings_created.labels(
+            organization_id=organization_id, format=tabular_format
+        ).inc(embedded)
+        logger.info(
+            "Knowledge Tabular chunks indexed",
+            document_id=str(document.id),
+            chunks=len(chunks),
+            embedded=embedded,
+            levels={str(level): count for level, count in sorted(level_counts.items())},
+        )
+        return len(chunks)
 
     async def _shadow_summarize(self, document, *, change_kind: str | None = None) -> None:
         """Phase C3 shadow: calcula SectionSummary/DocumentSummary (INFERRED).

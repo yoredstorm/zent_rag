@@ -555,6 +555,203 @@ class Settings(BaseSettings):
             "Solo tras calibrar shadow. Nunca promueve INFERRED a APPROVED."
         ),
     )
+    # -------------------------------------------------------------------------
+    # Knowledge Tabular V2 (Excel/CSV estructurado)
+    # -------------------------------------------------------------------------
+    KNOWLEDGE_TABULAR_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Pipeline tabular V2 para Excel/CSV (profiling, detección de tablas, "
+            "schema, dual indexing). Requiere RAG_KNOWLEDGE_V2_ENABLED para "
+            "persistir/embeder; con V2 off no tiene efecto."
+        ),
+    )
+    KNOWLEDGE_TABULAR_MAX_WORKBOOK_BYTES: int = Field(
+        default=52_428_800,
+        ge=1_048_576,
+        le=1_073_741_824,
+        description="Tamaño máximo del archivo Excel/CSV aceptado por el parser tabular.",
+    )
+    KNOWLEDGE_TABULAR_MAX_SHEETS: int = Field(
+        default=50,
+        ge=1,
+        le=1000,
+        description="Máximo de hojas procesadas por workbook (resto: partial ingestion + warning).",
+    )
+    KNOWLEDGE_TABULAR_MAX_ROWS_PER_SHEET: int = Field(
+        default=100_000,
+        ge=1,
+        le=5_000_000,
+        description="Máximo de filas leídas por hoja.",
+    )
+    KNOWLEDGE_TABULAR_MAX_COLUMNS: int = Field(
+        default=512,
+        ge=1,
+        le=16_384,
+        description="Máximo de columnas leídas por hoja.",
+    )
+    KNOWLEDGE_TABULAR_MAX_CELLS: int = Field(
+        default=2_000_000,
+        ge=1,
+        le=50_000_000,
+        description="Presupuesto global de celdas por workbook.",
+    )
+    KNOWLEDGE_TABULAR_MAX_EMBEDDING_ROWS: int = Field(
+        default=5_000,
+        ge=0,
+        le=1_000_000,
+        description=(
+            "Filas por tabla con representación semántica (embedding). El resto "
+            "queda en la representación estructurada (Postgres). 0 = no embeber filas."
+        ),
+    )
+    KNOWLEDGE_TABULAR_MAX_GROUP_ROWS: int = Field(
+        default=20_000,
+        ge=0,
+        le=5_000_000,
+        description=(
+            "Filas por tabla cubiertas por row-groups (cobertura semántica vía "
+            "contexto compacto). 0 = no generar row-groups."
+        ),
+    )
+    KNOWLEDGE_TABULAR_SUPERSEDE_V1: bool = Field(
+        default=False,
+        description=(
+            "Excel/CSV: en vez de un record V1 por fila, emitir un único record de "
+            "resumen (la estructura fila/columna vive en el pipeline tabular V2). "
+            "Requiere RAG_KNOWLEDGE_V2_ENABLED; el re-sync migra las fuentes."
+        ),
+    )
+    KNOWLEDGE_TABULAR_ROW_GROUP_SIZE: int = Field(
+        default=40,
+        ge=1,
+        le=1000,
+        description=(
+            "Filas por row-group chunk (nivel 3). Grupos más grandes = menos "
+            "chunks/tokens con contexto más amplio por hit."
+        ),
+    )
+    KNOWLEDGE_TABULAR_ROW_GROUP_OVERLAP: int = Field(
+        default=2,
+        ge=0,
+        le=100,
+        description="Solape de filas entre row-groups consecutivos.",
+    )
+    KNOWLEDGE_TABULAR_GROUP_KEY_COLUMNS: bool = Field(
+        default=True,
+        description=(
+            "En tablas anchas, los row-groups rinden solo columnas clave "
+            "(nombre/código/descripción/categoría) para bajar tokens; el header "
+            "conserva todas las columnas y los valores exactos viven en la capa "
+            "estructurada (SQL-first)."
+        ),
+    )
+    KNOWLEDGE_TABULAR_WIDE_TABLE_COLUMNS: int = Field(
+        default=12,
+        ge=1,
+        le=1024,
+        description=(
+            "Umbral de columnas a partir del cual se aplica la política de "
+            "columnas clave en row-groups."
+        ),
+    )
+    KNOWLEDGE_TABULAR_MAX_GROUP_KEY_COLUMNS: int = Field(
+        default=8,
+        ge=1,
+        le=64,
+        description=(
+            "Máximo de columnas clave por row-group en tablas anchas. Subirlo "
+            "mejora cobertura semántica a costa de más tokens."
+        ),
+    )
+    KNOWLEDGE_TABULAR_MAX_FREE_TEXT_CHARS: int = Field(
+        default=160,
+        ge=32,
+        le=2000,
+        description=(
+            "Recorte de celdas de texto libre/descripción dentro de los row-groups "
+            "(el texto completo permanece en la capa estructurada)."
+        ),
+    )
+    KNOWLEDGE_TABULAR_CELL_CHUNKS_ENABLED: bool = Field(
+        default=False,
+        description="Nivel 5 (celda/campo) — off por default para evitar explosión de embeddings.",
+    )
+    KNOWLEDGE_TABULAR_MAX_CELL_CHUNKS: int = Field(
+        default=200,
+        ge=0,
+        le=100_000,
+        description="Cap de chunks nivel 5 por tabla cuando están habilitados.",
+    )
+    KNOWLEDGE_TABULAR_MANAGED_DB_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Materializa las tablas detectadas en la Managed Database del workspace "
+            "(si existe) con columnas de provenance _zent_*. Off por default."
+        ),
+    )
+    KNOWLEDGE_TABULAR_LLM_ENRICH_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Reservado: enriquecimiento LLM de descripciones/aliases de columnas. "
+            "La ingesta determinista no requiere LLM."
+        ),
+    )
+    KNOWLEDGE_TABULAR_SQL_FIRST: bool = Field(
+        default=True,
+        description=(
+            "Query-time: intenta resolver preguntas exactas sobre Excel/CSV por la "
+            "representación estructurada (SQL) ANTES del SQL Expert LLM y del vector "
+            "search. Si no hay señal suficiente, cae al flujo normal."
+        ),
+    )
+    KNOWLEDGE_TABULAR_LAZY_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Auto-ingesta al consultar: si una fuente excel/csv aún no tiene "
+            "representación estructurada, se ingesta (bounded) durante la query y "
+            "se encola el sync para completar embeddings."
+        ),
+    )
+    KNOWLEDGE_TABULAR_LOOKUP_MAX_ROWS: int = Field(
+        default=20_000,
+        ge=10,
+        le=1_000_000,
+        description=(
+            "Filas máximas leídas de una tabla para resolver un lookup exacto "
+            "(fila por label, valor por rango)."
+        ),
+    )
+    KNOWLEDGE_TABULAR_SQL_MIN_CONFIDENCE: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Confianza mínima del router tabular para forzar el camino SQL-first. "
+            "Por debajo, la pregunta sigue el retrieval semántico normal."
+        ),
+    )
+    KNOWLEDGE_TABULAR_LAZY_MAX_ROWS: int = Field(
+        default=5_000,
+        ge=10,
+        le=100_000,
+        description=(
+            "Filas máximas leídas por hoja en la auto-ingesta al consultar "
+            "(independiente del lazy SQL de tablas)."
+        ),
+    )
+    KNOWLEDGE_TABULAR_LAZY_TIMEOUT_SECONDS: int = Field(
+        default=15,
+        ge=1,
+        le=120,
+        description="Timeout por fuente en la auto-ingesta tabular al consultar.",
+    )
+    KNOWLEDGE_TABULAR_LAZY_MAX_SOURCES: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description="Fuentes Excel/CSV pendientes máximas por trigger de auto-ingesta.",
+    )
     KNOWLEDGE_LOCATE_LLM_ENABLED: bool = Field(
         default=False,
         description=(
@@ -592,6 +789,16 @@ class Settings(BaseSettings):
         description="Precio estimado por 1000 tokens para cálculo de costo.",
     )
     RAG_AGENT_TOOL_TIMEOUT_SECONDS: int = Field(default=10, ge=1, le=120)
+    RAG_SEARCH_KNOWLEDGE_TIMEOUT_SECONDS: int = Field(
+        default=20,
+        ge=1,
+        le=120,
+        description=(
+            "Timeout del tool search_knowledge (embedding + dense/sparse + rerank + "
+            "parent expansion). Antes heredaba 10s del contrato base; se instrumenta "
+            "la latencia por etapa para calibrarlo con datos."
+        ),
+    )
     RAG_AGENT_TOOL_RATE_LIMIT_PER_MINUTE: int = Field(default=20, ge=1, le=600)
     RAG_AGENT_TOOL_MODULES: str = Field(
         default="",

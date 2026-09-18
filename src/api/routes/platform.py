@@ -1177,15 +1177,31 @@ async def get_platform_settings(request: Request):
     from src.core.config import get_settings
 
     s = get_settings()
+    from src.core.runtime_info import embedding_runtime, llm_runtime
+
+    embedding = embedding_runtime(s)
+    llm = llm_runtime(s)
     return {
         "environment": s.ENVIRONMENT,
         "sql_expert_enabled": s.RAG_SQL_EXPERT_ENABLED,
         "mcp_enabled": s.RAG_MCP_ENABLED,
         "lazy_ingestion_enabled": s.RAG_LAZY_INGESTION_ENABLED,
+        "knowledge_v2_enabled": s.KNOWLEDGE_V2_ENABLED,
+        "knowledge_v2_promote": s.KNOWLEDGE_V2_PROMOTE,
+        "knowledge_tabular_enabled": s.KNOWLEDGE_TABULAR_ENABLED,
+        "knowledge_tabular_sql_first": s.KNOWLEDGE_TABULAR_SQL_FIRST,
+        "knowledge_tabular_lazy_enabled": s.KNOWLEDGE_TABULAR_LAZY_ENABLED,
         "admin_enabled": s.RAG_ADMIN_ENABLED,
         "seed_demo_data": s.SEED_DEMO_DATA,
         "embedding_model": s.EMBEDDING_MODEL,
+        "embedding_provider": embedding["provider"],
+        "embedding_provider_label": embedding["provider_label"],
+        "embedding_served_model": embedding["served_model"],
+        "embedding_dimension": embedding["dimension"],
+        "embedding_hosted": embedding["hosted"],
+        "embedding_base_url_host": embedding["base_url_host"],
         "default_model": s.LITELLM_DEFAULT_MODEL,
+        "llm_provider_label": llm["provider_label"],
         "portal_session_ttl_hours": s.PORTAL_SESSION_TTL_HOURS,
         "rate_limit_per_minute": s.RATE_LIMIT_PER_MINUTE,
     }

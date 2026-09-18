@@ -1,0 +1,48 @@
+{
+  "workbook": "ATPCO_TEST.xlsx",
+  "sheet": "Record2",
+  "table": "ATPCO RECORD 2 RULES",
+  "note": "Golden tabular: valores exactos en la representación estructurada + provenance a fila/columna.",
+  "cases": [
+    {
+      "id": "tabular-001",
+      "question": "What is the start position of Carrier Code?",
+      "expected_answer": "28",
+      "expected_table": "ATPCO RECORD 2 RULES",
+      "expected_sheet": "Record2",
+      "expected_row": 5,
+      "expected_columns": ["Field Name", "Start Position"],
+      "expected_cell": "B5"
+    },
+    {
+      "id": "tabular-002",
+      "question": "How long is Carrier Code?",
+      "expected_answer": "2",
+      "expected_table": "ATPCO RECORD 2 RULES",
+      "expected_sheet": "Record2",
+      "expected_row": 5,
+      "expected_columns": ["Field Name", "Length"],
+      "expected_cell": "D5"
+    },
+    {
+      "id": "tabular-003",
+      "question": "Which field starts at position 30?",
+      "expected_answer": "Tariff Number",
+      "expected_table": "ATPCO RECORD 2 RULES",
+      "expected_sheet": "Record2",
+      "expected_row": 6,
+      "expected_columns": ["Field Name", "Start Position"],
+      "expected_cell": "A6"
+    },
+    {
+      "id": "tabular-004",
+      "question": "What is the end position of Tariff Number?",
+      "expected_answer": "32",
+      "expected_table": "ATPCO RECORD 2 RULES",
+      "expected_sheet": "Record2",
+      "expected_row": 6,
+      "expected_columns": ["Field Name", "End Position"],
+      "expected_cell": "C6"
+    }
+  ]
+}

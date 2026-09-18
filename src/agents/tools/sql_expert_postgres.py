@@ -661,6 +661,7 @@ class PostgresSqlExpert(SqlExpert):
         role: str,
         permissions: dict | None = None,
         user_id: UUID | None = None,
+        extra_schema: str | None = None,
     ) -> SqlQueryResult:
         """Wrapper con medición de tiempo + auditoría (fail-silent)."""
         from src.agents.tools.sql_audit import ensure_sql_audit_table, write_sql_audit
@@ -672,7 +673,12 @@ class PostgresSqlExpert(SqlExpert):
 
         start = time.perf_counter()
         result = await self._execute_inner(
-            organization_id, question, role, permissions, user_id=user_id
+            organization_id,
+            question,
+            role,
+            permissions,
+            user_id=user_id,
+            extra_schema=extra_schema,
         )
         elapsed_ms = (time.perf_counter() - start) * 1000
 
@@ -717,11 +723,22 @@ class PostgresSqlExpert(SqlExpert):
         role: str,
         permissions: dict | None,
         user_id: UUID | None = None,
+        extra_schema: str | None = None,
     ) -> SqlQueryResult:
         self._permissions = permissions
         self._query_organization_id = organization_id
         self._query_workspace_id = None
         self._query_workspace_kind = None
+        # Tablas extra (materializadas `zent_*`) permitidas en la validación.
+        self._extra_tables: set[str] = set()
+        if extra_schema:
+            for line in extra_schema.splitlines():
+                line = line.strip()
+                if not line or line.startswith("["):
+                    continue
+                name = line.split("(", 1)[0].strip().lower()
+                if name:
+                    self._extra_tables.add(name)
         if user_id is not None:
             try:
                 from src.platform.workspaces.context import (
@@ -796,13 +813,23 @@ class PostgresSqlExpert(SqlExpert):
             max_tables=settings.RAG_SQL_MAX_TABLES,
             semantic_boosts=semantic_boosts,
         )
-        if not sources:
+        if not sources and not extra_schema:
             return SqlQueryResult(
                 sql="",
                 error="Cannot generate query for this question",
             )
 
         schema_ctx = self._build_schema_context(sources, role)
+        if extra_schema:
+            # Inventario adicional (tablas materializadas de la Managed DB):
+            # no viven en el catálogo del tenant pero sí en la BD consultada.
+            base_schema = schema_ctx.get("schema") or ""
+            schema_ctx = {
+                **schema_ctx,
+                "schema": (
+                    f"{base_schema}\n\n{extra_schema}" if base_schema else extra_schema
+                ),
+            }
 
         # Phase 26D — try Verified Query Repository before LLM generation.
         verified_hit = await self._try_verified_query(
@@ -1101,9 +1128,13 @@ class PostgresSqlExpert(SqlExpert):
             )
 
         statements = sqlglot.parse(sql, error_level=sqlglot.ErrorLevel.RAISE)
+        extra_tables = getattr(self, "_extra_tables", set())
         for stmt in statements:
             for node in stmt.find_all(sqlglot.exp.Table):
                 schema, table = self._table_identity(node)
+                if table and table.lower() in extra_tables:
+                    # Tablas materializadas (zent_*) declaradas por el caller.
+                    continue
                 if schema:
                     if table not in sources_by_schema.get(schema, set()):
                         raise SqlValidationError(
@@ -1598,7 +1629,22 @@ class PostgresSqlExpert(SqlExpert):
         max_cost = settings.RAG_SQL_MAX_COST
         from src.infrastructure.postgres.readonly_session import get_readonly_session
 
-        session = await get_readonly_session()
+        session = None
+        org_id = getattr(self, "_query_organization_id", None)
+        # Tablas materializadas (`zent_*`) viven en la Managed DB: el EXPLAIN
+        # debe correr en la misma BD que la ejecución.
+        if org_id is not None and getattr(self, "_extra_tables", None):
+            try:
+                from src.platform.managed_db.service import open_managed_query_session
+
+                session = await open_managed_query_session(
+                    org_id, getattr(self, "_query_workspace_id", None)
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Managed EXPLAIN session skipped", error=str(exc)[:180])
+                session = None
+        if session is None:
+            session = await get_readonly_session()
         try:
             from src.infrastructure.postgres.readonly_session import apply_readonly_transaction
 

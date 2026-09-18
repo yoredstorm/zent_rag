@@ -22,8 +22,17 @@ type Settings = {
   lazy_ingestion_enabled: boolean;
   admin_enabled: boolean;
   seed_demo_data: boolean;
+  knowledge_v2_enabled?: boolean;
+  knowledge_tabular_sql_first?: boolean;
   embedding_model: string;
+  embedding_provider: string;
+  embedding_provider_label: string;
+  embedding_served_model: string;
+  embedding_dimension: number;
+  embedding_hosted: boolean;
+  embedding_base_url_host: string | null;
   default_model: string;
+  llm_provider_label: string;
   portal_session_ttl_hours: number;
   rate_limit_per_minute: number;
 };
@@ -97,6 +106,54 @@ export default function Settings() {
 
           <Panel>
             <PanelHeader
+              title="Motor de embeddings"
+              description="Proveedor que vectoriza documentos y tablas. Cambiarlo requiere reindexar las fuentes."
+            />
+            <div className="flex flex-wrap items-center gap-2 border-b border-border-soft px-4 py-3">
+              <Badge tone={settings.embedding_hosted ? "ok" : "warn"}>
+                {settings.embedding_provider_label}
+              </Badge>
+              <Badge tone="neutral">
+                {settings.embedding_hosted ? "remoto" : "local"}
+              </Badge>
+              <span className="text-[12px] text-muted">
+                dimensión {settings.embedding_dimension} · endpoint{" "}
+                {settings.embedding_base_url_host ?? "local"}
+              </span>
+            </div>
+            <dl className="divide-y divide-border-soft">
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
+                <dt className="text-[13px] text-muted">Modelo configurado</dt>
+                <dd className="mono text-xs text-text">{settings.embedding_model}</dd>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
+                <dt className="text-[13px] text-muted">Modelo servido</dt>
+                <dd className="mono text-xs text-text">
+                  {settings.embedding_served_model}
+                </dd>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
+                <dt className="text-[13px] text-muted">Dimensión vectorial</dt>
+                <dd className="mono text-xs text-text">
+                  {settings.embedding_dimension}
+                </dd>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
+                <dt className="text-[13px] text-muted">Endpoint</dt>
+                <dd className="mono text-xs text-text">
+                  {settings.embedding_base_url_host ?? "—"}
+                </dd>
+              </div>
+            </dl>
+            <p className="px-4 py-3 text-[12px] text-muted">
+              Para volver a embeddings locales (Ollama) descomenta el servicio en
+              docker-compose y define <code className="mono">RAG_EMBEDDING_MODEL=ollama/bge-m3</code>.
+              Los vectores existentes siguen siendo válidos si la dimensión no cambia.
+            </p>
+          </Panel>
+
+          <Panel>
+            <PanelHeader
               title="Runtime"
               description="Modelos y features habilitadas en esta instancia."
             />
@@ -113,6 +170,14 @@ export default function Settings() {
                   ["MCP Server", settings.mcp_enabled],
                   ["Lazy ingestion", settings.lazy_ingestion_enabled],
                   ["Admin console", settings.admin_enabled],
+                  [
+                    "Knowledge V2",
+                    settings.knowledge_v2_enabled ?? false,
+                  ],
+                  [
+                    "Tabular SQL-first",
+                    settings.knowledge_tabular_sql_first ?? false,
+                  ],
                 ] as [string, boolean][]
               ).map(([label, enabled]) => (
                 <div
@@ -134,12 +199,11 @@ export default function Settings() {
                 </dd>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
-                <dt className="text-[13px] text-muted">Embedding model</dt>
-                <dd className="mono text-xs text-text">{settings.embedding_model}</dd>
-              </div>
-              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
                 <dt className="text-[13px] text-muted">Modelo por defecto</dt>
-                <dd className="mono text-xs text-text">{settings.default_model}</dd>
+                <dd className="mono text-xs text-text">
+                  {settings.default_model}{" "}
+                  <span className="text-muted">({settings.llm_provider_label})</span>
+                </dd>
               </div>
             </dl>
           </Panel>

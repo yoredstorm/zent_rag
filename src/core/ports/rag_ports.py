@@ -90,6 +90,19 @@ class VectorStore(ABC):
         """
         return None
 
+    async def delete_v2_tables(
+        self,
+        organization_id: UUID,
+        document_id: UUID,
+        table_ids: list[UUID],
+    ) -> None:
+        """Elimina los puntos V2 de tablas concretas de un documento tabular.
+
+        Default sin soporte. Se usa para el reindex incremental de Excel/CSV:
+        solo las tablas cambiadas pierden sus puntos antes del re-embed.
+        """
+        return None
+
     async def delete_stale_v2_documents(
         self,
         organization_id: UUID,

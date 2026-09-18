@@ -117,6 +117,67 @@ describe("KnowledgeSourcesPage", () => {
     });
   });
 
+  it("avisa duplicado por nombre y permite crear copia forzada", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method || "GET").toUpperCase();
+      if (url.includes("/files/upload") && method === "POST") {
+        if (url.includes("force=true")) {
+          return Promise.resolve(json({ id: "src-copy", name: "cv.pdf", type: "file", status: "created" }, 201));
+        }
+        return Promise.resolve(
+          json(
+            {
+              error_code: "HTTP_409",
+              message: "Ya existe una fuente con el mismo nombre: cv.pdf",
+              details: {
+                existing_source_id: "src-1",
+                existing_name: "cv.pdf",
+                hint: "Abre la fuente existente o repite con force=true para copia.",
+              },
+            },
+            409,
+          ),
+        );
+      }
+      if (url.includes("/knowledge-bases") && method === "POST") {
+        return Promise.resolve(json({ id: "kb-1", name: "Principal" }, 201));
+      }
+      if (url.includes("/knowledge-bases")) return Promise.resolve(json({ knowledge_bases: KBS }));
+      if (url.includes("/api/v1/sources")) return Promise.resolve(json({ sources: [] }));
+      return Promise.resolve(json({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderSources();
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: /Nueva fuente/ }).length).toBeGreaterThan(0),
+    );
+    await user.click(screen.getAllByRole("button", { name: /Nueva fuente/ })[0]);
+    const input = await screen.findByTestId("source-file");
+    const pdf = new File(["%PDF"], "cv.pdf", { type: "application/pdf" });
+    await user.upload(input, pdf);
+    await user.click(screen.getByRole("button", { name: "Crear fuente" }));
+
+    expect(
+      await screen.findByText(/Ya existe una fuente con el mismo nombre/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Abrir existente" })).toHaveAttribute(
+      "href",
+      "/knowledge/sources/src-1",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Crear copia" }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            String(url).includes("force=true") && (init as RequestInit)?.method === "POST",
+        ),
+      ).toBe(true);
+    });
+  });
+
   it("elimina una fuente tras confirmar", async () => {
     const fetchMock = stubApi([FILE_SOURCE]);
     const user = userEvent.setup();

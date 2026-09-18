@@ -26,11 +26,14 @@ from src.infrastructure.postgres.knowledge_repos import (
 from src.infrastructure.postgres.session import get_async_session
 from src.knowledge.queue import enqueue_knowledge_job
 
-# Tipos de fuente que producen bytes crudos para el pipeline V2 (file connector).
-V2_CAPABLE_TYPES = ("file",)
+# Tipos de fuente que producen bytes crudos para el pipeline V2: file connector
+# (PDF/DOCX/TXT/MD/HTML) y tabular (csv/excel).
+V2_CAPABLE_TYPES = ("file", "csv", "excel")
 
 _JOB_TYPES = {
     "file": "sync_source:file",
+    "csv": "sync_source:csv",
+    "excel": "sync_source:excel",
 }
 
 
@@ -47,13 +50,13 @@ async def find_candidates(
         query = (
             "SELECT s.id, s.organization_id, s.knowledge_base_id, s.name, s.type "
             "FROM kb_sources s "
-            "WHERE s.type = :source_type "
+            "WHERE s.type = ANY(:source_types) "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM structured_documents sd "
             "  WHERE sd.source_id = s.id AND sd.organization_id = s.organization_id"
             ") "
         )
-        params: dict = {"source_type": V2_CAPABLE_TYPES[0], "limit": limit}
+        params: dict = {"source_types": list(V2_CAPABLE_TYPES), "limit": limit}
         if organization_id is not None:
             query += "AND s.organization_id = :oid "
             params["oid"] = organization_id
@@ -81,7 +84,10 @@ async def backfill(
 ) -> int:
     candidates = await find_candidates(organization_id, limit)
     if not candidates:
-        _print("No hay fuentes pendientes de reproceso V2 (tipo=file sin structured_documents).")
+        _print(
+            "No hay fuentes pendientes de reproceso V2 "
+            f"({', '.join(V2_CAPABLE_TYPES)} sin structured_documents)."
+        )
         return 0
 
     job_repo = PostgresIngestionJobRepository()

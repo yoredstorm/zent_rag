@@ -389,3 +389,46 @@ async def test_rate_limit_failure_schedules_long_retry(context) -> None:
     assert job.retry_at is not None
     delay = (job.retry_at - job.started_at).total_seconds() if job.started_at else 0
     assert delay >= 50
+
+
+class FakeUsageTracker:
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    async def record_embedding_tokens(
+        self, organization_id, tokens, *, workspace_id=None, source_id=None, corpus_id=None
+    ) -> None:
+        self.calls.append(
+            {
+                "organization_id": organization_id,
+                "tokens": tokens,
+                "workspace_id": workspace_id,
+                "source_id": source_id,
+            }
+        )
+
+
+@pytest.mark.asyncio
+async def test_v1_embedding_tokens_are_tracked(context) -> None:
+    """El camino V1 registra tokens de embedding (antes solo V2 lo hacía)."""
+    tracker = FakeUsageTracker()
+    engine = KnowledgeIngestionEngine(
+        job_repo=PostgresIngestionJobRepository(),
+        sync_state_repo=PostgresSyncStateRepository(),
+        doc_registry_repo=PostgresDocumentRegistryRepository(),
+        kb_repo=PostgresKnowledgeBaseRepository(),
+        source_repo=PostgresSourceRepository(),
+        vector_store=FakeVectorStore(),
+        embedding_provider=FakeEmbedding(),
+        usage_tracker=tracker,
+        backoff_base_seconds=1,
+        max_attempts_default=2,
+    )
+    job_id = await create_job(context)
+    job = await engine.execute_job(job_id)
+    assert job.status == IngestionJobStatus.COMPLETED
+    assert tracker.calls, "no se registraron tokens de embedding V1"
+    total_tokens = sum(call["tokens"] for call in tracker.calls)
+    assert total_tokens > 0
+    assert all(call["organization_id"] == context["organization"].id for call in tracker.calls)
+    assert all(call["source_id"] == context["source"].id for call in tracker.calls)

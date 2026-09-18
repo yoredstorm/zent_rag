@@ -943,7 +943,20 @@ class DataOnboardingService:
             "test_questions_passed": 0.0,
             "overall": 0.0,
         }
-        if row.get("catalog_source_id"):
+        tabular = await self._tabular_readiness(
+            organization_id,
+            row.get("kb_source_id"),
+            row.get("catalog_source_id"),
+        )
+        tabular_detail = None
+        if tabular is not None:
+            # Excel/CSV: la representación tabular (Knowledge Tabular V2) es la
+            # fuente de verdad de estructura/semántica/relaciones. El catálogo
+            # file-virtual solo aporta sugerencias pendientes de revisión.
+            composition.update(tabular["scores"])
+            pending = tabular["pending_review_count"]
+            tabular_detail = tabular["detail"]
+        elif row.get("catalog_source_id"):
             report = await ReadinessService(
                 self._catalog, intelligence_store=PostgresIntelligenceStore()
             ).for_source(organization_id, UUID(row["catalog_source_id"]))
@@ -977,8 +990,30 @@ class DataOnboardingService:
                 pending = 0
         if (row.get("state") or {}).get("question_pack"):
             composition["test_questions_passed"] = 90.0 if not row.get("skipped_test") else 0.0
+        if tabular is not None:
+            composition["overall"] = round(
+                sum(
+                    composition[key]
+                    for key in (
+                        "data_connected",
+                        "structure_understood",
+                        "business_mappings",
+                        "relationships",
+                        "test_questions_passed",
+                    )
+                )
+                / 5.0,
+                2,
+            )
         improvements = []
         flow = get_flow(row["kind"])
+        if tabular is not None:
+            if not tabular["detail"]["tables"]:
+                improvements.append(
+                    "Zent aún no detecta estructura de tabla en el archivo"
+                )
+            elif tabular["detail"]["indexing"] != "completed":
+                improvements.append("Indexación semántica en curso")
         if pending:
             improvements.append(f"{pending} {flow.review_term} por aclarar")
         return {
@@ -993,6 +1028,147 @@ class DataOnboardingService:
                 {"label": action.label, "to": action.to} for action in flow.ready_actions
             ],
             "flow": row["kind"],
+            **({"tabular": tabular_detail} if tabular_detail else {}),
+        }
+
+    async def _tabular_readiness(
+        self,
+        organization_id: UUID,
+        kb_source_id: object,
+        catalog_source_id: object,
+    ) -> dict | None:
+        """Readiness de un Excel/CSV desde la representación estructurada.
+
+        Devuelve None si la fuente no tiene representación tabular (cae al
+        cálculo de catálogo/understanding). Nunca lanza: un fallo aquí no puede
+        romper el wizard.
+        """
+        if not kb_source_id:
+            return None
+        try:
+            from sqlalchemy import text
+
+            from src.infrastructure.postgres.session import get_async_session
+
+            session = await get_async_session()
+            try:
+                row = (
+                    await session.execute(
+                        text(
+                            "SELECT type FROM kb_sources "
+                            "WHERE id = :sid AND organization_id = :oid"
+                        ),
+                        {"sid": str(kb_source_id), "oid": str(organization_id)},
+                    )
+                ).fetchone()
+            finally:
+                await session.close()
+            source_type = str(row.type) if row is not None else ""
+            if source_type not in ("excel", "csv"):
+                return None
+        except Exception:  # noqa: BLE001 - sin fuente: cae al camino de catálogo
+            return None
+
+        try:
+            from src.infrastructure.postgres.tabular import PostgresTabularRepository
+
+            repository = PostgresTabularRepository()
+            source_id = UUID(str(kb_source_id))
+            workbooks = await repository.list_workbooks(organization_id, source_id)
+            if not workbooks:
+                # Fuente Excel/CSV aún sin representación estructurada: el job
+                # está en cola o corriendo. No es un 0% real.
+                return {
+                    "scores": {
+                        "structure_understood": 40.0,
+                        "business_mappings": 40.0,
+                        "relationships": 0.0,
+                    },
+                    "pending_review_count": 0,
+                    "detail": {
+                        "workbooks": 0,
+                        "tables": 0,
+                        "columns": 0,
+                        "rows": 0,
+                        "relations": 0,
+                        "indexing": "pending",
+                        "quality_score": None,
+                    },
+                }
+            tables = await repository.list_tables(organization_id, source_id)
+            columns = await repository.list_columns(organization_id, source_id=source_id)
+            relations = await repository.list_relations(
+                organization_id, source_id=source_id
+            )
+        except Exception as exc:  # noqa: BLE001 - wizard resiliente
+            logger.warning("tabular readiness failed", error=str(exc)[:200])
+            return None
+
+        table_count = len(tables)
+        column_count = len(columns)
+        if table_count == 0:
+            structure = 40.0  # workbook leído, sin tabla detectada
+        else:
+            tables_with_columns = len(
+                {column["table_id"] for column in columns}
+            )
+            structure = round(tables_with_columns / table_count * 100, 2)
+        known_semantics = sum(
+            1 for column in columns if column["semantic_type"] != "unknown"
+        )
+        business_mappings = (
+            round(known_semantics / column_count * 100, 2) if column_count else 40.0
+        )
+        if table_count <= 1:
+            # Una sola tabla no tiene joins posibles: nada pendiente.
+            relationships = 100.0 if column_count else 0.0
+        else:
+            relationships = round(
+                min(1.0, len(relations) / (table_count - 1)) * 100, 2
+            )
+        semantic_indexed = any(
+            bool((workbook.get("representations") or {}).get("semantic"))
+            for workbook in workbooks
+        )
+        pending = 0
+        review_source = catalog_source_id or kb_source_id
+        if review_source:
+            try:
+                suggestions = await self._catalog.list_suggestions(
+                    organization_id,
+                    status="pending",
+                    source_id=UUID(str(review_source)),
+                    limit=50,
+                )
+                pending = len(suggestions)
+            except Exception:  # noqa: BLE001
+                pending = 0
+        quality_scores = [
+            float(workbook["quality_score"])
+            for workbook in workbooks
+            if workbook.get("quality_score") is not None
+        ]
+        detail = {
+            "workbooks": len(workbooks),
+            "tables": table_count,
+            "columns": column_count,
+            "rows": sum(int(workbook.get("row_count") or 0) for workbook in workbooks),
+            "relations": len(relations),
+            "indexing": "completed" if semantic_indexed else "pending",
+            "quality_score": (
+                round(sum(quality_scores) / len(quality_scores), 4)
+                if quality_scores
+                else None
+            ),
+        }
+        return {
+            "scores": {
+                "structure_understood": structure,
+                "business_mappings": business_mappings,
+                "relationships": relationships,
+            },
+            "pending_review_count": pending,
+            "detail": detail,
         }
 
     async def _document_readiness(self, organization_id: UUID, session_id: UUID, row: dict) -> dict:

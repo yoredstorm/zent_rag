@@ -705,9 +705,16 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
         if isinstance(exc.detail, dict):
             error_code = str(exc.detail.get("error_code") or f"HTTP_{exc.status_code}")
             message = str(exc.detail.get("message") or exc.detail)
+            extra = {
+                str(key): str(value)
+                for key, value in exc.detail.items()
+                if key not in ("error_code", "message") and value is not None
+            }
+            details = extra or None
         else:
             error_code = f"HTTP_{exc.status_code}"
             message = str(exc.detail)
+            details = None
 
         logger.warning(
             "HTTP exception",
@@ -720,6 +727,7 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
             content=ErrorResponse(
                 error_code=error_code,
                 message=message,
+                details=details,
             ).model_dump(),
         )
 

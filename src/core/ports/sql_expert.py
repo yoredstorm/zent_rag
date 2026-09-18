@@ -47,12 +47,15 @@ class SqlExpert(ABC):
         role: str,
         permissions: dict | None = None,
         user_id: UUID | None = None,
+        extra_schema: str | None = None,
     ) -> SqlQueryResult:
         """Genera SQL, valida, ejecuta y retorna resultados.
 
         `permissions`: config opcional del tenant, p. ej.
         {"column_blocklist": {"customer": ["cost"]}, "table_blocklist": [...]}.
         `user_id`: identidad del actor para auditoría.
+        `extra_schema`: inventario adicional (p. ej. tablas materializadas
+        `zent_*` de la Managed DB) que no vive en el catálogo del tenant.
         """
 
     @abstractmethod

@@ -145,6 +145,7 @@ async function toApiError(res: Response): Promise<ApiError> {
   const traceId = traceIdFrom(res);
   let code = "";
   let message = "";
+  let details: Record<string, string> | null = null;
   try {
     const data = await res.json();
     if (typeof data.message === "string") message = data.message;
@@ -154,13 +155,21 @@ async function toApiError(res: Response): Promise<ApiError> {
       message = typeof data.detail.message === "string" ? data.detail.message : "";
     }
     if (!code && typeof data.error_code === "string") code = data.error_code;
+    if (data.details && typeof data.details === "object") {
+      details = Object.fromEntries(
+        Object.entries(data.details as Record<string, unknown>).map(([key, value]) => [
+          key,
+          String(value),
+        ]),
+      );
+    }
     if (!message) message = res.statusText;
     if (code && message && message !== res.statusText) message = `${code} ${message}`;
     if (!message && code) message = code;
   } catch {
     message = res.statusText;
   }
-  return new ApiError(message || res.statusText, res.status, code, traceId);
+  return new ApiError(message || res.statusText, res.status, code, traceId, details);
 }
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

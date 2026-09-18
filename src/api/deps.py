@@ -394,8 +394,15 @@ def get_knowledge_engine():
         from src.knowledge.engine.service import KnowledgeIngestionEngine
 
         structured_repo = None
+        tabular_repo = None
         summarizer = None
         settings = get_settings()
+        if settings.KNOWLEDGE_V2_ENABLED and settings.KNOWLEDGE_TABULAR_ENABLED:
+            from src.infrastructure.postgres.tabular import (
+                PostgresTabularRepository,
+            )
+
+            tabular_repo = PostgresTabularRepository()
         if settings.KNOWLEDGE_V2_ENABLED:
             from src.infrastructure.postgres.structured_documents import (
                 PostgresStructuredDocumentRepository,
@@ -430,10 +437,46 @@ def get_knowledge_engine():
             vector_store=get_vector_store(),
             embedding_provider=get_embedding_provider(),
             structured_doc_repo=structured_repo,
+            tabular_repo=tabular_repo,
             summarizer=summarizer,
             usage_tracker=usage_tracker,
         )
     return _knowledge_engine
+
+
+_tabular_query_service: object | None = None
+
+
+def get_tabular_query_service():
+    """Servicio SQL-first de Excel/CSV (Knowledge Tabular V2).
+
+    Activo con RAG_KNOWLEDGE_V2_ENABLED + RAG_KNOWLEDGE_TABULAR_ENABLED.
+    Incluye auto-ingesta al consultar si RAG_KNOWLEDGE_TABULAR_LAZY_ENABLED.
+    """
+    global _tabular_query_service
+    if _tabular_query_service is None:
+        settings = get_settings()
+        if not (
+            settings.KNOWLEDGE_V2_ENABLED and settings.KNOWLEDGE_TABULAR_ENABLED
+        ):
+            return None
+        from src.infrastructure.postgres.tabular import PostgresTabularRepository
+        from src.knowledge.tabular.lazy import TabularLazyIngestionService
+        from src.knowledge.tabular.query import TabularQueryService
+
+        repository = PostgresTabularRepository()
+        lazy_service = (
+            TabularLazyIngestionService(repository)
+            if settings.KNOWLEDGE_TABULAR_LAZY_ENABLED
+            else None
+        )
+        _tabular_query_service = TabularQueryService(
+            repository,
+            lazy_ingestion=lazy_service,
+            max_lookup_rows=int(settings.KNOWLEDGE_TABULAR_LOOKUP_MAX_ROWS),
+            min_confidence=float(settings.KNOWLEDGE_TABULAR_SQL_MIN_CONFIDENCE),
+        )
+    return _tabular_query_service
 
 
 def get_vector_store() -> VectorStore:
@@ -974,6 +1017,12 @@ def get_rag_orchestrator() -> RAGOrchestrator:
                 if settings.KNOWLEDGE_V2_ENABLED
                 else False
             ),
+            tabular_query=(
+                get_tabular_query_service()
+                if settings.KNOWLEDGE_TABULAR_SQL_FIRST
+                else None
+            ),
+            tabular_sql_first=bool(settings.KNOWLEDGE_TABULAR_SQL_FIRST),
         )
     return _orchestrator
 
@@ -1031,6 +1080,7 @@ def get_agent_runtime():
             retriever=get_retriever(),
             sql_expert=get_sql_expert(),
             embedder=get_embedding_provider(),
+            tabular_query=get_tabular_query_service(),
         )
         load_tool_modules()
         _agent_runtime = AgentRuntime(

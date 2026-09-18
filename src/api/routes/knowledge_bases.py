@@ -241,3 +241,74 @@ async def kb_index_versions(
         raise HTTPException(404, "Knowledge base not found")
     versions = await list_index_versions(ctx.organization_id, kid)
     return {"index_versions": versions, "count": len(versions)}
+
+
+@router.get(
+    "/{kb_id}/tabular-map",
+    summary="Mapa de Excel/CSV de la KB (workbook, hojas, tablas, columnas)",
+)
+async def kb_tabular_map(
+    kb_id: str,
+    request: Request,
+    repo: KnowledgeBaseRepository = Depends(get_kb_repo),
+):
+    """Mapa compacto de la representación estructurada tabular.
+
+    Sirve a la UI (Knowledge > fuentes) y como contexto mínimo para agentes.
+    Solo lectura; scoped por organización (404 si la KB es de otro tenant).
+    """
+    from src.infrastructure.postgres.tabular import PostgresTabularRepository
+    from src.knowledge.tabular.map import build_tabular_map, render_tabular_map_text
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "kbs:read")
+    try:
+        kid = UUID(kb_id)
+    except ValueError:
+        raise HTTPException(400, "kb_id must be a valid UUID")
+    if await repo.get_kb(ctx.organization_id, kid) is None:
+        raise HTTPException(404, "Knowledge base not found")
+
+    tabular = await build_tabular_map(
+        PostgresTabularRepository(), ctx.organization_id, knowledge_base_id=kid
+    )
+    return {
+        "knowledge_base_id": str(kid),
+        "workbooks": [
+            {
+                "id": workbook.id,
+                "filename": workbook.filename,
+                "format": workbook.format,
+                "sheet_count": workbook.sheet_count,
+                "table_count": workbook.table_count,
+                "row_count": workbook.row_count,
+                "quality_score": workbook.quality_score,
+                "representations": workbook.representations,
+            }
+            for workbook in tabular.workbooks
+        ],
+        "tables": [
+            {
+                "id": table.id,
+                "name": table.name,
+                "sheet": table.sheet,
+                "workbook_id": table.workbook_id,
+                "row_count": table.row_count,
+                "column_count": table.column_count,
+                "header_rows": list(table.header_rows),
+                "columns": [
+                    {
+                        "normalized_name": column.normalized_name,
+                        "original_name": column.original_name,
+                        "excel_letter": column.excel_letter,
+                        "inferred_type": column.inferred_type,
+                        "semantic_type": column.semantic_type,
+                        "aliases": list(column.aliases),
+                    }
+                    for column in table.columns
+                ],
+            }
+            for table in tabular.tables
+        ],
+        "rendered": render_tabular_map_text(tabular),
+    }

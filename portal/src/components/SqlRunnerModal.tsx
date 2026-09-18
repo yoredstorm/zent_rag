@@ -17,18 +17,30 @@ type SqlResult = {
   columns: string[];
   rows: (string | null)[][];
   count: number;
+  truncated?: boolean;
 };
 
 type SqlResponse =
-  | ({ columns: string[]; rows: Record<string, string | null>[]; count: number })
+  | ({
+      columns: string[];
+      rows: (Record<string, unknown> | unknown[])[];
+      count: number;
+      truncated?: boolean;
+    })
   | { message: string; affected?: number };
 
 export default function SqlRunnerModal({
   sql,
   onClose,
+  endpoint = "/api/v1/admin/sql",
+  title = "Ejecutar consulta",
+  hint = "Solo SELECT · máx. 500 filas · deshabilitado en producción",
 }: {
   sql: string;
   onClose: () => void;
+  endpoint?: string;
+  title?: string;
+  hint?: string;
 }) {
   const { session } = useAuth();
   const { pushToast } = useToast();
@@ -57,7 +69,7 @@ export default function SqlRunnerModal({
     setAffected(null);
     setMessage("");
     try {
-      const data = await api<SqlResponse>("/api/v1/admin/sql", {
+      const data = await api<SqlResponse>(endpoint, {
         method: "POST",
         token: session.token,
         organizationId: session.organizationId,
@@ -66,10 +78,17 @@ export default function SqlRunnerModal({
       if ("columns" in data) {
         setResult({
           columns: data.columns,
-          rows: (data.rows || []).map((r) =>
-            data.columns.map((c) => (r[c] === undefined ? null : r[c]))
+          rows: (data.rows || []).map((row) =>
+            Array.isArray(row)
+              ? row.map((cell) => (cell === null || cell === undefined ? null : String(cell)))
+              : data.columns.map((column) =>
+                  row[column] === undefined || row[column] === null
+                    ? null
+                    : String(row[column]),
+                ),
           ),
           count: data.count ?? (data.rows || []).length,
+          truncated: data.truncated,
         });
       } else {
         setMessage(data.message || "Consulta ejecutada.");
@@ -96,7 +115,7 @@ export default function SqlRunnerModal({
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
-      aria-label="Ejecutar consulta SQL"
+      aria-label={title}
     >
       <div
         className="absolute inset-0 animate-fade-in bg-scrim backdrop-blur-[2px]"
@@ -107,7 +126,7 @@ export default function SqlRunnerModal({
         <header className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-text">
             <Table size={16} className="text-accent" aria-hidden />
-            Ejecutar consulta
+            {title}
           </h2>
           <button
             type="button"
@@ -175,9 +194,7 @@ export default function SqlRunnerModal({
                 </>
               )}
             </button>
-            <span className="text-[11.5px] text-faint">
-              Solo SELECT · máx. 500 filas · deshabilitado en producción
-            </span>
+            <span className="text-[11.5px] text-faint">{hint}</span>
           </div>
 
           {error && (
@@ -211,6 +228,7 @@ export default function SqlRunnerModal({
                   <span className="mono text-muted">{result.count.toLocaleString("es-PE")}</span>{" "}
                   filas ·{" "}
                   <span className="mono text-muted">{result.columns.length}</span> columnas
+                  {result.truncated ? " · truncado" : ""}
                 </p>
               </div>
               <div className="max-h-[340px] overflow-auto rounded-sm border border-border bg-bg/50">

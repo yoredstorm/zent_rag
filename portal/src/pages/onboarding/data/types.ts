@@ -122,6 +122,16 @@ export type ProgressPayload = {
 
 export type ReadyAction = { label: string; to: string };
 
+export type TabularReadiness = {
+  workbooks: number;
+  tables: number;
+  columns: number;
+  rows: number;
+  relations: number;
+  indexing: string;
+  quality_score: number | null;
+};
+
 export type ReadinessPayload = {
   overall: number;
   scores: Record<string, number>;
@@ -132,6 +142,7 @@ export type ReadinessPayload = {
   ready_subtitle?: string;
   ready_actions?: ReadyAction[];
   flow?: OnboardingKind;
+  tabular?: TabularReadiness;
 };
 
 export const WIZARD_STEPS: { id: WizardStep; label: string }[] = [

@@ -21,6 +21,7 @@ from enum import StrEnum
 from uuid import UUID, uuid4
 
 from src.core.domain.catalog import CatalogProvenance
+from src.core.domain.tabular import TabularWorkbook
 
 
 def _utcnow() -> datetime:
@@ -616,6 +617,10 @@ class StructuredDocument:
     sections: tuple[DocumentSection, ...] = ()
     tables: tuple[DocumentTable, ...] = ()
     figures: tuple[DocumentFigure, ...] = ()
+    # Knowledge Tabular V2: árbol tabular completo cuando el formato es
+    # Excel/CSV. Aditivo: los documentos no tabulares lo dejan en None y todo
+    # el pipeline existente los ignora.
+    tabular: TabularWorkbook | None = None
     summary: DocumentSummary | None = None
     provenance: CatalogProvenance = CatalogProvenance.OBSERVED
     status: KnowledgeObjectStatus = KnowledgeObjectStatus.OBSERVED
@@ -709,6 +714,15 @@ class StructuredDocument:
                 f"summary document_id ({self.summary.document_id}) "
                 f"!= owning document ({self.id})"
             )
+
+        if self.tabular is not None:
+            if self.tabular.organization_id != self.organization_id:
+                raise DocumentIntegrityError(
+                    "tabular workbook organization_id "
+                    f"({self.tabular.organization_id}) != document organization_id "
+                    f"({self.organization_id}) — tenant isolation invariant"
+                )
+            self.tabular.check_consistency()
 
     def as_markdown(self) -> str:
         """Lossy heading/paragraph flatten for V1 chunkers. Not the source of truth."""

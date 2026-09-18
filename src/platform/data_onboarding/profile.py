@@ -80,13 +80,53 @@ def _profile_excel(path: Path, filename: str) -> dict:
         return {"kind": "spreadsheet", "filename": filename, "sheets": [], "error": "openpyxl_missing"}
     wb = load_workbook(path, read_only=True, data_only=True)
     sheets = []
-    for sheet_name in wb.sheetnames:
+    primary_columns: list[dict] = []
+    for sheet_index, sheet_name in enumerate(wb.sheetnames):
         ws = wb[sheet_name]
-        rows = [list(row) for _, row in zip(range(5), ws.iter_rows(values_only=True), strict=False)]
+        rows = [list(row) for _, row in zip(range(6), ws.iter_rows(values_only=True), strict=False)]
         header = [str(c) if c is not None else f"col_{i}" for i, c in enumerate(rows[0])] if rows else []
         sheets.append({"name": sheet_name, "columns": header})
+        if sheet_index == 0 and header:
+            # La PRIMERA hoja alimenta `columns` del understanding (lo usa el
+            # readiness y el catálogo). Muestras de las filas siguientes para
+            # inferir tipo y null_ratio sin leer todo el archivo.
+            sample_rows = rows[1:]
+            for idx, name in enumerate(header):
+                values = [
+                    row[idx]
+                    for row in sample_rows
+                    if idx < len(row) and row[idx] is not None and str(row[idx]).strip() != ""
+                ]
+                rendered = [str(value) for value in values]
+                inferred = _infer(rendered) if rendered else "text"
+                null_ratio = round(1 - (len(rendered) / max(len(sample_rows), 1)), 3)
+                primary_columns.append(
+                    {
+                        "physical_name": name,
+                        "inferred_type": inferred,
+                        "null_ratio": null_ratio,
+                        "distinct_values": len(set(rendered)),
+                        "possible_meanings": _guess_meanings(name),
+                        "uncertain": False,
+                    }
+                )
     wb.close()
-    return {"kind": "spreadsheet", "filename": filename, "sheets": sheets}
+    result = {"kind": "spreadsheet", "filename": filename, "sheets": sheets}
+    if primary_columns:
+        result["columns"] = primary_columns
+        result["likely_entity"] = _guess_entity(filename, [c["physical_name"] for c in primary_columns])
+        result["interpretation"] = [
+            {
+                "physical": column["physical_name"],
+                "business": (
+                    column["possible_meanings"][0][0]
+                    if column["possible_meanings"]
+                    else column["physical_name"]
+                ),
+            }
+            for column in primary_columns
+        ]
+    return result
 
 
 def _profile_document(data: bytes, filename: str) -> dict:

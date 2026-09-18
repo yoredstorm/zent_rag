@@ -11,6 +11,16 @@ const DEFAULT_ACTIONS: ReadyAction[] = [
   { label: "Crear agente", to: "/agents/new" },
 ];
 
+export type TabularReadiness = {
+  workbooks: number;
+  tables: number;
+  columns: number;
+  rows: number;
+  relations: number;
+  indexing: string;
+  quality_score: number | null;
+};
+
 export function ReadinessStep({
   overall,
   scores,
@@ -20,6 +30,7 @@ export function ReadinessStep({
   readyHeadline,
   readySubtitle,
   readyActions,
+  tabular,
 }: {
   overall: number;
   scores: Record<string, number>;
@@ -29,6 +40,7 @@ export function ReadinessStep({
   readyHeadline?: string;
   readySubtitle?: string;
   readyActions?: ReadyAction[];
+  tabular?: TabularReadiness | null;
 }) {
   const extras = readyActions && readyActions.length > 0 ? readyActions : DEFAULT_ACTIONS;
   const seen = new Set<string>();
@@ -59,6 +71,38 @@ export function ReadinessStep({
         ))}
       </ul>
       {warning && <p className="text-sm text-warn">{warning}</p>}
+      {tabular && (
+        <div
+          className="rounded-lg border border-border-soft p-3 text-sm"
+          data-testid="tabular-structure"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="font-medium text-text">Estructura detectada</span>
+            <span
+              className={
+                tabular.indexing === "completed" ? "text-ok" : "text-warn"
+              }
+            >
+              {tabular.indexing === "completed" ? "Indexado" : "En análisis"}
+            </span>
+          </div>
+          <ul className="mt-2 space-y-1 text-muted">
+            <li>
+              {tabular.tables} tabla(s) · {tabular.columns} columnas ·{" "}
+              {tabular.rows.toLocaleString()} filas
+            </li>
+            <li>
+              {tabular.workbooks} archivo(s)
+              {tabular.quality_score !== null
+                ? ` · calidad ${Math.round(tabular.quality_score * 100)}%`
+                : ""}
+              {tabular.relations > 0
+                ? ` · ${tabular.relations} relación(es) candidata(s)`
+                : ""}
+            </li>
+          </ul>
+        </div>
+      )}
       {improvements.length > 0 && (
         <ul className="text-sm text-muted">
           {improvements.map((item) => (

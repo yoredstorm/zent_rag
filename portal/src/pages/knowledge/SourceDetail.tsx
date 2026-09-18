@@ -1,4 +1,4 @@
-import { ArrowsClockwise, ChatCircleDots, Files, Trash } from "@phosphor-icons/react";
+import { ArrowsClockwise, ChatCircleDots, Code, Files, Table, Trash } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api";
@@ -13,6 +13,7 @@ import {
   EmptyState,
   ErrorInline,
   Field,
+  Input,
   KeyValue,
   PageHeader,
   Panel,
@@ -24,6 +25,7 @@ import {
   type Column,
 } from "../../components/ui";
 import { StatusBadge } from "../../components/ui/Badge";
+import SqlRunnerModal from "../../components/SqlRunnerModal";
 import { fmtDateTime, fmtNum } from "../../lib/format";
 import {
   COPY,
@@ -59,6 +61,77 @@ type SourceDocument = {
   status: string;
   last_seen_at: string | null;
 };
+
+type TabularTableInfo = {
+  id: string;
+  name: string;
+  sheet: string | null;
+  row_count: number;
+  column_count: number;
+  header_rows: number[];
+  detection_method: string;
+};
+
+type TabularPayload = {
+  source_id: string;
+  workbooks: {
+    id: string;
+    filename: string;
+    sheet_count: number;
+    table_count: number;
+    row_count: number;
+    quality_score: number | null;
+    representations: Record<string, boolean> | null;
+    chunk_count: number | null;
+    pipeline_version: string | null;
+    materialization?: {
+      status?: string | null;
+      tables?: { name: string; rows: number }[] | null;
+      detail?: string | null;
+    } | null;
+  }[];
+  map: string;
+  tables: TabularTableInfo[];
+};
+
+type SourceTestResult = {
+  matched: boolean;
+  strategy?: string | null;
+  confidence?: number | null;
+  columns?: string[];
+  rows?: string[][];
+  total?: number | null;
+  provenance?: {
+    workbook?: string | null;
+    sheet?: string | null;
+    table?: string | null;
+    row?: number | null;
+    cell?: string | null;
+    column?: string | null;
+  }[];
+};
+
+type TablePreview = {
+  origin: string;
+  table: string | null;
+  columns: string[];
+  rows: unknown[][];
+  count: number;
+};
+
+function asTabularPayload(payload: TabularPayload | null | undefined): TabularPayload | null {
+  if (!payload || !Array.isArray(payload.workbooks)) return null;
+  return {
+    source_id: payload.source_id,
+    workbooks: payload.workbooks.map((workbook) => ({
+      ...workbook,
+      chunk_count: workbook.chunk_count ?? null,
+      pipeline_version: workbook.pipeline_version ?? null,
+    })),
+    map: typeof payload.map === "string" ? payload.map : "",
+    tables: Array.isArray(payload.tables) ? payload.tables : [],
+  };
+}
 
 type RailState = "queued" | "running" | "ready" | "failed";
 
@@ -103,6 +176,15 @@ export default function SourceDetailPage() {
   const tab = parseSourceTab(searchParams.get("tab"));
   const [source, setSource] = useState<SourceDetail | null>(null);
   const [documents, setDocuments] = useState<SourceDocument[]>([]);
+  const [tabular, setTabular] = useState<TabularPayload | null>(null);
+  const [testQuery, setTestQuery] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<SourceTestResult | null>(null);
+  const [testError, setTestError] = useState("");
+  const [preview, setPreview] = useState<TablePreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState("");
+  const [showSqlRunner, setShowSqlRunner] = useState(false);
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -115,7 +197,7 @@ export default function SourceDetailPage() {
     if (!session || !sourceId) return;
     setLoading(true);
     try {
-      const [sourceData, docsData, kbData] = await Promise.all([
+      const [sourceData, docsData, kbData, tabularData] = await Promise.all([
         api<SourceDetail>(`/api/v1/sources/${sourceId}`, {
           token: session.token,
           organizationId: session.organizationId,
@@ -128,10 +210,15 @@ export default function SourceDetailPage() {
           token: session.token,
           organizationId: session.organizationId,
         }).catch(() => ({ knowledge_bases: [] as KnowledgeBase[] })),
+        api<TabularPayload>(`/api/v1/sources/${sourceId}/tabular`, {
+          token: session.token,
+          organizationId: session.organizationId,
+        }).catch(() => null),
       ]);
       setSource(sourceData);
       setDocuments(docsData.documents || []);
       setKbs(kbData.knowledge_bases || []);
+      setTabular(asTabularPayload(tabularData));
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error");
@@ -154,6 +241,46 @@ export default function SourceDetailPage() {
       },
       { replace: true },
     );
+  }
+
+  async function loadPreview() {
+    if (!session || !sourceId) return;
+    setPreviewLoading(true);
+    setPreviewError("");
+    try {
+      const data = await api<TablePreview>(
+        `/api/v1/sources/${sourceId}/table-preview?limit=25`,
+        { token: session.token, organizationId: session.organizationId },
+      );
+      setPreview(data);
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : "Error al cargar datos");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  async function runSourceTest() {
+    if (!session || !sourceId || !testQuery.trim()) return;
+    setTesting(true);
+    setTestError("");
+    setTestResult(null);
+    try {
+      const result = await api<SourceTestResult>(
+        `/api/v1/sources/${sourceId}/test-query`,
+        {
+          method: "POST",
+          token: session.token,
+          organizationId: session.organizationId,
+          body: JSON.stringify({ query: testQuery.trim() }),
+        },
+      );
+      setTestResult(result);
+    } catch (err) {
+      setTestError(err instanceof Error ? err.message : "Error al probar");
+    } finally {
+      setTesting(false);
+    }
   }
 
   async function syncNow() {
@@ -214,6 +341,11 @@ export default function SourceDetailPage() {
   const tabs = SOURCE_TABS.map((id) => ({ id, label: SOURCE_TAB_LABEL[id] }));
   const managed = Boolean(source?.config?.managed);
   const docs = source?.document_count ?? 0;
+  const canRunSql = Boolean(
+    session?.permissions?.includes("*") ||
+      session?.permissions?.includes("sources:sql") ||
+      session?.roles?.some((role) => role === "owner" || role === "admin"),
+  );
 
   return (
     <KnowledgeLayout>
@@ -325,6 +457,239 @@ export default function SourceDetailPage() {
                     ) : null}
                   </div>
                 </Panel>
+
+                {tabular && (tabular.workbooks.length > 0 || tabular.tables.length > 0) ? (
+                  <Panel className="mt-4">
+                    <PanelHeader
+                      title="Estructura del archivo"
+                      description="Hojas, tablas y columnas detectadas por la ingesta tabular."
+                    />
+                    <div className="panel-body flex flex-col gap-3" data-testid="source-tabular">
+                      <p className="text-[13px] text-muted">
+                        Excel tratado como tabla: cada fila y columna vive en la capa
+                        estructurada (SQL-first), por eso la lista de documentos muestra
+                        1 resumen del archivo y no una fila por registro.
+                      </p>
+                      {tabular.workbooks.map((workbook) => {
+                        const representations = Object.entries(
+                          workbook.representations || {},
+                        )
+                          .filter(([, enabled]) => enabled)
+                          .map(([name]) => name)
+                          .join(", ");
+                        return (
+                          <div key={workbook.id} className="text-[13px] text-text">
+                            <span className="mono">{workbook.filename}</span>
+                            <span className="text-muted">
+                              {" "}
+                              · {workbook.sheet_count} hoja(s) · {workbook.table_count} tabla(s) ·{" "}
+                              {fmtNum(workbook.row_count)} filas
+                              {workbook.chunk_count
+                                ? ` · ${fmtNum(workbook.chunk_count)} fragmentos`
+                                : ""}
+                              {workbook.quality_score !== null
+                                ? ` · calidad ${Math.round(workbook.quality_score * 100)}%`
+                                : ""}
+                              {representations ? ` · ${representations}` : ""}
+                              {workbook.pipeline_version
+                                ? ` · pipeline ${workbook.pipeline_version}`
+                                : ""}
+                            </span>
+                            {workbook.materialization?.tables?.length ? (
+                              <span className="ml-1 text-ok">
+                                · tabla SQL:{" "}
+                                {workbook.materialization.tables
+                                  .map(
+                                    (table) =>
+                                      `${table.name} (${fmtNum(table.rows)} filas)`,
+                                  )
+                                  .join(", ")}
+                              </span>
+                            ) : workbook.materialization?.status === "skipped" ? (
+                              <span className="ml-1 text-muted">
+                                · tabla SQL: pendiente (sin Managed DB)
+                              </span>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                      {tabular.tables.length > 0 ? (
+                        <ul className="space-y-1 text-[13px] text-muted">
+                          {tabular.tables.slice(0, 8).map((table) => (
+                            <li key={table.id}>
+                              <span className="text-text">{table.name}</span>
+                              {table.sheet ? ` · hoja ${table.sheet}` : ""} ·{" "}
+                              {fmtNum(table.row_count)} filas · {table.column_count} columnas ·
+                              header fila {table.header_rows.join(", ") || "—"}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          variant="secondary"
+                          leadingIcon={Table}
+                          loading={previewLoading}
+                          data-testid="source-preview-run"
+                          onClick={() => void loadPreview()}
+                        >
+                          Ver datos
+                        </Button>
+                        {canRunSql ? (
+                          <Button
+                            variant="secondary"
+                            leadingIcon={Code}
+                            data-testid="source-sql-open"
+                            onClick={() => setShowSqlRunner(true)}
+                          >
+                            Consultar SQL
+                          </Button>
+                        ) : null}
+                        <span className="text-xs text-faint">
+                          {canRunSql
+                            ? "SQL read-only sobre la tabla materializada de esta fuente."
+                            : "Pedí a un owner/admin para consultar por SQL."}
+                        </span>
+                      </div>
+                      <ErrorInline message={previewError} className="mb-0" />
+                      {preview ? (
+                        <div className="flex flex-col gap-2" data-testid="source-preview">
+                          <p className="text-xs text-faint">
+                            {preview.origin === "managed_db"
+                              ? `Managed DB · ${preview.table} · ${fmtNum(preview.count)} filas`
+                              : preview.origin === "tabular"
+                                ? `Representación estructurada · ${preview.table} · ${fmtNum(preview.count)} filas`
+                                : "Sin datos materializados todavía."}
+                          </p>
+                          {preview.columns.length > 0 ? (
+                            <div className="max-h-[320px] overflow-auto rounded-sm border border-border bg-bg/50">
+                              <table className="table min-w-full text-[12.5px]">
+                                <thead className="sticky top-0 bg-surface">
+                                  <tr>
+                                    <th className="mono w-10 text-center text-faint">#</th>
+                                    {preview.columns.map((column) => (
+                                      <th key={column} className="mono">
+                                        {column}
+                                      </th>
+                                    ))}
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {preview.rows.map((row, index) => (
+                                    <tr key={index}>
+                                      <td className="mono w-10 text-center text-faint">
+                                        {index + 1}
+                                      </td>
+                                      {row.map((cell, cellIndex) => (
+                                        <td
+                                          key={cellIndex}
+                                          className="mono max-w-[260px] truncate"
+                                          title={String(cell ?? "")}
+                                        >
+                                          {cell === null || cell === "" ? (
+                                            <span className="text-faint">NULL</span>
+                                          ) : (
+                                            String(cell)
+                                          )}
+                                        </td>
+                                      ))}
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {tabular.map ? (
+                        <details>
+                          <summary className="cursor-pointer text-[13px] text-muted">
+                            Ver mapa completo
+                          </summary>
+                          <pre className="mono mt-2 max-h-72 overflow-auto whitespace-pre-wrap text-xs text-muted">
+                            {tabular.map}
+                          </pre>
+                        </details>
+                      ) : null}
+                    </div>
+                  </Panel>
+                ) : null}
+
+                {tabular && tabular.tables.length > 0 ? (
+                  <Panel className="mt-4">
+                    <PanelHeader
+                      title="Probar esta fuente"
+                      description="Consulta exacta sobre la tabla (sin LLM): posición, longitud, valor o listas."
+                    />
+                    <div className="panel-body flex flex-col gap-3" data-testid="source-test">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Input
+                          value={testQuery}
+                          data-testid="source-test-query"
+                          aria-label="Consulta de prueba"
+                          placeholder="¿Cuál es la posición de Carrier Code?"
+                          onChange={(e) => setTestQuery(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void runSourceTest();
+                          }}
+                        />
+                        <Button
+                          variant="secondary"
+                          loading={testing}
+                          disabled={!testQuery.trim()}
+                          data-testid="source-test-run"
+                          onClick={() => void runSourceTest()}
+                        >
+                          Probar
+                        </Button>
+                      </div>
+                      <ErrorInline message={testError} className="mb-0" />
+                      {testResult && !testResult.matched ? (
+                        <p className="text-sm text-muted">
+                          Sin coincidencia exacta para esa pregunta. Prueba con el nombre de un
+                          campo o pregunta al agente (búsqueda semántica).
+                        </p>
+                      ) : null}
+                      {testResult?.matched ? (
+                        <div className="flex flex-col gap-2" data-testid="source-test-result">
+                          <div className="text-[13px] text-text">
+                            <span className="text-muted">
+                              {(testResult.columns || []).join(" · ")}
+                              {testResult.total && testResult.total > 1
+                                ? ` (${fmtNum(testResult.total)} coincidencias)`
+                                : ""}
+                            </span>
+                          </div>
+                          <ul className="space-y-1 text-[13px]">
+                            {(testResult.rows || []).slice(0, 8).map((row, index) => (
+                              <li key={index}>
+                                <span className="text-text">{row[0]}</span>
+                                {row.length > 1 ? (
+                                  <span className="text-muted"> · {row[1]}</span>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ul>
+                          {testResult.provenance?.[0] ? (
+                            <p className="text-xs text-faint">
+                              {testResult.provenance[0].workbook}
+                              {testResult.provenance[0].sheet
+                                ? ` · hoja ${testResult.provenance[0].sheet}`
+                                : ""}
+                              {testResult.provenance[0].row
+                                ? ` · fila ${testResult.provenance[0].row}`
+                                : ""}
+                              {testResult.provenance[0].cell
+                                ? ` · celda ${testResult.provenance[0].cell}`
+                                : ""}
+                              {testResult.strategy ? ` · ${testResult.strategy}` : ""}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
+                  </Panel>
+                ) : null}
               </section>
             )}
 
@@ -411,6 +776,20 @@ export default function SourceDetailPage() {
         onConfirm={() => void deleteSource()}
         onCancel={() => setConfirmDelete(false)}
       />
+
+      {showSqlRunner ? (
+        <SqlRunnerModal
+          sql={
+            preview?.table
+              ? `SELECT *\nFROM ${preview.table}\nLIMIT 20;`
+              : "SELECT *\nFROM zent_tabla\nLIMIT 20;"
+          }
+          endpoint={`/api/v1/sources/${sourceId}/sql`}
+          title="Consultar la tabla materializada"
+          hint="Solo SELECT · solo las tablas de esta fuente · read-only"
+          onClose={() => setShowSqlRunner(false)}
+        />
+      ) : null}
     </KnowledgeLayout>
   );
 }

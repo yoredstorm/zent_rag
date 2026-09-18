@@ -8,14 +8,23 @@ export class ApiError extends Error {
   readonly code: string;
   readonly traceId: string | null;
   readonly retryable: boolean;
+  /** Detalles estructurados del backend (p. ej. duplicate_name → existing_source_id). */
+  readonly details: Record<string, string> | null;
 
-  constructor(message: string, status: number, code: string, traceId: string | null) {
+  constructor(
+    message: string,
+    status: number,
+    code: string,
+    traceId: string | null,
+    details: Record<string, string> | null = null,
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
     this.traceId = traceId;
     this.retryable = [408, 429, 500, 502, 503, 504].includes(status);
+    this.details = details;
   }
 }
 

@@ -788,6 +788,43 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
             ),
         )
 
+    async def delete_v2_tables(
+        self,
+        organization_id: UUID,
+        document_id: UUID,
+        table_ids: list[UUID],
+    ) -> None:
+        """Borra los puntos V2 de tablas concretas de un documento tabular.
+
+        Solo toca puntos que llevan `metadata.table_id` (Excel/CSV), scoped por
+        organización + documento. Se usa para el reindex incremental: las
+        tablas sin cambios conservan sus vectores."""
+        if not table_ids:
+            return
+        organization_id = bind_organization_id(organization_id)
+        await self._delete_with_filter(
+            must=[
+                qdrant_models.FieldCondition(
+                    key="organization_id",
+                    match=qdrant_models.MatchValue(value=str(organization_id)),
+                ),
+                qdrant_models.FieldCondition(
+                    key="metadata.document_id",
+                    match=qdrant_models.MatchValue(value=str(document_id)),
+                ),
+                qdrant_models.FieldCondition(
+                    key="metadata.table_id",
+                    match=qdrant_models.MatchAny(
+                        any=[str(table_id) for table_id in table_ids]
+                    ),
+                ),
+            ],
+            log_message=(
+                f"Deleted {len(table_ids)} tabular table scope(s) from document "
+                f"{document_id} (organization {organization_id})"
+            ),
+        )
+
     async def delete_stale_v2_documents(
         self,
         organization_id: UUID,

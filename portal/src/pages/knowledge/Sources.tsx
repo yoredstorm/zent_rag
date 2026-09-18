@@ -26,6 +26,7 @@ import {
 import { StatusBadge } from "../../components/ui/Badge";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
+import { isApiError } from "../../lib/errors";
 import { fmtDateTime, fmtNum } from "../../lib/format";
 import {
   COPY,
@@ -155,6 +156,12 @@ export default function KnowledgeSourcesPage() {
   const [type, setType] = useState<SourceType>("file");
   const [folderId, setFolderId] = useState("");
   const [creating, setCreating] = useState(false);
+  const [duplicate, setDuplicate] = useState<{
+    id: string;
+    name: string;
+    file: File;
+    kbId?: string;
+  } | null>(null);
   const [syncingId, setSyncingId] = useState("");
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
   const [file, setFile] = useState<File | null>(null);
@@ -269,21 +276,11 @@ export default function KnowledgeSourcesPage() {
       return;
     }
     setCreating(true);
+    let kbId: string | undefined;
     try {
-      const kbId = await ensureKbId();
+      kbId = await ensureKbId();
       if (isFileUploadType(type) && file) {
-        const params = new URLSearchParams();
-        if (kbId) params.set("knowledge_base_id", kbId);
-        if (name.trim()) params.set("name", name.trim());
-        const qs = params.toString() ? `?${params.toString()}` : "";
-        const body = new FormData();
-        body.append("file", file);
-        await api(`/api/v1/sources/files/upload${qs}`, {
-          method: "POST",
-          token: session.token,
-          organizationId: session.organizationId,
-          body,
-        });
+        await uploadFileSource(file, kbId, false);
         setMsg("Archivo subido. Indexado en cola.");
       } else {
         await api("/api/v1/sources", {
@@ -304,7 +301,53 @@ export default function KnowledgeSourcesPage() {
       setShowCreate(false);
       load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al crear");
+      if (isApiError(err) && err.status === 409 && err.details?.existing_source_id && file) {
+        setError("");
+        setDuplicate({
+          id: err.details.existing_source_id,
+          name: err.details.existing_name || name.trim() || file.name,
+          file,
+          kbId,
+        });
+      } else {
+        setError(err instanceof Error ? err.message : "Error al crear");
+      }
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function uploadFileSource(file: File, kbId: string | undefined, force: boolean) {
+    if (!session) return;
+    const params = new URLSearchParams();
+    if (kbId) params.set("knowledge_base_id", kbId);
+    if (name.trim()) params.set("name", name.trim());
+    if (force) params.set("force", "true");
+    const qs = params.toString() ? `?${params.toString()}` : "";
+    const body = new FormData();
+    body.append("file", file);
+    await api(`/api/v1/sources/files/upload${qs}`, {
+      method: "POST",
+      token: session.token,
+      organizationId: session.organizationId,
+      body,
+    });
+  }
+
+  async function forceDuplicateCopy() {
+    if (!duplicate) return;
+    setCreating(true);
+    setError("");
+    try {
+      await uploadFileSource(duplicate.file, duplicate.kbId, true);
+      setDuplicate(null);
+      setMsg("Copia creada. Indexado en cola.");
+      setName("");
+      setFile(null);
+      setShowCreate(false);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al crear la copia");
     } finally {
       setCreating(false);
     }
@@ -445,6 +488,32 @@ export default function KnowledgeSourcesPage() {
       <div className="flex flex-col gap-4">
         <ErrorInline message={error} className="mb-0" />
         <SuccessInline message={msg} className="mb-0" />
+
+        {duplicate && (
+          <Panel className="border-warn/40">
+            <div className="panel-body flex flex-wrap items-center gap-3 text-sm">
+              <span className="text-text">
+                Ya existe una fuente con el mismo nombre:{" "}
+                <span className="mono">{duplicate.name}</span>
+              </span>
+              <div className="flex gap-2">
+                <ButtonLink to={`/knowledge/sources/${duplicate.id}`} variant="secondary">
+                  Abrir existente
+                </ButtonLink>
+                <Button
+                  variant="secondary"
+                  disabled={creating}
+                  onClick={() => void forceDuplicateCopy()}
+                >
+                  Crear copia
+                </Button>
+                <Button variant="ghost" onClick={() => setDuplicate(null)}>
+                  Cancelar
+                </Button>
+              </div>
+            </div>
+          </Panel>
+        )}
 
         {showCreate && (
           <Panel>

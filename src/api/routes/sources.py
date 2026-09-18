@@ -8,15 +8,18 @@
 from __future__ import annotations
 
 import json
+import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 
 from src.api.deps import (
     get_job_repo,
     get_source_repo,
 )
+from src.core.config import get_settings
 from src.core.ports import IngestionJobRepository, SourceRepository
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.relational_db import PostgresAuditLogRepository
@@ -29,6 +32,39 @@ router = APIRouter(prefix="/api/v1", tags=["Knowledge Sources"])
 
 def _audit() -> AuditLogService:
     return AuditLogService(PostgresAuditLogRepository())
+
+
+def _normalize_filename(name: str) -> str:
+    """Normaliza nombre+extensión para detectar duplicados.
+
+    Colapsa espacios, minúsculas y el sufijo de copia del navegador:
+    "ATPCO (1).xlsx" ≡ "atpco.xlsx".
+    """
+    value = re.sub(r"\s+", " ", (name or "").strip().lower())
+    stem, dot, extension = value.rpartition(".")
+    if not dot:
+        stem, extension = value, ""
+    stem = re.sub(r"\s*\(\d+\)\s*$", "", stem).strip()
+    return f"{stem}.{extension}" if extension else stem
+
+
+async def _find_duplicate_source(repo: SourceRepository, organization_id, filename: str):
+    """Fuente existente con el mismo nombre+extensión (ignora borradas)."""
+    normalized = _normalize_filename(filename)
+    if not normalized:
+        return None
+    try:
+        sources = await repo.list_sources(organization_id)
+    except Exception as exc:  # noqa: BLE001 - el aviso nunca bloquea la ingesta
+        logger.warning("Duplicate source check failed", error=str(exc)[:200])
+        return None
+    for source in sources:
+        status = str(getattr(source, "status", "") or "")
+        if status in ("deleted", "archived"):
+            continue
+        if _normalize_filename(getattr(source, "name", "") or "") == normalized:
+            return source
+    return None
 
 
 class CreateSourceRequest(BaseModel):
@@ -475,6 +511,10 @@ async def upload_file_source(
     knowledge_base_id: UUID | None = None,
     source_type: str | None = Query(default=None, pattern=r"^(file|csv|excel)$"),
     name: str | None = Query(default=None, max_length=255),
+    force: bool = Query(
+        default=False,
+        description="Crear copia aunque exista otra fuente con el mismo nombre.",
+    ),
     repo: SourceRepository = Depends(get_source_repo),
     jobs: IngestionJobRepository = Depends(get_job_repo),
 ):
@@ -498,6 +538,23 @@ async def upload_file_source(
 
     if source_type is None:
         source_type = detected
+
+    # Duplicados por nombre+extensión (cualquier documento): avisa y reusa la
+    # fuente existente salvo force=true. Detecta el sufijo "(1)" del navegador.
+    duplicate = await _find_duplicate_source(repo, ctx.organization_id, name or filename)
+    if duplicate is not None and not force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "duplicate_name",
+                "message": (
+                    f"Ya existe una fuente con el mismo nombre: {duplicate.name}"
+                ),
+                "existing_source_id": str(duplicate.id),
+                "existing_name": duplicate.name,
+                "hint": "Abre la fuente existente o repite con force=true para copia.",
+            },
+        )
 
     from src.knowledge.storage import store_upload
 
@@ -606,6 +663,389 @@ async def profile_source(
         metadata={"tables": len(profiled_tables), "columns": len(profiled_columns)},
     )
     return {"source_id": str(sid), "status": "profiled", "tables": profiled_tables}
+
+
+@router.get(
+    "/sources/{source_id}/tabular",
+    summary="Representación tabular estructurada (Excel/CSV)",
+)
+async def get_source_tabular(source_id: str, request: Request):
+    """Workbooks + tablas detectadas + estado de representaciones (§35).
+
+    Solo lectura; datos scoped por organización (nunca cross-tenant)."""
+    from src.infrastructure.postgres.tabular import PostgresTabularRepository
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "sources:read")
+    try:
+        sid = UUID(source_id)
+    except ValueError:
+        raise HTTPException(400, "source_id must be a valid UUID")
+
+    from sqlalchemy import text as _text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    session = await get_async_session()
+    try:
+        exists = (
+            await session.execute(
+                _text(
+                    "SELECT 1 FROM kb_sources WHERE id = :sid AND organization_id = :oid"
+                ),
+                {"sid": sid, "oid": ctx.organization_id},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+    if exists is None:
+        raise HTTPException(404, "Source not found")
+
+    repository = PostgresTabularRepository()
+    workbooks = await repository.list_workbooks(ctx.organization_id, sid)
+    tables = await repository.list_tables(ctx.organization_id, sid)
+    filename_by_workbook = {
+        workbook["id"]: workbook.get("filename") for workbook in workbooks
+    }
+    from src.knowledge.tabular.map import build_tabular_map, render_tabular_map_text
+
+    tabular_map = await build_tabular_map(
+        repository, ctx.organization_id, source_ids=[sid]
+    )
+    return {
+        "source_id": str(sid),
+        "workbooks": workbooks,
+        "map": render_tabular_map_text(tabular_map),
+        "tables": [
+            {
+                "id": table["id"],
+                "workbook_id": table["workbook_id"],
+                "workbook": filename_by_workbook.get(table["workbook_id"]),
+                "name": table["name"],
+                "title": table["title"],
+                "row_count": table["row_count"],
+                "column_count": table["column_count"],
+                "detection_method": table["detection_method"],
+                "detection_confidence": table["detection_confidence"],
+                "header_rows": table["header_rows"],
+                "range": table["range"],
+            }
+            for table in tables
+        ],
+    }
+
+
+class SourceTestQueryRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=500)
+
+
+class SourceSqlRequest(BaseModel):
+    query: str = Field(..., min_length=1, max_length=4000)
+
+
+async def _materialized_table_names(
+    organization_id: UUID, source_id: UUID
+) -> set[str]:
+    """Tablas materializadas (`zent_*`) de una fuente, en minúsculas."""
+    from src.infrastructure.postgres.tabular import PostgresTabularRepository
+
+    names: set[str] = set()
+    try:
+        workbooks = await PostgresTabularRepository().list_workbooks(
+            organization_id, source_id
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Materialized table lookup failed", error=str(exc)[:200])
+        return names
+    for workbook in workbooks:
+        materialization = workbook.get("materialization") or {}
+        for table in materialization.get("tables") or []:
+            if table.get("name"):
+                names.add(str(table["name"]).lower())
+    return names
+
+
+async def _org_materialized_table_names(organization_id: UUID) -> set[str]:
+    """Todas las tablas materializadas de la organización (para joins)."""
+    from src.infrastructure.postgres.tabular import PostgresTabularRepository
+
+    names: set[str] = set()
+    try:
+        workbooks = await PostgresTabularRepository().list_workbooks(organization_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Org materialized table lookup failed", error=str(exc)[:200])
+        return names
+    for workbook in workbooks:
+        materialization = workbook.get("materialization") or {}
+        for table in materialization.get("tables") or []:
+            if table.get("name"):
+                names.add(str(table["name"]).lower())
+    return names
+
+
+def _jsonable_row(row) -> list:
+    return [
+        value
+        if isinstance(value, (int, float, str, bool, type(None)))
+        else str(value)
+        for value in row
+    ]
+
+
+@router.get(
+    "/sources/{source_id}/table-preview",
+    summary="Vista previa de la tabla materializada (solo lectura)",
+)
+async def source_table_preview(
+    source_id: str,
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    repo: SourceRepository = Depends(get_source_repo),
+):
+    """Columnas + primeras filas de la tabla SQL de la fuente.
+
+    Usa la Managed DB (reader) si la tabla está materializada; si no, cae a la
+    representación estructurada canónica (`tabular_rows`)."""
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "sources:read")
+    try:
+        sid = UUID(source_id)
+    except ValueError:
+        raise HTTPException(400, "source_id must be a valid UUID")
+    source = await repo.get_source(ctx.organization_id, sid)
+    if source is None:
+        raise HTTPException(404, "Source not found")
+
+    table_names = await _materialized_table_names(ctx.organization_id, sid)
+    if table_names:
+        from src.platform.managed_db.service import open_managed_query_session
+
+        session = await open_managed_query_session(
+            ctx.organization_id, source.workspace_id
+        )
+        if session is not None:
+            table_name = sorted(table_names)[0]
+            try:
+                result = await session.execute(
+                    text(f'SELECT * FROM "{table_name}" LIMIT {int(limit)}')  # noqa: S608 (tabla de la whitelist, limit acotado)
+                )
+                rows = result.fetchall()
+                columns = list(result.keys()) if rows else []
+                return {
+                    "source_id": str(sid),
+                    "origin": "managed_db",
+                    "table": table_name,
+                    "columns": columns,
+                    "rows": [_jsonable_row(row) for row in rows],
+                    "count": len(rows),
+                }
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Table preview failed", error=str(exc)[:200])
+            finally:
+                await session.close()
+
+    # Fallback: representación estructurada canónica.
+    from src.infrastructure.postgres.tabular import PostgresTabularRepository
+
+    repository = PostgresTabularRepository()
+    tables = await repository.list_tables(ctx.organization_id, sid)
+    if not tables:
+        return {
+            "source_id": str(sid),
+            "origin": "none",
+            "table": None,
+            "columns": [],
+            "rows": [],
+            "count": 0,
+        }
+    table = tables[0]
+    schema = await repository.get_table(ctx.organization_id, UUID(table["id"]))
+    rows = await repository.fetch_rows(
+        ctx.organization_id, UUID(table["id"]), limit=int(limit)
+    )
+    columns = [
+        column.get("original_name") or column.get("normalized_name")
+        for column in (schema or {}).get("columns", [])
+    ]
+    normalized = [column.get("normalized_name") for column in (schema or {}).get("columns", [])]
+    return {
+        "source_id": str(sid),
+        "origin": "tabular",
+        "table": table["name"],
+        "columns": columns,
+        "rows": [
+            [row.get("values", {}).get(name, "") for name in normalized] for row in rows
+        ],
+        "count": len(rows),
+    }
+
+
+@router.post(
+    "/sources/{source_id}/sql",
+    summary="SQL read-only sobre las tablas materializadas de la fuente",
+)
+async def source_sql(
+    source_id: str,
+    payload: SourceSqlRequest,
+    request: Request,
+    repo: SourceRepository = Depends(get_source_repo),
+):
+    """SELECT-only contra la Managed DB, acotado a las tablas de esta fuente."""
+    import asyncio
+    import re as _re
+
+    from sqlalchemy import text as _text
+
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "sources:sql")
+    try:
+        sid = UUID(source_id)
+    except ValueError:
+        raise HTTPException(400, "source_id must be a valid UUID")
+    source = await repo.get_source(ctx.organization_id, sid)
+    if source is None:
+        raise HTTPException(404, "Source not found")
+
+    table_names = await _materialized_table_names(ctx.organization_id, sid)
+    if not table_names:
+        raise HTTPException(
+            400,
+            "La fuente no tiene tabla materializada (requiere Managed DB y un sync)",
+        )
+    # Whitelist: cualquier tabla materializada de la organización (permite
+    # joins entre fuentes); el resto del esquema queda fuera.
+    allowed_tables = await _org_materialized_table_names(ctx.organization_id) or table_names
+
+    sql = payload.query.strip().rstrip(";").strip()
+    from src.agents.tools.sql_expert_postgres import (
+        _FORBIDDEN_KEYWORDS,
+        SqlValidationError,
+        _validate_sql_ast,
+    )
+
+    if _FORBIDDEN_KEYWORDS.search(sql):
+        raise HTTPException(400, "Solo se permiten consultas SELECT de lectura")
+    try:
+        _validate_sql_ast(sql)
+    except SqlValidationError as exc:
+        raise HTTPException(400, str(exc)[:300]) from None
+
+    import sqlglot
+
+    try:
+        referenced = {
+            table.name.lower()
+            for table in sqlglot.parse_one(sql).find_all(sqlglot.exp.Table)
+        }
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, "SQL inválido") from None
+    if not referenced:
+        raise HTTPException(400, "La consulta no referencia ninguna tabla")
+    unknown = sorted(referenced - allowed_tables)
+    if unknown:
+        raise HTTPException(
+            403,
+            "Solo podés consultar tablas materializadas de la organización: "
+            + ", ".join(sorted(allowed_tables)),
+        )
+
+    from src.infrastructure.postgres.readonly_session import apply_readonly_transaction
+    from src.platform.managed_db.service import open_managed_query_session
+
+    settings = get_settings()
+    timeout_seconds = float(settings.RAG_SQL_TIMEOUT_SECONDS)
+    max_rows = int(settings.RAG_SQL_MAX_ROWS)
+    session = await open_managed_query_session(ctx.organization_id, source.workspace_id)
+    if session is None:
+        raise HTTPException(400, "Managed DB no disponible para esta organización")
+    try:
+        await apply_readonly_transaction(session, timeout_seconds)
+        if not _re.search(r"\bLIMIT\s+\d+\s*$", sql, _re.IGNORECASE):
+            sql = f"{sql} LIMIT {max_rows}"
+        result = await asyncio.wait_for(
+            session.execute(_text(sql)), timeout=timeout_seconds
+        )
+        rows = result.fetchall()
+        columns = list(result.keys()) if rows else []
+    except TimeoutError:
+        raise HTTPException(504, "La consulta excedió el timeout") from None
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, str(exc)[:300]) from None
+    finally:
+        await session.close()
+    return {
+        "source_id": str(sid),
+        "sql": sql,
+        "columns": columns,
+        "rows": [_jsonable_row(row) for row in rows],
+        "count": len(rows),
+        "truncated": len(rows) >= max_rows,
+        "tables": sorted(allowed_tables),
+    }
+
+
+@router.post(
+    "/sources/{source_id}/test-query",
+    summary="Probar una consulta exacta contra la fuente (SQL-first, sin LLM)",
+)
+async def test_source_query(
+    source_id: str,
+    payload: SourceTestQueryRequest,
+    request: Request,
+    repo: SourceRepository = Depends(get_source_repo),
+):
+    """Ejecuta el resolutor estructurado (Excel/CSV) y devuelve valor + procedencia.
+
+    Es el mismo camino que usa el agente para datos exactos; sirve para validar
+    la confiabilidad de la fuente desde el portal sin gastar embeddings.
+    """
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "sources:read")
+    try:
+        sid = UUID(source_id)
+    except ValueError:
+        raise HTTPException(400, "source_id must be a valid UUID")
+    source = await repo.get_source(ctx.organization_id, sid)
+    if source is None:
+        raise HTTPException(404, "Source not found")
+
+    from src.api.deps import get_tabular_query_service
+
+    service = get_tabular_query_service()
+    role = next(
+        (candidate for candidate in ("owner", "admin", "member") if candidate in ctx.roles),
+        "member",
+    )
+    try:
+        result = await service.try_answer(
+            ctx.organization_id,
+            payload.query,
+            source_ids=[sid],
+            role=role,
+            user_id=ctx.user_id,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Source test query failed", error=str(exc)[:200])
+        raise HTTPException(500, "Test query failed") from None
+    if result is None:
+        return {"matched": False, "source_id": str(sid)}
+    metadata = result.metadata or {}
+    return {
+        "matched": True,
+        "source_id": str(sid),
+        "strategy": metadata.get("strategy"),
+        "confidence": metadata.get("confidence"),
+        "columns": list(result.columns),
+        "rows": [list(row) for row in result.rows[:20]],
+        "row_count": result.row_count,
+        "total": metadata.get("total"),
+        "tables": metadata.get("tables"),
+        "provenance": (metadata.get("provenance") or [])[:5],
+        "sql": result.sql,
+    }
 
 
 @router.get("/sources/{source_id}/profile", summary="Perfil de la fuente (último profiling)")
