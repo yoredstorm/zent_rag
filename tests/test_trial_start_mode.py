@@ -1,5 +1,6 @@
 # =============================================================================
-# Trial start mode — signup leaves no workspace; demo vs blank on demand
+# Trial start mode — el alta crea el workspace inicial vacío (business) y
+# StartMode queda como red de seguridad idempotente.
 # =============================================================================
 from __future__ import annotations
 
@@ -8,6 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import AsyncClient
 
+from src.core.domain.entities import WorkspaceKind
 from src.infrastructure.postgres.relational_db import PostgresWorkspaceRepository
 
 
@@ -47,66 +49,76 @@ async def choose_start_mode(
 
 
 @pytest.mark.asyncio
-async def test_signup_creates_no_workspace(async_client: AsyncClient) -> None:
+async def test_signup_creates_empty_business_workspace(async_client: AsyncClient) -> None:
+    """El alta entra directo al panel: un workspace business vacío, sin demo."""
     signup = await _signup(async_client)
     workspaces = await PostgresWorkspaceRepository().list_workspaces(
         UUID(signup["organization_id"])
     )
-    assert workspaces == []
+    assert len(workspaces) == 1
+    workspace = workspaces[0]
+    assert workspace.kind == WorkspaceKind.BUSINESS
+    assert workspace.name == "Default Workspace"
 
     me = await async_client.get("/api/v1/auth/me", headers=_headers(signup))
     assert me.status_code == 200, me.text
     body = me.json()
-    assert body["needs_start_mode"] is True
-    assert body["active_workspace_id"] is None
-    assert body["workspace_kind"] is None
+    assert body["needs_start_mode"] is False
+    assert body["active_workspace_id"] == str(workspace.id)
+    assert body["workspace_kind"] == "business"
 
     listed = await async_client.get("/api/v1/workspaces", headers=_headers(signup))
     assert listed.status_code == 200, listed.text
-    assert listed.json()["workspaces"] == []
-    assert listed.json()["active_workspace_id"] is None
+    assert len(listed.json()["workspaces"]) == 1
+    assert listed.json()["active_workspace_id"] == str(workspace.id)
+
+    kbs = await async_client.get("/api/v1/knowledge-bases", headers=_headers(signup))
+    assert kbs.status_code == 200, kbs.text
+    assert kbs.json()["knowledge_bases"] == []
 
 
 @pytest.mark.asyncio
-async def test_resolve_workspace_requires_start_mode(
+async def test_signup_can_create_sources_without_start_mode(
     async_client: AsyncClient,
 ) -> None:
+    """Con workspace creado por el alta, la guarda de start-mode no aplica."""
     signup = await _signup(async_client)
     created = await async_client.post(
         "/api/v1/sources",
-        json={"name": "blocked", "type": "web", "config": {"url": "https://x.example"}},
+        json={"name": "directo", "type": "web", "config": {"url": "https://x.example"}},
         headers=_headers(signup),
     )
-    assert created.status_code == 409, created.text
-    assert created.json()["error_code"] == "start_mode_required"
+    assert created.status_code == 201, created.text
 
 
 @pytest.mark.asyncio
-async def test_start_mode_demo_creates_demo_workspace(
+async def test_start_mode_demo_is_noop_with_existing_workspace(
     async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    called: dict[str, object] = {}
+    """StartMode ya no provisiona demo: el workspace del alta es el activo."""
 
-    async def _fake_provision(organization_id, workspace_id=None):
-        called["org"] = organization_id
-        called["workspace_id"] = workspace_id
-        return True
+    async def _must_not_run(*_args, **_kwargs):
+        raise AssertionError("provision_demo_kb must not run after signup")
 
     monkeypatch.setattr(
         "src.verticals.demo_farmacia.provisioning.provision_demo_kb",
-        _fake_provision,
+        _must_not_run,
     )
 
     signup = await _signup(async_client)
     result = await choose_start_mode(async_client, signup, "demo")
-    assert result["kind"] == "demo"
+    assert result["kind"] == "business"
     assert result["needs_start_mode"] is False
-    assert called["org"] == UUID(signup["organization_id"])
-    assert called["workspace_id"] == UUID(result["workspace_id"])
+
+    workspaces = await PostgresWorkspaceRepository().list_workspaces(
+        UUID(signup["organization_id"])
+    )
+    assert len(workspaces) == 1
+    assert str(workspaces[0].id) == result["workspace_id"]
 
     me = await async_client.get("/api/v1/auth/me", headers=_headers(signup))
     assert me.json()["needs_start_mode"] is False
-    assert me.json()["workspace_kind"] == "demo"
+    assert me.json()["workspace_kind"] == "business"
     assert me.json()["active_workspace_id"] == result["workspace_id"]
 
 
