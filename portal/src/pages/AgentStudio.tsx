@@ -7,6 +7,7 @@ import { AgentAdvancedPanel } from "../components/agentStudio/AgentAdvancedPanel
 import { AgentPurposeForm } from "../components/agentStudio/AgentPurposeForm";
 import { AgentSourcePicker } from "../components/agentStudio/AgentSourcePicker";
 import { AgentTestChat, type ChatTurn } from "../components/agentStudio/AgentTestChat";
+import { flowFromAgentSteps } from "./chat/runPlaygroundTurn";
 import {
   type AdvancedTab,
   type Agent,
@@ -459,6 +460,8 @@ export default function AgentStudioPage() {
       let answer = "";
       let used: string[] = [];
       let errors: string[] = [];
+      let steps: unknown = [];
+      let totalMs = 0;
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -480,6 +483,7 @@ export default function AgentStudioPage() {
             status?: string;
             message?: string;
             steps?: unknown;
+            total_latency_ms?: number;
           };
           if (eventName === "status") {
             setPlayStatus(payloadJson.phase === "running" ? "Ejecutando agente…" : "En curso…");
@@ -487,6 +491,8 @@ export default function AgentStudioPage() {
             answer = payloadJson.answer || "";
             used = sourceIdsFromSteps(payloadJson.steps);
             errors = toolErrorsFromSteps(payloadJson.steps);
+            steps = payloadJson.steps;
+            totalMs = payloadJson.total_latency_ms ?? 0;
             setPlayStatus(payloadJson.status === "completed" ? "Listo" : payloadJson.status || "Listo");
           } else if (eventName === "error") {
             throw new Error(payloadJson.message || "Error en el stream");
@@ -501,6 +507,7 @@ export default function AgentStudioPage() {
           sources: used,
           emptyHint: Boolean(config.source_ids.length) && used.length === 0 && errors.length === 0,
           error: errors[0],
+          flow: flowFromAgentSteps(steps, totalMs),
         },
       ]);
     } catch (err) {
@@ -770,6 +777,7 @@ export default function AgentStudioPage() {
             onInput={setPlayInput}
             onSubmit={(e) => void runPlayground(e)}
             onActivate={() => setIsActive(true)}
+            session={session}
           />
         </div>
       </div>

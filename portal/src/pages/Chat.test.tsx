@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -111,6 +111,18 @@ describe("Playground Chat", () => {
     const streamCall = fetchMock.mock.calls.find((call) => String(call[0]).includes("/agents/a1/run/stream"));
     expect(streamCall).toBeTruthy();
     expect(String(streamCall?.[1]?.method || "POST").toUpperCase()).toBe("POST");
+  });
+
+  it("click derecho en la respuesta del agente abre Ver flujo", async () => {
+    const { user } = await renderChat("/chat?target=agent&id=a1");
+    await waitFor(() => expect(screen.getByLabelText("Agente a probar")).toHaveValue("a1"));
+    await user.type(screen.getByRole("textbox", { name: "Tu pregunta" }), "hola");
+    await user.click(screen.getByRole("button", { name: "Enviar pregunta" }));
+    const answer = await screen.findByText("eco:hola");
+    fireEvent.contextMenu(answer.closest(".bubble-assistant")!);
+    const item = await screen.findByRole("menuitem", { name: "Ver flujo" });
+    await user.click(item);
+    expect(await screen.findByText("Decidió Agente")).toBeInTheDocument();
   });
 
   it("en conocimiento muestra Vista y pega al RAG", async () => {

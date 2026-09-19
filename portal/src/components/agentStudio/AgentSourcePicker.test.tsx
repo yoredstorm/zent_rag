@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
@@ -104,5 +104,43 @@ describe("AgentTestChat", () => {
       />,
     );
     expect(screen.getByTestId("chat-wait-index")).toHaveTextContent(/termine el indexado/);
+  });
+
+  it("click derecho en la respuesta abre Ver flujo con los pasos del agente", async () => {
+    const user = userEvent.setup();
+    render(
+      <AgentTestChat
+        turns={[
+          { role: "user", text: "hola" },
+          {
+            role: "assistant",
+            text: "respuesta",
+            flow: {
+              method: "agent",
+              verdict: { decider: "Agente", route: "Herramientas" },
+              steps: [
+                { name: "search_knowledge", status: "ok", ms: 120, detail: "tool_call" },
+              ],
+              timings: { total_ms: 900 },
+            },
+          },
+        ]}
+        input=""
+        status=""
+        playing={false}
+        inactive={false}
+        sources={[READY]}
+        selectedIds={["s1"]}
+        onInput={() => {}}
+        onSubmit={(e) => e.preventDefault()}
+        session={{ token: "t", organizationId: "org-1", companyName: "Acme" }}
+      />,
+    );
+    fireEvent.contextMenu(screen.getByText("respuesta").closest("article")!);
+    const item = await screen.findByRole("menuitem", { name: "Ver flujo" });
+    await user.click(item);
+    expect(await screen.findByText("Decidió Agente")).toBeInTheDocument();
+    expect(screen.getByText("search_knowledge")).toBeInTheDocument();
+    expect(screen.getByText("900 ms")).toBeInTheDocument();
   });
 });

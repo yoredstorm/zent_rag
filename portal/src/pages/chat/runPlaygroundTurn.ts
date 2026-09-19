@@ -31,8 +31,7 @@ type Auth = { token: string; organizationId: string };
 
 type TimelineStep = { name: string; status: string; ms: number; detail: string };
 
-function flowFromAgentSteps(steps: unknown, totalMs: number): Record<string, unknown> {
-  const list = Array.isArray(steps) ? steps : [];
+export function flowFromAgentSteps(steps: unknown, totalMs: number): Record<string, unknown> {  const list = Array.isArray(steps) ? steps : [];
   const timeline: TimelineStep[] = list
     .filter((step): step is Record<string, unknown> => typeof step === "object" && step !== null)
     .map((step) => ({
