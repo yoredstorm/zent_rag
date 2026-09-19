@@ -19,6 +19,7 @@ import {
 import {
   FormEvent,
   KeyboardEvent,
+  MouseEvent as ReactMouseEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -57,6 +58,7 @@ import {
   type StoredMessage,
 } from "../chatHistory";
 import { PlaygroundTargetBar } from "./chat/PlaygroundTargetBar";
+import FlowDrawer from "./chat/FlowDrawer";
 import {
   conversationMatches,
   parsePlaygroundSearch,
@@ -114,6 +116,10 @@ export default function ChatPage() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [flowFor, setFlowFor] = useState<Message | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; message: Message } | null>(
+    null,
+  );
   const [developerMode, setDeveloperMode] = useState(() => {
     try {
       return window.localStorage.getItem("zent_rag_developer_mode") === "1";
@@ -329,6 +335,7 @@ export default function ChatPage() {
         userQuery: query,
         latencyMs: result.latencyMs,
         ragTrace: result.ragTrace ?? null,
+        flow: result.flow ?? null,
       };
       const finalMessages = [...withUser, assistantMessage];
       setMessages(finalMessages);
@@ -374,6 +381,38 @@ export default function ChatPage() {
   function stopStreaming() {
     abortRef.current?.abort();
   }
+
+  function openFlow(message: Message) {
+    setCtxMenu(null);
+    setFlowFor(message);
+  }
+
+  function handleMessageContextMenu(event: ReactMouseEvent, message: Message) {
+    event.preventDefault();
+    let target = message;
+    if (message.role === "user") {
+      const index = messages.findIndex((m) => m.id === message.id);
+      const answer = messages.slice(index + 1).find((m) => m.role === "assistant");
+      if (!answer) return;
+      target = answer;
+    }
+    if (!target.flow && !target.ragTrace && !target.queryId && !target.sqlQuery) return;
+    setCtxMenu({ x: event.clientX, y: event.clientY, message: target });
+  }
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") close();
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [ctxMenu]);
 
   async function send(e: FormEvent) {
     e.preventDefault();
@@ -704,6 +743,8 @@ export default function ChatPage() {
                 developerMode={developerMode}
                 onFeedback={(rating) => void sendFeedback(i, rating)}
                 onFeedbackReason={(reason) => void sendFeedbackReason(i, reason)}
+                onFlow={openFlow}
+                onContextMenu={handleMessageContextMenu}
               />
             ))}
 
@@ -804,6 +845,81 @@ export default function ChatPage() {
           </form>
         </div>
       </div>
+
+      {ctxMenu && (
+        <div
+          className="fixed inset-0 z-40"
+          onClick={() => setCtxMenu(null)}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setCtxMenu(null);
+          }}
+        >
+          <div
+            className="absolute z-50 min-w-40 rounded-md border border-border bg-surface p-1 shadow-lg"
+            style={{ left: ctxMenu.x, top: ctxMenu.y }}
+            role="menu"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              className="w-full cursor-pointer rounded-sm px-2.5 py-1.5 text-left text-[12.5px] text-text transition-colors hover:bg-soft"
+              onClick={() => openFlow(ctxMenu.message)}
+            >
+              Ver flujo
+            </button>
+            {ctxMenu.message.sqlQuery ? (
+              <button
+                type="button"
+                role="menuitem"
+                className="w-full cursor-pointer rounded-sm px-2.5 py-1.5 text-left text-[12.5px] text-text transition-colors hover:bg-soft"
+                onClick={() => {
+                  const message = ctxMenu.message;
+                  setCtxMenu(null);
+                  void navigator.clipboard?.writeText(message.sqlQuery ?? "");
+                  pushToast("info", "SQL copiado");
+                }}
+              >
+                Copiar SQL
+              </button>
+            ) : null}
+            <button
+              type="button"
+              role="menuitem"
+              className="w-full cursor-pointer rounded-sm px-2.5 py-1.5 text-left text-[12.5px] text-text transition-colors hover:bg-soft"
+              onClick={() => {
+                const message = ctxMenu.message;
+                setCtxMenu(null);
+                void navigator.clipboard?.writeText(message.content);
+                pushToast("info", "Respuesta copiada");
+              }}
+            >
+              Copiar respuesta
+            </button>
+          </div>
+        </div>
+      )}
+
+      {session ? (
+        <FlowDrawer
+          open={flowFor !== null}
+          onOpenChange={(open) => {
+            if (!open) setFlowFor(null);
+          }}
+          flow={(flowFor?.flow as Record<string, unknown> | null) ?? null}
+          role={role}
+          queryId={flowFor?.queryId}
+          session={session}
+          onFetched={(fetched) => {
+            if (!flowFor) return;
+            const id = flowFor.id;
+            setMessages((prev) =>
+              prev.map((message) => (message.id === id ? { ...message, flow: fetched } : message)),
+            );
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -1023,11 +1139,15 @@ function MessageBubble({
   developerMode = false,
   onFeedback,
   onFeedbackReason,
+  onFlow,
+  onContextMenu,
 }: {
   message: Message;
   developerMode?: boolean;
   onFeedback: (rating: "up" | "down") => void;
   onFeedbackReason: (reason: string) => void;
+  onFlow: (message: Message) => void;
+  onContextMenu: (event: ReactMouseEvent, message: Message) => void;
 }) {
   const [sqlOpen, setSqlOpen] = useState(false);
   const [sqlModalOpen, setSqlModalOpen] = useState(false);
@@ -1035,7 +1155,10 @@ function MessageBubble({
   if (message.role === "user") {
     return (
       <div className="flex items-start justify-end gap-2.5">
-        <div className="bubble bubble-user">
+        <div
+          className="bubble bubble-user"
+          onContextMenu={(event) => onContextMenu(event, message)}
+        >
           <p className="whitespace-pre-wrap">{message.content}</p>
         </div>
         <Avatar isUser />
@@ -1049,7 +1172,10 @@ function MessageBubble({
     <div className="flex items-start gap-2.5">
       <Avatar isUser={false} />
       <div className="min-w-0 flex-1">
-        <div className="bubble bubble-assistant max-w-full">
+        <div
+          className="bubble bubble-assistant max-w-full"
+          onContextMenu={(event) => onContextMenu(event, message)}
+        >
           <div
             className="chat-markdown whitespace-pre-wrap text-[14.5px] leading-relaxed"
             dangerouslySetInnerHTML={renderMarkdown(message.content)}
@@ -1124,6 +1250,15 @@ function MessageBubble({
 
         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-1">
           {message.method && <MethodChip method={message.method} />}
+          {(message.flow || message.ragTrace || message.queryId || message.sqlQuery) && (
+            <button
+              type="button"
+              className="cursor-pointer text-[11px] text-muted underline underline-offset-2 transition-colors hover:text-text"
+              onClick={() => onFlow(message)}
+            >
+              Ver flujo
+            </button>
+          )}
           {message.lazyIngested && (
             <span className="flex items-center gap-1 text-[11px] text-accent">
               <MagnifyingGlass size={11} aria-hidden />

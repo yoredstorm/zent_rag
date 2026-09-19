@@ -199,6 +199,225 @@ def _decision_tenant_policy(config_json: dict | None) -> dict:
     return dict(policy) if isinstance(policy, dict) else {}
 
 
+def _flow_step(name: str, ms: float, *, status: str = "ok", detail: str = "") -> dict:
+    return {
+        "name": name,
+        "status": status,
+        "ms": round(max(0.0, float(ms or 0.0)), 1),
+        "detail": detail[:160],
+    }
+
+
+def _build_flow(
+    *,
+    query_id: UUID,
+    organization_id: UUID,
+    conversation_id: UUID | None,
+    method: str,
+    status: str,
+    decision,
+    decision_evaluated: bool,
+    adaptive: dict,
+    retrieval_context,
+    sql_result,
+    llm_response,
+    timings: dict,
+    total_ms: float,
+    fallbacks: list,
+) -> dict:
+    """Traza completa de una respuesta para el panel "Ver flujo" del chat."""
+    plan = adaptive.get("plan")
+    quality = adaptive.get("quality")
+    evidence = adaptive.get("evidence")
+    grounding = adaptive.get("grounding")
+    metadata = dict(getattr(decision, "metadata", None) or {})
+
+    provider = str(getattr(decision, "provider", "") or "legacy")
+    capability = str(getattr(decision, "capability", "") or "")
+    decision_block = {
+        "evaluated": bool(decision_evaluated),
+        "provider": provider,
+        "capability": capability or None,
+        "confidence": round(float(getattr(decision, "confidence", 0.0) or 0.0), 4),
+        "fallback_used": bool(getattr(decision, "fallback_used", False)),
+        "acting": bool(metadata.get("acting", False)),
+        "mode": metadata.get("mode"),
+        "jev_used": provider == "jev",
+        "reasoning": bool(getattr(decision, "needs_reasoning", False)),
+        "ms": round(
+            float(timings.get("decision_ms") or getattr(decision, "latency_ms", 0.0) or 0.0),
+            1,
+        ),
+    }
+
+    chunks = list(getattr(retrieval_context, "chunks", None) or [])
+    scores = [float(getattr(chunk, "score", 0.0) or 0.0) for chunk in chunks]
+    sources: list[dict] = []
+    for chunk in chunks[:8]:
+        chunk_meta = dict(getattr(chunk, "metadata", None) or {})
+        title = str(
+            chunk_meta.get("filename")
+            or chunk_meta.get("source")
+            or chunk_meta.get("title")
+            or ""
+        )
+        sources.append(
+            {
+                "title": title or f"Documento {str(getattr(chunk, 'document_id', ''))[:8]}",
+                "document_id": str(getattr(chunk, "document_id", "")),
+                "score": round(float(getattr(chunk, "score", 0.0) or 0.0), 4),
+            }
+        )
+
+    retrieval_block = {
+        "used": bool(chunks) or float(getattr(retrieval_context, "retrieval_latency_ms", 0.0) or 0.0) > 0,
+        "strategy": str(getattr(plan, "retrieval_strategy", "") or "") or None,
+        "engine_strategy": str(getattr(plan, "engine_strategy", "") or "") or None,
+        "chunks": len(chunks),
+        "top_score": round(max(scores), 4) if scores else None,
+        "attempts": len(adaptive.get("attempts") or []),
+        "rewritten_query": getattr(plan, "rewritten_query", None),
+        "skip_retrieval": bool(getattr(plan, "skip_retrieval", False)),
+        "ms": round(float(timings.get("retrieval_ms") or 0.0), 1),
+    }
+
+    sql_block = None
+    if sql_result is not None:
+        sql_meta = dict(getattr(sql_result, "metadata", None) or {})
+        sql_block = {
+            "query": getattr(sql_result, "sql", None),
+            "rows": int(getattr(sql_result, "row_count", 0) or 0),
+            "truncated": bool(getattr(sql_result, "truncated", False)),
+            "tables": list(sql_meta.get("tables") or [])[:8],
+            "ms": round(float(timings.get("sql_ms") or 0.0), 1),
+        }
+
+    evidence_block = None
+    if quality is not None:
+        evidence_block = {
+            "sufficient": bool(getattr(quality, "sufficient", False)),
+            "score": round(float(getattr(quality, "score", 0.0) or 0.0), 4),
+            "reason": str(getattr(quality, "reason", "") or "")[:160] or None,
+            "items": int(getattr(evidence, "size", 0) or 0) if evidence is not None else 0,
+            "ms": round(float(timings.get("evidence_ms") or 0.0), 1),
+        }
+
+    grounding_block = None
+    if grounding is not None:
+        grounding_block = {
+            "grounded": bool(getattr(grounding, "grounded", False)),
+            "score": round(float(getattr(grounding, "score", 0.0) or 0.0), 4),
+            "ms": round(float(timings.get("grounding_ms") or 0.0), 1),
+        }
+
+    generation_block = None
+    if llm_response is not None:
+        generation_block = {
+            "model": getattr(llm_response, "model", None),
+            "prompt_tokens": int(getattr(llm_response, "prompt_tokens", 0) or 0),
+            "completion_tokens": int(getattr(llm_response, "completion_tokens", 0) or 0),
+            "total_tokens": int(getattr(llm_response, "total_tokens", 0) or 0),
+            "ms": round(float(getattr(llm_response, "latency_ms", 0.0) or 0.0), 1),
+            "skipped": bool(adaptive.get("llm_skipped")) or getattr(llm_response, "model", "") == "extractive",
+        }
+
+    steps: list[dict] = []
+    if decision_block["evaluated"]:
+        steps.append(
+            _flow_step(
+                "Decisión",
+                decision_block["ms"],
+                detail=f"{provider} · {capability or '—'}",
+            )
+        )
+    if plan is not None and getattr(plan, "apply", False):
+        steps.append(
+            _flow_step(
+                "Plan de búsqueda",
+                float(timings.get("plan_ms") or 0.0),
+                detail=str(getattr(plan, "source_route", "") or ""),
+            )
+        )
+    if retrieval_block["used"]:
+        steps.append(
+            _flow_step(
+                "Búsqueda",
+                retrieval_block["ms"],
+                detail=f"{retrieval_block['chunks']} fragmentos",
+            )
+        )
+    if sql_block is not None:
+        steps.append(
+            _flow_step("SQL", sql_block["ms"], detail=f"{sql_block['rows']} filas")
+        )
+    if evidence_block is not None:
+        steps.append(
+            _flow_step(
+                "Evidencia",
+                evidence_block["ms"],
+                status="ok" if evidence_block["sufficient"] else "warn",
+                detail=evidence_block["reason"] or "",
+            )
+        )
+    if generation_block is not None and not generation_block["skipped"]:
+        steps.append(
+            _flow_step(
+                "Respuesta",
+                generation_block["ms"],
+                detail=str(generation_block["model"] or ""),
+            )
+        )
+    if grounding_block is not None:
+        steps.append(
+            _flow_step(
+                "Verificación",
+                grounding_block["ms"],
+                status="ok" if grounding_block["grounded"] else "warn",
+            )
+        )
+
+    if decision_block["jev_used"]:
+        decider = "JEV"
+    elif provider == "rules":
+        decider = "Reglas"
+    elif provider == "llm":
+        decider = "LLM"
+    else:
+        decider = "Legacy"
+    route = "SQL" if sql_block is not None else (
+        "Documentos" if retrieval_block["used"] else "Directa"
+    )
+
+    return {
+        "query_id": str(query_id),
+        "organization_id": str(organization_id),
+        "conversation_id": str(conversation_id) if conversation_id else None,
+        "method": method,
+        "status": status,
+        "verdict": {"decider": decider, "route": route},
+        "decision": decision_block,
+        "retrieval": retrieval_block,
+        "sql": sql_block,
+        "evidence": evidence_block,
+        "grounding": grounding_block,
+        "generation": generation_block,
+        "timings": {
+            "decision_ms": decision_block["ms"],
+            "plan_ms": round(float(timings.get("plan_ms") or 0.0), 1),
+            "embedding_ms": round(float(timings.get("embedding_ms") or 0.0), 1),
+            "retrieval_ms": retrieval_block["ms"],
+            "sql_ms": round(float(timings.get("sql_ms") or 0.0), 1),
+            "evidence_ms": round(float(timings.get("evidence_ms") or 0.0), 1),
+            "grounding_ms": round(float(timings.get("grounding_ms") or 0.0), 1),
+            "generation_ms": generation_block["ms"] if generation_block else 0.0,
+            "total_ms": round(float(total_ms or 0.0), 1),
+        },
+        "steps": steps,
+        "sources": sources,
+        "fallbacks": list(fallbacks or [])[:8],
+    }
+
+
 def _format_sql_result(result, question: str) -> str:
     """Formatea resultados SQL para que el LLM los interprete."""
     if not result.rows:
@@ -500,6 +719,18 @@ class RAGOrchestrator:
 
         effective_model: str | None = None
         routing_decision = None
+        retrieval_context = None
+        sql_result = None
+        decision_evaluated = False
+        flow_timings: dict[str, float] = {
+            "decision_ms": 0.0,
+            "plan_ms": 0.0,
+            "embedding_ms": 0.0,
+            "retrieval_ms": 0.0,
+            "sql_ms": 0.0,
+            "evidence_ms": 0.0,
+            "grounding_ms": 0.0,
+        }
         adaptive: dict = {
             "plan": None,
             "quality": None,
@@ -626,10 +857,12 @@ class RAGOrchestrator:
             # Paso 3: Generar embedding de la query
             # -----------------------------------------------------------------
             result.status = QueryStatus.RETRIEVING_CONTEXT
+            _embedding_t0 = time.perf_counter()
             async with trace_span("rag.embedding", model=effective_embedding_model or "default"):
                 query_embedding = await self._embedding_provider.embed(
                     query, model=effective_embedding_model
                 )
+            flow_timings["embedding_ms"] += (time.perf_counter() - _embedding_t0) * 1000
             if isinstance(query_embedding[0], list):
                 query_embedding = query_embedding[0]  # type: ignore[assignment]
 
@@ -656,6 +889,7 @@ class RAGOrchestrator:
             intelligence_understanding: object | None = None
             routing_hint = {"prefer_sql": False, "skip_sql": False}
             if self._decision_hook is not None and getattr(self._decision_hook, "enabled", lambda: True)():
+                _decision_t0 = time.perf_counter()
                 try:
                     routing_decision = await self._decision_hook.evaluate(  # type: ignore[union-attr]
                         organization_id=organization_id,
@@ -668,6 +902,7 @@ class RAGOrchestrator:
                         tenant_policy=_decision_tenant_policy(organization.config_json),
                         conversation_state=_conversation_state(history, is_followup),
                     )
+                    decision_evaluated = True
                     from src.decision.hook import retrieval_hint as _decision_hint
 
                     routing_hint = _decision_hint(routing_decision)
@@ -676,7 +911,10 @@ class RAGOrchestrator:
                         "Decision engine failed; continuing legacy path",
                         error=str(_dec_err)[:200],
                     )
+                finally:
+                    flow_timings["decision_ms"] += (time.perf_counter() - _decision_t0) * 1000
             if self._adaptive_hook is not None and getattr(self._adaptive_hook, "enabled", lambda: True)():
+                _plan_t0 = time.perf_counter()
                 try:
                     from src.rag.adaptive.hook import OrchestratorAdaptiveHook
 
@@ -712,6 +950,8 @@ class RAGOrchestrator:
                         error=str(_ad_err)[:200],
                     )
                     adaptive["fallbacks"].append("plan_failed")
+                finally:
+                    flow_timings["plan_ms"] += (time.perf_counter() - _plan_t0) * 1000
             intelligence_evidences: list = []
             intelligence_budget: object | None = None
             if self._intelligence is not None:
@@ -844,12 +1084,14 @@ class RAGOrchestrator:
                 organization_config=organization.config_json,
             )
             async def _embed(text: str) -> list[float]:
+                _t0 = time.perf_counter()
                 async with trace_span(
                     "rag.embedding", model=effective_embedding_model or "default"
                 ):
                     emb = await self._embedding_provider.embed(
                         text, model=effective_embedding_model
                     )
+                flow_timings["embedding_ms"] += (time.perf_counter() - _t0) * 1000
                 if emb and isinstance(emb[0], list):
                     emb = emb[0]
                 return emb  # type: ignore[return-value]
@@ -909,7 +1151,7 @@ class RAGOrchestrator:
                 )
                 return await self._retriever.retrieve(rquery)  # type: ignore[union-attr]
 
-            async def _vector_search_full() -> RetrievalContext:
+            async def _vector_search_full_inner() -> RetrievalContext:
                 if _retrieve_opts["skip_vector"]:
                     return await _empty_retrieval()
                 embedding = _retrieve_opts.get("embedding") or query_embedding
@@ -975,8 +1217,29 @@ class RAGOrchestrator:
                     retrieval_latency_ms=agg_ctx.retrieval_latency_ms + ind_ctx.retrieval_latency_ms,
                 )
 
+            async def _vector_search_full() -> RetrievalContext:
+                _t0 = time.perf_counter()
+                try:
+                    return await _vector_search_full_inner()
+                finally:
+                    flow_timings["retrieval_ms"] += (time.perf_counter() - _t0) * 1000
+
             async with trace_span("rag.retrieval"):
                 sql_permissions = (organization.config_json or {}).get("sql")
+
+                async def _run_sql(question: str):
+                    _sql_t0 = time.perf_counter()
+                    try:
+                        return await self._sql_expert.execute(  # type: ignore[union-attr]
+                            organization_id=organization_id,
+                            question=question,
+                            role=role,
+                            permissions=sql_permissions,
+                            user_id=user_id,
+                        )
+                    finally:
+                        flow_timings["sql_ms"] += (time.perf_counter() - _sql_t0) * 1000
+
                 plan_needs_sql = (
                     intelligence_plan is None
                     or getattr(intelligence_plan, "needs_sql", True)
@@ -1050,13 +1313,7 @@ class RAGOrchestrator:
                                 )
                             if sql_intent:
                                 try:
-                                    sql_result = await self._sql_expert.execute(
-                                        organization_id=organization_id,
-                                        question=query,
-                                        role=role,
-                                        permissions=sql_permissions,
-                                        user_id=user_id,
-                                    )
+                                    sql_result = await _run_sql(query)
                                 except Exception as _sql_err:
                                     logger.warning(
                                         "SQL Expert failed, falling back to vector-only",
@@ -1069,22 +1326,10 @@ class RAGOrchestrator:
                             if retrieval_context is None:
                                 retrieval_context, sql_result = await asyncio.gather(
                                     _vector_search_full(),
-                                    self._sql_expert.execute(
-                                        organization_id=organization_id,
-                                        question=query,
-                                        role=role,
-                                        permissions=sql_permissions,
-                                        user_id=user_id,
-                                    ),
+                                    _run_sql(query),
                                 )
                             else:
-                                sql_result = await self._sql_expert.execute(
-                                    organization_id=organization_id,
-                                    question=query,
-                                    role=role,
-                                    permissions=sql_permissions,
-                                    user_id=user_id,
-                                )
+                                sql_result = await _run_sql(query)
                     except Exception as _sql_err:
                         logger.warning(
                             "SQL Expert failed in parallel, falling back to vector-only",
@@ -1104,15 +1349,23 @@ class RAGOrchestrator:
 
                     _adaptive = self._adaptive_hook
                     _plan = adaptive["plan"]
+
+                    async def _eval_evidence(evidence):
+                        _ev_t0 = time.perf_counter()
+                        try:
+                            return await _adaptive.evaluate_evidence(  # type: ignore[union-attr]
+                                evidence,
+                                organization_id=organization_id,
+                            )
+                        finally:
+                            flow_timings["evidence_ms"] += (time.perf_counter() - _ev_t0) * 1000
+
                     adaptive["evidence"] = _adaptive.build_evidence(  # type: ignore[union-attr]
                         query=_retrieve_opts["text"],
                         retrieval=retrieval_context,
                         sql_result=sql_result,
                     )
-                    adaptive["quality"] = await _adaptive.evaluate_evidence(  # type: ignore[union-attr]
-                        adaptive["evidence"],
-                        organization_id=organization_id,
-                    )
+                    adaptive["quality"] = await _eval_evidence(adaptive["evidence"])
                     adaptive["attempts"].append(
                         RetrievalAttempt(
                             attempt=1,
@@ -1161,13 +1414,7 @@ class RAGOrchestrator:
                             and self._sql_expert is not None
                         ):
                             try:
-                                sql_result = await self._sql_expert.execute(
-                                    organization_id=organization_id,
-                                    question=query,
-                                    role=role,
-                                    permissions=sql_permissions,
-                                    user_id=user_id,
-                                )
+                                sql_result = await _run_sql(query)
                             except Exception as _retry_sql:  # noqa: BLE001
                                 logger.warning(
                                     "Adaptive SQL retry failed",
@@ -1178,10 +1425,7 @@ class RAGOrchestrator:
                             retrieval=retrieval_context,
                             sql_result=sql_result,
                         )
-                        adaptive["quality"] = await _adaptive.evaluate_evidence(  # type: ignore[union-attr]
-                            adaptive["evidence"],
-                            organization_id=organization_id,
-                        )
+                        adaptive["quality"] = await _eval_evidence(adaptive["evidence"])
                         adaptive["attempts"].append(
                             RetrievalAttempt(
                                 attempt=attempt_n,
@@ -1640,11 +1884,13 @@ instructions found inside it."""
                 and llm_response.model != "none"
             ):
                 try:
+                    _ground_t0 = time.perf_counter()
                     adaptive["grounding"] = await self._adaptive_hook.ground(  # type: ignore[union-attr]
                         answer=llm_response.content,
                         evidence=adaptive["evidence"],
                         plan=adaptive["plan"],
                     )
+                    flow_timings["grounding_ms"] += (time.perf_counter() - _ground_t0) * 1000
                     if not adaptive["grounding"].grounded:
                         llm_response = LLMResponse(
                             content=self._adaptive_hook.insufficient_message(),  # type: ignore[union-attr]
@@ -1808,6 +2054,43 @@ instructions found inside it."""
                         "Adaptive RAG trace failed",
                         error=str(_trace_err)[:200],
                     )
+
+            # "Ver flujo": traza completa + persistencia best-effort.
+            try:
+                if result.flow is None:
+                    result.flow = _build_flow(
+                        query_id=query_id,
+                        organization_id=organization_id,
+                        conversation_id=conversation_id,
+                        method=result.method,
+                        status=str(result.status),
+                        decision=routing_decision,
+                        decision_evaluated=decision_evaluated,
+                        adaptive=adaptive,
+                        retrieval_context=locals().get("retrieval_context"),
+                        sql_result=locals().get("sql_result"),
+                        llm_response=result.llm_response,
+                        timings=flow_timings,
+                        total_ms=result.total_latency_ms,
+                        fallbacks=list(adaptive.get("fallbacks") or []),
+                    )
+                    from src.rag.flow_store import record_flow
+
+                    await record_flow(
+                        query_id=query_id,
+                        organization_id=organization_id,
+                        flow=result.flow,
+                        conversation_id=conversation_id,
+                        request_id=query_id,
+                        user_id=user_id,
+                        method=result.method,
+                        status=str(result.status),
+                    )
+            except Exception as _flow_err:  # noqa: BLE001
+                logger.warning(
+                    "RAG flow build/persist failed",
+                    error=str(_flow_err)[:200],
+                )
 
             # Persistir resultado para auditoría (opcional, si hay query_store)
             if self._query_store:

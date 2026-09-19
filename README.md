@@ -473,6 +473,7 @@ zent_RAG/
 - **Trazas**: `decision_traces` con `actual_capability` y `agreement` tras ejecutar; dashboard y Experiment Lab (Rules vs JEV vs LLM) en `/api/v1/platform/runtime/*`
 - **Adaptive RAG** (`off` · `shadow` · `active` · `canary`): plan de retrieval, evidence gate, fast path extractivo, rewrite y grounding
 - **Capacidades advisory con dispatcher**: `agent.*`, `workflow.*`, `tool.*` viven en el registry; JEV no las elige por heurística, pero `POST /api/v1/rag/query` con `agent_id`, `workflow_id`, `run_id`, `tool` + `tool_arguments` las ejecuta vía `CapabilityDispatcher` con permisos por handler
+- **Ver flujo**: cada respuesta guarda su traza completa (decidió JEV/reglas/LLM/legacy, ruta SQL o documentos, SQL usado, retrieval, tokens y **ms por etapa**) y se abre con click derecho en el chat o link "Ver flujo"; se persiste en `rag_flows` para consultarla después
 - **Batcheo de preguntas System One**: plan en [docs/architecture/decision-engine-batching.md](docs/architecture/decision-engine-batching.md) (propuesto)
 - ADR: [docs/architecture/decision-engine.md](docs/architecture/decision-engine.md)
 
@@ -571,6 +572,7 @@ Swagger: http://localhost:8000/docs · ReDoc: `/redoc` · Bruno: carpeta [`bruno
 |---|---|---|
 | POST | `/api/v1/rag/query` | Query RAG (+ SQL Expert si aplica) |
 | POST | `/api/v1/rag/query/stream` | Mismo flujo por SSE |
+| GET | `/api/v1/rag/queries/{query_id}/flow` | Flujo completo de una respuesta: decisión, etapas con ms, SQL y fuentes |
 
 `/rag/query` también ejecuta targets explícitos del runtime: `agent_id`,
 `workflow_id` (+ `run_id` para resume) o `tool` con `tool_arguments`. En ese

@@ -18,6 +18,7 @@ export type PlaygroundTurnResult = {
   stopped?: boolean;
   error?: string;
   ragTrace?: Record<string, unknown> | null;
+  flow?: Record<string, unknown> | null;
 };
 
 export type StreamHooks = {
@@ -27,6 +28,46 @@ export type StreamHooks = {
 };
 
 type Auth = { token: string; organizationId: string };
+
+type TimelineStep = { name: string; status: string; ms: number; detail: string };
+
+function flowFromAgentSteps(steps: unknown, totalMs: number): Record<string, unknown> {
+  const list = Array.isArray(steps) ? steps : [];
+  const timeline: TimelineStep[] = list
+    .filter((step): step is Record<string, unknown> => typeof step === "object" && step !== null)
+    .map((step) => ({
+      name: String(step.tool || step.type || "paso"),
+      status: step.error ? "warn" : "ok",
+      ms: Number(step.latency_ms || 0),
+      detail: step.error ? String(step.error).slice(0, 160) : String(step.type || ""),
+    }));
+  return {
+    method: "agent",
+    verdict: { decider: "Agente", route: "Herramientas" },
+    steps: timeline,
+    timings: { total_ms: totalMs },
+    fallbacks: [],
+  };
+}
+
+function flowFromWorkflowSteps(
+  steps: { step_type?: string; node_id?: string | null; node_type?: string | null; status?: string; error?: string | null; duration_ms?: number | null }[],
+  totalMs: number,
+): Record<string, unknown> {
+  const timeline: TimelineStep[] = (steps || []).map((step) => ({
+    name: String(step.node_type || step.step_type || step.node_id || "nodo"),
+    status: step.status === "failed" || step.status === "denied" ? "warn" : "ok",
+    ms: Number(step.duration_ms || 0),
+    detail: step.error ? String(step.error).slice(0, 160) : String(step.status || ""),
+  }));
+  return {
+    method: "workflow",
+    verdict: { decider: "Workflow", route: "Nodos" },
+    steps: timeline,
+    timings: { total_ms: totalMs },
+    fallbacks: [],
+  };
+}
 
 async function httpError(res: Response): Promise<Error> {
   let message = `HTTP ${res.status}`;
@@ -101,6 +142,7 @@ export async function runKnowledgeTurn(input: {
   let latencyMs = 0;
   let sawMeta = false;
   let ragTrace: Record<string, unknown> | null = null;
+  let flow: Record<string, unknown> | null = null;
 
   await readSse(
     res,
@@ -141,11 +183,13 @@ export async function runKnowledgeTurn(input: {
           query_id: string;
           latency_ms: number;
           rag_trace?: Record<string, unknown> | null;
+          flow?: Record<string, unknown> | null;
         };
         queryId = payload.query_id;
         conversationId = payload.conversation_id;
         latencyMs = payload.latency_ms ?? 0;
         ragTrace = payload.rag_trace ?? null;
+        flow = payload.flow ?? null;
       } else if (event === "error") {
         throw new Error((JSON.parse(data) as { message: string }).message);
       }
@@ -166,6 +210,7 @@ export async function runKnowledgeTurn(input: {
     conversationId,
     latencyMs,
     ragTrace,
+    flow,
   };
 }
 
@@ -197,6 +242,7 @@ export async function runAgentTurn(input: {
   let latencyMs = 0;
   let used: string[] = [];
   let errors: string[] = [];
+  let steps: unknown = [];
 
   await readSse(
     res,
@@ -215,6 +261,7 @@ export async function runAgentTurn(input: {
         answer = payload.answer || "";
         used = sourceIdsFromSteps(payload.steps);
         errors = toolErrorsFromSteps(payload.steps);
+        steps = payload.steps;
         latencyMs = payload.total_latency_ms ?? 0;
         input.hooks?.onDelta?.(answer);
         input.hooks?.onPhase?.("");
@@ -232,6 +279,7 @@ export async function runAgentTurn(input: {
     conversationId: input.conversationId ?? undefined,
     latencyMs,
     error: errors[0],
+    flow: flowFromAgentSteps(steps, latencyMs),
   };
 }
 
@@ -263,6 +311,7 @@ export async function runWorkflowTurn(input: {
     method: "workflow",
     latencyMs: detail.duration_ms ?? 0,
     error: answer?.error || undefined,
+    flow: flowFromWorkflowSteps(detail.steps || [], detail.duration_ms ?? 0),
   };
 }
 

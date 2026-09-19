@@ -220,6 +220,7 @@ class AnswerabilityEvidenceResponse(BaseModel):
     source_name: str
     authority_level: str
     freshness: str | None = None
+    snippet: str | None = None
 
 
 class AnswerabilityResponse(BaseModel):
@@ -260,6 +261,8 @@ class RAGQueryResponse(BaseModel):
     answerability: AnswerabilityResponse | None = None
     trace_id: str | None = None
     rag_trace: dict | None = None
+    # "Ver flujo" — traza completa (decisión, etapas con ms, SQL, fuentes).
+    flow: dict | None = None
 
 
 class ErrorResponse(BaseModel):

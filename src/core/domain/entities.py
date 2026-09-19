@@ -440,6 +440,8 @@ class RAGQueryResult:
     answerability: AnswerabilityDecision | None = None
     trace_id: str | None = None
     rag_trace: dict | None = None
+    # "Ver flujo" — traza completa de la respuesta (decision, etapas, ms, SQL).
+    flow: dict | None = None
 
 
 # -----------------------------------------------------------------------------

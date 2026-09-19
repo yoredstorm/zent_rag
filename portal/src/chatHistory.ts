@@ -11,6 +11,8 @@ export type StoredMessage = {
   latencyMs?: number;
   stopped?: boolean;
   ragTrace?: Record<string, unknown> | null;
+  /** "Ver flujo": traza completa (decisión, etapas con ms, SQL, fuentes). */
+  flow?: Record<string, unknown> | null;
 };
 
 export type Conversation = {

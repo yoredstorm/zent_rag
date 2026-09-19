@@ -420,6 +420,7 @@ async def rag_query(
         answerability=_answerability_for_client(result),
         trace_id=getattr(result, "trace_id", None),
         rag_trace=getattr(result, "rag_trace", None),
+        flow=getattr(result, "flow", None),
     )
 
 
@@ -587,6 +588,7 @@ async def rag_query_stream(
                         "answerability": _answerability_for_client(result),
                         "trace_id": getattr(result, "trace_id", None),
                         "rag_trace": getattr(result, "rag_trace", None),
+                        "flow": getattr(result, "flow", None),
                     },
                 )
             )
@@ -637,3 +639,34 @@ async def rag_query_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.get(
+    "/rag/queries/{query_id}/flow",
+    summary="Flujo completo de una respuesta (Ver flujo)",
+    description=(
+        "Traza de una respuesta previa: decisión (JEV/reglas/LLM/legacy), "
+        "ruta, SQL, retrieval, generación y ms por etapa. Scoped por organización."
+    ),
+)
+async def rag_query_flow(query_id: str, request: Request) -> dict:
+    from src.api.security import resolve_organization
+    from src.platform.rbac.policy import require_permission
+
+    require_permission(request, "rag:read")
+    organization_id = resolve_organization(request)
+    try:
+        qid = UUID(query_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="query_id must be a valid UUID",
+        ) from exc
+    from src.rag.flow_store import get_flow
+
+    flow = await get_flow(organization_id, qid)
+    if flow is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Flow not found"
+        )
+    return {"flow": flow}
