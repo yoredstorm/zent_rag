@@ -41,19 +41,25 @@ const AGENT_STEP_LABEL: Record<string, string> = {
   error: "Error",
 };
 
-export function flowFromAgentSteps(steps: unknown, totalMs: number): Record<string, unknown> {
+export function flowFromAgentSteps(
+  steps: unknown,
+  totalMs: number,
+  totals: { model?: string | null; cost?: number | null; totalTokens?: number | null } = {},
+): Record<string, unknown> {
   const list = Array.isArray(steps)
     ? steps.filter(
         (step): step is Record<string, unknown> => typeof step === "object" && step !== null,
       )
     : [];
   let tokens = 0;
+  let generationMs = 0;
   let jevUsed = false;
   const timeline: TimelineStep[] = list.map((step) => {
     const type = String(step.type || "");
     if (type === "tool_routing" || type === "termination_gate") jevUsed = true;
     tokens += Number(step.tokens || 0);
-    let detail = "";
+    if (type === "llm") generationMs += Number(step.latency_ms || 0);
+    let detail: string;
     if (type === "tool_routing") {
       const choice = step.choice ? String(step.choice) : "";
       const confidence = Number(step.confidence || 0);
@@ -83,6 +89,8 @@ export function flowFromAgentSteps(steps: unknown, totalMs: number): Record<stri
       detail,
     };
   });
+  const totalTokens = Number(totals.totalTokens || 0) || tokens;
+  const cost = typeof totals.cost === "number" ? totals.cost : null;
   return {
     method: "agent",
     verdict: { decider: "Agente", route: "Herramientas" },
@@ -96,9 +104,14 @@ export function flowFromAgentSteps(steps: unknown, totalMs: number): Record<stri
       mode: jevUsed ? "ReAct + JEV" : "ReAct",
     },
     jev: { used: jevUsed },
-    generation: tokens > 0 ? { total_tokens: tokens, ms: 0 } : null,
+    generation: {
+      model: totals.model ?? null,
+      total_tokens: totalTokens,
+      ms: generationMs,
+      cost,
+    },
     steps: timeline,
-    timings: { total_ms: totalMs },
+    timings: { total_ms: totalMs, generation_ms: generationMs },
     fallbacks: [],
   };
 }
@@ -296,6 +309,9 @@ export async function runAgentTurn(input: {
   let used: string[] = [];
   let errors: string[] = [];
   let steps: unknown = [];
+  let model: string | null = null;
+  let cost: number | null = null;
+  let totalTokens: number | null = null;
 
   await readSse(
     res,
@@ -307,6 +323,9 @@ export async function runAgentTurn(input: {
         message?: string;
         steps?: unknown;
         total_latency_ms?: number;
+        total_tokens?: number;
+        cost?: number;
+        model?: string | null;
       };
       if (event === "status") {
         input.hooks?.onPhase?.(payload.phase === "running" ? "Ejecutando agente…" : "En curso…");
@@ -316,6 +335,9 @@ export async function runAgentTurn(input: {
         errors = toolErrorsFromSteps(payload.steps);
         steps = payload.steps;
         latencyMs = payload.total_latency_ms ?? 0;
+        model = payload.model ?? null;
+        cost = typeof payload.cost === "number" ? payload.cost : null;
+        totalTokens = typeof payload.total_tokens === "number" ? payload.total_tokens : null;
         input.hooks?.onDelta?.(answer);
         input.hooks?.onPhase?.("");
       } else if (event === "error") {
@@ -332,7 +354,7 @@ export async function runAgentTurn(input: {
     conversationId: input.conversationId ?? undefined,
     latencyMs,
     error: errors[0],
-    flow: flowFromAgentSteps(steps, latencyMs),
+    flow: flowFromAgentSteps(steps, latencyMs, { model, cost, totalTokens }),
   };
 }
 

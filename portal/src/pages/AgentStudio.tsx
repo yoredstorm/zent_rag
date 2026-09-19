@@ -462,6 +462,9 @@ export default function AgentStudioPage() {
       let errors: string[] = [];
       let steps: unknown = [];
       let totalMs = 0;
+      let model: string | null = null;
+      let cost: number | null = null;
+      let totalTokens: number | null = null;
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -484,6 +487,9 @@ export default function AgentStudioPage() {
             message?: string;
             steps?: unknown;
             total_latency_ms?: number;
+            total_tokens?: number;
+            cost?: number;
+            model?: string | null;
           };
           if (eventName === "status") {
             setPlayStatus(payloadJson.phase === "running" ? "Ejecutando agente…" : "En curso…");
@@ -493,6 +499,10 @@ export default function AgentStudioPage() {
             errors = toolErrorsFromSteps(payloadJson.steps);
             steps = payloadJson.steps;
             totalMs = payloadJson.total_latency_ms ?? 0;
+            model = payloadJson.model ?? null;
+            cost = typeof payloadJson.cost === "number" ? payloadJson.cost : null;
+            totalTokens =
+              typeof payloadJson.total_tokens === "number" ? payloadJson.total_tokens : null;
             setPlayStatus(payloadJson.status === "completed" ? "Listo" : payloadJson.status || "Listo");
           } else if (eventName === "error") {
             throw new Error(payloadJson.message || "Error en el stream");
@@ -507,7 +517,7 @@ export default function AgentStudioPage() {
           sources: used,
           emptyHint: Boolean(config.source_ids.length) && used.length === 0 && errors.length === 0,
           error: errors[0],
-          flow: flowFromAgentSteps(steps, totalMs),
+          flow: flowFromAgentSteps(steps, totalMs, { model, cost, totalTokens }),
         },
       ]);
     } catch (err) {

@@ -42,4 +42,26 @@ describe("flowFromAgentSteps", () => {
     expect(steps[1].name).toBe("call_api");
     expect(steps[1].status).toBe("warn");
   });
+
+  it("incluye modelo, costo y tiempo de razonamiento del run", () => {
+    const flow = flowFromAgentSteps(
+      [
+        { type: "llm", tokens: 1200, latency_ms: 2700 },
+        { type: "llm", tokens: 701, latency_ms: 6100 },
+      ],
+      9900,
+      { model: "openai/deepseek/deepseek-v3.2", cost: 0.0012, totalTokens: 1901 },
+    );
+    const generation = flow.generation as {
+      model: string;
+      cost: number;
+      ms: number;
+      total_tokens: number;
+    };
+    expect(generation.model).toBe("openai/deepseek/deepseek-v3.2");
+    expect(generation.cost).toBe(0.0012);
+    expect(generation.ms).toBe(8800);
+    expect(generation.total_tokens).toBe(1901);
+    expect((flow.timings as { generation_ms: number }).generation_ms).toBe(8800);
+  });
 });

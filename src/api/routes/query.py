@@ -237,6 +237,62 @@ async def _maybe_dispatch(
             }
         },
     )
+    # "Ver flujo" también para runs despachados (agente/workflow/tool).
+    try:
+        decider = "Agente" if method == "agent" else "Workflow" if method == "workflow" else "Runtime"
+        route = "Herramientas" if method == "agent" else "Nodos" if method == "workflow" else method
+        raw_steps = dispatched.data.get("steps")
+        flow_steps = [
+            {
+                "name": str(step.get("tool") or step.get("type") or "paso"),
+                "status": "warn" if step.get("error") else "ok",
+                "ms": float(step.get("latency_ms") or 0),
+                "detail": str(step.get("type") or "")[:160],
+            }
+            for step in (raw_steps if isinstance(raw_steps, list) else [])
+            if isinstance(step, dict)
+        ]
+        result.flow = {
+            "query_id": str(result.query_id),
+            "organization_id": str(organization_id),
+            "conversation_id": str(result.conversation_id) if result.conversation_id else None,
+            "method": method,
+            "status": str(result.status),
+            "verdict": {"decider": decider, "route": route},
+            "decision": {
+                "evaluated": True,
+                "provider": method,
+                "capability": dispatched.capability,
+                "confidence": 0,
+                "fallback_used": False,
+                "acting": True,
+                "mode": method,
+            },
+            "generation": {
+                "model": dispatched.data.get("model"),
+                "total_tokens": int(dispatched.tokens or 0),
+                "cost": float(dispatched.cost or 0.0),
+                "ms": round(float(dispatched.latency_ms or 0.0), 1),
+            },
+            "steps": flow_steps,
+            "timings": {"total_ms": dispatched.latency_ms},
+            "sources": [],
+            "fallbacks": [],
+        }
+        from src.rag.flow_store import record_flow
+
+        await record_flow(
+            query_id=result.query_id,
+            organization_id=organization_id,
+            flow=result.flow,
+            conversation_id=result.conversation_id,
+            request_id=decision_request_id,
+            user_id=user_id,
+            method=method,
+            status=str(result.status),
+        )
+    except Exception:  # noqa: BLE001 — el flujo nunca rompe la respuesta
+        pass
     return result
 
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type Session } from "../../api";
 import { Badge, CodeBlock, Drawer, Progress, Skeleton } from "../../components/ui";
+import { fmtCurrency } from "../../lib/format";
 
 type Flow = Record<string, unknown>;
 
@@ -98,6 +99,11 @@ export default function FlowDrawer({
   const promptTokens = num(generation?.prompt_tokens);
   const completionTokens = num(generation?.completion_tokens);
   const totalTokens = num(generation?.total_tokens) || promptTokens + completionTokens;
+  const cost = generation && typeof generation.cost === "number" ? num(generation.cost) : null;
+  const costPer1k = cost !== null && totalTokens > 0 ? (cost / totalTokens) * 1000 : null;
+  const pricing = asRecord(active?.pricing);
+  const currencyInput = num(pricing.input_cost_per_1k);
+  const currencyOutput = num(pricing.output_cost_per_1k);
   const hasRetrieval =
     retrieval.used === true || num(retrieval.chunks) > 0 || num(timings.retrieval_ms) > 0;
   const hasValue = (value: unknown) =>
@@ -242,6 +248,26 @@ export default function FlowDrawer({
                     {promptTokens > 0 || completionTokens > 0
                       ? `${promptTokens} / ${completionTokens}`
                       : `${totalTokens}`}
+                  </dd>
+                </div>
+              ) : null}
+              {cost !== null && cost > 0 ? (
+                <div>
+                  <dt className="text-faint">Costo</dt>
+                  <dd className="text-text">{fmtCurrency(cost, 6)}</dd>
+                </div>
+              ) : null}
+              {costPer1k !== null && costPer1k > 0 ? (
+                <div>
+                  <dt className="text-faint">Costo / 1k tokens</dt>
+                  <dd className="text-text">{fmtCurrency(costPer1k, 6)}</dd>
+                </div>
+              ) : null}
+              {currencyInput > 0 || currencyOutput > 0 ? (
+                <div className="col-span-2">
+                  <dt className="text-faint">Precio del modelo (entrada / salida por 1k)</dt>
+                  <dd className="text-text">
+                    {fmtCurrency(currencyInput, 6)} / {fmtCurrency(currencyOutput, 6)}
                   </dd>
                 </div>
               ) : null}

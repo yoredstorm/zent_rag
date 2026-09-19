@@ -98,6 +98,12 @@ def test_build_flow_jev_documents_with_timings() -> None:
         ),
         total_ms=1500.0,
         fallbacks=[],
+        generation_cost=0.0012,
+        pricing={
+            "input_cost_per_1k": 0.00015,
+            "output_cost_per_1k": 0.0006,
+            "currency": "USD",
+        },
     )
     assert flow["verdict"] == {"decider": "JEV", "route": "Documentos"}
     assert flow["decision"]["jev_used"] is True
@@ -107,6 +113,8 @@ def test_build_flow_jev_documents_with_timings() -> None:
     assert flow["retrieval"]["top_score"] == 0.9
     assert flow["retrieval"]["attempts"] == 1
     assert flow["generation"]["model"] == "deepseek-v3.2"
+    assert flow["generation"]["cost"] == 0.0012
+    assert flow["pricing"]["input_cost_per_1k"] == 0.00015
     assert flow["timings"]["generation_ms"] == 800.0
     assert flow["timings"]["total_ms"] == 1500.0
     assert flow["sources"][0]["title"] == "gerente.pdf"

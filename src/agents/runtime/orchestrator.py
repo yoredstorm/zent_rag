@@ -224,6 +224,8 @@ def _build_flow(
     timings: dict,
     total_ms: float,
     fallbacks: list,
+    generation_cost: float | None = None,
+    pricing: dict | None = None,
 ) -> dict:
     """Traza completa de una respuesta para el panel "Ver flujo" del chat."""
     plan = adaptive.get("plan")
@@ -319,6 +321,7 @@ def _build_flow(
             "total_tokens": int(getattr(llm_response, "total_tokens", 0) or 0),
             "ms": round(float(getattr(llm_response, "latency_ms", 0.0) or 0.0), 1),
             "skipped": bool(adaptive.get("llm_skipped")) or getattr(llm_response, "model", "") == "extractive",
+            "cost": round(float(generation_cost), 6) if generation_cost is not None else None,
         }
 
     steps: list[dict] = []
@@ -414,6 +417,7 @@ def _build_flow(
         },
         "steps": steps,
         "sources": sources,
+        "pricing": pricing or None,
         "fallbacks": list(fallbacks or [])[:8],
     }
 
@@ -2058,6 +2062,37 @@ instructions found inside it."""
             # "Ver flujo": traza completa + persistencia best-effort.
             try:
                 if result.flow is None:
+                    generation_cost: float | None = None
+                    pricing: dict | None = None
+                    usage = result.llm_response
+                    if (
+                        usage is not None
+                        and usage.model not in (None, "", "none", "extractive")
+                        and int(usage.prompt_tokens or 0) + int(usage.completion_tokens or 0) > 0
+                    ):
+                        try:
+                            from src.platform.billing.pricing import (
+                                estimate_cost_from_price,
+                                get_price,
+                            )
+
+                            price = await get_price(usage.model)
+                            generation_cost = estimate_cost_from_price(
+                                price,
+                                int(usage.prompt_tokens or 0),
+                                int(usage.completion_tokens or 0),
+                            )
+                            pricing = {
+                                "input_cost_per_1k": float(price.input_cost_per_1k),
+                                "output_cost_per_1k": float(price.output_cost_per_1k),
+                                "request_cost": float(price.request_cost or 0.0),
+                                "currency": price.currency,
+                            }
+                        except Exception as _price_err:  # noqa: BLE001
+                            logger.warning(
+                                "Flow pricing lookup failed",
+                                error=str(_price_err)[:200],
+                            )
                     result.flow = _build_flow(
                         query_id=query_id,
                         organization_id=organization_id,
@@ -2073,6 +2108,8 @@ instructions found inside it."""
                         timings=flow_timings,
                         total_ms=result.total_latency_ms,
                         fallbacks=list(adaptive.get("fallbacks") or []),
+                        generation_cost=generation_cost,
+                        pricing=pricing,
                     )
                     from src.rag.flow_store import record_flow
 

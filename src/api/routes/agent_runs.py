@@ -113,6 +113,8 @@ async def run_agent(
         "total_latency_ms": result.total_latency_ms,
         "total_tokens": result.total_tokens,
         "cost": result.cost,
+        "model": result.model,
+        "provider": result.provider,
         "injection_detected": result.injection_detected,
     }
 
@@ -165,6 +167,8 @@ async def run_agent_stream(
                     "total_latency_ms": result.total_latency_ms,
                     "total_tokens": result.total_tokens,
                     "cost": result.cost,
+                    "model": result.model,
+                    "provider": result.provider,
                 },
             )
         )

@@ -109,7 +109,7 @@ describe("FlowDrawer", () => {
         acting: true,
       },
       jev: { used: false },
-      generation: { total_tokens: 232, ms: 0 },
+      generation: { total_tokens: 232, ms: 8927, cost: 0.0012, model: "deepseek-v3.2" },
       steps: [
         { name: "Modelo (razonamiento)", status: "ok", ms: 2761, detail: "tool" },
         { name: "search_knowledge", status: "ok", ms: 1006, detail: "tool_call" },
@@ -131,6 +131,8 @@ describe("FlowDrawer", () => {
     expect(screen.getByText("JEV no intervino en este run")).toBeInTheDocument();
     expect(screen.getByText("ReAct")).toBeInTheDocument();
     expect(screen.getByText("232")).toBeInTheDocument();
+    expect(screen.getByText("Costo")).toBeInTheDocument();
+    expect(screen.getByText("Costo / 1k tokens")).toBeInTheDocument();
     expect(screen.queryByText("Mejor score")).toBeNull();
     expect(screen.queryByText("Embedding")).toBeNull();
     expect(screen.queryByText("Búsqueda")).toBeNull();

@@ -97,7 +97,15 @@ async def test_maybe_dispatch_runs_agent_target(monkeypatch: pytest.MonkeyPatch)
             tokens=15,
             prompt_tokens=10,
             completion_tokens=5,
-            data={"method": "agent", "model": "gpt-4o-mini"},
+            cost=0.002,
+            data={
+                "method": "agent",
+                "model": "gpt-4o-mini",
+                "steps": [
+                    {"type": "llm", "tokens": 10, "latency_ms": 900},
+                    {"type": "tool_call", "tool": "search_knowledge", "latency_ms": 300},
+                ],
+            },
         )
 
     from src.api import deps
@@ -121,6 +129,12 @@ async def test_maybe_dispatch_runs_agent_target(monkeypatch: pytest.MonkeyPatch)
     assert result.llm_response.completion_tokens == 5
     assert result.llm_response.total_tokens == 15
     assert result.rag_trace["dispatch"]["handler"] == "agent_runtime"
+    assert result.flow is not None
+    assert result.flow["verdict"] == {"decider": "Agente", "route": "Herramientas"}
+    assert result.flow["generation"]["model"] == "gpt-4o-mini"
+    assert result.flow["generation"]["cost"] == 0.002
+    assert result.flow["generation"]["total_tokens"] == 15
+    assert [step["name"] for step in result.flow["steps"]] == ["llm", "search_knowledge"]
     # Explicit target reached the Decision Engine as explicit intent.
     assert hook.calls[0]["explicit_agent_id"] == str(agent_id)
     assert hook.calls[0]["include_advisory"] is True
