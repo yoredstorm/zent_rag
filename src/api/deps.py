@@ -1118,7 +1118,7 @@ def get_capability_dispatcher():
         return dict(request.org_config or {})
 
     async def _agent_handler(request, decision):
-        from src.platform.agents.trace_store import ensure_agent_runs_table, save_run
+        from src.agents.runtime.trace_store import ensure_agent_runs_table, save_run
         from src.platform.auth.scopes import permission_satisfied
 
         if not permission_satisfied(request.permissions, "agents:execute"):
@@ -1157,6 +1157,8 @@ def get_capability_dispatcher():
             answer=run.answer,
             error=None if run.status == "completed" else run.status,
             tokens=run.total_tokens,
+            prompt_tokens=run.prompt_tokens,
+            completion_tokens=run.completion_tokens,
             cost=run.cost,
             run_id=str(run.run_id),
             data={

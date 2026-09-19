@@ -83,6 +83,8 @@ class DispatchResult:
     data: dict[str, Any] = field(default_factory=dict)
     latency_ms: float = 0.0
     tokens: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
     cost: float = 0.0
     run_id: str | None = None
 

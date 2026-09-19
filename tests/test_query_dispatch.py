@@ -94,6 +94,9 @@ async def test_maybe_dispatch_runs_agent_target(monkeypatch: pytest.MonkeyPatch)
             capability=decision.capability,
             answer="respuesta del agente",
             run_id="run-1",
+            tokens=15,
+            prompt_tokens=10,
+            completion_tokens=5,
             data={"method": "agent", "model": "gpt-4o-mini"},
         )
 
@@ -114,6 +117,9 @@ async def test_maybe_dispatch_runs_agent_target(monkeypatch: pytest.MonkeyPatch)
     assert result.method == "agent"
     assert result.llm_response is not None
     assert result.llm_response.content == "respuesta del agente"
+    assert result.llm_response.prompt_tokens == 10
+    assert result.llm_response.completion_tokens == 5
+    assert result.llm_response.total_tokens == 15
     assert result.rag_trace["dispatch"]["handler"] == "agent_runtime"
     # Explicit target reached the Decision Engine as explicit intent.
     assert hook.calls[0]["explicit_agent_id"] == str(agent_id)

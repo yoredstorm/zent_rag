@@ -219,6 +219,8 @@ async def _maybe_dispatch(
         llm_response=LLMResponse(
             content=dispatched.answer or "",
             model=str(dispatched.data.get("model") or dispatched.handler or method),
+            prompt_tokens=int(dispatched.prompt_tokens or 0),
+            completion_tokens=int(dispatched.completion_tokens or 0),
             total_tokens=int(dispatched.tokens or 0),
             latency_ms=dispatched.latency_ms,
         ),
