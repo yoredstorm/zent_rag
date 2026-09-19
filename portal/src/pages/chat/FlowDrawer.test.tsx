@@ -96,8 +96,47 @@ describe("FlowDrawer", () => {
     expect(screen.queryByText("SQL ejecutado")).toBeNull();
   });
 
-  it("trae el flujo desde el servidor si el mensaje no lo tiene", async () => {
-    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+  it("flujo de agente sin JEV: sin guiones y avisa que JEV no intervino", () => {
+    const agentFlow = {
+      method: "agent",
+      verdict: { decider: "Agente", route: "Herramientas" },
+      decision: {
+        evaluated: true,
+        provider: "agent",
+        capability: null,
+        confidence: 0,
+        mode: "ReAct",
+        acting: true,
+      },
+      jev: { used: false },
+      generation: { total_tokens: 232, ms: 0 },
+      steps: [
+        { name: "Modelo (razonamiento)", status: "ok", ms: 2761, detail: "tool" },
+        { name: "search_knowledge", status: "ok", ms: 1006, detail: "tool_call" },
+      ],
+      timings: { total_ms: 11017 },
+      sources: [],
+      fallbacks: [],
+    };
+    render(
+      <FlowDrawer
+        open
+        onOpenChange={() => {}}
+        flow={agentFlow}
+        role="admin"
+        session={SESSION}
+      />,
+    );
+    expect(screen.getByText("Decidió Agente")).toBeInTheDocument();
+    expect(screen.getByText("JEV no intervino en este run")).toBeInTheDocument();
+    expect(screen.getByText("ReAct")).toBeInTheDocument();
+    expect(screen.getByText("232")).toBeInTheDocument();
+    expect(screen.queryByText("Mejor score")).toBeNull();
+    expect(screen.queryByText("Embedding")).toBeNull();
+    expect(screen.queryByText("Búsqueda")).toBeNull();
+  });
+
+  it("trae el flujo desde el servidor si el mensaje no lo tiene", async () => {    const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/v1/rag/queries/q-1/flow")) {
         return Promise.resolve(json({ flow: FLOW }));

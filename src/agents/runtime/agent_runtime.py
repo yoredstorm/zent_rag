@@ -773,6 +773,7 @@ class AgentRuntime:
                 try:
                     from src.decision.service import get_decision_engine
 
+                    _routing_t0 = time.perf_counter()
                     prompt_tools, routing_meta = await select_relevant_tools(
                         allowed_tools,
                         engine=get_decision_engine(),
@@ -785,7 +786,13 @@ class AgentRuntime:
                         tools=tool_descriptions,
                         agent_instructions=agent_instructions,
                     )
-                    result.steps.append({"type": "tool_routing", **routing_meta})
+                    result.steps.append(
+                        {
+                            "type": "tool_routing",
+                            "latency_ms": round((time.perf_counter() - _routing_t0) * 1000, 2),
+                            **routing_meta,
+                        }
+                    )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("tool routing skipped", error=str(exc)[:200])
 
@@ -1066,6 +1073,7 @@ class AgentRuntime:
                 try:
                     from src.decision.service import get_decision_engine
 
+                    _gate_t0 = time.perf_counter()
                     gate = await original_request_satisfied(
                         engine=get_decision_engine(),
                         user_request=request.message,
@@ -1074,7 +1082,13 @@ class AgentRuntime:
                         noul_yes=settings.DECISION_NOUL_YES,
                     )
                     if gate.get("stop"):
-                        result.steps.append({"type": "termination_gate", **gate})
+                        result.steps.append(
+                            {
+                                "type": "termination_gate",
+                                "latency_ms": round((time.perf_counter() - _gate_t0) * 1000, 2),
+                                **gate,
+                            }
+                        )
                         await self._try_finalize_answer(
                             request, history, config, result, reason="termination_gate"
                         )

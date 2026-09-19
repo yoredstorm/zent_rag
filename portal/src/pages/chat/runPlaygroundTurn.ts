@@ -31,18 +31,72 @@ type Auth = { token: string; organizationId: string };
 
 type TimelineStep = { name: string; status: string; ms: number; detail: string };
 
-export function flowFromAgentSteps(steps: unknown, totalMs: number): Record<string, unknown> {  const list = Array.isArray(steps) ? steps : [];
-  const timeline: TimelineStep[] = list
-    .filter((step): step is Record<string, unknown> => typeof step === "object" && step !== null)
-    .map((step) => ({
-      name: String(step.tool || step.type || "paso"),
+const AGENT_STEP_LABEL: Record<string, string> = {
+  llm: "Modelo (razonamiento)",
+  tool_call: "Herramienta",
+  tool_routing: "JEV elige herramienta",
+  termination_gate: "JEV verifica cierre",
+  final: "Respuesta final",
+  guardrail: "Límite",
+  error: "Error",
+};
+
+export function flowFromAgentSteps(steps: unknown, totalMs: number): Record<string, unknown> {
+  const list = Array.isArray(steps)
+    ? steps.filter(
+        (step): step is Record<string, unknown> => typeof step === "object" && step !== null,
+      )
+    : [];
+  let tokens = 0;
+  let jevUsed = false;
+  const timeline: TimelineStep[] = list.map((step) => {
+    const type = String(step.type || "");
+    if (type === "tool_routing" || type === "termination_gate") jevUsed = true;
+    tokens += Number(step.tokens || 0);
+    let detail = "";
+    if (type === "tool_routing") {
+      const choice = step.choice ? String(step.choice) : "";
+      const confidence = Number(step.confidence || 0);
+      detail = [choice, confidence > 0 ? `confianza ${confidence.toFixed(2)}` : ""]
+        .filter(Boolean)
+        .join(" · ");
+    } else if (type === "termination_gate") {
+      detail = step.stop ? "cerró el run" : "continuó";
+    } else if (type === "tool_call") {
+      detail = step.error
+        ? String(step.error).slice(0, 160)
+        : step.output
+          ? String(step.output).slice(0, 120)
+          : "herramienta";
+    } else if (type === "llm") {
+      detail = step.action ? Object.keys(step.action as object).join(", ") : "llm";
+    } else {
+      detail = String(step.detail || step.status || "").slice(0, 160);
+    }
+    return {
+      name:
+        type === "tool_call"
+          ? String(step.tool || "herramienta")
+          : AGENT_STEP_LABEL[type] || type || "paso",
       status: step.error ? "warn" : "ok",
       ms: Number(step.latency_ms || 0),
-      detail: step.error ? String(step.error).slice(0, 160) : String(step.type || ""),
-    }));
+      detail,
+    };
+  });
   return {
     method: "agent",
     verdict: { decider: "Agente", route: "Herramientas" },
+    decision: {
+      evaluated: true,
+      provider: "agent",
+      capability: null,
+      confidence: 0,
+      fallback_used: false,
+      acting: true,
+      mode: jevUsed ? "ReAct + JEV" : "ReAct",
+    },
+    jev: { used: jevUsed },
+    generation: tokens > 0 ? { total_tokens: tokens, ms: 0 } : null,
     steps: timeline,
     timings: { total_ms: totalMs },
     fallbacks: [],

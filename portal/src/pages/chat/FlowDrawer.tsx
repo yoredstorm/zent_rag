@@ -89,10 +89,19 @@ export default function FlowDrawer({
   const generation = active?.generation ? asRecord(active.generation) : null;
   const evidence = active?.evidence ? asRecord(active.evidence) : null;
   const grounding = active?.grounding ? asRecord(active.grounding) : null;
+  const jev = asRecord(active?.jev);
   const sources = asList(active?.sources);
   const steps = asList(active?.steps);
   const fallbacks = Array.isArray(active?.fallbacks) ? (active?.fallbacks as unknown[]) : [];
   const totalMs = num(timings.total_ms) || num(active?.total_ms);
+  const confidence = num(decision.confidence);
+  const promptTokens = num(generation?.prompt_tokens);
+  const completionTokens = num(generation?.completion_tokens);
+  const totalTokens = num(generation?.total_tokens) || promptTokens + completionTokens;
+  const hasRetrieval =
+    retrieval.used === true || num(retrieval.chunks) > 0 || num(timings.retrieval_ms) > 0;
+  const hasValue = (value: unknown) =>
+    value !== null && value !== undefined && value !== "" && value !== "—";
 
   return (
     <Drawer
@@ -121,12 +130,18 @@ export default function FlowDrawer({
               <span className="tabular-nums">
                 Total <span className="mono text-text">{fmtMs(totalMs)}</span>
               </span>
-              {decision.evaluated !== false ? (
+              {decision.evaluated !== false && confidence > 0 ? (
                 <span className="tabular-nums">
-                  Confianza <span className="mono text-text">{fmtText(decision.confidence)}</span>
+                  Confianza <span className="mono text-text">{confidence.toFixed(2)}</span>
                 </span>
               ) : null}
-              {decision.jev_used ? <span className="text-accent">JEV ejecutó la decisión</span> : null}
+              {typeof jev.used === "boolean" ? (
+                <span className={jev.used ? "text-accent" : "text-faint"}>
+                  {jev.used ? "JEV intervino en este run" : "JEV no intervino en este run"}
+                </span>
+              ) : decision.jev_used ? (
+                <span className="text-accent">JEV ejecutó la decisión</span>
+              ) : null}
               {decision.fallback_used ? <span className="text-warn">Usó plan de respaldo</span> : null}
             </div>
           </div>
@@ -162,57 +177,73 @@ export default function FlowDrawer({
           <div>
             <p className="eyebrow mb-2">Detalle</p>
             <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-[12px]">
-              {decision.evaluated !== false ? (
-                <>
-                  <div>
-                    <dt className="text-faint">Proveedor</dt>
-                    <dd className="text-text">{fmtText(decision.provider)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-faint">Capability</dt>
-                    <dd className="text-text">{fmtText(decision.capability)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-faint">Modo</dt>
-                    <dd className="text-text">{fmtText(decision.mode)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-faint">Decisión</dt>
-                    <dd className="text-text">{fmtMs(timings.decision_ms)}</dd>
-                  </div>
-                </>
+              {hasValue(decision.provider) ? (
+                <div>
+                  <dt className="text-faint">Proveedor</dt>
+                  <dd className="text-text">{fmtText(decision.provider)}</dd>
+                </div>
               ) : null}
-              <div>
-                <dt className="text-faint">Búsqueda</dt>
-                <dd className="text-text">
-                  {fmtMs(timings.retrieval_ms)} · {fmtText(retrieval.chunks)} fragmentos
-                </dd>
-              </div>
-              <div>
-                <dt className="text-faint">Mejor score</dt>
-                <dd className="text-text">{fmtText(retrieval.top_score)}</dd>
-              </div>
-              <div>
-                <dt className="text-faint">Embedding</dt>
-                <dd className="text-text">{fmtMs(timings.embedding_ms)}</dd>
-              </div>
-              <div>
-                <dt className="text-faint">Respuesta LLM</dt>
-                <dd className="text-text">{fmtMs(timings.generation_ms)}</dd>
-              </div>
-              {generation ? (
-                <>
-                  <div>
-                    <dt className="text-faint">Modelo</dt>
-                    <dd className="text-text">{fmtText(generation.model)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-faint">Tokens</dt>
-                    <dd className="text-text">
-                      {num(generation.prompt_tokens)} / {num(generation.completion_tokens)}
-                    </dd>
-                  </div>
-                </>
+              {hasValue(decision.capability) ? (
+                <div>
+                  <dt className="text-faint">Capability</dt>
+                  <dd className="text-text">{fmtText(decision.capability)}</dd>
+                </div>
+              ) : null}
+              {hasValue(decision.mode) ? (
+                <div>
+                  <dt className="text-faint">Modo</dt>
+                  <dd className="text-text">{fmtText(decision.mode)}</dd>
+                </div>
+              ) : null}
+              {num(decision.ms) > 0 ? (
+                <div>
+                  <dt className="text-faint">Decisión</dt>
+                  <dd className="text-text">{fmtMs(decision.ms)}</dd>
+                </div>
+              ) : null}
+              {hasRetrieval ? (
+                <div>
+                  <dt className="text-faint">Búsqueda</dt>
+                  <dd className="text-text">
+                    {fmtMs(timings.retrieval_ms)} · {num(retrieval.chunks)} fragmentos
+                  </dd>
+                </div>
+              ) : null}
+              {num(retrieval.top_score) > 0 ? (
+                <div>
+                  <dt className="text-faint">Mejor score</dt>
+                  <dd className="text-text">{fmtText(retrieval.top_score)}</dd>
+                </div>
+              ) : null}
+              {num(timings.embedding_ms) > 0 ? (
+                <div>
+                  <dt className="text-faint">Embedding</dt>
+                  <dd className="text-text">{fmtMs(timings.embedding_ms)}</dd>
+                </div>
+              ) : null}
+              {num(timings.generation_ms) > 0 || totalTokens > 0 ? (
+                <div>
+                  <dt className="text-faint">Respuesta LLM</dt>
+                  <dd className="text-text">
+                    {num(timings.generation_ms) > 0 ? fmtMs(timings.generation_ms) : "—"}
+                  </dd>
+                </div>
+              ) : null}
+              {hasValue(generation?.model) ? (
+                <div>
+                  <dt className="text-faint">Modelo</dt>
+                  <dd className="text-text">{fmtText(generation?.model)}</dd>
+                </div>
+              ) : null}
+              {totalTokens > 0 ? (
+                <div>
+                  <dt className="text-faint">Tokens</dt>
+                  <dd className="text-text">
+                    {promptTokens > 0 || completionTokens > 0
+                      ? `${promptTokens} / ${completionTokens}`
+                      : `${totalTokens}`}
+                  </dd>
+                </div>
               ) : null}
               {evidence ? (
                 <div>
