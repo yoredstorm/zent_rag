@@ -84,7 +84,9 @@ def isolated_settings(tmp_path, monkeypatch):
     return settings
 
 
-async def test_upload_warns_on_same_name_and_extension(async_client, org) -> None:
+async def test_upload_warns_on_same_name_and_extension(
+    async_client, org, isolated_settings
+) -> None:
     data = fx.atpco_workbook_bytes()
     first = await async_client.post(
         "/api/v1/sources/files/upload",
@@ -116,7 +118,7 @@ async def test_upload_warns_on_same_name_and_extension(async_client, org) -> Non
     assert forced.json()["id"] != source_id
 
 
-async def test_upload_other_name_passes(async_client, org) -> None:
+async def test_upload_other_name_passes(async_client, org, isolated_settings) -> None:
     data = fx.atpco_workbook_bytes()
     first = await async_client.post(
         "/api/v1/sources/files/upload",

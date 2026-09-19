@@ -170,7 +170,7 @@ async def _provision_and_ingest(async_client: AsyncClient, org: dict) -> tuple[s
 
 
 async def test_table_preview_and_sql_endpoints(
-    async_client: AsyncClient, org: dict
+    async_client: AsyncClient, org: dict, isolated_settings
 ) -> None:
     source_id, workspace_id = await _provision_and_ingest(async_client, org)
     try:
