@@ -1,4 +1,4 @@
-import { ArrowsClockwise, Database, MagnifyingGlass, Plus, Trash, X } from "@phosphor-icons/react";
+import { ArrowsClockwise, Database, MagnifyingGlass, Plus, Trash, UploadSimple, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
@@ -26,28 +26,35 @@ import {
 import { StatusBadge } from "../../components/ui/Badge";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
-import { isApiError } from "../../lib/errors";
 import { fmtDateTime, fmtNum } from "../../lib/format";
 import {
   COPY,
-  isFileUploadType,
   sourceStatusLabel,
   sourceTypeBlurb,
   sourceTypeLabel,
 } from "./knowledgeCopy";
 
-const SOURCE_TYPES = [
-  "sql",
-  "file",
-  "csv",
-  "excel",
-  "web",
-  "s3",
-  "api",
-  "gdrive",
-] as const;
+const SOURCE_TYPES = ["sql", "web", "s3", "api", "gdrive"] as const;
 
 type SourceType = (typeof SOURCE_TYPES)[number];
+
+type UploadItem = {
+  filename: string;
+  status: "created" | "duplicate" | "rejected" | "error";
+  source_id?: string | null;
+  job_id?: string | null;
+  name?: string | null;
+  error?: string | null;
+  existing_source_id?: string | null;
+  existing_name?: string | null;
+};
+
+const UPLOAD_STATUS_LABEL: Record<UploadItem["status"], string> = {
+  created: "En cola de indexado",
+  duplicate: "Ya existe",
+  rejected: "Rechazado",
+  error: "Error",
+};
 
 type SourceRow = {
   id: string;
@@ -152,19 +159,18 @@ export default function KnowledgeSourcesPage() {
   const [msg, setMsg] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [profile, setProfile] = useState<{ sourceId: string; tables: { name: string; columns: ProfileCol[] }[] } | null>(null);
+  const [advanced, setAdvanced] = useState(false);
   const [name, setName] = useState("");
-  const [type, setType] = useState<SourceType>("file");
+  const [type, setType] = useState<SourceType>("web");
   const [folderId, setFolderId] = useState("");
   const [creating, setCreating] = useState(false);
-  const [duplicate, setDuplicate] = useState<{
-    id: string;
-    name: string;
-    file: File;
-    kbId?: string;
-  } | null>(null);
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const [retrying, setRetrying] = useState("");
   const [syncingId, setSyncingId] = useState("");
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
-  const [file, setFile] = useState<File | null>(null);
   const [pendingDelete, setPendingDelete] = useState<SourceRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [query, setQuery] = useState("");
@@ -271,85 +277,113 @@ export default function KnowledgeSourcesPage() {
       }
       return;
     }
-    if (isFileUploadType(type) && !file) {
-      setError(COPY.pickFile);
-      return;
-    }
     setCreating(true);
-    let kbId: string | undefined;
     try {
-      kbId = await ensureKbId();
-      if (isFileUploadType(type) && file) {
-        await uploadFileSource(file, kbId, false);
-        setMsg("Archivo subido. Indexado en cola.");
-      } else {
-        await api("/api/v1/sources", {
-          method: "POST",
-          token: session.token,
-          organizationId: session.organizationId,
-          body: JSON.stringify({
-            name: name.trim(),
-            type,
-            knowledge_base_id: kbId || null,
-            config: {},
-          }),
-        });
-        setMsg("Fuente creada.");
-      }
+      const kbId = await ensureKbId();
+      await api("/api/v1/sources", {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify({
+          name: name.trim(),
+          type,
+          knowledge_base_id: kbId || null,
+          config: {},
+        }),
+      });
+      setMsg("Fuente creada.");
       setName("");
-      setFile(null);
       setShowCreate(false);
+      setAdvanced(false);
       load();
     } catch (err) {
-      if (isApiError(err) && err.status === 409 && err.details?.existing_source_id && file) {
-        setError("");
-        setDuplicate({
-          id: err.details.existing_source_id,
-          name: err.details.existing_name || name.trim() || file.name,
-          file,
-          kbId,
-        });
-      } else {
-        setError(err instanceof Error ? err.message : "Error al crear");
-      }
+      setError(err instanceof Error ? err.message : "Error al crear");
     } finally {
       setCreating(false);
     }
   }
 
-  async function uploadFileSource(file: File, kbId: string | undefined, force: boolean) {
-    if (!session) return;
-    const params = new URLSearchParams();
-    if (kbId) params.set("knowledge_base_id", kbId);
-    if (name.trim()) params.set("name", name.trim());
-    if (force) params.set("force", "true");
-    const qs = params.toString() ? `?${params.toString()}` : "";
-    const body = new FormData();
-    body.append("file", file);
-    await api(`/api/v1/sources/files/upload${qs}`, {
-      method: "POST",
-      token: session.token,
-      organizationId: session.organizationId,
-      body,
+  function addUploadFiles(list: FileList | File[]) {
+    const incoming = Array.from(list);
+    if (incoming.length === 0) return;
+    setUploadItems([]);
+    setUploadFiles((prev) => {
+      const seen = new Set(prev.map((f) => `${f.name}:${f.size}`));
+      return [...prev, ...incoming.filter((f) => !seen.has(`${f.name}:${f.size}`))];
     });
   }
 
-  async function forceDuplicateCopy() {
-    if (!duplicate) return;
-    setCreating(true);
+  async function uploadAll(force: boolean) {
+    if (!session || uploadFiles.length === 0) return;
+    setUploading(true);
+    setError("");
+    setMsg("");
+    try {
+      const kbId = await ensureKbId();
+      const form = new FormData();
+      for (const item of uploadFiles) form.append("files", item);
+      const params = new URLSearchParams();
+      if (kbId) params.set("knowledge_base_id", kbId);
+      if (force) params.set("force", "true");
+      const out = await api<{ items: UploadItem[] }>(
+        `/api/v1/sources/files/upload-batch?${params.toString()}`,
+        {
+          method: "POST",
+          token: session.token,
+          organizationId: session.organizationId,
+          body: form,
+        },
+      );
+      setUploadItems(out.items || []);
+      const created = (out.items || []).filter((i) => i.status === "created").length;
+      if (created > 0) {
+        setMsg(
+          created === 1
+            ? "1 archivo en cola de indexado."
+            : `${created} archivos en cola de indexado.`,
+        );
+      }
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Error al subir");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function retryUpload(item: UploadItem) {
+    if (!session) return;
+    const file = uploadFiles.find((f) => f.name === item.filename);
+    if (!file) return;
+    setRetrying(item.filename);
     setError("");
     try {
-      await uploadFileSource(duplicate.file, duplicate.kbId, true);
-      setDuplicate(null);
-      setMsg("Copia creada. Indexado en cola.");
-      setName("");
-      setFile(null);
-      setShowCreate(false);
+      const kbId = await ensureKbId();
+      const form = new FormData();
+      form.append("files", file);
+      const params = new URLSearchParams({ force: "true" });
+      if (kbId) params.set("knowledge_base_id", kbId);
+      const out = await api<{ items: UploadItem[] }>(
+        `/api/v1/sources/files/upload-batch?${params.toString()}`,
+        {
+          method: "POST",
+          token: session.token,
+          organizationId: session.organizationId,
+          body: form,
+        },
+      );
+      const result = (out.items || [])[0];
+      if (result) {
+        setUploadItems((prev) =>
+          prev.map((i) => (i.filename === item.filename ? result : i)),
+        );
+        if (result.status === "created") setMsg("Copia creada. En cola de indexado.");
+      }
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al crear la copia");
     } finally {
-      setCreating(false);
+      setRetrying("");
     }
   }
 
@@ -489,37 +523,11 @@ export default function KnowledgeSourcesPage() {
         <ErrorInline message={error} className="mb-0" />
         <SuccessInline message={msg} className="mb-0" />
 
-        {duplicate && (
-          <Panel className="border-warn/40">
-            <div className="panel-body flex flex-wrap items-center gap-3 text-sm">
-              <span className="text-text">
-                Ya existe una fuente con el mismo nombre:{" "}
-                <span className="mono">{duplicate.name}</span>
-              </span>
-              <div className="flex gap-2">
-                <ButtonLink to={`/knowledge/sources/${duplicate.id}`} variant="secondary">
-                  Abrir existente
-                </ButtonLink>
-                <Button
-                  variant="secondary"
-                  disabled={creating}
-                  onClick={() => void forceDuplicateCopy()}
-                >
-                  Crear copia
-                </Button>
-                <Button variant="ghost" onClick={() => setDuplicate(null)}>
-                  Cancelar
-                </Button>
-              </div>
-            </div>
-          </Panel>
-        )}
-
         {showCreate && (
           <Panel>
             <PanelHeader
-              title="Alta de fuente"
-              description="El origen queda conectado a una colección para que los agentes puedan citarlo."
+              title="Añadir fuentes"
+              description="Soltá uno o varios archivos: cada uno se indexa solo y hereda el nombre del archivo."
               actions={
                 <IconButton
                   label="Cerrar alta de fuente"
@@ -528,84 +536,217 @@ export default function KnowledgeSourcesPage() {
                 />
               }
             />
-            <form
-              className="panel-body flex flex-col gap-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void create();
-              }}
-            >
-              <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="Nombre" hint="Cómo vas a reconocer esta fuente en los agentes.">
-                  <Input
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    autoComplete="off"
-                    required={!isFileUploadType(type)}
-                  />
-                </Field>
-                <Field label="Tipo">
-                  <Select value={type} onChange={(e) => setType(e.target.value as SourceType)}>
-                    {SOURCE_TYPES.map((t) => (
-                      <option key={t} value={t}>
-                        {sourceTypeLabel(t)}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-              </div>
+            <div className="panel-body flex flex-col gap-3">
+              <label
+                data-testid="source-dropzone"
+                className={`flex min-h-36 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 text-center transition-colors duration-150 ${
+                  dragOver ? "border-accent bg-accent-soft" : "border-border"
+                }`}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOver(true);
+                }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOver(false);
+                  addUploadFiles(e.dataTransfer.files);
+                }}
+              >
+                <UploadSimple size={20} className="text-faint" aria-hidden />
+                <p className="mt-2 text-sm font-medium text-text">Soltá archivos acá</p>
+                <p className="mt-1 text-xs text-muted">
+                  o elegí desde tu equipo. PDF, CSV, Excel, TXT, MD o DOCX. Máximo 25 MB por archivo.
+                </p>
+                <input
+                  type="file"
+                  multiple
+                  data-testid="source-files"
+                  className="sr-only"
+                  accept=".pdf,.csv,.xlsx,.xls,.txt,.md,.docx"
+                  onChange={(e) => {
+                    addUploadFiles(e.target.files || []);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
 
-              {isFileUploadType(type) && (
-                <Field label={COPY.uploadFile} hint="PDF, CSV o Excel. Se indexa en la colección elegida.">
-                  <Input
-                    type="file"
-                    data-testid="source-file"
-                    className="py-1.5 file:mr-3 file:rounded-sm file:border-0 file:bg-soft file:px-2.5 file:py-1.5 file:text-[13px] file:font-medium file:text-text"
-                    onChange={(e) => setFile(e.target.files?.[0] || null)}
-                  />
-                </Field>
+              {uploadFiles.length > 0 && (
+                <ul className="flex flex-col gap-1">
+                  {uploadFiles.map((item) => (
+                    <li
+                      key={`${item.name}-${item.size}`}
+                      className="flex flex-wrap items-center gap-2 rounded-sm bg-soft px-2.5 py-1.5 text-[12.5px] text-text"
+                    >
+                      <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                      <span className="text-[11px] text-faint">
+                        {Math.max(1, Math.round(item.size / 1024))} KB
+                      </span>
+                      <IconButton
+                        label={`Quitar ${item.name}`}
+                        icon={X}
+                        onClick={() =>
+                          setUploadFiles((prev) => prev.filter((f) => f !== item))
+                        }
+                      />
+                    </li>
+                  ))}
+                </ul>
               )}
-
-              {type === "gdrive" && (
-                <Field
-                  label="ID de carpeta de Google Drive"
-                  hint="1abc… (ID de la carpeta, no la URL). Se autoriza solo lectura."
-                >
-                  <Input
-                    value={folderId}
-                    onChange={(e) => setFolderId(e.target.value)}
-                    autoComplete="off"
-                    placeholder="1abc…"
-                  />
-                </Field>
-              )}
-
-              <p className="prose-measure text-[13px] leading-relaxed text-muted">
-                {type === "gdrive"
-                  ? "Se abre Google para autorizar solo lectura. El refresh token vive en el almacén de secretos, nunca en la fuente."
-                  : isFileUploadType(type)
-                    ? COPY.collectionHint
-                    : "Las credenciales de conectores viven en Vault, no en esta ficha."}
-              </p>
 
               <div className="flex flex-wrap items-center gap-2">
                 <Button
-                  type="submit"
                   variant="primary"
-                  loading={creating}
                   leadingIcon={Plus}
-                  disabled={
-                    creating ||
-                    (isFileUploadType(type) ? !file : type === "gdrive" ? !name.trim() : !name.trim())
-                  }
+                  loading={uploading}
+                  disabled={uploading || uploadFiles.length === 0}
+                  onClick={() => void uploadAll(false)}
                 >
-                  {type === "gdrive" ? "Conectar Google Drive" : "Crear fuente"}
+                  {uploadFiles.length > 1
+                    ? `Subir ${uploadFiles.length} archivos`
+                    : "Subir e indexar"}
                 </Button>
-                <Button variant="ghost" onClick={() => setShowCreate(false)}>
-                  Cancelar
+                {uploadFiles.length > 0 && (
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setUploadFiles([]);
+                      setUploadItems([]);
+                    }}
+                  >
+                    Limpiar
+                  </Button>
+                )}
+              </div>
+
+              <p className="text-[13px] leading-relaxed text-muted">
+                {kbs.length > 0
+                  ? `Se indexa en la colección ${kbs[0].name}.`
+                  : "Se crea la colección Principal y se indexa ahí."}{" "}
+                Después podés marcarla en Agent Studio.
+              </p>
+
+              {uploadItems.length > 0 && (
+                <ul className="flex flex-col gap-1.5" data-testid="upload-results">
+                  {uploadItems.map((item) => (
+                    <li
+                      key={item.filename}
+                      className="flex flex-wrap items-center gap-2 rounded-sm border border-border-soft px-2.5 py-2 text-[12.5px]"
+                    >
+                      <span className="min-w-0 flex-1 truncate text-text">
+                        {item.name || item.filename}
+                      </span>
+                      <span
+                        className={
+                          item.status === "created"
+                            ? "text-ok"
+                            : item.status === "duplicate"
+                              ? "text-warn"
+                              : "text-danger"
+                        }
+                      >
+                        {UPLOAD_STATUS_LABEL[item.status]}
+                      </span>
+                      {item.status === "duplicate" && item.existing_source_id && (
+                        <>
+                          <ButtonLink
+                            to={`/knowledge/sources/${item.existing_source_id}`}
+                            variant="secondary"
+                          >
+                            Abrir existente
+                          </ButtonLink>
+                          <Button
+                            variant="secondary"
+                            size="sm"
+                            loading={retrying === item.filename}
+                            onClick={() => void retryUpload(item)}
+                          >
+                            Subir igual
+                          </Button>
+                        </>
+                      )}
+                      {(item.status === "rejected" || item.status === "error") &&
+                        item.error && (
+                          <span className="text-[11px] text-danger">{item.error}</span>
+                        )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div>
+                <Button variant="ghost" size="sm" onClick={() => setAdvanced((v) => !v)}>
+                  {advanced
+                    ? "Ocultar conexión avanzada"
+                    : "Conectar otra fuente (base de datos, web, API, Drive)"}
                 </Button>
               </div>
-            </form>
+
+              {advanced && (
+                <form
+                  className="flex flex-col gap-3 border-t border-border-soft pt-3"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void create();
+                  }}
+                >
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="Nombre" hint="Cómo vas a reconocer esta fuente en los agentes.">
+                      <Input
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        autoComplete="off"
+                        required
+                      />
+                    </Field>
+                    <Field label="Tipo">
+                      <Select value={type} onChange={(e) => setType(e.target.value as SourceType)}>
+                        {SOURCE_TYPES.map((t) => (
+                          <option key={t} value={t}>
+                            {sourceTypeLabel(t)}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  </div>
+
+                  {type === "gdrive" && (
+                    <Field
+                      label="ID de carpeta de Google Drive"
+                      hint="1abc… (ID de la carpeta, no la URL). Se autoriza solo lectura."
+                    >
+                      <Input
+                        value={folderId}
+                        onChange={(e) => setFolderId(e.target.value)}
+                        autoComplete="off"
+                        placeholder="1abc…"
+                      />
+                    </Field>
+                  )}
+
+                  <p className="prose-measure text-[13px] leading-relaxed text-muted">
+                    {type === "gdrive"
+                      ? "Se abre Google para autorizar solo lectura. El refresh token vive en el almacén de secretos, nunca en la fuente."
+                      : "Las credenciales de conectores viven en Vault, no en esta ficha."}
+                  </p>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="submit"
+                      variant="primary"
+                      loading={creating}
+                      leadingIcon={Plus}
+                      disabled={creating || !name.trim()}
+                    >
+                      {type === "gdrive" ? "Conectar Google Drive" : "Crear fuente"}
+                    </Button>
+                    <Button variant="ghost" onClick={() => setShowCreate(false)}>
+                      Cancelar
+                    </Button>
+                  </div>
+                </form>
+              )}
+            </div>
           </Panel>
         )}
 

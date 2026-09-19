@@ -594,7 +594,8 @@ caso el Decision Engine autoriza la capability y el dispatcher la ejecuta.
 | CRUD | `/api/v1/sources` | Fuentes sql\|file\|csv\|excel\|web\|s3\|api |
 | POST | `/api/v1/sources/{id}/discover` | Validar + listar elementos |
 | POST | `/api/v1/sources/{id}/sync` | Encolar job |
-| POST | `/api/v1/sources/files/upload` | Upload multipart |
+| POST | `/api/v1/sources/files/upload` | Upload multipart (1 archivo) |
+| POST | `/api/v1/sources/files/upload-batch` | Upload de N archivos sin nombre; resultado por archivo (created/duplicate/rejected/error) |
 | GET/POST | `/api/v1/jobs` · retry · cancel | Jobs durables |
 
 ### Projects, agents, connectors, org

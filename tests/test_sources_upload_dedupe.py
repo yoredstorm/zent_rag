@@ -133,3 +133,68 @@ async def test_upload_other_name_passes(async_client, org, isolated_settings) ->
         files={"file": ("OTRO_ARCHIVO.xlsx", data, "application/octet-stream")},
     )
     assert other.status_code == 201, other.text
+
+
+async def test_batch_upload_reports_per_file_status(
+    async_client, org, isolated_settings
+) -> None:
+    """El lote no se corta: created/duplicate/rejected por archivo."""
+    data = fx.atpco_workbook_bytes()
+    first = await async_client.post(
+        "/api/v1/sources/files/upload",
+        headers=_headers(org),
+        files={"file": ("BATCH_A.xlsx", data, "application/octet-stream")},
+    )
+    assert first.status_code == 201, first.text
+
+    batch = await async_client.post(
+        "/api/v1/sources/files/upload-batch",
+        headers=_headers(org),
+        files=[
+            ("files", ("BATCH_A.xlsx", data, "application/octet-stream")),
+            ("files", ("BATCH_B.xlsx", data, "application/octet-stream")),
+            ("files", ("notas.txt", b"hola mundo", "text/plain")),
+            ("files", ("virus.exe", b"MZ\x90\x00", "application/octet-stream")),
+        ],
+    )
+    assert batch.status_code == 200, batch.text
+    body = batch.json()
+    statuses = {item["filename"]: item["status"] for item in body["items"]}
+    assert statuses["BATCH_A.xlsx"] == "duplicate"
+    assert statuses["BATCH_B.xlsx"] == "created"
+    assert statuses["notas.txt"] == "created"
+    assert statuses["virus.exe"] == "rejected"
+    assert body["created"] == 2
+    assert body["duplicates"] == 1
+    assert body["rejected"] == 1
+    assert body["failed"] == 0
+    duplicate = next(i for i in body["items"] if i["status"] == "duplicate")
+    assert duplicate["existing_source_id"] == first.json()["id"]
+    created_items = [i for i in body["items"] if i["status"] == "created"]
+    assert all(i["job_id"] for i in created_items)
+    assert all(i["name"] == i["filename"] for i in created_items)
+
+
+async def test_batch_upload_force_creates_copy(
+    async_client, org, isolated_settings
+) -> None:
+    data = fx.atpco_workbook_bytes()
+    first = await async_client.post(
+        "/api/v1/sources/files/upload",
+        headers=_headers(org),
+        files={"file": ("BATCH_FORCE.xlsx", data, "application/octet-stream")},
+    )
+    assert first.status_code == 201, first.text
+
+    batch = await async_client.post(
+        "/api/v1/sources/files/upload-batch",
+        headers=_headers(org),
+        params={"force": "true"},
+        files=[
+            ("files", ("BATCH_FORCE.xlsx", data, "application/octet-stream")),
+        ],
+    )
+    assert batch.status_code == 200, batch.text
+    body = batch.json()
+    assert body["created"] == 1
+    assert body["items"][0]["source_id"] != first.json()["id"]

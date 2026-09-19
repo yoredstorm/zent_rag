@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
@@ -65,6 +65,25 @@ async def _find_duplicate_source(repo: SourceRepository, organization_id, filena
         if _normalize_filename(getattr(source, "name", "") or "") == normalized:
             return source
     return None
+
+
+async def _next_copy_name(repo: SourceRepository, organization_id, base_name: str) -> str:
+    """Nombre libre para una copia forzada (kb_sources tiene UNIQUE org+name)."""
+    try:
+        sources = await repo.list_sources(organization_id)
+        existing = {getattr(s, "name", "") or "" for s in sources}
+    except Exception:  # noqa: BLE001
+        existing = set()
+    if base_name not in existing:
+        return base_name
+    stem, dot, extension = base_name.rpartition(".")
+    if not dot:
+        stem, extension = base_name, ""
+    for index in range(2, 100):
+        candidate = f"{stem} ({index})" + (f".{extension}" if extension else "")
+        if candidate not in existing:
+            return candidate
+    return f"{base_name} copia {uuid4().hex[:6]}"
 
 
 class CreateSourceRequest(BaseModel):
@@ -500,8 +519,82 @@ async def sync_source(
 
 
 # ---------------------------------------------------------------------------
-# Upload de archivos (crea fuente file/csv/excel con el objeto almacenado)
+# Upload de archivos (crea fuentes file/csv/excel con el objeto almacenado)
 # ---------------------------------------------------------------------------
+
+_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+_MAX_BATCH_FILES = 20
+
+
+async def _store_uploaded_file(
+    ctx,
+    repo: SourceRepository,
+    jobs: IngestionJobRepository,
+    *,
+    filename: str,
+    data: bytes,
+    knowledge_base_id: UUID | None,
+    source_type: str | None,
+    name: str | None,
+    force: bool,
+):
+    """Crea fuente + job para un archivo. Lanza HTTPException 413/415/409."""
+    if len(data) > _MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "File too large (max 25 MB)")
+
+    from src.platform.data_onboarding.mime import MimeRejected, detect_source_type
+
+    try:
+        detected = detect_source_type(filename, data)
+    except MimeRejected as exc:
+        raise HTTPException(415, str(exc)) from None
+
+    if source_type is None:
+        source_type = detected
+
+    # Duplicados por nombre+extensión (cualquier documento): avisa y reusa la
+    # fuente existente salvo force=true. Detecta el sufijo "(1)" del navegador.
+    duplicate = await _find_duplicate_source(
+        repo, ctx.organization_id, name or filename
+    )
+    if duplicate is not None and not force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "duplicate_name",
+                "message": (
+                    f"Ya existe una fuente con el mismo nombre: {duplicate.name}"
+                ),
+                "existing_source_id": str(duplicate.id),
+                "existing_name": duplicate.name,
+                "hint": "Abre la fuente existente o repite con force=true para copia.",
+            },
+        )
+
+    from src.knowledge.storage import store_upload
+
+    source_name = name or filename
+    if force and duplicate is not None:
+        source_name = await _next_copy_name(repo, ctx.organization_id, source_name)
+
+    object_key = store_upload(ctx.organization_id, filename, data)
+    config: dict = {"object_key": object_key, "filename": filename}
+    if source_type == "csv":
+        config["delimiter"] = ","
+
+    source = await repo.create_source(
+        ctx.organization_id,
+        source_name,
+        source_type,
+        knowledge_base_id=knowledge_base_id,
+        config_json=config,
+    )
+    await _audit().write(
+        ctx, "source.created", "source", source.id,
+        metadata={"name": source.name, "type": source.type, "object_key": object_key},
+    )
+    job = await _enqueue_source_sync(ctx, jobs, source)
+    return source, job
 
 
 @router.post("/sources/files/upload", status_code=201, summary="Subir archivo como fuente")
@@ -523,59 +616,117 @@ async def upload_file_source(
     ctx = require_permission(request, "sources:write")
     if knowledge_base_id is not None:
         await _assert_own_kb(ctx, knowledge_base_id)
-
-    data = await file.read()
-    if len(data) > 25 * 1024 * 1024:
-        raise HTTPException(413, "File too large (max 25 MB)")
-
-    filename = file.filename or "upload.bin"
-    from src.platform.data_onboarding.mime import MimeRejected, detect_source_type
-
-    try:
-        detected = detect_source_type(filename, data)
-    except MimeRejected as exc:
-        raise HTTPException(415, str(exc)) from None
-
-    if source_type is None:
-        source_type = detected
-
-    # Duplicados por nombre+extensión (cualquier documento): avisa y reusa la
-    # fuente existente salvo force=true. Detecta el sufijo "(1)" del navegador.
-    duplicate = await _find_duplicate_source(repo, ctx.organization_id, name or filename)
-    if duplicate is not None and not force:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "duplicate_name",
-                "message": (
-                    f"Ya existe una fuente con el mismo nombre: {duplicate.name}"
-                ),
-                "existing_source_id": str(duplicate.id),
-                "existing_name": duplicate.name,
-                "hint": "Abre la fuente existente o repite con force=true para copia.",
-            },
-        )
-
-    from src.knowledge.storage import store_upload
-
-    object_key = store_upload(ctx.organization_id, filename, data)
-    config: dict = {"object_key": object_key, "filename": filename}
-    if source_type == "csv":
-        config["delimiter"] = ","
-
-    source = await repo.create_source(
-        ctx.organization_id,
-        name or filename,
-        source_type,
+    source, job = await _store_uploaded_file(
+        ctx,
+        repo,
+        jobs,
+        filename=file.filename or "upload.bin",
+        data=await file.read(),
         knowledge_base_id=knowledge_base_id,
-        config_json=config,
+        source_type=source_type,
+        name=name,
+        force=force,
     )
-    await _audit().write(
-        ctx, "source.created", "source", source.id,
-        metadata={"name": source.name, "type": source.type, "object_key": object_key},
-    )
-    job = await _enqueue_source_sync(ctx, jobs, source)
     return _source_response(source, extra={"job_id": str(job.id)})
+
+
+@router.post(
+    "/sources/files/upload-batch",
+    status_code=200,
+    summary="Subir varios archivos como fuentes (resultado por archivo)",
+)
+async def upload_files_batch(
+    request: Request,
+    files: list[UploadFile] = File(...),
+    knowledge_base_id: UUID | None = None,
+    force: bool = Query(
+        default=False,
+        description="Crear copia aunque exista otra fuente con el mismo nombre.",
+    ),
+    repo: SourceRepository = Depends(get_source_repo),
+    jobs: IngestionJobRepository = Depends(get_job_repo),
+) -> dict:
+    """Sube N archivos sin pedir nombre: cada fuente hereda el nombre del archivo.
+
+    Nunca corta el lote: devuelve el resultado por archivo (created, duplicate,
+    rejected, error). Cada fuente creada encola su job de indexado.
+    """
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "sources:write")
+    if len(files) > _MAX_BATCH_FILES:
+        raise HTTPException(
+            422, f"Too many files per request (max {_MAX_BATCH_FILES})"
+        )
+    if knowledge_base_id is not None:
+        await _assert_own_kb(ctx, knowledge_base_id)
+
+    items: list[dict] = []
+    created = duplicates = rejected = failed = 0
+    for upload in files:
+        filename = upload.filename or "upload.bin"
+        data = await upload.read()
+        try:
+            source, job = await _store_uploaded_file(
+                ctx,
+                repo,
+                jobs,
+                filename=filename,
+                data=data,
+                knowledge_base_id=knowledge_base_id,
+                source_type=None,
+                name=None,
+                force=force,
+            )
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            if exc.status_code == 409:
+                status, duplicates = "duplicate", duplicates + 1
+            elif exc.status_code in (413, 415):
+                status, rejected = "rejected", rejected + 1
+            else:
+                status, failed = "error", failed + 1
+            items.append(
+                {
+                    "filename": filename,
+                    "status": status,
+                    "error": detail.get("message") or str(exc.detail),
+                    "existing_source_id": detail.get("existing_source_id"),
+                    "existing_name": detail.get("existing_name"),
+                    "http_status": exc.status_code,
+                }
+            )
+            continue
+        except Exception as exc:  # noqa: BLE001 — el lote no se corta
+            logger.warning(
+                "Batch upload failed", filename=filename, error=str(exc)[:200]
+            )
+            items.append(
+                {
+                    "filename": filename,
+                    "status": "error",
+                    "error": f"{type(exc).__name__}: {exc}"[:200],
+                }
+            )
+            failed += 1
+            continue
+        items.append(
+            {
+                "filename": filename,
+                "status": "created",
+                "source_id": str(source.id),
+                "name": source.name,
+                "job_id": str(job.id),
+            }
+        )
+        created += 1
+    return {
+        "items": items,
+        "created": created,
+        "duplicates": duplicates,
+        "rejected": rejected,
+        "failed": failed,
+    }
 
 @router.post("/sources/{source_id}/profile", summary="Perfilizar fuente (SQL: null rates, cardinalidad, PII)")
 async def profile_source(

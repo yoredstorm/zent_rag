@@ -48,8 +48,24 @@ function stubApi(sources: unknown[], kbs = KBS) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = (init?.method || "GET").toUpperCase();
-    if (url.includes("/files/upload") && method === "POST") {
-      return Promise.resolve(json({ id: "src-new", name: "cv.pdf", type: "file", status: "created" }, 201));
+    if (url.includes("/files/upload-batch") && method === "POST") {
+      return Promise.resolve(
+        json({
+          items: [
+            {
+              filename: "cv.pdf",
+              status: "created",
+              source_id: "src-new",
+              name: "cv.pdf",
+              job_id: "job-1",
+            },
+          ],
+          created: 1,
+          duplicates: 0,
+          rejected: 0,
+          failed: 0,
+        }),
+      );
     }
     if (url.includes("/knowledge-bases") && method === "POST") {
       return Promise.resolve(json({ id: "kb-1", name: "Principal" }, 201));
@@ -102,42 +118,85 @@ describe("KnowledgeSourcesPage", () => {
     expect(screen.getByRole("button", { name: "Perfilizar Inventario" })).toBeInTheDocument();
   });
 
-  it("sube archivo a files/upload", async () => {
+  it("sube archivos sin pedir nombre y muestra el resultado", async () => {
     const fetchMock = stubApi([]);
     const user = userEvent.setup();
     renderSources();
     await waitFor(() => expect(screen.getAllByRole("button", { name: /Nueva fuente/ }).length).toBeGreaterThan(0));
     await user.click(screen.getAllByRole("button", { name: /Nueva fuente/ })[0]);
-    const input = await screen.findByTestId("source-file");
+    const input = await screen.findByTestId("source-files");
     const pdf = new File(["%PDF"], "cv.pdf", { type: "application/pdf" });
     await user.upload(input, pdf);
-    await user.click(screen.getByRole("button", { name: "Crear fuente" }));
+    await user.click(screen.getByRole("button", { name: "Subir e indexar" }));
     await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes("/files/upload") && (init as RequestInit)?.method === "POST")).toBe(true);
+      expect(fetchMock.mock.calls.some(([url, init]) => String(url).includes("/files/upload-batch") && (init as RequestInit)?.method === "POST")).toBe(true);
+    });
+    expect(await screen.findByText("En cola de indexado")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Nombre")).toBeNull();
+  });
+
+  it("sube N archivos en un solo lote", async () => {
+    const fetchMock = stubApi([]);
+    const user = userEvent.setup();
+    renderSources();
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /Nueva fuente/ }).length).toBeGreaterThan(0));
+    await user.click(screen.getAllByRole("button", { name: /Nueva fuente/ })[0]);
+    const input = await screen.findByTestId("source-files");
+    await user.upload(input, [
+      new File(["%PDF"], "uno.pdf", { type: "application/pdf" }),
+      new File(["%PDF"], "dos.pdf", { type: "application/pdf" }),
+    ]);
+    await user.click(screen.getByRole("button", { name: "Subir 2 archivos" }));
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(
+        ([url, init]) => String(url).includes("/files/upload-batch") && (init as RequestInit)?.method === "POST",
+      );
+      expect(call).toBeTruthy();
+      const body = call?.[1]?.body as FormData;
+      expect(body.getAll("files")).toHaveLength(2);
     });
   });
 
-  it("avisa duplicado por nombre y permite crear copia forzada", async () => {
+  it("avisa duplicado por archivo y permite subir igual", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const method = (init?.method || "GET").toUpperCase();
-      if (url.includes("/files/upload") && method === "POST") {
+      if (url.includes("/files/upload-batch") && method === "POST") {
         if (url.includes("force=true")) {
-          return Promise.resolve(json({ id: "src-copy", name: "cv.pdf", type: "file", status: "created" }, 201));
+          return Promise.resolve(
+            json({
+              items: [
+                {
+                  filename: "cv.pdf",
+                  status: "created",
+                  source_id: "src-copy",
+                  name: "cv.pdf (2)",
+                  job_id: "job-2",
+                },
+              ],
+              created: 1,
+              duplicates: 0,
+              rejected: 0,
+              failed: 0,
+            }),
+          );
         }
         return Promise.resolve(
-          json(
-            {
-              error_code: "HTTP_409",
-              message: "Ya existe una fuente con el mismo nombre: cv.pdf",
-              details: {
+          json({
+            items: [
+              {
+                filename: "cv.pdf",
+                status: "duplicate",
+                error: "Ya existe una fuente con el mismo nombre: cv.pdf",
                 existing_source_id: "src-1",
                 existing_name: "cv.pdf",
-                hint: "Abre la fuente existente o repite con force=true para copia.",
               },
-            },
-            409,
-          ),
+            ],
+            created: 0,
+            duplicates: 1,
+            rejected: 0,
+            failed: 0,
+          }),
         );
       }
       if (url.includes("/knowledge-bases") && method === "POST") {
@@ -154,20 +213,18 @@ describe("KnowledgeSourcesPage", () => {
       expect(screen.getAllByRole("button", { name: /Nueva fuente/ }).length).toBeGreaterThan(0),
     );
     await user.click(screen.getAllByRole("button", { name: /Nueva fuente/ })[0]);
-    const input = await screen.findByTestId("source-file");
+    const input = await screen.findByTestId("source-files");
     const pdf = new File(["%PDF"], "cv.pdf", { type: "application/pdf" });
     await user.upload(input, pdf);
-    await user.click(screen.getByRole("button", { name: "Crear fuente" }));
+    await user.click(screen.getByRole("button", { name: "Subir e indexar" }));
 
-    expect(
-      await screen.findByText(/Ya existe una fuente con el mismo nombre/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Ya existe")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Abrir existente" })).toHaveAttribute(
       "href",
       "/knowledge/sources/src-1",
     );
 
-    await user.click(screen.getByRole("button", { name: "Crear copia" }));
+    await user.click(screen.getByRole("button", { name: "Subir igual" }));
     await waitFor(() => {
       expect(
         fetchMock.mock.calls.some(
@@ -176,6 +233,7 @@ describe("KnowledgeSourcesPage", () => {
         ),
       ).toBe(true);
     });
+    expect(await screen.findByText("En cola de indexado")).toBeInTheDocument();
   });
 
   it("elimina una fuente tras confirmar", async () => {
