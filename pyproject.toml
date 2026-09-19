@@ -56,6 +56,10 @@ connectors = [
     "ibm-db-sa>=0.4.0",
 ]
 
+jev = [
+    "typesafe-sdk>=0.1.0",
+]
+
 billing-stripe = [
     "stripe>=11.0.0",
     "httpx>=0.27.0",

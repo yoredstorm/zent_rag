@@ -1,0 +1,131 @@
+# =============================================================================
+# DecisionEngine — facade used by the Orchestrator.
+# =============================================================================
+from __future__ import annotations
+
+from typing import Any
+
+from src.core.domain.decision import DecisionContext, DecisionTrace, RoutingDecision
+from src.core.ports.decision import DecisionProvider
+from src.decision.metrics import record_judge, record_trace_written
+from src.decision.policy import authorize_decision
+from src.decision.settings import DecisionEngineSettings
+from src.infrastructure.observability.tracing import trace_span
+
+
+class DecisionEngine:
+    """Orchestrator-facing API. Providers stay behind this facade."""
+
+    def __init__(
+        self,
+        provider: DecisionProvider,
+        settings: DecisionEngineSettings,
+        *,
+        registry=None,
+        tracer=None,
+        usage=None,
+        jev=None,
+    ) -> None:
+        self._provider = provider
+        self._settings = settings
+        self._registry = registry
+        self._tracer = tracer
+        self._usage = usage
+        self._jev = jev
+
+    @property
+    def settings(self) -> DecisionEngineSettings:
+        return self._settings
+
+    @property
+    def provider(self) -> DecisionProvider:
+        return self._provider
+
+    async def decide(self, context: DecisionContext) -> RoutingDecision:
+        async with trace_span(
+            "decision.evaluate",
+            provider=self._provider.name,
+            mode=self._settings.effective_mode,
+        ):
+            decision = await self._provider.decide(context)
+        authorized = authorize_decision(decision, context, self._registry)
+        if self._tracer is not None and (
+            authorized.resolved
+            or self._settings.tracked(context.request_id)
+            or authorized.prompt_tokens > 0
+        ):
+            try:
+                trace = _trace_from(context, authorized, self._settings)
+                await self._tracer.record(trace)
+                if authorized.metadata.get("trace_id") is None:
+                    authorized.metadata["trace_id"] = str(trace.decision_id)
+                record_trace_written(authorized)
+            except Exception:  # noqa: BLE001
+                pass
+        if self._usage is not None and (
+            authorized.resolved or authorized.prompt_tokens > 0 or authorized.completion_tokens > 0
+        ):
+            try:
+                await self._usage.record(context, authorized)
+            except Exception:  # noqa: BLE001
+                pass
+        return authorized
+
+    async def judge(
+        self,
+        *,
+        state: dict[str, Any],
+        questions: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Adaptive RAG atomic questions. None if JEV is unavailable. Never generates."""
+        if self._jev is None:
+            return None
+        async with trace_span("decision.judge"):
+            try:
+                payload = await self._jev.judge(state=state, questions=questions)
+            except Exception:  # noqa: BLE001
+                record_judge(None, error=True)
+                return None
+        if isinstance(payload, dict):
+            record_judge(payload)
+        else:
+            record_judge(None, error=True)
+        return payload
+
+
+def _trace_from(
+    context: DecisionContext,
+    decision: RoutingDecision,
+    settings: DecisionEngineSettings,
+) -> DecisionTrace:
+    from src.decision.questions import build_routing_questions
+
+    questions = [
+        {"id": key, "type": spec.get("type")}
+        for key, spec in build_routing_questions(context.available_capabilities).items()
+    ]
+    return DecisionTrace(
+        organization_id=context.organization_id,
+        request_id=context.request_id,
+        user_id=context.user_id,
+        provider=decision.provider,
+        questions=questions,
+        results=[decision.to_public_dict()],
+        selected_capability=decision.capability,
+        confidence=decision.confidence,
+        fallback_used=decision.fallback_used,
+        latency_ms=decision.latency_ms,
+        estimated_cost=decision.estimated_cost,
+        routing_mode=settings.effective_mode,
+        shadow=settings.observes(context.request_id)
+        and not settings.acts(context.request_id)
+        and not decision.resolved,
+        canary=bool(decision.metadata.get("canary")),
+        jev_capability=(
+            (decision.metadata.get("jev") or {}).get("capability")
+            if isinstance(decision.metadata.get("jev"), dict)
+            else (decision.raw_answers.get("jev") or {}).get("capability")
+            if isinstance(decision.raw_answers.get("jev"), dict)
+            else None
+        ),
+    )

@@ -776,6 +776,117 @@ class Settings(BaseSettings):
         ),
     )
     # -------------------------------------------------------------------------
+    # Decision Engine (JEV System One + rules + LLM fallback)
+    # -------------------------------------------------------------------------
+    DECISION_ROUTING_MODE: Literal["legacy", "shadow", "jev", "hybrid"] = Field(
+        default="legacy",
+        description=(
+            "legacy = RAG actual. shadow = compara JEV sin cambiar ejecución. "
+            "jev = Decision Engine activo. hybrid = canary por porcentaje."
+        ),
+    )
+    JEV_SHADOW_MODE: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "JEV_SHADOW_MODE", "RAG_JEV_SHADOW_MODE"
+        ),
+        description="Si true, JEV observa el tráfico real y no cambia la ejecución.",
+    )
+    JEV_ROUTING_HIGH_CONFIDENCE: float = Field(
+        default=0.90,
+        ge=0.0,
+        le=1.0,
+        validation_alias=AliasChoices(
+            "JEV_ROUTING_HIGH_CONFIDENCE", "RAG_JEV_ROUTING_HIGH_CONFIDENCE"
+        ),
+    )
+    JEV_ROUTING_LOW_CONFIDENCE: float = Field(
+        default=0.65,
+        ge=0.0,
+        le=1.0,
+        validation_alias=AliasChoices(
+            "JEV_ROUTING_LOW_CONFIDENCE", "RAG_JEV_ROUTING_LOW_CONFIDENCE"
+        ),
+    )
+    JEV_CANARY_PERCENTAGE: int = Field(
+        default=0,
+        ge=0,
+        le=100,
+        validation_alias=AliasChoices(
+            "JEV_CANARY_PERCENTAGE", "RAG_JEV_CANARY_PERCENTAGE"
+        ),
+    )
+    JEV_TIMEOUT_SECONDS: float = Field(default=8.0, ge=0.5, le=60.0)
+    JEV_MODEL: str = Field(default="jev-latest")
+    JEV_BASE_URL: str = Field(default="https://api.typesafe.ai")
+    JEV_API_KEY: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "TYPESAFE_API_KEY", "JEV_API_KEY", "RAG_JEV_API_KEY"
+        ),
+        description="TypeSafe/JEV API key. Never log. Prefer Vault in production.",
+    )
+    DECISION_FALLBACK_MODEL: str = Field(
+        default="",
+        description="Small LLM fallback (Novita/LiteLLM). Vacío = GATEWAY_CHEAP_MODEL.",
+    )
+    DECISION_COMPLEX_MODEL: str = Field(
+        default="",
+        description="Reasoning LLM when JEV confidence is low and the request is complex.",
+    )
+    DECISION_NOUL_YES: float = Field(default=0.65, ge=0.5, le=1.0)
+    DECISION_NOUL_NO: float = Field(default=0.35, ge=0.0, le=0.5)
+    # -------------------------------------------------------------------------
+    # Adaptive RAG (Decision Engine + retrieval strategy + evidence gate)
+    # Default off: legacy embed→top-k→LLM unchanged until shadow/canary evidence.
+    # -------------------------------------------------------------------------
+    ADAPTIVE_RAG_MODE: Literal["off", "shadow", "active", "canary"] = Field(
+        default="off",
+        description=(
+            "off = pipeline actual. shadow = planifica sin cambiar retrieval. "
+            "active = aplica estrategia/top_k/retry. canary = porcentaje."
+        ),
+    )
+    ADAPTIVE_RAG_CANARY_PERCENTAGE: int = Field(default=0, ge=0, le=100)
+    ADAPTIVE_RAG_MAX_RETRIEVAL_ATTEMPTS: int = Field(default=3, ge=1, le=5)
+    ADAPTIVE_RAG_TOP_K_MIN: int = Field(default=3, ge=1, le=50)
+    ADAPTIVE_RAG_TOP_K_MAX: int = Field(default=12, ge=1, le=50)
+    ADAPTIVE_RAG_TOP_K_LOOKUP: int = Field(default=3, ge=1, le=50)
+    ADAPTIVE_RAG_TOP_K_COMPARE: int = Field(default=8, ge=1, le=50)
+    ADAPTIVE_RAG_TOP_K_MULTI: int = Field(default=12, ge=1, le=50)
+    ADAPTIVE_RAG_EVIDENCE_MIN_SCORE: float = Field(default=0.25, ge=0.0, le=1.0)
+    ADAPTIVE_RAG_EVIDENCE_MIN_COVERAGE: float = Field(default=0.25, ge=0.0, le=1.0)
+    ADAPTIVE_RAG_CACHE_TTL_SECONDS: int = Field(default=600, ge=0, le=86400)
+    ADAPTIVE_RAG_JEV_EVIDENCE: bool = Field(default=True)
+    ADAPTIVE_RAG_FAST_PATH: bool = Field(default=True)
+    ADAPTIVE_RAG_REWRITE: bool = Field(default=True)
+    JEV_CIRCUIT_FAILURE_THRESHOLD: int = Field(default=3, ge=1, le=20)
+    JEV_CIRCUIT_RECOVERY_SECONDS: float = Field(default=30.0, ge=1.0, le=300.0)
+    # -------------------------------------------------------------------------
+    # Agent Runtime
+    # -------------------------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # Zent AI Runtime (experimental flags; defaults off)
+    # -------------------------------------------------------------------------
+    RUNTIME_TOOL_ROUTING_MODE: Literal["off", "experimental"] = Field(
+        default="off",
+        description="experimental = JEV Choice selects a subset of agent tools.",
+    )
+    RUNTIME_TERMINATION_GATE: Literal["off", "on"] = Field(
+        default="off",
+        description="on = extra Noul gate after tool use; max_steps still hard-stops.",
+    )
+    RUNTIME_EFFICIENCY_QUALITY_WEIGHT: float = Field(default=0.40, ge=0.0, le=1.0)
+    RUNTIME_EFFICIENCY_COST_WEIGHT: float = Field(default=0.25, ge=0.0, le=1.0)
+    RUNTIME_EFFICIENCY_LATENCY_WEIGHT: float = Field(default=0.20, ge=0.0, le=1.0)
+    RUNTIME_EFFICIENCY_FALLBACK_WEIGHT: float = Field(default=0.15, ge=0.0, le=1.0)
+    RUNTIME_SHADOW_SAMPLE_RATE: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Optional sample of JEV decisions compared with the previous provider.",
+    )
+    # -------------------------------------------------------------------------
     # Agent Runtime
     # -------------------------------------------------------------------------
     RAG_AGENT_MODEL: str = Field(default="")

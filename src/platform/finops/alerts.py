@@ -210,6 +210,29 @@ async def check_organization(organization_id: UUID) -> list[dict]:
                 )
                 if ok:
                     created.append({"type": ALERT_PROVIDER_SPIKE, "message": f"Spike {provider}"})
+    try:
+        from src.runtime.wallet import snapshot_budget
+
+        wallet = await snapshot_budget(organization_id)
+        granted = float(wallet.get("granted") or 0)
+        used = float(wallet.get("used_credits") or 0)
+        if granted > 0:
+            pct = 100.0 * used / granted
+            for threshold in (50, 75, 90, 100):
+                if pct >= threshold:
+                    ok = await _insert_alert(
+                        organization_id,
+                        f"credit_{threshold}",
+                        f"Créditos al {threshold}% (usado {used:.2f} de {granted:.2f})",
+                        threshold_value=float(threshold),
+                        actual_value=pct,
+                    )
+                    if ok:
+                        created.append(
+                            {"type": f"credit_{threshold}", "message": f"Wallet {threshold}%"}
+                        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("wallet alert check failed", error=str(exc)[:160])
     return created
 
 

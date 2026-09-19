@@ -141,6 +141,69 @@ def _condition_schema() -> NodeBusinessSchema:
     )
 
 
+def _ai_decision_schema() -> NodeBusinessSchema:
+    return NodeBusinessSchema(
+        node_type="ai_decision",
+        label="Decisión de IA",
+        category="ai",
+        description="Elige una ruta con una pregunta de negocio. La confianza baja puede pedir revisión humana.",
+        parameters=[
+            _p(
+                "decision_kind",
+                "Tipo",
+                "enum",
+                required=True,
+                default="route",
+                validation={
+                    "options": [
+                        {"value": "route", "label": "Elegir ruta"},
+                        {"value": "yes_no", "label": "Sí / No"},
+                        {"value": "score", "label": "Evaluar puntuación"},
+                    ]
+                },
+            ),
+            _p(
+                "question",
+                "Pregunta",
+                "textarea",
+                required=True,
+                data_source="any",
+                placeholder="Determinar si el cliente requiere revisión manual",
+            ),
+            _p(
+                "options",
+                "Opciones (JSON)",
+                "json",
+                help='[{"id":"approve","label":"Aprobar"},{"id":"reject","label":"Rechazar"}]',
+            ),
+            _p("confidence_min", "Confianza mínima", "number", min_level="guided", default=0.65),
+            _p(
+                "on_low_confidence",
+                "Si la confianza es baja",
+                "enum",
+                min_level="guided",
+                default="fallback",
+                validation={
+                    "options": [
+                        {"value": "fallback", "label": "Usar respaldo"},
+                        {"value": "human_review", "label": "Revisión humana"},
+                        {"value": "stop", "label": "Detener"},
+                        {"value": "llm", "label": "Preguntar a un agente"},
+                    ]
+                },
+            ),
+            _p("score_threshold", "Umbral de puntuación", "number", min_level="advanced", default=0.5),
+        ],
+        outputs=[
+            _out("result", "Resultado", "boolean"),
+            _out("choice", "Opción", "text"),
+            _out("route", "Ruta", "text"),
+            _out("confidence", "Confianza", "number"),
+            _out("low_confidence", "Confianza baja", "boolean"),
+        ],
+    )
+
+
 def _llm_schema() -> NodeBusinessSchema:
     return NodeBusinessSchema(
         node_type="llm",
@@ -553,6 +616,7 @@ def _register(registry: dict[str, NodeBusinessSchema]) -> None:
         _notify_schema(),
         _condition_schema(),
         _llm_schema(),
+        _ai_decision_schema(),
         _query_business_data_schema(),
         _kb_query_schema(),
         _api_call_schema(),

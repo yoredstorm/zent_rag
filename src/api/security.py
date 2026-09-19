@@ -233,3 +233,19 @@ def require_scope(request: Request, scope: str) -> TenantContext:
             detail=f"Missing required scope: {scope}",
         )
     return ctx
+
+
+def decision_permissions(request: Request) -> frozenset[str]:
+    """RBAC permissions of the authenticated caller, for Decision Engine authz.
+
+    Never combined with role here: the Decision hook derives availability-level
+    grants (SQL Expert) separately, and execution-level policy stays in the
+    handlers.
+    """
+    ctx = get_auth_context(request)
+    permissions = getattr(ctx, "permissions", None) or frozenset()
+    result = set(permissions)
+    scopes = getattr(ctx, "scopes", None) or frozenset()
+    if "admin:*" in scopes or "portal" in scopes:
+        result.add("*")
+    return frozenset(result)

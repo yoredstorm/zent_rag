@@ -40,6 +40,7 @@ import {
   IconButton,
   LoadingDots,
   Progress,
+  Switch,
   Tooltip,
 } from "../components/ui";
 import { fmtLatency, timeAgo } from "../lib/format";
@@ -113,6 +114,13 @@ export default function ChatPage() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [developerMode, setDeveloperMode] = useState(() => {
+    try {
+      return window.localStorage.getItem("zent_rag_developer_mode") === "1";
+    } catch {
+      return false;
+    }
+  });
   const abortRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hintTimer = useRef<number | null>(null);
@@ -122,6 +130,14 @@ export default function ChatPage() {
     if (!session) return;
     setConversations(listConversations(session.organizationId));
   }, [session]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("zent_rag_developer_mode", developerMode ? "1" : "0");
+    } catch {
+      // storage blocked
+    }
+  }, [developerMode]);
 
   useEffect(() => {
     if (!session) return;
@@ -312,6 +328,7 @@ export default function ChatPage() {
         queryId: result.queryId,
         userQuery: query,
         latencyMs: result.latencyMs,
+        ragTrace: result.ragTrace ?? null,
       };
       const finalMessages = [...withUser, assistantMessage];
       setMessages(finalMessages);
@@ -556,6 +573,16 @@ export default function ChatPage() {
             onChange={applyDestination}
           />
         </div>
+        {destination.kind === "knowledge" ? (
+          <div className="mb-3 max-w-sm">
+            <Switch
+              checked={developerMode}
+              onCheckedChange={setDeveloperMode}
+              label="Ver cómo Zent resolvió esta pregunta"
+              hint="Modo desarrollador. Intent, ruta, evidencia y JEV."
+            />
+          </div>
+        ) : null}
 
         {error && (
           <ErrorInline
@@ -674,6 +701,7 @@ export default function ChatPage() {
               <MessageBubble
                 key={m.id}
                 message={m}
+                developerMode={developerMode}
                 onFeedback={(rating) => void sendFeedback(i, rating)}
                 onFeedbackReason={(reason) => void sendFeedbackReason(i, reason)}
               />
@@ -833,6 +861,73 @@ function MethodChip({ method }: { method: string }) {
   );
 }
 
+function RagTracePanel({ trace }: { trace: Record<string, unknown> }) {
+  const [open, setOpen] = useState(false);
+  const plan = (trace.plan && typeof trace.plan === "object" ? trace.plan : {}) as Record<string, unknown>;
+  const evidence = (trace.evidence_evaluation && typeof trace.evidence_evaluation === "object"
+    ? trace.evidence_evaluation
+    : {}) as Record<string, unknown>;
+  const grounding = (trace.grounding && typeof trace.grounding === "object"
+    ? trace.grounding
+    : null) as Record<string, unknown> | null;
+  const rows: { label: string; value: string }[] = [
+    { label: "Intent", value: String(trace.intent || plan.intent || "—") },
+    { label: "Ruta", value: String(trace.source_route || "—") },
+    { label: "Retrieval", value: String(trace.retrieval_strategy || "—") },
+    { label: "Path", value: String(plan.path || "—") },
+    { label: "top_k", value: String(trace.top_k ?? "—") },
+    { label: "Confianza", value: String(trace.confidence ?? "—") },
+    { label: "Evidencia", value: String(evidence.score ?? "—") },
+    { label: "Reintentos", value: String(Array.isArray(trace.attempts) ? trace.attempts.length : 0) },
+    { label: "Modelo", value: String(trace.generator || "—") },
+    { label: "Tokens", value: `${trace.input_tokens ?? 0} / ${trace.output_tokens ?? 0}` },
+    { label: "Costo", value: String(trace.total_cost ?? "—") },
+    { label: "Tiempo", value: `${trace.latency_ms ?? "—"} ms` },
+  ];
+  if (grounding) {
+    rows.push({ label: "Grounding", value: String(grounding.score ?? "—") });
+  }
+  if (trace.llm_skipped) {
+    rows.push({ label: "LLM", value: "omitido (fast path)" });
+  }
+  const jev = trace.jev_decisions && typeof trace.jev_decisions === "object"
+    ? Object.keys(trace.jev_decisions as object)
+    : [];
+  return (
+    <div className="mt-2.5">
+      <button
+        type="button"
+        className="flex cursor-pointer items-center gap-1.5 text-[11.5px] text-muted transition-colors hover:text-text"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        Cómo Zent resolvió esta pregunta
+        <CaretDown
+          size={11}
+          className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`}
+          aria-hidden
+        />
+      </button>
+      {open ? (
+        <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11.5px]">
+          {rows.map((row) => (
+            <div key={row.label}>
+              <dt className="text-faint">{row.label}</dt>
+              <dd className="text-text">{row.value}</dd>
+            </div>
+          ))}
+          {jev.length > 0 ? (
+            <div className="col-span-2">
+              <dt className="text-faint">JEV</dt>
+              <dd className="text-text">{jev.join(", ")}</dd>
+            </div>
+          ) : null}
+        </dl>
+      ) : null}
+    </div>
+  );
+}
+
 /** Evidencia: las fuentes son una capacidad principal, no un link al pie. */
 function SourceEvidence({ sources }: { sources: Source[] }) {
   const [openIndex, setOpenIndex] = useState<number | null>(null);
@@ -925,10 +1020,12 @@ function SourceEvidence({ sources }: { sources: Source[] }) {
 
 function MessageBubble({
   message,
+  developerMode = false,
   onFeedback,
   onFeedbackReason,
 }: {
   message: Message;
+  developerMode?: boolean;
   onFeedback: (rating: "up" | "down") => void;
   onFeedbackReason: (reason: string) => void;
 }) {
@@ -1022,6 +1119,7 @@ function MessageBubble({
               <SourceEvidence sources={message.sources!} />
             </div>
           )}
+          {developerMode && message.ragTrace ? <RagTracePanel trace={message.ragTrace} /> : null}
         </div>
 
         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 pl-1">

@@ -10,6 +10,7 @@ export type StoredMessage = {
   rated?: "up" | "down";
   latencyMs?: number;
   stopped?: boolean;
+  ragTrace?: Record<string, unknown> | null;
 };
 
 export type Conversation = {

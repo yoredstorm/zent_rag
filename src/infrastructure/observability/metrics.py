@@ -483,6 +483,127 @@ knowledge_evaluation_composite = Gauge(
 )
 
 
+# Decision Engine — low-cardinality labels only (no org/capability id).
+zent_decision_requests_total = Counter(
+    "zent_decision_requests_total",
+    "Decision Engine evaluations",
+    labelnames=["provider", "resolved"],
+)
+zent_decision_provider_total = Counter(
+    "zent_decision_provider_total",
+    "Decision Engine provider invocations",
+    labelnames=["provider"],
+)
+zent_decision_latency_seconds = Histogram(
+    "zent_decision_latency_seconds",
+    "Decision Engine latency",
+    labelnames=["provider"],
+    buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
+)
+zent_decision_confidence = Histogram(
+    "zent_decision_confidence",
+    "Decision confidence (0-1)",
+    labelnames=["provider"],
+    buckets=(0.1, 0.25, 0.5, 0.65, 0.8, 0.9, 0.95, 1.0),
+)
+zent_decision_fallback_total = Counter(
+    "zent_decision_fallback_total",
+    "Decision Engine fallbacks",
+    labelnames=["reason"],
+)
+zent_decision_agreement_total = Counter(
+    "zent_decision_agreement_total",
+    "Shadow agreement between JEV and the live path",
+    labelnames=["agreed"],
+)
+zent_decision_cost_usd = Counter(
+    "zent_decision_cost_usd",
+    "Estimated Decision Engine cost in USD",
+    labelnames=["provider"],
+)
+zent_decision_capability_total = Counter(
+    "zent_decision_capability_total",
+    "Selected capability family (not full id)",
+    labelnames=["capability"],
+)
+zent_decision_judge_total = Counter(
+    "zent_decision_judge_total",
+    "System One judge calls (non-routing questions)",
+    labelnames=["outcome"],
+)
+zent_decision_judge_tokens_total = Counter(
+    "zent_decision_judge_tokens_total",
+    "Tokens spent on System One judge calls",
+    labelnames=["kind"],
+)
+zent_decision_traces_total = Counter(
+    "zent_decision_traces_total",
+    "Decision traces written",
+    labelnames=["provider"],
+)
+
+zent_adaptive_requests_total = Counter(
+    "zent_adaptive_requests_total",
+    "Adaptive RAG plans",
+    labelnames=["mode", "path", "applied"],
+)
+zent_adaptive_strategy_total = Counter(
+    "zent_adaptive_strategy_total",
+    "Adaptive retrieval strategy",
+    labelnames=["strategy"],
+)
+zent_adaptive_source_route_total = Counter(
+    "zent_adaptive_source_route_total",
+    "Adaptive source route",
+    labelnames=["route"],
+)
+zent_adaptive_retrieval_attempts = Histogram(
+    "zent_adaptive_retrieval_attempts",
+    "Retrieval attempts per request",
+    buckets=(1, 2, 3, 4, 5),
+)
+zent_adaptive_top_k = Histogram(
+    "zent_adaptive_top_k",
+    "Dynamic context top_k",
+    buckets=(1, 3, 5, 8, 12, 20, 50),
+)
+zent_adaptive_evidence_quality = Histogram(
+    "zent_adaptive_evidence_quality",
+    "Evidence quality score (0-1)",
+    buckets=(0.1, 0.25, 0.5, 0.65, 0.8, 0.9, 1.0),
+)
+zent_adaptive_decision_confidence = Histogram(
+    "zent_adaptive_decision_confidence",
+    "Adaptive plan confidence (0-1)",
+    buckets=(0.1, 0.25, 0.5, 0.65, 0.8, 0.9, 1.0),
+)
+zent_adaptive_grounding_score = Histogram(
+    "zent_adaptive_grounding_score",
+    "Grounding score (0-1)",
+    buckets=(0.1, 0.25, 0.5, 0.65, 0.8, 0.9, 1.0),
+)
+zent_adaptive_context_tokens = Histogram(
+    "zent_adaptive_context_tokens",
+    "Context tokens before/after packing",
+    labelnames=["stage"],
+    buckets=(32, 64, 128, 256, 512, 1024, 2048, 4096, 8192),
+)
+zent_adaptive_llm_skipped_total = Counter(
+    "zent_adaptive_llm_skipped_total",
+    "Generative LLM calls avoided by Adaptive RAG",
+)
+zent_adaptive_cache_hit_total = Counter(
+    "zent_adaptive_cache_hit_total",
+    "Adaptive plan cache hits",
+    labelnames=["kind"],
+)
+zent_adaptive_fallback_total = Counter(
+    "zent_adaptive_fallback_total",
+    "Adaptive RAG fallbacks",
+    labelnames=["reason"],
+)
+
+
 def setup_metrics(app: FastAPI) -> Instrumentator:
     """Configura y expone /metrics para Prometheus scraping.
 

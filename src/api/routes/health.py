@@ -63,6 +63,24 @@ async def health_check() -> HealthResponse:
         checks["redis"] = "error"
         degraded = True
 
+    try:
+        from src.decision.health import decision_health
+
+        dec = decision_health()
+        checks["decision_engine"] = dec["status"]
+        if dec["status"] != "ok" and dec.get("jev") == "not_configured":
+            # Missing JEV is fine in legacy mode.
+            if get_settings().DECISION_ROUTING_MODE == "legacy":
+                checks["decision_engine"] = "ok"
+            else:
+                degraded = True
+        elif dec["status"] != "ok":
+            degraded = True
+    except Exception as exc:
+        logger.warning("Health check: Decision Engine failed", error=str(exc))
+        checks["decision_engine"] = "error"
+        degraded = True
+
     return HealthResponse(
         status="degraded" if degraded else "healthy",
         environment=settings.ENVIRONMENT,

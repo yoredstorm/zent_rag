@@ -55,6 +55,8 @@ export const PLATFORM_NAV: PlatformNavGroup[] = [
     label: "AI Platform",
     items: [
       { to: `${BASE}/model-gateway`, label: "Model Gateway", icon: Coins },
+      { to: `${BASE}/decision-engine`, label: "Decision Engine", icon: FlowArrow },
+      { to: `${BASE}/ai-runtime`, label: "AI Runtime", icon: Cpu },
       { to: `${BASE}/inference-proxy`, label: "Inference", icon: Cpu },
       { to: `${BASE}/knowledge-hub`, label: "Knowledge", icon: BookOpen },
       { to: `${BASE}/evals`, label: "Evals", icon: Flask },

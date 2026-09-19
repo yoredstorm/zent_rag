@@ -271,6 +271,9 @@ Clean Architecture con composición en la capa API. Las reglas de dependencia la
 ├─────────────────────────────────────────────────────────────────┤
 │  agents/     orchestrator (SQL-first vs RAG) + Agent Runtime    │
 │  rag/        chunking · retrieval · rerank · evaluation         │
+│              adaptive/ (plan · evidence gate · grounding)       │
+│  decision/   JEV · rules · LLM composite · policy · trazas      │
+│  runtime/    wallet · executor · efficiency · experiment lab    │
 │  knowledge/  sources · normalize → MD · engine · jobs           │
 │  connectors/ plugin registry (SQL, files, APIs, S3)             │
 │  platform/   auth · tenants · rbac · billing · usage · audit    │
@@ -384,6 +387,9 @@ zent_RAG/
 │   ├── core/                # domain + ports + config (isla)
 │   ├── agents/              # orchestrator, agent_runtime, tools, policies
 │   ├── rag/                 # chunking, retrieval, reranking, evaluation, embeddings
+│   │   └── adaptive/        # plan, evidence gate, fast path, rewrite, grounding
+│   ├── decision/            # Decision Engine: JEV/rules/LLM, policy, trazas
+│   ├── runtime/             # wallet, executor, efficiency, experiment lab
 │   ├── knowledge/           # Knowledge Platform: connectors, normalize, engine, jobs
 │   ├── connectors/          # Plugin platform (SQL/files/APIs/S3) + sql/ legacy path
 │   ├── platform/            # auth, tenants, rbac, billing, usage, audit, users
@@ -458,6 +464,17 @@ zent_RAG/
 - Tools registrables (builtin + módulos verticales) con guards: JSON-schema de input, rate limit por tenant, timeout duro
 - SSRF guard en la tool `call_api` (allowlist de dominios, bloqueo de rangos privados)
 - Traza: `GET /api/v1/agents/runs/{run_id}`
+
+### Decision Engine (JEV) y Adaptive RAG
+
+- **JEV decide, el orquestador ejecuta**: composite `rules` → JEV System One → LLM pequeño → LLM de razonamiento, con circuit breaker y fallback
+- **Autorización separada**: JEV nunca otorga capabilities; `authorize_decision()` recorta a `available_capabilities`, allowlist de tenant y permisos
+- **Modos**: `legacy` · `shadow` · `jev` · `hybrid` (canary), más muestreo de observación (`RAG_RUNTIME_SHADOW_SAMPLE_RATE`); shadow no cambia la ejecución
+- **Trazas**: `decision_traces` con `actual_capability` y `agreement` tras ejecutar; dashboard y Experiment Lab (Rules vs JEV vs LLM) en `/api/v1/platform/runtime/*`
+- **Adaptive RAG** (`off` · `shadow` · `active` · `canary`): plan de retrieval, evidence gate, fast path extractivo, rewrite y grounding
+- **Capacidades advisory con dispatcher**: `agent.*`, `workflow.*`, `tool.*` viven en el registry; JEV no las elige por heurística, pero `POST /api/v1/rag/query` con `agent_id`, `workflow_id`, `run_id`, `tool` + `tool_arguments` las ejecuta vía `CapabilityDispatcher` con permisos por handler
+- **Batcheo de preguntas System One**: plan en [docs/architecture/decision-engine-batching.md](docs/architecture/decision-engine-batching.md) (propuesto)
+- ADR: [docs/architecture/decision-engine.md](docs/architecture/decision-engine.md)
 
 ### Knowledge Platform y connectors
 
@@ -554,6 +571,10 @@ Swagger: http://localhost:8000/docs · ReDoc: `/redoc` · Bruno: carpeta [`bruno
 |---|---|---|
 | POST | `/api/v1/rag/query` | Query RAG (+ SQL Expert si aplica) |
 | POST | `/api/v1/rag/query/stream` | Mismo flujo por SSE |
+
+`/rag/query` también ejecuta targets explícitos del runtime: `agent_id`,
+`workflow_id` (+ `run_id` para resume) o `tool` con `tool_arguments`. En ese
+caso el Decision Engine autoriza la capability y el dispatcher la ejecuta.
 
 ### Ingestion legacy (SQL sync)
 
@@ -744,6 +765,9 @@ Todas las settings de app usan prefijo **`RAG_`** (`pydantic-settings` en [`src/
 - **Auth:** `RAG_AUTH_LOGIN_MAX_ATTEMPTS` (anti brute-force)
 - **MCP:** `RAG_RAG_MCP_ALLOWED_HOSTS` (DNS-rebinding guard)
 - **Billing:** `RAG_PAYMENT_PROVIDER`, `RAG_SELF_SERVICE_UPGRADE_ENABLED` (default `false`)
+- **Decision / JEV:** `RAG_DECISION_ROUTING_MODE`, `RAG_JEV_API_KEY` / `TYPESAFE_API_KEY`, `RAG_JEV_MODEL`, confianzas y circuit breaker
+- **Adaptive RAG:** `RAG_ADAPTIVE_RAG_MODE`, `_MAX_RETRIEVAL_ATTEMPTS`, `_TOP_K_*`, `_JEV_EVIDENCE`, `_FAST_PATH`, `_REWRITE`
+- **Zent AI Runtime:** `RAG_RUNTIME_TOOL_ROUTING_MODE`, `RAG_RUNTIME_TERMINATION_GATE`, `RAG_RUNTIME_SHADOW_SAMPLE_RATE`, pesos de efficiency
 - **Knowledge:** `RAG_UPLOAD_DIR`, `RAG_KNOWLEDGE_QUEUE_KEY`
 - **Vault (opcional):** `RAG_VAULT_ADDR`, `RAG_VAULT_TOKEN`
 
@@ -828,6 +852,8 @@ El plan SaaS evoluciona el core existente (Customer Portal, Control Center, enti
 | [sdk/node/README.md](sdk/node/README.md) | SDK Node |
 | [`.env.example`](.env.example) | Catálogo de variables |
 | [docs/architecture/enterprise-knowledge-refactor.md](docs/architecture/enterprise-knowledge-refactor.md) | Phase A ADR: CURRENT→TARGET Knowledge Engine (V2 flag-off) |
+| [docs/architecture/decision-engine.md](docs/architecture/decision-engine.md) | Decision Engine (JEV), Adaptive RAG, dispatcher y rollout |
+| [docs/architecture/decision-engine-batching.md](docs/architecture/decision-engine-batching.md) | ADR propuesto: batcheo de preguntas System One |
 | OpenAPI | `/docs`, `/redoc`, `/api/v1/openapi.json` |
 
 ---

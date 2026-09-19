@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import re
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -126,6 +126,34 @@ class RAGQueryRequest(BaseModel):
         description="Idioma de la consulta para filtros (ej: es, en).",
     )
 
+    # ------------------------------------------------------------------
+    # Explicit capability targets (Decision Engine dispatcher).
+    # When any is present, the runtime executes that capability instead of
+    # the default RAG flow. Authorization still comes from the Bearer.
+    # ------------------------------------------------------------------
+    agent_id: UUID | None = Field(
+        default=None,
+        description="Ejecutar este agente (requiere permiso agents:execute).",
+    )
+    workflow_id: UUID | None = Field(
+        default=None,
+        description="Ejecutar este workflow (requiere permiso workflows:run).",
+    )
+    run_id: UUID | None = Field(
+        default=None,
+        description="Run existente para reanudar (workflow.resume).",
+    )
+    tool: str | None = Field(
+        default=None,
+        max_length=60,
+        pattern=r"^[a-zA-Z0-9_\-]+$",
+        description="Ejecutar esta tool del registry (requiere agents:execute).",
+    )
+    tool_arguments: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Argumentos de la tool; si se omite, se usa {'query': query}.",
+    )
+
     @model_validator(mode="after")
     def detect_prompt_injection(self) -> "RAGQueryRequest":
         """Escanea la consulta en búsqueda de patrones de Prompt Injection.
@@ -231,6 +259,7 @@ class RAGQueryResponse(BaseModel):
     # Zent Intelligence Layer — opcional, backward compatible.
     answerability: AnswerabilityResponse | None = None
     trace_id: str | None = None
+    rag_trace: dict | None = None
 
 
 class ErrorResponse(BaseModel):

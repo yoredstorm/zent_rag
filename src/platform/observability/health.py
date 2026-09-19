@@ -171,6 +171,52 @@ async def system_health() -> dict:
             }
         )
 
+    # 6) Decision Engine
+    try:
+        from src.decision.health import decision_health
+
+        dec = decision_health()
+        checks.append(
+            {
+                "name": "decision_engine",
+                "status": dec["status"] if settings.DECISION_ROUTING_MODE != "legacy" else "ok",
+                "latency_ms": 0.0,
+                "detail": dec.get("detail", ""),
+            }
+        )
+    except Exception as exc:
+        checks.append(
+            {
+                "name": "decision_engine",
+                "status": "degraded",
+                "latency_ms": 0.0,
+                "detail": str(exc)[:200],
+            }
+        )
+
+    # 7) Adaptive RAG
+    try:
+        from src.rag.adaptive.health import adaptive_health
+
+        adp = adaptive_health()
+        checks.append(
+            {
+                "name": "adaptive_rag",
+                "status": adp["status"],
+                "latency_ms": 0.0,
+                "detail": adp.get("detail", ""),
+            }
+        )
+    except Exception as exc:
+        checks.append(
+            {
+                "name": "adaptive_rag",
+                "status": "degraded",
+                "latency_ms": 0.0,
+                "detail": str(exc)[:200],
+            }
+        )
+
     statuses = [c["status"] for c in checks]
     if "down" in statuses:
         overall = "down"

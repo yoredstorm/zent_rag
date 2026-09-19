@@ -41,6 +41,7 @@ EXPECTED_CONTRIBUTIONS: dict[str, set[str]] = {
     "business_node": {"data", "evidence", "entities"},
     "business_result": {"artifacts", "entities"},
     "llm": {"decisions", "findings"},
+    "ai_decision": {"decisions"},
 }
 
 
@@ -93,6 +94,7 @@ def test_simulation_supported_flags() -> None:
         "business_result",
         "business_node",
         "human_approval",
+        "ai_decision",
     }
     for node_def in registry.all():
         if node_def.node_type in expected_true:

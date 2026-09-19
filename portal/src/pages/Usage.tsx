@@ -69,9 +69,20 @@ function UsageSkeleton() {
   );
 }
 
+type Wallet = {
+  credit_granted: number;
+  used: number;
+  remaining: number | null;
+  on_limit: string;
+  trial_credits: number;
+  promo_credits: number;
+  paid_credits: number;
+};
+
 export default function UsagePage() {
   const { session } = useAuth();
   const [usage, setUsage] = useState<Usage | null>(null);
+  const [wallet, setWallet] = useState<Wallet | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -85,6 +96,11 @@ export default function UsagePage() {
         organizationId: session.organizationId,
       });
       setUsage(data);
+      const credits = await api<{ wallet: Wallet }>("/api/v1/billing/wallet", {
+        token: session.token,
+        organizationId: session.organizationId,
+      }).catch(() => null);
+      setWallet(credits?.wallet ?? null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error");
     } finally {
@@ -123,6 +139,24 @@ export default function UsagePage() {
       ) : (
         <div className="flex flex-col gap-4">
           {error && <ErrorInline message={error} />}
+
+          {wallet ? (
+            <Panel>
+              <PanelHeader
+                title="Créditos"
+                description="Trial, promocionales y pagados. El modelo no puede cambiar estas cantidades."
+              />
+              <MetricGrid cols={4}>
+                <Metric label="Otorgados" value={fmtCurrency(wallet.credit_granted)} />
+                <Metric label="Usados" value={fmtCurrency(wallet.used)} />
+                <Metric
+                  label="Restantes"
+                  value={wallet.remaining == null ? "—" : fmtCurrency(wallet.remaining)}
+                />
+                <Metric label="Al límite" value={wallet.on_limit} />
+              </MetricGrid>
+            </Panel>
+          ) : null}
 
           <div className="grid gap-4 lg:grid-cols-3">
             {/* Foco: el volumen real de los últimos 30 días manda sobre el resto */}

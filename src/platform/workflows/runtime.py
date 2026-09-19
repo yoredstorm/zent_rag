@@ -565,6 +565,20 @@ async def execute_graph(
                     executed_edges.add(edge.id)
                 else:
                     skipped_edges.add(edge.id)
+        elif node.type == "ai_decision":
+            output = exec_.output or {}
+            choice = str(output.get("route") or output.get("choice") or "")
+            result = bool(output.get("result"))
+            named = {edge.from_port for edge in outgoing.get(node_id, [])}
+            fallback = "then" if result else "else"
+            taken = {choice} if choice in named else {fallback}
+            if choice in named:
+                taken.add(choice)
+            for edge in outgoing.get(node_id, []):
+                if edge.from_port in taken:
+                    executed_edges.add(edge.id)
+                else:
+                    skipped_edges.add(edge.id)
         elif node.type == "for_each":
             for edge in outgoing.get(node_id, []):
                 if edge.from_port == "done":

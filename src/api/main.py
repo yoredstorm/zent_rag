@@ -33,6 +33,7 @@ from src.api.csrf_middleware import CsrfMiddleware
 from src.api.idempotency_middleware import IdempotencyMiddleware
 from src.api.middleware import TraceMiddleware
 from src.api.rate_limit_middleware import RateLimitMiddleware
+from src.api.routes.adaptive import router as adaptive_router
 from src.api.routes.admin import router as admin_router
 from src.api.routes.agent_runs import router as agent_runs_router
 from src.api.routes.agent_versions import router as agent_versions_router
@@ -47,6 +48,7 @@ from src.api.routes.chat_insights import router as chat_insights_router
 from src.api.routes.connectors import router as connectors_router
 from src.api.routes.copilot import router as copilot_router
 from src.api.routes.data_onboarding import router as data_onboarding_router
+from src.api.routes.decision import router as decision_router
 from src.api.routes.demo_transition import router as demo_transition_router
 from src.api.routes.deployments import router as deployments_router
 from src.api.routes.devportal import router as devportal_router
@@ -80,6 +82,7 @@ from src.api.routes.public_query import router as public_query_router
 from src.api.routes.query import router as query_router
 from src.api.routes.releases import router as releases_router
 from src.api.routes.risk_center import router as risk_center_router
+from src.api.routes.runtime import router as runtime_router
 from src.api.routes.scim import router as scim_router
 from src.api.routes.share import router as share_router
 from src.api.routes.soc import router as soc_router
@@ -673,6 +676,9 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     from src.api.routes.cognitive import router as cognitive_router
 
     new_app.include_router(cognitive_router)
+    new_app.include_router(decision_router)
+    new_app.include_router(adaptive_router)
+    new_app.include_router(runtime_router)
 
     # -------------------------------------------------------------------------
     # MCP Server — montado como sub-app: TODOS los middleware de la API

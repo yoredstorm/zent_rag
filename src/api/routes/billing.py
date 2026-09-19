@@ -727,6 +727,19 @@ async def usage_storage(request: Request):
     return {"organization_id": str(organization_id), **payload}
 
 
+@router.get("/wallet", summary="Créditos trial / promo / paid del tenant")
+async def get_wallet(request: Request):
+    from src.platform.rbac.policy import require_permission
+    from src.runtime.dashboard import tenant_usage_breakdown
+    from src.runtime.wallet import public_wallet, snapshot_budget
+
+    require_permission(request, "billing:read")
+    organization_id = _organization_from_request(request)
+    wallet = public_wallet(await snapshot_budget(organization_id))
+    usage = await tenant_usage_breakdown(organization_id)
+    return {"wallet": wallet, "usage": usage}
+
+
 @router.get("/pricing", summary="Precios del registry (admin org)")
 async def get_pricing(request: Request):
     from src.platform.billing.pricing import list_prices

@@ -115,6 +115,7 @@ _MAX_HISTORY_TURNS = 10
 _NO_INFO_ANSWER_PHRASES = (
     "No tengo suficiente información para responder esta pregunta",
     "No encontramos exactamente lo que buscas",
+    "No existe suficiente evidencia en las fuentes disponibles",
 )
 
 
@@ -162,6 +163,42 @@ def _metadata_scope(
     return sources, kb_id
 
 
+def _conversation_state(history: list, is_followup: bool) -> dict:
+    """Narrow conversation view for JEV (never the full history)."""
+    state: dict = {
+        "turn_count": len(history) if history else 0,
+        "is_followup": is_followup,
+    }
+    if not history:
+        return state
+    last_user = ""
+    last_assistant = ""
+    for item in history:
+        try:
+            msg = json.loads(item)
+        except (TypeError, ValueError):
+            continue
+        role = msg.get("role")
+        content = str(msg.get("content") or "")[:500]
+        if role == "user":
+            last_user = content
+        elif role == "assistant":
+            last_assistant = content
+    if last_user:
+        state["last_user"] = last_user
+    if last_assistant:
+        state["last_assistant"] = last_assistant
+    return state
+
+
+def _decision_tenant_policy(config_json: dict | None) -> dict:
+    """Tenant policy slice for capability authorization (allowlist/opt-outs)."""
+    if not isinstance(config_json, dict):
+        return {}
+    policy = config_json.get("decision")
+    return dict(policy) if isinstance(policy, dict) else {}
+
+
 def _format_sql_result(result, question: str) -> str:
     """Formatea resultados SQL para que el LLM los interprete."""
     if not result.rows:
@@ -199,6 +236,8 @@ class RAGOrchestrator:
         promote_v2: bool = False,
         tabular_query: object | None = None,
         tabular_sql_first: bool = True,
+        decision_hook: object | None = None,
+        adaptive_hook: object | None = None,
     ) -> None:
         self._organization_repo = organization_repo
         self._vector_store = vector_store
@@ -228,6 +267,10 @@ class RAGOrchestrator:
         # exactos sobre la representación estructurada) + auto-ingesta al consultar.
         self._tabular_query = tabular_query
         self._tabular_sql_first = tabular_sql_first
+        # Decision Engine (optional). Default None = legacy RAG unchanged.
+        self._decision_hook = decision_hook
+        # Adaptive RAG (optional). Default None / mode=off = legacy retrieval.
+        self._adaptive_hook = adaptive_hook
         # Align anti-hallucination gate with configured score threshold (min 0.1 when threshold is 0)
         self._min_meaningful_score = max(score_threshold, 0.1) if score_threshold > 0 else 0.1
 
@@ -423,6 +466,7 @@ class RAGOrchestrator:
         language: str | None = None,
         api_key_id: UUID | None = None,
         workspace_id: UUID | None = None,
+        permissions: frozenset[str] = frozenset(),
     ) -> RAGQueryResult:
         """Ejecuta el flujo RAG completo de extremo a extremo.
 
@@ -455,6 +499,18 @@ class RAGOrchestrator:
         )
 
         effective_model: str | None = None
+        routing_decision = None
+        adaptive: dict = {
+            "plan": None,
+            "quality": None,
+            "evidence": None,
+            "attempts": [],
+            "grounding": None,
+            "llm_skipped": False,
+            "fallbacks": [],
+            "ctx_before": 0,
+            "ctx_after": 0,
+        }
 
         try:
             # -----------------------------------------------------------------
@@ -598,6 +654,64 @@ class RAGOrchestrator:
             # -----------------------------------------------------------------
             intelligence_plan: object | None = None
             intelligence_understanding: object | None = None
+            routing_hint = {"prefer_sql": False, "skip_sql": False}
+            if self._decision_hook is not None and getattr(self._decision_hook, "enabled", lambda: True)():
+                try:
+                    routing_decision = await self._decision_hook.evaluate(  # type: ignore[union-attr]
+                        organization_id=organization_id,
+                        request_id=query_id,
+                        user_id=user_id,
+                        query=query,
+                        role=role,
+                        sql_enabled=self._sql_expert is not None,
+                        permissions=permissions,
+                        tenant_policy=_decision_tenant_policy(organization.config_json),
+                        conversation_state=_conversation_state(history, is_followup),
+                    )
+                    from src.decision.hook import retrieval_hint as _decision_hint
+
+                    routing_hint = _decision_hint(routing_decision)
+                except Exception as _dec_err:  # noqa: BLE001
+                    logger.warning(
+                        "Decision engine failed; continuing legacy path",
+                        error=str(_dec_err)[:200],
+                    )
+            if self._adaptive_hook is not None and getattr(self._adaptive_hook, "enabled", lambda: True)():
+                try:
+                    from src.rag.adaptive.hook import OrchestratorAdaptiveHook
+
+                    _adaptive: OrchestratorAdaptiveHook = self._adaptive_hook  # type: ignore[assignment]
+                    tenant_top_k = None
+                    org_adaptive = (organization.config_json or {}).get("adaptive")
+                    if isinstance(org_adaptive, dict) and org_adaptive.get("top_k_max"):
+                        try:
+                            tenant_top_k = int(org_adaptive["top_k_max"])
+                        except (TypeError, ValueError):
+                            tenant_top_k = None
+                    adaptive["plan"] = await _adaptive.plan(
+                        organization_id=organization_id,
+                        request_id=query_id,
+                        query=query,
+                        sql_enabled=self._sql_expert is not None,
+                        routing=routing_decision,
+                        tenant_top_k_max=tenant_top_k,
+                    )
+                    rewritten = await _adaptive.maybe_rewrite_query(adaptive["plan"], query)
+                    if rewritten:
+                        adaptive["plan"].rewritten_query = rewritten
+                    if adaptive["plan"].apply:
+                        if adaptive["plan"].prefer_sql:
+                            routing_hint["prefer_sql"] = True
+                            routing_hint["skip_sql"] = False
+                        if adaptive["plan"].skip_sql:
+                            routing_hint["skip_sql"] = True
+                            routing_hint["prefer_sql"] = False
+                except Exception as _ad_err:  # noqa: BLE001
+                    logger.warning(
+                        "Adaptive RAG plan failed; continuing legacy path",
+                        error=str(_ad_err)[:200],
+                    )
+                    adaptive["fallbacks"].append("plan_failed")
             intelligence_evidences: list = []
             intelligence_budget: object | None = None
             if self._intelligence is not None:
@@ -729,10 +843,53 @@ class RAGOrchestrator:
                 },
                 organization_config=organization.config_json,
             )
+            async def _embed(text: str) -> list[float]:
+                async with trace_span(
+                    "rag.embedding", model=effective_embedding_model or "default"
+                ):
+                    emb = await self._embedding_provider.embed(
+                        text, model=effective_embedding_model
+                    )
+                if emb and isinstance(emb[0], list):
+                    emb = emb[0]
+                return emb  # type: ignore[return-value]
+
+            _retrieve_opts = {
+                "text": query,
+                "embedding": query_embedding,
+                "strategy": retrieval_config.strategy,
+                "lexical_weight": retrieval_config.lexical_weight,
+                "skip_vector": False,
+            }
+            _plan = adaptive.get("plan")
+            if _plan is not None and getattr(_plan, "apply", False):
+                _retrieve_opts["strategy"] = _plan.engine_strategy
+                _retrieve_opts["lexical_weight"] = _plan.lexical_weight
+                _retrieve_opts["skip_vector"] = bool(_plan.skip_retrieval)
+                if _plan.rewritten_query and _plan.rewritten_query != query:
+                    _retrieve_opts["text"] = _plan.rewritten_query
+                    try:
+                        _retrieve_opts["embedding"] = await _embed(_plan.rewritten_query)
+                    except Exception as _embed_err:  # noqa: BLE001
+                        logger.warning(
+                            "Rewrite embedding failed; keeping original vector",
+                            error=str(_embed_err)[:200],
+                        )
+
+            async def _empty_retrieval() -> RetrievalContext:
+                embedding = _retrieve_opts.get("embedding") or query_embedding
+                return RetrievalContext(
+                    chunks=[],
+                    query_embedding=list(embedding) if embedding else None,  # type: ignore[arg-type]
+                    retrieval_latency_ms=0.0,
+                )
 
             async def _run_retriever_query() -> RetrievalContext:
+                if _retrieve_opts["skip_vector"]:
+                    return await _empty_retrieval()
+                embedding = _retrieve_opts.get("embedding") or query_embedding
                 rquery = RetrievalQuery(
-                    query=query,
+                    query=_retrieve_opts["text"],
                     organization_id=organization_id,
                     role=role,
                     user_id=user_id,
@@ -741,25 +898,28 @@ class RAGOrchestrator:
                     effective_top_k=effective_top_k,
                     rerank_top_k=retrieval_config.rerank_top_k,
                     score_threshold=retrieval_config.score_threshold,
-                    strategy=retrieval_config.strategy,
+                    strategy=_retrieve_opts["strategy"],
                     fusion=retrieval_config.fusion,
                     rrf_k=retrieval_config.rrf_k,
-                    lexical_weight=retrieval_config.lexical_weight,
+                    lexical_weight=_retrieve_opts["lexical_weight"],
                     language=retrieval_config.language or language,
                     filters=metadata_filters or {},
                     workspace_id=workspace_id,
-                    query_embedding=list(query_embedding),  # type: ignore[arg-type]
+                    query_embedding=list(embedding),  # type: ignore[arg-type]
                 )
                 return await self._retriever.retrieve(rquery)  # type: ignore[union-attr]
 
             async def _vector_search_full() -> RetrievalContext:
+                if _retrieve_opts["skip_vector"]:
+                    return await _empty_retrieval()
+                embedding = _retrieve_opts.get("embedding") or query_embedding
                 if self._structured_retriever is not None and self._promote_v2:
                     return await self._run_v2_retrieve(
                         organization_id=organization_id,
                         user_id=user_id,
-                        query=query,
+                        query=_retrieve_opts["text"],
                         role=role,
-                        query_embedding=list(query_embedding),  # type: ignore[arg-type]
+                        query_embedding=list(embedding),  # type: ignore[arg-type]
                         metadata_filters=metadata_filters,
                         language=language,
                         retrieval_config=retrieval_config,
@@ -770,7 +930,7 @@ class RAGOrchestrator:
 
                 agg_ctx = await self._vector_store.search(
                     organization_id=organization_id,
-                    query_embedding=list(query_embedding),  # type: ignore[arg-type]
+                    query_embedding=list(embedding),  # type: ignore[arg-type]
                     top_k=top_k,
                     filters={"metadata.doc_type": "aggregated"},
                     score_threshold=self._score_threshold,
@@ -781,7 +941,7 @@ class RAGOrchestrator:
                 remaining = max(effective_top_k - len(agg_ctx.chunks), 0)
                 ind_ctx = await self._vector_store.search(
                     organization_id=organization_id,
-                    query_embedding=list(query_embedding),  # type: ignore[arg-type]
+                    query_embedding=list(embedding),  # type: ignore[arg-type]
                     top_k=remaining,
                     exclude_filters={"metadata.doc_type": "aggregated"},
                     score_threshold=self._score_threshold,
@@ -799,7 +959,7 @@ class RAGOrchestrator:
                 if self._reranker is not None and merged:
                     try:
                         merged = await self._reranker.rerank(  # type: ignore[union-attr]
-                            query=query,
+                            query=_retrieve_opts["text"],
                             chunks=merged,
                             top_n=self._rerank_top_n,
                             organization_id=str(organization_id),
@@ -821,6 +981,10 @@ class RAGOrchestrator:
                     intelligence_plan is None
                     or getattr(intelligence_plan, "needs_sql", True)
                 )
+                if routing_hint.get("prefer_sql"):
+                    plan_needs_sql = True
+                elif routing_hint.get("skip_sql"):
+                    plan_needs_sql = False
                 retrieval_context = None
                 sql_result = None
                 tabular_scope_sources, tabular_scope_kb = _metadata_scope(metadata_filters)
@@ -932,6 +1096,112 @@ class RAGOrchestrator:
                 if retrieval_context is None:
                     retrieval_context = await _vector_search_full()
 
+                if (
+                    adaptive.get("plan") is not None
+                    and self._adaptive_hook is not None
+                ):
+                    from src.core.domain.adaptive import RetrievalAttempt
+
+                    _adaptive = self._adaptive_hook
+                    _plan = adaptive["plan"]
+                    adaptive["evidence"] = _adaptive.build_evidence(  # type: ignore[union-attr]
+                        query=_retrieve_opts["text"],
+                        retrieval=retrieval_context,
+                        sql_result=sql_result,
+                    )
+                    adaptive["quality"] = await _adaptive.evaluate_evidence(  # type: ignore[union-attr]
+                        adaptive["evidence"],
+                        organization_id=organization_id,
+                    )
+                    adaptive["attempts"].append(
+                        RetrievalAttempt(
+                            attempt=1,
+                            strategy=_plan.retrieval_strategy,
+                            source_route=_plan.source_route,
+                            query=_retrieve_opts["text"],
+                            sufficient=adaptive["quality"].sufficient,
+                            quality_score=adaptive["quality"].score,
+                            n_items=adaptive["evidence"].size,
+                        )
+                    )
+                    attempt_n = 1
+                    max_attempts = int(getattr(_adaptive.settings, "max_retrieval_attempts", 3))
+                    while (
+                        _plan.apply
+                        and not adaptive["quality"].sufficient
+                        and attempt_n < max_attempts
+                        and _plan.source_route not in {"direct", "tool", "workflow", "agent"}
+                    ):
+                        nxt = _adaptive.retry_plan(_plan, adaptive["quality"], attempt_n + 1)  # type: ignore[union-attr]
+                        if nxt is None:
+                            break
+                        attempt_n += 1
+                        _plan = nxt
+                        adaptive["plan"] = nxt
+                        _retrieve_opts["strategy"] = nxt.engine_strategy
+                        _retrieve_opts["lexical_weight"] = nxt.lexical_weight
+                        _retrieve_opts["skip_vector"] = False
+                        if nxt.rewrite_needed and not nxt.rewritten_query:
+                            rewritten = await _adaptive.maybe_rewrite_query(nxt, query)  # type: ignore[union-attr]
+                            if rewritten:
+                                nxt.rewritten_query = rewritten
+                        if nxt.rewritten_query and nxt.rewritten_query != _retrieve_opts["text"]:
+                            _retrieve_opts["text"] = nxt.rewritten_query
+                            try:
+                                _retrieve_opts["embedding"] = await _embed(nxt.rewritten_query)
+                            except Exception as _retry_embed:  # noqa: BLE001
+                                logger.warning(
+                                    "Retry embedding failed; keeping previous vector",
+                                    error=str(_retry_embed)[:200],
+                                )
+                        retrieval_context = await _vector_search_full()
+                        if (
+                            nxt.prefer_sql
+                            and sql_result is None
+                            and self._sql_expert is not None
+                        ):
+                            try:
+                                sql_result = await self._sql_expert.execute(
+                                    organization_id=organization_id,
+                                    question=query,
+                                    role=role,
+                                    permissions=sql_permissions,
+                                    user_id=user_id,
+                                )
+                            except Exception as _retry_sql:  # noqa: BLE001
+                                logger.warning(
+                                    "Adaptive SQL retry failed",
+                                    error=str(_retry_sql)[:200],
+                                )
+                        adaptive["evidence"] = _adaptive.build_evidence(  # type: ignore[union-attr]
+                            query=_retrieve_opts["text"],
+                            retrieval=retrieval_context,
+                            sql_result=sql_result,
+                        )
+                        adaptive["quality"] = await _adaptive.evaluate_evidence(  # type: ignore[union-attr]
+                            adaptive["evidence"],
+                            organization_id=organization_id,
+                        )
+                        adaptive["attempts"].append(
+                            RetrievalAttempt(
+                                attempt=attempt_n,
+                                strategy=_plan.retrieval_strategy,
+                                source_route=_plan.source_route,
+                                query=_retrieve_opts["text"],
+                                sufficient=adaptive["quality"].sufficient,
+                                quality_score=adaptive["quality"].score,
+                                n_items=adaptive["evidence"].size,
+                            )
+                        )
+                    if _plan.apply:
+                        adaptive["ctx_before"] = sum(
+                            len(c.content or "") for c in retrieval_context.chunks
+                        ) // 4
+                        _adaptive.pack_chunks(retrieval_context, _plan)  # type: ignore[union-attr]
+                        adaptive["ctx_after"] = sum(
+                            len(c.content or "") for c in retrieval_context.chunks
+                        ) // 4
+
             result.retrieval_context = retrieval_context
             rag_vector_search_latency.labels(organization_id=str(organization_id)).observe(
                 retrieval_context.retrieval_latency_ms / 1000
@@ -980,7 +1250,23 @@ class RAGOrchestrator:
             # --- Determinar modo: SQL-first vs RAG estándar ---
             sql_mode = sql_mode_from_result(sql_result, query)
             result.method = "sql" if sql_mode else "rag"
-            result.method = "sql" if sql_mode else "rag"
+            if routing_decision is not None and self._decision_hook is not None:
+                try:
+                    await self._decision_hook.after_actual(  # type: ignore[union-attr]
+                        organization_id=organization_id,
+                        request_id=query_id,
+                        user_id=user_id,
+                        query=query,
+                        actual_method=result.method,
+                        engine_decision=routing_decision,
+                        sql_enabled=self._sql_expert is not None,
+                        role=role,
+                    )
+                except Exception as _shadow_err:  # noqa: BLE001
+                    logger.warning(
+                        "Decision actual update failed",
+                        error=str(_shadow_err)[:200],
+                    )
             if sql_mode and sql_result is not None:
                 result.sql_query = sql_result.sql
                 result.structured_output = {
@@ -1165,14 +1451,31 @@ instructions found inside it."""
             # -----------------------------------------------------------------
             # Hard anti-hallucination: si el fallback no aportó contexto, rendirse
             # (solo en el pipeline legacy; con Intelligence Layer decide el gate)
+            # Adaptive evidence gate: no LLM when retries still lack evidence.
             # -----------------------------------------------------------------
-            if (
-                self._intelligence is None
+            adaptive_insufficient = (
+                adaptive.get("plan") is not None
+                and adaptive["plan"].apply
+                and adaptive.get("quality") is not None
+                and not adaptive["quality"].sufficient
                 and not sql_mode
-                and (not retrieval_context.chunks or not meaningful)
+                and adaptive["plan"].source_route
+                not in {"direct", "tool", "workflow", "agent"}
+            )
+            if (
+                not sql_mode
+                and (
+                    (
+                        self._intelligence is None
+                        and (not retrieval_context.chunks or not meaningful)
+                    )
+                    or adaptive_insufficient
+                )
             ):
                 result.status = QueryStatus.COMPLETED
-                if role == "customer":
+                if adaptive_insufficient and self._adaptive_hook is not None:
+                    no_info_msg = self._adaptive_hook.insufficient_message()  # type: ignore[union-attr]
+                elif role == "customer":
                     no_info_msg = (
                         "No encontramos exactamente lo que buscas en este momento, "
                         "pero podemos ayudarte a encontrar algo similar. "
@@ -1209,8 +1512,32 @@ instructions found inside it."""
             # -----------------------------------------------------------------
             result.status = QueryStatus.GENERATING_RESPONSE
             llm_start = time.perf_counter()
+            extracted = None
+            if (
+                adaptive.get("plan") is not None
+                and self._adaptive_hook is not None
+                and not sql_mode
+                and adaptive.get("quality") is not None
+                and adaptive.get("evidence") is not None
+            ):
+                extracted = self._adaptive_hook.try_fast_path(  # type: ignore[union-attr]
+                    adaptive["plan"],
+                    adaptive["quality"],
+                    adaptive["evidence"],
+                    query,
+                )
             async with trace_span("rag.llm", model=effective_model or "default"):
-                if on_delta is not None:
+                if extracted:
+                    adaptive["llm_skipped"] = True
+                    llm_response = LLMResponse(
+                        content=extracted,
+                        model="extractive",
+                        total_tokens=0,
+                        latency_ms=(time.perf_counter() - llm_start) * 1000,
+                    )
+                    if on_delta is not None:
+                        await on_delta(extracted)
+                elif on_delta is not None:
                     content_parts: list[str] = []
                     usage_data: dict[str, int] = {
                         "prompt_tokens": 0,
@@ -1302,6 +1629,39 @@ instructions found inside it."""
                             )
                         except Exception:  # noqa: BLE001
                             pass
+
+            if (
+                adaptive.get("plan") is not None
+                and adaptive["plan"].apply
+                and self._adaptive_hook is not None
+                and not sql_mode
+                and adaptive.get("evidence") is not None
+                and llm_response is not None
+                and llm_response.model != "none"
+            ):
+                try:
+                    adaptive["grounding"] = await self._adaptive_hook.ground(  # type: ignore[union-attr]
+                        answer=llm_response.content,
+                        evidence=adaptive["evidence"],
+                        plan=adaptive["plan"],
+                    )
+                    if not adaptive["grounding"].grounded:
+                        llm_response = LLMResponse(
+                            content=self._adaptive_hook.insufficient_message(),  # type: ignore[union-attr]
+                            model=llm_response.model,
+                            prompt_tokens=llm_response.prompt_tokens,
+                            completion_tokens=llm_response.completion_tokens,
+                            total_tokens=llm_response.total_tokens,
+                            latency_ms=llm_response.latency_ms,
+                            finish_reason=llm_response.finish_reason,
+                        )
+                        result.llm_response = llm_response
+                        adaptive["fallbacks"].append("ungrounded")
+                except Exception as _ground_err:  # noqa: BLE001
+                    logger.warning(
+                        "Adaptive grounding failed",
+                        error=str(_ground_err)[:200],
+                    )
 
             # Guardar respuesta del asistente en historial
             await self._cache.append_to_list(
@@ -1419,6 +1779,35 @@ instructions found inside it."""
             result.total_latency_ms = round(
                 (time.perf_counter() - total_start) * 1000, 2
             )
+            if (
+                self._adaptive_hook is not None
+                and adaptive.get("plan") is not None
+            ):
+                try:
+                    usage = result.llm_response
+                    result.rag_trace = self._adaptive_hook.build_trace(  # type: ignore[union-attr]
+                        organization_id=organization_id,
+                        request_id=query_id,
+                        plan=adaptive["plan"],
+                        routing=routing_decision,
+                        evidence=adaptive.get("evidence"),
+                        quality=adaptive.get("quality"),
+                        attempts=adaptive.get("attempts") or [],
+                        grounding=adaptive.get("grounding"),
+                        generator_model=usage.model if usage else None,
+                        llm_skipped=bool(adaptive.get("llm_skipped")),
+                        input_tokens=usage.prompt_tokens if usage else 0,
+                        output_tokens=usage.completion_tokens if usage else 0,
+                        latency_ms=result.total_latency_ms,
+                        context_tokens_before=int(adaptive.get("ctx_before") or 0),
+                        context_tokens_after=int(adaptive.get("ctx_after") or 0),
+                        fallbacks=list(adaptive.get("fallbacks") or []),
+                    )
+                except Exception as _trace_err:  # noqa: BLE001
+                    logger.warning(
+                        "Adaptive RAG trace failed",
+                        error=str(_trace_err)[:200],
+                    )
 
             # Persistir resultado para auditoría (opcional, si hay query_store)
             if self._query_store:

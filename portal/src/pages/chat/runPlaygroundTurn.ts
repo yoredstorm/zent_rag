@@ -17,6 +17,7 @@ export type PlaygroundTurnResult = {
   latencyMs?: number;
   stopped?: boolean;
   error?: string;
+  ragTrace?: Record<string, unknown> | null;
 };
 
 export type StreamHooks = {
@@ -99,6 +100,7 @@ export async function runKnowledgeTurn(input: {
   let conversationId = input.conversationId ?? "";
   let latencyMs = 0;
   let sawMeta = false;
+  let ragTrace: Record<string, unknown> | null = null;
 
   await readSse(
     res,
@@ -138,10 +140,12 @@ export async function runKnowledgeTurn(input: {
           conversation_id: string;
           query_id: string;
           latency_ms: number;
+          rag_trace?: Record<string, unknown> | null;
         };
         queryId = payload.query_id;
         conversationId = payload.conversation_id;
         latencyMs = payload.latency_ms ?? 0;
+        ragTrace = payload.rag_trace ?? null;
       } else if (event === "error") {
         throw new Error((JSON.parse(data) as { message: string }).message);
       }
@@ -161,6 +165,7 @@ export async function runKnowledgeTurn(input: {
     queryId,
     conversationId,
     latencyMs,
+    ragTrace,
   };
 }
 

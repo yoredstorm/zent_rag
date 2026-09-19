@@ -2330,6 +2330,105 @@ async def _exec_condition(rctx: NodeContext) -> NodeOutcome:
     return NodeOutcome(output={"condition": f"{field} {operator} {value}", "result": result})
 
 
+async def _exec_ai_decision(rctx: NodeContext) -> NodeOutcome:
+    from src.runtime.ai_decision import (
+        LOW_HUMAN,
+        LOW_LLM,
+        LOW_STOP,
+        apply_low_confidence,
+        interpret,
+        parse_config,
+        questions_for,
+        to_output,
+    )
+
+    config = parse_config(rctx.node.config)
+    if rctx.simulate:
+        outcome = interpret(config, None)
+        return NodeOutcome(
+            simulated=True,
+            planned={"kind": config.kind, "question": config.question},
+            output={**to_output(outcome), "simulated": True},
+            contribution=_ai_decision_contribution(rctx, outcome),
+        )
+    payload = None
+    try:
+        from src.decision.service import get_decision_engine
+
+        engine = get_decision_engine()
+        state = {
+            "user_request": config.question,
+            "trigger": {k: str(v)[:120] for k, v in list((rctx.trigger or {}).items())[:8]},
+            "evidence_preview": [],
+        }
+        payload = await engine.judge(state=state, questions=questions_for(config))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ai_decision judge failed", error=str(exc)[:200])
+        payload = None
+    from src.core.config import get_settings
+
+    settings = get_settings()
+    outcome = interpret(config, payload, noul_yes=settings.DECISION_NOUL_YES)
+    outcome = apply_low_confidence(outcome, config)
+    output = to_output(outcome)
+    if outcome.low_confidence and outcome.on_low_confidence == LOW_STOP:
+        return NodeOutcome(
+            output=output,
+            control="stop_fail",
+            contribution=_ai_decision_contribution(rctx, outcome),
+        )
+    if outcome.low_confidence and outcome.on_low_confidence == LOW_HUMAN:
+        action = config.question or "Revisión humana de una decisión de IA"
+        approval_id = await _create_approval(
+            rctx.execution,
+            rctx.node_id,
+            action,
+            f"confidence={outcome.confidence:.2f} choice={outcome.choice}",
+            rctx.execution.actor_id,
+            1440,
+            context=_approval_context_snapshot(rctx),
+        )
+        output["approval_id"] = str(approval_id)
+        output["status"] = "pending"
+        return NodeOutcome(
+            output=output,
+            control="wait_approval",
+            contribution=_ai_decision_contribution(rctx, outcome),
+        )
+    if outcome.low_confidence and outcome.on_low_confidence == LOW_LLM:
+        output["needs_llm"] = True
+    return NodeOutcome(output=output, contribution=_ai_decision_contribution(rctx, outcome))
+
+
+def _ai_decision_contribution(rctx: NodeContext, outcome) -> NodeContribution:
+    decision_result = DecisionResult(
+        decision=outcome.choice,
+        status="low_confidence" if outcome.low_confidence else "ok",
+        confidence=outcome.confidence,
+        reasons=(outcome.question,),
+        requires_review=outcome.low_confidence and outcome.on_low_confidence == "human_review",
+        details={"route": outcome.route, "provider": outcome.provider},
+    )
+    return NodeContribution(
+        writes=(
+            ContextWrite(
+                section="decisions",
+                key=rctx.node_id,
+                value={
+                    "decision": outcome.choice,
+                    "confidence": outcome.confidence,
+                    "decision_result": decision_result.to_dict(),
+                },
+                value_type="decision",
+                label=str(rctx.node.label or "Decisión de IA"),
+                provenance=node_provenance(
+                    rctx.node_id, "ai_decision", origin_kind="node", workspace_id=rctx.workspace_id
+                ),
+            ),
+        )
+    )
+
+
 def _resolve_condition_field(field: str, rctx: NodeContext) -> Any:
     """Resuelve el campo de una condición: referencias estables, trigger, legacy
     steps.N y literales. Antes, `{{nodes...}}` no se resolvía y comparaba el
@@ -3374,6 +3473,18 @@ def _register_defaults() -> None:
         outputs={"out": {"type": "boolean"}, "then": {"type": "json"}, "else": {"type": "json"}},
         execute=_exec_condition,
         **semantic_metadata("condition"),
+    )
+    registry.register(
+        "ai_decision",
+        version=1,
+        label="Decisión de IA",
+        category="ai",
+        risk_level="normal",
+        capabilities=frozenset({IS_LOGIC}),
+        inputs={"in": {"type": "json"}},
+        outputs={"out": {"type": "json"}, "then": {"type": "json"}, "else": {"type": "json"}},
+        execute=_exec_ai_decision,
+        **semantic_metadata("ai_decision"),
     )
     registry.register(
         "for_each",

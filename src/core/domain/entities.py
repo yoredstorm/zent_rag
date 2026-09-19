@@ -439,6 +439,7 @@ class RAGQueryResult:
     # Zent Intelligence Layer (Answerability Engine) — opcional, backward compatible.
     answerability: AnswerabilityDecision | None = None
     trace_id: str | None = None
+    rag_trace: dict | None = None
 
 
 # -----------------------------------------------------------------------------

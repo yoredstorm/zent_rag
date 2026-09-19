@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -20,6 +20,7 @@ from src.api.schemas import RAGQueryRequest, RAGQueryResponse, sources_for_clien
 from src.api.security import (
     ORG_HEADER_DESCRIPTION,
     USER_HEADER_DESCRIPTION,
+    decision_permissions,
 )
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.observability.metrics import (
@@ -99,6 +100,144 @@ def _record_metrics(result, organization_id: UUID) -> None:
         ).inc(result.llm_response.total_tokens)
 
 
+def _has_dispatch_target(body: RAGQueryRequest) -> bool:
+    """Explicit agent/workflow/tool target present in the request."""
+    return bool(body.agent_id or body.workflow_id or body.tool)
+
+
+async def _organization_config(organization_id: UUID) -> dict:
+    try:
+        from src.api.deps import get_organization_repo
+
+        org = await get_organization_repo().get_by_id(organization_id)
+        return dict(getattr(org, "config_json", None) or {})
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+async def _maybe_dispatch(
+    request: Request,
+    body: RAGQueryRequest,
+    *,
+    organization_id: UUID,
+    user_id: UUID,
+    role: str,
+    workspace_id: UUID | None,
+):
+    """Run an explicit capability target through the Decision Engine dispatcher.
+
+    Returns a RAGQueryResult when the target was executed, or None to fall
+    back to the RAG flow. Raises HTTPException for denied/needs-target.
+    """
+    if not _has_dispatch_target(body):
+        return None
+    from src.api.deps import get_capability_dispatcher, get_decision_hook
+    from src.core.domain.entities import LLMResponse, QueryStatus, RAGQueryResult
+    from src.runtime.dispatcher import DispatchRequest
+
+    permissions = decision_permissions(request)
+    decision_request_id = uuid4()
+    hook = get_decision_hook()
+    decision = await hook.evaluate(
+        organization_id=organization_id,
+        request_id=decision_request_id,
+        user_id=user_id,
+        query=body.query,
+        role=role,
+        sql_enabled=True,
+        permissions=permissions,
+        include_advisory=True,
+        conversation_state={"turn_count": 0, "is_followup": False},
+        explicit_agent_id=str(body.agent_id) if body.agent_id else None,
+        explicit_workflow_id=str(body.workflow_id) if body.workflow_id else None,
+        explicit_tool=body.tool,
+    )
+    if decision.metadata.get("authorization_denied"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Capability not permitted: {decision.metadata.get('denied_capability')}",
+        )
+    dispatcher = get_capability_dispatcher()
+    if not decision.resolved or not dispatcher.can_dispatch(decision.capability):
+        return None
+    dispatched = await dispatcher.dispatch(
+        decision,
+        DispatchRequest(
+            organization_id=organization_id,
+            user_id=user_id,
+            role=role,
+            permissions=permissions,
+            query=body.query,
+            conversation_id=body.conversation_id,
+            workspace_id=workspace_id,
+            agent_id=body.agent_id,
+            workflow_id=body.workflow_id,
+            run_id=body.run_id,
+            tool=body.tool,
+            tool_arguments=dict(body.tool_arguments or {}),
+            org_config=await _organization_config(organization_id),
+            api_key_id=_token_id(request),
+            trace_id=request.headers.get("X-Trace-Id"),
+        ),
+    )
+    if dispatched.status == "needs_target":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=dispatched.error or "missing target",
+        )
+    if dispatched.status == "denied":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=dispatched.error or "permission denied",
+        )
+    if dispatched.status == "unavailable":
+        return None
+
+    method = str(dispatched.data.get("method") or dispatched.handler or "runtime")
+    try:
+        await hook.after_actual(
+            organization_id=organization_id,
+            request_id=decision_request_id,
+            user_id=user_id,
+            query=body.query,
+            actual_method=method,
+            actual_capability=dispatched.capability,
+            engine_decision=decision,
+            sql_enabled=True,
+            role=role,
+        )
+    except Exception:  # noqa: BLE001 — trace ground truth is best-effort
+        pass
+    result = RAGQueryResult(
+        query_id=uuid4(),
+        organization_id=organization_id,
+        user_id=user_id,
+        query=body.query,
+        conversation_id=body.conversation_id or uuid4(),
+        role=role,
+        status=QueryStatus.COMPLETED if dispatched.completed else QueryStatus.FAILED,
+        llm_response=LLMResponse(
+            content=dispatched.answer or "",
+            model=str(dispatched.data.get("model") or dispatched.handler or method),
+            total_tokens=int(dispatched.tokens or 0),
+            latency_ms=dispatched.latency_ms,
+        ),
+        total_latency_ms=dispatched.latency_ms,
+        method=method,
+        error_message=dispatched.error,
+        trace_id=request.headers.get("X-Trace-Id"),
+        rag_trace={
+            "dispatch": {
+                "capability": dispatched.capability,
+                "handler": dispatched.handler,
+                "status": dispatched.status,
+                "run_id": dispatched.run_id,
+            }
+        },
+    )
+    return result
+
+
 @router.post(
     "/rag/query",
     response_model=RAGQueryResponse,
@@ -171,24 +310,36 @@ async def rag_query(
     rag_active_requests.labels(organization_id=str(organization_id)).inc()
 
     try:
-        result = await orchestrator.execute(
+        result = await _maybe_dispatch(
+            request,
+            body,
             organization_id=organization_id,
             user_id=user_id,
-            query=body.query,
-            model=body.model,
-            max_tokens=body.max_tokens,
-            temperature=body.temperature,
-            top_k=body.top_k,
-            conversation_id=body.conversation_id,
             role=role,
-            metadata_filters=body.metadata_filters,
-            rerank_top_k=body.rerank_top_k,
-            score_threshold_override=body.score_threshold,
-            retrieval_strategy=body.retrieval_strategy,
-            language=body.language,
-            api_key_id=_token_id(request),
             workspace_id=workspace_id,
         )
+        if result is None:
+            result = await orchestrator.execute(
+                organization_id=organization_id,
+                user_id=user_id,
+                query=body.query,
+                model=body.model,
+                max_tokens=body.max_tokens,
+                temperature=body.temperature,
+                top_k=body.top_k,
+                conversation_id=body.conversation_id,
+                role=role,
+                metadata_filters=body.metadata_filters,
+                rerank_top_k=body.rerank_top_k,
+                score_threshold_override=body.score_threshold,
+                retrieval_strategy=body.retrieval_strategy,
+                language=body.language,
+                api_key_id=_token_id(request),
+                workspace_id=workspace_id,
+                permissions=decision_permissions(request),
+            )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error(
             "Unhandled exception in RAG query",
@@ -266,6 +417,7 @@ async def rag_query(
         lazy_ingested=bool(getattr(result, "lazy_ingested", False)),
         answerability=_answerability_for_client(result),
         trace_id=getattr(result, "trace_id", None),
+        rag_trace=getattr(result, "rag_trace", None),
     )
 
 
@@ -349,25 +501,35 @@ async def rag_query_stream(
         """Ejecuta el flujo RAG completo y encola eventos finales."""
         rag_active_requests.labels(organization_id=str(organization_id)).inc()
         try:
-            result = await orchestrator.execute(
+            result = await _maybe_dispatch(
+                request,
+                body,
                 organization_id=organization_id,
                 user_id=user_id,
-                query=body.query,
-                model=body.model,
-                max_tokens=body.max_tokens,
-                temperature=body.temperature,
-                top_k=body.top_k,
-                conversation_id=body.conversation_id,
                 role=role,
-                on_delta=on_delta,
-                metadata_filters=body.metadata_filters,
-                rerank_top_k=body.rerank_top_k,
-                score_threshold_override=body.score_threshold,
-                retrieval_strategy=body.retrieval_strategy,
-                language=body.language,
-                api_key_id=_token_id(request),
                 workspace_id=workspace_id,
             )
+            if result is None:
+                result = await orchestrator.execute(
+                    organization_id=organization_id,
+                    user_id=user_id,
+                    query=body.query,
+                    model=body.model,
+                    max_tokens=body.max_tokens,
+                    temperature=body.temperature,
+                    top_k=body.top_k,
+                    conversation_id=body.conversation_id,
+                    role=role,
+                    on_delta=on_delta,
+                    metadata_filters=body.metadata_filters,
+                    rerank_top_k=body.rerank_top_k,
+                    score_threshold_override=body.score_threshold,
+                    retrieval_strategy=body.retrieval_strategy,
+                    language=body.language,
+                    api_key_id=_token_id(request),
+                    workspace_id=workspace_id,
+                    permissions=decision_permissions(request),
+                )
             _record_metrics(result, organization_id)
 
             if result.status == "failed":
@@ -422,8 +584,13 @@ async def rag_query_stream(
                         "latency_ms": result.total_latency_ms,
                         "answerability": _answerability_for_client(result),
                         "trace_id": getattr(result, "trace_id", None),
+                        "rag_trace": getattr(result, "rag_trace", None),
                     },
                 )
+            )
+        except HTTPException as exc:
+            await queue.put(
+                ("error", {"message": exc.detail, "status": exc.status_code})
             )
         except Exception as exc:
             logger.error(

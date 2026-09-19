@@ -738,9 +738,14 @@ class AgentRuntime:
     ) -> None:
         effective_tools = _effective_tools(request.agent)
         allowed_tools = resolve_allowed_tools(effective_tools, ctx)
-        tool_descriptions = "\n".join(
-            f"- {t.name}: {t.description}" for t in allowed_tools
-        ) or "(no tools available)"
+        settings = get_settings()
+
+        def _describe_tools(tools) -> str:
+            return "\n".join(
+                f"- {t.name}: {t.description}" for t in tools
+            ) or "(no tools available)"
+
+        tool_descriptions = _describe_tools(allowed_tools)
 
         agent_instructions = compose_agent_instructions(request.agent)
         system = _SYSTEM_TEMPLATE.format(
@@ -762,6 +767,28 @@ class AgentRuntime:
         from src.platform.billing.pricing import estimate_cost
 
         for step_index in range(max_steps):
+            from src.runtime.tool_routing import routing_enabled, select_relevant_tools
+
+            if routing_enabled(settings):
+                try:
+                    from src.decision.service import get_decision_engine
+
+                    prompt_tools, routing_meta = await select_relevant_tools(
+                        allowed_tools,
+                        engine=get_decision_engine(),
+                        user_request=request.message,
+                        history=history,
+                        noul_yes=settings.DECISION_NOUL_YES,
+                    )
+                    tool_descriptions = _describe_tools(prompt_tools)
+                    system = _SYSTEM_TEMPLATE.format(
+                        tools=tool_descriptions,
+                        agent_instructions=agent_instructions,
+                    )
+                    result.steps.append({"type": "tool_routing", **routing_meta})
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("tool routing skipped", error=str(exc)[:200])
+
             prompt = (
                 system
                 + "\n"
@@ -1032,6 +1059,28 @@ class AgentRuntime:
             if tool_result.meta:
                 step_record["meta"] = tool_result.meta
             result.steps.append(step_record)
+
+            from src.runtime.termination import gate_enabled, original_request_satisfied
+
+            if gate_enabled(settings) and not tool_result.error:
+                try:
+                    from src.decision.service import get_decision_engine
+
+                    gate = await original_request_satisfied(
+                        engine=get_decision_engine(),
+                        user_request=request.message,
+                        history=history,
+                        tool_calls=tool_calls,
+                        noul_yes=settings.DECISION_NOUL_YES,
+                    )
+                    if gate.get("stop"):
+                        result.steps.append({"type": "termination_gate", **gate})
+                        await self._try_finalize_answer(
+                            request, history, config, result, reason="termination_gate"
+                        )
+                        return
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("termination gate skipped", error=str(exc)[:200])
 
         result.status = "limit_reached"
         result.steps.append({"type": "guardrail", "detail": "max_steps reached"})

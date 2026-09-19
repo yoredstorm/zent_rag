@@ -132,6 +132,26 @@ def test_rag_and_agents_do_not_import_adapters() -> None:
     assert not violations, "rag/agents/intelligence/catalog/learning importan adaptadores:\n" + "\n".join(violations)
 
 
+def test_decision_runtime_layers_do_not_import_api() -> None:
+    """decision/, runtime/ y los hooks nuevos no dependen de src.api.
+
+    Pre-existing platform/agents tools still import src.api.deps at call time
+    (documented legacy); the new layers must stay on src.decision.service.
+    """
+    targets = [
+        *(SRC / "decision").rglob("*.py"),
+        *(SRC / "runtime").rglob("*.py"),
+        *(SRC / "rag" / "adaptive").rglob("*.py"),
+        SRC / "agents" / "runtime" / "agent_runtime.py",
+    ]
+    violations: list[str] = []
+    for path in sorted(targets):
+        for mod in _imports_of(path):
+            if mod == "src.api" or mod.startswith("src.api."):
+                violations.append(f"{path.relative_to(ROOT)}: imports {mod}")
+    assert not violations, "Capas nuevas importan src.api:\n" + "\n".join(violations)
+
+
 def test_no_vertical_business_terms_in_generic_layers() -> None:
     """core/rag/agents/platform no contienen lógica de negocio vertical."""
     terms = ("farmacia", "zentfarmacia", "product_images", "order_status", "rag_farmacia")

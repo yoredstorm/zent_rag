@@ -107,6 +107,8 @@ const AdminSecurityCenterPage = lazy(() => import("./pages/admin/SecurityCenter"
 const AdminTrustPage = lazy(() => import("./pages/admin/Trust"));
 const GovernancePage = lazy(() => import("./pages/Governance"));
 const AdminModelGatewayPage = lazy(() => import("./pages/admin/ModelGateway"));
+const AdminDecisionEnginePage = lazy(() => import("./pages/admin/DecisionEngine"));
+const AdminRuntimePage = lazy(() => import("./pages/admin/Runtime"));
 const AdminRealtimePage = lazy(() => import("./pages/admin/Realtime"));
 const AdminOnboardingPage = lazy(() => import("./pages/admin/Onboarding"));
 const AdminCapacityPage = lazy(() => import("./pages/admin/Capacity"));
@@ -454,6 +456,8 @@ export default function App() {
         <Route path="trust" element={<Suspense fallback={<PageFallback />}><AdminTrustPage /></Suspense>} />
         <Route path="security-center" element={<Suspense fallback={<PageFallback />}><AdminSecurityCenterPage /></Suspense>} />
         <Route path="model-gateway" element={<Suspense fallback={<PageFallback />}><AdminModelGatewayPage /></Suspense>} />
+        <Route path="decision-engine" element={<Suspense fallback={<PageFallback />}><AdminDecisionEnginePage /></Suspense>} />
+        <Route path="ai-runtime" element={<Suspense fallback={<PageFallback />}><AdminRuntimePage /></Suspense>} />
         <Route path="realtime" element={<Suspense fallback={<PageFallback />}><AdminRealtimePage /></Suspense>} />
         <Route path="onboarding" element={<Suspense fallback={<PageFallback />}><AdminOnboardingPage /></Suspense>} />
         <Route path="capacity" element={<Suspense fallback={<PageFallback />}><AdminCapacityPage /></Suspense>} />

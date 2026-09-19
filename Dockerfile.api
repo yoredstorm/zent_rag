@@ -57,6 +57,9 @@ RUN pip install --no-cache-dir \
     python-multipart>=0.0.9 \
     mcp>=2.0 \
     && pip install --no-cache-dir ./sdk/python
+# JEV SDK opcional: el adapter HTTP (src/decision/providers/jev.py) ya usa
+# httpx, instalado arriba. Para el cliente oficial, agregar a la lista
+# anterior: typesafe-sdk>=0.1.0
 
 # =============================================================================
 # Stage final — Imagen de producción minimalista

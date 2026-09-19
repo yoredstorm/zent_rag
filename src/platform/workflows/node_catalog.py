@@ -45,7 +45,8 @@ NODE_NEXT_STEPS: dict[str, tuple[str, ...]] = {
     "kb_query": ("llm", "condition", "notify", "join"),
     "api_call": ("llm", "condition", "notify"),
     "marketplace_action": ("llm", "condition", "notify", "business_result"),
-    "llm": ("condition", "human_approval", "notify", "business_result"),
+    "llm": ("ai_decision", "condition", "human_approval", "notify", "business_result"),
+    "ai_decision": ("llm", "kb_query", "human_approval", "notify", "stop"),
     "condition": ("llm", "notify", "human_approval", "stop"),
     "human_approval": ("notify", "business_result", "stop"),
     "filter": ("llm", "for_each", "notify"),
@@ -348,6 +349,37 @@ NODE_METADATA: dict[str, dict[str, Any]] = {
         ),
         context_reads=("trigger", "variables"),
         supports_simulation=False,
+    ),
+    "ai_decision": _meta(
+        "Decisión de IA",
+        "Elige una ruta con una pregunta de negocio.",
+        long_description=(
+            "Evalúa una pregunta en lenguaje de negocio y ramifica el flujo. "
+            "Tipos: elegir ruta, sí/no o puntuación. Si la confianza es baja "
+            "puedes pedir revisión humana, detener, usar un agente o un respaldo. "
+            "No reemplaza reglas determinísticas."
+        ),
+        when_to_use=("la regla no es un umbral fijo y hace falta un juicio",),
+        when_not_to_use=("puedes resolverlo con Tomar una decisión (regla)",),
+        examples=(
+            {
+                "title": "¿Requiere revisión manual?",
+                "config": {
+                    "decision_kind": "route",
+                    "question": "Determinar si el cliente requiere revisión manual",
+                    "options": [
+                        {"id": "approve", "label": "Aprobar"},
+                        {"id": "reject", "label": "Rechazar"},
+                        {"id": "review", "label": "Revisar"},
+                    ],
+                    "confidence_min": 0.65,
+                    "on_low_confidence": "human_review",
+                },
+            },
+        ),
+        context_reads=("trigger", "variables", "decisions", "evidence_refs"),
+        context_writes=("decisions",),
+        supports_simulation=True,
     ),
     "for_each": _meta(
         "Hacer esto por cada...",

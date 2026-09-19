@@ -93,6 +93,9 @@ _llm_provider: LLMProvider | None = None
 _embedding_provider: EmbeddingProvider | None = None
 _cache_provider: CacheProvider | None = None
 _orchestrator: RAGOrchestrator | None = None
+_decision_engine = None
+_decision_hook = None
+_adaptive_hook = None
 _knowledge_engine = None
 _knowledge_learning_repo = None
 _knowledge_learning_engine = None
@@ -1023,8 +1026,278 @@ def get_rag_orchestrator() -> RAGOrchestrator:
                 else None
             ),
             tabular_sql_first=bool(settings.KNOWLEDGE_TABULAR_SQL_FIRST),
+            decision_hook=_decision_hook_or_none(),
+            adaptive_hook=_adaptive_hook_or_none(),
         )
     return _orchestrator
+
+
+_decision_configured = False
+
+
+def get_decision_engine():
+    """Decision Engine facade. Never exposes the JEV SDK to callers."""
+    from src.decision.service import (
+        configure_decision_engine,
+        set_decision_engine,
+    )
+    from src.decision.service import (
+        get_decision_engine as _get,
+    )
+
+    global _decision_configured, _decision_engine
+    if not _decision_configured:
+        # First API composition wins: DI engine with the LLM provider. Lower
+        # layers import src.decision.service instead of this module.
+        set_decision_engine(_build_decision_engine())
+        configure_decision_engine(_build_decision_engine)
+        _decision_configured = True
+    _decision_engine = _get()
+    return _decision_engine
+
+
+def _build_decision_engine():
+    from src.decision.factory import build_decision_engine
+
+    return build_decision_engine(llm=get_llm_provider())
+
+
+def _decision_hook_or_none():
+    global _decision_hook
+    if _decision_hook is None:
+        from src.decision.hook import OrchestratorDecisionHook
+
+        _decision_hook = OrchestratorDecisionHook(get_decision_engine())
+    return _decision_hook
+
+
+def _adaptive_hook_or_none():
+    global _adaptive_hook
+    if _adaptive_hook is None:
+        from src.rag.adaptive.hook import OrchestratorAdaptiveHook
+        from src.rag.adaptive.settings import settings_from_app
+
+        cfg = settings_from_app()
+        if not cfg.enabled():
+            return None
+        engine = get_decision_engine()
+        _adaptive_hook = OrchestratorAdaptiveHook(
+            cfg,
+            judge=engine.judge if engine.settings.jev_configured else None,
+            cache=get_cache_provider(),
+            llm=get_llm_provider(),
+            high_confidence=engine.settings.high_confidence,
+            rewrite_model=engine.settings.fallback_model or None,
+        )
+    return _adaptive_hook
+
+
+def get_decision_hook():
+    """Shared decision hook for callers that need the recommendation only."""
+    return _decision_hook_or_none()
+
+
+_dispatcher = None
+
+
+def get_capability_dispatcher():
+    """Capability dispatcher with the handlers this process can execute.
+
+    Registration lives here (composition root): the runtime layer stays free
+    of api/agents/platform imports. knowledge/database/llm keep flowing through
+    RAGOrchestrator; agent/workflow/tool get a real execution path.
+    """
+    global _dispatcher
+    if _dispatcher is not None:
+        return _dispatcher
+    from src.runtime.dispatcher import CapabilityDispatcher, DispatchResult, denied
+
+    dispatcher = CapabilityDispatcher()
+
+    def _org_config(request) -> dict:
+        return dict(request.org_config or {})
+
+    async def _agent_handler(request, decision):
+        from src.platform.agents.trace_store import ensure_agent_runs_table, save_run
+        from src.platform.auth.scopes import permission_satisfied
+
+        if not permission_satisfied(request.permissions, "agents:execute"):
+            return denied(decision.capability, handler="agent_runtime")
+        agent = await get_agent_repo().get_agent(request.organization_id, request.agent_id)
+        if agent is None:
+            return DispatchResult(
+                capability=decision.capability,
+                handler="agent_runtime",
+                status="failed",
+                error="agent_not_found",
+            )
+        from src.agents.runtime.agent_runtime import AgentRunRequest
+
+        run = await get_agent_runtime().run(
+            AgentRunRequest(
+                agent=agent,
+                message=request.query,
+                user_id=request.user_id,
+                role=request.role,
+                conversation_id=request.conversation_id,
+                permissions=request.permissions,
+                org_config=_org_config(request),
+                trace_id=request.trace_id,
+            )
+        )
+        try:
+            await ensure_agent_runs_table()
+            await save_run(run)
+        except Exception:  # noqa: BLE001 — trace persistence is best-effort
+            pass
+        return DispatchResult(
+            capability=decision.capability,
+            handler="agent_runtime",
+            status="completed" if run.status == "completed" else "failed",
+            answer=run.answer,
+            error=None if run.status == "completed" else run.status,
+            tokens=run.total_tokens,
+            cost=run.cost,
+            run_id=str(run.run_id),
+            data={
+                "method": "agent",
+                "agent_id": str(agent.id),
+                "model": run.model,
+                "steps": run.steps[-10:],
+                "status": run.status,
+            },
+        )
+
+    async def _workflow_handler(request, decision):
+        from src.platform.auth.scopes import permission_satisfied
+        from src.platform.workflows.engine import WorkflowAccessError, run_workflow
+
+        if not permission_satisfied(request.permissions, "workflows:run"):
+            return denied(decision.capability, handler="workflow_engine")
+        try:
+            result = await run_workflow(
+                request.workflow_id,
+                payload={"query": request.query},
+                trigger="manual",
+                organization_id=request.organization_id,
+                workspace_id=request.workspace_id,
+                actor_type="api",
+                actor_id=request.user_id,
+                permissions=request.permissions,
+                correlation_id=request.trace_id,
+                resume=decision.capability == "workflow.resume",
+                run_id=request.run_id if decision.capability == "workflow.resume" else None,
+            )
+        except WorkflowAccessError as exc:
+            return denied(
+                decision.capability,
+                handler="workflow_engine",
+                reason=str(exc)[:200],
+            )
+        if result is None:
+            return DispatchResult(
+                capability=decision.capability,
+                handler="workflow_engine",
+                status="failed",
+                error="workflow_not_found",
+            )
+        status = str(result.get("status") or "completed")
+        answer = str(
+            result.get("answer")
+            or result.get("message")
+            or f"Workflow {status}."
+        )
+        return DispatchResult(
+            capability=decision.capability,
+            handler="workflow_engine",
+            status="completed" if status in {"completed", "ok", "simulated"} else "failed",
+            answer=answer[:8000],
+            error=None if status in {"completed", "ok", "simulated"} else status,
+            run_id=str(result.get("run_id") or result.get("id") or "") or None,
+            data={"method": "workflow", "workflow_id": str(request.workflow_id), "status": status},
+        )
+
+    async def _tool_handler(request, decision):
+        from src.agents.tools.base import ToolContext
+        from src.agents.tools.guards import ToolRateLimiter, execute_tool_guarded
+        from src.agents.tools.registry import get_tool
+        from src.platform.auth.scopes import permission_satisfied
+
+        if not permission_satisfied(request.permissions, "agents:execute"):
+            return denied(decision.capability, handler="tool_registry")
+        tool_name = request.tool or str(decision.metadata.get("tool") or "")
+        if not tool_name:
+            return DispatchResult(
+                capability=decision.capability,
+                handler="tool_registry",
+                status="needs_target",
+                error="missing_target:tool",
+            )
+        get_agent_runtime()  # guarantees builtin tools are registered
+        tool = get_tool(tool_name)
+        if tool is None:
+            return DispatchResult(
+                capability=decision.capability,
+                handler="tool_registry",
+                status="failed",
+                error=f"tool_not_found:{tool_name}",
+            )
+        if tool.permission and not permission_satisfied(request.permissions, tool.permission):
+            return denied(
+                decision.capability,
+                handler="tool_registry",
+                reason=f"missing_permission:{tool.permission}",
+            )
+        arguments = dict(request.tool_arguments or {})
+        if not arguments and request.query:
+            arguments = {"query": request.query}
+        ctx = ToolContext(
+            tenant_id=request.organization_id,
+            user_id=request.user_id,
+            role=request.role,
+            permissions=request.permissions,
+            conversation_id=request.conversation_id,
+            org_config=_org_config(request),
+        )
+        tool_result = await execute_tool_guarded(
+            tool, ctx, arguments, ToolRateLimiter(get_cache_provider())
+        )
+        try:
+            from uuid import uuid4 as _uuid4
+
+            from src.platform.usage.usage_engine import UsageEvent, record_event
+
+            await record_event(
+                UsageEvent(
+                    request_id=_uuid4(),
+                    organization_id=request.organization_id,
+                    user_id=request.user_id,
+                    event_type="tool",
+                    model=tool_name[:120],
+                    provider="tool_registry",
+                    latency_ms=tool_result.latency_ms,
+                    status="failed" if tool_result.error else "completed",
+                    routing={"capability": decision.capability},
+                    trace_id=request.trace_id,
+                )
+            )
+        except Exception:  # noqa: BLE001 — metering is best-effort
+            pass
+        return DispatchResult(
+            capability=decision.capability,
+            handler="tool_registry",
+            status="failed" if tool_result.error else "completed",
+            answer=tool_result.output or "",
+            error=tool_result.error,
+            tokens=tool_result.tokens,
+            data={"method": "tool", "tool": tool_name, "meta": tool_result.meta},
+        )
+
+    dispatcher.register("agent_runtime", _agent_handler)
+    dispatcher.register("workflow_engine", _workflow_handler)
+    dispatcher.register("tool_registry", _tool_handler)
+    _dispatcher = dispatcher
+    return _dispatcher
 
 
 _sql_expert: object | None = None

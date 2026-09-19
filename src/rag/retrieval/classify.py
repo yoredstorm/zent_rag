@@ -3,6 +3,8 @@
 # =============================================================================
 # Sin dependencias de negocio vertical. Determina qué pata del retrieval
 # debe dominar y opcionalmente el idioma para filtros metadata.language.
+# Adaptive RAG wraps this via RulesClassifier + optional JEV overlay.
+# classify_query remains the deterministic fallback. Do not delete it.
 # =============================================================================
 from __future__ import annotations
 

@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS pricing_models (
     input_cost_per_1k DOUBLE PRECISION NOT NULL DEFAULT 0,
     output_cost_per_1k DOUBLE PRECISION NOT NULL DEFAULT 0,
     embedding_cost_per_1k DOUBLE PRECISION NOT NULL DEFAULT 0,
+    request_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+    cost_kind VARCHAR(20) NOT NULL DEFAULT 'provider',
     currency VARCHAR(3) NOT NULL DEFAULT 'USD',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (provider, model)
@@ -40,7 +42,12 @@ VALUES
     ('openai', 'gpt-4o', 0.00250, 0.01000, 0.00002),
     ('openai', 'gpt-4.1-mini', 0.00040, 0.00160, 0.00002),
     ('openai', 'baai/bge-m3', 0.0, 0.0, 0.00002),
-    ('cohere', 'rerank-v3.5', 0.0, 0.0, 0.00020)
+    ('cohere', 'rerank-v3.5', 0.0, 0.0, 0.00020),
+    ('jev', 'jev-latest', 0.0, 0.0, 0.0),
+    ('novita', 'default', 0.00015, 0.00060, 0.0),
+    ('novita', 'small', 0.00010, 0.00040, 0.0),
+    ('embeddings', 'default', 0.0, 0.0, 0.00002),
+    ('reranker', 'default', 0.0, 0.0, 0.00020)
 ON CONFLICT (provider, model) DO NOTHING
 """
 
@@ -52,6 +59,8 @@ class PriceRecord:
     input_cost_per_1k: float
     output_cost_per_1k: float
     embedding_cost_per_1k: float
+    request_cost: float = 0.0
+    cost_kind: str = "provider"
     currency: str = "USD"
 
 
@@ -79,6 +88,34 @@ async def ensure_pricing_table() -> None:
     session = await get_async_session()
     try:
         await session.execute(text(_TABLE_SQL))
+        await session.execute(text(
+            "ALTER TABLE pricing_models ADD COLUMN IF NOT EXISTS request_cost "
+            "DOUBLE PRECISION NOT NULL DEFAULT 0"
+        ))
+        await session.execute(text(
+            "ALTER TABLE pricing_models ADD COLUMN IF NOT EXISTS cost_kind "
+            "VARCHAR(20) NOT NULL DEFAULT 'provider'"
+        ))
+        await session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS provider_cost_history (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    provider VARCHAR(60) NOT NULL,
+                    model VARCHAR(120) NOT NULL,
+                    input_cost_per_1k DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    output_cost_per_1k DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    embedding_cost_per_1k DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    request_cost DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    currency VARCHAR(3) NOT NULL DEFAULT 'USD',
+                    cost_kind VARCHAR(20) NOT NULL DEFAULT 'provider',
+                    effective_from TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    effective_to TIMESTAMPTZ,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                )
+                """
+            )
+        )
         await session.execute(text(_SEED_SQL))
         await session.commit()
     except Exception:
@@ -128,7 +165,9 @@ async def get_price(model: str) -> PriceRecord:
             await session.execute(
                 text(
                     "SELECT provider, model, input_cost_per_1k, "
-                    "output_cost_per_1k, embedding_cost_per_1k, currency "
+                    "output_cost_per_1k, embedding_cost_per_1k, currency, "
+                    "COALESCE(request_cost, 0) AS request_cost, "
+                    "COALESCE(cost_kind, 'provider') AS cost_kind "
                     "FROM pricing_models WHERE (provider = :p AND model = :m)"
                 ),
                 {"p": provider, "m": bare_model},
@@ -139,7 +178,9 @@ async def get_price(model: str) -> PriceRecord:
                 await session.execute(
                     text(
                         "SELECT provider, model, input_cost_per_1k, "
-                        "output_cost_per_1k, embedding_cost_per_1k, currency "
+                        "output_cost_per_1k, embedding_cost_per_1k, currency, "
+                        "COALESCE(request_cost, 0) AS request_cost, "
+                        "COALESCE(cost_kind, 'provider') AS cost_kind "
                         "FROM pricing_models WHERE provider = 'default' "
                         "AND model = :m"
                     ),
@@ -151,7 +192,9 @@ async def get_price(model: str) -> PriceRecord:
                 await session.execute(
                     text(
                         "SELECT provider, model, input_cost_per_1k, "
-                        "output_cost_per_1k, embedding_cost_per_1k, currency "
+                        "output_cost_per_1k, embedding_cost_per_1k, currency, "
+                        "COALESCE(request_cost, 0) AS request_cost, "
+                        "COALESCE(cost_kind, 'provider') AS cost_kind "
                         "FROM pricing_models WHERE provider = 'default' "
                         "AND model = 'default'"
                     )
@@ -175,6 +218,8 @@ async def get_price(model: str) -> PriceRecord:
             input_cost_per_1k=float(row.input_cost_per_1k),
             output_cost_per_1k=float(row.output_cost_per_1k),
             embedding_cost_per_1k=float(row.embedding_cost_per_1k),
+            request_cost=float(getattr(row, "request_cost", 0) or 0),
+            cost_kind=str(getattr(row, "cost_kind", None) or "provider"),
             currency=str(row.currency),
         )
     _store_cache(record.provider, record.model, record)
@@ -187,11 +232,12 @@ def estimate_cost_from_price(
     completion_tokens: int,
     embedding_tokens: int = 0,
 ) -> float:
-    """Costo estimado = input + output + embeddings (por 1k tokens)."""
+    """Costo estimado = input + output + embeddings (por 1k tokens) + per-request."""
     return (
         prompt_tokens / 1000 * price.input_cost_per_1k
         + completion_tokens / 1000 * price.output_cost_per_1k
         + embedding_tokens / 1000 * price.embedding_cost_per_1k
+        + float(price.request_cost or 0.0)
     )
 
 
@@ -215,21 +261,43 @@ async def upsert_price(
     output_cost_per_1k: float,
     embedding_cost_per_1k: float,
     currency: str = "USD",
+    request_cost: float = 0.0,
+    cost_kind: str = "provider",
 ) -> None:
-    """Actualiza un precio sin deploy (endpoint admin)."""
+    """Actualiza un precio sin deploy (endpoint admin). Conserva historial."""
     await ensure_pricing_table()
     session = await get_async_session()
     try:
         await session.execute(
             text(
+                """
+                INSERT INTO provider_cost_history (
+                    provider, model, input_cost_per_1k, output_cost_per_1k,
+                    embedding_cost_per_1k, request_cost, currency, cost_kind,
+                    effective_from, effective_to
+                )
+                SELECT provider, model, input_cost_per_1k, output_cost_per_1k,
+                       embedding_cost_per_1k, COALESCE(request_cost, 0),
+                       currency, COALESCE(cost_kind, 'provider'),
+                       updated_at, NOW()
+                FROM pricing_models
+                WHERE provider = :p AND model = :m
+                """
+            ),
+            {"p": provider, "m": model},
+        )
+        await session.execute(
+            text(
                 "INSERT INTO pricing_models "
                 "(provider, model, input_cost_per_1k, output_cost_per_1k, "
-                "embedding_cost_per_1k, currency) "
-                "VALUES (:p, :m, :in_c, :out_c, :emb_c, :cur) "
+                "embedding_cost_per_1k, request_cost, cost_kind, currency) "
+                "VALUES (:p, :m, :in_c, :out_c, :emb_c, :req_c, :kind, :cur) "
                 "ON CONFLICT (provider, model) DO UPDATE SET "
                 "input_cost_per_1k = EXCLUDED.input_cost_per_1k, "
                 "output_cost_per_1k = EXCLUDED.output_cost_per_1k, "
                 "embedding_cost_per_1k = EXCLUDED.embedding_cost_per_1k, "
+                "request_cost = EXCLUDED.request_cost, "
+                "cost_kind = EXCLUDED.cost_kind, "
                 "currency = EXCLUDED.currency, updated_at = NOW()"
             ),
             {
@@ -238,10 +306,15 @@ async def upsert_price(
                 "in_c": input_cost_per_1k,
                 "out_c": output_cost_per_1k,
                 "emb_c": embedding_cost_per_1k,
+                "req_c": request_cost,
+                "kind": cost_kind or "provider",
                 "cur": currency,
             },
         )
         await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
     finally:
         await session.close()
     invalidate_pricing_cache()
@@ -255,8 +328,11 @@ async def list_prices() -> list[dict]:
             await session.execute(
                 text(
                     "SELECT id, provider, model, input_cost_per_1k, "
-                    "output_cost_per_1k, embedding_cost_per_1k, currency, "
-                    "updated_at FROM pricing_models ORDER BY provider, model"
+                    "output_cost_per_1k, embedding_cost_per_1k, "
+                    "COALESCE(request_cost, 0) AS request_cost, "
+                    "COALESCE(cost_kind, 'provider') AS cost_kind, "
+                    "currency, updated_at FROM pricing_models "
+                    "ORDER BY provider, model"
                 )
             )
         ).fetchall()
@@ -268,10 +344,61 @@ async def list_prices() -> list[dict]:
                 "input_cost_per_1k": r.input_cost_per_1k,
                 "output_cost_per_1k": r.output_cost_per_1k,
                 "embedding_cost_per_1k": r.embedding_cost_per_1k,
+                "request_cost": float(r.request_cost or 0),
+                "cost_kind": r.cost_kind,
                 "currency": r.currency,
                 "updated_at": r.updated_at.isoformat(),
             }
             for r in rows
         ]
+    finally:
+        await session.close()
+
+
+async def list_price_history(provider: str | None = None, model: str | None = None) -> list[dict]:
+    session = await get_async_session()
+    query = (
+        "SELECT provider, model, input_cost_per_1k, output_cost_per_1k, "
+        "embedding_cost_per_1k, request_cost, currency, cost_kind, "
+        "effective_from, effective_to FROM provider_cost_history "
+        "ORDER BY effective_from DESC LIMIT 200"
+    )
+    params: dict = {}
+    if provider and model:
+        query = (
+            "SELECT provider, model, input_cost_per_1k, output_cost_per_1k, "
+            "embedding_cost_per_1k, request_cost, currency, cost_kind, "
+            "effective_from, effective_to FROM provider_cost_history "
+            "WHERE provider = :p AND model = :m "
+            "ORDER BY effective_from DESC LIMIT 200"
+        )
+        params = {"p": provider, "m": model}
+    elif provider:
+        query = (
+            "SELECT provider, model, input_cost_per_1k, output_cost_per_1k, "
+            "embedding_cost_per_1k, request_cost, currency, cost_kind, "
+            "effective_from, effective_to FROM provider_cost_history "
+            "WHERE provider = :p ORDER BY effective_from DESC LIMIT 200"
+        )
+        params = {"p": provider}
+    try:
+        rows = (await session.execute(text(query), params)).fetchall()
+        return [
+            {
+                "provider": r.provider,
+                "model": r.model,
+                "input_cost_per_1k": r.input_cost_per_1k,
+                "output_cost_per_1k": r.output_cost_per_1k,
+                "embedding_cost_per_1k": r.embedding_cost_per_1k,
+                "request_cost": float(r.request_cost or 0),
+                "currency": r.currency,
+                "cost_kind": r.cost_kind,
+                "effective_from": r.effective_from.isoformat() if r.effective_from else None,
+                "effective_to": r.effective_to.isoformat() if r.effective_to else None,
+            }
+            for r in rows
+        ]
+    except Exception:
+        return []
     finally:
         await session.close()
