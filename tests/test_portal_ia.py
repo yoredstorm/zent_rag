@@ -134,10 +134,13 @@ def test_finops_costs_page_does_not_map_undefined_breakdown_rows() -> None:
 
 
 def test_stat_card_help_is_visible_popover_not_native_title_only() -> None:
-    """FinOps `?` must show help on click; native `title` tooltips do not."""
+    """FinOps `?` must show help via tooltip accesible; native `title` no."""
     ui = (PORTAL / "components" / "ui.tsx").read_text(encoding="utf-8")
-    assert 'role="tooltip"' in ui
-    assert "aria-expanded" in ui
+    stat_card = ui.split("export function StatCard")[1].split("\n/* ---")[0]
+    assert "Tooltip" in stat_card
+    assert "title=" not in stat_card
+    overlay = (PORTAL / "components" / "ui" / "overlay.tsx").read_text(encoding="utf-8")
+    assert "TooltipPrimitive" in overlay
     assert "Qué significa" in ui
     assert "{help}" in ui
     usage = (PORTAL / "pages" / "admin" / "Usage.tsx").read_text(encoding="utf-8")
