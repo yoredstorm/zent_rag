@@ -1250,9 +1250,9 @@ class Settings(BaseSettings):
     DEMO_PROVISION_ON_TRIAL: bool = Field(
         default=True,
         description=(
-            "Encola el demo compartido (schema farmacia) al crear un trial. "
-            "Apagalo en entornos con LLM lento: cada alta re-embebe el dataset "
-            "completo y satura la cola de ingesta."
+            "Encola el dataset demo compartido (schema de ejemplo) al crear un "
+            "trial. Apagalo en entornos con LLM lento: cada alta re-embebe el "
+            "dataset completo y satura la cola de ingesta."
         ),
     )
     DEMO_SQL_ORGANIZATION_ID: str = Field(
