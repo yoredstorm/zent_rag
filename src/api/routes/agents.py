@@ -7,6 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy.exc import IntegrityError
 
 from src.api.deps import get_agent_repo
 from src.core.ports import AgentRepository
@@ -159,18 +160,30 @@ async def create_agent(
     if body.config is not None:
         config = await _apply_source_config(ctx, body.config)
         config_payload = config.model_dump(mode="json")
-    agent = await repo.create_agent(
-        ctx.organization_id,
-        body.name,
-        description=body.description,
-        project_id=body.project_id,
-        workspace_id=body.workspace_id,
-        system_prompt=body.system_prompt,
-        tools=body.tools,
-        model=body.model,
-        config_json=config_payload,
-        created_by=ctx.user_id,
-    )
+    try:
+        agent = await repo.create_agent(
+            ctx.organization_id,
+            body.name,
+            description=body.description,
+            project_id=body.project_id,
+            workspace_id=body.workspace_id,
+            system_prompt=body.system_prompt,
+            tools=body.tools,
+            model=body.model,
+            config_json=config_payload,
+            created_by=ctx.user_id,
+        )
+    except IntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": "duplicate_agent_name",
+                "message": (
+                    f"Ya existe un agente llamado «{body.name}» en esta organización. "
+                    "Abrilo para editarlo o elegí otro nombre."
+                ),
+            },
+        ) from exc
     await _audit().write(ctx, "agent.created", "agent", agent.id, metadata={"name": agent.name})
     try:
         from src.platform.onboardingv2.onboarding import sync_progress
@@ -339,6 +352,17 @@ async def update_agent(
         agent = await repo.update_agent(ctx.organization_id, aid, **fields)
     except ValueError:
         raise HTTPException(404, "Agent not found")
+    except IntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": "duplicate_agent_name",
+                "message": (
+                    f"Ya existe otro agente llamado «{fields.get('name') or agent_id}» "
+                    "en esta organización."
+                ),
+            },
+        ) from exc
     await _audit().write(ctx, "agent.updated", "agent", aid, metadata={"name": agent.name})
     return _agent_response(agent)
 

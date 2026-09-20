@@ -410,3 +410,36 @@ async def test_temperature_from_config_passed_to_llm(
         assert fake.last_request.agent.config_json["temperature"] == 0.2
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_create_duplicate_agent_name_returns_409(async_client: AsyncClient) -> None:
+    import json
+
+    org = await _create_org(async_client, "Agent Dup Org")
+    org["session"] = await _owner_session(org["organization_id"])
+    headers = _headers(org)
+    name = f"dup-{uuid4().hex[:6]}"
+
+    first = await async_client.post(
+        "/api/v1/agents", json={"name": name}, headers=headers
+    )
+    assert first.status_code == 201, first.text
+
+    second = await async_client.post(
+        "/api/v1/agents", json={"name": name}, headers=headers
+    )
+    assert second.status_code == 409, second.text
+    assert "Ya existe" in json.dumps(second.json())
+
+    other_name = f"otro-{uuid4().hex[:6]}"
+    other = await async_client.post(
+        "/api/v1/agents", json={"name": other_name}, headers=headers
+    )
+    assert other.status_code == 201, other.text
+    conflict = await async_client.put(
+        f"/api/v1/agents/{other.json()['id']}",
+        json={"name": name},
+        headers=headers,
+    )
+    assert conflict.status_code == 409, conflict.text
