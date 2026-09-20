@@ -31,6 +31,14 @@ class AgentSecurity(BaseModel):
     api_calls_enabled: bool = False
 
 
+class AgentRuntimeConfig(BaseModel):
+    """Overrides de JEV por agente (None = hereda el flag del sistema)."""
+
+    tool_routing: bool | None = None
+    termination_gate: bool | None = None
+    answer_gate: bool | None = None
+
+
 class AgentConfig(BaseModel):
     purpose: str | None = Field(default=None, max_length=2000)
     temperature: float = Field(default=0.2, ge=0, le=1)
@@ -46,6 +54,10 @@ class AgentConfig(BaseModel):
     output_schema: dict | None = Field(
         default=None,
         description="JSON Schema para respuestas estructuradas (ERP/CRM).",
+    )
+    runtime: AgentRuntimeConfig | None = Field(
+        default=None,
+        description="JEV por agente: tool_routing, termination_gate, answer_gate.",
     )
 
 

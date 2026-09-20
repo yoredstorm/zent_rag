@@ -241,17 +241,9 @@ async def _maybe_dispatch(
     try:
         decider = "Agente" if method == "agent" else "Workflow" if method == "workflow" else "Runtime"
         route = "Herramientas" if method == "agent" else "Nodos" if method == "workflow" else method
-        raw_steps = dispatched.data.get("steps")
-        flow_steps = [
-            {
-                "name": str(step.get("tool") or step.get("type") or "paso"),
-                "status": "warn" if step.get("error") else "ok",
-                "ms": float(step.get("latency_ms") or 0),
-                "detail": str(step.get("type") or "")[:160],
-            }
-            for step in (raw_steps if isinstance(raw_steps, list) else [])
-            if isinstance(step, dict)
-        ]
+        from src.runtime.agent_flow import steps_to_flow
+
+        mapped = steps_to_flow(dispatched.data.get("steps"))
         result.flow = {
             "query_id": str(result.query_id),
             "organization_id": str(organization_id),
@@ -266,16 +258,17 @@ async def _maybe_dispatch(
                 "confidence": 0,
                 "fallback_used": False,
                 "acting": True,
-                "mode": method,
+                "mode": "ReAct + JEV" if mapped["jev"]["used"] else "ReAct",
             },
+            "jev": mapped["jev"],
             "generation": {
                 "model": dispatched.data.get("model"),
                 "total_tokens": int(dispatched.tokens or 0),
                 "cost": float(dispatched.cost or 0.0),
                 "ms": round(float(dispatched.latency_ms or 0.0), 1),
             },
-            "steps": flow_steps,
-            "timings": {"total_ms": dispatched.latency_ms},
+            "steps": mapped["steps"],
+            "timings": {"total_ms": round(float(dispatched.latency_ms or 0.0), 1)},
             "sources": [],
             "fallbacks": [],
         }

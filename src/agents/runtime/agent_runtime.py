@@ -765,6 +765,66 @@ class AgentRuntime:
         max_tokens = int(config["max_tokens"])
         max_cost = float(config["max_cost"])
         from src.platform.billing.pricing import estimate_cost
+        from src.runtime.answer_gate import INSUFFICIENT_ANSWER, answer_gate_mode
+
+        answer_mode = answer_gate_mode(settings, request.agent.config_json)
+        revision_used = False
+
+        async def _confidence_gate(draft: str):
+            from src.decision.service import get_decision_engine
+            from src.runtime.answer_gate import judge_answer
+
+            try:
+                return await judge_answer(
+                    engine=get_decision_engine(),
+                    mode=answer_mode,
+                    user_request=request.message,
+                    draft=draft,
+                    observations=history[-8:],
+                    agent_instructions=agent_instructions,
+                    settings=settings,
+                    max_state_chars=settings.RUNTIME_JEV_STATE_MAX_CHARS,
+                    noul_yes=settings.DECISION_NOUL_YES,
+                    approve_at=settings.RUNTIME_JEV_ANSWER_APPROVE,
+                    revise_at=settings.RUNTIME_JEV_ANSWER_REVISE,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("answer gate skipped", error=str(exc)[:200])
+                return None
+
+        async def _gate_draft(draft: str) -> str:
+            """Registra el veredicto de JEV. Devuelve skip|shadow|approve|revise|abstain."""
+            nonlocal revision_used
+            if answer_mode == "off":
+                return "skip"
+            gate = await _confidence_gate(draft)
+            if gate is None:
+                return "skip"
+            if gate.mode != "on":
+                result.steps.append(gate.to_step())
+                return "shadow"
+            if gate.verdict == "abstain":
+                result.steps.append(gate.to_step())
+                return "abstain"
+            if gate.verdict == "revise":
+                if not revision_used:
+                    revision_used = True
+                    result.steps.append(gate.to_step())
+                    history.append(f"OBSERVATION (untrusted): {gate.feedback}")
+                    result.steps.append(
+                        {
+                            "type": "answer_revision",
+                            "feedback": gate.feedback[:300],
+                        }
+                    )
+                    return "revise"
+                step = gate.to_step()
+                step["verdict"] = "revise_exhausted"
+                step["detail"] = f"{step.get('detail') or ''} (revisión ya usada)".strip()
+                result.steps.append(step)
+                return "approve"
+            result.steps.append(gate.to_step())
+            return "approve"
 
         for step_index in range(max_steps):
             from src.runtime.tool_routing import routing_enabled, select_relevant_tools
@@ -780,6 +840,10 @@ class AgentRuntime:
                         user_request=request.message,
                         history=history,
                         noul_yes=settings.DECISION_NOUL_YES,
+                        noul_no=settings.DECISION_NOUL_NO,
+                        agent_instructions=agent_instructions,
+                        max_state_chars=settings.RUNTIME_JEV_STATE_MAX_CHARS,
+                        confidence_threshold=settings.RUNTIME_JEV_TOOL_CONFIDENCE,
                     )
                     tool_descriptions = _describe_tools(prompt_tools)
                     system = _SYSTEM_TEMPLATE.format(
@@ -890,6 +954,14 @@ class AgentRuntime:
                 return
 
             if "answer" in action and isinstance(action["answer"], str):
+                gate_verdict = await _gate_draft(action["answer"])
+                if gate_verdict == "abstain":
+                    result.answer = INSUFFICIENT_ANSWER
+                    result.status = "completed"
+                    result.steps.append({"type": "final", "answer": result.answer[:500]})
+                    return
+                if gate_verdict == "revise":
+                    continue
                 result.answer = action["answer"]
                 result.status = "completed"
                 result.steps.append({"type": "final", "answer": action["answer"][:500]})
@@ -897,7 +969,16 @@ class AgentRuntime:
 
             tool_name = str(action.get("tool") or "")
             if not tool_name:
-                result.answer = str(action.get("answer") or resp.content or "")
+                draft = str(action.get("answer") or resp.content or "")
+                gate_verdict = await _gate_draft(draft)
+                if gate_verdict == "abstain":
+                    result.answer = INSUFFICIENT_ANSWER
+                    result.status = "completed"
+                    result.steps.append({"type": "final", "answer": result.answer[:500]})
+                    return
+                if gate_verdict == "revise":
+                    continue
+                result.answer = draft
                 result.status = "completed"
                 result.steps.append({"type": "final", "answer": result.answer[:500]})
                 return

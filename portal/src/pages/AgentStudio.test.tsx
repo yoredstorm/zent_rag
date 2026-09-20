@@ -255,6 +255,22 @@ describe("AgentStudio", () => {
     });
   });
 
+  it("permite apagar el verificador de JEV por agente", async () => {
+    const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=tools");
+    await screen.findByDisplayValue("Soporte");
+    await user.selectOptions(screen.getByLabelText(/JEV verifica la respuesta/), "off");
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(
+        (call) =>
+          String(call[0]).includes("/agents/a1") &&
+          String(call[1]?.method || "").toUpperCase() === "PUT",
+      );
+      const body = JSON.parse(String(put?.[1]?.body || "{}"));
+      expect(body.config.runtime.answer_gate).toBe(false);
+    });
+  });
+
   it("persiste source_ids al guardar", async () => {
     const { user, fetchMock } = await renderStudio("/agents/a1");
     const checkbox = await screen.findByRole("checkbox", { name: /Políticas RRHH/ });

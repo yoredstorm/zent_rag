@@ -50,6 +50,8 @@ export function AgentAdvancedPanel({
   setRetrieval,
   jevMode,
   setJevMode,
+  answerGate,
+  setAnswerGate,
   onEnableAll,
   outputSchema,
   setOutputSchema,
@@ -103,6 +105,8 @@ export function AgentAdvancedPanel({
   setRetrieval: (value: { strategy: string; top_k: number; score_threshold: number }) => void;
   jevMode: "inherit" | "on" | "off";
   setJevMode: (value: "inherit" | "on" | "off") => void;
+  answerGate: "inherit" | "on" | "off";
+  setAnswerGate: (value: "inherit" | "on" | "off") => void;
   onEnableAll: () => void;
   outputSchema: string;
   setOutputSchema: (value: string) => void;
@@ -178,6 +182,8 @@ export function AgentAdvancedPanel({
             setRetrieval={setRetrieval}
             jevMode={jevMode}
             setJevMode={setJevMode}
+            answerGate={answerGate}
+            setAnswerGate={setAnswerGate}
             onEnableAll={onEnableAll}
           />
         </TabsContent>

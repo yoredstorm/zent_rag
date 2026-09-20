@@ -41,6 +41,13 @@ const ROUTE_LABEL: Record<string, string> = {
   Nodos: "Nodos",
 };
 
+const GATE_VERDICT_LABEL: Record<string, string> = {
+  approve: "aprobada",
+  revise: "revisada",
+  revise_exhausted: "aprobada (revisión ya usada)",
+  abstain: "abstención",
+};
+
 export default function FlowDrawer({
   open,
   onOpenChange,
@@ -91,6 +98,8 @@ export default function FlowDrawer({
   const evidence = active?.evidence ? asRecord(active.evidence) : null;
   const grounding = active?.grounding ? asRecord(active.grounding) : null;
   const jev = asRecord(active?.jev);
+  const hasValue = (value: unknown) =>
+    value !== null && value !== undefined && value !== "" && value !== "—";
   const sources = asList(active?.sources);
   const steps = asList(active?.steps);
   const fallbacks = Array.isArray(active?.fallbacks) ? (active?.fallbacks as unknown[]) : [];
@@ -101,13 +110,15 @@ export default function FlowDrawer({
   const totalTokens = num(generation?.total_tokens) || promptTokens + completionTokens;
   const cost = generation && typeof generation.cost === "number" ? num(generation.cost) : null;
   const costPer1k = cost !== null && totalTokens > 0 ? (cost / totalTokens) * 1000 : null;
+  const jevScore = typeof jev.score === "number" ? num(jev.score) : null;
+  const jevVerdict = hasValue(jev.verdict)
+    ? GATE_VERDICT_LABEL[fmtText(jev.verdict)] ?? fmtText(jev.verdict)
+    : "";
   const pricing = asRecord(active?.pricing);
   const currencyInput = num(pricing.input_cost_per_1k);
   const currencyOutput = num(pricing.output_cost_per_1k);
   const hasRetrieval =
     retrieval.used === true || num(retrieval.chunks) > 0 || num(timings.retrieval_ms) > 0;
-  const hasValue = (value: unknown) =>
-    value !== null && value !== undefined && value !== "" && value !== "—";
 
   return (
     <Drawer
@@ -268,6 +279,15 @@ export default function FlowDrawer({
                   <dt className="text-faint">Precio del modelo (entrada / salida por 1k)</dt>
                   <dd className="text-text">
                     {fmtCurrency(currencyInput, 6)} / {fmtCurrency(currencyOutput, 6)}
+                  </dd>
+                </div>
+              ) : null}
+              {jevScore !== null ? (
+                <div>
+                  <dt className="text-faint">Score JEV</dt>
+                  <dd className="text-text">
+                    {jevScore.toFixed(2)}
+                    {jevVerdict ? ` · ${jevVerdict}` : ""}
                   </dd>
                 </div>
               ) : null}

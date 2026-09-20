@@ -23,7 +23,7 @@ describe("flowFromAgentSteps", () => {
     ]);
     expect(steps[0].ms).toBe(120);
     expect(steps[0].detail).toContain("confianza 0.90");
-    expect(flow.jev).toEqual({ used: true });
+    expect(flow.jev).toMatchObject({ used: true });
     expect((flow.decision as { mode: string }).mode).toBe("ReAct + JEV");
     expect((flow.generation as { total_tokens: number }).total_tokens).toBe(180);
   });
@@ -36,7 +36,7 @@ describe("flowFromAgentSteps", () => {
       ],
       1500,
     );
-    expect(flow.jev).toEqual({ used: false });
+    expect(flow.jev).toMatchObject({ used: false });
     expect((flow.decision as { mode: string }).mode).toBe("ReAct");
     const steps = flow.steps as { name: string; status: string }[];
     expect(steps[1].name).toBe("call_api");
@@ -63,5 +63,49 @@ describe("flowFromAgentSteps", () => {
     expect(generation.ms).toBe(8800);
     expect(generation.total_tokens).toBe(1901);
     expect((flow.timings as { generation_ms: number }).generation_ms).toBe(8800);
+  });
+
+  it("mapea el verificador de respuesta de JEV con score", () => {
+    const flow = flowFromAgentSteps(
+      [
+        {
+          type: "tool_routing",
+          choice: "search_knowledge",
+          confidence: 0.45,
+          score: 0.55,
+          certain: false,
+          latency_ms: 790,
+        },
+        { type: "llm", tokens: 100, latency_ms: 1000 },
+        {
+          type: "answer_gate",
+          verdict: "approve",
+          score: 0.9,
+          grounded: true,
+          complete: true,
+          quality: 3,
+          latency_ms: 850,
+        },
+        { type: "final" },
+      ],
+      5000,
+    );
+    const steps = flow.steps as { name: string; detail: string; ms: number }[];
+    expect(steps[0].name).toBe("JEV elige herramienta");
+    expect(steps[0].detail).toContain("sin certeza");
+    expect(steps[2].name).toBe("JEV verifica respuesta");
+    expect(steps[2].detail).toContain("aprobada");
+    expect(steps[2].detail).toContain("calidad 3/3");
+    expect(steps[2].ms).toBe(850);
+    const jev = flow.jev as {
+      used: boolean;
+      score: number;
+      verdict: string;
+      grounded: boolean;
+    };
+    expect(jev.used).toBe(true);
+    expect(jev.score).toBe(0.9);
+    expect(jev.verdict).toBe("approve");
+    expect(jev.grounded).toBe(true);
   });
 });

@@ -474,6 +474,8 @@ zent_RAG/
 - **Adaptive RAG** (`off` · `shadow` · `active` · `canary`): plan de retrieval, evidence gate, fast path extractivo, rewrite y grounding
 - **Capacidades advisory con dispatcher**: `agent.*`, `workflow.*`, `tool.*` viven en el registry; JEV no las elige por heurística, pero `POST /api/v1/rag/query` con `agent_id`, `workflow_id`, `run_id`, `tool` + `tool_arguments` las ejecuta vía `CapabilityDispatcher` con permisos por handler
 - **Ver flujo**: cada respuesta guarda su traza completa (decidió JEV/reglas/LLM/legacy, ruta SQL o documentos, SQL usado, retrieval, tokens y **ms por etapa**) y se abre con click derecho en el chat o link "Ver flujo"; se persiste en `rag_flows` para consultarla después
+- **Verificador JEV de respuesta (agentes)**: opt-in por agente; JEV puntúa respaldo, completitud y calidad (0-3) contra la evidencia, permite **una** revisión y se abstiene si no hay respaldo; el score y el veredicto se ven en Ver flujo
+- **Decisión de herramienta ponderada**: JEV elige la herramienta con score (probabilidad + certeza); por debajo del umbral decide el LLM y el flujo lo indica
 - **Batcheo de preguntas System One**: plan en [docs/architecture/decision-engine-batching.md](docs/architecture/decision-engine-batching.md) (propuesto)
 - ADR: [docs/architecture/decision-engine.md](docs/architecture/decision-engine.md)
 

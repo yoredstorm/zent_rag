@@ -61,6 +61,45 @@ def tool_routing_questions(tool_criteria: dict[str, str]) -> dict[str, dict]:
             "criteria": tool_criteria
             or {"none": "No tool. Answer or finish."},
         },
+        "needs_more_evidence": {
+            "type": "noul",
+            "instructions": (
+                "Does the current state still lack evidence required to answer "
+                "`user_request`?"
+            ),
+        },
+    }
+
+
+def answer_gate_questions() -> dict[str, dict]:
+    """JEV verifica el borrador del agente contra la evidencia recolectada."""
+    return {
+        "answer_grounded": {
+            "type": "noul",
+            "instructions": (
+                "Are the factual claims in `draft_answer` supported by "
+                "`evidence`? If the draft says evidence is missing, the answer is yes."
+            ),
+        },
+        "answer_complete": {
+            "type": "noul",
+            "instructions": (
+                "Does `draft_answer` fully address `user_request` without "
+                "missing parts?"
+            ),
+        },
+        "answer_quality": {
+            "type": "score",
+            "instructions": (
+                "Quality of `draft_answer` for `user_request` given `evidence`."
+            ),
+            "criteria": [
+                "unsupported or wrong",
+                "weak or incomplete",
+                "adequate",
+                "strong, grounded and complete",
+            ],
+        },
     }
 
 

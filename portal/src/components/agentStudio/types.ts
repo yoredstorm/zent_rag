@@ -15,7 +15,11 @@ export type AgentConfig = {
   retrieval?: { strategy: string; top_k: number; score_threshold: number };
   output_schema?: Record<string, unknown>;
   /** Override de JEV por agente (si falta, hereda los flags del sistema). */
-  runtime?: { tool_routing?: boolean | null; termination_gate?: boolean | null } | null;
+  runtime?: {
+    tool_routing?: boolean | null;
+    termination_gate?: boolean | null;
+    answer_gate?: boolean | null;
+  } | null;
 };
 
 export type Agent = {

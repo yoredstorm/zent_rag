@@ -138,6 +138,42 @@ describe("FlowDrawer", () => {
     expect(screen.queryByText("Búsqueda")).toBeNull();
   });
 
+  it("flujo con verificador JEV muestra score y veredicto", () => {
+    const gatedFlow = {
+      method: "agent",
+      verdict: { decider: "Agente", route: "Herramientas" },
+      decision: {
+        evaluated: true,
+        provider: "agent",
+        confidence: 0,
+        mode: "ReAct + JEV",
+        acting: true,
+      },
+      jev: { used: true, score: 0.9, verdict: "approve", grounded: true, complete: true },
+      generation: { total_tokens: 1901, ms: 8800, cost: 0.0012, model: "deepseek" },
+      steps: [
+        { name: "JEV elige herramienta", status: "ok", ms: 790, detail: "search_knowledge · score 0.55" },
+        { name: "JEV verifica respuesta", status: "ok", ms: 850, detail: "respaldada · completa · calidad 3/3 · aprobada" },
+      ],
+      timings: { total_ms: 11000, generation_ms: 8800 },
+      sources: [],
+      fallbacks: [],
+    };
+    render(
+      <FlowDrawer
+        open
+        onOpenChange={() => {}}
+        flow={gatedFlow}
+        role="admin"
+        session={SESSION}
+      />,
+    );
+    expect(screen.getByText("JEV intervino en este run")).toBeInTheDocument();
+    expect(screen.getByText("Score JEV")).toBeInTheDocument();
+    expect(screen.getByText(/0.90 · aprobada/)).toBeInTheDocument();
+    expect(screen.getByText("JEV verifica respuesta")).toBeInTheDocument();
+  });
+
   it("trae el flujo desde el servidor si el mensaje no lo tiene", async () => {    const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/v1/rag/queries/q-1/flow")) {

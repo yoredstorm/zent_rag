@@ -19,6 +19,8 @@ export function AgentCapabilitiesSection({
   setRetrieval,
   jevMode,
   setJevMode,
+  answerGate,
+  setAnswerGate,
   onEnableAll,
 }: {
   config: AgentConfig;
@@ -33,6 +35,8 @@ export function AgentCapabilitiesSection({
   setRetrieval: (value: { strategy: string; top_k: number; score_threshold: number }) => void;
   jevMode: "inherit" | "on" | "off";
   setJevMode: (value: "inherit" | "on" | "off") => void;
+  answerGate: "inherit" | "on" | "off";
+  setAnswerGate: (value: "inherit" | "on" | "off") => void;
   onEnableAll: () => void;
 }) {
   const toolState: Record<string, { checked: boolean; onChange: (value: boolean) => void }> = {
@@ -92,6 +96,22 @@ export function AgentCapabilitiesSection({
             id="agent-jev-mode"
             value={jevMode}
             onChange={(e) => setJevMode(e.target.value as "inherit" | "on" | "off")}
+          >
+            <option value="inherit">Heredar del sistema</option>
+            <option value="on">Activado en este agente</option>
+            <option value="off">Apagado en este agente</option>
+          </Select>
+        </AgentField>
+
+        <AgentField
+          id="agent-jev-answer-gate"
+          label="JEV verifica la respuesta"
+          hint="Antes de responder, JEV puntúa el borrador contra la evidencia. Si está flojo, pide una corrección."
+        >
+          <Select
+            id="agent-jev-answer-gate"
+            value={answerGate}
+            onChange={(e) => setAnswerGate(e.target.value as "inherit" | "on" | "off")}
           >
             <option value="inherit">Heredar del sistema</option>
             <option value="on">Activado en este agente</option>

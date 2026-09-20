@@ -202,3 +202,259 @@ def test_experiment_summary_routing_accuracy() -> None:
     summary = summarize(report)
     assert summary["jev"]["routing_accuracy"] == 0.5
     assert summary["jev"]["fallback_rate"] == 0.5
+
+
+# ---------------------------------------------------------------------------
+# JEV: estado con presupuesto, fusion de herramienta y verificador
+# ---------------------------------------------------------------------------
+
+
+class _FakeJudge:
+    def __init__(self, answers: dict) -> None:
+        self.answers = answers
+        self.last_state: dict | None = None
+        self.last_questions: dict | None = None
+        self.calls = 0
+
+    async def judge(self, *, state, questions):
+        self.calls += 1
+        self.last_state = state
+        self.last_questions = questions
+        return {"model": "jev-latest", "answers": self.answers}
+
+
+class _Tool:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.description = f"tool {name}"
+
+
+def _needs(noul: float) -> dict:
+    return {"needs_tool": {"type": "noul", "noul": noul}}
+
+
+def test_build_jev_state_respeta_presupuesto_por_prioridad() -> None:
+    from src.runtime.jev_state import StateSection, build_jev_state
+
+    built = build_jev_state(
+        [
+            StateSection("critical", 1, "A" * 2000),
+            StateSection("secondary", 2, "B" * 5000),
+            StateSection("last", 3, "C" * 5000),
+        ],
+        max_chars=4000,
+    )
+    assert built.state["critical"] == "A" * 2000
+    assert len(built.state["secondary"]) == 2000
+    assert "last" not in built.state
+    assert "secondary" in built.truncated and "last" in built.truncated
+
+
+@pytest.mark.asyncio
+async def test_tool_routing_fusion_elige_con_certeza() -> None:
+    from src.runtime.tool_routing import select_relevant_tools
+
+    engine = _FakeJudge(
+        {
+            **_needs(0.9),
+            "tool": {
+                "type": "choice",
+                "choice": "query_database",
+                "confidence": 0.6,
+                "probabilities": {"query_database": 0.6, "search_knowledge": 0.3},
+            },
+        }
+    )
+    tools = [_Tool("search_knowledge"), _Tool("query_database"), _Tool("call_api")]
+    selected, meta = await select_relevant_tools(
+        tools,
+        engine=engine,
+        user_request="cuantas ventas hubo",
+        history=["USER QUESTION: cuantas ventas hubo"],
+    )
+    assert meta["mode"] == "jev"
+    assert meta["certain"] is True
+    assert meta["score"] >= 0.6
+    assert selected[0].name == "query_database"
+    assert engine.last_questions is not None
+    assert "needs_more_evidence" in engine.last_questions
+    assert engine.last_state is not None and "agent_instructions" not in engine.last_state
+
+
+@pytest.mark.asyncio
+async def test_tool_routing_sin_certeza_no_impone_nada() -> None:
+    from src.runtime.tool_routing import select_relevant_tools
+
+    engine = _FakeJudge(
+        {
+            **_needs(0.5),
+            "tool": {
+                "type": "choice",
+                "choice": "search_knowledge",
+                "confidence": 0.2,
+                "probabilities": {},
+            },
+        }
+    )
+    tools = [_Tool("search_knowledge"), _Tool("query_database"), _Tool("call_api")]
+    selected, meta = await select_relevant_tools(
+        tools, engine=engine, user_request="hola", history=[]
+    )
+    assert meta["certain"] is False
+    assert [t.name for t in selected] == [t.name for t in tools]
+
+
+@pytest.mark.asyncio
+async def test_tool_routing_confia_en_no_usar_herramientas() -> None:
+    from src.runtime.tool_routing import select_relevant_tools
+
+    engine = _FakeJudge(
+        {
+            **_needs(0.05),
+            "tool": {
+                "type": "choice",
+                "choice": "none",
+                "confidence": 0.9,
+                "probabilities": {"none": 0.9},
+            },
+        }
+    )
+    tools = [_Tool("search_knowledge"), _Tool("query_database"), _Tool("call_api")]
+    selected, meta = await select_relevant_tools(
+        tools, engine=engine, user_request="hola", history=[]
+    )
+    assert meta["mode"] == "jev_no_tools"
+    assert selected == []
+
+
+def test_answer_gate_mode_respeta_override_del_agente() -> None:
+    from types import SimpleNamespace
+
+    from src.runtime.answer_gate import answer_gate_mode
+
+    off = SimpleNamespace(RUNTIME_ANSWER_GATE="off")
+    on = SimpleNamespace(RUNTIME_ANSWER_GATE="on")
+    assert answer_gate_mode(off, {"runtime": {"answer_gate": True}}) == "on"
+    assert answer_gate_mode(on, {"runtime": {"answer_gate": False}}) == "off"
+    assert answer_gate_mode(on, {}) == "on"
+    assert answer_gate_mode(off, {}) == "off"
+
+
+def _gate_answers(grounded: float, complete: float, quality: float) -> dict:
+    return {
+        "answer_grounded": {"type": "noul", "noul": grounded},
+        "answer_complete": {"type": "noul", "noul": complete},
+        "answer_quality": {"type": "score", "score": quality},
+    }
+
+
+@pytest.mark.asyncio
+async def test_answer_gate_aprueba_respuesta_respaldada() -> None:
+    from src.runtime.answer_gate import judge_answer
+
+    engine = _FakeJudge(_gate_answers(0.95, 0.9, 3))
+    out = await judge_answer(
+        engine=engine,
+        mode="on",
+        user_request="quien es el gerente",
+        draft="El gerente es X (fuente: doc.pdf)",
+        observations=["OBSERVATION: doc.pdf dice que el gerente es X"],
+        settings=object(),
+    )
+    assert out.verdict == "approve"
+    assert out.grounded is True and out.complete is True
+    assert out.score >= 0.66
+    assert out.latency_ms >= 0
+    step = out.to_step()
+    assert step["type"] == "answer_gate" and step["verdict"] == "approve"
+
+
+@pytest.mark.asyncio
+async def test_answer_gate_pide_revision_o_se_abstiene() -> None:
+    from src.runtime.answer_gate import judge_answer
+
+    revise = await judge_answer(
+        engine=_FakeJudge(_gate_answers(0.8, 0.2, 2)),
+        mode="on",
+        user_request="quien es el gerente",
+        draft="El gerente es X",
+        observations=[],
+        settings=object(),
+    )
+    assert revise.verdict == "revise"
+    assert "Verificador JEV" in revise.feedback
+
+    abstain = await judge_answer(
+        engine=_FakeJudge(_gate_answers(0.5, 0.5, 0)),
+        mode="on",
+        user_request="quien es el gerente",
+        draft="Puede ser cualquiera",
+        observations=[],
+        settings=object(),
+    )
+    assert abstain.verdict == "abstain"
+
+
+@pytest.mark.asyncio
+async def test_answer_gate_apagado_o_sin_jev_no_cambia_nada() -> None:
+    from src.runtime.answer_gate import judge_answer
+
+    off = await judge_answer(
+        engine=_FakeJudge(_gate_answers(0.0, 0.0, 0)),
+        mode="off",
+        user_request="x",
+        draft="y",
+        observations=[],
+        settings=object(),
+    )
+    assert off.verdict == "skipped"
+
+    no_engine = await judge_answer(
+        engine=None,
+        mode="on",
+        user_request="x",
+        draft="y",
+        observations=[],
+        settings=object(),
+    )
+    assert no_engine.verdict == "skipped"
+
+
+def test_agent_steps_to_flow_mapea_verificador() -> None:
+    from src.runtime.agent_flow import steps_to_flow
+
+    mapped = steps_to_flow(
+        [
+            {
+                "type": "tool_routing",
+                "choice": "search_knowledge",
+                "confidence": 0.45,
+                "score": 0.55,
+                "certain": False,
+                "latency_ms": 790,
+            },
+            {
+                "type": "answer_gate",
+                "verdict": "approve",
+                "score": 0.9,
+                "grounded": True,
+                "complete": True,
+                "quality": 3,
+                "latency_ms": 850,
+            },
+            {"type": "final"},
+        ]
+    )
+    assert mapped["steps"][0]["name"] == "JEV elige herramienta"
+    assert "sin certeza" in mapped["steps"][0]["detail"]
+    assert mapped["steps"][0]["ms"] == 790
+    assert mapped["steps"][1]["name"] == "JEV verifica respuesta"
+    assert "aprobada" in mapped["steps"][1]["detail"]
+    assert "calidad 3/3" in mapped["steps"][1]["detail"]
+    assert mapped["jev"] == {
+        "used": True,
+        "score": 0.9,
+        "verdict": "approve",
+        "grounded": True,
+        "complete": True,
+    }

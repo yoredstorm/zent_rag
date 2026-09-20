@@ -36,9 +36,18 @@ const AGENT_STEP_LABEL: Record<string, string> = {
   tool_call: "Herramienta",
   tool_routing: "JEV elige herramienta",
   termination_gate: "JEV verifica cierre",
+  answer_gate: "JEV verifica respuesta",
+  answer_revision: "Revisión con feedback de JEV",
   final: "Respuesta final",
   guardrail: "Límite",
   error: "Error",
+};
+
+const GATE_VERDICT_LABEL: Record<string, string> = {
+  approve: "aprobada",
+  revise: "revisar",
+  revise_exhausted: "aprobada (revisión ya usada)",
+  abstain: "abstención",
 };
 
 export function flowFromAgentSteps(
@@ -54,20 +63,58 @@ export function flowFromAgentSteps(
   let tokens = 0;
   let generationMs = 0;
   let jevUsed = false;
+  let jevScore: number | null = null;
+  let jevVerdict: string | null = null;
+  let jevGrounded: boolean | null = null;
+  let jevComplete: boolean | null = null;
   const timeline: TimelineStep[] = list.map((step) => {
     const type = String(step.type || "");
-    if (type === "tool_routing" || type === "termination_gate") jevUsed = true;
+    if (type === "tool_routing" || type === "termination_gate" || type === "answer_gate") {
+      jevUsed = true;
+    }
     tokens += Number(step.tokens || 0);
     if (type === "llm") generationMs += Number(step.latency_ms || 0);
     let detail: string;
     if (type === "tool_routing") {
       const choice = step.choice ? String(step.choice) : "";
       const confidence = Number(step.confidence || 0);
-      detail = [choice, confidence > 0 ? `confianza ${confidence.toFixed(2)}` : ""]
+      const score = Number(step.score || 0);
+      detail = [
+        choice || "—",
+        confidence > 0 ? `confianza ${confidence.toFixed(2)}` : "",
+        score > 0 ? `score ${score.toFixed(2)}` : "",
+        step.certain === false ? "sin certeza (decide el LLM)" : "",
+      ]
         .filter(Boolean)
         .join(" · ");
+    } else if (type === "answer_gate") {
+      const verdict = GATE_VERDICT_LABEL[String(step.verdict || "")] || String(step.verdict || "");
+      detail = [
+        step.grounded === true
+          ? "respaldada"
+          : step.grounded === false
+            ? "sin respaldo"
+            : "",
+        step.complete === true
+          ? "completa"
+          : step.complete === false
+            ? "incompleta"
+            : "",
+        Number(step.quality || 0) > 0 ? `calidad ${Number(step.quality)}/3` : "",
+        verdict ? `→ ${verdict}` : "",
+        Number(step.score || 0) > 0 ? `score ${Number(step.score).toFixed(2)}` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      const score = Number(step.score || 0);
+      if (score > 0) jevScore = score;
+      if (step.verdict) jevVerdict = String(step.verdict);
+      if (typeof step.grounded === "boolean") jevGrounded = step.grounded;
+      if (typeof step.complete === "boolean") jevComplete = step.complete;
     } else if (type === "termination_gate") {
       detail = step.stop ? "cerró el run" : "continuó";
+    } else if (type === "answer_revision") {
+      detail = String(step.feedback || "corrección pedida por JEV").slice(0, 200);
     } else if (type === "tool_call") {
       detail = step.error
         ? String(step.error).slice(0, 160)
@@ -84,7 +131,7 @@ export function flowFromAgentSteps(
         type === "tool_call"
           ? String(step.tool || "herramienta")
           : AGENT_STEP_LABEL[type] || type || "paso",
-      status: step.error ? "warn" : "ok",
+      status: step.error ? "warn" : step.verdict === "abstain" ? "warn" : "ok",
       ms: Number(step.latency_ms || 0),
       detail,
     };
@@ -103,7 +150,13 @@ export function flowFromAgentSteps(
       acting: true,
       mode: jevUsed ? "ReAct + JEV" : "ReAct",
     },
-    jev: { used: jevUsed },
+    jev: {
+      used: jevUsed,
+      score: jevScore,
+      verdict: jevVerdict,
+      grounded: jevGrounded,
+      complete: jevComplete,
+    },
     generation: {
       model: totals.model ?? null,
       total_tokens: totalTokens,

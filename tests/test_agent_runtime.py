@@ -20,6 +20,17 @@ from src.core.domain.entities import Agent, LLMResponse
 from src.core.ports import LLMProvider
 
 
+@pytest.fixture(autouse=True)
+def _runtime_flags_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unit tests no dependen de los flags demo del .env local."""
+    from src.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "RUNTIME_TOOL_ROUTING_MODE", "off")
+    monkeypatch.setattr(settings, "RUNTIME_TERMINATION_GATE", "off")
+    monkeypatch.setattr(settings, "RUNTIME_ANSWER_GATE", "off")
+
+
 class _FakeLLM(LLMProvider):
     def __init__(self, contents: list[str], tokens: int = 10) -> None:
         self.contents = contents

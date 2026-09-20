@@ -16,6 +16,7 @@ import {
   type Environment,
   type IngestionJob,
   type KnowledgeSource,
+  type AgentConfig,
   defaultConfig,
   legacyTabToGroup,
   sourceIdsFromSteps,
@@ -65,6 +66,7 @@ export default function AgentStudioPage() {
   const [sql, setSql] = useState(true);
   const [apiCalls, setApiCalls] = useState(true);
   const [jevMode, setJevMode] = useState<"inherit" | "on" | "off">("inherit");
+  const [answerGate, setAnswerGate] = useState<"inherit" | "on" | "off">("inherit");
   const [isActive, setIsActive] = useState(true);
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
@@ -266,10 +268,20 @@ export default function AgentStudioPage() {
     setSemantic(semanticOn);
     setSql(sqlOn);
     setApiCalls(apiOn);
-    const runtimeCfg = (next.runtime ?? null) as { tool_routing?: unknown } | null;
+    const runtimeCfg = (next.runtime ?? null) as {
+      tool_routing?: unknown;
+      answer_gate?: unknown;
+    } | null;
     setJevMode(
       runtimeCfg && typeof runtimeCfg.tool_routing === "boolean"
         ? runtimeCfg.tool_routing
+          ? "on"
+          : "off"
+        : "inherit",
+    );
+    setAnswerGate(
+      runtimeCfg && typeof runtimeCfg.answer_gate === "boolean"
+        ? runtimeCfg.answer_gate
           ? "on"
           : "off"
         : "inherit",
@@ -319,13 +331,34 @@ export default function AgentStudioPage() {
 
   function updateJevMode(mode: "inherit" | "on" | "off") {
     setJevMode(mode);
-    setConfig((prev) => ({
-      ...prev,
-      runtime:
-        mode === "inherit"
-          ? undefined
-          : { tool_routing: mode === "on", termination_gate: mode === "on" },
-    }));
+    updateRuntime({
+      tool_routing: mode === "inherit" ? undefined : mode === "on",
+      termination_gate: mode === "inherit" ? undefined : mode === "on",
+    });
+  }
+
+  function updateAnswerGate(mode: "inherit" | "on" | "off") {
+    setAnswerGate(mode);
+    updateRuntime({ answer_gate: mode === "inherit" ? undefined : mode === "on" });
+  }
+
+  function updateRuntime(patch: Record<string, boolean | undefined>) {
+    setConfig((prev) => {
+      const current = {
+        ...((prev.runtime ?? {}) as Record<string, boolean | undefined>),
+      };
+      for (const [key, value] of Object.entries(patch)) {
+        if (value === undefined) delete current[key];
+        else current[key] = value;
+      }
+      const hasValue = Object.values(current).some(
+        (value) => typeof value === "boolean",
+      );
+      return {
+        ...prev,
+        runtime: hasValue ? (current as NonNullable<AgentConfig["runtime"]>) : undefined,
+      };
+    });
   }
 
   function enableAllTools() {
@@ -848,6 +881,8 @@ export default function AgentStudioPage() {
         setRetrieval={setRetrieval}
         jevMode={jevMode}
         setJevMode={updateJevMode}
+        answerGate={answerGate}
+        setAnswerGate={updateAnswerGate}
         onEnableAll={enableAllTools}
         outputSchema={outputSchema}
         setOutputSchema={setOutputSchema}

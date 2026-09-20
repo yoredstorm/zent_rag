@@ -262,6 +262,42 @@ async def test_create_returns_parsed_config(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_persists_runtime_overrides(async_client: AsyncClient) -> None:
+    """config.runtime (JEV por agente) debe guardarse y volver en el GET."""
+    org = await _create_org(async_client, "Agent Runtime Org")
+    org["session"] = await _owner_session(org["organization_id"])
+    headers = _headers(org)
+
+    create = await async_client.post(
+        "/api/v1/agents",
+        json={
+            "name": f"gate-{uuid4().hex[:8]}",
+            "tools": ["search_knowledge", "query_database", "call_api"],
+            "config": {
+                "purpose": "Responder con evidencia",
+                "runtime": {
+                    "tool_routing": True,
+                    "termination_gate": True,
+                    "answer_gate": True,
+                },
+            },
+        },
+        headers=headers,
+    )
+    assert create.status_code == 201, create.text
+    body = create.json()
+    assert body["config"]["runtime"] == {
+        "tool_routing": True,
+        "termination_gate": True,
+        "answer_gate": True,
+    }
+
+    fetched = await async_client.get(f"/api/v1/agents/{body['id']}", headers=headers)
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["config"]["runtime"]["answer_gate"] is True
+
+
+@pytest.mark.asyncio
 async def test_update_tools_without_sql_run_does_not_execute_sql(
     async_client: AsyncClient,
 ) -> None:

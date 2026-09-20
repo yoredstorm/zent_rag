@@ -886,6 +886,37 @@ class Settings(BaseSettings):
         le=1.0,
         description="Optional sample of JEV decisions compared with the previous provider.",
     )
+    RUNTIME_ANSWER_GATE: Literal["off", "shadow", "on"] = Field(
+        default="off",
+        description=(
+            "on = JEV verifica el borrador de respuesta del agente antes de "
+            "finalizar (una revision maximo). shadow = solo observa."
+        ),
+    )
+    RUNTIME_JEV_STATE_MAX_CHARS: int = Field(
+        default=30000,
+        ge=2000,
+        le=200000,
+        description="Presupuesto de estado (caracteres) que recibe JEV por juicio.",
+    )
+    RUNTIME_JEV_TOOL_CONFIDENCE: float = Field(
+        default=0.60,
+        ge=0.0,
+        le=1.0,
+        description="Score minimo para que JEV imponga su eleccion de herramienta.",
+    )
+    RUNTIME_JEV_ANSWER_APPROVE: float = Field(
+        default=0.66,
+        ge=0.0,
+        le=1.0,
+        description="Score minimo para aprobar la respuesta sin cambios.",
+    )
+    RUNTIME_JEV_ANSWER_REVISE: float = Field(
+        default=0.40,
+        ge=0.0,
+        le=1.0,
+        description="Score minimo para pedir una revision; debajo, abstencion.",
+    )
     # -------------------------------------------------------------------------
     # Agent Runtime
     # -------------------------------------------------------------------------
