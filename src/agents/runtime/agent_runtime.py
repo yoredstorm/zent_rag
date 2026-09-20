@@ -183,6 +183,112 @@ def _effective_tools(agent: Agent) -> list[str]:
     return tools
 
 
+# Tipos de fuente (`kb_sources.type`) que habilitan cada tool de datos.
+_DB_SOURCE_TYPES = {"sql", "postgres", "mysql", "mssql", "oracle", "snowflake"}
+_TABULAR_SOURCE_TYPES = {"csv", "excel"}
+
+# Errores de tool que permiten reintento (transitorios) vs. los que indican
+# que la tool no aplica para esta pregunta (permanentes).
+_TRANSIENT_TOOL_ERROR_MARKERS = (
+    "timed out",
+    "timeout",
+    "rate limit",
+    "temporarily",
+    "try again",
+    "circuit",
+    "connection",
+    "invalid",
+    "missing",
+    "required",
+)
+
+
+def _classify_tool_failure(error: str) -> str:
+    """Clasifica un error de tool: ``transient`` (permite reintento) o
+    ``permanent`` (la tool no aplica; no se reintenta para esta pregunta)."""
+    text = (error or "").lower()
+    if any(marker in text for marker in _TRANSIENT_TOOL_ERROR_MARKERS):
+        return "transient"
+    return "permanent"
+
+
+def _filter_tools_by_sources(
+    tools: list[str],
+    source_types: set[str],
+    *,
+    api_allowlist: list[str],
+) -> tuple[list[str], list[dict]]:
+    """Quita tools que no aplican a las fuentes del agente.
+
+    - ``query_database``: solo con fuentes SQL.
+    - ``query_tabular_data``: solo con CSV/Excel o fuentes SQL.
+    - ``call_api``: solo con allowlist de APIs del tenant.
+
+    Devuelve ``(tools_filtradas, omitidas)``; ``omitidas`` es la lista de
+    ``{"tool": ..., "reason": ...}`` que se expone en "Ver flujo".
+    """
+    has_db = bool(source_types & _DB_SOURCE_TYPES)
+    has_tabular = bool(source_types & _TABULAR_SOURCE_TYPES)
+    allowlist = [str(a).strip() for a in (api_allowlist or []) if str(a).strip()]
+    omitted: list[dict] = []
+    filtered: list[str] = []
+    for name in tools:
+        if name == "query_database" and not has_db:
+            omitted.append({"tool": name, "reason": "no_data_sources"})
+            continue
+        if name == "query_tabular_data" and not (has_tabular or has_db):
+            omitted.append({"tool": name, "reason": "no_tabular_sources"})
+            continue
+        if name == "call_api" and not allowlist:
+            omitted.append({"tool": name, "reason": "no_api_allowlist"})
+            continue
+        filtered.append(name)
+    return filtered, omitted
+
+
+async def _agent_source_types(agent: Agent) -> set[str] | None:
+    """Tipos de fuente del agente (o de la org si no declara `source_ids`).
+
+    ``None`` = no se pudo determinar (permisivo: no se filtran tools).
+    """
+    raw_ids = (agent.config_json or {}).get("source_ids") or []
+    ids = [str(sid).strip() for sid in raw_ids if str(sid).strip()][:100]
+    try:
+        from sqlalchemy import bindparam
+        from sqlalchemy import text as sql_text
+
+        from src.infrastructure.postgres.session import get_async_session
+
+        session = await get_async_session()
+        try:
+            if ids:
+                stmt = sql_text(
+                    "SELECT DISTINCT type FROM kb_sources "
+                    "WHERE organization_id = :oid AND id::text IN :ids"
+                ).bindparams(bindparam("ids", expanding=True))
+                rows = (
+                    await session.execute(
+                        stmt, {"oid": str(agent.organization_id), "ids": ids}
+                    )
+                ).fetchall()
+            else:
+                rows = (
+                    await session.execute(
+                        sql_text(
+                            "SELECT DISTINCT type FROM kb_sources "
+                            "WHERE organization_id = :oid"
+                        ),
+                        {"oid": str(agent.organization_id)},
+                    )
+                ).fetchall()
+        finally:
+            await session.close()
+        return {str(row[0]) for row in rows if row[0]}
+    except Exception as exc:  # noqa: BLE001 - nunca rompe el run
+        logger.warning("source-aware tools skipped", error=str(exc)[:200])
+        return None
+
+
 async def _circuit_check(config: dict, organization_id: UUID) -> None:
     """Circuit breaker: si el modelo está OPEN (cooldown activo), salta al
     siguiente candidato del router; si no hay, marca _circuit_open."""
@@ -737,8 +843,25 @@ class AgentRuntime:
         result: AgentRunResult,
     ) -> None:
         effective_tools = _effective_tools(request.agent)
-        allowed_tools = resolve_allowed_tools(effective_tools, ctx)
         settings = get_settings()
+        omitted_tools: list[dict] = []
+        if bool(getattr(settings, "RUNTIME_SOURCE_AWARE_TOOLS", True)):
+            source_types = await _agent_source_types(request.agent)
+            if source_types is not None:
+                agent_cfg = (request.org_config or {}).get("agent")
+                api_allowlist = (
+                    agent_cfg.get("api_allowlist") if isinstance(agent_cfg, dict) else None
+                )
+                effective_tools, omitted_tools = _filter_tools_by_sources(
+                    effective_tools,
+                    source_types,
+                    api_allowlist=api_allowlist or [],
+                )
+                if omitted_tools:
+                    result.steps.append(
+                        {"type": "tool_filter", "omitted": omitted_tools}
+                    )
+        allowed_tools = resolve_allowed_tools(effective_tools, ctx)
 
         def _describe_tools(tools) -> str:
             return "\n".join(
@@ -760,6 +883,7 @@ class AgentRuntime:
 
         history: list[str] = [f"USER QUESTION: {request.message}"]
         tool_calls = 0
+        failed_tools: dict[str, str] = {}
         max_steps = int(config["max_steps"])
         max_tool_calls = int(config["max_tool_calls"])
         max_tokens = int(config["max_tokens"])
@@ -1106,6 +1230,27 @@ class AgentRuntime:
                 )
                 continue
 
+            # Tool que ya falló para esta pregunta: no se reintenta (evita
+            # loops caros tipo query_database sobre preguntas documentales).
+            if (
+                bool(getattr(settings, "RUNTIME_FAILED_TOOL_GUARD", True))
+                and failed_tools.get(tool_name) == "permanent"
+            ):
+                history.append(
+                    f"OBSERVATION: error: '{tool_name}' ya falló para esta "
+                    "pregunta (no aplica). Usá otra herramienta, por ejemplo "
+                    "search_knowledge si es documental, o respondé con "
+                    "{\"answer\": \"...\"}."
+                )
+                result.steps.append(
+                    {
+                        "type": "guardrail",
+                        "tool": tool_name,
+                        "detail": "tool falló antes: no se reintenta para esta pregunta",
+                    }
+                )
+                continue
+
             tool_result = await execute_tool_guarded(
                 tool,
                 ctx,
@@ -1148,6 +1293,19 @@ class AgentRuntime:
             if tool_result.meta:
                 step_record["meta"] = tool_result.meta
             result.steps.append(step_record)
+
+            if (
+                tool_result.error
+                and bool(getattr(settings, "RUNTIME_FAILED_TOOL_GUARD", True))
+            ):
+                failed_tools[tool_name] = _classify_tool_failure(tool_result.error)
+                if failed_tools[tool_name] == "permanent":
+                    history.append(
+                        f"OBSERVATION: '{tool_name}' no pudo responder para esta "
+                        "pregunta (no aplica). No lo reintentes: usá otra "
+                        "herramienta, por ejemplo search_knowledge si es "
+                        "documental, o respondé con {\"answer\": \"...\"}."
+                    )
 
             from src.runtime.termination import gate_enabled, original_request_satisfied
 

@@ -65,6 +65,28 @@ describe("flowFromAgentSteps", () => {
     expect((flow.timings as { generation_ms: number }).generation_ms).toBe(8800);
   });
 
+  it("mapea herramientas omitidas por fuentes del agente", () => {
+    const flow = flowFromAgentSteps(
+      [
+        {
+          type: "tool_filter",
+          omitted: [
+            { tool: "query_database", reason: "no_data_sources" },
+            { tool: "call_api", reason: "no_api_allowlist" },
+          ],
+        },
+        { type: "llm", tokens: 100, latency_ms: 900 },
+        { type: "final" },
+      ],
+      2000,
+    );
+    const steps = flow.steps as { name: string; status: string; detail: string }[];
+    expect(steps[0].name).toBe("Herramientas omitidas");
+    expect(steps[0].status).toBe("warn");
+    expect(steps[0].detail).toContain("query_database (el agente no tiene fuentes de datos)");
+    expect(steps[0].detail).toContain("call_api (no hay APIs permitidas configuradas)");
+  });
+
   it("mapea el verificador de respuesta de JEV con score", () => {
     const flow = flowFromAgentSteps(
       [

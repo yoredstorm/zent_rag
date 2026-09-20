@@ -9,12 +9,19 @@ STEP_LABEL: dict[str, str] = {
     "llm": "LLM (razonamiento)",
     "tool_call": "Herramienta",
     "tool_routing": "JEV elige herramienta",
+    "tool_filter": "Herramientas omitidas",
     "termination_gate": "JEV verifica cierre",
     "answer_gate": "JEV verifica respuesta",
     "answer_revision": "Revisión con feedback de JEV",
     "final": "Respuesta final",
     "guardrail": "Límite",
     "error": "Error",
+}
+
+OMIT_REASON_LABEL: dict[str, str] = {
+    "no_data_sources": "el agente no tiene fuentes de datos",
+    "no_tabular_sources": "el agente no tiene CSV/Excel",
+    "no_api_allowlist": "no hay APIs permitidas configuradas",
 }
 
 VERDICT_LABEL: dict[str, str] = {
@@ -78,6 +85,18 @@ def step_to_flow(step: dict[str, Any]) -> dict[str, Any]:
             detail = str(step["output"])[:120]
         else:
             detail = "herramienta"
+    elif step_type == "tool_filter":
+        omitted = step.get("omitted") if isinstance(step.get("omitted"), list) else []
+        parts = []
+        for item in omitted:
+            if not isinstance(item, dict):
+                continue
+            tool = str(item.get("tool") or "herramienta")
+            reason = OMIT_REASON_LABEL.get(
+                str(item.get("reason") or ""), str(item.get("reason") or "")
+            )
+            parts.append(f"{tool} ({reason})" if reason else tool)
+        detail = " · ".join(parts) or "sin cambios"
     elif step_type == "llm":
         detail = " · ".join(
             part
@@ -96,7 +115,11 @@ def step_to_flow(step: dict[str, Any]) -> dict[str, Any]:
         if step_type == "tool_call"
         else STEP_LABEL.get(step_type, step_type or "paso")
     )
-    status = "warn" if step.get("error") or step.get("verdict") == "abstain" else "ok"
+    status = (
+        "warn"
+        if step.get("error") or step.get("verdict") == "abstain" or step_type == "tool_filter"
+        else "ok"
+    )
     return {
         "name": name,
         "status": status,

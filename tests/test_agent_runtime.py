@@ -12,6 +12,7 @@ import pytest
 from src.agents.runtime.agent_runtime import (
     AgentRunRequest,
     AgentRuntime,
+    _filter_tools_by_sources,
     _parse_action,
 )
 from src.agents.tools.base import Tool, ToolContext, ToolResult
@@ -29,6 +30,9 @@ def _runtime_flags_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "RUNTIME_TOOL_ROUTING_MODE", "off")
     monkeypatch.setattr(settings, "RUNTIME_TERMINATION_GATE", "off")
     monkeypatch.setattr(settings, "RUNTIME_ANSWER_GATE", "off")
+    # El filtro por fuentes consulta Postgres; en unit tests se apaga salvo
+    # en los casos dedicados (que mockean `_agent_source_types`).
+    monkeypatch.setattr(settings, "RUNTIME_SOURCE_AWARE_TOOLS", False)
 
 
 class _FakeLLM(LLMProvider):
@@ -251,3 +255,188 @@ class TestReActLoop:
         assert result.status == "completed"
         assert "Miguel" in result.answer
         assert any(s.get("detail") == "max_tokens exceeded" for s in result.steps)
+
+
+class _FailingSqlishTool(Tool):
+    """Simula el SQL Expert cuando la pregunta no aplica (error no transitorio)."""
+
+    name: ClassVar[str] = "sqlish"
+    description: ClassVar[str] = "Simula SQL que no aplica."
+    input_schema: ClassVar[dict] = {
+        "type": "object",
+        "required": ["q"],
+        "properties": {"q": {"type": "string"}},
+    }
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def execute(self, ctx: ToolContext, arguments: dict) -> ToolResult:
+        self.calls.append(dict(arguments))
+        return ToolResult(error="Cannot generate query for this question")
+
+
+class _FlakyTool(Tool):
+    """Falla una vez por timeout y luego responde (error transitorio)."""
+
+    name: ClassVar[str] = "flaky"
+    description: ClassVar[str] = "Falla una vez."
+    input_schema: ClassVar[dict] = {
+        "type": "object",
+        "properties": {"step": {"type": "string"}},
+    }
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def execute(self, ctx: ToolContext, arguments: dict) -> ToolResult:
+        self.calls += 1
+        if self.calls == 1:
+            return ToolResult(error="request timed out")
+        return ToolResult(output="ok")
+
+
+class TestFailedToolGuard:
+    @pytest.mark.asyncio
+    async def test_failed_tool_not_retried_for_same_question(self) -> None:
+        tool = _FailingSqlishTool()
+        register_tool(tool)
+        llm = _FakeLLM(
+            [
+                '{"tool": "sqlish", "arguments": {"q": "quien es el empleado"}}',
+                '{"tool": "sqlish", "arguments": {"q": "empleado nombre"}}',
+                '{"answer": "No tengo esa informacion en las fuentes."}',
+            ]
+        )
+        runtime = AgentRuntime(llm_provider=llm)
+        result = await runtime.run(
+            _request(_agent(tools=["sqlish"]), "quien es el empleado")
+        )
+        assert result.status == "completed"
+        # El segundo intento (argumentos distintos) se bloquea igual.
+        assert len(tool.calls) == 1
+        assert any(
+            s.get("detail") == "tool falló antes: no se reintenta para esta pregunta"
+            for s in result.steps
+        )
+
+    @pytest.mark.asyncio
+    async def test_transient_tool_failure_allows_retry(self) -> None:
+        tool = _FlakyTool()
+        register_tool(tool)
+        llm = _FakeLLM(
+            [
+                '{"tool": "flaky", "arguments": {"step": "1"}}',
+                '{"tool": "flaky", "arguments": {"step": "2"}}',
+                '{"answer": "ok"}',
+            ]
+        )
+        runtime = AgentRuntime(llm_provider=llm)
+        result = await runtime.run(_request(_agent(tools=["flaky"])))
+        assert result.status == "completed"
+        assert tool.calls == 2
+
+
+class TestSourceAwareTools:
+    def test_pdf_only_drops_sql_tabular_and_api(self) -> None:
+        tools, omitted = _filter_tools_by_sources(
+            ["search_knowledge", "query_database", "query_tabular_data", "call_api"],
+            {"file"},
+            api_allowlist=[],
+        )
+        assert tools == ["search_knowledge"]
+        assert {item["tool"] for item in omitted} == {
+            "query_database",
+            "query_tabular_data",
+            "call_api",
+        }
+
+    def test_csv_keeps_tabular_but_not_sql(self) -> None:
+        tools, omitted = _filter_tools_by_sources(
+            ["query_database", "query_tabular_data"],
+            {"csv"},
+            api_allowlist=[],
+        )
+        assert tools == ["query_tabular_data"]
+        assert [item["tool"] for item in omitted] == ["query_database"]
+
+    def test_sql_and_allowlist_keep_everything(self) -> None:
+        tools, omitted = _filter_tools_by_sources(
+            ["query_database", "query_tabular_data", "call_api"],
+            {"sql"},
+            api_allowlist=["api.example.com"],
+        )
+        assert tools == ["query_database", "query_tabular_data", "call_api"]
+        assert omitted == []
+
+    @pytest.mark.asyncio
+    async def test_run_records_omitted_tools_in_flow(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.agents.runtime import agent_runtime as runtime_module
+        from src.core.config import get_settings
+
+        monkeypatch.setattr(get_settings(), "RUNTIME_SOURCE_AWARE_TOOLS", True)
+
+        async def _fake_source_types(agent: Agent) -> set[str]:
+            return {"file"}
+
+        monkeypatch.setattr(runtime_module, "_agent_source_types", _fake_source_types)
+        register_tool(_EchoTool())
+        llm = _FakeLLM(['{"answer": "ok"}'])
+        agent = _agent(tools=["echo", "query_database"])
+        result = await AgentRuntime(llm_provider=llm).run(_request(agent))
+        assert result.status == "completed"
+        step = next(s for s in result.steps if s["type"] == "tool_filter")
+        assert [item["tool"] for item in step["omitted"]] == ["query_database"]
+
+
+class TestSqlToolFastReject:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "question",
+        [
+            "quién es el empleado",
+            "que es una factura",
+            "explícame la política de vacaciones",
+            "hola",
+        ],
+    )
+    async def test_definitional_question_rejected_without_expert(
+        self, question: str
+    ) -> None:
+        from src.agents.tools.tools_builtin import QueryDatabaseTool
+
+        class _ExpertMustNotRun:
+            async def execute(self, **kwargs):
+                raise AssertionError("el SQL Expert no debe ejecutarse")
+
+        tool = QueryDatabaseTool(_ExpertMustNotRun())
+        result = await tool.execute(ToolContext(tenant_id=uuid4()), {"question": question})
+        assert result.error
+        assert "no parece ser sobre datos" in result.error
+        # Sin LLM: debe ser inmediato (el SQL Expert tardaba ~13 s).
+        assert result.latency_ms < 1000
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "question",
+        ["cuántas ventas hubo ayer", "dame los empleados"],
+    )
+    async def test_analytical_question_reaches_expert(self, question: str) -> None:
+        from src.agents.tools.tools_builtin import QueryDatabaseTool
+        from src.core.ports.sql_expert import SqlQueryResult
+
+        seen: list[str] = []
+
+        class _Expert:
+            async def execute(self, **kwargs):
+                seen.append(kwargs["question"])
+                return SqlQueryResult(
+                    sql="SELECT 1", columns=["n"], rows=[["1"]], row_count=1
+                )
+
+        tool = QueryDatabaseTool(_Expert())
+        result = await tool.execute(ToolContext(tenant_id=uuid4()), {"question": question})
+        assert result.error is None
+        assert seen == [question]

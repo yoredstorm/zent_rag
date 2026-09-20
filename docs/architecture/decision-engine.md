@@ -50,6 +50,8 @@ Reglas no negociables:
 | `RAG_ADAPTIVE_RAG_MODE` | `off` · `shadow` · `active` · `canary` | Aplica plan de retrieval |
 | `RAG_RUNTIME_TOOL_ROUTING_MODE` | `off` · `experimental` | Subconjunto de tools por JEV en agentes |
 | `RAG_RUNTIME_TERMINATION_GATE` | `off` · `on` | Gate Noul tras uso de tools |
+| `RAG_RUNTIME_SOURCE_AWARE_TOOLS` | bool (default `true`) | Recorta tools según las fuentes del agente |
+| `RAG_RUNTIME_FAILED_TOOL_GUARD` | bool (default `true`) | No reintenta una tool que falló para la pregunta |
 
 Rollout recomendado: `legacy` + `RAG_JEV_SHADOW_MODE=true` → comparar
 `decision_traces` (agreement) → `hybrid` con canary 5-10 → `jev`.
@@ -83,6 +85,25 @@ Allowlist por tenant: `organizations.config_json["decision"]` acepta
 `{"capability_allowlist": ["knowledge.answer", ...]}`; el hook lo pasa como
 `tenant_policy` y `authorize_decision()` lo aplica antes de emitir señales de
 routing.
+
+## Herramientas según las fuentes (runtime de agentes)
+
+Antes del loop ReAct, el runtime recorta las tools del agente a las que aplican
+a sus fuentes (`RAG_RUNTIME_SOURCE_AWARE_TOOLS=true`, default on):
+
+| Tool | Se mantiene si... |
+|---|---|
+| `search_knowledge` | siempre |
+| `query_tabular_data` | hay fuentes `csv`/`excel` (o `sql`) |
+| `query_database` | hay fuentes `sql` |
+| `call_api` | el tenant tiene `agent.api_allowlist` |
+
+Si el agente no declara `source_ids`, se miran las fuentes de la organización.
+Las omisiones se registran como paso `tool_filter` en "Ver flujo". En la misma
+línea, `RAG_RUNTIME_FAILED_TOOL_GUARD=true` impide reintentar una tool que falló
+para la misma pregunta (solo errores transitorios permiten reintento) y
+`QueryDatabaseTool` rechaza sin LLM las preguntas de definición/identidad
+("quién es X") cuando no hay señal analítica.
 
 ## Trazas y costo
 

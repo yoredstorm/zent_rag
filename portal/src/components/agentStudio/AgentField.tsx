@@ -72,6 +72,8 @@ export function AgentToggleCard({
   tech,
   checked,
   onChange,
+  disabled = false,
+  disabledHint,
 }: {
   id: string;
   label: string;
@@ -79,12 +81,18 @@ export function AgentToggleCard({
   tech: string;
   checked: boolean;
   onChange: (value: boolean) => void;
+  disabled?: boolean;
+  disabledHint?: string;
 }) {
   return (
     <div
       className={cn(
         "rounded-md border bg-raised p-3 transition-colors duration-150",
-        checked ? "border-accent-line bg-accent-soft/40" : "border-border hover:border-border-strong",
+        disabled
+          ? "border-border opacity-70"
+          : checked
+            ? "border-accent-line bg-accent-soft/40"
+            : "border-border hover:border-border-strong",
       )}
     >
       <Checkbox
@@ -93,8 +101,12 @@ export function AgentToggleCard({
         onCheckedChange={onChange}
         label={<span className="font-medium">{label}</span>}
         hint={hint}
+        disabled={disabled}
       />
       <p className="mt-1 pl-[26px] font-mono text-[11px] text-faint">{tech}</p>
+      {disabled && disabledHint ? (
+        <p className="mt-1 pl-[26px] text-[11px] leading-relaxed text-faint">{disabledHint}</p>
+      ) : null}
     </div>
   );
 }

@@ -35,6 +35,7 @@ const AGENT_STEP_LABEL: Record<string, string> = {
   llm: "LLM (razonamiento)",
   tool_call: "Herramienta",
   tool_routing: "JEV elige herramienta",
+  tool_filter: "Herramientas omitidas",
   termination_gate: "JEV verifica cierre",
   answer_gate: "JEV verifica respuesta",
   answer_revision: "Revisión con feedback de JEV",
@@ -48,6 +49,12 @@ const GATE_VERDICT_LABEL: Record<string, string> = {
   revise: "revisar",
   revise_exhausted: "aprobada (revisión ya usada)",
   abstain: "abstención",
+};
+
+const TOOL_OMIT_REASON: Record<string, string> = {
+  no_data_sources: "el agente no tiene fuentes de datos",
+  no_tabular_sources: "el agente no tiene CSV/Excel",
+  no_api_allowlist: "no hay APIs permitidas configuradas",
 };
 
 export function flowFromAgentSteps(
@@ -121,6 +128,18 @@ export function flowFromAgentSteps(
         : step.output
           ? String(step.output).slice(0, 120)
           : "herramienta";
+    } else if (type === "tool_filter") {
+      const omitted = Array.isArray(step.omitted) ? step.omitted : [];
+      detail =
+        omitted
+          .map((item) => {
+            const entry = (item || {}) as Record<string, unknown>;
+            const tool = String(entry.tool || "herramienta");
+            const reason =
+              TOOL_OMIT_REASON[String(entry.reason || "")] || String(entry.reason || "");
+            return reason ? `${tool} (${reason})` : tool;
+          })
+          .join(" · ") || "sin cambios";
     } else if (type === "llm") {
       detail = [
         step.model ? String(step.model) : "",
@@ -137,7 +156,12 @@ export function flowFromAgentSteps(
         type === "tool_call"
           ? String(step.tool || "herramienta")
           : AGENT_STEP_LABEL[type] || type || "paso",
-      status: step.error ? "warn" : step.verdict === "abstain" ? "warn" : "ok",
+      status:
+        step.error || type === "tool_filter"
+          ? "warn"
+          : step.verdict === "abstain"
+            ? "warn"
+            : "ok",
       ms: Number(step.latency_ms || 0),
       detail,
     };

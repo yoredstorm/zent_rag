@@ -52,6 +52,7 @@ export function AgentAdvancedPanel({
   setJevMode,
   answerGate,
   setAnswerGate,
+  sourceTypes,
   onEnableAll,
   outputSchema,
   setOutputSchema,
@@ -107,6 +108,8 @@ export function AgentAdvancedPanel({
   setJevMode: (value: "inherit" | "on" | "off") => void;
   answerGate: "inherit" | "on" | "off";
   setAnswerGate: (value: "inherit" | "on" | "off") => void;
+  /** Tipos de fuente del agente; `null` = desconocido (no se restringe). */
+  sourceTypes?: string[] | null;
   onEnableAll: () => void;
   outputSchema: string;
   setOutputSchema: (value: string) => void;
@@ -184,6 +187,7 @@ export function AgentAdvancedPanel({
             setJevMode={setJevMode}
             answerGate={answerGate}
             setAnswerGate={setAnswerGate}
+            sourceTypes={sourceTypes}
             onEnableAll={onEnableAll}
           />
         </TabsContent>

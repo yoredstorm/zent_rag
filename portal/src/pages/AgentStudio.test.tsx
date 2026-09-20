@@ -18,6 +18,16 @@ const SOURCE = {
   knowledge_base_id: "kb1",
 };
 
+const SQL_SOURCE = {
+  id: "s2",
+  name: "Ventas DB",
+  type: "sql",
+  status: "ready",
+  document_count: 0,
+  last_sync: "2026-09-01T10:00:00Z",
+  knowledge_base_id: null,
+};
+
 const AGENT = {
   id: "a1",
   name: "Soporte",
@@ -50,7 +60,7 @@ function fetchRouter() {
     const method = (init?.method || "GET").toUpperCase();
     if (url.includes("/auth/me"))
       return Promise.resolve(json({ organization_id: "org-1", company_name: "Acme", email: "a@b.cl", roles: ["owner"], permissions: [] }));
-    if (url.includes("/api/v1/sources")) return Promise.resolve(json({ sources: [SOURCE] }));
+    if (url.includes("/api/v1/sources")) return Promise.resolve(json({ sources: [SOURCE, SQL_SOURCE] }));
     if (url.includes("/api/v1/jobs")) return Promise.resolve(json({ jobs: [] }));
     if (url.includes("/agents/a1/readiness"))
       return Promise.resolve(json({ score: 80, items: [{ key: "model", label: "Modelo", met: true, weight: 15, detail: "ok" }] }));
@@ -195,6 +205,8 @@ describe("AgentStudio", () => {
   it("guarda los permisos elegidos en Qué puede hacer", async () => {
     const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=tools");
     await screen.findByDisplayValue("Soporte");
+    // SQL solo se habilita cuando el agente suma una fuente de datos.
+    await user.click(screen.getByRole("checkbox", { name: /Ventas DB/ }));
     await user.click(screen.getByRole("checkbox", { name: /Consultar la base de datos/ }));
     await user.click(screen.getByRole("button", { name: "Guardar" }));
     await waitFor(() => {
@@ -205,6 +217,15 @@ describe("AgentStudio", () => {
       expect(body.tools).toContain("query_database");
       expect(body.config.security.sql_enabled).toBe(true);
     });
+  });
+
+  it("deshabilita SQL cuando las fuentes no incluyen datos", async () => {
+    await renderStudio("/agents/a1?panel=advanced&tab=tools");
+    await screen.findByDisplayValue("Soporte");
+    expect(screen.getByRole("checkbox", { name: /Consultar la base de datos/ })).toBeDisabled();
+    expect(
+      screen.getByText("Tus fuentes no incluyen base de datos: SQL se omite en este agente."),
+    ).toBeInTheDocument();
   });
 
   it("cambia a panel test en mobile tabs", async () => {
@@ -233,9 +254,10 @@ describe("AgentStudio", () => {
     });
   });
 
-  it("Activar todas enciende las tres herramientas", async () => {
+  it("Activar todas enciende las herramientas aplicables a las fuentes", async () => {
     const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=tools");
     await screen.findByDisplayValue("Soporte");
+    await user.click(screen.getByRole("checkbox", { name: /Ventas DB/ }));
     await user.click(screen.getByRole("button", { name: "Activar todas" }));
     await user.click(screen.getByRole("button", { name: "Guardar" }));
     await waitFor(() => {

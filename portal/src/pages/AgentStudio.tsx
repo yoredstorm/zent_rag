@@ -7,6 +7,7 @@ import { AgentAdvancedPanel } from "../components/agentStudio/AgentAdvancedPanel
 import { AgentPurposeForm } from "../components/agentStudio/AgentPurposeForm";
 import { AgentSourcePicker } from "../components/agentStudio/AgentSourcePicker";
 import { AgentTestChat, type ChatTurn } from "../components/agentStudio/AgentTestChat";
+import { hasDbSources, sourceTypesForSelection } from "../components/agentStudio/toolApplicability";
 import { flowFromAgentSteps } from "./chat/runPlaygroundTurn";
 import {
   type AdvancedTab,
@@ -363,7 +364,7 @@ export default function AgentStudioPage() {
 
   function enableAllTools() {
     setSemantic(true);
-    setSql(true);
+    setSql(hasDbSources(sourceTypesForSelection(sources, config.source_ids, sourcesLoading)));
     setApiCalls(true);
   }
 
@@ -721,6 +722,7 @@ export default function AgentStudioPage() {
   const configureVisible = panel !== "test";
   const testVisible = panel !== "configure";
   const saveState: SaveState = saving ? "saving" : dirty ? "dirty" : "idle";
+  const agentSourceTypes = sourceTypesForSelection(sources, config.source_ids, sourcesLoading);
 
   return (
     <div>
@@ -883,6 +885,7 @@ export default function AgentStudioPage() {
         setJevMode={updateJevMode}
         answerGate={answerGate}
         setAnswerGate={updateAnswerGate}
+        sourceTypes={agentSourceTypes}
         onEnableAll={enableAllTools}
         outputSchema={outputSchema}
         setOutputSchema={setOutputSchema}

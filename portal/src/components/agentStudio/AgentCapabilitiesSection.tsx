@@ -1,5 +1,6 @@
 import { AgentField, AgentFieldGroup, AgentToggleCard } from "./AgentField";
 import { COPY, RETRIEVAL_STRATEGIES, TOOL_CHOICES, choiceOptionLabel } from "./advancedCopy";
+import { hasDbSources } from "./toolApplicability";
 import { Button, Input, Select } from "../ui";
 import type { AgentConfig } from "./types";
 
@@ -21,6 +22,7 @@ export function AgentCapabilitiesSection({
   setJevMode,
   answerGate,
   setAnswerGate,
+  sourceTypes = null,
   onEnableAll,
 }: {
   config: AgentConfig;
@@ -37,11 +39,27 @@ export function AgentCapabilitiesSection({
   setJevMode: (value: "inherit" | "on" | "off") => void;
   answerGate: "inherit" | "on" | "off";
   setAnswerGate: (value: "inherit" | "on" | "off") => void;
+  /** Tipos de fuente del agente; `null` = desconocido (no se restringe). */
+  sourceTypes?: string[] | null;
   onEnableAll: () => void;
 }) {
-  const toolState: Record<string, { checked: boolean; onChange: (value: boolean) => void }> = {
+  const dbAvailable = hasDbSources(sourceTypes);
+  const toolState: Record<
+    string,
+    {
+      checked: boolean;
+      onChange: (value: boolean) => void;
+      disabled?: boolean;
+      disabledHint?: string;
+    }
+  > = {
     search_knowledge: { checked: semantic, onChange: setSemantic },
-    query_database: { checked: sql, onChange: setSql },
+    query_database: {
+      checked: sql && dbAvailable,
+      onChange: setSql,
+      disabled: !dbAvailable,
+      disabledHint: "Tus fuentes no incluyen base de datos: SQL se omite en este agente.",
+    },
     call_api: { checked: apiCalls, onChange: setApiCalls },
   };
 
@@ -74,12 +92,15 @@ export function AgentCapabilitiesSection({
               tech={tool.tool}
               checked={toolState[tool.tool].checked}
               onChange={toolState[tool.tool].onChange}
+              disabled={toolState[tool.tool].disabled}
+              disabledHint={toolState[tool.tool].disabledHint}
             />
           ))}
         </div>
         <p className="text-xs leading-relaxed text-faint">
           Consultar la base de datos y Llamar APIs externas son permisos sensibles: al activarlos
-          también quedan habilitados en la seguridad del agente.
+          también quedan habilitados en la seguridad del agente. SQL solo se ofrece si el agente
+          tiene fuentes de datos conectadas.
         </p>
       </AgentFieldGroup>
 

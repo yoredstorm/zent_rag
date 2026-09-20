@@ -872,6 +872,21 @@ class Settings(BaseSettings):
         default="off",
         description="experimental = JEV Choice selects a subset of agent tools.",
     )
+    RUNTIME_SOURCE_AWARE_TOOLS: bool = Field(
+        default=True,
+        description=(
+            "on = el runtime quita tools que no aplican a las fuentes del "
+            "agente (SQL sin fuentes de datos, tabular sin CSV/Excel, call_api "
+            "sin allowlist)."
+        ),
+    )
+    RUNTIME_FAILED_TOOL_GUARD: bool = Field(
+        default=True,
+        description=(
+            "on = una tool que fallo para la pregunta no se reintenta; la "
+            "observacion guia al LLM a usar otra herramienta o responder."
+        ),
+    )
     RUNTIME_TERMINATION_GATE: Literal["off", "on"] = Field(
         default="off",
         description="on = extra Noul gate after tool use; max_steps still hard-stops.",

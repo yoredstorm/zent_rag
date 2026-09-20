@@ -458,3 +458,25 @@ def test_agent_steps_to_flow_mapea_verificador() -> None:
         "grounded": True,
         "complete": True,
     }
+
+
+def test_agent_steps_to_flow_marca_tools_omitidas() -> None:
+    from src.runtime.agent_flow import steps_to_flow
+
+    mapped = steps_to_flow(
+        [
+            {
+                "type": "tool_filter",
+                "omitted": [
+                    {"tool": "query_database", "reason": "no_data_sources"},
+                    {"tool": "call_api", "reason": "no_api_allowlist"},
+                ],
+            },
+            {"type": "final"},
+        ]
+    )
+    step = mapped["steps"][0]
+    assert step["name"] == "Herramientas omitidas"
+    assert step["status"] == "warn"
+    assert "query_database (el agente no tiene fuentes de datos)" in step["detail"]
+    assert "call_api (no hay APIs permitidas configuradas)" in step["detail"]

@@ -91,6 +91,13 @@ _RAG_PATTERNS = (
     r"\bgu[íi]a\b",
     r"\bc[óo]mo\s+funciona\b",
 )
+# Preguntas de definición/identidad: son documentales por naturaleza.
+_DEFINITIONAL_PATTERNS = (
+    r"\bqui[ée]n\s+es\b",
+    r"\bqui[ée]nes\s+son\b",
+    r"\bqui[ée]n\s+fue\b",
+    r"\bcu[áa]l\s+es\s+el\s+nombre\b",
+)
 
 _ROUTER_PROMPT = """Classify the user question. Answer with ONLY one word.
 SQL = the question asks for numbers, counts, sums, totals, rankings,
@@ -126,30 +133,51 @@ class SqlIntentRouter:
         )
 
     @staticmethod
+    def signal_profile(question: str) -> dict[str, int]:
+        """Desglose de señales léxicas de la pregunta (trazabilidad y
+        rechazos rápidos sin LLM)."""
+        text = (question or "").lower()
+        return {
+            "aggregation": sum(
+                1 for pattern in _AGGREGATION_PATTERNS if re.search(pattern, text)
+            ),
+            "ranking": sum(
+                1 for pattern in _RANKING_PATTERNS if re.search(pattern, text)
+            ),
+            "date": sum(1 for pattern in _DATE_PATTERNS if re.search(pattern, text)),
+            "entity": sum(1 for pattern in _ENTITY_PATTERNS if re.search(pattern, text)),
+            "catalog": sum(
+                1 for pattern in _CATALOG_PATTERNS if re.search(pattern, text)
+            ),
+            "rag": sum(1 for pattern in _RAG_PATTERNS if re.search(pattern, text)),
+            "definitional": sum(
+                1 for pattern in _DEFINITIONAL_PATTERNS if re.search(pattern, text)
+            ),
+        }
+
+    @staticmethod
     def heuristic_score(question: str) -> float:
         """Score 0..1 de intención SQL por señales léxicas genéricas."""
-        text = (question or "").lower()
-        signals = 0
-        signals += sum(
-            1 for pattern in _AGGREGATION_PATTERNS if re.search(pattern, text)
-        )
-        signals += sum(
-            1 for pattern in _RANKING_PATTERNS if re.search(pattern, text)
-        )
-        signals += sum(1 for pattern in _DATE_PATTERNS if re.search(pattern, text))
-        signals += sum(1 for pattern in _ENTITY_PATTERNS if re.search(pattern, text))
-        catalog_signals = sum(
-            1 for pattern in _CATALOG_PATTERNS if re.search(pattern, text)
+        profile = SqlIntentRouter.signal_profile(question)
+        signals = (
+            profile["aggregation"]
+            + profile["ranking"]
+            + profile["date"]
+            + profile["entity"]
         )
         # Una señal de catálogo basta para cruzar el umbral 0.5 (2 × 0.4).
-        signals += catalog_signals * 2
-        rag_signals = sum(
-            1 for pattern in _RAG_PATTERNS if re.search(pattern, text)
-        )
+        signals += profile["catalog"] * 2
 
         score = min(signals * 0.4, 1.0)
-        score = max(score - rag_signals * 0.35, 0.0)
+        score = max(score - profile["rag"] * 0.35, 0.0)
         return score
+
+    @staticmethod
+    def is_definitional_intent(question: str) -> bool:
+        """True si es una pregunta de definición ("quién es X", "qué es Y"):
+        va a documentos, no a SQL (salvo que haya señal analítica)."""
+        text = (question or "").lower()
+        return any(re.search(pattern, text) for pattern in _DEFINITIONAL_PATTERNS)
 
     @staticmethod
     def is_catalog_intent(question: str) -> bool:

@@ -502,10 +502,38 @@ class QueryDatabaseTool(Tool):
 
     async def execute(self, ctx: ToolContext, arguments: dict) -> ToolResult:
         start = time.perf_counter()
+        question = str(arguments.get("question") or "")
+
+        # Rechazo rápido (sin LLM): si la pregunta es de definición/identidad
+        # ("quién es X") y no tiene ninguna señal analítica, el SQL Expert
+        # solo puede fallar caro. Se guía al LLM a la vía documental.
+        from src.agents.tools.sql_router import SqlIntentRouter
+
+        profile = SqlIntentRouter.signal_profile(question)
+        analytical = (
+            profile["aggregation"]
+            + profile["ranking"]
+            + profile["date"]
+            + profile["catalog"]
+        )
+        if analytical == 0 and (
+            profile["entity"] == 0
+            or profile["definitional"] > 0
+            or profile["rag"] > 0
+        ):
+            return ToolResult(
+                error=(
+                    "Esta pregunta no parece ser sobre datos/tablas (SQL no "
+                    "aplica). Usá search_knowledge para documentos o formulá "
+                    "una pregunta de datos con tablas, columnas o métricas."
+                ),
+                latency_ms=(time.perf_counter() - start) * 1000,
+            )
+
         try:
             result = await self._sql_expert.execute(
                 organization_id=ctx.tenant_id,
-                question=str(arguments["question"]),
+                question=question,
                 role=ctx.role,
                 permissions=(ctx.org_config or {}).get("sql"),
                 user_id=ctx.user_id,
