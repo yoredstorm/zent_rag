@@ -49,14 +49,17 @@ function stubApi(sources: unknown[], kbs = KBS) {
     const url = String(input);
     const method = (init?.method || "GET").toUpperCase();
     if (url.includes("/files/upload-batch") && method === "POST") {
+      const form = init?.body as FormData;
+      const file = form?.getAll("files")[0] as File | undefined;
+      const filename = file?.name || "cv.pdf";
       return Promise.resolve(
         json({
           items: [
             {
-              filename: "cv.pdf",
+              filename,
               status: "created",
-              source_id: "src-new",
-              name: "cv.pdf",
+              source_id: `src-${filename}`,
+              name: filename,
               job_id: "job-1",
             },
           ],
@@ -135,7 +138,7 @@ describe("KnowledgeSourcesPage", () => {
     expect(screen.queryByLabelText("Nombre")).toBeNull();
   });
 
-  it("sube N archivos en un solo lote", async () => {
+  it("sube N archivos en pedidos separados (uno por archivo)", async () => {
     const fetchMock = stubApi([]);
     const user = userEvent.setup();
     renderSources();
@@ -148,13 +151,83 @@ describe("KnowledgeSourcesPage", () => {
     ]);
     await user.click(screen.getByRole("button", { name: "Subir 2 archivos" }));
     await waitFor(() => {
-      const call = fetchMock.mock.calls.find(
+      const uploads = fetchMock.mock.calls.filter(
         ([url, init]) => String(url).includes("/files/upload-batch") && (init as RequestInit)?.method === "POST",
       );
-      expect(call).toBeTruthy();
-      const body = call?.[1]?.body as FormData;
-      expect(body.getAll("files")).toHaveLength(2);
+      // Un request por archivo: así ningún lote supera el límite del body.
+      expect(uploads).toHaveLength(2);
+      for (const [, init] of uploads) {
+        const body = (init as RequestInit)?.body as FormData;
+        expect(body.getAll("files")).toHaveLength(1);
+      }
+      expect(
+        uploads.map(([, init]) =>
+          (((init as RequestInit)?.body as FormData).getAll("files")[0] as File).name,
+        ),
+      ).toEqual(["uno.pdf", "dos.pdf"]);
     });
+    const results = within(await screen.findByTestId("upload-results"));
+    expect(await results.findByText("uno.pdf")).toBeInTheDocument();
+    expect(results.getByText("dos.pdf")).toBeInTheDocument();
+  });
+
+  it("si un archivo falla con 413 sigue con el siguiente", async () => {
+    const uploaded: string[] = [];
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method || "GET").toUpperCase();
+      if (url.includes("/files/upload-batch") && method === "POST") {
+        const form = init?.body as FormData;
+        const file = form.getAll("files")[0] as File;
+        uploaded.push(file.name);
+        if (file.name === "grande.pdf") {
+          return Promise.resolve(
+            new Response("<html>413 Request Entity Too Large</html>", {
+              status: 413,
+              headers: { "Content-Type": "text/html" },
+            }),
+          );
+        }
+        return Promise.resolve(
+          json({
+            items: [
+              {
+                filename: file.name,
+                status: "created",
+                source_id: "src-chico",
+                name: file.name,
+                job_id: "job-1",
+              },
+            ],
+            created: 1,
+            duplicates: 0,
+            rejected: 0,
+            failed: 0,
+          }),
+        );
+      }
+      if (url.includes("/knowledge-bases")) return Promise.resolve(json({ knowledge_bases: KBS }));
+      if (url.includes("/api/v1/sources")) return Promise.resolve(json({ sources: [] }));
+      return Promise.resolve(json({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    renderSources();
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: /Nueva fuente/ }).length).toBeGreaterThan(0),
+    );
+    await user.click(screen.getAllByRole("button", { name: /Nueva fuente/ })[0]);
+    const input = await screen.findByTestId("source-files");
+    await user.upload(input, [
+      new File(["%PDF"], "grande.pdf", { type: "application/pdf" }),
+      new File(["%PDF"], "chico.pdf", { type: "application/pdf" }),
+    ]);
+    await user.click(screen.getByRole("button", { name: "Subir 2 archivos" }));
+    expect(
+      await screen.findByText("Supera el máximo por archivo (25 MB). Probá con uno más chico."),
+    ).toBeInTheDocument();
+    expect(uploaded).toEqual(["grande.pdf", "chico.pdf"]);
+    expect(await screen.findByText("1 archivo en cola de indexado.")).toBeInTheDocument();
   });
 
   it("avisa duplicado por archivo y permite subir igual", async () => {

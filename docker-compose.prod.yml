@@ -41,6 +41,8 @@ x-prod-env: &prod-env
   RAG_MANAGED_DB_PROVIDER: ${RAG_MANAGED_DB_PROVIDER:-local}
   RAG_METRICS_TOKEN: ${RAG_METRICS_TOKEN:?set RAG_METRICS_TOKEN}
   RAG_UPLOAD_DIR: /app/uploads
+  # Subida de archivos: 25 MB por archivo; el body HTTP lleva aire (32 MB).
+  RAG_MAX_BODY_BYTES: ${RAG_MAX_BODY_BYTES:-33554432}
   # Cognitive OS (fases 1-10): off | shadow | limited | active (default off).
   RAG_COGNITIVE_OS_ENABLED: ${RAG_COGNITIVE_OS_ENABLED:-off}
   RAG_DECISION_ROUTING_MODE: ${RAG_DECISION_ROUTING_MODE:-legacy}

@@ -2,6 +2,7 @@ import { ArrowsClockwise, Database, MagnifyingGlass, Plus, Trash, UploadSimple, 
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
+import { isApiError } from "../../lib/errors";
 import { useAuth } from "../../auth";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import {
@@ -55,6 +56,44 @@ const UPLOAD_STATUS_LABEL: Record<UploadItem["status"], string> = {
   rejected: "Rechazado",
   error: "Error",
 };
+
+const MAX_UPLOAD_MB = 25;
+
+function uploadErrorMessage(err: unknown): string {
+  if (isApiError(err) && err.status === 413) {
+    return `Supera el máximo por archivo (${MAX_UPLOAD_MB} MB). Probá con uno más chico.`;
+  }
+  return err instanceof Error ? err.message : "Error al subir";
+}
+
+/** Sube UN archivo por request: evita el 413 por suma de tamaños del lote. */
+async function uploadSingleFile(
+  file: File,
+  auth: { token: string; organizationId: string },
+  opts: { kbId?: string; force: boolean },
+): Promise<UploadItem> {
+  const form = new FormData();
+  form.append("files", file);
+  const params = new URLSearchParams();
+  if (opts.kbId) params.set("knowledge_base_id", opts.kbId);
+  if (opts.force) params.set("force", "true");
+  const out = await api<{ items: UploadItem[] }>(
+    `/api/v1/sources/files/upload-batch?${params.toString()}`,
+    {
+      method: "POST",
+      token: auth.token,
+      organizationId: auth.organizationId,
+      body: form,
+    },
+  );
+  return (
+    (out.items || [])[0] ?? {
+      filename: file.name,
+      status: "error",
+      error: "El servidor no devolvió resultado para el archivo.",
+    }
+  );
+}
 
 type SourceRow = {
   id: string;
@@ -314,33 +353,45 @@ export default function KnowledgeSourcesPage() {
   }
 
   async function uploadAll(force: boolean) {
-    if (!session || uploadFiles.length === 0) return;
+    if (!session?.token || uploadFiles.length === 0) return;
+    const auth = { token: session.token, organizationId: session.organizationId };
     setUploading(true);
     setError("");
     setMsg("");
+    const results: UploadItem[] = [];
+    let created = 0;
+    let failed = 0;
     try {
       const kbId = await ensureKbId();
-      const form = new FormData();
-      for (const item of uploadFiles) form.append("files", item);
-      const params = new URLSearchParams();
-      if (kbId) params.set("knowledge_base_id", kbId);
-      if (force) params.set("force", "true");
-      const out = await api<{ items: UploadItem[] }>(
-        `/api/v1/sources/files/upload-batch?${params.toString()}`,
-        {
-          method: "POST",
-          token: session.token,
-          organizationId: session.organizationId,
-          body: form,
-        },
-      );
-      setUploadItems(out.items || []);
-      const created = (out.items || []).filter((i) => i.status === "created").length;
+      for (const file of uploadFiles) {
+        try {
+          const item = await uploadSingleFile(file, auth, { kbId, force });
+          results.push(item);
+          if (item.status === "created") created += 1;
+          else if (item.status === "error" || item.status === "rejected") failed += 1;
+        } catch (err) {
+          failed += 1;
+          results.push({
+            filename: file.name,
+            status: "error",
+            error: uploadErrorMessage(err),
+          });
+        }
+        // Progreso por archivo: los que falten siguen aunque uno falle.
+        setUploadItems([...results]);
+      }
       if (created > 0) {
         setMsg(
           created === 1
             ? "1 archivo en cola de indexado."
             : `${created} archivos en cola de indexado.`,
+        );
+      }
+      if (failed > 0) {
+        setError(
+          failed === 1
+            ? "1 archivo no se pudo subir. Revisá el detalle."
+            : `${failed} archivos no se pudieron subir. Revisá el detalle.`,
         );
       }
       load();
@@ -352,36 +403,25 @@ export default function KnowledgeSourcesPage() {
   }
 
   async function retryUpload(item: UploadItem) {
-    if (!session) return;
+    if (!session?.token) return;
     const file = uploadFiles.find((f) => f.name === item.filename);
     if (!file) return;
     setRetrying(item.filename);
     setError("");
     try {
       const kbId = await ensureKbId();
-      const form = new FormData();
-      form.append("files", file);
-      const params = new URLSearchParams({ force: "true" });
-      if (kbId) params.set("knowledge_base_id", kbId);
-      const out = await api<{ items: UploadItem[] }>(
-        `/api/v1/sources/files/upload-batch?${params.toString()}`,
-        {
-          method: "POST",
-          token: session.token,
-          organizationId: session.organizationId,
-          body: form,
-        },
+      const result = await uploadSingleFile(
+        file,
+        { token: session.token, organizationId: session.organizationId },
+        { kbId, force: true },
       );
-      const result = (out.items || [])[0];
-      if (result) {
-        setUploadItems((prev) =>
-          prev.map((i) => (i.filename === item.filename ? result : i)),
-        );
-        if (result.status === "created") setMsg("Copia creada. En cola de indexado.");
-      }
+      setUploadItems((prev) =>
+        prev.map((i) => (i.filename === item.filename ? result : i)),
+      );
+      if (result.status === "created") setMsg("Copia creada. En cola de indexado.");
       load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Error al crear la copia");
+      setError(uploadErrorMessage(err));
     } finally {
       setRetrying("");
     }
@@ -527,7 +567,7 @@ export default function KnowledgeSourcesPage() {
           <Panel>
             <PanelHeader
               title="Añadir fuentes"
-              description="Soltá uno o varios archivos: cada uno se indexa solo y hereda el nombre del archivo."
+              description="Soltá uno o varios archivos: se suben de a uno, cada uno se indexa solo y hereda el nombre del archivo."
               actions={
                 <IconButton
                   label="Cerrar alta de fuente"
@@ -556,7 +596,8 @@ export default function KnowledgeSourcesPage() {
                 <UploadSimple size={20} className="text-faint" aria-hidden />
                 <p className="mt-2 text-sm font-medium text-text">Soltá archivos acá</p>
                 <p className="mt-1 text-xs text-muted">
-                  o elegí desde tu equipo. PDF, CSV, Excel, TXT, MD o DOCX. Máximo 25 MB por archivo.
+                  o elegí desde tu equipo. PDF, CSV, Excel, TXT, MD o DOCX. Se suben de a uno;
+                  máximo 25 MB por archivo.
                 </p>
                 <input
                   type="file"

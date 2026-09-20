@@ -43,6 +43,8 @@ x-common-env: &common-env
   RAG_RAG_SQL_EXPERT_ENABLED: ${RAG_RAG_SQL_EXPERT_ENABLED:-false}
   RAG_RAG_SQL_TIMEOUT_SECONDS: ${RAG_RAG_SQL_TIMEOUT_SECONDS:-5}
   RAG_SQL_HEURISTICS_MODULES: ${RAG_SQL_HEURISTICS_MODULES:-}
+  # Subida de archivos: 25 MB por archivo; el body HTTP lleva aire (32 MB).
+  RAG_MAX_BODY_BYTES: ${RAG_MAX_BODY_BYTES:-33554432}
   RAG_GOLDEN_SET_PATH: ${RAG_GOLDEN_SET_PATH:-}
   # Evaluation Engine (golden sets, LLM-judge, regresión de versiones)
   RAG_EVAL_JUDGE_ENABLED: ${RAG_EVAL_JUDGE_ENABLED:-true}
