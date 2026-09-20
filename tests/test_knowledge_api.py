@@ -417,3 +417,91 @@ async def test_list_sources_includes_sync_stats(
     )
     assert docs.status_code == 200, docs.text
     assert "documents" in docs.json()
+
+
+@pytest.mark.asyncio
+async def test_upload_source_is_listed_in_active_workspace(
+    async_client, org_a, isolated_settings
+) -> None:
+    """La subida guarda el workspace activo: la fuente aparece en GET /sources."""
+    upload = await async_client.post(
+        "/api/v1/sources/files/upload",
+        headers=_headers(org_a),
+        files={"file": ("politica.txt", b"# Politica\n\nTexto.", "text/plain")},
+    )
+    assert upload.status_code == 201, upload.text
+    source_id = upload.json()["id"]
+
+    listed = await async_client.get("/api/v1/sources", headers=_headers(org_a))
+    assert listed.status_code == 200, listed.text
+    assert source_id in [s["id"] for s in listed.json()["sources"]]
+
+
+@pytest.mark.asyncio
+async def test_source_usage_lists_agent_using_it_directly(
+    async_client, org_a, isolated_settings
+) -> None:
+    upload = await async_client.post(
+        "/api/v1/sources/files/upload",
+        headers=_headers(org_a),
+        files={"file": ("politica.txt", b"# Politica\n\nTexto.", "text/plain")},
+    )
+    source_id = upload.json()["id"]
+
+    created = await async_client.post(
+        "/api/v1/agents",
+        json={
+            "name": f"uso-{uuid4().hex[:8]}",
+            "tools": ["search_knowledge"],
+            "config": {"source_ids": [source_id]},
+        },
+        headers=_headers(org_a),
+    )
+    assert created.status_code == 201, created.text
+
+    usage = await async_client.get(
+        f"/api/v1/sources/{source_id}/usage", headers=_headers(org_a)
+    )
+    assert usage.status_code == 200, usage.text
+    agents = usage.json()["agents"]
+    assert [a["name"] for a in agents] == [created.json()["name"]]
+    assert agents[0]["via"] == "source"
+
+
+@pytest.mark.asyncio
+async def test_source_usage_detects_agent_using_its_collection(
+    async_client, org_a, isolated_settings
+) -> None:
+    kb = await async_client.post(
+        "/api/v1/knowledge-bases",
+        json={"name": f"KB {uuid4().hex[:6]}"},
+        headers=_headers(org_a),
+    )
+    assert kb.status_code == 201, kb.text
+    kb_id = kb.json()["id"]
+    upload = await async_client.post(
+        f"/api/v1/sources/files/upload?knowledge_base_id={kb_id}",
+        headers=_headers(org_a),
+        files={"file": ("kb.txt", b"# KB\n\nTexto.", "text/plain")},
+    )
+    assert upload.status_code == 201, upload.text
+    source_id = upload.json()["id"]
+
+    created = await async_client.post(
+        "/api/v1/agents",
+        json={
+            "name": f"kb-{uuid4().hex[:8]}",
+            "tools": ["search_knowledge"],
+            "config": {"knowledge_base_ids": [kb_id]},
+        },
+        headers=_headers(org_a),
+    )
+    assert created.status_code == 201, created.text
+
+    usage = await async_client.get(
+        f"/api/v1/sources/{source_id}/usage", headers=_headers(org_a)
+    )
+    assert usage.status_code == 200, usage.text
+    agents = usage.json()["agents"]
+    assert [a["name"] for a in agents] == [created.json()["name"]]
+    assert agents[0]["via"] == "knowledge_base"

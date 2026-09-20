@@ -44,10 +44,11 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
-function stubApi(sources: unknown[], kbs = KBS) {
+function stubApi(sources: unknown[], kbs = KBS, usage: unknown = { agents: [], count: 0 }) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = (init?.method || "GET").toUpperCase();
+    if (url.includes("/usage")) return Promise.resolve(json(usage));
     if (url.includes("/files/upload-batch") && method === "POST") {
       const form = init?.body as FormData;
       const file = form?.getAll("files")[0] as File | undefined;
@@ -323,5 +324,25 @@ describe("KnowledgeSourcesPage", () => {
         ),
       ).toBe(true);
     });
+  });
+
+  it("avisa qué agentes dejarán de usar la fuente al eliminarla", async () => {
+    stubApi([FILE_SOURCE], KBS, {
+      agents: [
+        { id: "a1", name: "RRHH", is_active: true, via: "source" },
+        { id: "a2", name: "Soporte", is_active: false, via: "knowledge_base" },
+      ],
+      count: 2,
+    });
+    const user = userEvent.setup();
+    renderSources();
+    await waitFor(() => expect(screen.getByTestId("source-delete-src-1")).toBeInTheDocument());
+    await user.click(screen.getByTestId("source-delete-src-1"));
+    const dialog = within(await screen.findByRole("alertdialog"));
+    expect(await dialog.findByText("Estos agentes dejarán de usar la fuente:")).toBeInTheDocument();
+    expect(dialog.getByText(/RRHH/)).toBeInTheDocument();
+    expect(dialog.getByText(/Soporte/)).toBeInTheDocument();
+    expect(dialog.getByText(/inactivo/)).toBeInTheDocument();
+    expect(dialog.getByText(/la usa por su colección/)).toBeInTheDocument();
   });
 });

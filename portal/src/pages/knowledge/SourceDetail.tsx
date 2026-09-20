@@ -4,6 +4,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { SourceUsageWarning, useSourceUsage } from "../../components/SourceUsageWarning";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 import { PageTabs } from "../../components/PageTabs";
 import {
@@ -192,6 +193,9 @@ export default function SourceDetailPage() {
   const [syncing, setSyncing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const { agents: deleteUsage, loading: deleteUsageLoading } = useSourceUsage(
+    confirmDelete ? sourceId : null,
+  );
 
   const load = useCallback(async () => {
     if (!session || !sourceId) return;
@@ -770,7 +774,12 @@ export default function SourceDetailPage() {
       <ConfirmDialog
         open={confirmDelete}
         title={`Eliminar ${source?.name || "fuente"}`}
-        body={COPY.deleteSourceBody}
+        body={
+          <>
+            {COPY.deleteSourceBody}
+            <SourceUsageWarning agents={deleteUsage} loading={deleteUsageLoading} />
+          </>
+        }
         confirmLabel={COPY.deleteSource}
         busy={deleting}
         onConfirm={() => void deleteSource()}

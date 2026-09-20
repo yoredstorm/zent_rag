@@ -1,10 +1,12 @@
-import { ArrowsClockwise, Database, MagnifyingGlass, Plus, Trash, UploadSimple, X } from "@phosphor-icons/react";
+import { ArrowsClockwise, Database, MagnifyingGlass, Plus, Trash, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import { isApiError } from "../../lib/errors";
 import { useAuth } from "../../auth";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
+import { FileDropzone } from "../../components/FileDropzone";
+import { SourceUsageWarning, useSourceUsage } from "../../components/SourceUsageWarning";
 import {
   Badge,
   Button,
@@ -206,13 +208,15 @@ export default function KnowledgeSourcesPage() {
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
   const [uploading, setUploading] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
   const [retrying, setRetrying] = useState("");
   const [syncingId, setSyncingId] = useState("");
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
   const [pendingDelete, setPendingDelete] = useState<SourceRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [query, setQuery] = useState("");
+  const { agents: deleteUsage, loading: deleteUsageLoading } = useSourceUsage(
+    pendingDelete?.id ?? null,
+  );
 
   const load = useCallback(() => {
     if (!session) return;
@@ -577,40 +581,11 @@ export default function KnowledgeSourcesPage() {
               }
             />
             <div className="panel-body flex flex-col gap-3">
-              <label
-                data-testid="source-dropzone"
-                className={`flex min-h-36 cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 text-center transition-colors duration-150 ${
-                  dragOver ? "border-accent bg-accent-soft" : "border-border"
-                }`}
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragOver(true);
-                }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDragOver(false);
-                  addUploadFiles(e.dataTransfer.files);
-                }}
-              >
-                <UploadSimple size={20} className="text-faint" aria-hidden />
-                <p className="mt-2 text-sm font-medium text-text">Soltá archivos acá</p>
-                <p className="mt-1 text-xs text-muted">
-                  o elegí desde tu equipo. PDF, CSV, Excel, TXT, MD o DOCX. Se suben de a uno;
-                  máximo 25 MB por archivo.
-                </p>
-                <input
-                  type="file"
-                  multiple
-                  data-testid="source-files"
-                  className="sr-only"
-                  accept=".pdf,.csv,.xlsx,.xls,.txt,.md,.docx"
-                  onChange={(e) => {
-                    addUploadFiles(e.target.files || []);
-                    e.target.value = "";
-                  }}
-                />
-              </label>
+              <FileDropzone
+                onFiles={addUploadFiles}
+                inputTestId="source-files"
+                dropzoneTestId="source-dropzone"
+              />
 
               {uploadFiles.length > 0 && (
                 <ul className="flex flex-col gap-1">
@@ -1003,7 +978,12 @@ export default function KnowledgeSourcesPage() {
       <ConfirmDialog
         open={Boolean(pendingDelete)}
         title={`Eliminar ${pendingDelete?.name || "fuente"}`}
-        body={COPY.deleteSourceBody}
+        body={
+          <>
+            {COPY.deleteSourceBody}
+            <SourceUsageWarning agents={deleteUsage} loading={deleteUsageLoading} />
+          </>
+        }
         confirmLabel={COPY.deleteSource}
         busy={deleting}
         onConfirm={() => void confirmDelete()}

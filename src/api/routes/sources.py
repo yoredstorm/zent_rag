@@ -338,6 +338,62 @@ async def _own_source(request: Request, source_id: str, repo: SourceRepository):
     return ctx, sid, source
 
 
+@router.get(
+    "/sources/{source_id}/usage",
+    summary="Agentes que usan la fuente (advertencia antes de eliminarla)",
+)
+async def source_usage(
+    source_id: str,
+    request: Request,
+    repo: SourceRepository = Depends(get_source_repo),
+):
+    """Agentes que dejarían de usar la fuente: directa (`source_ids`) o por
+    su colección (`knowledge_base_ids`)."""
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    ctx, sid, source = await _own_source(request, source_id, repo)
+    params: dict = {"oid": ctx.organization_id, "sid": str(sid)}
+    select = (
+        "SELECT id, name, is_active, "
+        "CASE WHEN config_json->'source_ids' @> to_jsonb(ARRAY[:sid]::text[]) "
+        "THEN 'source' ELSE 'knowledge_base' END AS via "
+        "FROM agents WHERE organization_id = :oid AND ("
+        "config_json->'source_ids' @> to_jsonb(ARRAY[:sid]::text[])"
+    )
+    if source.knowledge_base_id is not None:
+        params["kid"] = str(source.knowledge_base_id)
+        query = (
+            select
+            + " OR config_json->'knowledge_base_ids' @> "
+            "to_jsonb(ARRAY[:kid]::text[])"
+        )
+    else:
+        query = select
+    query += ") ORDER BY is_active DESC, name"
+    session = await get_async_session()
+    try:
+        rows = (
+            await session.execute(
+                text(query),
+                params,
+            )
+        ).fetchall()
+    finally:
+        await session.close()
+    agents = [
+        {
+            "id": str(row.id),
+            "name": row.name,
+            "is_active": bool(row.is_active),
+            "via": row.via,
+        }
+        for row in rows
+    ]
+    return {"source_id": str(sid), "agents": agents, "count": len(agents)}
+
+
 @router.get("/sources/{source_id}", summary="Obtener fuente")
 async def get_source(
     source_id: str,
@@ -537,6 +593,7 @@ async def _store_uploaded_file(
     source_type: str | None,
     name: str | None,
     force: bool,
+    workspace_id: UUID | None = None,
 ):
     """Crea fuente + job para un archivo. Lanza HTTPException 413/415/409."""
     if len(data) > _MAX_UPLOAD_BYTES:
@@ -588,6 +645,7 @@ async def _store_uploaded_file(
         source_type,
         knowledge_base_id=knowledge_base_id,
         config_json=config,
+        workspace_id=workspace_id,
     )
     await _audit().write(
         ctx, "source.created", "source", source.id,
@@ -616,6 +674,7 @@ async def upload_file_source(
     ctx = require_permission(request, "sources:write")
     if knowledge_base_id is not None:
         await _assert_own_kb(ctx, knowledge_base_id)
+    ws = await resolve_workspace(request)
     source, job = await _store_uploaded_file(
         ctx,
         repo,
@@ -626,6 +685,7 @@ async def upload_file_source(
         source_type=source_type,
         name=name,
         force=force,
+        workspace_id=ws.id,
     )
     return _source_response(source, extra={"job_id": str(job.id)})
 
@@ -660,6 +720,7 @@ async def upload_files_batch(
         )
     if knowledge_base_id is not None:
         await _assert_own_kb(ctx, knowledge_base_id)
+    ws = await resolve_workspace(request)
 
     items: list[dict] = []
     created = duplicates = rejected = failed = 0
@@ -677,6 +738,7 @@ async def upload_files_batch(
                 source_type=None,
                 name=None,
                 force=force,
+                workspace_id=ws.id,
             )
         except HTTPException as exc:
             detail = exc.detail if isinstance(exc.detail, dict) else {}
