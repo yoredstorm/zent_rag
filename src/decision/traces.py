@@ -93,13 +93,14 @@ class DecisionTraceStore:
                     SET actual_capability = :actual,
                         agreement = COALESCE(
                             CAST(:agreement AS boolean),
-                            selected_capability = :actual
+                            selected_capability = :actual_cmp
                         )
                     WHERE id = :id
                     """
                 ),
                 {
                     "actual": (actual_capability or "")[:80],
+                    "actual_cmp": (actual_capability or "")[:80],
                     "agreement": agreement,
                     "id": parsed,
                 },

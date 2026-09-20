@@ -302,3 +302,47 @@ async def test_flow_endpoint_returns_stored_flow_and_404_cross_tenant(
         f"/api/v1/rag/queries/{uuid4()}/flow", headers=_headers(org)
     )
     assert missing.status_code == 404
+
+
+async def test_decision_trace_update_actual_marks_agreement(
+    async_client: AsyncClient, org: dict
+) -> None:
+    """El update de actual_capability no debe romper por tipos de parámetro."""
+    from sqlalchemy import text
+
+    from src.core.domain.decision import DecisionTrace
+    from src.decision.traces import DecisionTraceStore
+    from src.infrastructure.postgres.session import get_async_session
+
+    trace = DecisionTrace(
+        organization_id=UUID(org["organization_id"]),
+        request_id=uuid4(),
+        provider="jev",
+        selected_capability="knowledge.answer",
+        confidence=0.9,
+        routing_mode="jev",
+    )
+    store = DecisionTraceStore()
+    await store.record(trace)
+    await store.update_actual(
+        str(trace.decision_id),
+        actual_capability="database.query",
+        jev_capability="knowledge.answer",
+    )
+
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT actual_capability, agreement FROM decision_traces "
+                    "WHERE id = :id"
+                ),
+                {"id": trace.decision_id},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+    assert row is not None
+    assert row.actual_capability == "database.query"
+    assert row.agreement is False
