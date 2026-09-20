@@ -14,6 +14,8 @@ export type AgentConfig = {
   security: { sql_enabled: boolean; api_calls_enabled: boolean } | null;
   retrieval?: { strategy: string; top_k: number; score_threshold: number };
   output_schema?: Record<string, unknown>;
+  /** Override de JEV por agente (si falta, hereda los flags del sistema). */
+  runtime?: { tool_routing?: boolean | null; termination_gate?: boolean | null } | null;
 };
 
 export type Agent = {
@@ -169,6 +171,7 @@ export function buildAgentPayload(input: {
       },
       retrieval: input.retrieval.strategy ? input.retrieval : undefined,
       output_schema: input.outputSchema.trim() ? parseSchema(input.outputSchema) : undefined,
+      runtime: input.config.runtime ?? undefined,
     },
     workspace_id: input.workspaceId || undefined,
   };

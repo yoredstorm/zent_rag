@@ -1,6 +1,6 @@
 import { AgentField, AgentFieldGroup, AgentToggleCard } from "./AgentField";
 import { COPY, RETRIEVAL_STRATEGIES, TOOL_CHOICES, choiceOptionLabel } from "./advancedCopy";
-import { Input, Select } from "../ui";
+import { Button, Input, Select } from "../ui";
 import type { AgentConfig } from "./types";
 
 const DEFAULT_LIMITS = { max_steps: 8, max_tokens: 4000, max_cost_usd: 0.5 };
@@ -17,6 +17,9 @@ export function AgentCapabilitiesSection({
   setApiCalls,
   retrieval,
   setRetrieval,
+  jevMode,
+  setJevMode,
+  onEnableAll,
 }: {
   config: AgentConfig;
   setConfig: (config: AgentConfig) => void;
@@ -28,6 +31,9 @@ export function AgentCapabilitiesSection({
   setApiCalls: (value: boolean) => void;
   retrieval: { strategy: string; top_k: number; score_threshold: number };
   setRetrieval: (value: { strategy: string; top_k: number; score_threshold: number }) => void;
+  jevMode: "inherit" | "on" | "off";
+  setJevMode: (value: "inherit" | "on" | "off") => void;
+  onEnableAll: () => void;
 }) {
   const toolState: Record<string, { checked: boolean; onChange: (value: boolean) => void }> = {
     search_knowledge: { checked: semantic, onChange: setSemantic },
@@ -45,6 +51,15 @@ export function AgentCapabilitiesSection({
   return (
     <div className="grid gap-6">
       <AgentFieldGroup title={COPY.tools.title} hint={COPY.tools.hint}>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="prose-measure text-xs leading-relaxed text-muted">
+            Con 3 o más herramientas activas, JEV elige cuál usar en cada paso. Las claves sensibles
+            (base de datos, APIs) se pueden apagar por agente.
+          </p>
+          <Button variant="secondary" size="sm" onClick={onEnableAll}>
+            Activar todas
+          </Button>
+        </div>
         <div className="grid gap-2 sm:grid-cols-2">
           {TOOL_CHOICES.map((tool) => (
             <AgentToggleCard
@@ -62,6 +77,27 @@ export function AgentCapabilitiesSection({
           Consultar la base de datos y Llamar APIs externas son permisos sensibles: al activarlos
           también quedan habilitados en la seguridad del agente.
         </p>
+      </AgentFieldGroup>
+
+      <AgentFieldGroup
+        title="Motor de decisión (JEV)"
+        hint="JEV decide la ruta y la herramienta; si lo apagás, decide el LLM del agente."
+      >
+        <AgentField
+          id="agent-jev-mode"
+          label="JEV en este agente"
+          hint="Heredar usa la configuración del sistema (Control Center)."
+        >
+          <Select
+            id="agent-jev-mode"
+            value={jevMode}
+            onChange={(e) => setJevMode(e.target.value as "inherit" | "on" | "off")}
+          >
+            <option value="inherit">Heredar del sistema</option>
+            <option value="on">Activado en este agente</option>
+            <option value="off">Apagado en este agente</option>
+          </Select>
+        </AgentField>
       </AgentFieldGroup>
 
       <AgentFieldGroup title={COPY.retrieval.title} hint={COPY.retrieval.hint}>

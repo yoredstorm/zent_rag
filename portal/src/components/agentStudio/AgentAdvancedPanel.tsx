@@ -48,6 +48,9 @@ export function AgentAdvancedPanel({
   setApiCalls,
   retrieval,
   setRetrieval,
+  jevMode,
+  setJevMode,
+  onEnableAll,
   outputSchema,
   setOutputSchema,
   readiness,
@@ -98,6 +101,9 @@ export function AgentAdvancedPanel({
   setApiCalls: (value: boolean) => void;
   retrieval: { strategy: string; top_k: number; score_threshold: number };
   setRetrieval: (value: { strategy: string; top_k: number; score_threshold: number }) => void;
+  jevMode: "inherit" | "on" | "off";
+  setJevMode: (value: "inherit" | "on" | "off") => void;
+  onEnableAll: () => void;
   outputSchema: string;
   setOutputSchema: (value: string) => void;
   readiness: Readiness | null;
@@ -170,6 +176,9 @@ export function AgentAdvancedPanel({
             setApiCalls={setApiCalls}
             retrieval={retrieval}
             setRetrieval={setRetrieval}
+            jevMode={jevMode}
+            setJevMode={setJevMode}
+            onEnableAll={onEnableAll}
           />
         </TabsContent>
 

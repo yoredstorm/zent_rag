@@ -214,6 +214,47 @@ describe("AgentStudio", () => {
     await waitFor(() => expect(screen.getByTestId("loc").textContent).toContain("panel=test"));
   });
 
+  it("permite apagar JEV por agente y lo guarda en runtime", async () => {
+    const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=tools");
+    await screen.findByDisplayValue("Soporte");
+    await user.selectOptions(screen.getByLabelText(/JEV en este agente/), "off");
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(
+        (call) =>
+          String(call[0]).includes("/agents/a1") &&
+          String(call[1]?.method || "").toUpperCase() === "PUT",
+      );
+      const body = JSON.parse(String(put?.[1]?.body || "{}"));
+      expect(body.config.runtime).toEqual({
+        tool_routing: false,
+        termination_gate: false,
+      });
+    });
+  });
+
+  it("Activar todas enciende las tres herramientas", async () => {
+    const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=tools");
+    await screen.findByDisplayValue("Soporte");
+    await user.click(screen.getByRole("button", { name: "Activar todas" }));
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(
+        (call) =>
+          String(call[0]).includes("/agents/a1") &&
+          String(call[1]?.method || "").toUpperCase() === "PUT",
+      );
+      const body = JSON.parse(String(put?.[1]?.body || "{}"));
+      expect(body.tools).toEqual(
+        expect.arrayContaining(["search_knowledge", "query_database", "call_api"]),
+      );
+      expect(body.config.security).toEqual({
+        sql_enabled: true,
+        api_calls_enabled: true,
+      });
+    });
+  });
+
   it("persiste source_ids al guardar", async () => {
     const { user, fetchMock } = await renderStudio("/agents/a1");
     const checkbox = await screen.findByRole("checkbox", { name: /Políticas RRHH/ });

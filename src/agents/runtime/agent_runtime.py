@@ -769,7 +769,7 @@ class AgentRuntime:
         for step_index in range(max_steps):
             from src.runtime.tool_routing import routing_enabled, select_relevant_tools
 
-            if routing_enabled(settings):
+            if routing_enabled(settings, request.agent.config_json):
                 try:
                     from src.decision.service import get_decision_engine
 
@@ -1069,7 +1069,7 @@ class AgentRuntime:
 
             from src.runtime.termination import gate_enabled, original_request_satisfied
 
-            if gate_enabled(settings) and not tool_result.error:
+            if gate_enabled(settings, request.agent.config_json) and not tool_result.error:
                 try:
                     from src.decision.service import get_decision_engine
 

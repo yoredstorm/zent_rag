@@ -10,7 +10,13 @@ from src.decision.questions import noul_is_yes
 from src.runtime.questions import termination_questions
 
 
-def gate_enabled(settings) -> bool:
+def gate_enabled(settings, config: dict | None = None) -> bool:
+    """Flag del tenant; `config.runtime.termination_gate` del agente manda si existe."""
+    runtime = (config or {}).get("runtime") if isinstance(config, dict) else None
+    if isinstance(runtime, dict):
+        override = runtime.get("termination_gate")
+        if isinstance(override, bool):
+            return override
     flag = getattr(settings, "RUNTIME_TERMINATION_GATE", "off")
     if isinstance(flag, bool):
         return flag

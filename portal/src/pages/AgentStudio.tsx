@@ -62,8 +62,9 @@ export default function AgentStudioPage() {
   const [canCustomModel, setCanCustomModel] = useState(false);
   const [config, setConfig] = useState(defaultConfig());
   const [semantic, setSemantic] = useState(true);
-  const [sql, setSql] = useState(false);
-  const [apiCalls, setApiCalls] = useState(false);
+  const [sql, setSql] = useState(true);
+  const [apiCalls, setApiCalls] = useState(true);
+  const [jevMode, setJevMode] = useState<"inherit" | "on" | "off">("inherit");
   const [isActive, setIsActive] = useState(true);
   const [loading, setLoading] = useState(!isNew);
   const [saving, setSaving] = useState(false);
@@ -265,6 +266,14 @@ export default function AgentStudioPage() {
     setSemantic(semanticOn);
     setSql(sqlOn);
     setApiCalls(apiOn);
+    const runtimeCfg = (next.runtime ?? null) as { tool_routing?: unknown } | null;
+    setJevMode(
+      runtimeCfg && typeof runtimeCfg.tool_routing === "boolean"
+        ? runtimeCfg.tool_routing
+          ? "on"
+          : "off"
+        : "inherit",
+    );
     setIsActive(data.is_active);
     setRetrieval(retrievalNext);
     setOutputSchema(outputNext);
@@ -306,6 +315,23 @@ export default function AgentStudioPage() {
     const next = checked ? config.source_ids.filter((x) => x !== sourceId) : [...config.source_ids, sourceId];
     setConfig({ ...config, source_ids: next });
     if (next.length > 0) setSemantic(true);
+  }
+
+  function updateJevMode(mode: "inherit" | "on" | "off") {
+    setJevMode(mode);
+    setConfig((prev) => ({
+      ...prev,
+      runtime:
+        mode === "inherit"
+          ? undefined
+          : { tool_routing: mode === "on", termination_gate: mode === "on" },
+    }));
+  }
+
+  function enableAllTools() {
+    setSemantic(true);
+    setSql(true);
+    setApiCalls(true);
   }
 
   async function indexSource(sourceId: string) {
@@ -820,6 +846,9 @@ export default function AgentStudioPage() {
         setApiCalls={setApiCalls}
         retrieval={retrieval}
         setRetrieval={setRetrieval}
+        jevMode={jevMode}
+        setJevMode={updateJevMode}
+        onEnableAll={enableAllTools}
         outputSchema={outputSchema}
         setOutputSchema={setOutputSchema}
         readiness={readiness}

@@ -10,7 +10,13 @@ from src.decision.questions import noul_is_yes
 from src.runtime.questions import tool_routing_questions
 
 
-def routing_enabled(settings) -> bool:
+def routing_enabled(settings, config: dict | None = None) -> bool:
+    """Flag del tenant; `config.runtime.tool_routing` del agente manda si existe."""
+    runtime = (config or {}).get("runtime") if isinstance(config, dict) else None
+    if isinstance(runtime, dict):
+        override = runtime.get("tool_routing")
+        if isinstance(override, bool):
+            return override
     mode = str(getattr(settings, "RUNTIME_TOOL_ROUTING_MODE", "off") or "off").lower()
     return mode in {"experimental", "on", "true", "1"}
 

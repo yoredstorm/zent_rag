@@ -140,6 +140,26 @@ async def test_termination_gate_requires_tool_calls() -> None:
     assert out["stop"] is False
 
 
+def test_agent_runtime_flags_can_be_overridden_per_agent() -> None:
+    """config.runtime del agente manda sobre el flag del tenant."""
+    from types import SimpleNamespace
+
+    from src.runtime.termination import gate_enabled
+    from src.runtime.tool_routing import routing_enabled
+
+    settings = SimpleNamespace(RUNTIME_TOOL_ROUTING_MODE="off", RUNTIME_TERMINATION_GATE="off")
+    assert routing_enabled(settings, {}) is False
+    assert routing_enabled(settings, {"runtime": {"tool_routing": True}}) is True
+    assert routing_enabled(settings, {"runtime": {"tool_routing": False}}) is False
+    assert gate_enabled(settings, {}) is False
+    assert gate_enabled(settings, {"runtime": {"termination_gate": True}}) is True
+    assert gate_enabled(settings, {"runtime": {"termination_gate": False}}) is False
+
+    on = SimpleNamespace(RUNTIME_TOOL_ROUTING_MODE="experimental", RUNTIME_TERMINATION_GATE="on")
+    assert routing_enabled(on, {"runtime": {"tool_routing": False}}) is False
+    assert gate_enabled(on, {"runtime": {"termination_gate": False}}) is False
+
+
 def test_efficiency_score_uses_visible_components() -> None:
     weights = normalize_weights({"quality": 1, "cost": 1, "latency": 1, "fallback": 1})
     assert abs(sum(weights.values()) - 1.0) < 0.02
