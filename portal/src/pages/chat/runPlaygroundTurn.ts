@@ -32,7 +32,7 @@ type Auth = { token: string; organizationId: string };
 type TimelineStep = { name: string; status: string; ms: number; detail: string };
 
 const AGENT_STEP_LABEL: Record<string, string> = {
-  llm: "Modelo (razonamiento)",
+  llm: "LLM (razonamiento)",
   tool_call: "Herramienta",
   tool_routing: "JEV elige herramienta",
   termination_gate: "JEV verifica cierre",
@@ -122,7 +122,13 @@ export function flowFromAgentSteps(
           ? String(step.output).slice(0, 120)
           : "herramienta";
     } else if (type === "llm") {
-      detail = step.action ? Object.keys(step.action as object).join(", ") : "llm";
+      detail = [
+        step.model ? String(step.model) : "",
+        Number(step.tokens || 0) > 0 ? `${Number(step.tokens)} tokens` : "",
+        step.action ? Object.keys(step.action as object).join(", ") : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
     } else {
       detail = String(step.detail || step.status || "").slice(0, 160);
     }

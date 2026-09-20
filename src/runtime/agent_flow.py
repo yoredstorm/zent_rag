@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 STEP_LABEL: dict[str, str] = {
-    "llm": "Modelo (razonamiento)",
+    "llm": "LLM (razonamiento)",
     "tool_call": "Herramienta",
     "tool_routing": "JEV elige herramienta",
     "termination_gate": "JEV verifica cierre",
@@ -79,8 +79,15 @@ def step_to_flow(step: dict[str, Any]) -> dict[str, Any]:
         else:
             detail = "herramienta"
     elif step_type == "llm":
-        action = step.get("action")
-        detail = ", ".join(str(k) for k in action) if isinstance(action, dict) else "llm"
+        detail = " · ".join(
+            part
+            for part in (
+                str(step.get("model") or ""),
+                f"{int(_num(step.get('tokens')))} tokens" if _num(step.get("tokens")) > 0 else "",
+                ", ".join(str(k) for k in step["action"]) if isinstance(step.get("action"), dict) else "",
+            )
+            if part
+        )
     else:
         detail = str(step.get("detail") or step.get("status") or "")[:160]
 

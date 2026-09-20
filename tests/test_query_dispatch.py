@@ -135,7 +135,7 @@ async def test_maybe_dispatch_runs_agent_target(monkeypatch: pytest.MonkeyPatch)
     assert result.flow["generation"]["cost"] == 0.002
     assert result.flow["generation"]["total_tokens"] == 15
     assert [step["name"] for step in result.flow["steps"]] == [
-        "Modelo (razonamiento)",
+        "LLM (razonamiento)",
         "search_knowledge",
     ]
     assert result.flow["jev"]["used"] is False

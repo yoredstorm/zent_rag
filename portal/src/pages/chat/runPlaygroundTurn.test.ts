@@ -16,7 +16,7 @@ describe("flowFromAgentSteps", () => {
     const steps = flow.steps as { name: string; ms: number; detail: string }[];
     expect(steps.map((step) => step.name)).toEqual([
       "JEV elige herramienta",
-      "Modelo (razonamiento)",
+      "LLM (razonamiento)",
       "search_knowledge",
       "JEV verifica cierre",
       "Respuesta final",

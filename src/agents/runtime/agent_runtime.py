@@ -929,6 +929,7 @@ class AgentRuntime:
                 {
                     "type": "llm",
                     "step": step_index,
+                    "model": used_model,
                     "action": {
                         k: str(v)[:300] for k, v in action.items()
                     },
