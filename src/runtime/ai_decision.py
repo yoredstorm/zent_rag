@@ -6,7 +6,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from src.decision.questions import noul_certainty, noul_is_yes
+from src.decision.questions import (
+    noul_certainty,
+    noul_from_answer,
+    noul_is_no,
+    noul_is_yes,
+    safe_noul,
+)
 from src.runtime.questions import (
     workflow_route_questions,
     workflow_score_questions,
@@ -53,6 +59,11 @@ class AiDecisionOutcome:
     on_low_confidence: str
     question: str
     alternatives: tuple[str, ...] = ()
+    # Route: Choice confidence y certeza del Noul "route warranted" son
+    # métricas separadas; nunca se mezclan con max().
+    choice_confidence: float = 0.0
+    warranted: bool | None = None
+    warranted_certainty: float | None = None
 
 
 def parse_config(cfg: dict[str, Any] | None) -> AiDecisionConfig:
@@ -133,6 +144,7 @@ def interpret(
     payload: dict[str, Any] | None,
     *,
     noul_yes: float = 0.65,
+    noul_no: float = 0.35,
 ) -> AiDecisionOutcome:
     answers = (payload or {}).get("answers") if isinstance(payload, dict) else None
     if not isinstance(answers, dict):
@@ -140,7 +152,7 @@ def interpret(
     first = config.options[0][0] if config.options else "approve"
     provider = "jev" if answers else "fallback"
     if config.kind == KIND_YES_NO:
-        noul = float((answers.get("yes") or {}).get("noul") or 0.0)
+        noul = noul_from_answer(answers.get("yes"), 0.0)
         yes = noul_is_yes(noul, noul_yes)
         confidence = noul_certainty(noul) if answers else 0.0
         route = "then" if yes else "else"
@@ -178,14 +190,34 @@ def interpret(
             question=config.question,
         )
     route_ans = answers.get("route") or {}
+    if not isinstance(route_ans, dict):
+        route_ans = {}
     choice = str(route_ans.get("choice") or first)
     allowed = {key for key, _ in config.options}
     if choice not in allowed:
         choice = first
-    confidence = float(route_ans.get("confidence") or 0.0)
-    noul_ok = answers.get("confidence_ok") or {}
-    if "noul" in noul_ok:
-        confidence = max(confidence, noul_certainty(float(noul_ok.get("noul") or 0.0)))
+    try:
+        choice_confidence = min(1.0, max(0.0, float(route_ans.get("confidence") or 0.0)))
+    except (TypeError, ValueError):
+        choice_confidence = 0.0
+    confidence = choice_confidence
+    warranted: bool | None = None
+    warranted_certainty: float | None = None
+    uncertain_warranty = False
+    noul_ok = answers.get("confidence_ok")
+    if isinstance(noul_ok, dict) and noul_ok.get("noul") is not None:
+        # Semántica separada: la certeza del Noul NO es confianza del Choice.
+        # Un Noul negativo con alta certeza degrada; nunca infla.
+        noul = safe_noul(noul_ok.get("noul"), 0.5)
+        warranted_certainty = noul_certainty(noul)
+        if noul_is_yes(noul, noul_yes):
+            warranted = True
+        elif noul_is_no(noul, noul_no):
+            warranted = False
+            confidence = min(choice_confidence, noul)
+        else:
+            warranted = None
+            uncertain_warranty = True
     probs = route_ans.get("probabilities") or {}
     alternatives = tuple(
         k
@@ -202,10 +234,14 @@ def interpret(
         score=None,
         confidence=confidence,
         provider=provider,
-        low_confidence=bool(answers) and confidence < config.confidence_min,
+        low_confidence=bool(answers)
+        and (confidence < config.confidence_min or uncertain_warranty),
         on_low_confidence=config.on_low_confidence,
         question=config.question,
         alternatives=alternatives,
+        choice_confidence=choice_confidence,
+        warranted=warranted,
+        warranted_certainty=warranted_certainty,
     )
 
 
@@ -227,6 +263,9 @@ def apply_low_confidence(outcome: AiDecisionOutcome, config: AiDecisionConfig) -
                 on_low_confidence=action,
                 question=config.question,
                 alternatives=outcome.alternatives,
+                choice_confidence=outcome.choice_confidence,
+                warranted=outcome.warranted,
+                warranted_certainty=outcome.warranted_certainty,
             )
         return AiDecisionOutcome(
             result=False,
@@ -238,6 +277,9 @@ def apply_low_confidence(outcome: AiDecisionOutcome, config: AiDecisionConfig) -
             low_confidence=True,
             on_low_confidence=action,
             question=config.question,
+            choice_confidence=outcome.choice_confidence,
+            warranted=outcome.warranted,
+            warranted_certainty=outcome.warranted_certainty,
         )
     return outcome
 
@@ -254,4 +296,11 @@ def to_output(outcome: AiDecisionOutcome) -> dict[str, Any]:
         "on_low_confidence": outcome.on_low_confidence,
         "question": outcome.question,
         "alternatives": list(outcome.alternatives),
+        "choice_confidence": round(outcome.choice_confidence, 4),
+        "warranted": outcome.warranted,
+        "warranted_certainty": (
+            round(outcome.warranted_certainty, 4)
+            if outcome.warranted_certainty is not None
+            else None
+        ),
     }

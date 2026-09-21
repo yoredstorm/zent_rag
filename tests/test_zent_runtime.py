@@ -118,6 +118,106 @@ def test_ai_decision_yes_no_and_score() -> None:
     assert score_out.route == "else"
 
 
+# ---------------------------------------------------------------------------
+# P0.1 — Choice confidence y Noul "route warranted" son métricas separadas
+# ---------------------------------------------------------------------------
+
+
+def _route_config(confidence_min: float = 0.65):
+    return parse_config(
+        {
+            "decision_kind": "route",
+            "question": "Elegir la ruta",
+            "options": [{"id": "approve"}, {"id": "reject"}],
+            "confidence_min": confidence_min,
+            "on_low_confidence": "fallback",
+        }
+    )
+
+
+def _route_payload(choice_conf: float, warranted_noul: float | None) -> dict:
+    answers: dict = {
+        "route": {"choice": "approve", "confidence": choice_conf, "probabilities": {}},
+    }
+    if warranted_noul is not None:
+        answers["confidence_ok"] = {"type": "noul", "noul": warranted_noul}
+    return {"answers": answers}
+
+
+def test_ai_decision_route_confidence_ok_alta() -> None:
+    """Caso A: Choice 0.90 + warranted 0.95 → alta confianza."""
+    outcome = interpret(_route_config(), _route_payload(0.90, 0.95))
+    assert outcome.confidence == 0.90
+    assert outcome.choice_confidence == 0.90
+    assert outcome.warranted is True
+    assert outcome.warranted_certainty == pytest.approx(0.90)
+    assert outcome.low_confidence is False
+
+
+def test_ai_decision_route_confidence_ok_negativo_no_infla() -> None:
+    """Caso B: Choice 0.90 + warranted 0.05 → low confidence, nunca 0.90."""
+    outcome = interpret(_route_config(), _route_payload(0.90, 0.05))
+    assert outcome.warranted is False
+    assert outcome.confidence <= 0.05
+    assert outcome.low_confidence is True
+    assert outcome.warranted_certainty == pytest.approx(0.90)
+
+
+def test_ai_decision_route_choice_bajo_sigue_low_aunque_warranted() -> None:
+    """Caso C: Choice 0.58 no alcanza el threshold aunque el Noul sea 0.95."""
+    outcome = interpret(_route_config(), _route_payload(0.58, 0.95))
+    assert outcome.warranted is True
+    assert outcome.confidence == 0.58
+    assert outcome.low_confidence is True
+
+
+def test_ai_decision_route_confidence_ok_incierto() -> None:
+    """Caso D: warranted ~0.50 → uncertain activa la política de low confidence."""
+    outcome = interpret(_route_config(), _route_payload(0.90, 0.50))
+    assert outcome.warranted is None
+    assert outcome.confidence == 0.90
+    assert outcome.low_confidence is True
+
+
+def test_ai_decision_route_sin_confidence_ok_backward_compatible() -> None:
+    """Caso E: sin confidence_ok manda solo el Choice."""
+    high = interpret(_route_config(), _route_payload(0.90, None))
+    assert high.warranted is None
+    assert high.warranted_certainty is None
+    assert high.confidence == 0.90
+    assert high.low_confidence is False
+    low = interpret(_route_config(), _route_payload(0.40, None))
+    assert low.confidence == 0.40
+    assert low.low_confidence is True
+
+
+def test_ai_decision_route_noul_cero_es_negativo() -> None:
+    """Noul 0.0 válido no se confunde con missing ni con incertidumbre."""
+    outcome = interpret(_route_config(), _route_payload(0.90, 0.0))
+    assert outcome.warranted is False
+    assert outcome.confidence == 0.0
+    assert outcome.low_confidence is True
+
+
+def test_ai_decision_low_confidence_preserva_semantica_de_ruta() -> None:
+    outcome = interpret(_route_config(), _route_payload(0.90, 0.05))
+    applied = apply_low_confidence(outcome, _route_config())
+    assert applied.warranted is False
+    assert applied.choice_confidence == 0.90
+    assert applied.warranted_certainty == pytest.approx(0.90)
+    assert applied.low_confidence is True
+
+
+def test_ai_decision_output_expone_semantica_separada() -> None:
+    from src.runtime.ai_decision import to_output
+
+    payload = to_output(interpret(_route_config(), _route_payload(0.90, 0.05)))
+    assert payload["confidence"] == 0.05
+    assert payload["choice_confidence"] == 0.90
+    assert payload["warranted"] is False
+    assert payload["warranted_certainty"] == pytest.approx(0.90)
+
+
 @pytest.mark.asyncio
 async def test_tool_routing_passthrough_without_engine() -> None:
     tools = [type("T", (), {"name": "search_knowledge", "description": "kb"})()]

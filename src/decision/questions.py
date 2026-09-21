@@ -6,6 +6,8 @@
 # =============================================================================
 from __future__ import annotations
 
+from typing import Any
+
 from src.core.domain.decision import SCORE_COMPLEXITY_LEVELS
 
 CAPABILITY_CRITERIA: dict[str, str] = {
@@ -101,6 +103,30 @@ def build_routing_questions(
             ),
         },
     }
+
+
+def safe_noul(raw: Any, default: float = 0.5) -> float:
+    """Noul sin colapsar 0.0.
+
+    `raw or default` convierte un Noul válido de 0.0 en incertidumbre. Acá:
+    None / missing / inválido → `default`; 0.0, 1.0 y `False` son valores
+    válidos y se conservan (False = 0.0).
+    """
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        return 1.0 if raw else 0.0
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return default
+
+
+def noul_from_answer(answer: Any, default: float = 0.5) -> float:
+    """Noul de una respuesta System One (`{"type": "noul", "noul": X}`)."""
+    if not isinstance(answer, dict):
+        return default
+    return safe_noul(answer.get("noul"), default)
 
 
 def noul_certainty(value: float) -> float:
