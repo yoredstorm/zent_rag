@@ -52,6 +52,8 @@ Reglas no negociables:
 | `RAG_RUNTIME_TERMINATION_GATE` | `off` · `on` | Gate Noul tras uso de tools |
 | `RAG_RUNTIME_SOURCE_AWARE_TOOLS` | bool (default `true`) | Recorta tools según las fuentes del agente |
 | `RAG_RUNTIME_FAILED_TOOL_GUARD` | bool (default `true`) | No reintenta una tool que falló para la pregunta |
+| `RAG_JEV_CANARY_MODEL` | string (default vacío) | Modelo candidato JEV; vacío = solo `JEV_MODEL` |
+| `RAG_JEV_CANARY_PERCENTAGE` | 0-100 (default 0) | % de requests que usa el modelo canary |
 
 Rollout recomendado: `legacy` + `RAG_JEV_SHADOW_MODE=true` → comparar
 `decision_traces` (agreement) → `hybrid` con canary 5-10 → `jev`.
@@ -105,14 +107,93 @@ para la misma pregunta (solo errores transitorios permiten reintento) y
 `QueryDatabaseTool` rechaza sin LLM las preguntas de definición/identidad
 ("quién es X") cuando no hay señal analítica.
 
+## Confianza de ruta: Choice vs Noul (P0.1)
+
+En decisiones `route` (workflow AI decision) hay dos señales distintas y **no
+se mezclan**:
+
+| Señal | Pregunta | Campo |
+|---|---|---|
+| Choice confidence | ¿qué ruta elige el modelo y con qué probabilidad? | `route.confidence` |
+| Noul warranted | ¿la ruta elegida está claramente justificada por el estado? | `confidence_ok.noul` |
+
+La certeza de un Noul es distancia de 0.5 (`noul_certainty`). Un Noul **0.05**
+significa "la ruta no está justificada" con certeza 0.90; usar esa certeza como
+confianza de ruta convertiría una señal negativa en confianza alta. Reglas
+vigentes en `interpret()`:
+
+1. Noul en banda YES (`>= DECISION_NOUL_YES`): `warranted=True`; la confianza
+   efectiva es la del Choice (sin inflar).
+2. Noul en banda NO (`<= DECISION_NOUL_NO`): `warranted=False`; la confianza
+   efectiva se degrada a `min(choice_confidence, noul)` y la decisión queda
+   `low_confidence`.
+3. Noul incierto: `warranted=None` y se activa la política
+   `on_low_confidence` aunque el Choice supere el threshold.
+4. Sin `confidence_ok`: comportamiento legacy basado solo en el Choice.
+
+`AiDecisionOutcome` expone `choice_confidence`, `warranted` y
+`warranted_certainty` por separado (también en `to_output()`).
+
+## Noul 0.0 (P0.2)
+
+`valor or default` colapsa un Noul válido de `0.0` en el default. Todos los
+lectores de Noul usan `safe_noul()` / `noul_from_answer()`
+(`src/decision/questions.py`): `None`/missing/inválido → default; `0.0`,
+`1.0` y `False` (0.0) se conservan. Cubre routing, tool routing, termination,
+answer gate, adaptive planner y workflow AI decision.
+
+## Pricing canónico (P0.3)
+
+El Pricing Registry (`pricing_models` / `provider_cost_history`,
+`src/platform/billing/pricing.py`) es la fuente canónica de costo para JEV y
+LLM del Decision Engine. `src/decision/costs.py::resolve_cost()` aplica:
+
+1. `get_price(provider/model)` del registry y `estimate_cost_from_price()`
+   (input/output/embedding por 1k + `request_cost`; `cost_kind` se conserva).
+2. Fallback `estimated_cost_per_1k` de las settings **solo** si el registry no
+   está disponible (DB caída, tabla ausente).
+
+El provider JEV usa `provider="jev"` y el modelo efectivo; no hay fórmula de
+precio hardcodeada en `JevDecisionProvider`. El costo queda en
+`estimated_cost` y `metadata.cost_source` (`registry` | `legacy` | `none`).
+
+## JudgmentContext (P0.4)
+
+`engine.judge(state=..., questions=..., context=JudgmentContext(...))`
+transporta `organization_id`, `request_id`, `phase`, `provider`, `model` y,
+opcionalmente, `agent_id`, `workflow_id`, `capability`, `run_id`, `user_id`,
+`deployment_id` y `trace_id`.
+
+- El contexto es **opcional**: `call_judge()` solo lo pasa a judges que
+  declaran `context` (o `**kwargs`), así callers y fakes previos siguen
+  funcionando.
+- Cada juicio produce un usage event `jev_judge:<phase>` cuando hay
+  organización y request/run. La idempotencia `(request_id, event_type)` de
+  `usage_events` evita doble cobro en retries; fases distintas no se pisan.
+- Sin tenant context el juicio corre igual y solo se mide en métricas.
+
+## Fases y observabilidad (P0.6)
+
+Fases: `routing` (decide), `pre_retrieval`, `evidence`, `grounding`,
+`tool_routing`, `termination`, `answer_gate`, `workflow_decision`.
+
+- `zent_decision_judge_total{outcome, phase}`
+- `zent_decision_judge_tokens_total{kind, phase}`
+- `zent_decision_judge_latency_seconds{phase}`
+- `zent_decision_judge_cost_usd{phase}`
+
+`decision_traces.payload.model` y `usage_events.model` guardan el modelo JEV
+efectivo. Para distinguir producción de candidato/canary: `JEV_MODEL` +
+`JEV_CANARY_MODEL`/`JEV_CANARY_PERCENTAGE`; `metadata.model_role` queda
+`production` o `canary`.
+
 ## Trazas y costo
 
 - `decision_traces` (migración 120) guarda cada decisión; `update_actual()`
   completa `actual_capability` y `agreement` después de ejecutar, en todos los
-  modos, no solo shadow.
-- `engine.judge()` (preguntas atómicas de adaptive/agent/workflow) no emite
-  usage events por no tener contexto de tenant; se mide con
-  `zent_decision_judge_total` y `zent_decision_judge_tokens_total`.
+  modos, no solo shadow. El payload incluye `model` (P0.5).
+- `engine.judge()` emite usage events `jev_judge:<phase>` con
+  provider/model/tokens/costo cuando recibe `JudgmentContext` con tenant.
 - `tenant_wallets` y `efficiency_score_weights` (migración 121) alimentan el
   Control Center; los pesos por env son solo default inicial.
 
@@ -127,3 +208,19 @@ para la misma pregunta (solo errores transitorios permiten reintento) y
 - El rewrite de query re-embebe solo en el camino adaptativo; el rerank usa
   el texto reescrito.
 - Aún no hay Alertmanager ni dashboards Grafana dedicados a estos flags.
+- Los usage events de judge son uno por `(request, fase)`: varias llamadas de
+  la misma fase dentro de un request (p. ej. tool routing por paso) dedupean
+  por diseño de idempotencia. Si se necesita granularidad por paso, usar
+  `run_id`/sub-request distinto.
+
+## Compatibilidad legacy (P0)
+
+- `DECISION_ROUTING_MODE=legacy` y `engine.judge()` sin `JudgmentContext`
+  mantienen el comportamiento previo.
+- `AiDecisionOutcome` agrega campos con default (`choice_confidence=0.0`,
+  `warranted=None`, `warranted_certainty=None`): callers que no los leen no
+  cambian.
+- `engine.judge()` acepta callers viejos (`state`, `questions`) y fakes sin
+  `context`.
+- `estimated_cost_per_1k` sigue existiendo como fallback; no se eliminó
+  ninguna setting.

@@ -58,7 +58,8 @@ construye su payload por separado.
     uno por pregunta.
   - Resultado cacheado por `request_id` durante la request para que routing y
     planner lean el mismo payload sin segunda llamada.
-- Métricas: `zent_decision_judge_calls_total{phase}` y
+- Métricas: `zent_decision_judge_total{outcome, phase}` (ya implementado en
+  P0; ver [decision-engine.md](decision-engine.md)) y
   `zent_decision_judge_dedup_total` (llamadas evitadas) para medir el ahorro.
 - Rollout: `RAG_DECISION_BATCH_MODE=off|shadow|on` (default `off`).
   En `shadow` se arma el payload batcheado y se compara contra la secuencia
