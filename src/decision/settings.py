@@ -19,6 +19,8 @@ class DecisionEngineSettings:
     shadow_sample_rate: float = 0.0
     jev_timeout_seconds: float = 8.0
     jev_model: str = "jev-latest"
+    jev_canary_model: str = ""
+    jev_canary_percentage: int = 0
     jev_base_url: str = "https://api.typesafe.ai"
     jev_api_key: str = ""
     fallback_model: str = ""
@@ -32,6 +34,21 @@ class DecisionEngineSettings:
     @property
     def jev_configured(self) -> bool:
         return bool(self.jev_api_key.strip())
+
+    def jev_model_for(self, request_id: UUID | None) -> str:
+        """Modelo efectivo: producción, o candidato/canary si toca el request."""
+        canary = (self.jev_canary_model or "").strip()
+        if (
+            canary
+            and canary != self.jev_model
+            and request_id is not None
+            and int(self.jev_canary_percentage or 0) > 0
+        ):
+            from src.decision.routing import in_canary
+
+            if in_canary(request_id, int(self.jev_canary_percentage)):
+                return canary
+        return self.jev_model
 
     @property
     def effective_mode(self) -> str:
@@ -90,6 +107,8 @@ def settings_from_app() -> DecisionEngineSettings:
         shadow_sample_rate=s.RUNTIME_SHADOW_SAMPLE_RATE,
         jev_timeout_seconds=float(s.JEV_TIMEOUT_SECONDS),
         jev_model=s.JEV_MODEL,
+        jev_canary_model=s.JEV_CANARY_MODEL or "",
+        jev_canary_percentage=int(s.JEV_CANARY_PERCENTAGE or 0),
         jev_base_url=s.JEV_BASE_URL.rstrip("/"),
         jev_api_key=key or "",
         fallback_model=s.DECISION_FALLBACK_MODEL or s.GATEWAY_CHEAP_MODEL or s.LITELLM_DEFAULT_MODEL,

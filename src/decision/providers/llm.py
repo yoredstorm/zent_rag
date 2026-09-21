@@ -18,6 +18,7 @@ from src.core.domain.decision import (
 )
 from src.core.ports.decision import DecisionProvider
 from src.core.ports.rag_ports import LLMProvider
+from src.decision.costs import resolve_cost
 from src.decision.questions import complexity_from_score
 from src.decision.settings import DecisionEngineSettings
 from src.infrastructure.observability.logging_config import get_logger
@@ -117,6 +118,7 @@ class LLMDecisionProvider(DecisionProvider):
             complexity = ComplexityLevel(complexity_from_score(1.0))
         confidence = float(parsed.get("confidence") or 0.55)
         confidence = min(1.0, max(0.0, confidence))
+        model = str(getattr(response, "model", self._model) or "")
         decision = RoutingDecision(
             intent=str(parsed.get("intent") or capability),
             capability=capability,
@@ -132,10 +134,18 @@ class LLMDecisionProvider(DecisionProvider):
             latency_ms=(time.perf_counter() - started) * 1000,
             prompt_tokens=int(getattr(response, "prompt_tokens", 0) or 0),
             completion_tokens=int(getattr(response, "completion_tokens", 0) or 0),
-            metadata={"model": getattr(response, "model", self._model) or "", "reasoning": self._reasoning},
+            metadata={"model": model, "reasoning": self._reasoning},
         )
-        total = decision.prompt_tokens + decision.completion_tokens
-        decision.estimated_cost = (total / 1000.0) * self._settings.estimated_cost_per_1k
+        # Pricing Registry primero; estimated_cost_per_1k solo si el registry cae.
+        cost = await resolve_cost(
+            provider="default",
+            model=model,
+            prompt_tokens=decision.prompt_tokens,
+            completion_tokens=decision.completion_tokens,
+            legacy_per_1k=self._settings.estimated_cost_per_1k,
+        )
+        decision.estimated_cost = cost.amount
+        decision.metadata["cost_source"] = cost.source
         return decision
 
 

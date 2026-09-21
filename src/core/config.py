@@ -818,6 +818,19 @@ class Settings(BaseSettings):
     )
     JEV_TIMEOUT_SECONDS: float = Field(default=8.0, ge=0.5, le=60.0)
     JEV_MODEL: str = Field(default="jev-latest")
+    JEV_CANARY_MODEL: str = Field(
+        default="",
+        description=(
+            "Modelo candidato/canary de JEV. Vacío = solo JEV_MODEL. El modelo "
+            "efectivo queda en traces/usage."
+        ),
+    )
+    JEV_CANARY_PERCENTAGE: int = Field(
+        default=0,
+        ge=0,
+        le=100,
+        description="Porcentaje de requests que usa JEV_CANARY_MODEL (0 = off).",
+    )
     JEV_BASE_URL: str = Field(default="https://api.typesafe.ai")
     JEV_API_KEY: SecretStr | None = Field(
         default=None,

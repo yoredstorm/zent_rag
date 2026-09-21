@@ -6,8 +6,9 @@
 # =============================================================================
 from __future__ import annotations
 
+import inspect
 import time
-from typing import Any, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
 from src.core.domain.decision import (
     ComplexityLevel,
@@ -17,12 +18,15 @@ from src.core.domain.decision import (
     RoutingDecision,
 )
 from src.core.ports.decision import DecisionProvider
+from src.decision.costs import JEV_PROVIDER, DecisionCost, resolve_cost
 from src.decision.questions import (
     build_routing_questions,
     complexity_from_score,
     noul_certainty,
+    noul_from_answer,
     noul_is_uncertain,
     noul_is_yes,
+    safe_noul,
 )
 from src.decision.settings import DecisionEngineSettings
 from src.infrastructure.observability.logging_config import get_logger
@@ -32,6 +36,9 @@ from src.infrastructure.resilience.circuit_breaker import (
 )
 
 logger = get_logger(__name__)
+
+# Resolver inyectable (tests sin DB). Debe devolver un DecisionCost.
+CostResolver = Callable[..., Awaitable[DecisionCost] | DecisionCost]
 
 
 class JevTransportError(Exception):
@@ -150,7 +157,7 @@ def _answer_to_dict(answer: Any) -> dict[str, Any]:
         payload["probabilities"] = dict(getattr(answer, "probabilities", {}) or {})
         payload["confidence"] = float(getattr(answer, "confidence", 0.0) or 0.0)
     if hasattr(answer, "noul"):
-        payload["noul"] = float(answer.noul)
+        payload["noul"] = safe_noul(getattr(answer, "noul", None), 0.5)
     return payload
 
 
@@ -163,13 +170,60 @@ class JevDecisionProvider(DecisionProvider):
         *,
         client: JevClient | None = None,
         circuit: CircuitBreaker | None = None,
+        cost_resolver: CostResolver | None = None,
     ) -> None:
         self._settings = settings
         self._client = client
+        self._cost_resolver = cost_resolver
         self._circuit = circuit or CircuitBreaker(
             failure_threshold=settings.circuit_failure_threshold,
             recovery_timeout=settings.circuit_recovery_seconds,
         )
+
+    @property
+    def model(self) -> str:
+        """Modelo configurado para producción (observabilidad)."""
+        return self._settings.jev_model
+
+    def effective_model(self, request_id=None) -> str:
+        """Modelo efectivo del request: producción o candidato/canary."""
+        return self._settings.jev_model_for(request_id)
+
+    async def _resolve_cost(
+        self,
+        *,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+    ) -> DecisionCost:
+        """Pricing Registry primero; settings legacy solo si el registry falla."""
+        if int(prompt_tokens or 0) <= 0 and int(completion_tokens or 0) <= 0:
+            return DecisionCost(
+                amount=0.0, provider=JEV_PROVIDER, model=model
+            )
+        try:
+            if self._cost_resolver is not None:
+                result = self._cost_resolver(
+                    provider=JEV_PROVIDER,
+                    model=model,
+                    prompt_tokens=int(prompt_tokens or 0),
+                    completion_tokens=int(completion_tokens or 0),
+                )
+                if inspect.isawaitable(result):
+                    result = await result
+                return result
+            return await resolve_cost(
+                provider=JEV_PROVIDER,
+                model=model,
+                prompt_tokens=int(prompt_tokens or 0),
+                completion_tokens=int(completion_tokens or 0),
+                legacy_per_1k=self._settings.estimated_cost_per_1k,
+            )
+        except Exception as exc:  # noqa: BLE001 — costo nunca rompe el juicio
+            logger.warning("JEV cost resolution failed", error=str(exc)[:200])
+            return DecisionCost(
+                amount=0.0, provider=JEV_PROVIDER, model=model
+            )
 
     def _client_or_raise(self) -> JevClient:
         if self._client is not None:
@@ -195,13 +249,14 @@ class JevDecisionProvider(DecisionProvider):
         started = time.perf_counter()
         questions = build_routing_questions(context.available_capabilities)
         state = context.sanitized_state()
+        model = self.effective_model(context.request_id)
         try:
             payload = await self._circuit.call(
                 "jev.system_one",
                 lambda: self._client_or_raise().system_one(
                     state=state,
                     questions=questions,
-                    model=self._settings.jev_model,
+                    model=model,
                     timeout=self._settings.jev_timeout_seconds,
                 ),
             )
@@ -220,9 +275,19 @@ class JevDecisionProvider(DecisionProvider):
         if isinstance(usage, dict):
             decision.prompt_tokens = int(usage.get("input_tokens") or 0)
             decision.completion_tokens = int(usage.get("output_tokens") or 0)
-            total = decision.prompt_tokens + decision.completion_tokens
-            decision.estimated_cost = (total / 1000.0) * self._settings.estimated_cost_per_1k
+        cost = await self._resolve_cost(
+            model=model,
+            prompt_tokens=decision.prompt_tokens,
+            completion_tokens=decision.completion_tokens,
+        )
+        decision.estimated_cost = cost.amount
+        decision.metadata["cost_source"] = cost.source
+        decision.metadata["cost_kind"] = cost.cost_kind
         decision.latency_ms = (time.perf_counter() - started) * 1000
+        decision.metadata["model"] = model
+        decision.metadata["model_role"] = (
+            "canary" if model != self._settings.jev_model else "production"
+        )
         decision.metadata["questions"] = list(questions.keys())
         decision.raw_answers = {
             key: _public_answer(val) for key, val in answers.items()
@@ -236,6 +301,7 @@ class JevDecisionProvider(DecisionProvider):
         questions: dict[str, Any],
     ) -> dict[str, Any]:
         """Atomic System One questions that are not capability routing."""
+        started = time.perf_counter()
         try:
             payload = await self._circuit.call(
                 "jev.system_one",
@@ -254,7 +320,23 @@ class JevDecisionProvider(DecisionProvider):
             raise JevTransportError(str(exc)[:200]) from exc
         if not isinstance(payload, dict) or "answers" not in payload:
             raise JevTransportError("JEV invalid response: answers")
-        return payload
+        model = str(payload.get("model") or self._settings.jev_model)
+        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+        prompt_tokens = int(usage.get("input_tokens") or 0)
+        completion_tokens = int(usage.get("output_tokens") or 0)
+        cost = await self._resolve_cost(
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+        return {
+            **payload,
+            "provider": JEV_PROVIDER,
+            "model": model,
+            "estimated_cost": cost.amount,
+            "cost_source": cost.source,
+            "latency_ms": round((time.perf_counter() - started) * 1000, 2),
+        }
 
 
 def _public_answer(raw: Any) -> dict[str, Any]:
@@ -297,20 +379,20 @@ def _from_answers(
     score_conf = float(score_ans.get("confidence") or choice_conf)
     complexity = ComplexityLevel(complexity_from_score(score))
     needs_knowledge = noul_is_yes(
-        float((answers.get("needs_private_knowledge") or {}).get("noul") or 0.0),
+        noul_from_answer(answers.get("needs_private_knowledge"), 0.0),
         settings.noul_yes,
     )
     needs_reasoning = noul_is_yes(
-        float((answers.get("needs_complex_reasoning") or {}).get("noul") or 0.0),
+        noul_from_answer(answers.get("needs_complex_reasoning"), 0.0),
         settings.noul_yes,
     )
     needs_action = noul_is_yes(
-        float((answers.get("needs_action") or {}).get("noul") or 0.0),
+        noul_from_answer(answers.get("needs_action"), 0.0),
         settings.noul_yes,
     )
 
     noul_values = [
-        float((answers.get(key) or {}).get("noul") or 0.5)
+        noul_from_answer(answers.get(key), 0.5)
         for key in (
             "needs_private_knowledge",
             "needs_complex_reasoning",
