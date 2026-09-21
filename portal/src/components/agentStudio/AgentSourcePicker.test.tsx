@@ -86,6 +86,67 @@ describe("AgentSourcePicker", () => {
     await user.click(screen.getByTestId("source-index-s1"));
     expect(onIndex).toHaveBeenCalledWith("s1");
   });
+
+  it("filtra por nombre", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <AgentSourcePicker
+          sources={[
+            { ...READY, id: "s1", name: "Políticas RRHH" },
+            { ...READY, id: "s2", name: "Inventario.xlsx" },
+          ]}
+          selectedIds={[]}
+          jobs={[]}
+          loading={false}
+          onToggle={() => {}}
+          onIndex={() => {}}
+        />
+      </MemoryRouter>,
+    );
+    await user.type(screen.getByRole("searchbox"), "inventario");
+    expect(screen.getByText("Inventario.xlsx")).toBeInTheDocument();
+    expect(screen.queryByText("Políticas RRHH")).toBeNull();
+  });
+
+  it("lista con scroll interno", () => {
+    render(
+      <MemoryRouter>
+        <AgentSourcePicker
+          sources={[READY]}
+          selectedIds={[]}
+          jobs={[]}
+          loading={false}
+          onToggle={() => {}}
+          onIndex={() => {}}
+        />
+      </MemoryRouter>,
+    );
+    const list = screen.getByTestId("source-picker-list");
+    expect(list.className).toMatch(/overflow-y-auto/);
+    expect(list.className).toMatch(/max-h-/);
+  });
+
+  it("el tope bloquea el ítem 501", async () => {
+    const user = userEvent.setup();
+    const onToggle = vi.fn();
+    const selectedIds = Array.from({ length: 500 }, (_, i) => `filled-${i}`);
+    render(
+      <MemoryRouter>
+        <AgentSourcePicker
+          sources={[READY]}
+          selectedIds={selectedIds}
+          jobs={[]}
+          loading={false}
+          onToggle={onToggle}
+          onIndex={() => {}}
+        />
+      </MemoryRouter>,
+    );
+    await user.click(screen.getByRole("checkbox"));
+    expect(onToggle).not.toHaveBeenCalled();
+    expect(screen.getByText("Un agente admite como máximo 500 fuentes.")).toBeInTheDocument();
+  });
 });
 
 describe("AgentTestChat", () => {

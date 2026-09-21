@@ -345,4 +345,21 @@ describe("KnowledgeSourcesPage", () => {
     expect(dialog.getByText(/inactivo/)).toBeInTheDocument();
     expect(dialog.getByText(/la usa por su colección/)).toBeInTheDocument();
   });
+
+  it("pagina de a 25 fuentes", async () => {
+    const many = Array.from({ length: 26 }, (_, i) => ({
+      ...FILE_SOURCE,
+      id: `src-${i}`,
+      name: `Doc ${i}.pdf`,
+    }));
+    stubApi(many);
+    const user = userEvent.setup();
+    renderSources();
+    await waitFor(() => expect(screen.getByTestId("source-card-src-0")).toBeInTheDocument());
+    expect(screen.getByTestId("source-card-src-24")).toBeInTheDocument();
+    expect(screen.queryByTestId("source-card-src-25")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Página siguiente" }));
+    expect(await screen.findByTestId("source-card-src-25")).toBeInTheDocument();
+    expect(screen.queryByTestId("source-card-src-0")).toBeNull();
+  });
 });

@@ -6,6 +6,7 @@ import {
   DataTable,
   EmptyState,
   PageHeader,
+  Pagination,
   ResultCount,
   StatusBadge,
   type Column,
@@ -23,6 +24,8 @@ type DocRow = {
   last_seen_at: string | null;
   source_name: string;
 };
+
+const PAGE_SIZE = 25;
 
 const columns: Column<DocRow>[] = [
   {
@@ -64,6 +67,7 @@ export default function KnowledgeDocumentsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [sort, setSort] = useState<SortState>(null);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     if (!session) return;
@@ -106,6 +110,10 @@ export default function KnowledgeDocumentsPage() {
     });
   }, [docs, sort]);
 
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageRows = rows.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
+
   const sourceCount = new Set(docs.map((d) => d.source_name)).size;
 
   return (
@@ -117,13 +125,16 @@ export default function KnowledgeDocumentsPage() {
 
       <DataTable
         columns={columns}
-        rows={rows}
+        rows={pageRows}
         rowKey={(d) => `${d.source_name}-${d.id}`}
         caption="Documentos indexados"
         loading={loading}
         error={error || null}
         sort={sort}
-        onSortChange={setSort}
+        onSortChange={(next) => {
+          setSort(next);
+          setPage(1);
+        }}
         empty={
           <EmptyState
             icon={Files}
@@ -134,7 +145,16 @@ export default function KnowledgeDocumentsPage() {
         footer={
           docs.length > 0 ? (
             <>
-              <ResultCount shown={docs.length} total={docs.length} noun="documentos" />
+              {docs.length > PAGE_SIZE ? (
+                <Pagination
+                  page={safePage}
+                  pageSize={PAGE_SIZE}
+                  total={rows.length}
+                  onPageChange={setPage}
+                />
+              ) : (
+                <ResultCount shown={docs.length} total={docs.length} noun="documentos" />
+              )}
               <span className="text-xs text-faint tabular-nums">
                 {sourceCount === 1 ? "1 fuente" : `${sourceCount} fuentes`}
               </span>

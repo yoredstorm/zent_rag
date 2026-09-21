@@ -17,6 +17,7 @@ import {
   Input,
   KeyValue,
   PageHeader,
+  Pagination,
   Panel,
   PanelHeader,
   ResultCount,
@@ -146,6 +147,8 @@ const RAIL_STATE: Record<string, RailState> = {
   error: "failed",
 };
 
+const PAGE_SIZE = 25;
+
 const DOC_COLUMNS: Column<SourceDocument>[] = [
   {
     key: "external_id",
@@ -177,6 +180,7 @@ export default function SourceDetailPage() {
   const tab = parseSourceTab(searchParams.get("tab"));
   const [source, setSource] = useState<SourceDetail | null>(null);
   const [documents, setDocuments] = useState<SourceDocument[]>([]);
+  const [docPage, setDocPage] = useState(1);
   const [tabular, setTabular] = useState<TabularPayload | null>(null);
   const [testQuery, setTestQuery] = useState("");
   const [testing, setTesting] = useState(false);
@@ -345,6 +349,9 @@ export default function SourceDetailPage() {
   const tabs = SOURCE_TABS.map((id) => ({ id, label: SOURCE_TAB_LABEL[id] }));
   const managed = Boolean(source?.config?.managed);
   const docs = source?.document_count ?? 0;
+  const docTotalPages = Math.max(1, Math.ceil(documents.length / PAGE_SIZE));
+  const safeDocPage = Math.min(docPage, docTotalPages);
+  const pageDocs = documents.slice((safeDocPage - 1) * PAGE_SIZE, safeDocPage * PAGE_SIZE);
   const canRunSql = Boolean(
     session?.permissions?.includes("*") ||
       session?.permissions?.includes("sources:sql") ||
@@ -701,7 +708,7 @@ export default function SourceDetailPage() {
               <section data-testid="source-documentos">
                 <DataTable
                   columns={DOC_COLUMNS}
-                  rows={documents}
+                  rows={pageDocs}
                   rowKey={(doc) => String(doc.id)}
                   caption={`Documentos de ${source.name}`}
                   empty={
@@ -712,7 +719,14 @@ export default function SourceDetailPage() {
                     />
                   }
                   footer={
-                    documents.length > 0 ? (
+                    documents.length > PAGE_SIZE ? (
+                      <Pagination
+                        page={safeDocPage}
+                        pageSize={PAGE_SIZE}
+                        total={documents.length}
+                        onPageChange={setDocPage}
+                      />
+                    ) : documents.length > 0 ? (
                       <ResultCount
                         shown={documents.length}
                         total={documents.length}

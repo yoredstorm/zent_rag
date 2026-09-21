@@ -18,6 +18,7 @@ import {
   IconButton,
   Input,
   PageHeader,
+  Pagination,
   Panel,
   PanelHeader,
   SectionHeader,
@@ -29,11 +30,10 @@ import {
 import { StatusBadge } from "../../components/ui/Badge";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
-import { fmtDateTime, fmtNum } from "../../lib/format";
+import { fmtNum } from "../../lib/format";
 import {
   COPY,
   sourceStatusLabel,
-  sourceTypeBlurb,
   sourceTypeLabel,
 } from "./knowledgeCopy";
 
@@ -60,6 +60,7 @@ const UPLOAD_STATUS_LABEL: Record<UploadItem["status"], string> = {
 };
 
 const MAX_UPLOAD_MB = 25;
+const PAGE_SIZE = 25;
 
 function uploadErrorMessage(err: unknown): string {
   if (isApiError(err) && err.status === 413) {
@@ -214,6 +215,7 @@ export default function KnowledgeSourcesPage() {
   const [pendingDelete, setPendingDelete] = useState<SourceRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(1);
   const { agents: deleteUsage, loading: deleteUsageLoading } = useSourceUsage(
     pendingDelete?.id ?? null,
   );
@@ -243,6 +245,10 @@ export default function KnowledgeSourcesPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query]);
 
   useEffect(() => {
     if (!session) return;
@@ -533,6 +539,9 @@ export default function KnowledgeSourcesPage() {
           sourceStatusLabel(s.status).toLowerCase().includes(term),
       )
     : sources;
+  const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const paged = visible.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   return (
     <KnowledgeLayout>
@@ -588,7 +597,7 @@ export default function KnowledgeSourcesPage() {
               />
 
               {uploadFiles.length > 0 && (
-                <ul className="flex flex-col gap-1">
+                <ul className="flex max-h-48 flex-col gap-1 overflow-y-auto">
                   {uploadFiles.map((item) => (
                     <li
                       key={`${item.name}-${item.size}`}
@@ -643,7 +652,7 @@ export default function KnowledgeSourcesPage() {
               </p>
 
               {uploadItems.length > 0 && (
-                <ul className="flex flex-col gap-1.5" data-testid="upload-results">
+                <ul className="flex max-h-48 flex-col gap-1.5 overflow-y-auto" data-testid="upload-results">
                   {uploadItems.map((item) => (
                     <li
                       key={item.filename}
@@ -828,8 +837,9 @@ export default function KnowledgeSourcesPage() {
               }
             />
           ) : (
+            <>
             <ul>
-              {visible.map((s) => {
+              {paged.map((s) => {
                 const canProfile = s.type === "sql" || Boolean(s.config?.managed);
                 const docs = s.document_count || s.last_processed_count || 0;
                 return (
@@ -837,9 +847,9 @@ export default function KnowledgeSourcesPage() {
                     key={s.id}
                     data-testid={`source-card-${s.id}`}
                     data-state={RAIL_STATE[s.status]}
-                    className="state-rail border-b border-border-soft py-3.5 pr-3 pl-4 last:border-b-0"
+                    className="state-rail border-b border-border-soft py-2 pr-3 pl-4 last:border-b-0"
                   >
-                    <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
                       <div className="min-w-0 flex-1">
                         <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
                           <Link
@@ -849,31 +859,21 @@ export default function KnowledgeSourcesPage() {
                             {s.name}
                           </Link>
                           <StatusBadge status={s.status} label={sourceStatusLabel(s.status)} />
-                        </div>
-                        <p className="prose-measure mt-1 text-xs leading-relaxed text-muted">
-                          <span className="text-faint">{sourceTypeLabel(s.type, s.config?.managed)}</span>
-                          {" · "}
-                          {sourceTypeBlurb(s.type, s.config?.managed)}
-                        </p>
-                        <p className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-faint">
-                          <span>
-                            {COPY.lastSync}:{" "}
-                            <span className="text-muted">
-                              {s.last_sync ? fmtDateTime(s.last_sync) : "—"}
-                            </span>
+                          <span className="text-xs text-faint">
+                            {sourceTypeLabel(s.type, s.config?.managed)}
                           </span>
-                          <span>
+                          <span className="text-xs text-faint">
                             {COPY.documents}:{" "}
                             <span className="mono text-muted">{fmtNum(docs)}</span>
                           </span>
                           {s.error_count > 0 ? (
-                            <span className="text-danger">
+                            <span className="text-xs text-danger">
                               {COPY.issues}: <span className="mono">{fmtNum(s.error_count)}</span>
                             </span>
                           ) : null}
-                        </p>
+                        </div>
                         {s.last_error ? (
-                          <p className="mt-1.5 max-w-[68ch] text-xs leading-relaxed text-danger">
+                          <p className="mt-1 max-w-[68ch] truncate text-xs leading-relaxed text-danger">
                             {s.last_error}
                           </p>
                         ) : null}
@@ -935,6 +935,17 @@ export default function KnowledgeSourcesPage() {
                 );
               })}
             </ul>
+            {visible.length > PAGE_SIZE ? (
+              <div className="border-t border-border-soft px-4 py-3">
+                <Pagination
+                  page={safePage}
+                  pageSize={PAGE_SIZE}
+                  total={visible.length}
+                  onPageChange={setPage}
+                />
+              </div>
+            ) : null}
+            </>
           )}
         </Panel>
 

@@ -324,3 +324,22 @@ async def test_update_rejects_foreign_source_ids(async_client: AsyncClient) -> N
         headers=_headers(org_b),
     )
     assert update.status_code in (400, 404), update.text
+
+
+def test_agent_config_accepts_500_source_ids() -> None:
+    from src.api.routes.agents import AgentConfig
+
+    ids = [uuid4() for _ in range(500)]
+    cfg = AgentConfig(source_ids=ids)
+    assert len(cfg.source_ids) == 500
+
+
+def test_agent_config_rejects_501_source_ids_with_spanish_message() -> None:
+    from pydantic import ValidationError
+
+    from src.api.routes.agents import AgentConfig
+
+    ids = [uuid4() for _ in range(501)]
+    with pytest.raises(ValidationError) as exc:
+        AgentConfig(source_ids=ids)
+    assert "Un agente admite como máximo 500 fuentes." in str(exc.value)

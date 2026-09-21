@@ -5,7 +5,7 @@ import { api } from "../api";
 import { useAuth } from "../auth";
 import { AgentAdvancedPanel } from "../components/agentStudio/AgentAdvancedPanel";
 import { AgentPurposeForm } from "../components/agentStudio/AgentPurposeForm";
-import { AgentSourcePicker } from "../components/agentStudio/AgentSourcePicker";
+import { AgentSourcePicker, AGENT_SOURCE_CAP_MSG, MAX_AGENT_SOURCES } from "../components/agentStudio/AgentSourcePicker";
 import { AgentTestChat, type ChatTurn } from "../components/agentStudio/AgentTestChat";
 import { hasDbSources, sourceTypesForSelection } from "../components/agentStudio/toolApplicability";
 import { flowFromAgentSteps } from "./chat/runPlaygroundTurn";
@@ -325,9 +325,22 @@ export default function AgentStudioPage() {
 
   function toggleSource(sourceId: string) {
     const checked = config.source_ids.includes(sourceId);
-    const next = checked ? config.source_ids.filter((x) => x !== sourceId) : [...config.source_ids, sourceId];
+    if (!checked && config.source_ids.length >= MAX_AGENT_SOURCES) {
+      setError(AGENT_SOURCE_CAP_MSG);
+      return;
+    }
+    const next = checked
+      ? config.source_ids.filter((x) => x !== sourceId)
+      : [...config.source_ids, sourceId];
     setConfig({ ...config, source_ids: next });
     if (next.length > 0) setSemantic(true);
+  }
+
+  function setSelectedSources(ids: string[]) {
+    const next = ids.slice(0, MAX_AGENT_SOURCES);
+    setConfig((prev) => ({ ...prev, source_ids: next }));
+    if (next.length > 0) setSemantic(true);
+    if (ids.length > MAX_AGENT_SOURCES) setError(AGENT_SOURCE_CAP_MSG);
   }
 
   function updateJevMode(mode: "inherit" | "on" | "off") {
@@ -431,6 +444,10 @@ export default function AgentStudioPage() {
 
   async function save(): Promise<Agent | null> {
     if (!session || !name.trim()) return null;
+    if (config.source_ids.length > MAX_AGENT_SOURCES) {
+      setError(AGENT_SOURCE_CAP_MSG);
+      return null;
+    }
     setSaving(true);
     setError("");
     setMsg("");
@@ -831,6 +848,7 @@ export default function AgentStudioPage() {
                 loading={sourcesLoading}
                 indexingId={indexingId}
                 onToggle={toggleSource}
+                onSetSelected={setSelectedSources}
                 onIndex={(sourceId) => void indexSource(sourceId)}
               />
             </div>

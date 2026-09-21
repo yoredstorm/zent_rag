@@ -6,7 +6,8 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic_core import PydanticCustomError
 from sqlalchemy.exc import IntegrityError
 
 from src.api.deps import get_agent_repo
@@ -15,6 +16,9 @@ from src.infrastructure.postgres.relational_db import PostgresAuditLogRepository
 from src.platform.audit.service import AuditLogService
 
 router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
+
+MAX_AGENT_SOURCE_IDS = 500
+AGENT_SOURCE_CAP_MSG = "Un agente admite como máximo 500 fuentes."
 
 
 def _audit() -> AuditLogService:
@@ -45,7 +49,7 @@ class AgentConfig(BaseModel):
     temperature: float = Field(default=0.2, ge=0, le=1)
     tone: str = Field(default="professional", pattern="^(professional|friendly|concise)$")
     knowledge_base_ids: list[UUID] = Field(default_factory=list, max_length=50)
-    source_ids: list[UUID] = Field(default_factory=list, max_length=50)
+    source_ids: list[UUID] = Field(default_factory=list)
     limits: AgentLimits | None = None
     security: AgentSecurity | None = None
     retrieval: dict | None = Field(
@@ -60,6 +64,13 @@ class AgentConfig(BaseModel):
         default=None,
         description="JEV por agente: tool_routing, termination_gate, answer_gate.",
     )
+
+    @field_validator("source_ids")
+    @classmethod
+    def cap_source_ids(cls, value: list[UUID]) -> list[UUID]:
+        if len(value) > MAX_AGENT_SOURCE_IDS:
+            raise PydanticCustomError("too_long", AGENT_SOURCE_CAP_MSG)
+        return value
 
 
 class CreateAgentRequest(BaseModel):
