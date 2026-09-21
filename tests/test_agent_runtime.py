@@ -146,6 +146,27 @@ class TestReActLoop:
         assert "echo: hello" in tool_steps[0]["output"]
 
     @pytest.mark.asyncio
+    async def test_invalid_tool_json_is_not_shown_as_answer(self) -> None:
+        register_tool(_EchoTool())
+        broken = (
+            '{\n  "tool": "echo",\n  "arguments": {\n'
+            '    "text": "hello",\n    "top_k": III\n  }\n}'
+        )
+        llm = _FakeLLM(
+            [
+                '{"tool": "echo", "arguments": {"text": "hello"}}',
+                broken,
+                '{"answer": "Record 4 controla la renumeración."}',
+            ]
+        )
+        runtime = AgentRuntime(llm_provider=llm)
+        result = await runtime.run(_request(_agent(), "cuentame sobre el record 4"))
+
+        assert result.status == "completed"
+        assert result.answer == "Record 4 controla la renumeración."
+        assert "top_k" not in result.answer
+
+    @pytest.mark.asyncio
     async def test_direct_answer_without_tools(self) -> None:
         llm = _FakeLLM(['{"answer": "Sin tools"}'])
         agent = _agent(tools=[])

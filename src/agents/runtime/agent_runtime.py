@@ -171,6 +171,24 @@ def _parse_action(content: str) -> dict:
     return {"answer": text}
 
 
+def _tool_shaped(text: str) -> bool:
+    """JSON de tool que no parseó (p.ej. ``top_k: III``). No es respuesta."""
+    body = (text or "").strip()
+    return body.startswith("{") and '"tool"' in body
+
+
+def _direct_answer(action: dict) -> str | None:
+    """Texto final para el usuario. None si es una llamada a tool."""
+    if action.get("tool"):
+        return None
+    answer = action.get("answer")
+    if not isinstance(answer, str) or not answer.strip():
+        return None
+    if _tool_shaped(answer):
+        return None
+    return answer
+
+
 def _effective_tools(agent: Agent) -> list[str]:
     tools = list(agent.tools or [])
     security = (agent.config_json or {}).get("security")
@@ -383,8 +401,8 @@ class AgentRuntime:
         result.prompt_tokens += int(getattr(resp, "prompt_tokens", 0) or 0)
         result.completion_tokens += int(getattr(resp, "completion_tokens", 0) or 0)
         action = _parse_action(resp.content)
-        answer = action.get("answer")
-        if not isinstance(answer, str) or not answer.strip() or action.get("tool"):
+        answer = _direct_answer(action)
+        if answer is None:
             return False
         result.answer = answer
         result.status = "completed"
@@ -1079,8 +1097,9 @@ class AgentRuntime:
                 )
                 return
 
-            if "answer" in action and isinstance(action["answer"], str):
-                gate_verdict = await _gate_draft(action["answer"])
+            direct = _direct_answer(action)
+            if direct is not None:
+                gate_verdict = await _gate_draft(direct)
                 if gate_verdict == "abstain":
                     result.answer = INSUFFICIENT_ANSWER
                     result.status = "completed"
@@ -1088,26 +1107,25 @@ class AgentRuntime:
                     return
                 if gate_verdict == "revise":
                     continue
-                result.answer = action["answer"]
+                result.answer = direct
                 result.status = "completed"
-                result.steps.append({"type": "final", "answer": action["answer"][:500]})
+                result.steps.append({"type": "final", "answer": direct[:500]})
                 return
 
             tool_name = str(action.get("tool") or "")
             if not tool_name:
-                draft = str(action.get("answer") or resp.content or "")
-                gate_verdict = await _gate_draft(draft)
-                if gate_verdict == "abstain":
-                    result.answer = INSUFFICIENT_ANSWER
-                    result.status = "completed"
-                    result.steps.append({"type": "final", "answer": result.answer[:500]})
-                    return
-                if gate_verdict == "revise":
-                    continue
-                result.answer = draft
-                result.status = "completed"
-                result.steps.append({"type": "final", "answer": result.answer[:500]})
-                return
+                history.append(
+                    "OBSERVATION: error: that response is not valid JSON. "
+                    "Do not show a tool call to the user. Answer now with "
+                    '{"answer": "..."} using the observations already collected.'
+                )
+                result.steps.append(
+                    {
+                        "type": "guardrail",
+                        "detail": "invalid JSON rejected as answer",
+                    }
+                )
+                continue
 
             tool_calls += 1
             if tool_calls > max_tool_calls:
