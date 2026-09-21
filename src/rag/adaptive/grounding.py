@@ -6,6 +6,7 @@ from __future__ import annotations
 import re
 
 from src.core.domain.adaptive import EvidenceSet, GroundingResult
+from src.decision.judgment import PHASE_GROUNDING, JudgmentContext, call_judge
 from src.decision.questions import noul_is_no
 from src.rag.adaptive.questions import build_grounding_questions
 from src.rag.adaptive.settings import AdaptiveRagSettings
@@ -59,6 +60,7 @@ async def maybe_jev_grounding(
     evidence: EvidenceSet,
     settings: AdaptiveRagSettings,
     judge=None,
+    context: JudgmentContext | None = None,
 ) -> GroundingResult:
     if judge is None or result.reason in {"abstain", "no_evidence", "empty_answer"}:
         return result
@@ -70,7 +72,12 @@ async def maybe_jev_grounding(
         "evidence_preview": evidence.preview(1200),
     }
     try:
-        payload = await judge(state=state, questions=build_grounding_questions())
+        payload = await call_judge(
+            judge,
+            state=state,
+            questions=build_grounding_questions(),
+            context=context or JudgmentContext(phase=PHASE_GROUNDING),
+        )
     except Exception:  # noqa: BLE001
         return result
     answers = payload.get("answers") if isinstance(payload, dict) else None

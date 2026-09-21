@@ -10,6 +10,7 @@ from uuid import UUID
 
 from src.core.domain.adaptive import EvidenceItem, EvidenceQuality, EvidenceSet
 from src.core.domain.entities import RetrievalChunk, RetrievalContext
+from src.decision.judgment import PHASE_EVIDENCE, JudgmentContext, call_judge
 from src.decision.questions import noul_is_no, noul_is_uncertain, noul_is_yes
 from src.rag.adaptive.questions import build_evidence_questions, public_answers
 from src.rag.adaptive.settings import AdaptiveRagSettings
@@ -162,6 +163,7 @@ class EvidenceEvaluator:
         evidence: EvidenceSet,
         *,
         organization_id: UUID | None = None,
+        request_id: UUID | None = None,
     ) -> EvidenceQuality:
         quality = evaluate_deterministic(evidence, self._settings)
         if not self._settings.jev_evidence_enabled or self._judge is None:
@@ -182,7 +184,16 @@ class EvidenceEvaluator:
             "organization_id": str(organization_id) if organization_id else "",
         }
         try:
-            payload = await self._judge(state=state, questions=build_evidence_questions())
+            payload = await call_judge(
+                self._judge,
+                state=state,
+                questions=build_evidence_questions(),
+                context=JudgmentContext(
+                    phase=PHASE_EVIDENCE,
+                    organization_id=organization_id,
+                    request_id=request_id,
+                ),
+            )
         except Exception:  # noqa: BLE001
             return quality
         if not isinstance(payload, dict):

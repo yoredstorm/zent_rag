@@ -16,6 +16,7 @@ from src.core.domain.adaptive import (
 )
 from src.core.domain.decision import RoutingDecision
 from src.core.domain.entities import RetrievalContext
+from src.decision.judgment import PHASE_GROUNDING, JudgmentContext
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.observability.tracing import trace_span
 from src.rag.adaptive.evidence import EvidenceEvaluator, build_evidence_set
@@ -122,10 +123,13 @@ class OrchestratorAdaptiveHook:
         evidence: EvidenceSet,
         *,
         organization_id: UUID,
+        request_id: UUID | None = None,
     ) -> EvidenceQuality:
         async with trace_span("adaptive.evidence"):
             quality = await self._evaluator.evaluate(
-                evidence, organization_id=organization_id
+                evidence,
+                organization_id=organization_id,
+                request_id=request_id,
             )
         record_quality(quality)
         return quality
@@ -172,6 +176,8 @@ class OrchestratorAdaptiveHook:
         answer: str,
         evidence: EvidenceSet,
         plan: AdaptivePlan,
+        organization_id: UUID | None = None,
+        request_id: UUID | None = None,
     ) -> GroundingResult:
         result = evaluate_grounding(
             answer=answer, evidence=evidence, settings=self._settings
@@ -183,6 +189,13 @@ class OrchestratorAdaptiveHook:
                 evidence=evidence,
                 settings=self._settings,
                 judge=self._judge,
+                context=JudgmentContext(
+                    phase=PHASE_GROUNDING,
+                    organization_id=organization_id,
+                    request_id=request_id,
+                )
+                if (organization_id is not None or request_id is not None)
+                else None,
             )
         record_grounding(result.score)
         return result
@@ -190,7 +203,7 @@ class OrchestratorAdaptiveHook:
     def insufficient_message(self) -> str:
         return _INSUFFICIENT_ES
 
-    def build_trace(
+    async def build_trace(
         self,
         *,
         organization_id: UUID,
@@ -211,6 +224,16 @@ class OrchestratorAdaptiveHook:
         fallbacks: list[str],
     ) -> dict:
         record_attempts(len(attempts) or 1)
+        # Pricing Registry primero; estimated_cost_per_1k solo si el registry cae.
+        from src.decision.costs import resolve_cost
+
+        cost = await resolve_cost(
+            provider="default",
+            model=generator_model or "",
+            prompt_tokens=input_tokens,
+            completion_tokens=output_tokens,
+            legacy_per_1k=self._settings.estimated_cost_per_1k,
+        )
         trace = AdaptiveTrace(
             organization_id=organization_id,
             request_id=request_id,
@@ -233,8 +256,7 @@ class OrchestratorAdaptiveHook:
             context_tokens_after=context_tokens_after,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            total_cost=((input_tokens + output_tokens) / 1000.0)
-            * self._settings.estimated_cost_per_1k,
+            total_cost=cost.amount,
             latency_ms=latency_ms,
             fallbacks=fallbacks,
         )

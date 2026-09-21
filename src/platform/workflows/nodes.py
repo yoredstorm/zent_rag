@@ -2353,6 +2353,7 @@ async def _exec_ai_decision(rctx: NodeContext) -> NodeOutcome:
         )
     payload = None
     try:
+        from src.decision.judgment import PHASE_WORKFLOW_DECISION, JudgmentContext
         from src.decision.service import get_decision_engine
 
         engine = get_decision_engine()
@@ -2361,14 +2362,30 @@ async def _exec_ai_decision(rctx: NodeContext) -> NodeOutcome:
             "trigger": {k: str(v)[:120] for k, v in list((rctx.trigger or {}).items())[:8]},
             "evidence_preview": [],
         }
-        payload = await engine.judge(state=state, questions=questions_for(config))
+        execution = rctx.execution
+        payload = await engine.judge(
+            state=state,
+            questions=questions_for(config),
+            context=JudgmentContext(
+                phase=PHASE_WORKFLOW_DECISION,
+                organization_id=execution.organization_id,
+                request_id=execution.run_id,
+                workflow_id=execution.workflow_id,
+                run_id=execution.run_id,
+            ),
+        )
     except Exception as exc:  # noqa: BLE001
         logger.warning("ai_decision judge failed", error=str(exc)[:200])
         payload = None
     from src.core.config import get_settings
 
     settings = get_settings()
-    outcome = interpret(config, payload, noul_yes=settings.DECISION_NOUL_YES)
+    outcome = interpret(
+        config,
+        payload,
+        noul_yes=settings.DECISION_NOUL_YES,
+        noul_no=settings.DECISION_NOUL_NO,
+    )
     outcome = apply_low_confidence(outcome, config)
     output = to_output(outcome)
     if outcome.low_confidence and outcome.on_low_confidence == LOW_STOP:

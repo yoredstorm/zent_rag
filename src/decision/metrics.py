@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from src.core.domain.decision import RoutingDecision
+from src.decision.judgment import JUDGE_PHASES
 
 _PROVIDER_LABELS = ("rules", "jev", "llm", "composite", "legacy")
 _CAPABILITY_PREFIXES = (
@@ -66,24 +67,37 @@ def record_agreement(agreed: bool) -> None:
     m.zent_decision_agreement_total.labels(agreed=str(bool(agreed)).lower()).inc()
 
 
-def record_judge(payload: dict | None, *, error: bool = False) -> None:
-    """Judge calls are metered apart from routing (no usage event, no org id)."""
+def record_judge(
+    payload: dict | None,
+    *,
+    error: bool = False,
+    phase: str = "unknown",
+    latency_ms: float = 0.0,
+) -> None:
+    """Judge calls are metered apart from routing, now with phase labels."""
     try:
         from src.infrastructure.observability import metrics as m
     except Exception:  # noqa: BLE001
         return
+    phase_label = phase if phase in JUDGE_PHASES else "other"
     outcome = "error" if error or not isinstance(payload, dict) else "ok"
-    m.zent_decision_judge_total.labels(outcome=outcome).inc()
+    m.zent_decision_judge_total.labels(outcome=outcome, phase=phase_label).inc()
+    m.zent_decision_judge_latency_seconds.labels(phase=phase_label).observe(
+        max(float(latency_ms or 0.0), 0.0) / 1000.0
+    )
     if not isinstance(payload, dict):
         return
     usage = payload.get("usage")
     if isinstance(usage, dict):
-        m.zent_decision_judge_tokens_total.labels(kind="input").inc(
+        m.zent_decision_judge_tokens_total.labels(kind="input", phase=phase_label).inc(
             max(0, int(usage.get("input_tokens") or 0))
         )
-        m.zent_decision_judge_tokens_total.labels(kind="output").inc(
+        m.zent_decision_judge_tokens_total.labels(kind="output", phase=phase_label).inc(
             max(0, int(usage.get("output_tokens") or 0))
         )
+    cost = float(payload.get("estimated_cost") or 0.0)
+    if cost > 0:
+        m.zent_decision_judge_cost_usd.labels(phase=phase_label).inc(cost)
 
 
 def record_trace_written(decision: RoutingDecision) -> None:

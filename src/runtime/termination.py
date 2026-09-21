@@ -6,7 +6,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.decision.questions import noul_is_yes
+from src.decision.judgment import PHASE_TERMINATION, JudgmentContext, call_judge
+from src.decision.questions import noul_from_answer, noul_is_yes
 from src.runtime.questions import termination_questions
 
 
@@ -30,6 +31,7 @@ async def original_request_satisfied(
     history: list[str],
     tool_calls: int,
     noul_yes: float = 0.65,
+    context: JudgmentContext | None = None,
 ) -> dict[str, Any]:
     """Return {stop, confidence, provider}. Never bypasses max_steps."""
     result = {"stop": False, "confidence": 0.0, "provider": "skip"}
@@ -39,10 +41,15 @@ async def original_request_satisfied(
         "user_request": (user_request or "")[:2000],
         "tool_results": [line[:180] for line in history[-8:]],
     }
-    payload = await engine.judge(state=state, questions=termination_questions())
+    payload = await call_judge(
+        engine,
+        state=state,
+        questions=termination_questions(),
+        context=context or JudgmentContext(phase=PHASE_TERMINATION),
+    )
     if not isinstance(payload, dict):
         return result
-    noul = float(((payload.get("answers") or {}).get("satisfied") or {}).get("noul") or 0.0)
+    noul = noul_from_answer((payload.get("answers") or {}).get("satisfied"), 0.0)
     return {
         "stop": noul_is_yes(noul, noul_yes),
         "confidence": round(abs(noul - 0.5) * 2.0, 4),

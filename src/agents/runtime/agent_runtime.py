@@ -913,6 +913,7 @@ class AgentRuntime:
         revision_used = False
 
         async def _confidence_gate(draft: str):
+            from src.decision.judgment import PHASE_ANSWER_GATE, JudgmentContext
             from src.decision.service import get_decision_engine
             from src.runtime.answer_gate import judge_answer
 
@@ -929,6 +930,14 @@ class AgentRuntime:
                     noul_yes=settings.DECISION_NOUL_YES,
                     approve_at=settings.RUNTIME_JEV_ANSWER_APPROVE,
                     revise_at=settings.RUNTIME_JEV_ANSWER_REVISE,
+                    context=JudgmentContext(
+                        phase=PHASE_ANSWER_GATE,
+                        organization_id=request.agent.organization_id,
+                        request_id=result.run_id,
+                        agent_id=request.agent.id,
+                        run_id=result.run_id,
+                        trace_id=request.trace_id,
+                    ),
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("answer gate skipped", error=str(exc)[:200])
@@ -973,6 +982,7 @@ class AgentRuntime:
 
             if routing_enabled(settings, request.agent.config_json):
                 try:
+                    from src.decision.judgment import PHASE_TOOL_ROUTING, JudgmentContext
                     from src.decision.service import get_decision_engine
 
                     _routing_t0 = time.perf_counter()
@@ -987,6 +997,14 @@ class AgentRuntime:
                         max_state_chars=settings.RUNTIME_JEV_STATE_MAX_CHARS,
                         confidence_threshold=settings.RUNTIME_JEV_TOOL_CONFIDENCE,
                         min_tools=getattr(settings, "RUNTIME_JEV_MIN_TOOLS", 3),
+                        context=JudgmentContext(
+                            phase=PHASE_TOOL_ROUTING,
+                            organization_id=request.agent.organization_id,
+                            request_id=result.run_id,
+                            agent_id=request.agent.id,
+                            run_id=result.run_id,
+                            trace_id=request.trace_id,
+                        ),
                     )
                     tool_descriptions = _describe_tools(prompt_tools)
                     system = _SYSTEM_TEMPLATE.format(
@@ -1330,6 +1348,7 @@ class AgentRuntime:
 
             if gate_enabled(settings, request.agent.config_json) and not tool_result.error:
                 try:
+                    from src.decision.judgment import PHASE_TERMINATION, JudgmentContext
                     from src.decision.service import get_decision_engine
 
                     _gate_t0 = time.perf_counter()
@@ -1339,6 +1358,14 @@ class AgentRuntime:
                         history=history,
                         tool_calls=tool_calls,
                         noul_yes=settings.DECISION_NOUL_YES,
+                        context=JudgmentContext(
+                            phase=PHASE_TERMINATION,
+                            organization_id=request.agent.organization_id,
+                            request_id=result.run_id,
+                            agent_id=request.agent.id,
+                            run_id=result.run_id,
+                            trace_id=request.trace_id,
+                        ),
                     )
                     if gate.get("stop"):
                         result.steps.append(

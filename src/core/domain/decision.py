@@ -258,6 +258,7 @@ class DecisionTrace:
     agreement: bool | None = None
     shadow: bool = False
     canary: bool = False
+    model: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -265,6 +266,7 @@ class DecisionTrace:
             "organization_id": str(self.organization_id) if self.organization_id else None,
             "request_id": str(self.request_id) if self.request_id else None,
             "provider": self.provider,
+            "model": self.model,
             "questions": self.questions,
             "results": self.results,
             "selected_capability": self.selected_capability,

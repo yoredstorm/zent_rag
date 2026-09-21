@@ -16,7 +16,8 @@ from src.core.domain.adaptive import (
     SourceRoute,
 )
 from src.core.domain.decision import RoutingDecision
-from src.decision.questions import noul_is_yes
+from src.decision.judgment import PHASE_PRE_RETRIEVAL, JudgmentContext, call_judge
+from src.decision.questions import noul_from_answer, noul_is_yes
 from src.rag.adaptive.cache import deserialize_plan, plan_cache_key, serialize_plan
 from src.rag.adaptive.classifier import RulesClassifier, overlay_modality, overlay_strategy
 from src.rag.adaptive.questions import build_query_questions, public_answers
@@ -182,7 +183,7 @@ class AdaptivePlanner:
                 route = SourceRoute.AGENT.value
             needs_reason = routing.raw_answers.get("needs_complex_reasoning") or {}
             if isinstance(needs_reason, dict) and noul_is_yes(
-                float(needs_reason.get("noul") or 0.0), self._settings.noul_yes
+                noul_from_answer(needs_reason, 0.0), self._settings.noul_yes
             ):
                 path = AdaptivePath.COMPLEX.value
                 complexity = "reasoning"
@@ -200,7 +201,16 @@ class AdaptivePlanner:
                 "available_route": route,
             }
             try:
-                payload = await self._judge(state=state, questions=build_query_questions())
+                payload = await call_judge(
+                    self._judge,
+                    state=state,
+                    questions=build_query_questions(),
+                    context=JudgmentContext(
+                        phase=PHASE_PRE_RETRIEVAL,
+                        organization_id=organization_id,
+                        request_id=request_id,
+                    ),
+                )
             except Exception:  # noqa: BLE001
                 payload = None
             if isinstance(payload, dict):

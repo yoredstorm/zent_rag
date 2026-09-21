@@ -10,7 +10,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from src.decision.questions import noul_certainty, noul_is_yes
+from src.decision.judgment import PHASE_ANSWER_GATE, JudgmentContext, call_judge
+from src.decision.questions import noul_certainty, noul_from_answer, noul_is_yes
 from src.runtime.jev_state import StateSection, build_jev_state
 from src.runtime.questions import answer_gate_questions
 
@@ -67,10 +68,7 @@ def _noul(answers: dict, key: str) -> float:
     raw = answers.get(key)
     if not isinstance(raw, dict):
         return 0.0
-    try:
-        return float(raw.get("noul") or 0.0)
-    except (TypeError, ValueError):
-        return 0.0
+    return noul_from_answer(raw, 0.0)
 
 
 def _quality(answers: dict, max_level: int = 3) -> float:
@@ -112,6 +110,7 @@ async def judge_answer(
     noul_yes: float = 0.65,
     approve_at: float = 0.66,
     revise_at: float = 0.40,
+    context: JudgmentContext | None = None,
 ) -> AnswerGateResult:
     """Evalua el borrador. Nunca lanza: ante error devuelve skipped."""
     result = AnswerGateResult(mode=mode, provider="skip")
@@ -129,7 +128,12 @@ async def judge_answer(
     )
     try:
         started = time.perf_counter()
-        payload = await engine.judge(state=built.state, questions=answer_gate_questions())
+        payload = await call_judge(
+            engine,
+            state=built.state,
+            questions=answer_gate_questions(),
+            context=context or JudgmentContext(phase=PHASE_ANSWER_GATE),
+        )
         result.latency_ms = (time.perf_counter() - started) * 1000
     except Exception:  # noqa: BLE001 — el gate nunca rompe el run
         return result

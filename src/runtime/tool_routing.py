@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.decision.questions import noul_certainty, noul_is_no, noul_is_yes
+from src.decision.judgment import PHASE_TOOL_ROUTING, JudgmentContext, call_judge
+from src.decision.questions import noul_certainty, noul_from_answer, noul_is_no, noul_is_yes
 from src.runtime.jev_state import StateSection, build_jev_state
 from src.runtime.questions import tool_routing_questions
 
@@ -54,6 +55,7 @@ async def select_relevant_tools(
     max_state_chars: int = 30000,
     confidence_threshold: float = 0.60,
     min_tools: int = 3,
+    context: JudgmentContext | None = None,
 ) -> tuple[list[Any], dict[str, Any]]:
     """Return a subset of tools. Empty judge payload keeps the full list.
 
@@ -82,12 +84,17 @@ async def select_relevant_tools(
         max_chars=max_state_chars,
     )
     state = built.state
-    payload = await engine.judge(state=state, questions=tool_routing_questions(criteria))
+    payload = await call_judge(
+        engine,
+        state=state,
+        questions=tool_routing_questions(criteria),
+        context=context or JudgmentContext(phase=PHASE_TOOL_ROUTING),
+    )
     if not isinstance(payload, dict):
         meta["skip_reason"] = "no_payload"
         return tools, meta
     answers = payload.get("answers") or {}
-    needs = float((answers.get("needs_tool") or {}).get("noul") or 0.0)
+    needs = noul_from_answer(answers.get("needs_tool"), 0.0)
     tool_ans = answers.get("tool") or {}
     choice = str(tool_ans.get("choice") or "none")
     probabilities = tool_ans.get("probabilities") or {}

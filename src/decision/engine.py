@@ -3,10 +3,12 @@
 # =============================================================================
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from src.core.domain.decision import DecisionContext, DecisionTrace, RoutingDecision
 from src.core.ports.decision import DecisionProvider
+from src.decision.judgment import JudgmentContext
 from src.decision.metrics import record_judge, record_trace_written
 from src.decision.policy import authorize_decision
 from src.decision.settings import DecisionEngineSettings
@@ -76,21 +78,58 @@ class DecisionEngine:
         *,
         state: dict[str, Any],
         questions: dict[str, Any],
+        context: JudgmentContext | None = None,
     ) -> dict[str, Any] | None:
-        """Adaptive RAG atomic questions. None if JEV is unavailable. Never generates."""
+        """Atomic questions (adaptive/agent/workflow). None if JEV unavailable.
+
+        `context` es opcional y backward-compatible: sin él el juicio corre
+        igual pero no produce usage event por tenant.
+        """
         if self._jev is None:
             return None
-        async with trace_span("decision.judge"):
+        ctx = context or JudgmentContext()
+        phase = ctx.phase or "unknown"
+        started = time.perf_counter()
+        async with trace_span("decision.judge", phase=phase):
             try:
                 payload = await self._jev.judge(state=state, questions=questions)
-            except Exception:  # noqa: BLE001
-                record_judge(None, error=True)
+            except Exception:  # noqa: BLE001 — el juicio nunca rompe el request
+                record_judge(
+                    None,
+                    error=True,
+                    phase=phase,
+                    latency_ms=(time.perf_counter() - started) * 1000,
+                )
                 return None
-        if isinstance(payload, dict):
-            record_judge(payload)
-        else:
-            record_judge(None, error=True)
-        return payload
+        latency_ms = (time.perf_counter() - started) * 1000
+        if not isinstance(payload, dict):
+            record_judge(None, error=True, phase=phase, latency_ms=latency_ms)
+            return None
+        enriched = self._enrich_judge_payload(payload, ctx, latency_ms)
+        record_judge(enriched, phase=phase, latency_ms=latency_ms)
+        if self._usage is not None:
+            try:
+                await self._usage.record_judge(ctx, enriched)
+            except Exception:  # noqa: BLE001
+                pass
+        return enriched
+
+    def _enrich_judge_payload(
+        self,
+        payload: dict[str, Any],
+        context: JudgmentContext,
+        latency_ms: float,
+    ) -> dict[str, Any]:
+        """Provider/model/usage/costo observables aunque el provider no los traiga."""
+        data = dict(payload)
+        data.setdefault("provider", context.provider or "jev")
+        data.setdefault("phase", context.phase)
+        model = str(data.get("model") or context.model or getattr(self._jev, "model", "") or "")
+        if model:
+            data["model"] = model
+        data.setdefault("latency_ms", round(latency_ms, 2))
+        data.setdefault("estimated_cost", 0.0)
+        return data
 
 
 def _trace_from(
@@ -117,6 +156,7 @@ def _trace_from(
         latency_ms=decision.latency_ms,
         estimated_cost=decision.estimated_cost,
         routing_mode=settings.effective_mode,
+        model=str(decision.metadata.get("model") or "") or None,
         shadow=settings.observes(context.request_id)
         and not settings.acts(context.request_id)
         and not decision.resolved,

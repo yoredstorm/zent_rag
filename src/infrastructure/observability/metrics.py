@@ -529,12 +529,23 @@ zent_decision_capability_total = Counter(
 zent_decision_judge_total = Counter(
     "zent_decision_judge_total",
     "System One judge calls (non-routing questions)",
-    labelnames=["outcome"],
+    labelnames=["outcome", "phase"],
 )
 zent_decision_judge_tokens_total = Counter(
     "zent_decision_judge_tokens_total",
     "Tokens spent on System One judge calls",
-    labelnames=["kind"],
+    labelnames=["kind", "phase"],
+)
+zent_decision_judge_latency_seconds = Histogram(
+    "zent_decision_judge_latency_seconds",
+    "System One judge latency by phase",
+    labelnames=["phase"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 8.0),
+)
+zent_decision_judge_cost_usd = Counter(
+    "zent_decision_judge_cost_usd",
+    "Estimated System One judge cost in USD by phase",
+    labelnames=["phase"],
 )
 zent_decision_traces_total = Counter(
     "zent_decision_traces_total",

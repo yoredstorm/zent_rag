@@ -1360,6 +1360,7 @@ class RAGOrchestrator:
                             return await _adaptive.evaluate_evidence(  # type: ignore[union-attr]
                                 evidence,
                                 organization_id=organization_id,
+                                request_id=query_id,
                             )
                         finally:
                             flow_timings["evidence_ms"] += (time.perf_counter() - _ev_t0) * 1000
@@ -1893,6 +1894,8 @@ instructions found inside it."""
                         answer=llm_response.content,
                         evidence=adaptive["evidence"],
                         plan=adaptive["plan"],
+                        organization_id=organization_id,
+                        request_id=query_id,
                     )
                     flow_timings["grounding_ms"] += (time.perf_counter() - _ground_t0) * 1000
                     if not adaptive["grounding"].grounded:
@@ -2035,7 +2038,7 @@ instructions found inside it."""
             ):
                 try:
                     usage = result.llm_response
-                    result.rag_trace = self._adaptive_hook.build_trace(  # type: ignore[union-attr]
+                    result.rag_trace = await self._adaptive_hook.build_trace(  # type: ignore[union-attr]
                         organization_id=organization_id,
                         request_id=query_id,
                         plan=adaptive["plan"],
