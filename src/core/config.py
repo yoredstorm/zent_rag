@@ -920,6 +920,15 @@ class Settings(BaseSettings):
         le=1.0,
         description="Score minimo para que JEV imponga su eleccion de herramienta.",
     )
+    RUNTIME_JEV_MIN_TOOLS: int = Field(
+        default=3,
+        ge=1,
+        le=50,
+        description=(
+            "Minimo de herramientas disponibles para consultar a JEV en el "
+            "routing. Con menos, passthrough y decide el LLM. 1 = siempre."
+        ),
+    )
     RUNTIME_JEV_ANSWER_APPROVE: float = Field(
         default=0.66,
         ge=0.0,

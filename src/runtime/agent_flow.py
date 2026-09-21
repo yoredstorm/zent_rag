@@ -39,21 +39,42 @@ def _num(value: Any) -> float:
         return 0.0
 
 
+SKIP_REASON_LABEL: dict[str, str] = {
+    "no_engine": "JEV no configurado",
+    "no_payload": "JEV sin respuesta",
+}
+
+
+def _skip_detail(step: dict[str, Any]) -> str:
+    """Detalle honesto cuando el router no consulto a JEV."""
+    reason = str(step.get("skip_reason") or "")
+    if reason in SKIP_REASON_LABEL:
+        return SKIP_REASON_LABEL[reason]
+    if reason == "too_few_tools":
+        count = int(_num(step.get("tools_count")))
+        plural = "herramientas activas" if count != 1 else "herramienta activa"
+        return f"JEV no consultado · {count} {plural}"
+    return "JEV no consultado"
+
+
 def step_to_flow(step: dict[str, Any]) -> dict[str, Any]:
     step_type = str(step.get("type") or "")
     detail = ""
     if step_type == "tool_routing":
-        choice = str(step.get("choice") or "—")
-        confidence = _num(step.get("confidence"))
-        score = _num(step.get("score"))
-        parts = [choice]
-        if confidence > 0:
-            parts.append(f"confianza {confidence:.2f}")
-        if score > 0:
-            parts.append(f"score {score:.2f}")
-        if step.get("certain") is False:
-            parts.append("sin certeza (decide el LLM)")
-        detail = " · ".join(parts)
+        if str(step.get("mode") or "") == "passthrough":
+            detail = _skip_detail(step)
+        else:
+            choice = str(step.get("choice") or "—")
+            confidence = _num(step.get("confidence"))
+            score = _num(step.get("score"))
+            parts = [choice]
+            if confidence > 0:
+                parts.append(f"confianza {confidence:.2f}")
+            if score > 0:
+                parts.append(f"score {score:.2f}")
+            if step.get("certain") is False:
+                parts.append("sin certeza (decide el LLM)")
+            detail = " · ".join(parts)
     elif step_type == "answer_gate":
         verdict = VERDICT_LABEL.get(str(step.get("verdict") or ""), str(step.get("verdict") or ""))
         parts = []
@@ -139,8 +160,14 @@ def steps_to_flow(steps: Any) -> dict[str, Any]:
     jev_complete: bool | None = None
     for step in rows:
         step_type = str(step.get("type") or "")
-        if step_type in {"tool_routing", "termination_gate", "answer_gate"}:
-            jev_used = True
+        if step_type == "tool_routing":
+            # Un paso `passthrough` solo se mostro: JEV no fue consultado.
+            if str(step.get("mode") or "") != "passthrough":
+                jev_used = True
+        elif step_type in {"termination_gate", "answer_gate"}:
+            # `provider=skip` = el gate no llego a juzgar (JEV no disponible).
+            if str(step.get("provider") or "jev") != "skip":
+                jev_used = True
         if step_type == "answer_gate":
             score = _num(step.get("score"))
             if score > 0:

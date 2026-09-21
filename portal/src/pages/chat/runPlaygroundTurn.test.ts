@@ -28,6 +28,44 @@ describe("flowFromAgentSteps", () => {
     expect((flow.generation as { total_tokens: number }).total_tokens).toBe(180);
   });
 
+  it("no finge JEV cuando el router no lo consultó", () => {
+    const flow = flowFromAgentSteps(
+      [
+        {
+          type: "tool_routing",
+          mode: "passthrough",
+          skip_reason: "too_few_tools",
+          tools_count: 1,
+          choice: null,
+          certain: false,
+          latency_ms: 0.2,
+        },
+        { type: "llm", tokens: 100, latency_ms: 900 },
+        { type: "final" },
+      ],
+      3000,
+    );
+    const steps = flow.steps as { name: string; detail: string }[];
+    expect(steps[0].name).toBe("JEV elige herramienta");
+    expect(steps[0].detail).toBe("JEV no consultado · 1 herramienta activa");
+    expect(steps[0].detail).not.toContain("sin certeza");
+    expect(flow.jev).toMatchObject({ used: false });
+    expect((flow.decision as { mode: string }).mode).toBe("ReAct");
+  });
+
+  it("muestra JEV no configurado en passthrough sin motor", () => {
+    const flow = flowFromAgentSteps(
+      [
+        { type: "tool_routing", mode: "passthrough", skip_reason: "no_engine", latency_ms: 0 },
+        { type: "final" },
+      ],
+      1000,
+    );
+    const steps = flow.steps as { detail: string }[];
+    expect(steps[0].detail).toBe("JEV no configurado");
+    expect(flow.jev).toMatchObject({ used: false });
+  });
+
   it("sin pasos JEV deja used=false y modo ReAct", () => {
     const flow = flowFromAgentSteps(
       [

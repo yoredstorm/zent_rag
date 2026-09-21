@@ -968,6 +968,7 @@ class AgentRuntime:
                         agent_instructions=agent_instructions,
                         max_state_chars=settings.RUNTIME_JEV_STATE_MAX_CHARS,
                         confidence_threshold=settings.RUNTIME_JEV_TOOL_CONFIDENCE,
+                        min_tools=getattr(settings, "RUNTIME_JEV_MIN_TOOLS", 3),
                     )
                     tool_descriptions = _describe_tools(prompt_tools)
                     system = _SYSTEM_TEMPLATE.format(

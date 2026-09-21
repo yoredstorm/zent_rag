@@ -76,24 +76,41 @@ export function flowFromAgentSteps(
   let jevComplete: boolean | null = null;
   const timeline: TimelineStep[] = list.map((step) => {
     const type = String(step.type || "");
-    if (type === "tool_routing" || type === "termination_gate" || type === "answer_gate") {
-      jevUsed = true;
+    if (type === "tool_routing") {
+      // Un paso `passthrough` solo se mostró: JEV no fue consultado.
+      if (String(step.mode || "") !== "passthrough") jevUsed = true;
+    } else if (type === "termination_gate" || type === "answer_gate") {
+      // `provider=skip` = el gate no llegó a juzgar (JEV no disponible).
+      if (String(step.provider || "jev") !== "skip") jevUsed = true;
     }
     tokens += Number(step.tokens || 0);
     if (type === "llm") generationMs += Number(step.latency_ms || 0);
     let detail: string;
     if (type === "tool_routing") {
-      const choice = step.choice ? String(step.choice) : "";
-      const confidence = Number(step.confidence || 0);
-      const score = Number(step.score || 0);
-      detail = [
-        choice || "—",
-        confidence > 0 ? `confianza ${confidence.toFixed(2)}` : "",
-        score > 0 ? `score ${score.toFixed(2)}` : "",
-        step.certain === false ? "sin certeza (decide el LLM)" : "",
-      ]
-        .filter(Boolean)
-        .join(" · ");
+      if (String(step.mode || "") === "passthrough") {
+        const reason = String(step.skip_reason || "");
+        const count = Number(step.tools_count || 0);
+        detail =
+          reason === "no_engine"
+            ? "JEV no configurado"
+            : reason === "no_payload"
+              ? "JEV sin respuesta"
+              : reason === "too_few_tools"
+                ? `JEV no consultado · ${count} ${count === 1 ? "herramienta activa" : "herramientas activas"}`
+                : "JEV no consultado";
+      } else {
+        const choice = step.choice ? String(step.choice) : "";
+        const confidence = Number(step.confidence || 0);
+        const score = Number(step.score || 0);
+        detail = [
+          choice || "—",
+          confidence > 0 ? `confianza ${confidence.toFixed(2)}` : "",
+          score > 0 ? `score ${score.toFixed(2)}` : "",
+          step.certain === false ? "sin certeza (decide el LLM)" : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+      }
     } else if (type === "answer_gate") {
       const verdict = GATE_VERDICT_LABEL[String(step.verdict || "")] || String(step.verdict || "");
       detail = [

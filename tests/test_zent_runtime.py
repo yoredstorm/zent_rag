@@ -126,6 +126,44 @@ async def test_tool_routing_passthrough_without_engine() -> None:
     )
     assert selected == tools
     assert meta["mode"] == "passthrough"
+    assert meta["skip_reason"] == "no_engine"
+
+
+@pytest.mark.asyncio
+async def test_tool_routing_passthrough_con_pocas_herramientas() -> None:
+    engine = _FakeJudge(_needs(0.9))
+    tools = [_Tool("search_knowledge"), _Tool("query_database")]
+    selected, meta = await select_relevant_tools(
+        tools, engine=engine, user_request="hola", history=[]
+    )
+    assert selected == tools
+    assert meta["mode"] == "passthrough"
+    assert meta["skip_reason"] == "too_few_tools"
+    assert meta["tools_count"] == 2
+    assert engine.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_tool_routing_min_tools_1_consulta_con_una_herramienta() -> None:
+    engine = _FakeJudge(
+        {
+            **_needs(0.9),
+            "tool": {
+                "type": "choice",
+                "choice": "search_knowledge",
+                "confidence": 0.9,
+                "probabilities": {"search_knowledge": 0.9},
+            },
+        }
+    )
+    tools = [_Tool("search_knowledge")]
+    selected, meta = await select_relevant_tools(
+        tools, engine=engine, user_request="hola", history=[], min_tools=1
+    )
+    assert engine.calls == 1
+    assert meta["mode"] == "jev"
+    assert meta["certain"] is True
+    assert selected == tools
 
 
 @pytest.mark.asyncio
@@ -458,6 +496,70 @@ def test_agent_steps_to_flow_mapea_verificador() -> None:
         "grounded": True,
         "complete": True,
     }
+
+
+def test_agent_steps_to_flow_passthrough_no_finge_jev() -> None:
+    from src.runtime.agent_flow import steps_to_flow
+
+    mapped = steps_to_flow(
+        [
+            {
+                "type": "tool_routing",
+                "mode": "passthrough",
+                "skip_reason": "too_few_tools",
+                "tools_count": 1,
+                "choice": None,
+                "confidence": 0.0,
+                "score": 0.0,
+                "certain": False,
+                "latency_ms": 0.2,
+            },
+            {
+                "type": "tool_routing",
+                "mode": "passthrough",
+                "skip_reason": "no_engine",
+                "latency_ms": 0.0,
+            },
+            {"type": "final"},
+        ]
+    )
+    first, second = mapped["steps"][0], mapped["steps"][1]
+    assert first["name"] == "JEV elige herramienta"
+    assert "JEV no consultado" in first["detail"]
+    assert "1 herramienta activa" in first["detail"]
+    assert "sin certeza" not in first["detail"]
+    assert second["detail"] == "JEV no configurado"
+    assert mapped["jev"]["used"] is False
+
+
+def test_agent_steps_to_flow_gate_skip_no_finge_jev() -> None:
+    from src.runtime.agent_flow import steps_to_flow
+
+    only_skip = steps_to_flow(
+        [
+            {
+                "type": "answer_gate",
+                "verdict": "skipped",
+                "provider": "skip",
+                "mode": "on",
+            },
+            {"type": "final"},
+        ]
+    )
+    assert only_skip["jev"]["used"] is False
+
+    judged = steps_to_flow(
+        [
+            {
+                "type": "termination_gate",
+                "stop": True,
+                "provider": "jev",
+                "latency_ms": 80,
+            },
+            {"type": "final"},
+        ]
+    )
+    assert judged["jev"]["used"] is True
 
 
 def test_agent_steps_to_flow_marca_tools_omitidas() -> None:

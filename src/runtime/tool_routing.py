@@ -30,6 +30,7 @@ def routing_enabled(settings, config: dict | None = None) -> bool:
 def _tool_meta() -> dict[str, Any]:
     return {
         "mode": "passthrough",
+        "skip_reason": None,
         "choice": None,
         "confidence": 0.0,
         "certainty": 0.0,
@@ -52,10 +53,21 @@ async def select_relevant_tools(
     agent_instructions: str = "",
     max_state_chars: int = 30000,
     confidence_threshold: float = 0.60,
+    min_tools: int = 3,
 ) -> tuple[list[Any], dict[str, Any]]:
-    """Return a subset of tools. Empty judge payload keeps the full list."""
+    """Return a subset of tools. Empty judge payload keeps the full list.
+
+    `skip_reason` en el meta explica por que JEV no fue consultado:
+    `no_engine` (no configurado), `too_few_tools` (menos de `min_tools`
+    herramientas) o `no_payload` (JEV no respondio).
+    """
     meta = _tool_meta()
-    if engine is None or len(tools) <= 2:
+    if engine is None:
+        meta["skip_reason"] = "no_engine"
+        return tools, meta
+    if len(tools) < max(1, int(min_tools or 3)):
+        meta["skip_reason"] = "too_few_tools"
+        meta["tools_count"] = len(tools)
         return tools, meta
     criteria = {str(t.name): str(getattr(t, "description", "") or t.name)[:180] for t in tools[:16]}
     criteria["none"] = "No tool. Answer or finish without a tool."
@@ -72,6 +84,7 @@ async def select_relevant_tools(
     state = built.state
     payload = await engine.judge(state=state, questions=tool_routing_questions(criteria))
     if not isinstance(payload, dict):
+        meta["skip_reason"] = "no_payload"
         return tools, meta
     answers = payload.get("answers") or {}
     needs = float((answers.get("needs_tool") or {}).get("noul") or 0.0)
