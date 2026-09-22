@@ -472,11 +472,12 @@ zent_RAG/
 - **Modos**: `legacy` · `shadow` · `jev` · `hybrid` (canary), más muestreo de observación (`RAG_RUNTIME_SHADOW_SAMPLE_RATE`); shadow no cambia la ejecución
 - **Trazas**: `decision_traces` con `actual_capability` y `agreement` tras ejecutar; dashboard y Experiment Lab (Rules vs JEV vs LLM) en `/api/v1/platform/runtime/*`
 - **Adaptive RAG** (`off` · `shadow` · `active` · `canary`): plan de retrieval, evidence gate, fast path extractivo, rewrite y grounding
-- **Capacidades advisory con dispatcher**: `agent.*`, `workflow.*`, `tool.*` viven en el registry; JEV no las elige por heurística, pero `POST /api/v1/rag/query` con `agent_id`, `workflow_id`, `run_id`, `tool` + `tool_arguments` las ejecuta vía `CapabilityDispatcher` con permisos por handler
+- **Capacidades advisory con dispatcher**: `agent.*`, `workflow.*`, `tool.*` viven en el registry; con `RAG_DECISION_TARGET_SELECTION=shadow|on` el Judgment Fabric resuelve candidatos autorizados (tenant + RBAC + fuentes + riesgo) y JEV elige el target; la política re-autoriza antes de ejecutar. Con target explícito (`agent_id`, `workflow_id`, `run_id`, `tool` + `tool_arguments`) el comportamiento previo manda
 - **Ver flujo**: cada respuesta guarda su traza completa (decidió JEV/reglas/LLM/legacy, ruta SQL o documentos, SQL usado, retrieval, tokens y **ms por etapa**) y se abre con click derecho en el chat o link "Ver flujo"; se persiste en `rag_flows` para consultarla después
 - **Verificador JEV de respuesta (agentes)**: opt-in por agente; JEV puntúa respaldo, completitud y calidad (0-3) contra la evidencia, permite **una** revisión y se abstiene si no hay respaldo; el score y el veredicto se ven en Ver flujo
 - **Decisión de herramienta ponderada**: JEV elige la herramienta con score (probabilidad + certeza); por debajo del umbral decide el LLM y el flujo lo indica
-- **Batcheo de preguntas System One**: plan en [docs/architecture/decision-engine-batching.md](docs/architecture/decision-engine-batching.md) (propuesto)
+- **Batcheo de preguntas System One**: una llamada JEV por fase de estado (`PRE_RETRIEVAL`, `POST_RETRIEVAL`, `POST_GENERATION`, `AGENT_STEP`) con cache request-scoped y rollout `RAG_DECISION_BATCH_MODE=off|shadow|on`; Passage Judge e verificación por claim reutilizan el Claim Ledger — [docs/architecture/decision-engine-batching.md](docs/architecture/decision-engine-batching.md)
+- **Judgment Fabric**: candidatos autorizados → JEV → política (`RAG_DECISION_RISK_*`, dos señales en HIGH/CRITICAL) → dispatcher → verificación; Control Center con learning, calibración, modelos y cost breakdown — [docs/architecture/judgment-fabric.md](docs/architecture/judgment-fabric.md)
 - ADR: [docs/architecture/decision-engine.md](docs/architecture/decision-engine.md)
 
 ### Knowledge Platform y connectors
@@ -773,6 +774,8 @@ Todas las settings de app usan prefijo **`RAG_`** (`pydantic-settings` en [`src/
 - **Decision / JEV:** `RAG_DECISION_ROUTING_MODE`, `RAG_JEV_API_KEY` / `TYPESAFE_API_KEY`, `RAG_JEV_MODEL`, confianzas y circuit breaker
 - **Adaptive RAG:** `RAG_ADAPTIVE_RAG_MODE`, `_MAX_RETRIEVAL_ATTEMPTS`, `_TOP_K_*`, `_JEV_EVIDENCE`, `_FAST_PATH`, `_REWRITE`
 - **Zent AI Runtime:** `RAG_RUNTIME_TOOL_ROUTING_MODE`, `RAG_RUNTIME_TERMINATION_GATE`, `RAG_RUNTIME_SHADOW_SAMPLE_RATE`, pesos de efficiency
+- **Decision batching:** `RAG_DECISION_BATCH_MODE` (`off|shadow|on`), `RAG_DECISION_PASSAGE_JUDGE`, `RAG_DECISION_CLAIMS*`, `RAG_DECISION_JUDGMENT_CACHE_TTL_SECONDS`
+- **Judgment Fabric:** `RAG_DECISION_TARGET_SELECTION`, `RAG_DECISION_RISK_MAX_SELECTABLE`, `RAG_DECISION_RISK_*_CHOICE`, `RAG_DECISION_RISK_*_FALLBACK`
 - **Knowledge:** `RAG_UPLOAD_DIR`, `RAG_KNOWLEDGE_QUEUE_KEY`
 - **Vault (opcional):** `RAG_VAULT_ADDR`, `RAG_VAULT_TOKEN`
 

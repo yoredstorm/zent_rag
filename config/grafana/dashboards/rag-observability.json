@@ -170,6 +170,141 @@
       ],
       "title": "Logs Estructurados — RAG API (Loki)",
       "type": "logs"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
+      "id": 100,
+      "panels": [],
+      "title": "Decision Engine · Judgment Fabric",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 33 },
+      "id": 101,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "sum(rate(zent_decision_judge_total[5m])) by (phase)",
+          "legendFormat": "{{phase}}",
+          "refId": "A"
+        }
+      ],
+      "title": "JEV calls/sec por fase",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 33 },
+      "id": 102,
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [
+        {
+          "expr": "sum(rate(zent_decision_judge_dedup_total[5m])) / clamp_min(sum(rate(zent_decision_judge_total[5m])) + sum(rate(zent_decision_judge_dedup_total[5m])), 0.0001)",
+          "legendFormat": "dedupe",
+          "refId": "A"
+        }
+      ],
+      "title": "Batch dedupe ratio (cache request-scoped)",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 33 },
+      "id": 103,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(zent_decision_batch_questions_per_call_bucket[10m])) by (le, phase))",
+          "legendFormat": "p50 {{phase}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Preguntas por llamada batcheada",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 41 },
+      "id": 104,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(zent_decision_judge_latency_seconds_bucket[10m])) by (le, phase))",
+          "legendFormat": "p95 {{phase}}",
+          "refId": "A"
+        }
+      ],
+      "title": "JEV latency p95 por fase",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 41 },
+      "id": 105,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(increase(zent_decision_judge_cost_usd[1h])) by (phase)",
+          "legendFormat": "{{phase}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Costo JEV por fase (1h)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 49 },
+      "id": 106,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(increase(zent_decision_batch_shadow_total[1h])) by (agreement)",
+          "legendFormat": "shadow {{agreement}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(zent_decision_target_selection_total[1h])) by (kind, action)",
+          "legendFormat": "target {{kind}} {{action}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Shadow agreement + target selection",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 49 },
+      "id": 107,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(increase(zent_adaptive_claim_verdict_total[1h])) by (verdict)",
+          "legendFormat": "claim {{verdict}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(zent_adaptive_passage_judge_total[1h])) by (verdict)",
+          "legendFormat": "passage {{verdict}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(increase(zent_adaptive_injection_suspected_total[1h])) by (stage)",
+          "legendFormat": "injection {{stage}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Passage judge · claims · injection",
+      "type": "timeseries"
     }
   ],
   "refresh": "10s",
