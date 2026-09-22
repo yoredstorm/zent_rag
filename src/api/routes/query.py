@@ -128,15 +128,23 @@ async def _maybe_dispatch(
 
     Returns a RAGQueryResult when the target was executed, or None to fall
     back to the RAG flow. Raises HTTPException for denied/needs-target.
+
+    Judgment Fabric: sin target explícito, si `RAG_DECISION_TARGET_SELECTION`
+    está en shadow/on, se resuelve el CandidateSet autorizado y JEV elige; la
+    política re-autoriza. En shadow se observa y se sigue con RAG.
     """
-    if not _has_dispatch_target(body):
-        return None
+    explicit = _has_dispatch_target(body)
     from src.api.deps import get_capability_dispatcher, get_decision_hook
     from src.core.domain.entities import LLMResponse, QueryStatus, RAGQueryResult
-    from src.runtime.dispatcher import DispatchRequest
+    from src.runtime.dispatcher import DispatchRequest, with_target
+
+    dispatcher = get_capability_dispatcher()
+    if not explicit and not dispatcher.selection_enabled():
+        return None
 
     permissions = decision_permissions(request)
     decision_request_id = uuid4()
+    org_config = await _organization_config(organization_id)
     hook = get_decision_hook()
     decision = await hook.evaluate(
         organization_id=organization_id,
@@ -148,38 +156,48 @@ async def _maybe_dispatch(
         permissions=permissions,
         include_advisory=True,
         conversation_state={"turn_count": 0, "is_followup": False},
+        tenant_policy=dict(org_config.get("decision") or {}),
         explicit_agent_id=str(body.agent_id) if body.agent_id else None,
         explicit_workflow_id=str(body.workflow_id) if body.workflow_id else None,
         explicit_tool=body.tool,
     )
-    if decision.metadata.get("authorization_denied"):
+    if explicit and decision.metadata.get("authorization_denied"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Capability not permitted: {decision.metadata.get('denied_capability')}",
         )
-    dispatcher = get_capability_dispatcher()
     if not decision.resolved or not dispatcher.can_dispatch(decision.capability):
         return None
-    dispatched = await dispatcher.dispatch(
-        decision,
-        DispatchRequest(
-            organization_id=organization_id,
-            user_id=user_id,
-            role=role,
-            permissions=permissions,
-            query=body.query,
-            conversation_id=body.conversation_id,
-            workspace_id=workspace_id,
-            agent_id=body.agent_id,
-            workflow_id=body.workflow_id,
-            run_id=body.run_id,
-            tool=body.tool,
-            tool_arguments=dict(body.tool_arguments or {}),
-            org_config=await _organization_config(organization_id),
-            api_key_id=_token_id(request),
-            trace_id=request.headers.get("X-Trace-Id"),
-        ),
+    dispatch_request = DispatchRequest(
+        organization_id=organization_id,
+        user_id=user_id,
+        role=role,
+        permissions=permissions,
+        query=body.query,
+        conversation_id=body.conversation_id,
+        workspace_id=workspace_id,
+        agent_id=body.agent_id,
+        workflow_id=body.workflow_id,
+        run_id=body.run_id,
+        tool=body.tool,
+        tool_arguments=dict(body.tool_arguments or {}),
+        org_config=org_config,
+        api_key_id=_token_id(request),
+        trace_id=request.headers.get("X-Trace-Id"),
+        request_id=decision_request_id,
+        tenant_policy=dict(org_config.get("decision") or {}),
     )
+    authorized = None
+    if not explicit:
+        resolution = await dispatcher.resolve_target(decision, dispatch_request)
+        if resolution is None or not resolution.executable:
+            # La selección nunca ejecuta por sí sola: se sigue con RAG.
+            return None
+        dispatch_request = with_target(
+            dispatch_request, resolution.selection.kind, str(resolution.selection.target_id)
+        )
+        authorized = resolution.policy
+    dispatched = await dispatcher.dispatch(decision, dispatch_request, authorized=authorized)
     if dispatched.status == "needs_target":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

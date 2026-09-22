@@ -2336,13 +2336,16 @@ async def _exec_ai_decision(rctx: NodeContext) -> NodeOutcome:
         LOW_LLM,
         LOW_STOP,
         apply_low_confidence,
+        default_confidence_min,
         interpret,
         parse_config,
         questions_for,
         to_output,
     )
 
-    config = parse_config(rctx.node.config)
+    config = parse_config(
+        rctx.node.config, default_confidence_min=default_confidence_min(risk="medium")
+    )
     if rctx.simulate:
         outcome = interpret(config, None)
         return NodeOutcome(

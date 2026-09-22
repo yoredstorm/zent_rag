@@ -911,6 +911,7 @@ class AgentRuntime:
 
         answer_mode = answer_gate_mode(settings, request.agent.config_json)
         revision_used = False
+        pending_step_judgment = None
 
         async def _confidence_gate(draft: str):
             from src.decision.judgment import PHASE_ANSWER_GATE, JudgmentContext
@@ -986,26 +987,37 @@ class AgentRuntime:
                     from src.decision.service import get_decision_engine
 
                     _routing_t0 = time.perf_counter()
-                    prompt_tools, routing_meta = await select_relevant_tools(
-                        allowed_tools,
-                        engine=get_decision_engine(),
-                        user_request=request.message,
-                        history=history,
-                        noul_yes=settings.DECISION_NOUL_YES,
-                        noul_no=settings.DECISION_NOUL_NO,
-                        agent_instructions=agent_instructions,
-                        max_state_chars=settings.RUNTIME_JEV_STATE_MAX_CHARS,
-                        confidence_threshold=settings.RUNTIME_JEV_TOOL_CONFIDENCE,
-                        min_tools=getattr(settings, "RUNTIME_JEV_MIN_TOOLS", 3),
-                        context=JudgmentContext(
-                            phase=PHASE_TOOL_ROUTING,
-                            organization_id=request.agent.organization_id,
-                            request_id=result.run_id,
-                            agent_id=request.agent.id,
-                            run_id=result.run_id,
-                            trace_id=request.trace_id,
-                        ),
-                    )
+                    if pending_step_judgment is not None:
+                        # Juicio AGENT_STEP del paso anterior (tool routing +
+                        # termination en una sola llamada): se reutiliza acá.
+                        prompt_tools = pending_step_judgment.tools
+                        routing_meta = {
+                            **pending_step_judgment.routing,
+                            "batched": True,
+                            "questions": pending_step_judgment.questions,
+                        }
+                        pending_step_judgment = None
+                    else:
+                        prompt_tools, routing_meta = await select_relevant_tools(
+                            allowed_tools,
+                            engine=get_decision_engine(),
+                            user_request=request.message,
+                            history=history,
+                            noul_yes=settings.DECISION_NOUL_YES,
+                            noul_no=settings.DECISION_NOUL_NO,
+                            agent_instructions=agent_instructions,
+                            max_state_chars=settings.RUNTIME_JEV_STATE_MAX_CHARS,
+                            confidence_threshold=settings.RUNTIME_JEV_TOOL_CONFIDENCE,
+                            min_tools=getattr(settings, "RUNTIME_JEV_MIN_TOOLS", 3),
+                            context=JudgmentContext(
+                                phase=PHASE_TOOL_ROUTING,
+                                organization_id=request.agent.organization_id,
+                                request_id=result.run_id,
+                                agent_id=request.agent.id,
+                                run_id=result.run_id,
+                                trace_id=request.trace_id,
+                            ),
+                        )
                     tool_descriptions = _describe_tools(prompt_tools)
                     system = _SYSTEM_TEMPLATE.format(
                         tools=tool_descriptions,
@@ -1348,37 +1360,101 @@ class AgentRuntime:
 
             if gate_enabled(settings, request.agent.config_json) and not tool_result.error:
                 try:
-                    from src.decision.judgment import PHASE_TERMINATION, JudgmentContext
+                    from src.decision.judgment import PHASE_AGENT_STEP, JudgmentContext
                     from src.decision.service import get_decision_engine
+                    from src.runtime.agent_step import judge_agent_step, step_batch_enabled
 
                     _gate_t0 = time.perf_counter()
-                    gate = await original_request_satisfied(
-                        engine=get_decision_engine(),
-                        user_request=request.message,
-                        history=history,
-                        tool_calls=tool_calls,
-                        noul_yes=settings.DECISION_NOUL_YES,
-                        context=JudgmentContext(
-                            phase=PHASE_TERMINATION,
-                            organization_id=request.agent.organization_id,
-                            request_id=result.run_id,
-                            agent_id=request.agent.id,
-                            run_id=result.run_id,
-                            trace_id=request.trace_id,
-                        ),
+                    step_context = JudgmentContext(
+                        phase=PHASE_AGENT_STEP,
+                        organization_id=request.agent.organization_id,
+                        request_id=result.run_id,
+                        agent_id=request.agent.id,
+                        run_id=result.run_id,
+                        trace_id=request.trace_id,
                     )
-                    if gate.get("stop"):
-                        result.steps.append(
-                            {
-                                "type": "termination_gate",
-                                "latency_ms": round((time.perf_counter() - _gate_t0) * 1000, 2),
-                                **gate,
-                            }
+                    if step_batch_enabled(settings, request.agent.config_json):
+                        # Tool routing + termination del mismo estado en UNA llamada.
+                        step_judgment = await judge_agent_step(
+                            engine=get_decision_engine(),
+                            tools=allowed_tools,
+                            user_request=request.message,
+                            history=history,
+                            tool_calls=tool_calls,
+                            agent_instructions=agent_instructions,
+                            noul_yes=settings.DECISION_NOUL_YES,
+                            noul_no=settings.DECISION_NOUL_NO,
+                            max_state_chars=settings.RUNTIME_JEV_STATE_MAX_CHARS,
+                            confidence_threshold=settings.RUNTIME_JEV_TOOL_CONFIDENCE,
+                            min_tools=getattr(settings, "RUNTIME_JEV_MIN_TOOLS", 3),
+                            context=step_context,
                         )
-                        await self._try_finalize_answer(
-                            request, history, config, result, reason="termination_gate"
+                        if step_judgment is not None:
+                            pending_step_judgment = step_judgment
+                            step_record = step_judgment.to_step()
+                            step_record["latency_ms"] = round(
+                                (time.perf_counter() - _gate_t0) * 1000, 2
+                            )
+                            result.steps.append(step_record)
+                            if step_judgment.termination.get("stop"):
+                                await self._try_finalize_answer(
+                                    request,
+                                    history,
+                                    config,
+                                    result,
+                                    reason="agent_step_batched",
+                                )
+                                return
+                        else:
+                            gate = await original_request_satisfied(
+                                engine=get_decision_engine(),
+                                user_request=request.message,
+                                history=history,
+                                tool_calls=tool_calls,
+                                noul_yes=settings.DECISION_NOUL_YES,
+                                context=step_context,
+                            )
+                            if gate.get("stop"):
+                                result.steps.append(
+                                    {
+                                        "type": "termination_gate",
+                                        "latency_ms": round(
+                                            (time.perf_counter() - _gate_t0) * 1000, 2
+                                        ),
+                                        **gate,
+                                    }
+                                )
+                                await self._try_finalize_answer(
+                                    request,
+                                    history,
+                                    config,
+                                    result,
+                                    reason="termination_gate",
+                                )
+                                return
+                    else:
+                        gate = await original_request_satisfied(
+                            engine=get_decision_engine(),
+                            user_request=request.message,
+                            history=history,
+                            tool_calls=tool_calls,
+                            noul_yes=settings.DECISION_NOUL_YES,
+                            context=step_context,
                         )
-                        return
+                        if gate.get("stop"):
+                            result.steps.append(
+                                {
+                                    "type": "termination_gate",
+                                    "latency_ms": round(
+                                        (time.perf_counter() - _gate_t0) * 1000, 2
+                                    ),
+                                    **gate,
+                                }
+                            )
+                            await self._try_finalize_answer(
+                                request, history, config, result, reason="termination_gate"
+                            )
+                            return
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("termination gate skipped", error=str(exc)[:200])
 

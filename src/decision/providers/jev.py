@@ -171,14 +171,24 @@ class JevDecisionProvider(DecisionProvider):
         client: JevClient | None = None,
         circuit: CircuitBreaker | None = None,
         cost_resolver: CostResolver | None = None,
+        cache=None,
     ) -> None:
         self._settings = settings
         self._client = client
         self._cost_resolver = cost_resolver
+        self._cache = cache
         self._circuit = circuit or CircuitBreaker(
             failure_threshold=settings.circuit_failure_threshold,
             recovery_timeout=settings.circuit_recovery_seconds,
         )
+
+    def _judgment_cache(self):
+        """Cache request-scoped compartida con el engine (misma instancia)."""
+        if self._cache is not None:
+            return self._cache
+        from src.decision.batch import default_cache
+
+        return default_cache()
 
     @property
     def model(self) -> str:
@@ -246,12 +256,23 @@ class JevDecisionProvider(DecisionProvider):
         )
 
     async def decide(self, context: DecisionContext) -> RoutingDecision:
-        started = time.perf_counter()
-        questions = build_routing_questions(context.available_capabilities)
-        state = context.sanitized_state()
-        model = self.effective_model(context.request_id)
+        mode = self._settings.effective_batch_mode
+        if mode == "on":
+            return await self._decide_batched(context)
+        decision = await self._decide_legacy(context)
+        if mode == "shadow":
+            await self._observe_batch(context, decision)
+        return decision
+
+    async def _system_one(
+        self,
+        *,
+        state: dict[str, Any],
+        questions: dict[str, Any],
+        model: str,
+    ) -> dict[str, Any]:
         try:
-            payload = await self._circuit.call(
+            return await self._circuit.call(
                 "jev.system_one",
                 lambda: self._client_or_raise().system_one(
                     state=state,
@@ -266,6 +287,143 @@ class JevDecisionProvider(DecisionProvider):
             raise
         except Exception as exc:  # noqa: BLE001
             raise JevTransportError(str(exc)[:200]) from exc
+
+    def _planner_state(self, context: DecisionContext) -> dict[str, Any]:
+        """Estado PRE_RETRIEVAL: routing + señales que el planner ya conoce.
+
+        El fingerprint de la fase se calcula sobre `user_request`, así que el
+        planner reutiliza este payload sin segunda llamada.
+        """
+        state = context.sanitized_state()
+        try:
+            from src.rag.adaptive.classifier import RulesClassifier
+
+            classification = RulesClassifier().classify(context.user_request or "")
+            state["classification_kind"] = classification.kind
+            state["lexical_ratio"] = classification.lexical_ratio
+        except Exception:  # noqa: BLE001 — señal opcional, nunca rompe routing
+            pass
+        if context.sql_enabled:
+            try:
+                from src.agents.tools.sql_router import SqlIntentRouter
+
+                state["sql_heuristic"] = SqlIntentRouter.heuristic_score(
+                    context.user_request or ""
+                )
+            except Exception:  # noqa: BLE001
+                pass
+        state["sql_enabled"] = bool(context.sql_enabled)
+        return state
+
+    async def _decide_batched(self, context: DecisionContext) -> RoutingDecision:
+        """Una sola llamada PRE_RETRIEVAL (routing + planner) con cache por request."""
+        from src.decision.batch import (
+            build_pre_retrieval_questions,
+            questions_fingerprint,
+            request_key,
+            state_fingerprint,
+        )
+
+        started = time.perf_counter()
+        phase = build_pre_retrieval_questions(
+            available_capabilities=context.available_capabilities
+        )
+        questions = phase.to_jevy()
+        state = self._planner_state(context)
+        model = self.effective_model(context.request_id)
+        try:
+            payload = await self._system_one(state=state, questions=questions, model=model)
+        except JevTransportError as exc:
+            # El batch no puede degradar routing: se reintenta el camino legacy
+            # (sólo preguntas de routing) una vez.
+            logger.warning("JEV batched routing failed; retrying legacy questions", error=str(exc)[:200])
+            return await self._decide_legacy(context)
+        answers = payload.get("answers") if isinstance(payload, dict) else None
+        if not isinstance(answers, dict):
+            raise JevTransportError("JEV invalid response: answers")
+        decision = _from_answers(answers, self._settings, context)
+        usage = payload.get("usage") if isinstance(payload, dict) else {}
+        if isinstance(usage, dict):
+            decision.prompt_tokens = int(usage.get("input_tokens") or 0)
+            decision.completion_tokens = int(usage.get("output_tokens") or 0)
+        cost = await self._resolve_cost(
+            model=model,
+            prompt_tokens=decision.prompt_tokens,
+            completion_tokens=decision.completion_tokens,
+        )
+        decision.estimated_cost = cost.amount
+        decision.metadata["cost_source"] = cost.source
+        decision.metadata["cost_kind"] = cost.cost_kind
+        decision.latency_ms = (time.perf_counter() - started) * 1000
+        decision.metadata["model"] = model
+        decision.metadata["model_role"] = (
+            "canary" if model != self._settings.jev_model else "production"
+        )
+        decision.metadata["questions"] = list(questions.keys())
+        decision.metadata["batch_phase"] = phase.phase
+        decision.metadata["batch_questions"] = len(questions)
+        decision.raw_answers = {key: _public_answer(val) for key, val in answers.items()}
+        req = request_key(context.request_id)
+        if req:
+            self._judgment_cache().put(
+                request=req,
+                phase=phase.phase,
+                state_fp=state_fingerprint(phase.phase, state),
+                questions_fp=questions_fingerprint(questions),
+                payload={
+                    "provider": JEV_PROVIDER,
+                    "model": model,
+                    "answers": {key: _public_answer(val) for key, val in answers.items()},
+                    "usage": usage if isinstance(usage, dict) else {},
+                    "estimated_cost": cost.amount,
+                    "latency_ms": round(decision.latency_ms, 2),
+                    "phase": phase.phase,
+                },
+                question_ids=questions.keys(),
+            )
+        return decision
+
+    async def _observe_batch(
+        self, context: DecisionContext, decision: RoutingDecision
+    ) -> None:
+        """Shadow: compara legacy vs batch sin cambiar la ejecución."""
+        from src.decision.batch import (
+            build_pre_retrieval_questions,
+            compare_payloads,
+            record_shadow_diffs,
+        )
+
+        try:
+            phase = build_pre_retrieval_questions(
+                available_capabilities=context.available_capabilities
+            )
+            questions = phase.to_jevy()
+            payload = await self._system_one(
+                state=self._planner_state(context),
+                questions=questions,
+                model=self.effective_model(context.request_id),
+            )
+            answers = payload.get("answers") if isinstance(payload, dict) else None
+            if not isinstance(answers, dict):
+                return
+            record_shadow_diffs(
+                compare_payloads(
+                    phase=phase.phase,
+                    legacy_answers=decision.raw_answers,
+                    batch_answers=answers,
+                    question_ids=list(questions),
+                    request_id=context.request_id,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — observación nunca rompe routing
+            logger.warning("JEV batch shadow skipped", error=str(exc)[:200])
+
+    async def _decide_legacy(self, context: DecisionContext) -> RoutingDecision:
+        started = time.perf_counter()
+        questions = build_routing_questions(context.available_capabilities)
+        state = context.sanitized_state()
+        model = self.effective_model(context.request_id)
+        payload = await self._system_one(state=state, questions=questions, model=model)
 
         answers = payload.get("answers") if isinstance(payload, dict) else None
         if not isinstance(answers, dict):
@@ -383,7 +541,10 @@ def _from_answers(
         settings.noul_yes,
     )
     needs_reasoning = noul_is_yes(
-        noul_from_answer(answers.get("needs_complex_reasoning"), 0.0),
+        noul_from_answer(
+            answers.get("needs_reasoning") or answers.get("needs_complex_reasoning"),
+            0.0,
+        ),
         settings.noul_yes,
     )
     needs_action = noul_is_yes(
@@ -395,10 +556,14 @@ def _from_answers(
         noul_from_answer(answers.get(key), 0.5)
         for key in (
             "needs_private_knowledge",
-            "needs_complex_reasoning",
             "needs_action",
         )
     ]
+    noul_values.append(
+        noul_from_answer(
+            answers.get("needs_reasoning") or answers.get("needs_complex_reasoning"), 0.5
+        )
+    )
     if any(
         noul_is_uncertain(v, settings.noul_yes, settings.noul_no) for v in noul_values
     ):

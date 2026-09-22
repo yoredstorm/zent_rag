@@ -178,6 +178,11 @@ class EvidenceQuality:
     reason: str = ""
     jev_used: bool = False
     jev_answers: dict[str, Any] = field(default_factory=dict)
+    passage_relevance: float = 0.0
+    contradictions: int = 0
+    injection_suspected: int = 0
+    authority: bool = False
+    freshness: bool = False
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -190,6 +195,11 @@ class EvidenceQuality:
             "exact_match": self.exact_match,
             "reason": self.reason,
             "jev_used": self.jev_used,
+            "passage_relevance": round(self.passage_relevance, 4),
+            "contradictions": self.contradictions,
+            "injection_suspected": self.injection_suspected,
+            "authority": self.authority,
+            "freshness": self.freshness,
         }
 
 
@@ -222,6 +232,9 @@ class GroundingResult:
     citation_coverage: float = 0.0
     reason: str = ""
     jev_used: bool = False
+    claim_verdicts: list[dict[str, Any]] = field(default_factory=list)
+    policy: str = ""
+    claims_summary: dict[str, Any] = field(default_factory=dict)
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -230,6 +243,9 @@ class GroundingResult:
             "citation_coverage": round(self.citation_coverage, 4),
             "reason": self.reason,
             "jev_used": self.jev_used,
+            "policy": self.policy,
+            "claims": self.claims_summary,
+            "claim_verdicts": self.claim_verdicts[:12],
         }
 
 
@@ -251,6 +267,7 @@ class AdaptiveTrace:
     generator_model: str | None = None
     llm_skipped: bool = False
     grounding: dict[str, Any] | None = None
+    passages: dict[str, Any] = field(default_factory=dict)
     jev_decisions: dict[str, Any] = field(default_factory=dict)
     confidence: float = 0.0
     top_k: int = 0
@@ -278,6 +295,7 @@ class AdaptiveTrace:
             "generator": self.generator_model,
             "llm_skipped": self.llm_skipped,
             "grounding": self.grounding,
+            "passages": self.passages,
             "jev_decisions": self.jev_decisions,
             "confidence": round(self.confidence, 4),
             "top_k": self.top_k,

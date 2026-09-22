@@ -26,6 +26,11 @@ class AdaptiveRagSettings:
     jev_evidence_enabled: bool = True
     fast_path_enabled: bool = True
     rewrite_enabled: bool = True
+    passage_judge_enabled: bool = True
+    passage_judge_max: int = 5
+    claims_enabled: bool = True
+    claims_max: int = 6
+    claims_ledger_enabled: bool = True
     noul_yes: float = 0.65
     noul_no: float = 0.35
     estimated_cost_per_1k: float = 0.0005
@@ -68,6 +73,11 @@ def settings_from_app() -> AdaptiveRagSettings:
         jev_evidence_enabled=s.ADAPTIVE_RAG_JEV_EVIDENCE,
         fast_path_enabled=s.ADAPTIVE_RAG_FAST_PATH,
         rewrite_enabled=s.ADAPTIVE_RAG_REWRITE,
+        passage_judge_enabled=s.DECISION_PASSAGE_JUDGE,
+        passage_judge_max=s.DECISION_PASSAGE_MAX,
+        claims_enabled=s.DECISION_CLAIMS,
+        claims_max=s.DECISION_CLAIMS_MAX,
+        claims_ledger_enabled=s.DECISION_CLAIMS_LEDGER,
         noul_yes=s.DECISION_NOUL_YES,
         noul_no=s.DECISION_NOUL_NO,
     )

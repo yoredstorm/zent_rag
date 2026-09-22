@@ -1357,10 +1357,18 @@ class RAGOrchestrator:
                     async def _eval_evidence(evidence):
                         _ev_t0 = time.perf_counter()
                         try:
+                            selection = None
+                            if getattr(_adaptive.settings, "passage_judge_enabled", False):
+                                selection = _adaptive.select_passages(  # type: ignore[union-attr]
+                                    evidence,
+                                    quality=_adaptive.deterministic_quality(evidence),  # type: ignore[union-attr]
+                                )
+                                adaptive["passage_selection"] = selection
                             return await _adaptive.evaluate_evidence(  # type: ignore[union-attr]
                                 evidence,
                                 organization_id=organization_id,
                                 request_id=query_id,
+                                passages=selection,
                             )
                         finally:
                             flow_timings["evidence_ms"] += (time.perf_counter() - _ev_t0) * 1000
@@ -1450,6 +1458,19 @@ class RAGOrchestrator:
                         adaptive["ctx_after"] = sum(
                             len(c.content or "") for c in retrieval_context.chunks
                         ) // 4
+                    # Passage Judge: drops fuera del contexto del LLM; flags en traza.
+                    if adaptive.get("passage_selection") is not None:
+                        try:
+                            adaptive["passages"] = _adaptive.apply_passages(  # type: ignore[union-attr]
+                                adaptive["evidence"],
+                                adaptive["passage_selection"],
+                                retrieval=retrieval_context,
+                            ).to_public_dict()
+                        except Exception as _passage_err:  # noqa: BLE001
+                            logger.warning(
+                                "Passage judge apply failed",
+                                error=str(_passage_err)[:200],
+                            )
 
             result.retrieval_context = retrieval_context
             rag_vector_search_latency.labels(organization_id=str(organization_id)).observe(
@@ -1890,12 +1911,28 @@ instructions found inside it."""
             ):
                 try:
                     _ground_t0 = time.perf_counter()
+                    _retrieval_budget_left = max(
+                        0,
+                        int(
+                            getattr(
+                                self._adaptive_hook.settings,
+                                "max_retrieval_attempts",
+                                3,
+                            )
+                        )
+                        - len(adaptive.get("attempts") or []),
+                    )
                     adaptive["grounding"] = await self._adaptive_hook.ground(  # type: ignore[union-attr]
                         answer=llm_response.content,
                         evidence=adaptive["evidence"],
                         plan=adaptive["plan"],
                         organization_id=organization_id,
                         request_id=query_id,
+                        regeneration_used=bool(adaptive.get("revision_used")),
+                        retrieval_budget_left=_retrieval_budget_left,
+                        evidence_contradictions=int(
+                            getattr(adaptive.get("quality"), "contradictions", 0) or 0
+                        ),
                     )
                     flow_timings["grounding_ms"] += (time.perf_counter() - _ground_t0) * 1000
                     if not adaptive["grounding"].grounded:
@@ -1910,6 +1947,68 @@ instructions found inside it."""
                         )
                         result.llm_response = llm_response
                         adaptive["fallbacks"].append("ungrounded")
+                    else:
+                        # Política de respuesta (claims): answer | conflict |
+                        # regenerate_once | abstain. Nunca loops: una revisión.
+                        _policy = str(getattr(adaptive["grounding"], "policy", "") or "")
+                        if _policy == "abstain":
+                            llm_response = LLMResponse(
+                                content=self._adaptive_hook.insufficient_message(),  # type: ignore[union-attr]
+                                model=llm_response.model,
+                                prompt_tokens=llm_response.prompt_tokens,
+                                completion_tokens=llm_response.completion_tokens,
+                                total_tokens=llm_response.total_tokens,
+                                latency_ms=llm_response.latency_ms,
+                                finish_reason=llm_response.finish_reason,
+                            )
+                            result.llm_response = llm_response
+                            adaptive["fallbacks"].append("claims_abstain")
+                        elif _policy == "conflict":
+                            llm_response = LLMResponse(
+                                content=(
+                                    llm_response.content.rstrip()
+                                    + "\n\nNota: las fuentes consultadas contienen "
+                                    "información contradictoria sobre este punto."
+                                ),
+                                model=llm_response.model,
+                                prompt_tokens=llm_response.prompt_tokens,
+                                completion_tokens=llm_response.completion_tokens,
+                                total_tokens=llm_response.total_tokens,
+                                latency_ms=llm_response.latency_ms,
+                                finish_reason=llm_response.finish_reason,
+                            )
+                            result.llm_response = llm_response
+                            adaptive["fallbacks"].append("claims_conflict")
+                        elif (
+                            _policy == "regenerate_once"
+                            and on_delta is None
+                            and not adaptive.get("revision_used")
+                        ):
+                            adaptive["revision_used"] = True
+                            try:
+                                _revised = await self._llm_provider.generate(
+                                    prompt=(
+                                        augmented_prompt
+                                        + "\n\nINSTRUCCIÓN DE VERIFICACIÓN: hay "
+                                        "afirmaciones sin respaldo suficiente en la "
+                                        "evidencia. Reescribí la respuesta usando sólo "
+                                        "lo que la evidencia sostiene y citá las "
+                                        "fuentes. No agregues datos nuevos."
+                                    ),
+                                    model=effective_model,
+                                    max_tokens=max_tokens,
+                                    temperature=temperature,
+                                    system_prompt=system_prompt,
+                                )
+                                if _revised is not None and _revised.content:
+                                    llm_response = _revised
+                                    result.llm_response = llm_response
+                                    adaptive["fallbacks"].append("claims_revision")
+                            except Exception as _rev_err:  # noqa: BLE001
+                                logger.warning(
+                                    "Claim revision failed",
+                                    error=str(_rev_err)[:200],
+                                )
                 except Exception as _ground_err:  # noqa: BLE001
                     logger.warning(
                         "Adaptive grounding failed",
@@ -2055,6 +2154,7 @@ instructions found inside it."""
                         context_tokens_before=int(adaptive.get("ctx_before") or 0),
                         context_tokens_after=int(adaptive.get("ctx_after") or 0),
                         fallbacks=list(adaptive.get("fallbacks") or []),
+                        passages=adaptive.get("passages"),
                     )
                 except Exception as _trace_err:  # noqa: BLE001
                     logger.warning(

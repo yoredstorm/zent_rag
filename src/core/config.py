@@ -873,6 +873,79 @@ class Settings(BaseSettings):
     ADAPTIVE_RAG_JEV_EVIDENCE: bool = Field(default=True)
     ADAPTIVE_RAG_FAST_PATH: bool = Field(default=True)
     ADAPTIVE_RAG_REWRITE: bool = Field(default=True)
+    # -------------------------------------------------------------------------
+    # Decision Engine batching (ADR decision-engine-batching.md)
+    # -------------------------------------------------------------------------
+    DECISION_BATCH_MODE: Literal["off", "shadow", "on"] = Field(
+        default="off",
+        description=(
+            "off = una llamada JEV por modulo (comportamiento previo). "
+            "shadow = ejecuta legacy + batch y guarda el diff sin cambiar la "
+            "ejecucion. on = una llamada por fase (PRE_RETRIEVAL, "
+            "POST_RETRIEVAL, POST_GENERATION, AGENT_STEP) con cache por request."
+        ),
+    )
+    DECISION_PASSAGE_JUDGE: bool = Field(
+        default=True,
+        description=(
+            "on = JEV juzga passages individuales solo en la zona incierta, "
+            "top candidatos, conflictos y casos sensibles (deterministico "
+            "primero)."
+        ),
+    )
+    DECISION_PASSAGE_MAX: int = Field(default=5, ge=1, le=12)
+    DECISION_CLAIMS: bool = Field(
+        default=True,
+        description=(
+            "on = verificacion por claim contra evidencia (supported/"
+            "unsupported/contradicted/not_verifiable) reutilizando el "
+            "Claim Ledger cuando hay tenant."
+        ),
+    )
+    DECISION_CLAIMS_MAX: int = Field(default=6, ge=1, le=12)
+    DECISION_CLAIMS_LEDGER: bool = Field(
+        default=True,
+        description="on = registra claims verificados en el Claim Ledger (best-effort).",
+    )
+    DECISION_JUDGMENT_CACHE_TTL_SECONDS: float = Field(
+        default=120.0, ge=1.0, le=900.0
+    )
+    # -------------------------------------------------------------------------
+    # Judgment Fabric — target selection + risk-aware thresholds
+    # -------------------------------------------------------------------------
+    DECISION_TARGET_SELECTION: Literal["off", "shadow", "on"] = Field(
+        default="off",
+        description=(
+            "off = el target de agent/workflow/tool debe venir explícito. "
+            "shadow = resuelve candidatos y observa la elección JEV sin ejecutar. "
+            "on = JEV elige dentro del CandidateSet autorizado y la política "
+            "re-autoriza antes de ejecutar."
+        ),
+    )
+    DECISION_RISK_MAX_SELECTABLE: Literal["low", "medium", "high", "critical"] = Field(
+        default="high",
+        description="Riesgo máximo auto-seleccionable; critical exige habilitación explícita.",
+    )
+    DECISION_RISK_LOW_CHOICE: float = Field(default=0.60, ge=0.0, le=1.0)
+    DECISION_RISK_MEDIUM_CHOICE: float = Field(default=0.70, ge=0.0, le=1.0)
+    DECISION_RISK_HIGH_CHOICE: float = Field(default=0.80, ge=0.0, le=1.0)
+    DECISION_RISK_CRITICAL_CHOICE: float = Field(default=0.90, ge=0.0, le=1.0)
+    DECISION_RISK_HIGH_WARRANT_REQUIRED: bool = Field(default=True)
+    DECISION_RISK_CRITICAL_WARRANT_REQUIRED: bool = Field(default=True)
+    DECISION_RISK_HIGH_WARRANT: float = Field(default=0.65, ge=0.0, le=1.0)
+    DECISION_RISK_CRITICAL_WARRANT: float = Field(default=0.75, ge=0.0, le=1.0)
+    DECISION_RISK_LOW_FALLBACK: Literal[
+        "respond_directly", "ask_clarification", "default_target", "human_review"
+    ] = Field(default="respond_directly")
+    DECISION_RISK_MEDIUM_FALLBACK: Literal[
+        "respond_directly", "ask_clarification", "default_target", "human_review"
+    ] = Field(default="ask_clarification")
+    DECISION_RISK_HIGH_FALLBACK: Literal[
+        "respond_directly", "ask_clarification", "default_target", "human_review"
+    ] = Field(default="human_review")
+    DECISION_RISK_CRITICAL_FALLBACK: Literal[
+        "respond_directly", "ask_clarification", "default_target", "human_review"
+    ] = Field(default="human_review")
     JEV_CIRCUIT_FAILURE_THRESHOLD: int = Field(default=3, ge=1, le=20)
     JEV_CIRCUIT_RECOVERY_SECONDS: float = Field(default=30.0, ge=1.0, le=300.0)
     # -------------------------------------------------------------------------

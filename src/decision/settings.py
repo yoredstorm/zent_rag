@@ -30,10 +30,24 @@ class DecisionEngineSettings:
     circuit_failure_threshold: int = 3
     circuit_recovery_seconds: float = 30.0
     estimated_cost_per_1k: float = 0.0005
+    batch_mode: str = "off"
+    judgment_cache_ttl_seconds: float = 120.0
 
     @property
     def jev_configured(self) -> bool:
         return bool(self.jev_api_key.strip())
+
+    @property
+    def effective_batch_mode(self) -> str:
+        from src.decision.batch import normalize_batch_mode
+
+        return normalize_batch_mode(self.batch_mode)
+
+    def batch_enabled(self) -> bool:
+        return self.effective_batch_mode == "on"
+
+    def batch_shadow(self) -> bool:
+        return self.effective_batch_mode == "shadow"
 
     def jev_model_for(self, request_id: UUID | None) -> str:
         """Modelo efectivo: producción, o candidato/canary si toca el request."""
@@ -117,4 +131,6 @@ def settings_from_app() -> DecisionEngineSettings:
         noul_no=s.DECISION_NOUL_NO,
         circuit_failure_threshold=s.JEV_CIRCUIT_FAILURE_THRESHOLD,
         circuit_recovery_seconds=float(s.JEV_CIRCUIT_RECOVERY_SECONDS),
+        batch_mode=s.DECISION_BATCH_MODE,
+        judgment_cache_ttl_seconds=float(s.DECISION_JUDGMENT_CACHE_TTL_SECONDS),
     )

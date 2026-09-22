@@ -162,6 +162,39 @@ class DecisionTraceStore:
         finally:
             await session.close()
 
+    async def get_by_request(
+        self,
+        organization_id: UUID,
+        request_id: UUID,
+    ) -> dict | None:
+        """Traza más reciente de un request (tenant-scoped) con payload."""
+        session = await get_async_session()
+        try:
+            row = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT id, organization_id, request_id, provider,
+                               selected_capability, confidence, fallback_used,
+                               latency_ms, estimated_cost, routing_mode,
+                               actual_capability, jev_capability, agreement,
+                               shadow, canary, payload, created_at
+                        FROM decision_traces
+                        WHERE organization_id = :oid AND request_id = :rid
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                        """
+                    ),
+                    {"oid": organization_id, "rid": request_id},
+                )
+            ).mappings().first()
+            return dict(row) if row else None
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("decision trace get failed", error=str(exc)[:200])
+            return None
+        finally:
+            await session.close()
+
     async def dashboard(self) -> dict:
         session = await get_async_session()
         try:

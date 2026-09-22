@@ -23,6 +23,7 @@ async def runtime_dashboard() -> dict:
     store = DecisionTraceStore()
     decision = await store.dashboard()
     usage = await _usage_today()
+    batch = await _batch_usage_today()
     weights = await load_efficiency_weights()
     cost_index = 1.0
     avg_cost = float(usage.get("average_cost") or 0.0)
@@ -40,9 +41,24 @@ async def runtime_dashboard() -> dict:
     today = int(decision.get("decisions_today") or 0)
     avoided = int(round(today * (rules_pct + jev_pct) / 100.0))
     settings = get_settings()
+    from src.decision.batch import shadow_diffs
+
+    shadow = shadow_diffs()
     return {
         "decisions": decision,
         "usage": usage,
+        "batching": {
+            **batch,
+            "mode": settings.DECISION_BATCH_MODE,
+            "phases": ("pre_retrieval", "post_retrieval", "post_generation", "agent_step"),
+            "shadow_diffs_recent": shadow[-20:],
+            "shadow_diff_count": len(shadow),
+            "note": (
+                "calls_per_request/cost/latency salen de usage_events "
+                "jev_judge:<fase>; el dedupe ratio exacto vive en "
+                "zent_decision_judge_dedup_total (Prometheus)."
+            ),
+        },
         "efficiency": {
             "score": score,
             "components": {
@@ -62,8 +78,60 @@ async def runtime_dashboard() -> dict:
             "tool_routing": settings.RUNTIME_TOOL_ROUTING_MODE,
             "termination_gate": settings.RUNTIME_TERMINATION_GATE,
             "shadow_sample_rate": settings.RUNTIME_SHADOW_SAMPLE_RATE,
+            "batch_mode": settings.DECISION_BATCH_MODE,
+            "passage_judge": settings.DECISION_PASSAGE_JUDGE,
+            "claims": settings.DECISION_CLAIMS,
         },
     }
+
+
+async def _batch_usage_today() -> dict:
+    """JEV calls/costo/latencia por request desde usage_events (fase jev_judge:*)."""
+    empty = {
+        "calls": 0,
+        "requests": 0,
+        "calls_per_request": 0.0,
+        "cost_per_request": 0.0,
+        "latency_ms_per_request": 0.0,
+        "by_phase": [],
+    }
+    session = await get_async_session()
+    try:
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT event_type AS phase,
+                           COUNT(*)::int AS calls,
+                           COUNT(DISTINCT request_id)::int AS requests,
+                           COALESCE(SUM(estimated_cost), 0)::float AS cost,
+                           COALESCE(AVG(latency_ms), 0)::float AS latency_ms
+                    FROM usage_events
+                    WHERE created_at >= CURRENT_DATE
+                      AND event_type LIKE 'jev_judge:%'
+                    GROUP BY event_type
+                    ORDER BY calls DESC
+                    """
+                )
+            )
+        ).mappings().all()
+        by_phase = [dict(row) for row in rows]
+        calls = sum(int(row["calls"]) for row in by_phase)
+        requests = max((int(row["requests"]) for row in by_phase), default=0)
+        cost = sum(float(row["cost"] or 0.0) for row in by_phase)
+        latency = sum(float(row["latency_ms"] or 0.0) for row in by_phase)
+        return {
+            "calls": calls,
+            "requests": requests,
+            "calls_per_request": round(calls / requests, 4) if requests else 0.0,
+            "cost_per_request": round(cost / requests, 6) if requests else 0.0,
+            "latency_ms_per_request": round(latency / requests, 2) if requests else 0.0,
+            "by_phase": by_phase,
+        }
+    except Exception:  # noqa: BLE001
+        return empty
+    finally:
+        await session.close()
 
 
 async def _usage_today() -> dict:

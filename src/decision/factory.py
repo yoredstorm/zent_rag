@@ -25,7 +25,16 @@ def build_decision_engine(
     registry = InMemoryCapabilityRegistry()
     registry.sync_tools()
     rules = RulesDecisionProvider()
-    jev = JevDecisionProvider(cfg, client=jev_client) if (cfg.jev_configured or jev_client is not None) else None
+    # Cache request-scoped compartida entre provider (escribe PRE_RETRIEVAL) y
+    # engine (lee/reutiliza en el planner y las demás fases).
+    from src.decision.batch import JudgmentCache
+
+    batch_cache = JudgmentCache(ttl_seconds=cfg.judgment_cache_ttl_seconds)
+    jev = (
+        JevDecisionProvider(cfg, client=jev_client, cache=batch_cache)
+        if (cfg.jev_configured or jev_client is not None)
+        else None
+    )
     small_llm = LLMDecisionProvider(llm, cfg) if llm is not None else None
     reasoning = (
         LLMDecisionProvider(llm, cfg, model=cfg.complex_model, reasoning=True)
@@ -47,4 +56,5 @@ def build_decision_engine(
         tracer=DecisionTraceStore(),
         usage=DecisionUsageRecorder(),
         jev=jev,
+        cache=batch_cache,
     )

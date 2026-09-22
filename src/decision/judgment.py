@@ -26,6 +26,13 @@ PHASE_TOOL_ROUTING = "tool_routing"
 PHASE_TERMINATION = "termination"
 PHASE_ANSWER_GATE = "answer_gate"
 PHASE_WORKFLOW_DECISION = "workflow_decision"
+PHASE_TARGET_SELECTION = "target_selection"
+
+# Fases de batching (una llamada por estado compatible). Ver
+# `src/decision/batch.py` y el ADR decision-engine-batching.md.
+PHASE_POST_RETRIEVAL = "post_retrieval"
+PHASE_POST_GENERATION = "post_generation"
+PHASE_AGENT_STEP = "agent_step"
 
 JUDGE_PHASES = frozenset(
     {
@@ -37,8 +44,27 @@ JUDGE_PHASES = frozenset(
         PHASE_TERMINATION,
         PHASE_ANSWER_GATE,
         PHASE_WORKFLOW_DECISION,
+        PHASE_POST_RETRIEVAL,
+        PHASE_POST_GENERATION,
+        PHASE_AGENT_STEP,
+        PHASE_TARGET_SELECTION,
     }
 )
+
+# Alias de etiqueta para métricas/usage: las fases de batching se reportan con
+# la etiqueta legacy de su módulo principal para que los dashboards sigan
+# comparables antes/después del batching.
+_USAGE_PHASE_LABELS = {
+    PHASE_POST_RETRIEVAL: PHASE_EVIDENCE,
+    PHASE_POST_GENERATION: PHASE_GROUNDING,
+    PHASE_AGENT_STEP: PHASE_TOOL_ROUTING,
+}
+
+
+def usage_phase_label(phase: str | None) -> str:
+    """Etiqueta estable de fase para métricas y usage events."""
+    value = str(phase or "unknown")
+    return _USAGE_PHASE_LABELS.get(value, value)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -100,3 +126,55 @@ async def call_judge(
     if context is None or not _accepts_context(target):
         return await target(state=state, questions=questions)
     return await target(state=state, questions=questions, context=context)
+
+
+@lru_cache(maxsize=256)
+def _phase_params(judge: Any) -> frozenset[str]:
+    """Parámetros aceptados por `judge_phase`, o `*` si acepta **kwargs."""
+    try:
+        signature = inspect.signature(judge)
+    except (TypeError, ValueError):
+        return frozenset()
+    params = signature.parameters.values()
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params):
+        return frozenset({"*"})
+    return frozenset(signature.parameters)
+
+
+async def call_phase_judge(
+    judge: Any,
+    *,
+    phase: str,
+    state: dict[str, Any],
+    questions: dict[str, Any] | None = None,
+    batch_questions: dict[str, Any] | None = None,
+    context: JudgmentContext | None = None,
+    cache: Any = None,
+) -> dict[str, Any] | None:
+    """Invoca una fase de juicio con una sola llamada por estado compatible.
+
+    Con un `DecisionEngine` (o cualquier judge con `judge_phase`) usa el camino
+    batcheado: cache request-scoped, dedupe y rollout off/shadow/on. Con un
+    callable simple (fakes, providers legacy) mantiene exactamente el contrato
+    de `call_judge`, así los tests y fallbacks previos siguen funcionando.
+
+    `questions=None` sin `batch_questions` significa "reutilizá el payload de
+    esta fase si ya existe": sólo el camino batcheado puede responder eso.
+    """
+    target = getattr(judge, "judge_phase", None)
+    if not callable(target):
+        if questions is None:
+            return None
+        return await call_judge(judge, state=state, questions=questions, context=context)
+    accepted = _phase_params(target)
+    kwargs: dict[str, Any] = {
+        "phase": phase,
+        "state": state,
+        "questions": questions,
+        "batch_questions": batch_questions,
+        "context": context,
+        "cache": cache,
+    }
+    if accepted and "*" not in accepted:
+        kwargs = {key: value for key, value in kwargs.items() if key in accepted}
+    return await target(**kwargs)

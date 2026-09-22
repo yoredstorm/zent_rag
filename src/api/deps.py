@@ -1081,13 +1081,21 @@ def _adaptive_hook_or_none():
         if not cfg.enabled():
             return None
         engine = get_decision_engine()
+        try:
+            claims_ledger = get_claim_ledger_repo()
+        except Exception:  # noqa: BLE001 — ledger opcional (best-effort)
+            claims_ledger = None
         _adaptive_hook = OrchestratorAdaptiveHook(
             cfg,
-            judge=engine.judge if engine.settings.jev_configured else None,
+            # El engine (no el bound method) habilita `judge_phase`: batching,
+            # cache request-scoped y rollout off/shadow/on. `call_judge` acepta
+            # ambos, así los fakes y callers previos siguen funcionando.
+            judge=engine if engine.settings.jev_configured else None,
             cache=get_cache_provider(),
             llm=get_llm_provider(),
             high_confidence=engine.settings.high_confidence,
             rewrite_model=engine.settings.fallback_model or None,
+            claims_ledger=claims_ledger,
         )
     return _adaptive_hook
 
@@ -1298,8 +1306,141 @@ def get_capability_dispatcher():
     dispatcher.register("agent_runtime", _agent_handler)
     dispatcher.register("workflow_engine", _workflow_handler)
     dispatcher.register("tool_registry", _tool_handler)
+    # Judgment Fabric: CandidateSet autorizado (tenant + RBAC + fuentes +
+    # riesgo). El judge y el modo se resuelven acá (composition root).
+    try:
+        from src.core.config import get_settings
+        from src.decision.service import get_decision_engine
+
+        settings = get_settings()
+        engine = get_decision_engine()
+        dispatcher.configure_target_selection(
+            candidates=_build_candidate_registry(),
+            judge=engine if engine.settings.jev_configured else None,
+            mode=settings.DECISION_TARGET_SELECTION,
+            cache=getattr(engine, "batch_cache", None),
+        )
+    except Exception:  # noqa: BLE001 — sin selección automática el path previo manda
+        pass
     _dispatcher = dispatcher
     return _dispatcher
+
+
+def _build_candidate_registry():
+    """Providers tenant-scoped para agent/workflow/tool. Sólo campos seguros."""
+    from src.core.domain.decision import CostClass, RiskLevel
+    from src.decision.candidates import Candidate, CandidateKind, CandidateRegistry
+
+    registry = CandidateRegistry()
+
+    def _risk(value) -> RiskLevel:
+        raw = value.value if hasattr(value, "value") else str(value or "")
+        for level in RiskLevel:
+            if level.value == raw:
+                return level
+        return RiskLevel.MEDIUM
+
+    async def _agent_candidates(organization_id, context=None):
+        try:
+            agents = await get_agent_repo().list_agents(organization_id)
+        except Exception:  # noqa: BLE001
+            return []
+        out: list[Candidate] = []
+        for agent in agents:
+            status = str(getattr(agent.status, "value", agent.status) or "draft")
+            enabled = bool(getattr(agent, "is_active", True)) and status not in {
+                "draft",
+                "archived",
+            }
+            config = dict(getattr(agent, "config_json", None) or {})
+            out.append(
+                Candidate(
+                    id=str(agent.id),
+                    kind=CandidateKind.AGENT.value,
+                    name=str(getattr(agent, "name", "") or "")[:120],
+                    description=str(getattr(agent, "description", "") or "")[:200],
+                    capabilities=("agent.execute", "agent.reason", "agent.delegate"),
+                    required_permission="agents:execute",
+                    risk_level=_risk(config.get("risk_level") or "medium"),
+                    cost_class=CostClass.EXPENSIVE,
+                    enabled=enabled,
+                    status="active" if enabled else status,
+                    tenant_id=str(organization_id),
+                    tags=tuple(str(t) for t in (config.get("tags") or ())[:8]),
+                )
+            )
+        return out
+
+    async def _workflow_candidates(organization_id, context=None):
+        from src.platform.workflows.engine import list_workflows
+
+        workspace_id = getattr(context, "workspace_id", None) if context is not None else None
+        try:
+            payload = await list_workflows(organization_id, workspace_id=workspace_id)
+        except Exception:  # noqa: BLE001
+            return []
+        out: list[Candidate] = []
+        for item in payload.get("workflows") or []:
+            status = str(item.get("status") or "draft")
+            enabled = status in {"active", "published", "ready", "simulated"}
+            out.append(
+                Candidate(
+                    id=str(item.get("id") or ""),
+                    kind=CandidateKind.WORKFLOW.value,
+                    name=str(item.get("name") or "")[:120],
+                    description=str(item.get("description") or "")[:200],
+                    capabilities=("workflow.start", "workflow.execute"),
+                    required_permission="workflows:run",
+                    risk_level=RiskLevel.MEDIUM,
+                    cost_class=CostClass.STANDARD,
+                    enabled=enabled,
+                    status="active" if enabled else status,
+                    tenant_id=str(organization_id),
+                    tags=(str(item.get("trigger_type") or "manual")[:32],),
+                )
+            )
+        return out
+
+    async def _tool_candidates(organization_id, context=None):
+        from src.agents.tools.registry import list_tools
+
+        try:
+            get_agent_runtime()  # garantiza tools builtin registradas
+            tools = list_tools()
+        except Exception:  # noqa: BLE001
+            return []
+        source_map = {
+            "query_database": ("sql",),
+            "query_tabular_data": ("tabular",),
+            "search_knowledge": ("knowledge",),
+            "call_api": ("api",),
+        }
+        out: list[Candidate] = []
+        for name, tool in tools.items():
+            permission = str(getattr(tool, "permission", "") or "")
+            out.append(
+                Candidate(
+                    id=str(name),
+                    kind=CandidateKind.TOOL.value,
+                    name=str(name)[:120],
+                    description=str(getattr(tool, "description", "") or name)[:200],
+                    capabilities=("tool.execute",),
+                    required_sources=source_map.get(str(name), ()),
+                    required_permission=permission,
+                    risk_level=RiskLevel.HIGH if permission else RiskLevel.MEDIUM,
+                    cost_class=CostClass.CHEAP,
+                    enabled=True,
+                    status="active",
+                    tenant_id=str(organization_id),
+                    tags=("tool",),
+                )
+            )
+        return out
+
+    registry.register(CandidateKind.AGENT.value, _agent_candidates)
+    registry.register(CandidateKind.WORKFLOW.value, _workflow_candidates)
+    registry.register(CandidateKind.TOOL.value, _tool_candidates)
+    return registry
 
 
 _sql_expert: object | None = None

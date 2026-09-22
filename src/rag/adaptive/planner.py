@@ -16,7 +16,8 @@ from src.core.domain.adaptive import (
     SourceRoute,
 )
 from src.core.domain.decision import RoutingDecision
-from src.decision.judgment import PHASE_PRE_RETRIEVAL, JudgmentContext, call_judge
+from src.decision.batch import answer_for, noul_for
+from src.decision.judgment import PHASE_PRE_RETRIEVAL, JudgmentContext, call_phase_judge
 from src.decision.questions import noul_from_answer, noul_is_yes
 from src.rag.adaptive.cache import deserialize_plan, plan_cache_key, serialize_plan
 from src.rag.adaptive.classifier import RulesClassifier, overlay_modality, overlay_strategy
@@ -181,8 +182,10 @@ class AdaptivePlanner:
                 modality = DataModality.WORKFLOW.value
             elif cap.startswith("agent."):
                 route = SourceRoute.AGENT.value
-            needs_reason = routing.raw_answers.get("needs_complex_reasoning") or {}
-            if isinstance(needs_reason, dict) and noul_is_yes(
+            needs_reason = answer_for(
+                routing.raw_answers, "needs_complex_reasoning", "needs_reasoning"
+            )
+            if needs_reason is not None and noul_is_yes(
                 noul_from_answer(needs_reason, 0.0), self._settings.noul_yes
             ):
                 path = AdaptivePath.COMPLEX.value
@@ -191,7 +194,7 @@ class AdaptivePlanner:
         jev_answers: dict[str, Any] = {}
         provider = "rules"
         confidence = 0.85 if greeting or classification.kind == "lexical" or sql_score >= 0.8 else 0.6
-        if self._judge is not None and not deterministic:
+        if self._judge is not None:
             state = {
                 "user_request": (query or "")[:2000],
                 "classification_kind": classification.kind,
@@ -200,26 +203,39 @@ class AdaptivePlanner:
                 "sql_enabled": sql_enabled,
                 "available_route": route,
             }
-            try:
-                payload = await call_judge(
-                    self._judge,
-                    state=state,
-                    questions=build_query_questions(),
-                    context=JudgmentContext(
+            context = JudgmentContext(
+                phase=PHASE_PRE_RETRIEVAL,
+                organization_id=organization_id,
+                request_id=request_id,
+            )
+            # 1) Reutilizar el payload PRE_RETRIEVAL del request (routing ya pagó
+            #    la llamada). 2) Sólo si no hay payload y las reglas no alcanzan,
+            #    pedir el juicio con las preguntas del planner.
+            payload = await call_phase_judge(
+                self._judge,
+                phase=PHASE_PRE_RETRIEVAL,
+                state=state,
+                questions=None,
+                context=context,
+            )
+            if payload is None and not deterministic:
+                try:
+                    payload = await call_phase_judge(
+                        self._judge,
                         phase=PHASE_PRE_RETRIEVAL,
-                        organization_id=organization_id,
-                        request_id=request_id,
-                    ),
-                )
-            except Exception:  # noqa: BLE001
-                payload = None
+                        state=state,
+                        questions=build_query_questions(),
+                        context=context,
+                    )
+                except Exception:  # noqa: BLE001
+                    payload = None
             if isinstance(payload, dict):
                 answers = payload.get("answers") if isinstance(payload.get("answers"), dict) else payload
                 if isinstance(answers, dict) and answers:
                     jev_answers = public_answers(answers)
                     provider = "hybrid"
-                    modality_ans = answers.get("modality") or {}
-                    strategy_ans = answers.get("retrieval_strategy") or {}
+                    modality_ans = answer_for(answers, "modality") or {}
+                    strategy_ans = answer_for(answers, "retrieval_strategy") or {}
                     modality = overlay_modality(
                         rules_modality=modality,
                         jev_modality=str(modality_ans.get("choice") or "") or None,
@@ -233,23 +249,24 @@ class AdaptivePlanner:
                         high_confidence=self._high_confidence,
                     )
                     if rules_rewrite is None:
-                        noul = (answers.get("needs_rewrite") or {}).get("noul")
-                        try:
+                        rewrite_noul = noul_for(
+                            answers, "needs_rewrite", default=None
+                        )
+                        if rewrite_noul is not None:
                             rewrite = rewrite_needed_from_jev(
-                                float(noul) if noul is not None else None,
-                                self._settings,
+                                rewrite_noul, self._settings
                             )
-                        except (TypeError, ValueError):
-                            pass
-                    reason_noul = (answers.get("needs_reasoning") or {}).get("noul")
-                    try:
-                        if reason_noul is not None and noul_is_yes(
-                            float(reason_noul), self._settings.noul_yes
-                        ):
-                            path = AdaptivePath.COMPLEX.value
-                            complexity = "reasoning"
-                    except (TypeError, ValueError):
-                        pass
+                    reason_noul = noul_for(
+                        answers,
+                        "needs_reasoning",
+                        "needs_complex_reasoning",
+                        default=None,
+                    )
+                    if reason_noul is not None and noul_is_yes(
+                        reason_noul, self._settings.noul_yes
+                    ):
+                        path = AdaptivePath.COMPLEX.value
+                        complexity = "reasoning"
                     confs = [
                         float(v.get("confidence") or 0.0)
                         for v in (modality_ans, strategy_ans)

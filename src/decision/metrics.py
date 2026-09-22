@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from src.core.domain.decision import RoutingDecision
-from src.decision.judgment import JUDGE_PHASES
+from src.decision.judgment import JUDGE_PHASES, usage_phase_label
 
 _PROVIDER_LABELS = ("rules", "jev", "llm", "composite", "legacy")
 _CAPABILITY_PREFIXES = (
@@ -79,7 +79,9 @@ def record_judge(
         from src.infrastructure.observability import metrics as m
     except Exception:  # noqa: BLE001
         return
-    phase_label = phase if phase in JUDGE_PHASES else "other"
+    phase_label = usage_phase_label(phase)
+    if phase_label not in JUDGE_PHASES:
+        phase_label = "other"
     outcome = "error" if error or not isinstance(payload, dict) else "ok"
     m.zent_decision_judge_total.labels(outcome=outcome, phase=phase_label).inc()
     m.zent_decision_judge_latency_seconds.labels(phase=phase_label).observe(

@@ -552,6 +552,68 @@ zent_decision_traces_total = Counter(
     "Decision traces written",
     labelnames=["provider"],
 )
+zent_decision_judge_dedup_total = Counter(
+    "zent_decision_judge_dedup_total",
+    "JEV judge calls avoided by the request-scoped judgment cache",
+    labelnames=["phase"],
+)
+zent_decision_batch_total = Counter(
+    "zent_decision_batch_total",
+    "Batched JEV phase calls (one per compatible state)",
+    labelnames=["mode", "phase", "outcome"],
+)
+zent_decision_batch_questions_per_call = Histogram(
+    "zent_decision_batch_questions_per_call",
+    "Atomic questions per batched JEV call",
+    labelnames=["phase"],
+    buckets=(1, 2, 4, 6, 8, 12, 16, 24, 32),
+)
+zent_decision_batch_shadow_total = Counter(
+    "zent_decision_batch_shadow_total",
+    "Legacy vs batched agreement observed in shadow mode",
+    labelnames=["phase", "agreement"],
+)
+zent_adaptive_passage_judge_total = Counter(
+    "zent_adaptive_passage_judge_total",
+    "Passage judge verdicts composed in code",
+    labelnames=["verdict"],
+)
+zent_adaptive_injection_suspected_total = Counter(
+    "zent_adaptive_injection_suspected_total",
+    "Retrieved passages flagged as suspected prompt injection",
+    labelnames=["stage"],
+)
+zent_adaptive_claim_verdict_total = Counter(
+    "zent_adaptive_claim_verdict_total",
+    "Claim verification verdicts",
+    labelnames=["verdict"],
+)
+zent_adaptive_claims_ledger_total = Counter(
+    "zent_adaptive_claims_ledger_total",
+    "Claim ledger writes from claim verification",
+    labelnames=["outcome"],
+)
+zent_decision_candidates_total = Histogram(
+    "zent_decision_candidates_total",
+    "Authorized candidates offered to JEV per kind",
+    labelnames=["kind"],
+    buckets=(0, 1, 2, 3, 5, 8, 13, 21),
+)
+zent_decision_candidates_rejected_total = Counter(
+    "zent_decision_candidates_rejected_total",
+    "Candidates rejected by the deterministic resolver",
+    labelnames=["kind", "reason"],
+)
+zent_decision_target_selection_total = Counter(
+    "zent_decision_target_selection_total",
+    "Target selection outcomes (JEV choice + policy)",
+    labelnames=["mode", "kind", "action"],
+)
+zent_decision_policy_total = Counter(
+    "zent_decision_policy_total",
+    "Policy results by reason",
+    labelnames=["reason", "risk"],
+)
 
 zent_adaptive_requests_total = Counter(
     "zent_adaptive_requests_total",

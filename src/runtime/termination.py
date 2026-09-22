@@ -6,8 +6,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from src.decision.judgment import PHASE_TERMINATION, JudgmentContext, call_judge
-from src.decision.questions import noul_from_answer, noul_is_yes
+from src.decision.batch import build_agent_step_questions, noul_for
+from src.decision.judgment import PHASE_AGENT_STEP, JudgmentContext, call_phase_judge
+from src.decision.questions import noul_is_yes
 from src.runtime.questions import termination_questions
 
 
@@ -22,6 +23,21 @@ def gate_enabled(settings, config: dict | None = None) -> bool:
     if isinstance(flag, bool):
         return flag
     return str(flag or "off").lower() in {"on", "true", "1", "experimental"}
+
+
+def satisfied_from_answers(
+    answers: dict[str, Any],
+    *,
+    noul_yes: float = 0.65,
+) -> dict[str, Any]:
+    """Compone el veredicto de termination desde las respuestas atómicas."""
+    noul = noul_for(answers, "satisfied", default=0.0) or 0.0
+    return {
+        "stop": noul_is_yes(noul, noul_yes),
+        "confidence": round(abs(noul - 0.5) * 2.0, 4),
+        "provider": "jev",
+        "noul": noul,
+    }
 
 
 async def original_request_satisfied(
@@ -41,18 +57,28 @@ async def original_request_satisfied(
         "user_request": (user_request or "")[:2000],
         "tool_results": [line[:180] for line in history[-8:]],
     }
-    payload = await call_judge(
+    context = context or JudgmentContext(phase=PHASE_AGENT_STEP)
+    # 1) Reutilizar el juicio AGENT_STEP del mismo estado (tool routing + termination
+    #    batcheados). 2) Si no hay payload, preguntar sólo termination.
+    payload = await call_phase_judge(
         engine,
+        phase=PHASE_AGENT_STEP,
         state=state,
-        questions=termination_questions(),
-        context=context or JudgmentContext(phase=PHASE_TERMINATION),
+        questions=None,
+        context=context,
     )
+    if payload is None:
+        payload = await call_phase_judge(
+            engine,
+            phase=PHASE_AGENT_STEP,
+            state=state,
+            questions=termination_questions(),
+            batch_questions=build_agent_step_questions(
+                include_tool_routing=False, include_termination=True
+            ).to_jevy(),
+            context=context,
+        )
     if not isinstance(payload, dict):
         return result
-    noul = noul_from_answer((payload.get("answers") or {}).get("satisfied"), 0.0)
-    return {
-        "stop": noul_is_yes(noul, noul_yes),
-        "confidence": round(abs(noul - 0.5) * 2.0, 4),
-        "provider": "jev",
-        "noul": noul,
-    }
+    answers = payload.get("answers") or {}
+    return satisfied_from_answers(answers, noul_yes=noul_yes)

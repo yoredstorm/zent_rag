@@ -52,11 +52,13 @@ class OrchestratorAdaptiveHook:
         llm=None,
         high_confidence: float = 0.90,
         rewrite_model: str | None = None,
+        claims_ledger=None,
     ) -> None:
         self._settings = settings or settings_from_app()
         self._judge = judge
         self._llm = llm
         self._rewrite_model = rewrite_model
+        self._claims_ledger = claims_ledger
         self._planner = AdaptivePlanner(
             self._settings,
             judge=judge,
@@ -118,18 +120,71 @@ class OrchestratorAdaptiveHook:
     ) -> EvidenceSet:
         return build_evidence_set(query=query, retrieval=retrieval, sql_result=sql_result)
 
+    def deterministic_quality(self, evidence: EvidenceSet) -> EvidenceQuality:
+        """Reglas determinísticas sin JEV (zona fuerte / débil / incierta)."""
+        from src.rag.adaptive.evidence import evaluate_deterministic
+
+        return evaluate_deterministic(evidence, self._settings)
+
+    def select_passages(
+        self,
+        evidence: EvidenceSet,
+        *,
+        quality: EvidenceQuality | None = None,
+        max_candidates: int | None = None,
+    ):
+        """Preselección determinística de passages para el judge."""
+        from src.rag.adaptive.passages import select_passages
+
+        return select_passages(
+            evidence,
+            quality=quality or self.deterministic_quality(evidence),
+            settings=self._settings,
+            max_candidates=max_candidates,
+        )
+
+    async def judge_passages(
+        self,
+        evidence: EvidenceSet,
+        *,
+        quality: EvidenceQuality | None = None,
+        selection=None,
+        organization_id: UUID | None = None,
+        request_id: UUID | None = None,
+    ):
+        """JEV sobre passages dudosos (sin evidence gate; ver evaluate_evidence)."""
+        from src.rag.adaptive.passages import judge_passages
+
+        return await judge_passages(
+            evidence,
+            judge=self._judge,
+            settings=self._settings,
+            quality=quality,
+            selection=selection,
+            organization_id=organization_id,
+            request_id=request_id,
+        )
+
+    def apply_passages(self, evidence: EvidenceSet, selection, *, retrieval=None):
+        """Drops fuera del contexto; flags etiquetados. Nunca ejecuta acciones."""
+        from src.rag.adaptive.passages import apply_passages
+
+        return apply_passages(evidence, selection, retrieval=retrieval)
+
     async def evaluate_evidence(
         self,
         evidence: EvidenceSet,
         *,
         organization_id: UUID,
         request_id: UUID | None = None,
+        passages=None,
     ) -> EvidenceQuality:
         async with trace_span("adaptive.evidence"):
             quality = await self._evaluator.evaluate(
                 evidence,
                 organization_id=organization_id,
                 request_id=request_id,
+                passages=passages,
             )
         record_quality(quality)
         return quality
@@ -178,6 +233,10 @@ class OrchestratorAdaptiveHook:
         plan: AdaptivePlan,
         organization_id: UUID | None = None,
         request_id: UUID | None = None,
+        agent_id: UUID | None = None,
+        regeneration_used: bool = False,
+        retrieval_budget_left: int = 0,
+        evidence_contradictions: int = 0,
     ) -> GroundingResult:
         result = evaluate_grounding(
             answer=answer, evidence=evidence, settings=self._settings
@@ -196,6 +255,14 @@ class OrchestratorAdaptiveHook:
                 )
                 if (organization_id is not None or request_id is not None)
                 else None,
+                claims_enabled=self._settings.claims_enabled,
+                organization_id=organization_id,
+                request_id=request_id,
+                agent_id=agent_id,
+                claims_ledger=self._claims_ledger,
+                regeneration_used=regeneration_used,
+                retrieval_budget_left=retrieval_budget_left,
+                evidence_contradictions=evidence_contradictions,
             )
         record_grounding(result.score)
         return result
@@ -222,6 +289,7 @@ class OrchestratorAdaptiveHook:
         context_tokens_before: int,
         context_tokens_after: int,
         fallbacks: list[str],
+        passages: dict | None = None,
     ) -> dict:
         record_attempts(len(attempts) or 1)
         # Pricing Registry primero; estimated_cost_per_1k solo si el registry cae.
@@ -249,6 +317,7 @@ class OrchestratorAdaptiveHook:
             generator_model=generator_model,
             llm_skipped=llm_skipped,
             grounding=grounding.to_public_dict() if grounding else None,
+            passages=dict(passages or {}),
             jev_decisions=dict(plan.jev_answers),
             confidence=plan.confidence,
             top_k=plan.top_k,

@@ -57,9 +57,10 @@ class OrchestratorDecisionHook:
     ) -> RoutingDecision:
         budget: dict = {}
         try:
+            from src.decision.budget import enrich_budget
             from src.runtime.wallet import snapshot_budget
 
-            budget = await snapshot_budget(organization_id)
+            budget = enrich_budget(await snapshot_budget(organization_id))
         except Exception:  # noqa: BLE001
             budget = {}
         effective_permissions = set(permissions)

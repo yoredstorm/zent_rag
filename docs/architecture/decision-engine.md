@@ -54,6 +54,13 @@ Reglas no negociables:
 | `RAG_RUNTIME_FAILED_TOOL_GUARD` | bool (default `true`) | No reintenta una tool que falló para la pregunta |
 | `RAG_JEV_CANARY_MODEL` | string (default vacío) | Modelo candidato JEV; vacío = solo `JEV_MODEL` |
 | `RAG_JEV_CANARY_PERCENTAGE` | 0-100 (default 0) | % de requests que usa el modelo canary |
+| `RAG_DECISION_BATCH_MODE` | `off` (default) · `shadow` · `on` | Una llamada JEV por fase de estado (ver [decision-engine-batching.md](decision-engine-batching.md)) |
+| `RAG_DECISION_PASSAGE_JUDGE` | bool (default `true`) | JEV juzga passages dudosos (zona incierta, conflictos, injection) |
+| `RAG_DECISION_PASSAGE_MAX` | 1-12 (default 5) | Candidatos máximos al Passage Judge |
+| `RAG_DECISION_CLAIMS` | bool (default `true`) | Verificación por claim contra evidencia |
+| `RAG_DECISION_CLAIMS_MAX` | 1-12 (default 6) | Claims máximos verificados por respuesta |
+| `RAG_DECISION_CLAIMS_LEDGER` | bool (default `true`) | Registra claims verificados en el Claim Ledger |
+| `RAG_DECISION_JUDGMENT_CACHE_TTL_SECONDS` | 1-900 (default 120) | TTL del cache request-scoped de juicios |
 
 Rollout recomendado: `legacy` + `RAG_JEV_SHADOW_MODE=true` → comparar
 `decision_traces` (agreement) → `hybrid` con canary 5-10 → `jev`.
@@ -174,18 +181,72 @@ opcionalmente, `agent_id`, `workflow_id`, `capability`, `run_id`, `user_id`,
 
 ## Fases y observabilidad (P0.6)
 
-Fases: `routing` (decide), `pre_retrieval`, `evidence`, `grounding`,
+Fases legacy: `routing` (decide), `pre_retrieval`, `evidence`, `grounding`,
 `tool_routing`, `termination`, `answer_gate`, `workflow_decision`.
+
+Fases de batching (`RAG_DECISION_BATCH_MODE=on|shadow`): `pre_retrieval`,
+`post_retrieval`, `post_generation`, `agent_step`. Se reportan con la etiqueta
+legacy de su módulo principal para que los dashboards sigan comparables.
 
 - `zent_decision_judge_total{outcome, phase}`
 - `zent_decision_judge_tokens_total{kind, phase}`
 - `zent_decision_judge_latency_seconds{phase}`
 - `zent_decision_judge_cost_usd{phase}`
+- `zent_decision_judge_dedup_total{phase}` (llamadas evitadas por el cache)
+- `zent_decision_batch_total{mode, phase, outcome}`
+- `zent_decision_batch_questions_per_call{phase}`
+- `zent_decision_batch_shadow_total{phase, agreement}`
 
 `decision_traces.payload.model` y `usage_events.model` guardan el modelo JEV
 efectivo. Para distinguir producción de candidato/canary: `JEV_MODEL` +
 `JEV_CANARY_MODEL`/`JEV_CANARY_PERCENTAGE`; `metadata.model_role` queda
 `production` o `canary`.
+
+## Pipeline de respuesta (batching + jueces selectivos)
+
+JEV decide/juzga; el LLM genera; el código autoriza/ejecuta.
+
+```mermaid
+flowchart LR
+    A[user_request] --> B[PRE_RETRIEVAL<br/>routing + planner]
+    B --> C[retrieve + rerank]
+    C --> D[deterministic filtering]
+    D --> E[POST_RETRIEVAL<br/>evidence gate + passage judge]
+    E --> F[LLM]
+    F --> G[POST_GENERATION<br/>grounding + claims]
+    G --> H[política: answer / revise / conflict / abstain]
+    I[AGENT_STEP<br/>tool routing + termination] --> J[tools autorizadas]
+```
+
+- Passage Judge: descarta irrelevantes/débiles, flaggea contradicciones y saca
+  prompt injection del contexto del LLM (evidencia sanitizada y etiquetada).
+- Evidence gate: deterministic-first; JEV sólo en la banda incierta y no pisa
+  reglas fuertes (`structured`, `exact_match`).
+- Claims: `supported | unsupported | contradicted | not_verifiable` compuestos
+  en código; las frases no factuales no se penalizan. Los claims verificados se
+  registran en el Claim Ledger existente (best-effort, sin CoT).
+- Política: una regeneración como máximo, sin loops; contradicción nunca se
+  presenta como hecho.
+
+Detalle completo en [decision-engine-batching.md](decision-engine-batching.md).
+
+## Judgment Fabric (Knowledge · Database · Agents · Workflows · Tools)
+
+Desde la fase de batching, el Decision Engine es el **Judgment Fabric** común:
+JEV juzga dentro de CandidateSets autorizados, la política re-autoriza y el
+runtime ejecuta. Agents/Workflows/Tools ya no exigen target explícito cuando
+`RAG_DECISION_TARGET_SELECTION=shadow|on`.
+
+| Flag | Valores | Efecto |
+|---|---|---|
+| `RAG_DECISION_TARGET_SELECTION` | `off` (default) · `shadow` · `on` | Selección de target asistida por JEV |
+| `RAG_DECISION_RISK_MAX_SELECTABLE` | `low` · `medium` · `high` (default) · `critical` | Riesgo máximo auto-seleccionable |
+| `RAG_DECISION_RISK_*_CHOICE` | 0-1 | Umbrales de Choice por riesgo (centralizados) |
+| `RAG_DECISION_RISK_*_FALLBACK` | `respond_directly` · `ask_clarification` · `default_target` · `human_review` | Acción ante duda |
+
+Diseño completo, política de riesgo, dos señales para HIGH/CRITICAL,
+aprendizaje/calibración y Control Center:
+[judgment-fabric.md](judgment-fabric.md).
 
 ## Trazas y costo
 
@@ -199,9 +260,9 @@ efectivo. Para distinguir producción de candidato/canary: `JEV_MODEL` +
 
 ## Límites conocidos
 
-- Cada etapa (routing, plan, evidencia, grounding) usa su propia llamada
-  System One. No se baten en una sola; el planner omite JEV cuando la señal
-  determinística es fuerte (saludo, lexical, SQL ≥ 0.8). Plan de batcheo:
+- Con `RAG_DECISION_BATCH_MODE=off` cada etapa usa su propia llamada System One.
+  El batcheo (`on`) fusiona routing + planner, evidence + passages,
+  grounding + claims y tool routing + termination por estado compatible; ver
   [decision-engine-batching.md](decision-engine-batching.md).
 - El dispatcher cubre `agent.*`, `workflow.*`, `tool.*` con target explícito.
   JEV no elige *cuál* agente/workflow/tool: sin target no hay ejecución.
@@ -212,6 +273,11 @@ efectivo. Para distinguir producción de candidato/canary: `JEV_MODEL` +
   la misma fase dentro de un request (p. ej. tool routing por paso) dedupean
   por diseño de idempotencia. Si se necesita granularidad por paso, usar
   `run_id`/sub-request distinto.
+- `retry_retrieval` post-generación degrada a `abstain`: no hay loop de
+  retrieval después del LLM. El retry real vive en el evidence gate
+  (`ADAPTIVE_RAG_MAX_RETRIEVAL_ATTEMPTS`).
+- La regeneración por claims no corre en streaming (`on_delta`): se conserva el
+  draft y queda registrado en la traza (`claims_revision` ausente).
 
 ## Compatibilidad legacy (P0)
 
@@ -224,3 +290,10 @@ efectivo. Para distinguir producción de candidato/canary: `JEV_MODEL` +
   `context`.
 - `estimated_cost_per_1k` sigue existiendo como fallback; no se eliminó
   ninguna setting.
+- `RAG_DECISION_BATCH_MODE=off` (default) conserva una llamada por módulo; el
+  Passage Judge y la verificación de claims tienen sus propios flags
+  (`RAG_DECISION_PASSAGE_JUDGE`, `RAG_DECISION_CLAIMS`) y defaults seguros.
+- `call_phase_judge` cae a `call_judge` con callables sin `judge_phase`:
+  providers legacy y fakes de tests siguen funcionando.
+- `EvidenceQuality` / `GroundingResult` / `AdaptiveTrace` agregan campos con
+  default; los consumidores que no los leen no cambian.

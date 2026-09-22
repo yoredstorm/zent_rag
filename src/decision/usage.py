@@ -62,7 +62,9 @@ class DecisionUsageRecorder:
             usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
             prompt_tokens = max(0, int(usage.get("input_tokens") or 0))
             completion_tokens = max(0, int(usage.get("output_tokens") or 0))
-            phase = str(context.phase or "unknown")[:17]
+            from src.decision.judgment import usage_phase_label
+
+            phase = usage_phase_label(context.phase)[:17]
             routing: dict = {"phase": context.phase}
             if context.capability:
                 routing["capability"] = context.capability

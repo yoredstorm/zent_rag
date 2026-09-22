@@ -10,7 +10,8 @@ from uuid import UUID
 
 from src.core.domain.adaptive import EvidenceItem, EvidenceQuality, EvidenceSet
 from src.core.domain.entities import RetrievalChunk, RetrievalContext
-from src.decision.judgment import PHASE_EVIDENCE, JudgmentContext, call_judge
+from src.decision.batch import build_post_retrieval_questions
+from src.decision.judgment import PHASE_EVIDENCE, JudgmentContext, call_phase_judge
 from src.decision.questions import noul_is_no, noul_is_uncertain, noul_is_yes
 from src.rag.adaptive.questions import build_evidence_questions, public_answers
 from src.rag.adaptive.settings import AdaptiveRagSettings
@@ -121,6 +122,10 @@ def evaluate_deterministic(
         exact = any(needle in (item.content or "").lower() for item in items[:6])
     docs = {item.document_id or item.table or item.source_type for item in items}
     has_sql = any(item.source_type == "sql" for item in items)
+    authority = any(
+        str((item.metadata or {}).get("authority") or "").strip() for item in items
+    )
+    freshness = any(str(item.freshness or "").strip() for item in items)
     if has_sql and max_score >= 0.99:
         sufficient = True
         reason = "structured"
@@ -141,6 +146,10 @@ def evaluate_deterministic(
         sufficient = False
         reason = "weak"
         quality = min(1.0, 0.5 * max_score + 0.5 * coverage)
+    if authority:
+        quality = min(1.0, quality + 0.05)
+    if freshness:
+        quality = min(1.0, quality + 0.03)
     return EvidenceQuality(
         sufficient=sufficient,
         score=quality,
@@ -150,7 +159,28 @@ def evaluate_deterministic(
         source_diversity=len(docs),
         exact_match=exact,
         reason=reason,
+        authority=authority,
+        freshness=freshness,
     )
+
+
+def apply_passage_summary(quality: EvidenceQuality, passages: Any) -> None:
+    """El evidence gate consume el Passage Judge sin sobrescribir reglas fuertes."""
+    if passages is None:
+        return
+    from src.rag.adaptive.passages import summarize
+
+    summary = summarize(passages)
+    quality.passage_relevance = float(summary["passage_relevance"])
+    quality.contradictions = int(summary["contradictions"])
+    quality.injection_suspected = int(summary["injection_suspected"])
+    if quality.reason in {"structured", "exact_match"}:
+        # Regla determinística fuerte: JEV/reglas de passage no la pisan.
+        return
+    if summary["judged"] and summary["kept"] == 0:
+        quality.sufficient = False
+        quality.reason = "passages_dropped"
+        quality.score = min(quality.score, 0.2)
 
 
 class EvidenceEvaluator:
@@ -164,8 +194,11 @@ class EvidenceEvaluator:
         *,
         organization_id: UUID | None = None,
         request_id: UUID | None = None,
+        passages: Any = None,
     ) -> EvidenceQuality:
         quality = evaluate_deterministic(evidence, self._settings)
+        if passages is not None:
+            apply_passage_summary(quality, passages)
         if not self._settings.jev_evidence_enabled or self._judge is None:
             return quality
         if quality.reason in {"empty", "structured", "exact_match"}:
@@ -183,11 +216,28 @@ class EvidenceEvaluator:
             "coverage": quality.coverage,
             "organization_id": str(organization_id) if organization_id else "",
         }
+        batch_questions = None
+        questions = build_evidence_questions()
+        if passages is not None and getattr(passages, "candidates", None):
+            # Una sola llamada POST_RETRIEVAL: evidence gate + passage judge.
+            from src.rag.adaptive.passages import passage_state
+
+            state = {
+                **passage_state(evidence, passages),
+                "max_score": quality.max_retrieval_score,
+                "coverage": quality.coverage,
+                "organization_id": str(organization_id) if organization_id else "",
+            }
+            questions = build_post_retrieval_questions(
+                passages=passages.candidates
+            ).to_jevy()
         try:
-            payload = await call_judge(
+            payload = await call_phase_judge(
                 self._judge,
+                phase=PHASE_EVIDENCE,
                 state=state,
-                questions=build_evidence_questions(),
+                questions=questions,
+                batch_questions=batch_questions,
                 context=JudgmentContext(
                     phase=PHASE_EVIDENCE,
                     organization_id=organization_id,
@@ -198,6 +248,9 @@ class EvidenceEvaluator:
             return quality
         if not isinstance(payload, dict):
             return quality
+        if passages is not None:
+            passages.apply_jev_answers(payload)
+            apply_passage_summary(quality, passages)
         answers = payload.get("answers") if isinstance(payload.get("answers"), dict) else payload
         if not isinstance(answers, dict):
             return quality

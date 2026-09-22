@@ -4,9 +4,16 @@
 from __future__ import annotations
 
 import re
+from typing import Any
+from uuid import UUID
 
 from src.core.domain.adaptive import EvidenceSet, GroundingResult
-from src.decision.judgment import PHASE_GROUNDING, JudgmentContext, call_judge
+from src.decision.batch import noul_for
+from src.decision.judgment import (
+    PHASE_GROUNDING,
+    JudgmentContext,
+    call_phase_judge,
+)
 from src.decision.questions import noul_is_no
 from src.rag.adaptive.questions import build_grounding_questions
 from src.rag.adaptive.settings import AdaptiveRagSettings
@@ -61,9 +68,37 @@ async def maybe_jev_grounding(
     settings: AdaptiveRagSettings,
     judge=None,
     context: JudgmentContext | None = None,
+    claims_enabled: bool | None = None,
+    organization_id: UUID | None = None,
+    request_id: UUID | None = None,
+    agent_id: UUID | None = None,
+    cache: Any = None,
+    claims_ledger: Any = None,
+    regeneration_used: bool = False,
+    retrieval_budget_left: int = 0,
+    evidence_contradictions: int = 0,
 ) -> GroundingResult:
     if judge is None or result.reason in {"abstain", "no_evidence", "empty_answer"}:
         return result
+    use_claims = (
+        bool(settings.claims_enabled) if claims_enabled is None else bool(claims_enabled)
+    )
+    if use_claims:
+        return await _claim_grounding(
+            result,
+            answer=answer,
+            evidence=evidence,
+            settings=settings,
+            judge=judge,
+            organization_id=organization_id,
+            request_id=request_id,
+            agent_id=agent_id,
+            cache=cache,
+            ledger=claims_ledger,
+            regeneration_used=regeneration_used,
+            retrieval_budget_left=retrieval_budget_left,
+            evidence_contradictions=evidence_contradictions,
+        )
     if result.grounded and result.score >= 0.5:
         return result
     state = {
@@ -72,8 +107,9 @@ async def maybe_jev_grounding(
         "evidence_preview": evidence.preview(1200),
     }
     try:
-        payload = await call_judge(
+        payload = await call_phase_judge(
             judge,
+            phase=PHASE_GROUNDING,
             state=state,
             questions=build_grounding_questions(),
             context=context or JudgmentContext(phase=PHASE_GROUNDING),
@@ -95,4 +131,71 @@ async def maybe_jev_grounding(
         result.grounded = False
         result.reason = "jev_ungrounded"
         result.score = min(result.score, 0.2)
+    return result
+
+
+async def _claim_grounding(
+    result: GroundingResult,
+    *,
+    answer: str,
+    evidence: EvidenceSet,
+    settings: AdaptiveRagSettings,
+    judge,
+    organization_id: UUID | None,
+    request_id: UUID | None,
+    agent_id: UUID | None,
+    cache: Any,
+    ledger: Any,
+    regeneration_used: bool,
+    retrieval_budget_left: int,
+    evidence_contradictions: int,
+) -> GroundingResult:
+    """Grounding + verificación de claims en UNA llamada POST_GENERATION."""
+    from src.rag.adaptive.claims import (
+        record_claims_in_ledger,
+        verify_generation,
+    )
+
+    grounding_uncertain = not (result.grounded and result.score >= 0.5)
+    verification = await verify_generation(
+        judge=judge,
+        answer=answer,
+        evidence=evidence,
+        settings=settings,
+        organization_id=organization_id,
+        request_id=request_id,
+        agent_id=agent_id,
+        cache=cache,
+        regeneration_used=regeneration_used,
+        retrieval_budget_left=retrieval_budget_left,
+        ask_grounding=grounding_uncertain,
+        evidence_contradictions=evidence_contradictions,
+    )
+    result.claim_verdicts = [claim.to_public_dict() for claim in verification.claims]
+    result.claims_summary = {
+        "supported": len(verification.supported),
+        "unsupported": len(verification.unsupported),
+        "contradicted": len(verification.contradicted),
+        "not_verifiable": len(verification.not_verifiable),
+        "jev_used": verification.jev_used,
+    }
+    result.policy = verification.policy
+    result.jev_used = result.jev_used or verification.jev_used
+    noul = noul_for(verification.answers, "answer_grounded", default=None)
+    if noul is not None and noul_is_no(noul, settings.noul_no):
+        result.grounded = False
+        result.reason = "jev_ungrounded"
+        result.score = min(result.score, 0.2)
+    if (
+        verification.jev_used
+        and organization_id is not None
+        and settings.claims_ledger_enabled
+    ):
+        await record_claims_in_ledger(
+            verification,
+            organization_id=organization_id,
+            request_id=request_id,
+            agent_id=agent_id,
+            repo=ledger,
+        )
     return result

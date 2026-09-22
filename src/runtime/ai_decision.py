@@ -66,7 +66,11 @@ class AiDecisionOutcome:
     warranted_certainty: float | None = None
 
 
-def parse_config(cfg: dict[str, Any] | None) -> AiDecisionConfig:
+def parse_config(
+    cfg: dict[str, Any] | None,
+    *,
+    default_confidence_min: float | None = None,
+) -> AiDecisionConfig:
     raw = cfg or {}
     kind = str(raw.get("decision_kind") or raw.get("kind") or KIND_ROUTE).strip().lower()
     if kind in {"elegir_ruta", "choice", "select"}:
@@ -79,10 +83,13 @@ def parse_config(cfg: dict[str, Any] | None) -> AiDecisionConfig:
         kind = KIND_ROUTE
     question = str(raw.get("question") or raw.get("prompt") or "").strip()[:500]
     options = _parse_options(raw.get("options"))
+    fallback_min = (
+        0.65 if default_confidence_min is None else float(default_confidence_min)
+    )
     try:
-        confidence_min = float(raw.get("confidence_min") or 0.65)
+        confidence_min = float(raw.get("confidence_min") or fallback_min)
     except (TypeError, ValueError):
-        confidence_min = 0.65
+        confidence_min = fallback_min
     confidence_min = min(1.0, max(0.0, confidence_min))
     on_low = str(raw.get("on_low_confidence") or LOW_FALLBACK).strip().lower()
     if on_low not in LOW_ACTIONS:
@@ -284,6 +291,36 @@ def apply_low_confidence(outcome: AiDecisionOutcome, config: AiDecisionConfig) -
     return outcome
 
 
+def default_confidence_min(*, risk: str = "medium") -> float:
+    """Umbral central de la risk policy: ningún nodo inventa números."""
+    try:
+        from src.core.config import get_settings
+        from src.decision.risk_policy import DecisionRiskPolicy
+
+        return DecisionRiskPolicy.from_settings(get_settings()).thresholds(risk).choice_threshold
+    except Exception:  # noqa: BLE001 — defaults de código
+        return 0.70
+
+
+def to_business_explanation(outcome: AiDecisionOutcome) -> dict[str, Any]:
+    """Explicación amigable (sin Noul/Choice/Score) para el usuario final."""
+    band = (
+        "alta"
+        if outcome.confidence >= 0.85
+        else "media"
+        if outcome.confidence >= 0.65
+        else "baja"
+    )
+    return {
+        "decision": outcome.choice,
+        "confidence": band,
+        "needs_review": bool(outcome.low_confidence)
+        and outcome.on_low_confidence == LOW_HUMAN,
+        "action_on_doubt": outcome.on_low_confidence,
+        "provider": outcome.provider,
+    }
+
+
 def to_output(outcome: AiDecisionOutcome) -> dict[str, Any]:
     return {
         "result": outcome.result,
@@ -303,4 +340,5 @@ def to_output(outcome: AiDecisionOutcome) -> dict[str, Any]:
             if outcome.warranted_certainty is not None
             else None
         ),
+        "explanation": to_business_explanation(outcome),
     }
