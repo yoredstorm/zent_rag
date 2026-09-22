@@ -200,4 +200,43 @@ describe("FlowDrawer", () => {
     expect(await screen.findByText("Decidió JEV")).toBeInTheDocument();
     expect(onFetched).toHaveBeenCalled();
   });
+
+  it("pide el impacto de memoria al abrir, aunque el flujo ya venga en el mensaje", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/v1/memory/queries/")) {
+        return Promise.resolve(
+          json({
+            query_id: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            truncated: false,
+            counts: { used: 0, created: 0, reinforced: 0, contradicted: 0, validated: 0 },
+            used: [],
+            created: [],
+            reinforced: [],
+            contradicted: [],
+            validated: [],
+          }),
+        );
+      }
+      return Promise.resolve(json({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(
+      <FlowDrawer
+        open
+        onOpenChange={() => {}}
+        flow={FLOW}
+        role="customer"
+        queryId="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        session={SESSION}
+      />,
+    );
+    expect(await screen.findByText("Esta respuesta no usó ni creó memoria.")).toBeInTheDocument();
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes("/api/v1/memory/queries/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/impact"),
+      ),
+    ).toBe(true);
+    expect(screen.queryByText("SQL ejecutado")).toBeNull();
+  });
 });

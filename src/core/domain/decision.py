@@ -141,6 +141,7 @@ class DecisionContext:
     sql_enabled: bool = False
     knowledge_enabled: bool = True
     role: str = "admin"
+    operational_patterns: tuple[dict[str, Any], ...] = ()
 
     def sanitized_state(self) -> dict[str, Any]:
         """JSON state for System One. Truncated. No secrets."""
@@ -169,7 +170,27 @@ class DecisionContext:
             "available_capabilities": list(self.available_capabilities),
             "tenant_policy": policy,
             "budget": budget,
+            "known_operational_patterns": _slim_patterns(self.operational_patterns),
         }
+
+
+def _slim_patterns(patterns: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:
+    """Señales de memoria para JEV. Sin prosa ni chain-of-thought."""
+    slim: list[dict[str, Any]] = []
+    for item in patterns[:8]:
+        if not isinstance(item, dict):
+            continue
+        slim.append(
+            {
+                "memory_id": str(item.get("memory_id") or "")[:80],
+                "pattern_key": str(item.get("pattern_key") or "")[:80],
+                "memory_type": str(item.get("memory_type") or "")[:40],
+                "success_rate": float(item.get("success_rate") or 0.0),
+                "support_count": int(item.get("support_count") or 0),
+                "confidence": float(item.get("confidence") or 0.0),
+            }
+        )
+    return slim
 
 
 def _sanitize_conversation(raw: dict[str, Any]) -> dict[str, Any]:
@@ -260,6 +281,7 @@ class DecisionTrace:
     shadow: bool = False
     canary: bool = False
     model: str | None = None
+    memory_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -281,4 +303,5 @@ class DecisionTrace:
             "agreement": self.agreement,
             "shadow": self.shadow,
             "canary": self.canary,
+            "memory_ids": list(self.memory_ids),
         }

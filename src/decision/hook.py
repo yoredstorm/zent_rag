@@ -66,6 +66,15 @@ class OrchestratorDecisionHook:
         effective_permissions = set(permissions)
         if sql_enabled:
             effective_permissions.update(_SQL_CAPABILITY_PERMISSIONS)
+        conversation_id = _optional_uuid((conversation_state or {}).get("conversation_id"))
+        from src.memory.integration import recall_for_decision, record_memory_influence
+
+        patterns = await recall_for_decision(
+            organization_id=organization_id,
+            query=query,
+            sql_enabled=sql_enabled,
+            conversation_id=conversation_id,
+        )
         context = DecisionContext(
             user_request=query,
             organization_id=organization_id,
@@ -87,10 +96,20 @@ class OrchestratorDecisionHook:
             explicit_workflow_id=explicit_workflow_id,
             explicit_agent_id=explicit_agent_id,
             budget=budget,
+            operational_patterns=tuple(patterns),
         )
         async with trace_span("orchestrator.decision"):
             decision = await self._engine.decide(context)
         record_decision(decision)
+        await record_memory_influence(
+            organization_id=organization_id,
+            patterns=patterns,
+            request_id=request_id,
+            conversation_id=conversation_id,
+            run_id=_optional_uuid((conversation_state or {}).get("run_id")),
+            capability=decision.capability,
+            confidence=decision.confidence,
+        )
         return decision
 
     async def after_actual(
@@ -149,6 +168,15 @@ class OrchestratorDecisionHook:
             await self._store.record(trace)
         except Exception as exc:  # noqa: BLE001
             logger.warning("shadow trace failed", error=str(exc)[:200])
+
+
+def _optional_uuid(value: object) -> UUID | None:
+    if value is None or value == "":
+        return None
+    try:
+        return UUID(str(value))
+    except (ValueError, TypeError):
+        return None
 
 
 def _jev_candidate(decision: RoutingDecision) -> str | None:

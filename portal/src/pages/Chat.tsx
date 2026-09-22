@@ -92,6 +92,15 @@ function titleFrom(messages: StoredMessage[]): string {
   return t.length > 42 ? `${t.slice(0, 42)}…` : t;
 }
 
+function flowQuestion(messages: Message[], flowFor: Message | null): string {
+  if (!flowFor) return "";
+  const index = messages.findIndex((message) => message.id === flowFor.id);
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    if (messages[cursor].role === "user") return messages[cursor].content;
+  }
+  return "";
+}
+
 export default function ChatPage() {
   const { session } = useAuth();
   const { pushToast } = useToast();
@@ -910,6 +919,7 @@ export default function ChatPage() {
           flow={(flowFor?.flow as Record<string, unknown> | null) ?? null}
           role={role}
           queryId={flowFor?.queryId}
+          question={flowQuestion(messages, flowFor)}
           session={session}
           onFetched={(fetched) => {
             if (!flowFor) return;

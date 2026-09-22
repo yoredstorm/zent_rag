@@ -298,6 +298,14 @@ def _reused_payload(payload: dict[str, Any], phase: str) -> dict[str, Any]:
     return data
 
 
+def _memory_ids(context: DecisionContext) -> list[str]:
+    ids: list[str] = []
+    for item in context.operational_patterns:
+        if isinstance(item, dict) and item.get("memory_id"):
+            ids.append(str(item["memory_id"]))
+    return ids
+
+
 def _trace_from(
     context: DecisionContext,
     decision: RoutingDecision,
@@ -327,6 +335,7 @@ def _trace_from(
         and not settings.acts(context.request_id)
         and not decision.resolved,
         canary=bool(decision.metadata.get("canary")),
+        memory_ids=_memory_ids(context),
         jev_capability=(
             (decision.metadata.get("jev") or {}).get("capability")
             if isinstance(decision.metadata.get("jev"), dict)

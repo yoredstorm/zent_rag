@@ -15,6 +15,15 @@ from src.infrastructure.postgres.session import get_async_session
 logger = get_logger(__name__)
 
 
+async def _capture_learning_signal(trace) -> None:
+    try:
+        from src.learning_engine.capture import capture_decision_trace
+
+        await capture_decision_trace(trace)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("learning capture skipped", error=str(exc)[:200])
+
+
 class DecisionTraceStore:
     async def record(self, trace: DecisionTrace) -> None:
         if trace.organization_id is None:
@@ -60,6 +69,7 @@ class DecisionTraceStore:
                 },
             )
             await session.commit()
+            await _capture_learning_signal(trace)
         except Exception as exc:  # noqa: BLE001
             await session.rollback()
             logger.warning("decision trace persist failed", error=str(exc)[:200])

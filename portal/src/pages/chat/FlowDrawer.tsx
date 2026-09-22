@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { api, type Session } from "../../api";
 import { Badge, CodeBlock, Drawer, Progress, Skeleton } from "../../components/ui";
 import { fmtCurrency } from "../../lib/format";
+import { DecisionSignals, MemoryImpact, type ImpactLoad, type QueryImpact } from "./MemoryImpact";
+import { ReplayCompare, type ReplayResult } from "./ReplayCompare";
 
 type Flow = Record<string, unknown>;
 
@@ -54,6 +56,7 @@ export default function FlowDrawer({
   flow,
   role,
   queryId,
+  question,
   session,
   onFetched,
 }: {
@@ -62,12 +65,18 @@ export default function FlowDrawer({
   flow: Flow | null;
   role: "admin" | "customer";
   queryId?: string;
+  question?: string;
   session: Session;
   onFetched?: (flow: Flow) => void;
 }) {
   const [fetched, setFetched] = useState<Flow | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [impact, setImpact] = useState<QueryImpact | null>(null);
+  const [impactState, setImpactState] = useState<ImpactLoad>("idle");
+  const [replay, setReplay] = useState<ReplayResult | null>(null);
+  const [replayError, setReplayError] = useState("");
+  const [replayPending, setReplayPending] = useState(false);
 
   useEffect(() => {
     if (!open || flow || !queryId) return;
@@ -87,6 +96,66 @@ export default function FlowDrawer({
       .finally(() => setLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, flow, queryId]);
+
+  useEffect(() => {
+    if (!open || !queryId) {
+      setImpact(null);
+      setImpactState("idle");
+      return;
+    }
+    let cancelled = false;
+    setImpact(null);
+    setImpactState("loading");
+    api<QueryImpact>(`/api/v1/memory/queries/${queryId}/impact`, {
+      token: session.token,
+      organizationId: session.organizationId,
+    })
+      .then((body) => {
+        if (cancelled) return;
+        if (!body?.counts) {
+          setImpactState("error");
+          return;
+        }
+        setImpact(body);
+        setImpactState("ready");
+      })
+      .catch(() => {
+        if (!cancelled) setImpactState("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, queryId, session.token, session.organizationId]);
+
+  useEffect(() => {
+    setReplay(null);
+    setReplayError("");
+    setReplayPending(false);
+  }, [open, queryId]);
+
+  function runReplay() {
+    if (!queryId || replayPending) return;
+    setReplayPending(true);
+    setReplayError("");
+    api<ReplayResult>(`/api/v1/memory/queries/${queryId}/replay`, {
+      method: "POST",
+      body: JSON.stringify({ question: question ?? "", tools: [] }),
+      token: session.token,
+      organizationId: session.organizationId,
+    })
+      .then((body) => {
+        if (!body?.comparison?.fields) {
+          setReplayError("No se pudo comparar esta respuesta.");
+          return;
+        }
+        setReplay(body);
+      })
+      .catch((err) => {
+        const message = err instanceof Error ? err.message : "";
+        setReplayError(message || "No se pudo reejecutar esta respuesta.");
+      })
+      .finally(() => setReplayPending(false));
+  }
 
   const active = flow ?? fetched;
   const verdict = asRecord(active?.verdict);
@@ -160,6 +229,13 @@ export default function FlowDrawer({
                 <span className="text-accent">JEV ejecutó la decisión</span>
               ) : null}
               {decision.fallback_used ? <span className="text-warn">Usó plan de respaldo</span> : null}
+            </div>
+            <div className="mt-4">
+              <DecisionSignals
+                flow={active}
+                used={impact?.used ?? []}
+                impactReady={impactState === "ready"}
+              />
             </div>
           </div>
 
@@ -360,6 +436,16 @@ export default function FlowDrawer({
                 ))}
               </div>
             </div>
+          ) : null}
+
+          <MemoryImpact state={impactState} impact={impact} />
+          {queryId ? (
+            <ReplayCompare
+              result={replay}
+              error={replayError}
+              pending={replayPending}
+              onReplay={runReplay}
+            />
           ) : null}
         </div>
       ) : null}

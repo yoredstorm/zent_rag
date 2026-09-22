@@ -165,6 +165,7 @@ async def lifespan(app: FastAPI):
             _wf_sched_task = asyncio.create_task(_workflow_v2_scheduler_loop())
             _wf_event_task = asyncio.create_task(_workflow_event_consumer_loop())
             _wf_watchers_task = asyncio.create_task(_workflow_watchers_loop())
+            _learning_cycle_task = asyncio.create_task(_learning_cycle_loop())
             yield
         finally:
             _region_health_task.cancel()
@@ -178,6 +179,7 @@ async def lifespan(app: FastAPI):
             _wf_sched_task.cancel()
             _wf_event_task.cancel()
             _wf_watchers_task.cancel()
+            _learning_cycle_task.cancel()
             await _run_shutdown()
 
 
@@ -277,6 +279,24 @@ async def _catalog_discovery_loop() -> None:
         except Exception as exc:  # noqa: BLE001
             logger.warning("catalog discovery loop error", error=str(exc)[:150])
         await _asyncio.sleep(300)
+
+
+async def _learning_cycle_loop() -> None:
+    """Agregación periódica. Apagado salvo LEARNING_CYCLE_ENABLED. Mínimo 5 minutos."""
+    import asyncio as _asyncio
+
+    while True:
+        wait = 300
+        try:
+            from src.learning_engine.schedule import enabled, interval_seconds, run_periodic
+            from src.learning_engine.wiring import learning_engine
+
+            wait = interval_seconds()
+            if enabled():
+                await run_periodic(learning_engine())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("learning cycle loop failed", error=str(exc)[:200])
+        await _asyncio.sleep(wait)
 
 
 async def _spider_loop() -> None:
@@ -677,6 +697,12 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
 
     new_app.include_router(cognitive_router)
     new_app.include_router(decision_router)
+    from src.api.routes.memory import router as memory_router
+
+    new_app.include_router(memory_router)
+    from src.api.routes.learning_cycle import router as learning_cycle_router
+
+    new_app.include_router(learning_cycle_router)
     new_app.include_router(adaptive_router)
     new_app.include_router(runtime_router)
 

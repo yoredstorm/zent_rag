@@ -66,6 +66,30 @@ async def record_flow(
         await session.close()
 
 
+async def request_id_for_query(organization_id: UUID, query_id: UUID) -> UUID | None:
+    """request_id de la decisión de esta respuesta. None si no hay fila en el tenant."""
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT request_id
+                    FROM rag_flows
+                    WHERE organization_id = :oid AND query_id = :qid
+                    """
+                ),
+                {"oid": organization_id, "qid": query_id},
+            )
+        ).mappings().first()
+    finally:
+        await session.close()
+    if row is None or row["request_id"] is None:
+        return None
+    value = row["request_id"]
+    return value if isinstance(value, UUID) else UUID(str(value))
+
+
 async def get_flow(organization_id: UUID, query_id: UUID) -> dict | None:
     """Flujo de una query, scoped por organización. None si no existe."""
     session = await get_async_session()
