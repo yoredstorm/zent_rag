@@ -821,26 +821,34 @@ export default function AgentStudioPage() {
         </button>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
-        <Panel className={configureVisible ? "" : "hidden lg:block"}>
+      <div className="grid gap-4 lg:h-[calc(100dvh-13.5rem)] lg:min-h-[28rem] lg:grid-cols-[minmax(0,22rem)_minmax(0,1fr)] xl:grid-cols-[minmax(0,26rem)_minmax(0,1fr)]">
+        <Panel
+          className={
+            configureVisible
+              ? "flex min-h-0 flex-col overflow-hidden"
+              : "hidden lg:flex lg:min-h-0 lg:flex-col lg:overflow-hidden"
+          }
+        >
           <PanelHeader
             title="Contexto"
             description="Qué hace este agente y con qué material responde."
           />
-          <div className="grid gap-5 p-4">
-            <AgentPurposeForm
-              name={name}
-              purpose={config.purpose || ""}
-              instructions={systemPrompt}
-              nameError={nameTouched && !name.trim() ? "Necesitas un nombre para guardar." : undefined}
-              onName={(value) => {
-                setNameTouched(true);
-                setName(value);
-              }}
-              onPurpose={(value) => setConfig({ ...config, purpose: value })}
-              onInstructions={setSystemPrompt}
-            />
-            <div className="border-t border-border pt-4">
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4">
+            <div className="max-h-[42%] shrink-0 overflow-y-auto pr-1">
+              <AgentPurposeForm
+                name={name}
+                purpose={config.purpose || ""}
+                instructions={systemPrompt}
+                nameError={nameTouched && !name.trim() ? "Necesitas un nombre para guardar." : undefined}
+                onName={(value) => {
+                  setNameTouched(true);
+                  setName(value);
+                }}
+                onPurpose={(value) => setConfig({ ...config, purpose: value })}
+                onInstructions={setSystemPrompt}
+              />
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col border-t border-border pt-4">
               <AgentSourcePicker
                 sources={sources}
                 selectedIds={config.source_ids}
@@ -854,7 +862,7 @@ export default function AgentStudioPage() {
             </div>
           </div>
         </Panel>
-        <div className={testVisible ? "" : "hidden lg:block"}>
+        <div className={testVisible ? "min-h-0 h-full" : "hidden min-h-0 h-full lg:block"}>
           <AgentTestChat
             turns={turns}
             input={playInput}

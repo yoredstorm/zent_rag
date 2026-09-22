@@ -1,4 +1,4 @@
-import { Database, Files, MagnifyingGlass } from "@phosphor-icons/react";
+import { Database, MagnifyingGlass } from "@phosphor-icons/react";
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button, Checkbox, EmptyState, Input, SkeletonBlock, cn } from "../ui";
@@ -135,12 +135,12 @@ export function AgentSourcePicker({
   const waiting = sources.some((source) => selectedIds.includes(source.id) && !source.document_count);
 
   return (
-    <fieldset className="min-w-0">
+    <fieldset className="flex min-h-0 min-w-0 flex-1 flex-col">
       <legend className="text-h3">Fuentes que ya cargaste</legend>
       <p className="mt-0.5 text-xs leading-relaxed text-muted">
         Elige con qué material responde este agente.
       </p>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+      <div className="mt-3 shrink-0">
         <Input
           type="search"
           icon={MagnifyingGlass}
@@ -148,26 +148,30 @@ export function AgentSourcePicker({
           placeholder="Buscar por nombre"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="w-full sm:w-56"
+          className="w-full"
         />
-        <span className="text-xs text-faint tabular-nums">
-          {selectedIds.length} seleccionadas / {sources.length}
-        </span>
-        <Button variant="ghost" size="sm" onClick={selectVisible} disabled={visible.length === 0}>
-          Marcar visibles
-        </Button>
-        <Button variant="ghost" size="sm" onClick={clearSelected} disabled={selectedIds.length === 0}>
-          Quitar selección
-        </Button>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+          <span className="text-xs text-faint tabular-nums">
+            {selectedIds.length} seleccionadas / {sources.length}
+          </span>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="sm" onClick={selectVisible} disabled={visible.length === 0}>
+              Marcar visibles
+            </Button>
+            <Button variant="ghost" size="sm" onClick={clearSelected} disabled={selectedIds.length === 0}>
+              Quitar selección
+            </Button>
+          </div>
+        </div>
       </div>
       {capError ? (
-        <p className="mt-2 text-xs text-danger" role="alert">
+        <p className="mt-2 shrink-0 text-xs text-danger" role="alert">
           {capError}
         </p>
       ) : null}
       {waiting && (
         <p
-          className="mt-3 rounded-md border border-warn/25 bg-warn-soft px-3 py-2.5 text-xs leading-relaxed text-warn"
+          className="mt-3 shrink-0 rounded-md border border-warn/25 bg-warn-soft px-3 py-2.5 text-xs leading-relaxed text-warn"
           data-testid="source-indexing-copy"
           role="status"
         >
@@ -176,69 +180,66 @@ export function AgentSourcePicker({
       )}
       <div
         data-testid="source-picker-list"
-        className="mt-3 max-h-72 space-y-1 overflow-y-auto pr-1"
+        className="mt-3 min-h-48 max-h-72 flex-1 overflow-y-auto rounded-md border border-border lg:max-h-none"
       >
         {visible.length === 0 ? (
-          <p className="px-1 py-2 text-xs text-muted">Ninguna fuente coincide con la búsqueda.</p>
+          <p className="px-3 py-2 text-xs text-muted">Ninguna fuente coincide con la búsqueda.</p>
         ) : (
-          visible.map((source) => {
-            const checked = selectedIds.includes(source.id);
-            const job = latestJobForSource(source.id, jobs);
-            const empty = !source.document_count;
-            const active = Boolean(job && ACTIVE_JOB.has(job.status));
-            const progress = Math.max(0, Math.min(100, job?.progress ?? 0));
-            return (
-              <div
-                key={source.id}
-                data-state={railState(source, job)}
-                className={cn(
-                  "state-rail flex items-center gap-2 rounded-md border py-1.5 pr-2 pl-3",
-                  checked ? "border-accent-line bg-accent-soft/40" : "border-border",
-                )}
-              >
-                <Checkbox
-                  className="min-w-0 flex-1 items-center"
-                  id={`agent-source-${source.id}`}
-                  checked={checked}
-                  onCheckedChange={() => tryToggle(source.id)}
-                  label={
-                    <span className="block min-w-0">
-                      <span className="flex min-w-0 items-center gap-2">
-                        <Files size={14} className="shrink-0 text-accent" aria-hidden />
-                        <span className="truncate font-medium text-text">{source.name}</span>
-                        <span className="shrink-0 text-xs text-faint">
-                          {source.type} · {humanStatus(source, job)}
-                        </span>
-                      </span>
-                      {empty && active && (
-                        <span className="progress-track mt-1.5 block" data-testid={`source-progress-${source.id}`}>
-                          {progress > 0 ? (
-                            <span className="progress-fill block" style={{ width: `${progress}%` }} />
-                          ) : (
-                            <span className="progress-fill block w-1/3 animate-pulse" />
-                          )}
-                        </span>
-                      )}
-                      {empty && !active && (
-                        <span className="mt-0.5 block text-xs text-warn">Aún no indexada</span>
+          <ul>
+            {visible.map((source) => {
+              const checked = selectedIds.includes(source.id);
+              const job = latestJobForSource(source.id, jobs);
+              const empty = !source.document_count;
+              const active = Boolean(job && ACTIVE_JOB.has(job.status));
+              const progress = Math.max(0, Math.min(100, job?.progress ?? 0));
+              return (
+                <li
+                  key={source.id}
+                  data-state={railState(source, job)}
+                  className={cn(
+                    "state-rail border-b border-border-soft py-1.5 pr-2 pl-3 last:border-b-0",
+                    checked ? "bg-accent-soft/40" : "",
+                  )}
+                >
+                  <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+                    <Checkbox
+                      className="min-w-0 items-center"
+                      id={`agent-source-${source.id}`}
+                      checked={checked}
+                      onCheckedChange={() => tryToggle(source.id)}
+                      label={<span className="block truncate">{source.name}</span>}
+                    />
+                    <span className="shrink-0 text-xs text-faint tabular-nums">
+                      {humanStatus(source, job)}
+                    </span>
+                  </div>
+                  {empty && active && (
+                    <span className="progress-track mt-1.5 block" data-testid={`source-progress-${source.id}`}>
+                      {progress > 0 ? (
+                        <span className="progress-fill block" style={{ width: `${progress}%` }} />
+                      ) : (
+                        <span className="progress-fill block w-1/3 animate-pulse" />
                       )}
                     </span>
-                  }
-                />
-                {empty && !active && (
-                  <Button
-                    size="sm"
-                    className="shrink-0"
-                    loading={indexingId === source.id}
-                    data-testid={`source-index-${source.id}`}
-                    onClick={() => onIndex(source.id)}
-                  >
-                    Indexar ahora
-                  </Button>
-                )}
-              </div>
-            );
-          })
+                  )}
+                  {empty && !active && (
+                    <div className="mt-1 flex items-center justify-between gap-2">
+                      <span className="text-xs text-warn">Aún no indexada</span>
+                      <Button
+                        size="sm"
+                        className="shrink-0"
+                        loading={indexingId === source.id}
+                        data-testid={`source-index-${source.id}`}
+                        onClick={() => onIndex(source.id)}
+                      >
+                        Indexar ahora
+                      </Button>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         )}
       </div>
     </fieldset>
