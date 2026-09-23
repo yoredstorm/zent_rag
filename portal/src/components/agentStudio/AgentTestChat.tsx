@@ -1,4 +1,10 @@
-import { PaperPlaneRight, Play } from "@phosphor-icons/react";
+import {
+  Broom,
+  ChatCircle,
+  PaperPlaneRight,
+  Play,
+  TreeStructure,
+} from "@phosphor-icons/react";
 import {
   FormEvent,
   MouseEvent as ReactMouseEvent,
@@ -8,8 +14,8 @@ import {
 } from "react";
 import type { Session } from "../../api";
 import FlowDrawer from "../../pages/chat/FlowDrawer";
-import { Button, EmptyState, Panel, PanelHeader, Textarea } from "../ui";
-import type { KnowledgeSource } from "./types";
+import { Badge, Button, IconButton, LoadingDots, Panel, PanelHeader, Textarea } from "../ui";
+import { SUGGESTED_QUESTIONS, type KnowledgeSource } from "./types";
 
 export type ChatTurn = {
   role: "user" | "assistant";
@@ -33,8 +39,12 @@ export function AgentTestChat({
   disabledReason,
   sources,
   selectedIds,
+  agentName,
+  model,
   onInput,
   onSubmit,
+  onSuggest,
+  onClear,
   onActivate,
   session,
 }: {
@@ -46,8 +56,13 @@ export function AgentTestChat({
   disabledReason?: string;
   sources: KnowledgeSource[];
   selectedIds: string[];
+  agentName?: string;
+  model?: string;
   onInput: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
+  /** Ejecuta una pregunta sugerida: es una acción explícita del usuario. */
+  onSuggest?: (question: string) => void;
+  onClear?: () => void;
   onActivate?: () => void;
   session?: Session | null;
 }) {
@@ -61,6 +76,7 @@ export function AgentTestChat({
     (source) => selectedIds.includes(source.id) && !source.document_count,
   );
   const blocked = playing || inactive || !input.trim() || Boolean(disabledReason);
+  const selectedSources = sources.filter((source) => selectedIds.includes(source.id));
 
   useEffect(() => {
     if (!ctxMenu) return;
@@ -83,6 +99,13 @@ export function AgentTestChat({
     setCtxMenu({ x: event.clientX, y: event.clientY, turn });
   }
 
+  const facts = [
+    selectedSources.length
+      ? `${selectedSources.length} fuente${selectedSources.length === 1 ? "" : "s"}`
+      : "",
+    model ? model : "",
+  ].filter(Boolean);
+
   return (
     <Panel className="flex h-full min-h-[22rem] flex-col">
       <PanelHeader
@@ -92,7 +115,22 @@ export function AgentTestChat({
             Probar
           </span>
         }
-        description="Habla con el agente. Ajusta propósito o fuentes y vuelve a preguntar."
+        description="Hablá con el agente. Ajustá propósito o fuentes y volvé a preguntar."
+        actions={
+          <>
+            <Badge tone={inactive ? "neutral" : "ok"} dot>
+              {inactive ? "En pausa" : "Activo"}
+            </Badge>
+            {turns.length > 0 && onClear ? (
+              <IconButton
+                label="Limpiar conversación de prueba"
+                icon={Broom}
+                iconSize={15}
+                onClick={onClear}
+              />
+            ) : null}
+          </>
+        }
       />
 
       {waitingOnIndex && (
@@ -120,12 +158,35 @@ export function AgentTestChat({
 
       <div className="flex-1 space-y-3 overflow-y-auto p-4">
         {turns.length === 0 && (
-          <EmptyState
-            icon={Play}
-            title="Haz una pregunta de prueba"
-            body="El agente usa el propósito y las fuentes de la configuración."
-            compact
-          />
+          <div className="flex h-full flex-col items-center justify-center gap-2 text-center">
+            <div className="flex h-10 w-10 items-center justify-center rounded-md border border-accent-line bg-accent-soft text-accent">
+              <ChatCircle size={19} weight="regular" aria-hidden />
+            </div>
+            <p className="mt-1 text-sm font-medium text-text">
+              {agentName ? `Preguntale a ${agentName}` : "Hacé una pregunta de prueba"}
+            </p>
+            <p className="max-w-sm text-[13px] leading-relaxed text-muted text-pretty">
+              Responde con el propósito y las fuentes configuradas, y muestra en qué se apoyó.
+            </p>
+            {facts.length ? (
+              <p className="text-xs text-faint">{facts.join(" · ")}</p>
+            ) : null}
+            {onSuggest && !inactive && (
+              <div className="mt-3 flex w-full max-w-sm flex-col gap-1.5">
+                {SUGGESTED_QUESTIONS.map((question) => (
+                  <button
+                    key={question}
+                    type="button"
+                    disabled={playing}
+                    onClick={() => onSuggest(question)}
+                    className="cursor-pointer rounded-md border border-border bg-raised px-3 py-2 text-left text-[12.5px] text-muted transition-colors duration-150 hover:border-border-strong hover:text-text disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    {question}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         {turns.map((turn, index) => (
           <article
@@ -135,66 +196,82 @@ export function AgentTestChat({
           >
             <p className="whitespace-pre-wrap">{turn.text}</p>
             {turn.role === "assistant" && (turn.sources?.length ?? 0) > 0 && (
-              <div className="mt-2 border-t border-border-soft pt-2">
-                <p className="eyebrow">Fuentes usadas</p>
-                <ol className="mt-1 list-decimal space-y-0.5 pl-4 text-xs text-muted">
-                  {turn.sources!.map((id) => (
-                    <li key={id}>{nameById.get(id) || id.slice(0, 8)}</li>
-                  ))}
-                </ol>
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border-soft pt-2">
+                <span className="text-[11px] text-faint">Fuentes</span>
+                {turn.sources!.map((id) => (
+                  <Badge key={id} tone="neutral" title={nameById.get(id) || id}>
+                    {nameById.get(id) || `${id.slice(0, 8)}…`}
+                  </Badge>
+                ))}
               </div>
             )}
             {turn.emptyHint && (
               <p className="mt-2 text-xs text-muted">
-                No encontró nada en las fuentes elegidas. Prueba otra pregunta o revisa que estén indexadas.
+                No encontró nada en las fuentes elegidas. Probá otra pregunta o revisá que estén
+                indexadas.
               </p>
             )}
             {turn.error && <p className="mt-2 text-xs text-danger">{turn.error}</p>}
             {turn.role === "assistant" && turn.flow && (
-              <button
-                type="button"
-                className="mt-2 cursor-pointer text-[11px] text-muted underline underline-offset-2 transition-colors hover:text-text"
-                onClick={() => setFlowFor(turn)}
-              >
-                Ver flujo
-              </button>
+              <div className="mt-2 flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  leadingIcon={TreeStructure}
+                  onClick={() => setFlowFor(turn)}
+                >
+                  Ver flujo
+                </Button>
+              </div>
             )}
           </article>
         ))}
-        {status && (
-          <p
-            className="state-rail text-xs text-muted"
-            data-state={playing ? "running" : "ready"}
-            role="status"
-          >
+        {playing && (
+          <div className="flex items-center gap-2 text-xs text-muted" role="status">
+            <LoadingDots label="El agente está respondiendo" />
+            {status || "El agente está respondiendo…"}
+          </div>
+        )}
+        {!playing && status && (
+          <p className="state-rail text-xs text-muted" data-state="ready" role="status">
             {status}
           </p>
         )}
       </div>
 
-      <form ref={formRef} className="flex items-end gap-2 border-t border-border p-3" onSubmit={onSubmit}>
-        <label className="block min-w-0 flex-1">
-          <span className="sr-only">Pregunta de prueba</span>
-          <Textarea
-            className="min-h-9 resize-none py-2"
-            rows={1}
-            placeholder="Pregunta al agente…"
-            value={input}
-            onChange={(e) => onInput(e.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                if (!blocked) formRef.current?.requestSubmit();
-              }
-            }}
-            disabled={playing || inactive}
+      <form ref={formRef} className="border-t border-border p-3" onSubmit={onSubmit}>
+        <div className="flex items-end gap-2">
+          <label className="block min-w-0 flex-1">
+            <span className="sr-only">Pregunta de prueba</span>
+            <Textarea
+              className="min-h-9 resize-none py-2"
+              rows={1}
+              placeholder="Pregunta al agente…"
+              value={input}
+              onChange={(e) => onInput(e.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.shiftKey) {
+                  event.preventDefault();
+                  if (!blocked) formRef.current?.requestSubmit();
+                }
+              }}
+              disabled={playing || inactive}
+            />
+          </label>
+          <IconButton
+            type="submit"
+            label="Probar"
+            icon={PaperPlaneRight}
+            variant="primary"
+            loading={playing}
+            disabled={blocked}
           />
-        </label>
-        <Button type="submit" variant="primary" leadingIcon={PaperPlaneRight} loading={playing} disabled={blocked}>
-          Probar
-        </Button>
+        </div>
+        <p className="mt-1.5 text-[11px] text-faint">
+          Enter envía · Shift+Enter salto de línea
+          {disabledReason ? ` · ${disabledReason}` : ""}
+        </p>
       </form>
-      {disabledReason && <p className="px-3 pb-3 text-xs text-muted">{disabledReason}</p>}
 
       {ctxMenu && (
         <div

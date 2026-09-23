@@ -1,16 +1,17 @@
 // =============================================================================
 // AgentResponseProfileSection — "Cómo debe responder" (§27-§36)
 // =============================================================================
-// Separa PROPÓSITO ("qué debe lograr") de PERFIL DE RESPUESTA ("cómo debe
-// explicarlo"). El perfil es estructura: idioma, tono, nivel, detalle, formato,
-// citas y qué hacer con la incertidumbre.
+// Separa PROPÓSITO ("qué debe lograr", vive en Identidad) de PERFIL DE RESPUESTA
+// ("cómo debe explicarlo"). El perfil es estructura: idioma, tono, nivel,
+// detalle, formato, citas y qué hacer con la incertidumbre.
 //
 // El generador con IA propone ESTILO. Nunca hechos ni capacidades que el agente
 // no tenga: eso vive en el conocimiento, no en el prompt.
+import { Sparkle } from "@phosphor-icons/react";
 import { useState } from "react";
 import { api } from "../../api";
 import { Badge, Button, Select, Textarea } from "../ui";
-import { AgentField } from "./AgentField";
+import { AgentField, AgentOptionCard, AgentSection, AgentToggleGrid } from "./AgentField";
 import {
   RESPONSE_PROFILE_PRESETS,
   RESPONSE_PROFILE_TOGGLES,
@@ -23,9 +24,7 @@ export function AgentResponseProfileSection({
   agentId,
   token,
   organizationId,
-  purpose,
   sourceTitles = [],
-  onPurpose,
 }: {
   profile: ResponseProfile;
   onChange: (next: ResponseProfile) => void;
@@ -33,67 +32,44 @@ export function AgentResponseProfileSection({
   agentId?: string;
   token?: string;
   organizationId?: string;
-  purpose?: string;
   sourceTitles?: string[];
-  onPurpose?: (value: string) => void;
 }) {
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [preview, setPreview] = useState("");
-  const [previewQuestion, setPreviewQuestion] = useState("¿Qué significa el campo X cuando su valor es 2?");
+  const [previewQuestion, setPreviewQuestion] = useState(
+    "¿Qué significa el campo X cuando su valor es 2?",
+  );
   const [previewContract, setPreviewContract] = useState<Record<string, unknown> | null>(null);
 
   const activePreset = profile.preset ?? "";
-
-  function applyPreset(preset: (typeof RESPONSE_PROFILE_PRESETS)[number]) {
-    onChange({ ...profile, ...preset.profile, preset: preset.id });
-  }
 
   function set<K extends keyof ResponseProfile>(key: K, value: ResponseProfile[K]) {
     onChange({ ...profile, [key]: value });
   }
 
-  async function generate(what: "purpose" | "profile") {
+  async function generateProfile() {
     if (!agentId) {
       setNotice("");
       setError("Guardá el agente primero: el generador sólo usa datos reales del agente.");
       return;
     }
-    setBusy(what);
+    setBusy("profile");
     setError("");
     setNotice("");
     try {
-      if (what === "purpose") {
-        const data = await api<{ draft: string; warnings: string[]; saved: boolean }>(
-          `/api/v1/agents/${agentId}/config/purpose`,
-          {
-            method: "POST",
-            token,
-            organizationId,
-            body: JSON.stringify({}),
-          },
-        );
-        onPurpose?.(data.draft);
-        setNotice("Borrador de propósito generado. Revisalo y guardá cuando estés conforme.");
-      } else {
-        const data = await api<{ draft: Record<string, unknown>; saved: boolean }>(
-          `/api/v1/agents/${agentId}/config/response-profile`,
-          {
-            method: "POST",
-            token,
-            organizationId,
-            body: JSON.stringify({}),
-          },
-        );
-        const draft = data.draft as Partial<ResponseProfile>;
-        onChange({
-          ...profile,
-          ...draft,
-          preset: typeof draft.preset === "string" ? draft.preset : profile.preset,
-        });
-        setNotice("Perfil propuesto. Ajustá lo que quieras antes de guardar.");
-      }
+      const data = await api<{ draft: Record<string, unknown> }>(
+        `/api/v1/agents/${agentId}/config/response-profile`,
+        { method: "POST", token, organizationId, body: JSON.stringify({}) },
+      );
+      const draft = data.draft as Partial<ResponseProfile>;
+      onChange({
+        ...profile,
+        ...draft,
+        preset: typeof draft.preset === "string" ? draft.preset : profile.preset,
+      });
+      setNotice("Perfil propuesto. Ajustá lo que quieras antes de guardar.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo generar el borrador");
     } finally {
@@ -114,7 +90,6 @@ export function AgentResponseProfileSection({
       const data = await api<{
         preview: string;
         response_contract: Record<string, unknown> | null;
-        simulated_evidence: boolean;
       }>(`/api/v1/agents/${agentId}/config/preview`, {
         method: "POST",
         token,
@@ -131,39 +106,46 @@ export function AgentResponseProfileSection({
   }
 
   return (
-    <section className="grid gap-4" data-testid="agent-response-profile">
-      <div>
-        <p className="text-[13px] text-text">Cómo debe responder</p>
-        <p className="text-[11.5px] text-faint">
-          Cómo explicar la respuesta. No cambia qué puede concluir el agente: eso lo
-          deciden la evidencia y el análisis.
-        </p>
-      </div>
-
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Presets de respuesta">
-        {RESPONSE_PROFILE_PRESETS.map((preset) => (
-          <button
-            key={preset.id}
-            type="button"
-            onClick={() => applyPreset(preset)}
-            aria-pressed={activePreset === preset.id}
-            title={preset.hint}
-            className={`rounded-sm border px-2.5 py-1 text-[12px] ${
-              activePreset === preset.id
-                ? "border-accent bg-surface-strong text-text"
-                : "border-border text-muted hover:text-text"
-            }`}
+    <section className="grid gap-6" data-testid="agent-response-profile">
+      <AgentSection
+        title="Cómo debe responder"
+        hint="Cómo explicar la respuesta. No cambia qué puede concluir el agente: eso lo deciden la evidencia y el análisis."
+        actions={
+          <Button
+            variant="secondary"
+            size="sm"
+            leadingIcon={Sparkle}
+            loading={busy === "profile"}
+            onClick={() => void generateProfile()}
           >
-            {preset.label}
-          </button>
-        ))}
-        {activePreset && !RESPONSE_PROFILE_PRESETS.some((p) => p.id === activePreset) ? (
-          <Badge tone="neutral">Personalizado</Badge>
-        ) : null}
-      </div>
+            Generar con IA
+          </Button>
+        }
+      >
+        <div>
+          <p className="mb-2 flex items-center gap-2 text-xs text-muted">
+            Estilo base
+            {activePreset && !RESPONSE_PROFILE_PRESETS.some((p) => p.id === activePreset) ? (
+              <Badge tone="neutral">Personalizado</Badge>
+            ) : null}
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {RESPONSE_PROFILE_PRESETS.map((preset) => (
+              <AgentOptionCard
+                key={preset.id}
+                id={`response-preset-${preset.id}`}
+                label={preset.label}
+                hint={preset.hint}
+                selected={activePreset === preset.id}
+                onSelect={() => onChange({ ...profile, ...preset.profile, preset: preset.id })}
+              />
+            ))}
+          </div>
+        </div>
+      </AgentSection>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <AgentField id="response-detail" label="Nivel de detalle" hint="Cuánto explicar, no cuánto escribir.">
+        <AgentField id="response-detail" label="Nivel de detalle" hint="Cuánto explicar.">
           <Select
             id="response-detail"
             value={profile.default_detail}
@@ -215,22 +197,19 @@ export function AgentResponseProfileSection({
         </AgentField>
       </div>
 
-      <fieldset className="grid gap-2">
-        <legend className="text-[12px] text-muted">Formato y evidencia</legend>
-        <div className="flex flex-wrap gap-x-4 gap-y-2">
-          {RESPONSE_PROFILE_TOGGLES.map((toggle) => (
-            <label key={String(toggle.key)} className="flex items-center gap-2 text-[12px] text-text">
-              <input
-                type="checkbox"
-                checked={Boolean(profile[toggle.key])}
-                onChange={(e) => onChange({ ...profile, [toggle.key]: e.target.checked })}
-                aria-label={toggle.label}
-              />
-              <span title={toggle.hint}>{toggle.label}</span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
+      <AgentSection
+        title="Formato y evidencia"
+        hint="Qué puede usar la respuesta y qué debe declarar."
+      >
+        <AgentToggleGrid
+          options={RESPONSE_PROFILE_TOGGLES.map((toggle) => ({
+            key: String(toggle.key),
+            label: toggle.label,
+            checked: Boolean(profile[toggle.key]),
+            onChange: (checked: boolean) => onChange({ ...profile, [toggle.key]: checked }),
+          }))}
+        />
+      </AgentSection>
 
       <AgentField
         id="response-instructions"
@@ -246,72 +225,57 @@ export function AgentResponseProfileSection({
         />
       </AgentField>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" variant="secondary" onClick={() => void generate("profile")} disabled={busy !== ""}>
-          {busy === "profile" ? "Generando…" : "Generar con IA"}
-        </Button>
-        {onPurpose ? (
-          <Button type="button" variant="ghost" onClick={() => void generate("purpose")} disabled={busy !== ""}>
-            {busy === "purpose" ? "Generando…" : "Generar propósito"}
-          </Button>
-        ) : null}
-        {!agentId ? (
-          <span className="text-[11.5px] text-faint">
-            Guardá el agente para generar con IA y ver el preview.
-          </span>
-        ) : null}
-      </div>
-
-      {onPurpose ? (
-        <AgentField
-          id="agent-studio-purpose"
-          label="Propósito"
-          hint="¿Qué debe lograr? Usá «Generar propósito» como borrador."
-        >
-          <Textarea
-            id="agent-studio-purpose"
-            className="min-h-20"
-            value={purpose ?? ""}
-            onChange={(e) => onPurpose(e.target.value)}
-            placeholder="Explicar reglas tarifarias con la documentación autorizada."
-          />
-        </AgentField>
+      {notice ? (
+        <p className="text-xs text-ok" role="status">
+          {notice}
+        </p>
+      ) : null}
+      {error ? (
+        <p className="text-xs text-danger" role="alert">
+          {error}
+        </p>
       ) : null}
 
-      {notice ? <p className="text-[11.5px] text-ok">{notice}</p> : null}
-      {error ? <p className="text-[11.5px] text-danger">{error}</p> : null}
-
-      <div className="rounded-md border border-border-soft p-3">
-        <p className="text-[12px] text-text">Preview de respuesta</p>
-        <p className="text-[11.5px] text-faint">
-          Usa conocimiento simulado: muestra forma y estilo, no hechos reales.
-          {sourceTitles.length ? ` Fuentes configuradas: ${sourceTitles.slice(0, 3).join(", ")}.` : ""}
-        </p>
-        <div className="mt-2 flex flex-col gap-2">
+      <AgentSection
+        title="Preview de respuesta"
+        hint="Usa conocimiento simulado: muestra forma y estilo, no hechos reales."
+      >
+        <div className="flex flex-col gap-2">
           <Textarea
             aria-label="Pregunta de prueba"
             className="min-h-16"
             value={previewQuestion}
             onChange={(e) => setPreviewQuestion(e.target.value)}
           />
-          <div>
-            <Button type="button" variant="secondary" onClick={() => void runPreview()} disabled={busy !== ""}>
-              {busy === "preview" ? "Generando…" : "Ver cómo respondería"}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              loading={busy === "preview"}
+              onClick={() => void runPreview()}
+            >
+              Ver cómo respondería
             </Button>
+            {sourceTitles.length ? (
+              <span className="text-[11.5px] text-faint">
+                Fuentes configuradas: {sourceTitles.slice(0, 3).join(", ")}
+              </span>
+            ) : null}
           </div>
         </div>
         {preview ? (
-          <div className="mt-3 rounded border border-border bg-surface/60 p-2">
+          <div className="rounded-md border border-border bg-surface/60 p-3">
             {previewContract ? (
-              <p className="mb-1 text-[11.5px] text-faint">
-                Forma elegida: {String(previewContract.blueprint)} · nivel{" "}
-                {String(previewContract.detail)} · {String(previewContract.decided_by)}
-              </p>
+              <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                <Badge tone="accent">{String(previewContract.blueprint)}</Badge>
+                <Badge tone="neutral">{String(previewContract.detail)}</Badge>
+                <Badge tone="neutral">{String(previewContract.decided_by)}</Badge>
+              </div>
             ) : null}
             <p className="whitespace-pre-wrap text-[12.5px] text-text">{preview}</p>
           </div>
         ) : null}
-      </div>
+      </AgentSection>
     </section>
   );
 }

@@ -1,4 +1,4 @@
-import { AgentField, AgentFieldGroup, AgentToggleCard } from "./AgentField";
+import { AgentField, AgentSection, AgentToggleCard } from "./AgentField";
 import { COPY, RETRIEVAL_STRATEGIES, TOOL_CHOICES, choiceOptionLabel } from "./advancedCopy";
 import { hasDbSources } from "./toolApplicability";
 import { Button, Input, Select } from "../ui";
@@ -72,16 +72,15 @@ export function AgentCapabilitiesSection({
 
   return (
     <div className="grid gap-6">
-      <AgentFieldGroup title={COPY.tools.title} hint={COPY.tools.hint}>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="prose-measure text-xs leading-relaxed text-muted">
-            Con 3 o más herramientas activas, JEV elige cuál usar en cada paso. Las claves sensibles
-            (base de datos, APIs) se pueden apagar por agente.
-          </p>
+      <AgentSection
+        title={COPY.tools.title}
+        hint={COPY.tools.hint}
+        actions={
           <Button variant="secondary" size="sm" onClick={onEnableAll}>
             Activar todas
           </Button>
-        </div>
+        }
+      >
         <div className="grid gap-2 sm:grid-cols-2">
           {TOOL_CHOICES.map((tool) => (
             <AgentToggleCard
@@ -98,13 +97,13 @@ export function AgentCapabilitiesSection({
           ))}
         </div>
         <p className="text-xs leading-relaxed text-faint">
-          Consultar la base de datos y Llamar APIs externas son permisos sensibles: al activarlos
-          también quedan habilitados en la seguridad del agente. SQL solo se ofrece si el agente
-          tiene fuentes de datos conectadas.
+          Con 3 o más herramientas activas, JEV elige cuál usar en cada paso. SQL y APIs externas son
+          permisos sensibles: al activarlos quedan habilitados también en la seguridad del agente, y
+          SQL sólo se ofrece si el agente tiene fuentes de datos conectadas.
         </p>
-      </AgentFieldGroup>
+      </AgentSection>
 
-      <AgentFieldGroup
+      <AgentSection
         title="Motor de decisión (JEV)"
         hint="JEV decide la ruta y la herramienta; si lo apagás, decide el LLM del agente."
       >
@@ -139,9 +138,9 @@ export function AgentCapabilitiesSection({
             <option value="off">Apagado en este agente</option>
           </Select>
         </AgentField>
-      </AgentFieldGroup>
+      </AgentSection>
 
-      <AgentFieldGroup title={COPY.retrieval.title} hint={COPY.retrieval.hint}>
+      <AgentSection title={COPY.retrieval.title} hint={COPY.retrieval.hint}>
         <div className="grid gap-4 sm:grid-cols-3">
           <AgentField
             id="agent-retrieval-strategy"
@@ -190,9 +189,9 @@ export function AgentCapabilitiesSection({
             />
           </AgentField>
         </div>
-      </AgentFieldGroup>
+      </AgentSection>
 
-      <AgentFieldGroup title={COPY.limits.title} hint={COPY.limits.hint}>
+      <AgentSection title={COPY.limits.title} hint={COPY.limits.hint}>
         <div className="grid gap-4 sm:grid-cols-3">
           <AgentField id="agent-limit-steps" label={COPY.limits.stepsLabel} hint={COPY.limits.stepsHint}>
             <Input
@@ -229,7 +228,7 @@ export function AgentCapabilitiesSection({
             />
           </AgentField>
         </div>
-      </AgentFieldGroup>
+      </AgentSection>
     </div>
   );
 }

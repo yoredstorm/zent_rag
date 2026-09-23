@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from "reac
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { AgentAdvancedPanel } from "../components/agentStudio/AgentAdvancedPanel";
+import { AgentStatusBadge } from "../components/agentStudio/AgentField";
 import { AgentResponseProfileSection } from "../components/agentStudio/AgentResponseProfileSection";
 import { AgentPurposeForm } from "../components/agentStudio/AgentPurposeForm";
 import { AgentSourcePicker, AGENT_SOURCE_CAP_MSG, MAX_AGENT_SOURCES } from "../components/agentStudio/AgentSourcePicker";
@@ -773,7 +774,12 @@ export default function AgentStudioPage() {
           className="mb-0"
           title={isNew ? "Nuevo agente" : name || "Agente"}
           subtitle="Dile qué hace, elige fuentes y pruébalo. Siempre puedes volver a editar."
-          meta={<SaveStatus state={saveState} dirtyLabel="Cambios sin guardar" />}
+          meta={
+            <>
+              {!isNew ? <AgentStatusBadge active={isActive} /> : null}
+              <SaveStatus state={saveState} dirtyLabel="Cambios sin guardar" />
+            </>
+          }
           actions={
             <div className="flex flex-wrap items-center gap-2">
               {!isNew && (
@@ -852,49 +858,44 @@ export default function AgentStudioPage() {
             title="Contexto"
             description="Qué hace este agente y con qué material responde."
           />
-          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden p-4">
-            <div className="max-h-[42%] shrink-0 overflow-y-auto pr-1">
-              <AgentPurposeForm
-                name={name}
-                purpose={config.purpose || ""}
-                instructions={systemPrompt}
-                nameError={nameTouched && !name.trim() ? "Necesitas un nombre para guardar." : undefined}
-                onName={(value) => {
-                  setNameTouched(true);
-                  setName(value);
-                }}
-                onPurpose={(value) => setConfig({ ...config, purpose: value })}
-                onInstructions={setSystemPrompt}
-              />
-            </div>
-            <div className="shrink-0 overflow-y-auto border-t border-border pr-1 pt-4">
-              {/* §27-§36: propósito ("qué debe lograr") separado del perfil de
-                  respuesta ("cómo debe explicarlo"). */}
-              <AgentResponseProfileSection
-                profile={responseProfile}
-                onChange={(next) =>
-                  setConfig({ ...config, response_profile: { ...next, preset: next.preset } })
-                }
-                agentId={isNew ? undefined : id}
-                token={session?.token}
-                organizationId={session?.organizationId}
-                purpose={config.purpose || ""}
-                onPurpose={(value) => setConfig({ ...config, purpose: value })}
-                sourceTitles={sources.filter((s) => config.source_ids.includes(s.id)).map((s) => s.name)}
-              />
-            </div>
-            <div className="flex min-h-0 flex-1 flex-col border-t border-border pt-4">
-              <AgentSourcePicker
-                sources={sources}
-                selectedIds={config.source_ids}
-                jobs={jobs}
-                loading={sourcesLoading}
-                indexingId={indexingId}
-                onToggle={toggleSource}
-                onSetSelected={setSelectedSources}
-                onIndex={(sourceId) => void indexSource(sourceId)}
-              />
-            </div>
+          <div className="grid min-h-0 flex-1 auto-rows-min gap-6 overflow-y-auto p-4">
+            <AgentPurposeForm
+              name={name}
+              purpose={config.purpose || ""}
+              instructions={systemPrompt}
+              nameError={nameTouched && !name.trim() ? "Necesitas un nombre para guardar." : undefined}
+              onName={(value) => {
+                setNameTouched(true);
+                setName(value);
+              }}
+              onPurpose={(value) => setConfig({ ...config, purpose: value })}
+              onInstructions={setSystemPrompt}
+              agentId={isNew ? undefined : id}
+              token={session?.token}
+              organizationId={session?.organizationId}
+            />
+            {/* §27-§36: propósito ("qué debe lograr", en Identidad) separado del
+                perfil de respuesta ("cómo debe explicarlo"). */}
+            <AgentResponseProfileSection
+              profile={responseProfile}
+              onChange={(next) =>
+                setConfig({ ...config, response_profile: { ...next, preset: next.preset } })
+              }
+              agentId={isNew ? undefined : id}
+              token={session?.token}
+              organizationId={session?.organizationId}
+              sourceTitles={sources.filter((s) => config.source_ids.includes(s.id)).map((s) => s.name)}
+            />
+            <AgentSourcePicker
+              sources={sources}
+              selectedIds={config.source_ids}
+              jobs={jobs}
+              loading={sourcesLoading}
+              indexingId={indexingId}
+              onToggle={toggleSource}
+              onSetSelected={setSelectedSources}
+              onIndex={(sourceId) => void indexSource(sourceId)}
+            />
           </div>
         </Panel>
         <div className={testVisible ? "min-h-0 h-full" : "hidden min-h-0 h-full lg:block"}>
@@ -906,8 +907,15 @@ export default function AgentStudioPage() {
             inactive={!isNew && !isActive}
             sources={sources}
             selectedIds={config.source_ids}
+            agentName={name.trim() || undefined}
+            model={model}
             onInput={setPlayInput}
             onSubmit={(e) => void runPlayground(e)}
+            onSuggest={(question) => void runPlaygroundMessage(question)}
+            onClear={() => {
+              setTurns([]);
+              setPlayStatus("");
+            }}
             onActivate={() => setIsActive(true)}
             session={session}
           />

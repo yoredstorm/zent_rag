@@ -1,6 +1,10 @@
 import "@testing-library/jest-dom/vitest";
-import { cleanup } from "@testing-library/react";
+import { cleanup, configure } from "@testing-library/react";
 import { afterEach, vi } from "vitest";
+
+// Los `findBy*` esperan 1s por defecto: con la suite en paralelo, un render
+// pesado puede tardar más y el test falla por tiempo, no por comportamiento.
+configure({ asyncUtilTimeout: 3000 });
 
 Object.defineProperty(window, "matchMedia", {
   writable: true,

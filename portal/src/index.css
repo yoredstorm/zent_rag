@@ -644,6 +644,46 @@
   .field-error {
     @apply text-[13px] font-medium text-danger;
   }
+  /* --- Slider ---------------------------------------------- */
+  .range {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    border-radius: 999px;
+    background: linear-gradient(
+      to right,
+      var(--color-accent) 0%,
+      var(--color-accent) var(--range-progress, 0%),
+      var(--color-track) var(--range-progress, 0%),
+      var(--color-track) 100%
+    );
+    outline: none;
+  }
+  .range::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 16px;
+    width: 16px;
+    border-radius: 999px;
+    border: 2px solid var(--color-surface);
+    background: var(--color-accent);
+    cursor: pointer;
+    transition: transform var(--dur-2) var(--ease-out);
+  }
+  .range::-webkit-slider-thumb:hover {
+    transform: scale(1.08);
+  }
+  .range::-moz-range-thumb {
+    height: 16px;
+    width: 16px;
+    border-radius: 999px;
+    border: 2px solid var(--color-surface);
+    background: var(--color-accent);
+    cursor: pointer;
+  }
+  .range:focus-visible {
+    box-shadow: 0 0 0 3px var(--color-accent-soft);
+  }
 
   /* --- Tablas ----------------------------------------------------- */
   .table {

@@ -2,7 +2,7 @@
 // Los identificadores técnicos (zent-default, search_knowledge, top_k…) se
 // muestran como pista secundaria: quien ya los conoce los sigue encontrando.
 
-export const ADVANCED_SUMMARY_TITLE = "Ajustes extra";
+export const ADVANCED_SUMMARY_TITLE = "Ajustes avanzados";
 export const ADVANCED_SUMMARY_HINT = "modelo, herramientas, versiones y publicación";
 
 export type Choice = { value: string; label: string; tech: string };

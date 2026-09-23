@@ -180,10 +180,10 @@ describe("AgentStudio", () => {
     expect(screen.getByRole("link", { name: "Agentes" })).toHaveAttribute("href", "/agents");
   });
 
-  it("abre Ajustes extra en Publicar con un tab antiguo y muestra readiness", async () => {
+  it("abre Ajustes avanzados en Publicar con un tab antiguo y muestra readiness", async () => {
     await renderStudio("/agents/a1?panel=advanced&tab=readiness");
     await screen.findByDisplayValue("Soporte");
-    expect(screen.getByText("Ajustes extra")).toBeInTheDocument();
+    expect(screen.getByText("Ajustes avanzados")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Publicar" })).toHaveAttribute("aria-selected", "true");
     await waitFor(() => expect(screen.getByText("Listo para producción")).toBeInTheDocument());
     expect(
@@ -196,7 +196,7 @@ describe("AgentStudio", () => {
     await screen.findByDisplayValue("Soporte");
     expect(screen.getByLabelText("Qué modelo usar")).toHaveValue("zent-default");
     expect(screen.getByRole("option", { name: /Equilibrado \(recomendado\) · zent-default/ })).toBeInTheDocument();
-    expect(screen.getByLabelText(/Creatividad \(0\.20\)/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/Creatividad · 0\.20/)).toBeInTheDocument();
     await user.click(screen.getByRole("tab", { name: "Qué puede hacer" }));
     expect(screen.getByRole("checkbox", { name: /Buscar en el conocimiento/ })).toBeChecked();
     expect(screen.getByLabelText("Fragmentos a usar")).toHaveValue(8);
@@ -313,7 +313,7 @@ describe("AgentStudio", () => {
     const { user, fetchMock } = await renderStudio();
     await screen.findByDisplayValue("Soporte");
     expect(screen.getByText("Cómo debe responder")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Técnico detallado" }));
+    await user.click(screen.getByRole("button", { name: /Técnico detallado/ }));
     await user.click(screen.getByRole("button", { name: "Guardar" }));
     await waitFor(() => {
       const put = fetchMock.mock.calls.find(
@@ -335,11 +335,58 @@ describe("AgentStudio", () => {
     expect(within(profile).getByRole("button", { name: "Ver cómo respondería" })).toBeInTheDocument();
   });
 
+  it("el propósito tiene label y acción de IA propia", async () => {
+    await renderStudio();
+    await screen.findByDisplayValue("Soporte");
+    expect(screen.getByLabelText("Propósito")).toHaveValue("Atender clientes");
+    expect(screen.getByRole("button", { name: "Generar propósito con IA" })).toBeInTheDocument();
+  });
+
+  it("las instrucciones libres arrancan plegadas y se abren al pedirlas", async () => {
+    const { user } = await renderStudio();
+    await screen.findByDisplayValue("Soporte");
+    expect(screen.queryByLabelText("Texto libre")).toBeNull();
+    await user.click(screen.getByRole("button", { name: /Instrucciones libres/ }));
+    expect(screen.getByLabelText("Texto libre")).toBeInTheDocument();
+  });
+
+  it("el encabezado muestra el estado del agente", async () => {
+    await renderStudio();
+    await screen.findByDisplayValue("Soporte");
+    expect(screen.getByTestId("agent-status")).toHaveTextContent("Activo");
+  });
+
+  it("Probar sugiere preguntas y las ejecuta al clic", async () => {
+    const { user, fetchMock } = await renderStudio();
+    await screen.findByDisplayValue("Soporte");
+    expect(screen.getByText("Preguntale a Soporte")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Resumí lo más importante en 3 puntos/ }));
+    await waitFor(() => {
+      const stream = fetchMock.mock.calls.find((call) =>
+        String(call[0]).includes("/run/stream"),
+      );
+      expect(stream).toBeTruthy();
+      const body = JSON.parse(String(stream?.[1]?.body || "{}"));
+      expect(body.message).toBe("Resumí lo más importante en 3 puntos.");
+    });
+  });
+
+  it("la conversación de prueba se puede limpiar", async () => {
+    const { user } = await renderStudio();
+    await screen.findByDisplayValue("Soporte");
+    await user.click(screen.getByRole("button", { name: /¿Qué cubre la documentación/ }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Limpiar conversación de prueba" })).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: "Limpiar conversación de prueba" }));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /¿Qué cubre la documentación/ })).toBeInTheDocument(),
+    );
+  });
+
   it("§30: sin agente guardado no se simula la generación con IA", async () => {
     const { user } = await renderStudio("/agents/new");
-    expect(
-      await screen.findByText(/Guardá el agente para generar con IA y ver el preview/i),
-    ).toBeInTheDocument();
+    await screen.findByText("Identidad");
     await user.click(screen.getByRole("button", { name: "Generar con IA" }));
     expect(
       await screen.findByText(/Guardá el agente primero: el generador sólo usa datos reales del agente/i),

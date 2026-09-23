@@ -8,7 +8,7 @@ import {
   type DeploymentEvents,
   type Readiness,
 } from "./AgentPublishSection";
-import { ADVANCED_SUMMARY_HINT, ADVANCED_SUMMARY_TITLE } from "./advancedCopy";
+import { ADVANCED_SUMMARY_TITLE } from "./advancedCopy";
 import {
   ADVANCED_TAB_LABELS,
   ADVANCED_TABS,
@@ -140,12 +140,21 @@ export function AgentAdvancedPanel({
   onCreateEmbed: () => void;
   onRevokeEmbed: () => void;
 }) {
+  const toolCount = [semantic, sql, apiCalls].filter(Boolean).length;
+  const summaryHint = [
+    `${toolCount} de 3 herramientas activas`,
+    model ? model : "",
+    versions.length ? `${versions.length} versión${versions.length === 1 ? "" : "es"}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
     <AgentDisclosure
       id="agent-advanced"
       className="mt-4"
       title={ADVANCED_SUMMARY_TITLE}
-      hint={ADVANCED_SUMMARY_HINT}
+      hint={summaryHint}
       open={open}
       onToggle={onToggle}
     >

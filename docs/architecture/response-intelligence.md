@@ -103,15 +103,18 @@ Reglas de composición:
 ## 6. Perfil de respuesta — Agent Studio (§27-§36)
 
 Propósito («qué debe lograr») y perfil («cómo debe explicarlo») son cosas
-distintas; el perfil es estructura, no un system prompt gigante.
+distintas; el perfil es estructura, no un system prompt gigante. En el Studio:
+**Identidad** (nombre + propósito, con generación asistida) →
+**Instrucciones libres** (plegadas, texto libre para casos puntuales) →
+**Cómo debe responder** (perfil) → **Fuentes**.
 
 Campos: `language`, `tone`, `technical_level`, `default_detail`, `audience`,
 `conclusion_first`, `use_headings`, `use_bold`, `use_tables`, `use_examples`,
 `cite_sources`, `show_uncertainty`, `show_practical_implications`,
 `preserve_domain_terms`, `preferred_blueprints`, `custom_instructions`.
 
-- Presets: Claro y didáctico · Técnico detallado · Ejecutivo · Conciso ·
-  Analítico · Con evidencia.
+- Presets (tarjetas seleccionables): Claro y didáctico · Técnico detallado ·
+  Ejecutivo · Conciso · Analítico · Con evidencia.
 - `POST /api/v1/agents/{id}/config/response-profile` — propone un perfil.
 - `POST /api/v1/agents/{id}/config/purpose` — propone un propósito.
 - `POST /api/v1/agents/{id}/config/preview` — preview con conocimiento

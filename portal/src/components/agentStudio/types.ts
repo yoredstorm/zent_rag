@@ -28,6 +28,13 @@ export type ResponseProfilePreset = {
   profile: Partial<ResponseProfile>;
 };
 
+/** Preguntas de arranque del panel Probar: genéricas, sin datos de dominio. */
+export const SUGGESTED_QUESTIONS: string[] = [
+  "¿Qué cubre la documentación que cargaste?",
+  "Resumí lo más importante en 3 puntos.",
+  "¿Qué límites o excepciones debería conocer?",
+];
+
 /** Presets de Agent Studio (§29): el backend sólo guarda el resultado. */
 export const RESPONSE_PROFILE_PRESETS: ResponseProfilePreset[] = [
   {

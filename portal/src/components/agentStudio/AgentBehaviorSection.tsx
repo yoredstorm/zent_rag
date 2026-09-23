@@ -1,4 +1,5 @@
-import { AgentField } from "./AgentField";
+import type { CSSProperties } from "react";
+import { AgentField, AgentFieldGroup } from "./AgentField";
 import {
   COPY,
   CUSTOM_MODEL_VALUE,
@@ -37,98 +38,111 @@ export function AgentBehaviorSection({
   const schemaInvalid = outputSchema.trim() !== "" && !parseSchema(outputSchema);
 
   return (
-    <section className="grid gap-5">
-      <AgentField id="agent-model-route" label={COPY.model.label} hint={COPY.model.hint}>
-        <Select
-          id="agent-model-route"
-          value={gatewayValue}
-          onChange={(e) => {
-            const next = e.target.value;
-            if (next === CUSTOM_MODEL_VALUE) {
-              setModel("");
-              return;
-            }
-            setModel(next);
-          }}
-        >
-          {GATEWAY_ROUTES.map((route) => (
-            <option key={route.value} value={route.value}>
-              {choiceOptionLabel(route)}
-            </option>
-          ))}
-          {routes
-            .filter((r) => !KNOWN_ROUTES.includes(r.name))
-            .map((r) => (
-              <option key={r.name} value={r.name}>
-                {r.name}
+    <div className="grid gap-6">
+      <AgentFieldGroup title="Motor" hint="Quién genera las respuestas y cuánto se arriesga.">
+        <AgentField id="agent-model-route" label={COPY.model.label} hint={COPY.model.hint}>
+          <Select
+            id="agent-model-route"
+            value={gatewayValue}
+            onChange={(e) => {
+              const next = e.target.value;
+              if (next === CUSTOM_MODEL_VALUE) {
+                setModel("");
+                return;
+              }
+              setModel(next);
+            }}
+          >
+            {GATEWAY_ROUTES.map((route) => (
+              <option key={route.value} value={route.value}>
+                {choiceOptionLabel(route)}
               </option>
             ))}
-          {canCustomModel && <option value={CUSTOM_MODEL_VALUE}>Modelo propio…</option>}
-        </Select>
-      </AgentField>
+            {routes
+              .filter((r) => !KNOWN_ROUTES.includes(r.name))
+              .map((r) => (
+                <option key={r.name} value={r.name}>
+                  {r.name}
+                </option>
+              ))}
+            {canCustomModel && <option value={CUSTOM_MODEL_VALUE}>Modelo propio…</option>}
+          </Select>
+        </AgentField>
 
-      {showCustomModel && (
-        <AgentField id="agent-model-custom" label={COPY.model.customLabel} hint={COPY.model.customHint}>
-          <Input
-            id="agent-model-custom"
-            placeholder="openai/gpt-4o-mini"
-            value={isKnownRoute ? "" : model}
-            onChange={(e) => setModel(e.target.value)}
+        {showCustomModel && (
+          <AgentField id="agent-model-custom" label={COPY.model.customLabel} hint={COPY.model.customHint}>
+            <Input
+              id="agent-model-custom"
+              placeholder="openai/gpt-4o-mini"
+              value={isKnownRoute ? "" : model}
+              onChange={(e) => setModel(e.target.value)}
+            />
+          </AgentField>
+        )}
+
+        <AgentField
+          id="agent-temperature"
+          label={`${COPY.temperature.label} · ${config.temperature.toFixed(2)}`}
+          hint={COPY.temperature.hint}
+        >
+          <input
+            id="agent-temperature"
+            aria-describedby="agent-temperature-hint"
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={config.temperature}
+            onChange={(e) => setConfig({ ...config, temperature: Number(e.target.value) })}
+            className="range mt-1 w-full cursor-pointer"
+            style={{ "--range-progress": `${Math.round(config.temperature * 100)}%` } as CSSProperties}
+          />
+          <div className="flex justify-between text-xs text-faint">
+            <span>{COPY.temperature.min}</span>
+            <span>{COPY.temperature.max}</span>
+          </div>
+        </AgentField>
+      </AgentFieldGroup>
+
+      <AgentFieldGroup
+        title="Estilo base"
+        hint="Matiz sobre el propósito. El detalle de la explicación se define en «Cómo debe responder»."
+      >
+        <AgentField id="agent-tone" label={COPY.tone.label} hint={COPY.tone.hint}>
+          <Select
+            id="agent-tone"
+            value={config.tone}
+            onChange={(e) => setConfig({ ...config, tone: e.target.value as AgentConfig["tone"] })}
+          >
+            {TONE_CHOICES.map((tone) => (
+              <option key={tone.value} value={tone.value}>
+                {tone.label} · {tone.hint}
+              </option>
+            ))}
+          </Select>
+        </AgentField>
+      </AgentFieldGroup>
+
+      <AgentFieldGroup
+        title="Formato de salida"
+        hint="Sólo si el agente alimenta otro sistema."
+      >
+        <AgentField
+          id="agent-output-schema"
+          label={COPY.output.label}
+          hint={COPY.output.hint}
+          error={schemaInvalid ? COPY.output.invalid : undefined}
+        >
+          <Textarea
+            id="agent-output-schema"
+            className="min-h-52 font-mono text-xs"
+            value={outputSchema}
+            onChange={(e) => setOutputSchema(e.target.value)}
+            placeholder={'{"product": "string", "warehouse": "string", "stock": "integer"}'}
+            spellCheck={false}
           />
         </AgentField>
-      )}
-
-      <AgentField
-        id="agent-temperature"
-        label={`${COPY.temperature.label} (${config.temperature.toFixed(2)})`}
-        hint={COPY.temperature.hint}
-      >
-        <input
-          id="agent-temperature"
-          aria-describedby="agent-temperature-hint"
-          type="range"
-          min={0}
-          max={1}
-          step={0.05}
-          value={config.temperature}
-          onChange={(e) => setConfig({ ...config, temperature: Number(e.target.value) })}
-          className="h-9 w-full cursor-pointer accent-accent"
-        />
-        <div className="flex justify-between text-xs text-faint">
-          <span>{COPY.temperature.min}</span>
-          <span>{COPY.temperature.max}</span>
-        </div>
-      </AgentField>
-
-      <AgentField id="agent-tone" label={COPY.tone.label} hint={COPY.tone.hint}>
-        <Select
-          id="agent-tone"
-          value={config.tone}
-          onChange={(e) => setConfig({ ...config, tone: e.target.value as AgentConfig["tone"] })}
-        >
-          {TONE_CHOICES.map((tone) => (
-            <option key={tone.value} value={tone.value}>
-              {tone.label} · {tone.hint}
-            </option>
-          ))}
-        </Select>
-      </AgentField>
-
-      <AgentField
-        id="agent-output-schema"
-        label={COPY.output.label}
-        hint={COPY.output.hint}
-        error={schemaInvalid ? COPY.output.invalid : undefined}
-      >
-        <Textarea
-          id="agent-output-schema"
-          className="min-h-52 font-mono text-xs"
-          value={outputSchema}
-          onChange={(e) => setOutputSchema(e.target.value)}
-          placeholder={'{"product": "string", "warehouse": "string", "stock": "integer"}'}
-          spellCheck={false}
-        />
-      </AgentField>
-    </section>
+      </AgentFieldGroup>
+    </div>
   );
 }
