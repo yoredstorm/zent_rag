@@ -266,6 +266,8 @@ class SearchKnowledgeTool(Tool):
                 )
             used: list[str] = []
             lines: list[str] = []
+            evidence: list[dict] = []
+            seen_refs: set[str] = set()
             if exact_block:
                 lines.append(exact_block)
             full_tabular_left = _TABULAR_FULL_CHUNKS
@@ -276,6 +278,34 @@ class SearchKnowledgeTool(Tool):
                     used.append(source_id)
                 knowledge_type = str(metadata.get("knowledge_type") or "")
                 is_tabular = knowledge_type.startswith("table_")
+                # Evidencia estructurada para "Ver flujo": la UI no debe
+                # reconstruir fuentes a partir del texto del output.
+                document_id = str(getattr(chunk, "document_id", "") or "")
+                ref = document_id or source_id or f"chunk-{i}"
+                if ref not in seen_refs:
+                    seen_refs.add(ref)
+                    item: dict = {
+                        "ref": ref,
+                        "document_id": document_id or None,
+                        "source_id": source_id or None,
+                        "chunk_id": str(metadata.get("chunk_id") or document_id or "") or None,
+                        "title": str(
+                            metadata.get("filename")
+                            or metadata.get("title")
+                            or metadata.get("source")
+                            or ""
+                        )[:160]
+                        or None,
+                        "score": round(float(getattr(chunk, "score", 0.0) or 0.0), 4),
+                        "status": "USED",
+                        "knowledge_type": knowledge_type or None,
+                    }
+                    authority = str(metadata.get("authority") or "")
+                    if authority:
+                        item["authority"] = authority[:32]
+                    if is_tabular and metadata.get("table_name"):
+                        item["table"] = str(metadata["table_name"])[:120]
+                    evidence.append(item)
                 if is_tabular:
                     budget = (
                         _TABULAR_FULL_CHARS
@@ -303,12 +333,25 @@ class SearchKnowledgeTool(Tool):
                 tag += "]"
                 lines.append(f"{tag} {chunk.content[:budget]}")
             snippet = "\n\n".join(lines)
+            top_score = max(
+                (float(getattr(chunk, "score", 0.0) or 0.0) for chunk in chunks),
+                default=0.0,
+            )
             return ToolResult(
                 output=snippet[:_MAX_OUTPUT_CHARS],
                 truncated=len(snippet) > _MAX_OUTPUT_CHARS,
                 latency_ms=(time.perf_counter() - start) * 1000,
                 meta={
                     "source_ids": used,
+                    "evidence": evidence[:24],
+                    "retrieval": {
+                        "chunks": len(chunks),
+                        "strategy": (exact_result.metadata or {}).get("strategy")
+                        if exact_result is not None
+                        else None,
+                        "exact": bool(exact_block),
+                        "top_score": round(top_score, 4),
+                    },
                     "stage_ms": stage_ms,
                     "exact": bool(exact_block),
                     "strategy": (exact_result.metadata or {}).get("strategy")

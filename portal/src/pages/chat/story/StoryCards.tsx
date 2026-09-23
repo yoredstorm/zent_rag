@@ -10,6 +10,8 @@ import {
   evidenceStatusLabel,
   reasonText,
   toJudgmentPacks,
+  VERIFICATION_CHECK_LABELS,
+  VERIFICATION_STATE_LABELS,
   type StoryEvent,
 } from "../executionStory";
 import { JudgmentPackCard } from "./JudgmentStory";
@@ -42,9 +44,42 @@ export function StoryCard({ event, detailed }: { event: StoryEvent; detailed: bo
       return <DecisionCard event={event} />;
     case "jev_pack":
       return <JudgmentPackCardWrapper event={event} />;
+    case "verification":
+      return <VerificationCard event={event} />;
     default:
       return null;
   }
+}
+
+/** §19, §20: la verificación muestra qué se comprobó, uno por uno. */
+function VerificationCard({ event }: { event: StoryEvent }) {
+  const checks = Array.isArray(event.metrics.checks)
+    ? (event.metrics.checks as Array<Record<string, unknown>>)
+    : [];
+  if (!checks.length) return null;
+  return (
+    <div className="mt-1 flex flex-col gap-1 text-[11.5px]">
+      {checks.map((check) => {
+        const key = String(check.key ?? "");
+        const state = String(check.state ?? "");
+        return (
+          <span key={key} className="flex flex-wrap items-center gap-2 text-muted">
+            <span className="text-text">{VERIFICATION_CHECK_LABELS[key] ?? key}</span>
+            <Badge tone={checkTone(state)}>
+              {VERIFICATION_STATE_LABELS[state] ?? state}
+            </Badge>
+            {check.detail ? <span className="text-faint">{String(check.detail)}</span> : null}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
+function checkTone(state: string): Tone {
+  if (state === "ok") return "ok";
+  if (state === "blocked" || state === "warn") return "warn";
+  return "neutral";
 }
 
 /** §35: un pack JEV se muestra agrupado, no como tarjetas sueltas. */

@@ -13,12 +13,16 @@ export type PlaygroundTurnResult = {
   method: string;
   lazyIngested?: boolean;
   queryId?: string;
+  /** Run del agente: la referencia de ejecución para memoria y flow. */
+  runId?: string;
   conversationId?: string;
   latencyMs?: number;
   stopped?: boolean;
   error?: string;
   ragTrace?: Record<string, unknown> | null;
   flow?: Record<string, unknown> | null;
+  /** De dónde salió el flow: el backend es la única fuente de verdad. */
+  flowSource?: "backend" | "legacy";
 };
 
 export type StreamHooks = {
@@ -57,7 +61,14 @@ const TOOL_OMIT_REASON: Record<string, string> = {
   no_api_allowlist: "no hay APIs permitidas configuradas",
 };
 
-export function flowFromAgentSteps(
+/**
+ * LEGACY (§33, §34): sólo para runs cuyo `done` NO traía `flow` (servidor viejo).
+ *
+ * Construye un timeline mínimo con lo que el step realmente dice y NO inventa
+ * nada: ni confianza, ni score JEV, ni verificación, ni memoria. Un run nuevo
+ * recibe su flow canónico del backend y nunca pasa por acá.
+ */
+export function flowFromAgentStepsLegacy(
   steps: unknown,
   totalMs: number,
   totals: { model?: string | null; cost?: number | null; totalTokens?: number | null } = {},
@@ -67,84 +78,19 @@ export function flowFromAgentSteps(
         (step): step is Record<string, unknown> => typeof step === "object" && step !== null,
       )
     : [];
-  let tokens = 0;
   let generationMs = 0;
-  let jevUsed = false;
-  let jevScore: number | null = null;
-  let jevVerdict: string | null = null;
-  let jevGrounded: boolean | null = null;
-  let jevComplete: boolean | null = null;
   const timeline: TimelineStep[] = list.map((step) => {
     const type = String(step.type || "");
-    if (type === "tool_routing") {
-      // Un paso `passthrough` solo se mostró: JEV no fue consultado.
-      if (String(step.mode || "") !== "passthrough") jevUsed = true;
-    } else if (type === "termination_gate" || type === "answer_gate") {
-      // `provider=skip` = el gate no llegó a juzgar (JEV no disponible).
-      if (String(step.provider || "jev") !== "skip") jevUsed = true;
-    }
-    tokens += Number(step.tokens || 0);
     if (type === "llm") generationMs += Number(step.latency_ms || 0);
     let detail: string;
     if (type === "tool_routing") {
-      if (String(step.mode || "") === "passthrough") {
-        const reason = String(step.skip_reason || "");
-        const count = Number(step.tools_count || 0);
-        detail =
-          reason === "no_engine"
-            ? "JEV no configurado"
-            : reason === "no_payload"
-              ? "JEV sin respuesta"
-              : reason === "too_few_tools"
-                ? `JEV no consultado · ${count} ${count === 1 ? "herramienta activa" : "herramientas activas"}`
-                : "JEV no consultado";
-      } else {
-        const choice = step.choice ? String(step.choice) : "";
-        const confidence = Number(step.confidence || 0);
-        const score = Number(step.score || 0);
-        detail = [
-          choice || "—",
-          confidence > 0 ? `confianza ${confidence.toFixed(2)}` : "",
-          score > 0 ? `score ${score.toFixed(2)}` : "",
-          step.certain === false ? "sin certeza (decide el LLM)" : "",
-        ]
-          .filter(Boolean)
-          .join(" · ");
-      }
+      detail =
+        String(step.mode || "") === "passthrough"
+          ? "JEV no consultado"
+          : String(step.choice || "—");
     } else if (type === "answer_gate") {
-      const verdict = GATE_VERDICT_LABEL[String(step.verdict || "")] || String(step.verdict || "");
-      detail = [
-        step.grounded === true
-          ? "respaldada"
-          : step.grounded === false
-            ? "sin respaldo"
-            : "",
-        step.complete === true
-          ? "completa"
-          : step.complete === false
-            ? "incompleta"
-            : "",
-        Number(step.quality || 0) > 0 ? `calidad ${Number(step.quality)}/3` : "",
-        verdict ? `→ ${verdict}` : "",
-        Number(step.score || 0) > 0 ? `score ${Number(step.score).toFixed(2)}` : "",
-      ]
-        .filter(Boolean)
-        .join(" · ");
-      const score = Number(step.score || 0);
-      if (score > 0) jevScore = score;
-      if (step.verdict) jevVerdict = String(step.verdict);
-      if (typeof step.grounded === "boolean") jevGrounded = step.grounded;
-      if (typeof step.complete === "boolean") jevComplete = step.complete;
-    } else if (type === "termination_gate") {
-      detail = step.stop ? "cerró el run" : "continuó";
-    } else if (type === "answer_revision") {
-      detail = String(step.feedback || "corrección pedida por JEV").slice(0, 200);
-    } else if (type === "tool_call") {
-      detail = step.error
-        ? String(step.error).slice(0, 160)
-        : step.output
-          ? String(step.output).slice(0, 120)
-          : "herramienta";
+      detail =
+        GATE_VERDICT_LABEL[String(step.verdict || "")] || String(step.verdict || "");
     } else if (type === "tool_filter") {
       const omitted = Array.isArray(step.omitted) ? step.omitted : [];
       detail =
@@ -157,14 +103,8 @@ export function flowFromAgentSteps(
             return reason ? `${tool} (${reason})` : tool;
           })
           .join(" · ") || "sin cambios";
-    } else if (type === "llm") {
-      detail = [
-        step.model ? String(step.model) : "",
-        Number(step.tokens || 0) > 0 ? `${Number(step.tokens)} tokens` : "",
-        step.action ? Object.keys(step.action as object).join(", ") : "",
-      ]
-        .filter(Boolean)
-        .join(" · ");
+    } else if (type === "tool_call") {
+      detail = step.error ? String(step.error).slice(0, 160) : "herramienta";
     } else {
       detail = String(step.detail || step.status || "").slice(0, 160);
     }
@@ -183,35 +123,22 @@ export function flowFromAgentSteps(
       detail,
     };
   });
-  const totalTokens = Number(totals.totalTokens || 0) || tokens;
-  const cost = typeof totals.cost === "number" ? totals.cost : null;
+  const generation: Record<string, unknown> = {};
+  if (totals.model) generation.model = totals.model;
+  if (typeof totals.cost === "number") generation.cost = totals.cost;
+  if (typeof totals.totalTokens === "number") generation.total_tokens = totals.totalTokens;
+  if (generationMs > 0) generation.ms = generationMs;
   return {
+    // Un flow sin eventos canónicos se declara v1: la historia lo marca como
+    // "Flujo histórico" en vez de fingir telemetría completa (§35).
+    flow_version: 1,
+    legacy: true,
     method: "agent",
     verdict: { decider: "Agente", route: "Herramientas" },
-    decision: {
-      evaluated: true,
-      provider: "agent",
-      capability: null,
-      confidence: 0,
-      fallback_used: false,
-      acting: true,
-      mode: jevUsed ? "ReAct + JEV" : "ReAct",
-    },
-    jev: {
-      used: jevUsed,
-      score: jevScore,
-      verdict: jevVerdict,
-      grounded: jevGrounded,
-      complete: jevComplete,
-    },
-    generation: {
-      model: totals.model ?? null,
-      total_tokens: totalTokens,
-      ms: generationMs,
-      cost,
-    },
+    decision: { evaluated: true, provider: "agent_runtime", capability: null },
     steps: timeline,
-    timings: { total_ms: totalMs, generation_ms: generationMs },
+    generation,
+    timings: { total_ms: totalMs },
     fallbacks: [],
   };
 }
@@ -412,6 +339,8 @@ export async function runAgentTurn(input: {
   let model: string | null = null;
   let cost: number | null = null;
   let totalTokens: number | null = null;
+  let runId: string | null = null;
+  let backendFlow: Record<string, unknown> | null = null;
 
   await readSse(
     res,
@@ -422,6 +351,8 @@ export async function runAgentTurn(input: {
         status?: string;
         message?: string;
         steps?: unknown;
+        run_id?: string;
+        flow?: Record<string, unknown> | null;
         total_latency_ms?: number;
         total_tokens?: number;
         cost?: number;
@@ -438,6 +369,10 @@ export async function runAgentTurn(input: {
         model = payload.model ?? null;
         cost = typeof payload.cost === "number" ? payload.cost : null;
         totalTokens = typeof payload.total_tokens === "number" ? payload.total_tokens : null;
+        runId = payload.run_id ?? null;
+        // El backend es la autoridad: si manda flow canónico, se usa tal cual.
+        backendFlow =
+          payload.flow && typeof payload.flow === "object" ? payload.flow : null;
         input.hooks?.onDelta?.(answer);
         input.hooks?.onPhase?.("");
       } else if (event === "error") {
@@ -451,10 +386,14 @@ export async function runAgentTurn(input: {
     text: answer || "(sin respuesta)",
     sources: used.length > 0 ? used.map((id) => ({ text: id })) : undefined,
     method: "agent",
+    runId: runId ?? undefined,
     conversationId: input.conversationId ?? undefined,
     latencyMs,
     error: errors[0],
-    flow: flowFromAgentSteps(steps, latencyMs, { model, cost, totalTokens }),
+    flow:
+      backendFlow ??
+      flowFromAgentStepsLegacy(steps, latencyMs, { model, cost, totalTokens }),
+    flowSource: backendFlow ? "backend" : "legacy",
   };
 }
 

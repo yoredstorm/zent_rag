@@ -589,12 +589,16 @@ def test_agent_steps_to_flow_mapea_verificador() -> None:
     assert mapped["steps"][1]["name"] == "JEV verifica respuesta"
     assert "aprobada" in mapped["steps"][1]["detail"]
     assert "calidad 3/3" in mapped["steps"][1]["detail"]
+    # El resumen JEV declara llamadas y fases reales además del veredicto.
     assert mapped["jev"] == {
         "used": True,
+        "calls": 2,
+        "phases": ["tool_routing", "answer_gate"],
         "score": 0.9,
         "verdict": "approve",
         "grounded": True,
         "complete": True,
+        "quality": 3.0,
     }
 
 

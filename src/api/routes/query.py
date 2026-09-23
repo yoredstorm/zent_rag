@@ -262,25 +262,34 @@ async def _maybe_dispatch(
         from src.runtime.agent_flow import steps_to_flow
 
         mapped = steps_to_flow(dispatched.data.get("steps"))
+        # Procedencia honesta (§8, §9): el target fue explícito (usuario/caller),
+        # no hay RoutingDecision detrás. Sin confidence real, no se inventa 0.
+        decision_provider = str(dispatched.data.get("decision_provider") or "explicit_target")
+        decision_confidence = dispatched.data.get("confidence")
+        decision_block: dict = {
+            "evaluated": True,
+            "provider": decision_provider,
+            "capability": dispatched.capability,
+            "fallback_used": False,
+            "acting": True,
+            "mode": "ReAct + JEV" if mapped["jev"]["used"] else "ReAct",
+        }
+        if isinstance(decision_confidence, (int, float)) and not isinstance(decision_confidence, bool):
+            decision_block["confidence"] = round(float(decision_confidence), 4)
         result.flow = {
             "query_id": str(result.query_id),
             "organization_id": str(organization_id),
             "conversation_id": str(result.conversation_id) if result.conversation_id else None,
             "method": method,
             "status": str(result.status),
+            "execution": {"kind": f"{method}_run", "id": dispatched.run_id},
             "verdict": {"decider": decider, "route": route},
-            "decision": {
-                "evaluated": True,
-                "provider": method,
-                "capability": dispatched.capability,
-                "confidence": 0,
-                "fallback_used": False,
-                "acting": True,
-                "mode": "ReAct + JEV" if mapped["jev"]["used"] else "ReAct",
-            },
+            "decision": decision_block,
             "jev": mapped["jev"],
             "generation": {
                 "model": dispatched.data.get("model"),
+                "prompt_tokens": int(dispatched.prompt_tokens or 0),
+                "completion_tokens": int(dispatched.completion_tokens or 0),
                 "total_tokens": int(dispatched.tokens or 0),
                 "cost": float(dispatched.cost or 0.0),
                 "ms": round(float(dispatched.latency_ms or 0.0), 1),

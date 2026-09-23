@@ -18,6 +18,10 @@ export type ChatTurn = {
   emptyHint?: boolean;
   error?: string;
   flow?: Record<string, unknown> | null;
+  /** Run del agente: referencia de ejecución para "Ver flujo" y memoria. */
+  runId?: string;
+  /** Pregunta que originó el turno (contexto para memoria y replay). */
+  question?: string;
 };
 
 export function AgentTestChat({
@@ -241,6 +245,9 @@ export function AgentTestChat({
           }}
           flow={(flowFor?.flow as Record<string, unknown> | null) ?? null}
           role="admin"
+          runId={flowFor?.runId}
+          method="agent"
+          question={flowFor?.question}
           session={session}
         />
       ) : null}

@@ -99,6 +99,47 @@ export type StoryIncident = {
 
 export type StoryBreakdownRow = { label: string; ms: number; costUsd: number | null };
 
+/** §19-§21: la verificación no es un booleano, es un conjunto de comprobaciones. */
+export type StoryVerificationCheck = {
+  key: string;
+  label: string;
+  state: string;
+  stateLabel: string;
+  detail?: string;
+};
+
+export type StoryVerification = {
+  overall: string;
+  label: string;
+  tone: "ok" | "warn" | "neutral";
+  checks: StoryVerificationCheck[];
+};
+
+/** §24, §25: qué señales de observabilidad llegaron realmente. */
+export type StoryTelemetryDimension = {
+  key: string;
+  label: string;
+  state: string;
+  stateLabel: string;
+};
+
+export type StoryTelemetry = {
+  dimensions: StoryTelemetryDimension[];
+  quality: "full" | "partial" | "legacy";
+  qualityLabel: string;
+  qualityTone: "ok" | "warn" | "neutral";
+  /** Dimensiones no observadas (no son ceros ni fallos). */
+  missing: string[];
+};
+
+/** §36: cuántos steps crudos llegaron y cuántos se mapearon a eventos. */
+export type StoryCounts = {
+  canonicalEvents: number;
+  rawSteps: number;
+  mapped: number;
+  unmapped: number;
+};
+
 /** §36-§40: un juicio con su tipo, su decisión y su efecto. Sin CoT. */
 export type StoryJudgment = {
   id: string;
@@ -190,6 +231,16 @@ export type ExecutionStory = {
   judgmentPacks: StoryJudgmentPack[];
   /** Efecto agregado del juicio previo (§42, §43). */
   jevImpact: StoryJevImpact | null;
+  /** Verificación real del run (§19-§21). */
+  verification: StoryVerification;
+  /** Observabilidad realmente recibida (§24, §25). */
+  telemetry: StoryTelemetry;
+  /** Steps crudos vs eventos canónicos (§36). */
+  counts: StoryCounts;
+  /** Run de la ejecución cuando existe (agent/workflow). */
+  runId?: string;
+  /** Llamadas al modelo realmente observadas (§42). */
+  llmCalls?: number;
   technical: {
     provider?: string;
     decider?: string;
@@ -646,6 +697,62 @@ export function scoreLevelLabel(key: string): string {
   return SCORE_LEVEL_LABELS[key.toLowerCase()] ?? key;
 }
 
+
+// ---------------------------------------------------------------------------
+// Verificación y telemetría (§19-§25, §47)
+// ---------------------------------------------------------------------------
+
+/** §21: resultados posibles del run, en lenguaje honesto. */
+export const VERIFICATION_OVERALL_LABELS: Record<string, string> = {
+  verified: "Verificada",
+  partial: "Verificada parcialmente",
+  not_verified: "Sin verificación",
+  blocked: "Retenida por seguridad",
+};
+
+export const VERIFICATION_CHECK_LABELS: Record<string, string> = {
+  analysis_complete: "Análisis",
+  inference_supported: "Inferencia",
+  answer_gate: "Gate de respuesta",
+  grounding: "Respaldo en fuentes",
+  claims: "Afirmaciones",
+};
+
+export const VERIFICATION_STATE_LABELS: Record<string, string> = {
+  ok: "Comprobado",
+  warn: "Con reservas",
+  blocked: "Bloqueado",
+  not_observed: "No se ejecutó",
+  not_applicable: "No aplica",
+};
+
+/** §24: dimensiones de observabilidad y sus estados. */
+export const TELEMETRY_LABELS: Record<string, string> = {
+  routing: "Decisión",
+  reasoning: "Razonamiento",
+  company_context: "Contexto empresarial",
+  jev: "JEV",
+  tools: "Herramientas",
+  evidence: "Evidencia",
+  generation: "Generación",
+  verification: "Verificación",
+  memory: "Memoria",
+  cost: "Costo",
+  timings: "Tiempos",
+};
+
+export const TELEMETRY_STATE_LABELS: Record<string, string> = {
+  observed: "Observado",
+  not_applicable: "No aplica",
+  not_available: "No disponible",
+  not_observed: "No observado",
+};
+
+export const DATA_QUALITY_LABELS: Record<string, string> = {
+  full: "Telemetría completa",
+  partial: "Telemetría parcial",
+  legacy: "Flujo histórico",
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -1174,7 +1281,6 @@ export function buildExecutionStory(flow: Flow | null | undefined): ExecutionSto
   const decision = record(safe.decision);
   const verdict = record(safe.verdict);
   const generation = record(safe.generation);
-  const grounding = groundingFor(safe, events);
   const jev = record(safe.jev);
   const totalMs = num(record(safe.timings).total_ms) ?? num(safe.total_ms) ?? 0;
   const reasoningShape = events
@@ -1184,23 +1290,49 @@ export function buildExecutionStory(flow: Flow | null | undefined): ExecutionSto
   const analysisComplete = completion ? completion.complete !== false : undefined;
   const sourcesEvent = events.find((event) => event.kind === "sources");
   const sourcesCount =
-    num(record(sourcesEvent?.metrics).sources) ?? list(safe.sources).length;
-  const costUsd = num(record(generation).cost);
+    num(record(sourcesEvent?.metrics).sources) ??
+    list(safe.sources).length;
+  const costUsd = num(record(generation).cost) ?? num(safe.cost);
   const hasReasoning = phases.some((phase) => phase.id === "reasoning");
   const judgmentPacks = toJudgmentPacks(events);
   const jevImpact = buildJevImpact(safe, judgmentPacks);
+  const verification = verificationFor(safe, events);
+  const execution = record(safe.execution);
+  const counts: StoryCounts = {
+    canonicalEvents: events.length,
+    rawSteps: list(safe.steps).length,
+    unmapped: events.filter((event) => event.technical?.unmapped === true).length,
+    mapped: 0,
+  };
+  counts.mapped = Math.max(0, counts.canonicalEvents - counts.unmapped);
+  const telemetry = telemetryFor(safe, {
+    legacy,
+    verification,
+    sourcesCount,
+  });
+  const llmCalls = num(generation.calls);
+  const confidence = num(decision.confidence);
 
   return {
     version: num(safe.flow_version) ?? (legacy ? 1 : 2),
     legacy,
     status: str(safe.status) || "completed",
     headline: headlineFor(str(safe.status), analysisComplete),
-    headlineStatus: str(safe.status) === "completed" ? "ok" : "warn",
+    // §47: la telemetría faltante NO convierte el run en warning. Sólo lo hacen
+    // un error real, una verificación bloqueada, un fallback material o una
+    // retención por seguridad.
+    headlineStatus: headlineStatusFor({
+      status: str(safe.status),
+      events,
+      verification,
+      fallbacks: list(safe.fallbacks),
+      analysisComplete,
+    }),
     narrative: narrativeFor({ events, sourcesCount, analysisComplete }),
     routeLabel: routeLabelFor(safe, events),
-    outcomeLabel: outcomeLabelFor(grounding),
-    outcomeTone: grounding.grounded === false ? "warn" : grounding.grounded ? "ok" : "neutral",
-    confidenceLabel: confidenceLabelFor(num(decision.confidence)),
+    outcomeLabel: verification.label,
+    outcomeTone: verification.tone,
+    confidenceLabel: confidenceLabelFor(confidence),
     evidenceLabel: sourcesCount ? `${sourcesCount} fuente${sourcesCount === 1 ? "" : "s"}` : "",
     // El razonamiento sólo se anuncia cuando la historia lo demuestra.
     reasoningLabel: hasReasoning
@@ -1210,28 +1342,58 @@ export function buildExecutionStory(flow: Flow | null | undefined): ExecutionSto
     costUsd: costUsd ?? null,
     phases,
     incidents,
-    breakdown: breakdownFor(phases, generation),
+    breakdown: breakdownFor(phases),
     judgmentPacks,
     jevImpact,
+    verification,
+    telemetry,
+    counts,
+    runId: str(execution.id) || undefined,
     technical: {
       provider: str(decision.provider) || undefined,
       decider: str(verdict.decider) || undefined,
       model: str(generation.model) || undefined,
       jevUsed: typeof jev.used === "boolean" ? jev.used : undefined,
+      // §10: no existe un "Score JEV" universal. Sólo se expone si el juicio
+      // realmente produjo un score (p.ej. el gate de respuesta).
       jevScore: num(jev.score) ?? null,
-      confidence: num(decision.confidence) ?? null,
-      tokens: {
-        prompt: num(generation.prompt_tokens) ?? 0,
-        completion: num(generation.completion_tokens) ?? 0,
-        total: num(generation.total_tokens) ?? 0,
-      },
+      confidence: confidence ?? null,
+      tokens:
+        num(generation.prompt_tokens) ||
+        num(generation.completion_tokens) ||
+        num(generation.total_tokens)
+          ? {
+              prompt: num(generation.prompt_tokens) ?? 0,
+              completion: num(generation.completion_tokens) ?? 0,
+              total: num(generation.total_tokens) ?? 0,
+            }
+          : undefined,
       answerability: Object.keys(record(safe.answerability)).length
         ? record(safe.answerability)
         : undefined,
       pricing: Object.keys(record(safe.pricing)).length ? record(safe.pricing) : undefined,
       raw: safe,
     },
+    llmCalls,
   };
+}
+
+/** §47: sólo señales reales convierten el run en "Revisar". */
+function headlineStatusFor(input: {
+  status: string;
+  events: StoryEvent[];
+  verification: StoryVerification;
+  fallbacks: Flow[];
+  analysisComplete: boolean | undefined;
+}): StoryStatus {
+  if (input.status && input.status !== "completed") return "warn";
+  if (input.events.some((event) => event.status === "error")) return "warn";
+  if (input.verification.overall === "blocked") return "warn";
+  if (input.analysisComplete === false) return "warn";
+  if (input.fallbacks.length) return "warn";
+  if (input.events.some((event) => event.kind === "guardrail")) return "warn";
+  // La telemetría faltante es información, no una incidencia (§46, §47).
+  return "ok";
 }
 
 function worstStatus(statuses: StoryStatus[]): StoryStatus {
@@ -1285,8 +1447,30 @@ function phaseSubtitle(id: StoryPhaseId, events: StoryEvent[]): string {
     }
   }
   if (id === "generation") {
-    const tokens = num(record(events[0]?.metrics).total_tokens);
+    const metrics = record(events[0]?.metrics);
+    const tokens = num(metrics.total_tokens);
     if (tokens) parts.push(`${tokens} tokens`);
+    // §42, §43: si hubo varias llamadas al modelo, no se atribuye todo a
+    // "redactar": se declara cuántas fueron de razonamiento y cuántas respuesta.
+    const llmEvents = events.filter((event) => event.kind === "llm");
+    const calls = num(record(events.find((event) => event.kind === "generation")?.technical).calls);
+    const total = calls ?? llmEvents.length;
+    if (total > 1) {
+      const answerCalls = events
+        .map((event) => num(record(event.technical).answer_calls))
+        .find((value) => value !== undefined);
+      const reasoningCalls = events
+        .map((event) => num(record(event.technical).reasoning_calls))
+        .find((value) => value !== undefined);
+      const detail = [
+        `${total} llamadas al modelo`,
+        reasoningCalls ? `${reasoningCalls} de razonamiento` : "",
+        answerCalls ? `${answerCalls} de respuesta` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      parts.push(detail);
+    }
   }
   if (id === "verification") {
     const completion = events.find((event) => event.completion)?.completion;
@@ -1369,19 +1553,6 @@ function routeLabelFor(flow: Flow, events: StoryEvent[]): string {
   return route || "Respuesta";
 }
 
-/** El grounding puede venir del bloque histórico o de su evento canónico. */
-function groundingFor(flow: Flow, events: StoryEvent[]): Flow {
-  const block = record(flow.grounding);
-  if (Object.keys(block).length) return block;
-  const event = events.find((item) => item.kind === "grounding");
-  if (!event) return {};
-  return {
-    grounded: event.metrics.grounded,
-    score: event.metrics.score,
-    ms: event.durationMs,
-  };
-}
-
 /** §22: la tarjeta de completitud muestra también lo que faltó en el escenario. */
 function enrichCompletionEvents(events: StoryEvent[]): StoryEvent[] {
   const missing: string[] = [];
@@ -1406,25 +1577,214 @@ function enrichCompletionEvents(events: StoryEvent[]): StoryEvent[] {
   });
 }
 
-function outcomeLabelFor(grounding: Flow): string {
-  if (grounding.grounded === true) return "Respaldada";
-  if (grounding.grounded === false) return "Sin respaldo";
-  return "Sin verificación";
+/**
+ * §19, §20: la verificación se compone de las comprobaciones REALES del run.
+ * Nunca se dice "Verificada" si sólo corrió el gate de respuesta.
+ */
+function verificationFor(flow: Flow, events: StoryEvent[]): StoryVerification {
+  const block = record(flow.verification);
+  const rawChecks = Array.isArray(block.checks) ? list(block.checks) : [];
+  const checks: StoryVerificationCheck[] = rawChecks.map((check) => {
+    const key = str(check.key);
+    const state = str(check.state) || "not_observed";
+    return {
+      key,
+      label: VERIFICATION_CHECK_LABELS[key] ?? key.replace(/_/g, " "),
+      state,
+      stateLabel: VERIFICATION_STATE_LABELS[state] ?? state,
+      detail: check.detail ? str(check.detail) : undefined,
+    };
+  });
+
+  // Fallback para flows sin bloque de verificación: se leen los eventos reales.
+  if (!checks.length) {
+    const gate = events.find((event) => event.kind === "answer_gate");
+    if (gate) {
+      const verdict = str(gate.metrics.verdict);
+      const provider = str(gate.metrics.provider || "jev");
+      const state =
+        provider === "skip"
+          ? "not_observed"
+          : verdict === "abstain"
+            ? "blocked"
+            : verdict === "revise"
+              ? "warn"
+              : "ok";
+      checks.push({
+        key: "answer_gate",
+        label: VERIFICATION_CHECK_LABELS.answer_gate,
+        state,
+        stateLabel: VERIFICATION_STATE_LABELS[state] ?? state,
+        detail: verdict || undefined,
+      });
+      if (typeof gate.metrics.grounded === "boolean") {
+        const grounded = gate.metrics.grounded === true;
+        checks.push({
+          key: "grounding",
+          label: VERIFICATION_CHECK_LABELS.grounding,
+          state: grounded ? "ok" : "blocked",
+          stateLabel: grounded ? VERIFICATION_STATE_LABELS.ok : VERIFICATION_STATE_LABELS.blocked,
+        });
+      }
+    }
+    const grounding = events.find((event) => event.kind === "grounding");
+    if (grounding && typeof grounding.metrics.grounded === "boolean") {
+      const grounded = grounding.metrics.grounded === true;
+      checks.push({
+        key: "grounding",
+        label: VERIFICATION_CHECK_LABELS.grounding,
+        state: grounded ? "ok" : "blocked",
+        stateLabel: grounded ? VERIFICATION_STATE_LABELS.ok : VERIFICATION_STATE_LABELS.blocked,
+      });
+    }
+    const completion = events.find((event) => event.completion)?.completion;
+    if (completion && typeof completion.complete === "boolean") {
+      const complete = completion.complete === true;
+      checks.push({
+        key: "analysis_complete",
+        label: VERIFICATION_CHECK_LABELS.analysis_complete,
+        state: complete ? "ok" : "blocked",
+        stateLabel: complete
+          ? VERIFICATION_STATE_LABELS.ok
+          : VERIFICATION_STATE_LABELS.blocked,
+      });
+    }
+  }
+
+  const declared = str(block.overall);
+  const overall =
+    declared ||
+    (checks.some((check) => check.state === "blocked")
+      ? "blocked"
+      : checks.length === 0
+        ? "not_verified"
+        : checks.some((check) => check.key === "grounding" && check.state === "ok")
+          ? "verified"
+          : "partial");
+  const tone: StoryVerification["tone"] =
+    overall === "verified" ? "ok" : overall === "blocked" ? "warn" : "neutral";
+  return {
+    overall,
+    label: verificationLabel(overall, checks),
+    tone,
+    checks,
+  };
+}
+
+/** §21: el resultado se nombra por lo que realmente pasó, no por un default. */
+function verificationLabel(overall: string, checks: StoryVerificationCheck[]): string {
+  if (overall === "verified") return "Verificada";
+  if (overall === "partial") return "Verificada parcialmente";
+  if (overall === "not_verified") return "Sin verificación";
+  const gate = checks.find((check) => check.key === "answer_gate");
+  if (gate?.detail === "abstain") return "Retenida por seguridad";
+  const analysis = checks.find((check) => check.key === "analysis_complete");
+  if (analysis?.state === "blocked") return "Análisis incompleto";
+  return "Evidencia insuficiente";
+}
+
+const TELEMETRY_ORDER = [
+  "routing",
+  "reasoning",
+  "company_context",
+  "jev",
+  "tools",
+  "evidence",
+  "generation",
+  "verification",
+  "memory",
+  "cost",
+  "timings",
+];
+
+/**
+ * §24, §25: qué señales llegaron. No es una confidence ni un score agregado:
+ * cada dimensión declara si se observó, no aplica o no está disponible.
+ */
+function telemetryFor(
+  flow: Flow,
+  options: {
+    legacy: boolean;
+    verification: StoryVerification;
+    sourcesCount: number;
+  },
+): StoryTelemetry {
+  const { legacy, verification, sourcesCount } = options;
+  const declared = record(flow.telemetry);
+  const rawSteps = list(flow.steps);
+  const generation = record(flow.generation);
+  const jev = record(flow.jev);
+
+  const state = (key: string): string => {
+    const value = str(declared[key]);
+    if (value) return value;
+    if (legacy) return "not_available";
+    switch (key) {
+      case "routing":
+        return Object.keys(record(flow.decision)).length ? "observed" : "not_available";
+      case "jev":
+        return jev.used === true ? "observed" : "not_applicable";
+      case "tools":
+        return rawSteps.some((step) => str(step.type) === "tool_call")
+          ? "observed"
+          : "not_applicable";
+      case "evidence":
+        return sourcesCount ? "observed" : "not_applicable";
+      case "generation":
+        return Object.keys(generation).length ? "observed" : "not_available";
+      case "verification":
+        return verification.checks.length ? "observed" : "not_available";
+      case "cost":
+        return num(generation.cost) ? "observed" : "not_available";
+      case "timings":
+        return num(record(flow.timings).total_ms) ? "observed" : "not_available";
+      default:
+        return "not_observed";
+    }
+  };
+
+  const dimensions: StoryTelemetryDimension[] = TELEMETRY_ORDER.map((key) => {
+    const value = state(key);
+    return {
+      key,
+      label: TELEMETRY_LABELS[key] ?? key,
+      state: value,
+      stateLabel: TELEMETRY_STATE_LABELS[value] ?? value,
+    };
+  });
+  const missing = dimensions
+    .filter((dimension) => dimension.state === "not_available" || dimension.state === "not_observed")
+    .map((dimension) => dimension.key);
+
+  const quality: StoryTelemetry["quality"] = legacy
+    ? "legacy"
+    : missing.length === 0
+      ? "full"
+      : "partial";
+  return {
+    dimensions,
+    quality,
+    qualityLabel: DATA_QUALITY_LABELS[quality],
+    qualityTone: quality === "full" ? "ok" : quality === "legacy" ? "neutral" : "warn",
+    missing,
+  };
 }
 
 function confidenceLabelFor(confidence: number | undefined): string {
-  if (!confidence) return "";
+  // §7: un 0 real se muestra; "sin dato" no inventa una etiqueta.
+  if (confidence === undefined) return "";
   if (confidence >= 0.8) return "Alta";
   if (confidence >= 0.6) return "Media";
   return "Baja";
 }
 
-function breakdownFor(phases: StoryPhase[], generation: Flow): StoryBreakdownRow[] {
-  const cost = num(generation.cost) ?? null;
+function breakdownFor(phases: StoryPhase[]): StoryBreakdownRow[] {
+  // §44: el costo del run es costo de LLM y no se atribuye a una fase que no lo
+  // produjo. Si sólo existe el total, cada fase queda sin costo.
   return phases.map((phase) => ({
     label: phase.title,
     ms: phase.durationMs,
-    costUsd: phase.id === "generation" ? cost : null,
+    costUsd: null,
   }));
 }
 

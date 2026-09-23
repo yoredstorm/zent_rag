@@ -8,7 +8,7 @@ import { AgentPurposeForm } from "../components/agentStudio/AgentPurposeForm";
 import { AgentSourcePicker, AGENT_SOURCE_CAP_MSG, MAX_AGENT_SOURCES } from "../components/agentStudio/AgentSourcePicker";
 import { AgentTestChat, type ChatTurn } from "../components/agentStudio/AgentTestChat";
 import { hasDbSources, sourceTypesForSelection } from "../components/agentStudio/toolApplicability";
-import { flowFromAgentSteps } from "./chat/runPlaygroundTurn";
+import { flowFromAgentStepsLegacy } from "./chat/runPlaygroundTurn";
 import {
   type AdvancedTab,
   type Agent,
@@ -542,6 +542,8 @@ export default function AgentStudioPage() {
       let model: string | null = null;
       let cost: number | null = null;
       let totalTokens: number | null = null;
+      let runId: string | null = null;
+      let backendFlow: Record<string, unknown> | null = null;
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -563,6 +565,8 @@ export default function AgentStudioPage() {
             status?: string;
             message?: string;
             steps?: unknown;
+            run_id?: string;
+            flow?: Record<string, unknown> | null;
             total_latency_ms?: number;
             total_tokens?: number;
             cost?: number;
@@ -580,6 +584,12 @@ export default function AgentStudioPage() {
             cost = typeof payloadJson.cost === "number" ? payloadJson.cost : null;
             totalTokens =
               typeof payloadJson.total_tokens === "number" ? payloadJson.total_tokens : null;
+            runId = payloadJson.run_id ?? null;
+            // El backend manda el flow canónico: el portal no lo reconstruye.
+            backendFlow =
+              payloadJson.flow && typeof payloadJson.flow === "object"
+                ? payloadJson.flow
+                : null;
             setPlayStatus(payloadJson.status === "completed" ? "Listo" : payloadJson.status || "Listo");
           } else if (eventName === "error") {
             throw new Error(payloadJson.message || "Error en el stream");
@@ -594,7 +604,11 @@ export default function AgentStudioPage() {
           sources: used,
           emptyHint: Boolean(config.source_ids.length) && used.length === 0 && errors.length === 0,
           error: errors[0],
-          flow: flowFromAgentSteps(steps, totalMs, { model, cost, totalTokens }),
+          runId: runId ?? undefined,
+          question: message,
+          flow:
+            backendFlow ??
+            flowFromAgentStepsLegacy(steps, totalMs, { model, cost, totalTokens }),
         },
       ]);
     } catch (err) {

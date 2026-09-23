@@ -1,9 +1,15 @@
-import { describe, expect, it } from "vitest";
-import { flowFromAgentSteps } from "./runPlaygroundTurn";
+// =============================================================================
+// runPlaygroundTurn — el portal NO reconstruye la verdad del run (§1, §33, §34)
+// =============================================================================
+// El flow canónico lo construye el backend y viaja en el `done`. El builder
+// local queda como fallback legacy explícito y no inventa NADA: ni confianza,
+// ni score JEV, ni verificación, ni memoria.
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { flowFromAgentStepsLegacy, runAgentTurn } from "./runPlaygroundTurn";
 
-describe("flowFromAgentSteps", () => {
-  it("mapea pasos JEV y de herramienta con ms", () => {
-    const flow = flowFromAgentSteps(
+describe("flowFromAgentStepsLegacy", () => {
+  it("mapea el timeline mínimo sin inventar señales JEV", () => {
+    const flow = flowFromAgentStepsLegacy(
       [
         { type: "tool_routing", choice: "search_knowledge", confidence: 0.9, latency_ms: 120 },
         { type: "llm", tokens: 180, latency_ms: 2761, action: { tool: "search_knowledge" } },
@@ -22,22 +28,22 @@ describe("flowFromAgentSteps", () => {
       "Respuesta final",
     ]);
     expect(steps[0].ms).toBe(120);
-    expect(steps[0].detail).toContain("confianza 0.90");
-    expect(flow.jev).toMatchObject({ used: true });
-    expect((flow.decision as { mode: string }).mode).toBe("ReAct + JEV");
-    expect((flow.generation as { total_tokens: number }).total_tokens).toBe(180);
+    // Sin flow canónico no hay veredictos ni scores: sólo lo que el step dice.
+    expect(steps[0].detail).toBe("search_knowledge");
+    expect(flow.jev).toBeUndefined();
+    expect(flow.confidence).toBeUndefined();
+    expect(flow.flow_version).toBe(1);
+    expect(flow.legacy).toBe(true);
   });
 
-  it("no finge JEV cuando el router no lo consultó", () => {
-    const flow = flowFromAgentSteps(
+  it("no declara JEV cuando el router no lo consultó", () => {
+    const flow = flowFromAgentStepsLegacy(
       [
         {
           type: "tool_routing",
           mode: "passthrough",
           skip_reason: "too_few_tools",
           tools_count: 1,
-          choice: null,
-          certain: false,
           latency_ms: 0.2,
         },
         { type: "llm", tokens: 100, latency_ms: 900 },
@@ -47,42 +53,25 @@ describe("flowFromAgentSteps", () => {
     );
     const steps = flow.steps as { name: string; detail: string }[];
     expect(steps[0].name).toBe("JEV elige herramienta");
-    expect(steps[0].detail).toBe("JEV no consultado · 1 herramienta activa");
-    expect(steps[0].detail).not.toContain("sin certeza");
-    expect(flow.jev).toMatchObject({ used: false });
-    expect((flow.decision as { mode: string }).mode).toBe("ReAct");
+    expect(steps[0].detail).toBe("JEV no consultado");
+    expect(flow.jev).toBeUndefined();
   });
 
-  it("muestra JEV no configurado en passthrough sin motor", () => {
-    const flow = flowFromAgentSteps(
-      [
-        { type: "tool_routing", mode: "passthrough", skip_reason: "no_engine", latency_ms: 0 },
-        { type: "final" },
-      ],
-      1000,
-    );
-    const steps = flow.steps as { detail: string }[];
-    expect(steps[0].detail).toBe("JEV no configurado");
-    expect(flow.jev).toMatchObject({ used: false });
-  });
-
-  it("sin pasos JEV deja used=false y modo ReAct", () => {
-    const flow = flowFromAgentSteps(
+  it("marca warning sólo cuando el step falló", () => {
+    const flow = flowFromAgentStepsLegacy(
       [
         { type: "llm", tokens: 100, latency_ms: 900 },
         { type: "tool_call", tool: "call_api", latency_ms: 300, error: "blocked" },
       ],
       1500,
     );
-    expect(flow.jev).toMatchObject({ used: false });
-    expect((flow.decision as { mode: string }).mode).toBe("ReAct");
     const steps = flow.steps as { name: string; status: string }[];
     expect(steps[1].name).toBe("call_api");
     expect(steps[1].status).toBe("warn");
   });
 
-  it("incluye modelo, costo y tiempo de razonamiento del run", () => {
-    const flow = flowFromAgentSteps(
+  it("conserva modelo, costo y tokens reales del run", () => {
+    const flow = flowFromAgentStepsLegacy(
       [
         { type: "llm", tokens: 1200, latency_ms: 2700 },
         { type: "llm", tokens: 701, latency_ms: 6100 },
@@ -100,11 +89,13 @@ describe("flowFromAgentSteps", () => {
     expect(generation.cost).toBe(0.0012);
     expect(generation.ms).toBe(8800);
     expect(generation.total_tokens).toBe(1901);
-    expect((flow.timings as { generation_ms: number }).generation_ms).toBe(8800);
+    // Sin datos no se escribe la clave (unknown != 0).
+    const empty = flowFromAgentStepsLegacy([{ type: "final" }], 1000);
+    expect(empty.generation).toEqual({});
   });
 
   it("mapea herramientas omitidas por fuentes del agente", () => {
-    const flow = flowFromAgentSteps(
+    const flow = flowFromAgentStepsLegacy(
       [
         {
           type: "tool_filter",
@@ -124,48 +115,94 @@ describe("flowFromAgentSteps", () => {
     expect(steps[0].detail).toContain("query_database (el agente no tiene fuentes de datos)");
     expect(steps[0].detail).toContain("call_api (no hay APIs permitidas configuradas)");
   });
+});
 
-  it("mapea el verificador de respuesta de JEV con score", () => {
-    const flow = flowFromAgentSteps(
-      [
-        {
-          type: "tool_routing",
-          choice: "search_knowledge",
-          confidence: 0.45,
-          score: 0.55,
-          certain: false,
-          latency_ms: 790,
-        },
-        { type: "llm", tokens: 100, latency_ms: 1000 },
-        {
-          type: "answer_gate",
-          verdict: "approve",
-          score: 0.9,
-          grounded: true,
-          complete: true,
-          quality: 3,
-          latency_ms: 850,
-        },
-        { type: "final" },
-      ],
-      5000,
+// ---------------------------------------------------------------------------
+// §53: con flow del backend el portal NO reconstruye nada
+// ---------------------------------------------------------------------------
+
+const BACKEND_FLOW = {
+  flow_version: 2,
+  method: "agent",
+  status: "completed",
+  execution: { kind: "agent_run", id: "run-1" },
+  events: [
+    { id: "e-1", phase: "decision", kind: "tool_routing", status: "ok" },
+    { id: "e-2", phase: "generation", kind: "llm", status: "ok" },
+  ],
+  jev: { used: true, calls: 2 },
+  generation: { model: "zent-default", prompt_tokens: 1200, completion_tokens: 440 },
+};
+
+function sseResponse(frames: string) {
+  return new Response(frames, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
+describe("runAgentTurn", () => {
+  it("usa el flow canónico del backend y conserva el run_id", async () => {
+    const body =
+      "event: status\ndata: {\"phase\":\"running\"}\n\n" +
+      `event: done\ndata: ${JSON.stringify({
+        run_id: "run-1",
+        status: "completed",
+        answer: "listo",
+        steps: [{ type: "final" }],
+        flow: BACKEND_FLOW,
+        total_latency_ms: 14380,
+        total_tokens: 1640,
+        prompt_tokens: 1200,
+        completion_tokens: 440,
+        cost: 0.000381,
+        model: "zent-default",
+      })}\n\n`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => sseResponse(body)),
     );
-    const steps = flow.steps as { name: string; detail: string; ms: number }[];
-    expect(steps[0].name).toBe("JEV elige herramienta");
-    expect(steps[0].detail).toContain("sin certeza");
-    expect(steps[2].name).toBe("JEV verifica respuesta");
-    expect(steps[2].detail).toContain("aprobada");
-    expect(steps[2].detail).toContain("calidad 3/3");
-    expect(steps[2].ms).toBe(850);
-    const jev = flow.jev as {
-      used: boolean;
-      score: number;
-      verdict: string;
-      grounded: boolean;
-    };
-    expect(jev.used).toBe(true);
-    expect(jev.score).toBe(0.9);
-    expect(jev.verdict).toBe("approve");
-    expect(jev.grounded).toBe(true);
+
+    const result = await runAgentTurn({
+      agentId: "a-1",
+      message: "¿aplica?",
+      conversationId: null,
+      auth: { token: "t", organizationId: "o" },
+    });
+
+    expect(result.flowSource).toBe("backend");
+    expect(result.flow?.flow_version).toBe(2);
+    expect(result.runId).toBe("run-1");
+    expect(result.latencyMs).toBe(14380);
+  });
+
+  it("sin flow del backend cae al fallback legacy y lo marca", async () => {
+    const body = `event: done\ndata: ${JSON.stringify({
+      run_id: "run-2",
+      status: "completed",
+      answer: "ok",
+      steps: [{ type: "llm", tokens: 10, latency_ms: 5 }],
+      flow: null,
+    })}\n\n`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => sseResponse(body)),
+    );
+
+    const result = await runAgentTurn({
+      agentId: "a-1",
+      message: "hola",
+      conversationId: null,
+      auth: { token: "t", organizationId: "o" },
+    });
+
+    expect(result.flowSource).toBe("legacy");
+    expect(result.flow?.flow_version).toBe(1);
+    expect(result.flow?.jev).toBeUndefined();
+    expect(result.runId).toBe("run-2");
   });
 });

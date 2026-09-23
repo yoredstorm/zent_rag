@@ -1,6 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, type Session } from "../../api";
 import { Badge, CodeBlock, Drawer, Skeleton } from "../../components/ui";
+import {
+  executionFlowPath,
+  executionRefOf,
+  memoryImpactPath,
+  normalizeRunImpact,
+  type ExecutionRef,
+} from "./executionRef";
 import { buildExecutionStory } from "./executionStory";
 import type { ImpactLoad, QueryImpact } from "./MemoryImpact";
 import type { ReplayResult } from "./ReplayCompare";
@@ -14,6 +21,9 @@ export default function FlowDrawer({
   flow,
   role,
   queryId,
+  runId,
+  method,
+  executionRef,
   question,
   session,
   onFetched,
@@ -23,6 +33,11 @@ export default function FlowDrawer({
   flow: Flow | null;
   role: "admin" | "customer";
   queryId?: string;
+  /** Run del agente/workflow: referencia de ejecución cuando no hay query_id. */
+  runId?: string;
+  method?: string;
+  /** Referencia explícita; si falta se deriva de queryId/runId. */
+  executionRef?: ExecutionRef | null;
   question?: string;
   session: Session;
   onFetched?: (flow: Flow) => void;
@@ -38,50 +53,67 @@ export default function FlowDrawer({
   // La historia es el modo por defecto para todos los roles (§32).
   const [mode, setMode] = useState<StoryMode>("story");
 
+  const ref = useMemo(
+    () => executionRef ?? executionRefOf({ queryId, runId, method }) ?? null,
+    [executionRef, queryId, runId, method],
+  );
+
   useEffect(() => {
-    if (!open || flow || !queryId) return;
+    if (!open || flow || !ref) return;
     setLoading(true);
     setError("");
-    api<{ flow: Flow }>(`/api/v1/rag/queries/${queryId}/flow`, {
+    api<{ flow: Flow | null }>(executionFlowPath(ref), {
       token: session.token,
       organizationId: session.organizationId,
     })
       .then((out) => {
+        if (!out.flow) {
+          setError("Esta ejecución no tiene un flujo guardado.");
+          return;
+        }
         setFetched(out.flow);
         onFetched?.(out.flow);
       })
       .catch((err) => {
         const detail = err instanceof Error ? err.message : "";
         setError(
-          detail
-            ? `No se pudo cargar el flujo: ${detail}`
-            : "No se pudo cargar el flujo",
+          detail ? `No se pudo cargar el flujo: ${detail}` : "No se pudo cargar el flujo",
         );
       })
       .finally(() => setLoading(false));
+    // Sólo se recarga cuando cambia la ejecución o falta el flow: `onFetched`
+    // es un callback del padre y no debe re-disparar el fetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, flow, queryId]);
+    }, [open, flow, ref]);
 
   useEffect(() => {
-    if (!open || !queryId) {
+    if (!open || !ref) {
       setImpact(null);
       setImpactState("idle");
+      return;
+    }
+    const path = memoryImpactPath(ref);
+    if (!path) {
+      // Sin integración de memoria para este tipo: se dice, no se muestra 0.
+      setImpact(null);
+      setImpactState("unavailable");
       return;
     }
     let cancelled = false;
     setImpact(null);
     setImpactState("loading");
-    api<QueryImpact>(`/api/v1/memory/queries/${queryId}/impact`, {
+    api<unknown>(path, {
       token: session.token,
       organizationId: session.organizationId,
     })
       .then((body) => {
         if (cancelled) return;
-        if (!body?.counts) {
+        const normalized = normalizeRunImpact(body, ref);
+        if (!normalized) {
           setImpactState("error");
           return;
         }
-        setImpact(body);
+        setImpact(normalized);
         setImpactState("ready");
       })
       .catch(() => {
@@ -90,15 +122,17 @@ export default function FlowDrawer({
     return () => {
       cancelled = true;
     };
-  }, [open, queryId, session.token, session.organizationId]);
+  }, [open, ref, session.token, session.organizationId]);
 
   useEffect(() => {
     setReplay(null);
     setReplayError("");
     setReplayPending(false);
-  }, [open, queryId]);
+  }, [open, ref]);
 
   function runReplay() {
+    // El replay existe sólo para respuestas RAG (query_id): no se inventa para
+    // runs de agente.
     if (!queryId || replayPending) return;
     setReplayPending(true);
     setReplayError("");

@@ -241,7 +241,10 @@ describe("buildExecutionStory — consulta simple (§57)", () => {
     expect(story.headline).toBe("Respuesta completada");
     expect(story.narrative).toContain("buscó en el conocimiento");
     expect(story.routeLabel).toBe("Documentos");
-    expect(story.outcomeLabel).toBe("Respaldada");
+    // §21: el resultado sale de las comprobaciones reales, no de un default.
+    expect(story.outcomeLabel).toBe("Verificada");
+    expect(story.verification.overall).toBe("verified");
+    expect(story.verification.checks.map((check) => check.key)).toContain("grounding");
     expect(story.evidenceLabel).toBe("1 fuente");
     expect(story.confidenceLabel).toBe("Media");
     expect(story.totalMs).toBe(900);

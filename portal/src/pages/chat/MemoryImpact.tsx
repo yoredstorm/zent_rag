@@ -44,7 +44,7 @@ export type QueryImpact = {
   validated: ImpactItem[];
 };
 
-export type ImpactLoad = "idle" | "loading" | "error" | "ready";
+export type ImpactLoad = "idle" | "loading" | "error" | "ready" | "unavailable" | "none";
 
 const STATUS: Record<string, { label: string; tone: Tone; icon: Icon }> = {
   observed: { label: "Observada", tone: "info", icon: Clock },
@@ -246,9 +246,26 @@ export function MemoryImpact({ state, impact }: { state: ImpactLoad; impact: Que
   return (
     <section aria-label="Memoria">
       <p className="eyebrow mb-2">Memoria</p>
-      {state === "loading" ? <Skeleton className="h-24" /> : null}
+      {state === "loading" ? (
+        <>
+          <Skeleton className="h-24" />
+          <p className="mt-2 text-[13px] text-muted">Consultando la memoria de este run…</p>
+        </>
+      ) : null}
       {state === "error" ? (
         <p className="text-[13px] text-danger">No se pudo cargar la memoria de esta respuesta.</p>
+      ) : null}
+      {/* Sin integración disponible NO se muestra 0: se dice que no está. */}
+      {state === "unavailable" ? (
+        <p className="text-[13px] text-muted">
+          Memoria no disponible para este tipo de ejecución.
+        </p>
+      ) : null}
+      {state === "none" ? (
+        <p className="text-[13px] text-muted">
+          Esta respuesta no tiene una ejecución asociada, así que no hay memoria que
+          consultar.
+        </p>
       ) : null}
       {state === "ready" && impact ? <ImpactBody impact={impact} /> : null}
     </section>
@@ -269,23 +286,34 @@ export function DecisionSignals({
   const routeRaw = verdict.route == null || verdict.route === "" ? "" : String(verdict.route);
   const route = routeRaw ? (ROUTE_LABEL[routeRaw] ?? routeRaw) : "";
   const jevUsed = jev.used === true;
+  // §10: no existe un "Score JEV" universal. Se muestra el score sólo si el
+  // juicio realmente produjo uno; la intervención se informa aparte.
   const jevScore = typeof jev.score === "number" ? jev.score : null;
+  const jevCalls = typeof jev.calls === "number" ? jev.calls : null;
   const jevVerdict =
     jevUsed && jev.verdict != null && jev.verdict !== ""
       ? (GATE_VERDICT_LABEL[String(jev.verdict)] ?? String(jev.verdict))
       : "";
-  const showJev = jevUsed && jevScore != null;
   const memories = impactReady ? used : [];
-  if (!route && !showJev && memories.length === 0) return null;
+  if (!route && !jevUsed && memories.length === 0) return null;
   return (
     <div>
       <p className="eyebrow mb-2">Señales</p>
       <ul className="flex flex-col gap-1 text-[12.5px] text-muted">
         {route ? <li className="text-text">Ruta {route}</li> : null}
-        {showJev ? (
+        {jevUsed ? (
           <li>
-            JEV <span className="text-text">{jevScore.toFixed(2)}</span>
-            {jevVerdict ? <span className="text-text">, {jevVerdict}</span> : null}
+            JEV{" "}
+            <span className="text-text">
+              {jevScore != null ? jevScore.toFixed(2) : "intervino"}
+            </span>
+            {jevCalls != null ? (
+              <span>
+                {" "}
+                · {jevCalls} {jevCalls === 1 ? "llamada" : "llamadas"}
+              </span>
+            ) : null}
+            {jevVerdict ? <span className="text-text"> · {jevVerdict}</span> : null}
           </li>
         ) : null}
         {memories.map((item) => (

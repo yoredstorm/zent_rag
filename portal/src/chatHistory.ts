@@ -6,6 +6,8 @@ export type StoredMessage = {
   method?: string;
   lazyIngested?: boolean;
   queryId?: string;
+  /** Run de agente/workflow: la otra referencia de ejecución posible. */
+  runId?: string;
   userQuery?: string;
   rated?: "up" | "down";
   latencyMs?: number;

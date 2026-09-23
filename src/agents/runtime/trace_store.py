@@ -40,9 +40,14 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     environment VARCHAR(30),
     prompt_tokens INTEGER DEFAULT 0,
     completion_tokens INTEGER DEFAULT 0,
+    flow JSONB,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 )
 """
+
+# El flow canónico es aditivo: las instalaciones previas reciben la columna acá
+# (misma migración 131 para quien corre alembic).
+_AGENT_RUNS_FLOW_COLUMN = "ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS flow JSONB"
 
 _INDEX_ORG = (
     "CREATE INDEX IF NOT EXISTS idx_agent_runs_org "
@@ -58,6 +63,7 @@ async def ensure_agent_runs_table() -> None:
     session: AsyncSession = await get_async_session()
     try:
         await session.execute(text(_AGENT_RUNS_TABLE))
+        await session.execute(text(_AGENT_RUNS_FLOW_COLUMN))
         await session.commit()
     except Exception:
         await session.rollback()
@@ -76,8 +82,8 @@ async def ensure_agent_runs_table() -> None:
         await session.close()
 
 
-async def save_run(result) -> None:
-    """Persiste un AgentRunResult (fail-silent)."""
+async def save_run(result, flow: dict | None = None) -> None:
+    """Persiste un AgentRunResult (+ su flow canónico). Fail-silent."""
     try:
         session: AsyncSession = await get_async_session()
         try:
@@ -88,12 +94,12 @@ async def save_run(result) -> None:
                     "message, answer, steps, total_latency_ms, total_tokens, "
                     "cost, injection_detected, trace_id, model, provider, "
                     "deployment_id, version_id, environment, prompt_tokens, "
-                    "completion_tokens) "
+                    "completion_tokens, flow) "
                     "VALUES (:id, :oid, :aid, :uid, :role, :status, :message, "
                     ":answer, CAST(:steps AS jsonb), :latency, :tokens, "
                     ":cost, :injection, :trace_id, :model, :provider, "
                     ":deployment_id, :version_id, :environment, :prompt_tokens, "
-                    ":completion_tokens)"
+                    ":completion_tokens, CAST(:flow AS jsonb))"
                 ),
                 {
                     "id": result.run_id,
@@ -117,6 +123,7 @@ async def save_run(result) -> None:
                     "environment": (getattr(result, "environment", None) or "")[:30] or None,
                     "prompt_tokens": getattr(result, "prompt_tokens", 0) or 0,
                     "completion_tokens": getattr(result, "completion_tokens", 0) or 0,
+                    "flow": json.dumps(flow, default=str) if flow else None,
                 },
             )
             await session.commit()
@@ -129,6 +136,29 @@ async def save_run(result) -> None:
         pass
 
 
+async def get_flow(organization_id: UUID, run_id: UUID) -> dict | None:
+    """Flow canónico persistido de un run (tenant-scoped). None si no hay."""
+    session: AsyncSession = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT flow FROM agent_runs "
+                    "WHERE organization_id = :oid AND id = :rid"
+                ),
+                {"oid": organization_id, "rid": run_id},
+            )
+        ).fetchone()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Agent run flow read failed", error=str(exc)[:200])
+        return None
+    finally:
+        await session.close()
+    if row is None or row.flow is None:
+        return None
+    return dict(row.flow) if isinstance(row.flow, dict) else None
+
+
 async def get_run(organization_id: UUID, run_id: UUID) -> dict | None:
     session: AsyncSession = await get_async_session()
     try:
@@ -139,7 +169,7 @@ async def get_run(organization_id: UUID, run_id: UUID) -> dict | None:
                     "status, message, answer, steps, total_latency_ms, "
                     "total_tokens, cost, injection_detected, trace_id, model, "
                     "provider, deployment_id, version_id, environment, "
-                    "prompt_tokens, completion_tokens, created_at "
+                    "prompt_tokens, completion_tokens, flow, created_at "
                     "FROM agent_runs "
                     "WHERE organization_id = :oid AND id = :rid"
                 ),
@@ -169,6 +199,7 @@ async def get_run(organization_id: UUID, run_id: UUID) -> dict | None:
             "environment": row.environment,
             "prompt_tokens": row.prompt_tokens or 0,
             "completion_tokens": row.completion_tokens or 0,
+            "flow": dict(row.flow) if isinstance(row.flow, dict) else None,
             "created_at": row.created_at.isoformat(),
         }
     finally:

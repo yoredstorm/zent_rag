@@ -62,6 +62,7 @@ STEP_KIND_PHASES: dict[str, str] = {
     "answer_gate": PHASE_VERIFICATION,
     "reasoning_incomplete": PHASE_VERIFICATION,
     "answer_revision": PHASE_VERIFICATION,
+    "verification": PHASE_VERIFICATION,
     "scenario_parse": PHASE_REASONING,
     "state_reconstruction": PHASE_REASONING,
     "timeline": PHASE_REASONING,
@@ -70,10 +71,33 @@ STEP_KIND_PHASES: dict[str, str] = {
     "analysis_completion": PHASE_VERIFICATION,
     "tool_call": PHASE_EVIDENCE,
     "guardrail": PHASE_VERIFICATION,
+    "error": PHASE_VERIFICATION,
     "final": PHASE_GENERATION,
     "llm": PHASE_GENERATION,
     "memory": PHASE_LEARNING,
 }
+
+#: Claves de un step que NO se copian a `metrics` (ya viven en el evento o son
+#: texto de presentación). El resto del step se preserva tal cual: si mañana el
+#: runtime agrega una señal, aparece en la historia sin tocar este módulo.
+STEP_METRIC_EXCLUDE: frozenset[str] = frozenset(
+    {
+        "id",
+        "type",
+        "name",
+        "detail",
+        "status",
+        "ms",
+        "duration_ms",
+        "unmapped",
+        "raw",
+        "tool",
+        "answer",
+    }
+)
+
+#: Fase segura para un step sin mapping canónico: se preserva, no se pierde.
+UNMAPPED_STEP_PHASE = PHASE_DECISION
 
 #: Tipos canónicos de los bloques históricos del flow.
 BLOCK_KIND_PHASES: dict[str, str] = {
@@ -83,6 +107,7 @@ BLOCK_KIND_PHASES: dict[str, str] = {
     "evidence": PHASE_EVIDENCE,
     "sources": PHASE_EVIDENCE,
     "generation": PHASE_GENERATION,
+    "verification": PHASE_VERIFICATION,
     "grounding": PHASE_VERIFICATION,
     "fallback": PHASE_VERIFICATION,
 }
@@ -334,6 +359,14 @@ def _generation_event(flow: dict, index: int) -> dict | None:
     if not isinstance(generation, dict):
         return None
     skipped = bool(generation.get("skipped"))
+    technical: dict[str, Any] = {}
+    if generation.get("model"):
+        technical["model"] = generation["model"]
+    if generation.get("provider"):
+        technical["provider"] = generation["provider"]
+    for key in ("calls", "answer_calls", "reasoning_calls"):
+        if generation.get(key) is not None:
+            technical[key] = _int_or_none(generation.get(key))
     return _event(
         event_id=f"flow-{index}",
         kind="generation",
@@ -346,7 +379,43 @@ def _generation_event(flow: dict, index: int) -> dict | None:
             "total_tokens": _int_or_none(generation.get("total_tokens")),
             "cost_usd": _number(generation.get("cost")),
         },
-        technical={"model": generation.get("model")},
+        technical=technical or None,
+    )
+
+
+def _verification_event(flow: dict, index: int) -> dict | None:
+    """Verificación agregada del run (§19, §20). No es un booleano."""
+    verification = flow.get("verification")
+    if not isinstance(verification, dict):
+        return None
+    checks = [item for item in (verification.get("checks") or []) if isinstance(item, dict)]
+    if not checks:
+        return None
+    overall = str(verification.get("overall") or "")
+    # "partial" no es una incidencia: es un dato honesto de qué se comprobó.
+    status = {
+        "verified": STATUS_OK,
+        "partial": STATUS_OK,
+        "not_verified": STATUS_SKIPPED,
+        "blocked": STATUS_WARN,
+    }.get(overall, STATUS_OK)
+    return _event(
+        event_id=f"flow-{index}",
+        kind="verification",
+        phase=PHASE_VERIFICATION,
+        status=status,
+        metrics={
+            "overall": overall or None,
+            "checks": [
+                {
+                    "key": str(check.get("key") or ""),
+                    "state": str(check.get("state") or ""),
+                    **({"detail": str(check["detail"])[:160]} if check.get("detail") else {}),
+                }
+                for check in checks[:8]
+            ],
+        },
+        technical={"source": verification.get("source")},
     )
 
 
@@ -561,33 +630,38 @@ def build_flow_events(flow: dict) -> list[dict]:
         if not kind:
             continue
         phase = STEP_KIND_PHASES.get(kind)
-        if phase is None:
-            continue
+        unmapped = phase is None
+        if unmapped:
+            # Un step sin mapping canónico NO se descarta: se preserva con su
+            # kind original y se marca para que el portal lo cuente (§37).
+            phase = UNMAPPED_STEP_PHASE
         index += 1
         covered.add(kind)
         technical: dict[str, Any] = {}
         for extra in ("shape", "detail", "model", "tool", "phase", "trace_id"):
             if step.get(extra) not in (None, ""):
                 technical[extra] = step[extra]
+        if unmapped or step.get("unmapped") is True:
+            technical["unmapped"] = True
         metrics = {}
         for key in ("step", "tokens", "latency_ms"):
             if isinstance(step.get(key), (int, float)):
                 metrics[key] = step[key]
-        # Los steps del razonamiento traen métricas estructuradas propias.
-        for key in (
-            "reasoning",
-            "company_context",
-            "plan",
-            "scenario",
-            "transitions",
-            "hypotheses",
-            "inference",
-            "completion",
-            "memory",
-        ):
-            payload = step.get(key)
-            if isinstance(payload, dict):
-                metrics[key] = payload
+        # El resto del step se conserva tal cual (payloads estructurados y
+        # señales de gates): la historia no reinterpreta ni rellena nada.
+        for key, value in step.items():
+            if key in STEP_METRIC_EXCLUDE or key in metrics:
+                continue
+            if isinstance(value, (dict, list, str, int, float, bool)) and value != "":
+                metrics[key] = value
+        evidence_refs: list[str] = []
+        meta = step.get("meta")
+        if isinstance(meta, dict):
+            for item in list(meta.get("evidence") or [])[:16]:
+                if isinstance(item, dict):
+                    ref = str(item.get("ref") or item.get("document_id") or item.get("source_id") or "")
+                    if ref:
+                        evidence_refs.append(ref)
         events.append(
             _event(
                 event_id=str(step.get("id") or f"step-{index}"),
@@ -596,6 +670,7 @@ def build_flow_events(flow: dict) -> list[dict]:
                 status=canonical_status(step.get("status")),
                 duration_ms=_number(step.get("duration_ms") or step.get("latency_ms")),
                 metrics=metrics or None,
+                evidence_refs=evidence_refs or None,
                 technical=technical or None,
             )
         )
@@ -608,6 +683,7 @@ def build_flow_events(flow: dict) -> list[dict]:
         ("evidence", lambda: _evidence_event(flow, index + 1)),
         ("sources", lambda: _sources_event(flow, sources, index + 1)),
         ("generation", lambda: _generation_event(flow, index + 1)),
+        ("verification", lambda: _verification_event(flow, index + 1)),
         ("grounding", lambda: _grounding_event(flow, index + 1)),
     )
     for kind, factory in blocks:
@@ -654,6 +730,8 @@ __all__ = [
     "JEV_PACK_PHASES",
     "PHASE_ORDER",
     "STEP_KIND_PHASES",
+    "STEP_METRIC_EXCLUDE",
+    "UNMAPPED_STEP_PHASE",
     "build_flow_events",
     "canonical_status",
     "with_story",

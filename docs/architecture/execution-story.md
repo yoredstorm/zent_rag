@@ -115,11 +115,119 @@ Efecto: evitó el modelo caro
 
 El contrato del bloque: `docs/architecture/jev-preflight.md`.
 
+## El backend es la única fuente de verdad
+
+El portal **renderiza**; no reconstruye el run. Antes, el Agent Playground
+rearmaba el flow en el navegador (`flowFromAgentSteps`) y perdía tipos,
+payloads de razonamiento, señales de JEV, tokens y verificación: la historia
+mostraba "Decidió el camino → Redactó la respuesta" para un run con tools,
+reasoning y gates.
+
+Flujo único:
+
+```
+AgentRuntime → AgentRunResult → build_agent_flow() (server-side)
+→ Canonical Flow v2 → with_story() → SSE done.flow → portal
+→ buildExecutionStory() → render
+```
+
+- `src/runtime/agent_flow.py` es el builder canónico de agentes (steps,
+  generación, verificación, tiempos, telemetría, fuentes).
+- `src/rag/flow_story.py` convierte cualquier flow en eventos canónicos v2.
+- `GET /api/v1/executions/{kind}/{id}/flow` normaliza `query`, `agent` y
+  `workflow` bajo el mismo contrato.
+- El flow se persiste con el run (`agent_runs.flow`) y viaja en el `done`.
+
+El portal sólo cae a un builder local si el servidor **no** envió `flow`
+(servidor viejo): `flowFromAgentStepsLegacy`, marcado `legacy` y sin inventar
+nada.
+
+## Unknown is not zero
+
+| Caso | Se muestra |
+| --- | --- |
+| Valor no medido | se omite (no hay fila ni `0`) |
+| Cero real | se muestra como 0 |
+| No aplica | "No aplica" |
+| No observado | "No observado" / "No disponible" |
+
+Nunca `confidence: 0`, `score: 0` ni `tokens: 0/0` para decir "no sé". El
+endpoint de dispatch ya no fabrica `confidence: 0`: la procedencia
+(`explicit_target`, `agent_runtime`, `routing_decision`) viaja en
+`decision.provider` y la confianza sólo aparece si existe.
+
+## Verificación y resultado
+
+`verification` es un conjunto de comprobaciones, no un booleano:
+
+```
+analysis_complete  ✓
+inference_supported ✓
+answer_gate        ✓ (approve)
+grounding          ✓
+overall            verified
+```
+
+- `verified` exige respaldo declarado; sin él, `partial` →
+  "Verificada parcialmente" (no "Respaldada" si sólo corrió el gate).
+- `blocked` con abstención → "Retenida por seguridad"; con análisis incompleto
+  → "Análisis incompleto"; el resto → "Evidencia insuficiente".
+- La telemetría faltante **no** marca el run como "Revisar": sólo lo hacen un
+  error real, una verificación bloqueada, un fallback material, un guardrail o
+  una retención.
+
+## Telemetría (completeness, no confidence)
+
+`flow.telemetry` declara, por dimensión (`routing`, `reasoning`,
+`company_context`, `jev`, `tools`, `evidence`, `generation`, `verification`,
+`memory`, `cost`, `timings`), si la señal se **observó**, **no aplica** o **no
+está disponible**. No se agrega a un porcentaje: se lista.
+
+El badge superior resume la calidad del dato: **Telemetría completa**,
+**Telemetría parcial** o **Flujo histórico** (`flow_version < 2`).
+
+## ExecutionRef
+
+La historia y la memoria no dependen de `query_id`:
+
+```ts
+type ExecutionRef = { kind: "query" | "agent" | "workflow"; id: string };
+```
+
+- `query/{query_id}` → `rag_flows`.
+- `agent/{run_id}` → `agent_runs.flow` (memoria: `/memory/runs/{run_id}/impact`).
+- `workflow/{run_id}` → detalle del run (v1 honesto; memoria "no disponible").
+
+Sin integración disponible la memoria dice "no disponible", nunca 0. Con la
+consulta respondida y buckets vacíos muestra los ceros reales.
+
+## Paridad de agentes
+
+El AgentRuntime emite hoy: `llm`, `tool_routing`, `tool_call`, `tool_filter`,
+`termination_gate`, `answer_gate`, `answer_revision`, `router_fallback`,
+`reasoning_incomplete`, `guardrail`, `error`, `final`, `context`, `memory` y los
+steps de razonamiento (`reasoning_classification`, `company_context`,
+`reasoning_plan`, `scenario_parse`, `state_reconstruction`, `timeline`,
+`hypothesis_test`, `inference_verification`, `analysis_completion`).
+
+Reglas:
+
+- Los payloads estructurados viajan tal cual (`plan`, `scenario`,
+  `transitions`, `hypotheses`, `inference`, `completion`, `meta`, `action`, …).
+- Un step **sin** mapping canónico no se descarta: se emite con su `kind`
+  original, fase segura (`decision`) y `technical.unmapped = true`.
+- El invariante está fijado por test: todo tipo que el runtime puede emitir
+  está mapeado o declarado como oculto a propósito.
+
+Varias llamadas al modelo no se atribuyen a "redactar": la fase muestra
+`N llamadas al modelo (x de razonamiento · y de respuesta)`.
+
 ## Compatibilidad histórica
 
 Los flows sin `flow_version` se normalizan con `normalizeLegacyFlow()` a los
 mismos eventos canónicos, así que las conversaciones viejas siguen mostrando su
-historia (marcadas como "Flujo histórico").
+historia (marcadas como "Flujo histórico"). Un run nuevo **nunca** lleva ese
+badge: el backend siempre emite `flow_version: 2` con `events[]`.
 
 ## Traducciones (backend → humano)
 
@@ -154,11 +262,16 @@ El frontend nunca fabrica una razón: si no hay señal, no se muestra.
 
 ## Backend
 
-`src/rag/flow_story.py` (canónico) y `src/agents/runtime/reasoning_step.py`
-(semántica del razonamiento). Los flujos RAG suman el razonamiento observado
-cuando `RAG_EVIDENCE_REASONING_MODE` no está en `off`: en ese camino el motor
-corre después de generar, así que la historia lo muestra como análisis
-observado, no como control de la respuesta.
+`src/runtime/agent_flow.py` (builder canónico de agentes),
+`src/rag/flow_story.py` (eventos canónicos + steps sin mapping),
+`src/agents/runtime/reasoning_step.py` (semántica del razonamiento) y
+`src/api/routes/executions.py` (contrato único por tipo de ejecución).
 
-`tests/test_flow_story.py` fija el contrato; `executionStory.test.ts` y
-`ExecutionStoryView.test.tsx` fijan la traducción y el render.
+En el camino RAG el razonamiento corre después de generar cuando
+`RAG_EVIDENCE_REASONING_MODE` no está en `off`: la historia lo muestra como
+análisis observado salvo que el JEV Preflight lo mueva antes del generador.
+
+Tests: `tests/test_flow_story.py` y `tests/test_agent_flow_v2.py` fijan el
+contrato del backend; `executionStory.test.ts`, `executionStory.agent.test.ts`,
+`executionRef.test.ts` y `ExecutionStoryView.test.tsx` fijan la traducción y el
+render.

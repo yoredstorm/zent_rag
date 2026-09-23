@@ -75,23 +75,42 @@ function JudgmentTechnical({ story }: { story: ExecutionStory }) {
 export function TechnicalTrace({ story }: { story: ExecutionStory }) {
   const technical = story.technical;
   const rows: Array<[string, string]> = [];
+  // §45: sólo se muestran datos conocidos. Missing != 0.
+  if (story.runId) rows.push(["Run ID", story.runId]);
+  const execution = technical.raw?.execution;
+  if (execution && typeof execution === "object") {
+    const kind = String((execution as Record<string, unknown>).kind ?? "");
+    if (kind) rows.push(["Tipo de ejecución", kind]);
+  }
+  rows.push(["Flow version", String(story.version)]);
+  rows.push([
+    "Eventos canónicos / steps crudos",
+    `${story.counts.canonicalEvents} / ${story.counts.rawSteps}`,
+  ]);
+  if (story.counts.unmapped) {
+    rows.push([
+      "Mapeados / sin mapping",
+      `${story.counts.mapped} / ${story.counts.unmapped}`,
+    ]);
+  }
   if (technical.provider) rows.push(["Proveedor de decisión", technical.provider]);
   if (technical.decider) rows.push(["Decisor", technical.decider]);
   if (technical.model) rows.push(["Modelo", technical.model]);
-  if (technical.jevScore !== null && technical.jevScore !== undefined) {
-    rows.push(["Score JEV", technical.jevScore.toFixed(2)]);
+  if (typeof story.llmCalls === "number") {
+    rows.push(["Llamadas al modelo", String(story.llmCalls)]);
   }
   if (typeof technical.jevUsed === "boolean") {
     rows.push(["JEV", technical.jevUsed ? "intervino" : "no intervino"]);
   }
+  if (technical.jevScore !== null && technical.jevScore !== undefined) {
+    rows.push(["Score del gate de respuesta", technical.jevScore.toFixed(2)]);
+  }
   if (technical.confidence !== null && technical.confidence !== undefined) {
     rows.push(["Confianza de decisión", technical.confidence.toFixed(2)]);
   }
-  if (technical.tokens && technical.tokens.total) {
-    rows.push([
-      "Tokens (prompt / completion)",
-      `${technical.tokens.prompt} / ${technical.tokens.completion}`,
-    ]);
+  if (technical.tokens) {
+    rows.push(["Tokens (prompt / completion)", `${technical.tokens.prompt} / ${technical.tokens.completion}`]);
+    rows.push(["Tokens totales", String(technical.tokens.total)]);
   }
   if (story.totalMs) rows.push(["Latencia total", `${Math.round(story.totalMs)} ms`]);
   if (story.costUsd !== null) rows.push(["Costo", fmtCurrency(story.costUsd, 6)]);
@@ -107,7 +126,7 @@ export function TechnicalTrace({ story }: { story: ExecutionStory }) {
   if (technical.answerability) {
     rows.push(["Answerability", JSON.stringify(technical.answerability)]);
   }
-  rows.push(["Flow version", String(story.version)]);
+  rows.push(["Verificación", `${story.verification.label} (${story.verification.overall})`]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -123,6 +142,19 @@ export function TechnicalTrace({ story }: { story: ExecutionStory }) {
             </div>
           ))}
         </dl>
+      </div>
+      <div>
+        <p className="eyebrow mb-2">Observabilidad</p>
+        <ul className="flex flex-col gap-1 text-[11.5px]">
+          {story.telemetry.dimensions.map((dimension) => (
+            <li key={dimension.key} className="flex items-center gap-2">
+              <span className="w-40 shrink-0 text-faint">{dimension.label}</span>
+              <span className={dimension.state === "observed" ? "text-ok" : "text-muted"}>
+                {dimension.state}
+              </span>
+            </li>
+          ))}
+        </ul>
       </div>
       <JudgmentTechnical story={story} />
       <details>

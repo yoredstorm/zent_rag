@@ -58,6 +58,7 @@ from src.api.routes.embed import admin_router as embed_admin_router
 from src.api.routes.embed import public_router as embed_public_router
 from src.api.routes.embed import widget_router as embed_widget_router
 from src.api.routes.evaluation import router as eval_router
+from src.api.routes.executions import router as executions_router
 from src.api.routes.federated import router as federated_router
 from src.api.routes.feedback import router as feedback_router
 from src.api.routes.gateway import router as gateway_router
@@ -699,6 +700,7 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(projects_router)
     new_app.include_router(prompt_router)
     new_app.include_router(query_router)
+    new_app.include_router(executions_router)
     new_app.include_router(sources_router)
     new_app.include_router(intelligence_router)
     from src.api.routes.marketplace_factory import cc_router as factory_cc_router

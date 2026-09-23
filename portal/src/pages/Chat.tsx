@@ -341,6 +341,7 @@ export default function ChatPage() {
         method: result.method,
         lazyIngested: result.lazyIngested,
         queryId: result.queryId,
+        runId: result.runId,
         userQuery: query,
         latencyMs: result.latencyMs,
         ragTrace: result.ragTrace ?? null,
@@ -919,6 +920,8 @@ export default function ChatPage() {
           flow={(flowFor?.flow as Record<string, unknown> | null) ?? null}
           role={role}
           queryId={flowFor?.queryId}
+          runId={flowFor?.runId}
+          method={flowFor?.method}
           question={flowQuestion(messages, flowFor)}
           session={session}
           onFetched={(fetched) => {

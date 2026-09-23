@@ -13,13 +13,21 @@ function fmtMs(value: number): string {
 }
 
 export function StorySummary({ story }: { story: ExecutionStory }) {
+  // §23: las métricas se llaman por su semántica. "Confianza" sólo aparece si
+  // existe una confianza real (nunca un 0 inventado).
   const metrics: Array<{ label: string; value: string }> = [
     { label: "Ruta", value: story.routeLabel },
     { label: "Resultado", value: story.outcomeLabel },
   ];
-  if (story.confidenceLabel) metrics.push({ label: "Confianza", value: story.confidenceLabel });
   if (story.evidenceLabel) metrics.push({ label: "Evidencia", value: story.evidenceLabel });
-  if (story.reasoningLabel) metrics.push({ label: "Razonamiento", value: story.reasoningLabel });
+  if (story.reasoningLabel) metrics.push({ label: "Análisis", value: story.reasoningLabel });
+  metrics.push({
+    label: "Verificación",
+    value: story.verification.label,
+  });
+  if (story.confidenceLabel) {
+    metrics.push({ label: "Confianza de ruta", value: story.confidenceLabel });
+  }
   metrics.push({ label: "Tiempo", value: fmtMs(story.totalMs) });
   if (story.costUsd !== null) metrics.push({ label: "Costo", value: fmtCurrency(story.costUsd, 6) });
 
@@ -30,7 +38,15 @@ export function StorySummary({ story }: { story: ExecutionStory }) {
         <Badge tone={story.headlineStatus === "ok" ? "ok" : "warn"} dot>
           {story.headlineStatus === "ok" ? "Sin incidencias" : "Revisar"}
         </Badge>
-        {story.legacy ? <Badge tone="neutral">Flujo histórico</Badge> : null}
+        {/* §46: la calidad del dato se declara, no se disfraza con "Revisar". */}
+        <Badge tone={story.telemetry.qualityTone === "ok" ? "ok" : "neutral"}>
+          {story.telemetry.qualityLabel}
+        </Badge>
+        {story.counts.unmapped > 0 ? (
+          <Badge tone="warn">
+            {story.counts.unmapped} evento{story.counts.unmapped === 1 ? "" : "s"} sin mapping
+          </Badge>
+        ) : null}
       </div>
       <p className="mt-1 text-[12.5px] text-muted">{story.narrative}</p>
 
@@ -47,6 +63,29 @@ export function StorySummary({ story }: { story: ExecutionStory }) {
         <div className="mt-4 flex flex-col gap-2">
           <JevImpactCard impact={story.jevImpact} />
           <JudgmentUncertaintyNote impact={story.jevImpact} />
+        </div>
+      ) : null}
+
+      {story.telemetry.dimensions.length ? (
+        <div className="mt-4">
+          <p className="text-[11.5px] text-faint">Observabilidad</p>
+          <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11.5px]">
+            {story.telemetry.dimensions.map((dimension) => {
+              const observed = dimension.state === "observed";
+              const notApplicable = dimension.state === "not_applicable";
+              return (
+                <li key={dimension.key} className={observed ? "text-muted" : "text-faint"}>
+                  <span className={observed ? "text-ok" : "text-faint"}>
+                    {observed ? "✓" : notApplicable ? "—" : "·"}
+                  </span>{" "}
+                  {dimension.label}
+                  {observed ? null : (
+                    <span className="text-faint"> {dimension.stateLabel.toLowerCase()}</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         </div>
       ) : null}
 

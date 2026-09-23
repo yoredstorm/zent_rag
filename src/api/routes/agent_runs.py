@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from src.agents.runtime.agent_runtime import AgentRunRequest
 from src.agents.runtime.trace_store import (
     ensure_agent_runs_table,
+    get_flow,
     get_run,
     list_runs,
     save_run,
@@ -26,6 +27,7 @@ from src.agents.runtime.trace_store import (
 from src.api.deps import get_agent_repo, get_agent_runtime
 from src.core.ports import AgentRepository
 from src.infrastructure.observability.logging_config import get_logger
+from src.runtime.agent_flow import build_agent_flow
 
 logger = get_logger(__name__)
 router = APIRouter(prefix="/api/v1/agents", tags=["Agent Runs"])
@@ -41,6 +43,66 @@ class AgentRunBody(BaseModel):
 
 def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+def _runtime_context(agent) -> dict:
+    """Contexto real del run para no inventar procedencia (§9, §12)."""
+    config = agent.config_json if isinstance(agent.config_json, dict) else {}
+    runtime = config.get("runtime") if isinstance(config.get("runtime"), dict) else {}
+    reasoning_mode = str(runtime.get("evidence_reasoning_mode") or "")
+    jev_configured: bool | None = None
+    try:
+        from src.decision.service import get_decision_engine
+
+        jev_configured = bool(get_decision_engine().settings.jev_configured)
+    except Exception:  # noqa: BLE001 — sin engine no se afirma nada
+        jev_configured = None
+    if not reasoning_mode:
+        try:
+            from src.core.config import get_settings
+            from src.intelligence.reasoning import wiring
+
+            reasoning_mode = wiring.reasoning_mode(get_settings()).value
+        except Exception:  # noqa: BLE001
+            reasoning_mode = ""
+    return {"reasoning_mode": reasoning_mode, "jev_configured": jev_configured}
+
+
+def build_agent_run_flow(*, result, agent, question: str = "") -> dict:
+    """Flow canónico v2 del run: el backend es la autoridad, el portal renderiza."""
+    context = _runtime_context(agent)
+    tools = tuple(str(name) for name in (getattr(agent, "tools", None) or []))
+    try:
+        return build_agent_flow(
+            result=result,
+            question=question,
+            agent_tools=tools,
+            reasoning_mode=context["reasoning_mode"],
+            jev_configured=context["jev_configured"],
+        )
+    except Exception as exc:  # noqa: BLE001 — el flow nunca rompe el run
+        logger.warning("Agent flow build failed", error=str(exc)[:200])
+        return {}
+
+
+def _run_payload(result, flow: dict) -> dict:
+    """Contrato del run para el portal: flow + métricas reales (§3, §13)."""
+    payload: dict = {
+        "run_id": str(result.run_id),
+        "status": result.status,
+        "answer": result.answer,
+        "steps": result.steps,
+        "flow": flow,
+        "total_latency_ms": result.total_latency_ms,
+        "total_tokens": result.total_tokens,
+        "prompt_tokens": result.prompt_tokens,
+        "completion_tokens": result.completion_tokens,
+        "cost": result.cost,
+        "model": result.model,
+        "provider": result.provider,
+        "injection_detected": result.injection_detected,
+    }
+    return payload
 
 
 async def _load_agent(
@@ -93,11 +155,12 @@ async def run_agent(
             trace_id=request.headers.get("X-Trace-Id"),
         )
     )
+    flow = build_agent_run_flow(result=result, agent=agent, question=body.message)
     try:
         await ensure_agent_runs_table()
     except Exception:
         pass
-    await save_run(result)
+    await save_run(result, flow=flow or None)
     try:
         from src.platform.onboardingv2.onboarding import sync_progress
 
@@ -105,18 +168,7 @@ async def run_agent(
     except Exception:  # noqa: BLE001
         pass
 
-    return {
-        "run_id": str(result.run_id),
-        "status": result.status,
-        "answer": result.answer,
-        "steps": result.steps,
-        "total_latency_ms": result.total_latency_ms,
-        "total_tokens": result.total_tokens,
-        "cost": result.cost,
-        "model": result.model,
-        "provider": result.provider,
-        "injection_detected": result.injection_detected,
-    }
+    return _run_payload(result, flow)
 
 
 @router.post("/{agent_id}/run/stream", summary="Ejecutar agente (SSE)")
@@ -151,27 +203,15 @@ async def run_agent_stream(
                 org_config=org_config,
             )
         )
+        # El flow canónico se construye SERVER-SIDE y viaja en el `done`:
+        # el portal no reconstruye la verdad del run (docs/architecture/execution-story.md).
+        flow = build_agent_run_flow(result=result, agent=agent, question=body.message)
         try:
             await ensure_agent_runs_table()
         except Exception:
             pass
-        await save_run(result)
-        await queue.put(
-            (
-                "done",
-                {
-                    "run_id": str(result.run_id),
-                    "status": result.status,
-                    "answer": result.answer,
-                    "steps": result.steps,
-                    "total_latency_ms": result.total_latency_ms,
-                    "total_tokens": result.total_tokens,
-                    "cost": result.cost,
-                    "model": result.model,
-                    "provider": result.provider,
-                },
-            )
-        )
+        await save_run(result, flow=flow or None)
+        await queue.put(("done", _run_payload(result, flow)))
 
     async def event_stream():
         await queue.put(("status", {"phase": "running"}))
@@ -206,6 +246,17 @@ async def get_agent_run(
     if run is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return run
+
+
+@router.get("/runs/{run_id}/flow", summary="Flow canónico v2 de un run (tenant)")
+async def get_agent_run_flow(run_id: UUID, request: Request) -> dict:
+    """Flow canónico del run. Para runs viejos sin flow persistido: None."""
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "rag:read")
+    await ensure_agent_runs_table()
+    flow = await get_flow(ctx.organization_id, run_id)
+    return {"flow": flow}
 
 
 @router.post(
