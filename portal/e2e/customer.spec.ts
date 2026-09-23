@@ -51,7 +51,7 @@ test.describe("Customer portal — flujo smoke", () => {
     const agentId = agentUrl.match(/\/agents\/([^/?]+)/)?.[1];
     expect(agentId).toBeTruthy();
     await expect(page.getByRole("heading", { name: "Probar" })).toBeVisible();
-    await page.getByLabel("Propósito").fill("Responder dudas internas");
+    await page.getByLabel("Propósito", { exact: true }).fill("Responder dudas internas");
     const sourceBox = page.getByRole("checkbox", { name: /docs/i }).first();
     if (await sourceBox.count()) {
       await sourceBox.check();
