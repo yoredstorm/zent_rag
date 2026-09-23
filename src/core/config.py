@@ -335,6 +335,27 @@ class Settings(BaseSettings):
     RAG_CATALOG_MAX_COLUMNS_PER_TABLE: int = Field(default=200, ge=1, le=2000)
     RAG_CATALOG_MAX_SAMPLES: int = Field(default=50, ge=1, le=1000)
     # -------------------------------------------------------------------------
+    # Evidence Reasoning (Fase 6)
+    # -------------------------------------------------------------------------
+    RAG_EVIDENCE_REASONING_MODE: str = Field(
+        default="off",
+        pattern="^(off|shadow|on|canary)$",
+        description=(
+            "Razonamiento sobre hechos: off (legacy), shadow (ejecuta y compara "
+            "sin responder), on (controla requests complejos), canary (porcentaje)."
+        ),
+    )
+    RAG_EVIDENCE_REASONING_CANARY_PERCENT: int = Field(
+        default=0, ge=0, le=100, description="Porcentaje de requests en modo canary."
+    )
+    RAG_EVIDENCE_REASONING_MAX_EVENTS: int = Field(default=200, ge=1, le=2000)
+    RAG_EVIDENCE_REASONING_MAX_HYPOTHESES: int = Field(default=4, ge=1, le=8)
+    RAG_EVIDENCE_REASONING_MAX_REQUIREMENTS: int = Field(default=6, ge=1, le=20)
+    RAG_EVIDENCE_REASONING_MAX_RETRIEVAL_ROUNDS: int = Field(default=4, ge=0, le=20)
+    RAG_EVIDENCE_REASONING_MAX_ANALYSIS_STEPS: int = Field(
+        default=10, ge=1, le=40, description="Pasos máximos del plan de razonamiento."
+    )
+    # -------------------------------------------------------------------------
     # Company Discovery Engine (Fase 5B)
     # -------------------------------------------------------------------------
     RAG_COMPANY_DISCOVERY_ENABLED: bool = Field(

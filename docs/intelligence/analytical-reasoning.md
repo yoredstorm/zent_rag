@@ -2,6 +2,11 @@
 
 Phase 29 — research plans, decomposition, drivers, graph paths.
 
+> Este motor es una **estrategia** dentro de Evidence Reasoning
+> (`docs/intelligence/evidence-reasoning.md`): aporta las operaciones de
+> `CAUSAL_ANALYSIS` y `DIAGNOSTIC`. El coordinador de escenarios, hipótesis,
+> inferencias y completitud vive en esa fase, no acá.
+
 ## Research plan
 
 `src/core/domain/research.py` — `ResearchPlan` / `ResearchStep` with statuses

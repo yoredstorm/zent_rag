@@ -232,6 +232,18 @@ x-common-env: &common-env
   RAG_RUNTIME_EFFICIENCY_LATENCY_WEIGHT: ${RAG_RUNTIME_EFFICIENCY_LATENCY_WEIGHT:-0.20}
   RAG_RUNTIME_EFFICIENCY_FALLBACK_WEIGHT: ${RAG_RUNTIME_EFFICIENCY_FALLBACK_WEIGHT:-0.15}
   # =========================================================================
+  # Evidence Reasoning (docs/intelligence/evidence-reasoning.md).
+  # off = legacy | shadow = ejecuta y compara sin responder | on = controla
+  # requests complejos | canary = porcentaje. Default off: activar por tenant.
+  # =========================================================================
+  RAG_EVIDENCE_REASONING_MODE: ${RAG_EVIDENCE_REASONING_MODE:-off}
+  RAG_EVIDENCE_REASONING_CANARY_PERCENT: ${RAG_EVIDENCE_REASONING_CANARY_PERCENT:-0}
+  RAG_EVIDENCE_REASONING_MAX_EVENTS: ${RAG_EVIDENCE_REASONING_MAX_EVENTS:-200}
+  RAG_EVIDENCE_REASONING_MAX_HYPOTHESES: ${RAG_EVIDENCE_REASONING_MAX_HYPOTHESES:-4}
+  RAG_EVIDENCE_REASONING_MAX_REQUIREMENTS: ${RAG_EVIDENCE_REASONING_MAX_REQUIREMENTS:-6}
+  RAG_EVIDENCE_REASONING_MAX_RETRIEVAL_ROUNDS: ${RAG_EVIDENCE_REASONING_MAX_RETRIEVAL_ROUNDS:-4}
+  RAG_EVIDENCE_REASONING_MAX_ANALYSIS_STEPS: ${RAG_EVIDENCE_REASONING_MAX_ANALYSIS_STEPS:-10}
+  # =========================================================================
   # Decision Engine batching (ADR decision-engine-batching.md)
   # off = una llamada JEV por módulo. shadow = legacy + batch observacional.
   # on = una llamada por fase (pre/post retrieval, post generation, agent step).

@@ -89,6 +89,95 @@ def detect_source_conflicts(
     return conflicts
 
 
+#: Reason codes nuevos del razonamiento sobre hechos (§33). No se crean estados
+#: nuevos: los reason codes alcanzan para explicar qué falta.
+ANALYSIS_INCOMPLETE = "ANALYSIS_INCOMPLETE"
+SCHEMA_REQUIRED = "SCHEMA_REQUIRED"
+STATE_UNRESOLVED = "STATE_UNRESOLVED"
+HYPOTHESIS_UNRESOLVED = "HYPOTHESIS_UNRESOLVED"
+INFERENCE_UNSUPPORTED = "INFERENCE_UNSUPPORTED"
+TIMELINE_INCOMPLETE = "TIMELINE_INCOMPLETE"
+GRAPH_RELATION_UNCONFIRMED = "GRAPH_RELATION_UNCONFIRMED"
+
+_REASONING_BLOCKING_CODES = frozenset(
+    {
+        ANALYSIS_INCOMPLETE,
+        SCHEMA_REQUIRED,
+        STATE_UNRESOLVED,
+        TIMELINE_INCOMPLETE,
+        INFERENCE_UNSUPPORTED,
+        GRAPH_RELATION_UNCONFIRMED,
+    }
+)
+
+
+def apply_reasoning_signals(
+    decision: AnswerabilityDecision, reasoning: Any | None
+) -> AnswerabilityDecision:
+    """§32/§33: degrada la decisión si el análisis quedó incompleto.
+
+    No toca las decisiones de severidad (permisos, ejecución fallida): ésas
+    siguen mandando. Sólo convierte "respondible" en CONTEXT_MISSING cuando el
+    razonamiento declara que falta reconstruir el escenario.
+    """
+    if reasoning is None or not getattr(reasoning, "activated", False):
+        return decision
+    completion = getattr(reasoning, "completion", None)
+    if completion is None or getattr(completion, "complete", True):
+        return decision
+    if decision.status in (
+        AnswerabilityStatus.ACCESS_BLOCKED,
+        AnswerabilityStatus.EXECUTION_FAILED,
+        AnswerabilityStatus.CLARIFICATION_REQUIRED,
+        AnswerabilityStatus.AMBIGUOUS,
+    ):
+        return decision
+    codes = [
+        str(code)
+        for code in getattr(completion, "reason_codes", ()) or ()
+        if code
+    ]
+    codes.extend(
+        str(code)
+        for code in getattr(reasoning, "reason_codes", ()) or ()
+        if code and code not in codes
+    )
+    blockers = [str(item) for item in getattr(completion, "blockers", ()) or ()]
+    missing_context = list(decision.missing_context)
+    for blocker in blockers:
+        if blocker not in missing_context:
+            missing_context.append(blocker)
+    blocking = [code for code in codes if code in _REASONING_BLOCKING_CODES]
+    reason_codes = list(decision.reason_codes)
+    for code in blocking or [ANALYSIS_INCOMPLETE]:
+        if code not in reason_codes:
+            reason_codes.append(code)
+    actions = list(decision.recommended_actions)
+    hint = (
+        "Completar el análisis: " + ", ".join(blockers[:4])
+        if blockers
+        else "Completar el análisis del escenario antes de concluir"
+    )
+    if hint not in actions:
+        actions.append(hint)
+    return AnswerabilityDecision(
+        status=AnswerabilityStatus.CONTEXT_MISSING,
+        answerable=False,
+        confidence_level=ConfidenceLevel.INSUFFICIENT,
+        score=decision.score,
+        reason_codes=reason_codes,
+        evidence_ids=list(decision.evidence_ids),
+        missing_context=missing_context,
+        recommended_actions=actions,
+        message=(
+            "No puedo concluir todavía: el escenario no está completamente "
+            "reconstruido. Falta: " + ", ".join(blockers[:4]) + "."
+            if blockers
+            else decision.message
+        ),
+    )
+
+
 class AnswerabilityGate:
     """Compuerta central de answerability (independiente del LLM)."""
 
@@ -123,6 +212,36 @@ class AnswerabilityGate:
         return ConfidenceLevel.INSUFFICIENT
 
     def evaluate(
+        self,
+        signals: SignalSet,
+        understanding: QueryUnderstanding,
+        plan: QueryPlan,
+        evidences: list[EvidenceObject],
+        *,
+        execution_error: str | None = None,
+        missing_data_hints: list[str] | None = None,
+        authoritative_source: str | None = None,
+        reasoning: Any | None = None,
+    ) -> AnswerabilityDecision:
+        """Evaluación de answerability, ahora consciente del razonamiento.
+
+        `reasoning` es un ReasoningOutcome opcional (o cualquier objeto con
+        `completion`, `workspace` y `reason_codes`). Si el análisis quedó
+        incompleto, la decisión se degrada a CONTEXT_MISSING conservando los
+        reason codes del dominio (SCHEMA_REQUIRED, INFERENCE_UNSUPPORTED, ...).
+        """
+        decision = self._evaluate_core(
+            signals,
+            understanding,
+            plan,
+            evidences,
+            execution_error=execution_error,
+            missing_data_hints=missing_data_hints,
+            authoritative_source=authoritative_source,
+        )
+        return apply_reasoning_signals(decision, reasoning)
+
+    def _evaluate_core(
         self,
         signals: SignalSet,
         understanding: QueryUnderstanding,
