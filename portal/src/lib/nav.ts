@@ -16,6 +16,7 @@ import {
   FlowArrow,
   Gear,
   GraduationCap,
+  Graph,
   Key,
   Lifebuoy,
   NotePencil,
@@ -75,6 +76,11 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Conocimiento",
     items: [
       { to: "/knowledge", label: "Conocimiento", icon: Database },
+      {
+        to: "/company-intelligence",
+        label: "Company Intelligence",
+        icon: Graph,
+      },
       { to: "/knowledge-hub", label: "Knowledge Hub", icon: Books },
       { to: "/data-sources", label: "Fuentes de datos", icon: StackSimple },
       { to: "/integrations", label: "Integraciones API", icon: Plugs },

@@ -157,6 +157,30 @@ const AiQualityPage = lazy(() => import("./pages/AiQuality"));
 const DeploymentsPage = lazy(() => import("./pages/Deployments"));
 const EnvironmentsPage = lazy(() => import("./pages/Environments"));
 const DataSourcesPage = lazy(() => import("./pages/DataSources"));
+const CompanyOverviewPage = lazy(
+  () => import("./pages/companyIntelligence/Overview"),
+);
+const CompanyMapPage = lazy(() => import("./pages/companyIntelligence/CompanyMap"));
+const CompanyEntitiesPage = lazy(
+  () => import("./pages/companyIntelligence/Entities"),
+);
+const CompanyEntityDetailPage = lazy(
+  () => import("./pages/companyIntelligence/EntityDetail"),
+);
+const CompanyRelationshipsPage = lazy(
+  () => import("./pages/companyIntelligence/Relationships"),
+);
+const CompanySourceAuthorityPage = lazy(
+  () => import("./pages/companyIntelligence/SourceAuthority"),
+);
+const CompanyKnowledgeGapsPage = lazy(
+  () => import("./pages/companyIntelligence/KnowledgeGaps"),
+);
+const CompanyChangesPage = lazy(() => import("./pages/companyIntelligence/Changes"));
+const CompanyInstitutionalPage = lazy(
+  () => import("./pages/companyIntelligence/Institutional"),
+);
+const CompanyAskPage = lazy(() => import("./pages/companyIntelligence/Ask"));
 const WebhooksPage = lazy(() => import("./pages/Webhooks"));
 const TeamAccessPage = lazy(() => import("./pages/TeamAccess"));
 const SecurityAuditPage = lazy(() => import("./pages/SecurityAudit"));
@@ -501,6 +525,21 @@ export default function App() {
         <Route path="/keys" element={<Suspense fallback={<PageFallback />}><KeysPage /></Suspense>} />
         <Route path="/webhooks" element={<Suspense fallback={<PageFallback />}><WebhooksPage /></Suspense>} />
         <Route path="/knowledge" element={<Suspense fallback={<PageFallback />}><KnowledgeOverviewPage /></Suspense>} />
+        <Route path="/company-intelligence" element={<Suspense fallback={<PageFallback />}><CompanyOverviewPage /></Suspense>} />
+        <Route path="/company-intelligence/map" element={<Suspense fallback={<PageFallback />}><CompanyMapPage /></Suspense>} />
+        <Route path="/company-intelligence/concepts" element={<Suspense fallback={<PageFallback />}><CompanyEntitiesPage /></Suspense>} />
+        <Route path="/company-intelligence/processes" element={<Suspense fallback={<PageFallback />}><CompanyEntitiesPage /></Suspense>} />
+        <Route path="/company-intelligence/systems" element={<Suspense fallback={<PageFallback />}><CompanyEntitiesPage /></Suspense>} />
+        <Route path="/company-intelligence/data" element={<Suspense fallback={<PageFallback />}><CompanyEntitiesPage /></Suspense>} />
+        <Route path="/company-intelligence/rules" element={<Suspense fallback={<PageFallback />}><CompanyEntitiesPage /></Suspense>} />
+        <Route path="/company-intelligence/events" element={<Suspense fallback={<PageFallback />}><CompanyEntitiesPage /></Suspense>} />
+        <Route path="/company-intelligence/relationships" element={<Suspense fallback={<PageFallback />}><CompanyRelationshipsPage /></Suspense>} />
+        <Route path="/company-intelligence/authority" element={<Suspense fallback={<PageFallback />}><CompanySourceAuthorityPage /></Suspense>} />
+        <Route path="/company-intelligence/gaps" element={<Suspense fallback={<PageFallback />}><CompanyKnowledgeGapsPage /></Suspense>} />
+        <Route path="/company-intelligence/changes" element={<Suspense fallback={<PageFallback />}><CompanyChangesPage /></Suspense>} />
+        <Route path="/company-intelligence/people" element={<Suspense fallback={<PageFallback />}><CompanyInstitutionalPage /></Suspense>} />
+        <Route path="/company-intelligence/ask" element={<Suspense fallback={<PageFallback />}><CompanyAskPage /></Suspense>} />
+        <Route path="/company-intelligence/entity/:entityId" element={<Suspense fallback={<PageFallback />}><CompanyEntityDetailPage /></Suspense>} />
         <Route path="/knowledge/learning" element={<Suspense fallback={<PageFallback />}><KnowledgeLearningPage /></Suspense>} />
         <Route path="/knowledge/map" element={<Suspense fallback={<PageFallback />}><KnowledgeMapPage /></Suspense>} />
         <Route path="/knowledge/understanding" element={<Suspense fallback={<PageFallback />}><KnowledgeUnderstandingPage /></Suspense>} />

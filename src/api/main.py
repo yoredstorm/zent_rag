@@ -166,6 +166,7 @@ async def lifespan(app: FastAPI):
             _wf_event_task = asyncio.create_task(_workflow_event_consumer_loop())
             _wf_watchers_task = asyncio.create_task(_workflow_watchers_loop())
             _learning_cycle_task = asyncio.create_task(_learning_cycle_loop())
+            _company_discovery_task = asyncio.create_task(_company_discovery_loop())
             yield
         finally:
             _region_health_task.cancel()
@@ -180,6 +181,7 @@ async def lifespan(app: FastAPI):
             _wf_event_task.cancel()
             _wf_watchers_task.cancel()
             _learning_cycle_task.cancel()
+            _company_discovery_task.cancel()
             await _run_shutdown()
 
 
@@ -297,6 +299,30 @@ async def _learning_cycle_loop() -> None:
         except Exception as exc:  # noqa: BLE001
             logger.warning("learning cycle loop failed", error=str(exc)[:200])
         await _asyncio.sleep(wait)
+
+
+async def _company_discovery_loop() -> None:
+    """Descubrimiento de compañía: drena jobs y planifica corridas (Fase 5B).
+
+    Apagado salvo RAG_COMPANY_DISCOVERY_ENABLED. Solo propone candidatos:
+    nunca escribe verdad en el Company Graph sin validación.
+    """
+    import asyncio as _asyncio
+
+    wait = max(60, int(settings.RAG_COMPANY_DISCOVERY_INTERVAL_SECONDS))
+    while True:
+        try:
+            if not settings.RAG_COMPANY_DISCOVERY_ENABLED:
+                await _asyncio.sleep(wait)
+                continue
+            from src.company.discovery.jobs import company_discovery_worker_loop
+
+            await company_discovery_worker_loop(wait)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("company discovery loop failed", error=str(exc)[:200])
+            await _asyncio.sleep(wait)
 
 
 async def _spider_loop() -> None:
@@ -703,6 +729,15 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     from src.api.routes.learning_cycle import router as learning_cycle_router
 
     new_app.include_router(learning_cycle_router)
+    from src.api.routes.company_graph import router as company_graph_router
+
+    new_app.include_router(company_graph_router)
+    from src.api.routes.company_discovery import router as company_discovery_router
+
+    new_app.include_router(company_discovery_router)
+    from src.api.routes.company_studio import router as company_studio_router
+
+    new_app.include_router(company_studio_router)
     new_app.include_router(adaptive_router)
     new_app.include_router(runtime_router)
 

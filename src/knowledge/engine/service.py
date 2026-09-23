@@ -209,6 +209,7 @@ class KnowledgeIngestionEngine:
         tabular_repo: TabularRepository | None = None,
         summarizer: object | None = None,
         usage_tracker: object | None = None,
+        company_discovery: object | None = None,
     ) -> None:
         self._jobs = job_repo
         self._state = sync_state_repo
@@ -227,6 +228,8 @@ class KnowledgeIngestionEngine:
         self._summarizer = summarizer
         # Phase G (brief §41): registro de costos por corpus/source.
         self._usage_tracker = usage_tracker
+        # Fase 5B: hook opcional de descubrimiento de compañía (fail-soft).
+        self._company_discovery = company_discovery
         self.v2_parsed = 0
         self.v2_failed = 0
 
@@ -601,6 +604,9 @@ class KnowledgeIngestionEngine:
                     )
             outcome = "summarize"
             await self._shadow_summarize(document, change_kind=change_kind)
+            await self._maybe_discover_company(
+                job, source, document, change_kind=change_kind
+            )
             outcome = "ok"
             self.v2_parsed += 1
         except Exception as exc:
@@ -1163,6 +1169,33 @@ class KnowledgeIngestionEngine:
             levels={str(level): count for level, count in sorted(level_counts.items())},
         )
         return len(chunks)
+
+    async def _maybe_discover_company(
+        self, job, source, document, *, change_kind: str | None = None
+    ) -> None:
+        """Fase 5B: encola descubrimiento de compañía para el documento.
+
+        Encolar es barato y no bloquea: el motor corre en background. Si el
+        hook falla o no está configurado, la ingesta ya terminó bien.
+        """
+        if self._company_discovery is None:
+            return
+        hook = getattr(self._company_discovery, "on_document_ingested", None)
+        if hook is None:
+            return
+        try:
+            await hook(
+                job.organization_id,
+                document_id=getattr(document, "id", None),
+                source_id=getattr(source, "id", None),
+            )
+        except Exception as exc:  # noqa: BLE001 - la ingesta nunca se rompe
+            logger.warning(
+                "Company discovery hook failed",
+                error=str(exc)[:200],
+                document_id=str(getattr(document, "id", "")),
+                change_kind=change_kind or "unknown",
+            )
 
     async def _shadow_summarize(self, document, *, change_kind: str | None = None) -> None:
         """Phase C3 shadow: calcula SectionSummary/DocumentSummary (INFERRED).

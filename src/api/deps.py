@@ -443,8 +443,26 @@ def get_knowledge_engine():
             tabular_repo=tabular_repo,
             summarizer=summarizer,
             usage_tracker=usage_tracker,
+            company_discovery=_company_discovery_hook(settings),
         )
     return _knowledge_engine
+
+
+def _company_discovery_hook(settings):
+    """Hook de ingesta -> descubrimiento de compañía (Fase 5B, fail-soft).
+
+    Devuelve un objeto con `on_document_ingested`; el motor corre en background
+    y solo propone candidatos. Si el flag está apagado, devuelve None y la
+    ingesta no cambia en nada.
+    """
+    if not getattr(settings, "RAG_COMPANY_DISCOVERY_ENABLED", False):
+        return None
+    try:
+        from src.company.discovery import jobs as discovery_jobs
+
+        return discovery_jobs
+    except Exception:  # noqa: BLE001 - descubrimiento no bloquea la ingesta
+        return None
 
 
 _tabular_query_service: object | None = None

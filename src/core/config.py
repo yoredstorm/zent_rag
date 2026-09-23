@@ -334,6 +334,23 @@ class Settings(BaseSettings):
     RAG_CATALOG_MAX_TABLES_PER_SCAN: int = Field(default=200, ge=1, le=5000)
     RAG_CATALOG_MAX_COLUMNS_PER_TABLE: int = Field(default=200, ge=1, le=2000)
     RAG_CATALOG_MAX_SAMPLES: int = Field(default=50, ge=1, le=1000)
+    # -------------------------------------------------------------------------
+    # Company Discovery Engine (Fase 5B)
+    # -------------------------------------------------------------------------
+    RAG_COMPANY_DISCOVERY_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Activa el worker de descubrimiento de compañía (candidatos, "
+            "procesos observados, gaps y authority). Nunca escribe verdad: "
+            "solo propone candidatos para validación."
+        ),
+    )
+    RAG_COMPANY_DISCOVERY_INTERVAL_SECONDS: int = Field(
+        default=900,
+        ge=60,
+        le=86400,
+        description="Intervalo del worker de descubrimiento cuando no hay jobs.",
+    )
     RAG_CATALOG_MAX_QUERY_SECONDS: float = Field(default=10.0, ge=1.0, le=120.0)
     RAG_CATALOG_MAX_SCAN_COST: int = Field(
         default=500,

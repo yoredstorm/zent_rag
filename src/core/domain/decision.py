@@ -142,6 +142,10 @@ class DecisionContext:
     knowledge_enabled: bool = True
     role: str = "admin"
     operational_patterns: tuple[dict[str, Any], ...] = ()
+    #: Fase 5B: contexto empresarial compilado (Company Context Compiler).
+    #: Solo hechos (conceptos, mappings, procesos, authority). Nunca
+    #: instrucciones ni prompts. Vacío = no cambia el state ni su fingerprint.
+    company_context: dict[str, Any] = field(default_factory=dict)
 
     def sanitized_state(self) -> dict[str, Any]:
         """JSON state for System One. Truncated. No secrets."""
@@ -171,7 +175,57 @@ class DecisionContext:
             "tenant_policy": policy,
             "budget": budget,
             "known_operational_patterns": _slim_patterns(self.operational_patterns),
+            **_company_signals(self.company_context),
         }
+
+
+def _company_signals(company_context: dict[str, Any]) -> dict[str, Any]:
+    """Señales empresariales compactas para System One (Fase 5B).
+
+    Solo hechos acotados: conceptos, mappings y procesos relevantes. Si el
+    contexto viene vacío, no se añade ninguna clave: el state (y su
+    fingerprint de cache) queda idéntico al de antes de esta fase.
+    """
+    if not company_context:
+        return {}
+    signals: dict[str, Any] = {}
+    concepts = company_context.get("company_concepts") or []
+    if concepts:
+        signals["company_concepts"] = [
+            {
+                "name": str(item.get("name") or "")[:120],
+                "entity_type": str(item.get("entity_type") or "")[:40],
+                "authority_level": item.get("authority_level"),
+            }
+            for item in list(concepts)[:6]
+            if isinstance(item, dict)
+        ]
+    mappings = company_context.get("company_mappings") or []
+    if mappings:
+        signals["company_mappings"] = [
+            {
+                "concept": str(item.get("concept") or "")[:120],
+                "field": str(item.get("field") or "")[:120],
+                "values": [str(value)[:40] for value in list(item.get("values") or ())[:4]],
+            }
+            for item in list(mappings)[:6]
+            if isinstance(item, dict)
+        ]
+    for key in ("company_processes", "company_systems"):
+        values = company_context.get(key) or []
+        if values:
+            signals[key] = [str(item)[:120] for item in list(values)[:4]]
+    authority = company_context.get("company_authority") or []
+    if authority:
+        signals["company_authority"] = [
+            {
+                "source": str(item.get("source") or "")[:120],
+                "level": str(item.get("level") or "")[:24],
+            }
+            for item in list(authority)[:4]
+            if isinstance(item, dict)
+        ]
+    return signals
 
 
 def _slim_patterns(patterns: tuple[dict[str, Any], ...]) -> list[dict[str, Any]]:

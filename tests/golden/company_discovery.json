@@ -1,0 +1,61 @@
+{
+  "name": "company_discovery_golden",
+  "note": "Preguntas empresariales reales. Verifican que el Company Context Compiler entregue SOLO el contexto relevante (bounded) y que el descubrimiento haya poblado el grafo con conceptos, mappings, procesos, sistemas, authority y versiones.",
+  "cases": [
+    {
+      "id": "company-001",
+      "question": "¿qué significa pending?",
+      "expects": {
+        "concepts_include": ["Pending Transaction"],
+        "max_tokens_estimate": 4000
+      }
+    },
+    {
+      "id": "company-002",
+      "question": "¿dónde se representa pending?",
+      "expects": {
+        "concepts_include": ["Pending Transaction"],
+        "mappings_include_field": "A1672STO0",
+        "mapping_values_include": "0"
+      }
+    },
+    {
+      "id": "company-003",
+      "question": "¿qué sistema almacena ticket status?",
+      "expects": {
+        "systems_include": ["PXSAUDIT"]
+      }
+    },
+    {
+      "id": "company-004",
+      "question": "¿qué proceso usa la tabla PXSAUDIT?",
+      "expects": {
+        "processes_include": ["Reconciliation"]
+      }
+    },
+    {
+      "id": "company-005",
+      "question": "¿qué workflow depende de la API /transactions?",
+      "expects": {
+        "processes_include": ["invoice-wf"]
+      }
+    },
+    {
+      "id": "company-006",
+      "question": "¿qué fuente manda sobre ticket?",
+      "expects": {
+        "authority_include_source": "PXSAUDIT",
+        "authority_level": "authoritative"
+      }
+    },
+    {
+      "id": "company-007",
+      "question": "¿cómo funcionaba esta política el año pasado?",
+      "as_of": "2025-03-01T00:00:00+00:00",
+      "expects": {
+        "rules_include": ["Refund Policy v1"],
+        "rules_exclude": ["Refund Policy v2"]
+      }
+    }
+  ]
+}
