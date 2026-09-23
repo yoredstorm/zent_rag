@@ -346,6 +346,87 @@ def test_contrato_y_prompt_sin_chain_of_thought() -> None:
 
 
 # ---------------------------------------------------------------------------
+# §55 — Las claves internas no llegan al prompt ni a la respuesta
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_no_expone_las_claves_de_las_secciones() -> None:
+    """El contrato se audita con claves; el generador no las ve ni las imprime."""
+    contract = compose_contract(
+        question="¿Qué significa el campo X cuando su valor es 2?",
+        profile=RESPONSE_PROFILE_PRESETS["technical_detailed"],
+    )
+    block = prompt_block(contract)
+    for section in contract.sections:
+        assert f"{section}:" not in block
+        assert f"- {section}" not in block
+    assert "orden de la información" in block
+    assert "una sola explicación conectada" in block
+    assert "no escribas etiquetas internas" in block
+    assert "no más de dos o tres" in block
+
+
+def test_strip_section_labels_quita_rotulos_filtrados() -> None:
+    from src.intelligence.response.contract import strip_section_labels
+
+    rotulado = (
+        "**direct_answer:** El Record 4 cambia la secuencia del Record 2.\n\n"
+        "**meaning:** Formalmente es un registro de control.\n\n"
+        "**practical_effect:** Permite reordenar reglas.\n\n"
+        "**example:** Si el Record 2 tiene 0001 y se publica 0005, se actualiza."
+    )
+    cleaned, removed = strip_section_labels(rotulado)
+    assert removed == 4
+    assert "direct_answer" not in cleaned
+    assert "meaning:" not in cleaned
+    assert cleaned.startswith("El Record 4 cambia la secuencia del Record 2.")
+    assert "Formalmente es un registro de control." in cleaned
+    assert "Si el Record 2 tiene 0001" in cleaned
+
+
+def test_strip_section_labels_limpia_la_lista_final_repetida() -> None:
+    from src.intelligence.response.contract import strip_section_labels
+
+    texto = (
+        "El campo se aplica sólo a la carga de datos.\n\n"
+        "**direct_answer:**  **meaning:**  **practical_effect:** **example:** **limitations:**"
+    )
+    cleaned, removed = strip_section_labels(texto)
+    assert removed == 5
+    assert cleaned == "El campo se aplica sólo a la carga de datos."
+    assert "*" not in cleaned
+
+
+def test_strip_section_labels_no_toca_encabezados_normales() -> None:
+    from src.intelligence.response.contract import strip_section_labels
+
+    normal = "## Qué significa\n\nEl campo **Record 4** renumera.\n\n### Ejemplo\n\n0001 → 0005."
+    cleaned, removed = strip_section_labels(normal)
+    assert removed == 0
+    assert cleaned == normal
+    again, removed_again = strip_section_labels(cleaned)
+    assert removed_again == 0
+    assert again == cleaned
+
+
+def test_respuesta_con_rotulos_se_limpia_en_el_agente() -> None:
+    """El texto que sale del runtime nunca lleva claves internas."""
+    from src.agents.runtime.agent_runtime import _direct_answer
+
+    answer = _direct_answer(
+        {
+            "answer": (
+                "**direct_answer:** El Record 4 renumera el Record 2.\n"
+                "**meaning:** Es un registro de control de ATPCO."
+            )
+        }
+    )
+    assert answer is not None
+    assert "direct_answer" not in answer
+    assert answer.startswith("El Record 4 renumera el Record 2.")
+
+
+# ---------------------------------------------------------------------------
 # Selección: determinista primero, JEV sólo con ambigüedad
 # ---------------------------------------------------------------------------
 

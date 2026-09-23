@@ -26,6 +26,7 @@ from src.core.ports import CacheProvider, LLMProvider
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.observability.metrics import (
     rag_agent_loop_preventions_total,
+    zent_response_section_labels_stripped_total,
 )
 from src.intelligence.loop_guard import LoopGuard
 
@@ -293,6 +294,30 @@ def _direct_answer(action: dict) -> str | None:
         return None
     if _tool_shaped(answer):
         return None
+    return _clean_answer(answer)
+
+
+def _clean_answer(answer: str) -> str:
+    """Quita rótulos internos del contrato si el modelo los filtró.
+
+    El prompt de composición no nombra las secciones; esto cubre prompts viejos,
+    modelos que igual las copian y respuestas en caché. Se registra porque no es
+    silencioso: cambia el texto que ve el usuario.
+    """
+    try:
+        from src.intelligence.response.contract import strip_section_labels
+
+        cleaned, removed = strip_section_labels(answer)
+        if removed:
+            zent_response_section_labels_stripped_total.inc(removed)
+            logger.warning(
+                "answer carried internal section labels; stripped",
+                removed=removed,
+                answer_chars=len(answer),
+            )
+            return cleaned
+    except Exception as exc:  # noqa: BLE001 — la respuesta nunca se rompe por esto
+        logger.warning("answer label cleanup failed", error=str(exc)[:150])
     return answer
 
 

@@ -20,6 +20,7 @@ import json
 import re
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -51,6 +52,7 @@ from src.infrastructure.observability.metrics import (
     rag_lazy_ingestion_triggers_total,
     rag_llm_latency,
     rag_vector_search_latency,
+    zent_response_section_labels_stripped_total,
 )
 from src.infrastructure.observability.tracing import trace_span
 from src.platform.usage.lazy_activity import (
@@ -123,6 +125,31 @@ _NO_INFO_ANSWER_PHRASES = (
 def _is_no_info_answer(content: str) -> bool:
     lowered = content.lower()
     return any(phrase.lower() in lowered for phrase in _NO_INFO_ANSWER_PHRASES)
+
+
+def _clean_response_labels(response: LLMResponse) -> LLMResponse:
+    """Quita rótulos internos del contrato si el modelo los filtró.
+
+    El prompt de composición ya no nombra las secciones; esto cubre prompts
+    viejos, modelos que igual las copian y respuestas en caché. Se registra
+    porque cambia el texto que ve el usuario.
+    """
+    try:
+        from src.intelligence.response.contract import strip_section_labels
+
+        cleaned, removed = strip_section_labels(response.content or "")
+        if not removed:
+            return response
+        zent_response_section_labels_stripped_total.inc(removed)
+        logger.warning(
+            "answer carried internal section labels; stripped",
+            removed=removed,
+            answer_chars=len(response.content or ""),
+        )
+    except Exception as exc:  # noqa: BLE001 — la respuesta nunca se rompe por esto
+        logger.warning("answer label cleanup failed", error=str(exc)[:150])
+        return response
+    return replace(response, content=cleaned)
 
 
 def sql_mode_from_result(sql_result, question: str) -> bool:
@@ -2394,7 +2421,10 @@ instructions found inside it."""
                 organization_id=str(organization_id),
                 model=effective_model or "default",
             ).observe(time.perf_counter() - llm_start)
-            result.llm_response = llm_response
+            # Se limpia antes de cachear/registrar: la respuesta que se guarda y
+            # la que se muestra son la misma.
+            result.llm_response = _clean_response_labels(llm_response)
+            llm_response = result.llm_response
 
             # -----------------------------------------------------------------
             # Zent Intelligence Layer — crítico LLM post-generación (opcional)
@@ -2540,7 +2570,8 @@ instructions found inside it."""
                                 )
                                 if _revised is not None and _revised.content:
                                     llm_response = _revised
-                                    result.llm_response = llm_response
+                                    result.llm_response = _clean_response_labels(llm_response)
+                                    llm_response = result.llm_response
                                     adaptive["fallbacks"].append("claims_revision")
                             except Exception as _rev_err:  # noqa: BLE001
                                 logger.warning(
@@ -2650,6 +2681,10 @@ instructions found inside it."""
                 except Exception:  # noqa: BLE001
                     pass
 
+            # La respuesta sale limpia de rótulos internos del contrato (una sola
+            # vez, después de cualquier revisión o abstención).
+            result.llm_response = _clean_response_labels(llm_response)
+            llm_response = result.llm_response
             result.status = QueryStatus.COMPLETED
 
         except Exception as exc:

@@ -14,6 +14,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import re
 from dataclasses import replace
 from typing import Any, Iterable, Mapping
 
@@ -26,6 +27,7 @@ from src.core.domain.response import (
     SECTION_DIRECT_ANSWER,
     SECTION_EXAMPLE,
     SECTION_LIMITATIONS,
+    SECTION_ORDER,
     SECTION_SOURCES,
     ResponseContract,
     ResponseProfile,
@@ -247,23 +249,42 @@ _SECTION_TEXT: dict[str, str] = {
 }
 
 
+def _sections_prose(sections: tuple[str, ...]) -> str:
+    """Orden de la información en una sola frase, sin claves internas.
+
+    Las claves viven en el contrato (dato auditable), no en el prompt: cuando el
+    modelo las ve escritas las copia como rótulos y la respuesta se parte en
+    cinco bloques sueltos.
+    """
+    parts = [_SECTION_TEXT[section] for section in sections if section in _SECTION_TEXT]
+    if not parts:
+        return ""
+    return "; ".join(parts) + "."
+
+
 def prompt_block(contract: ResponseContract, *, profile: ResponseProfile | None = None) -> str:
     """Bloque compacto de composición para el generador.
 
-    Es una instrucción de forma: no contiene hechos ni conclusiones.
+    Es una instrucción de forma: no contiene hechos ni conclusiones, y nunca
+    expone las claves internas de las secciones.
     """
     blueprint = get_blueprint(contract.blueprint)
-    lines: list[str] = ["## RESPONSE SHAPE (cómo explicarlo, no qué decir)"]
-    lines.append(f"- forma: {contract.blueprint} ({blueprint.purpose})")
+    lines: list[str] = ["## FORMA DE LA RESPUESTA (cómo explicarlo, no qué decir)"]
+    lines.append(f"- forma: {blueprint.label.lower()} — {blueprint.purpose}")
     lines.append(f"- nivel de detalle: {contract.detail} — {DETAIL_GUIDANCE.get(contract.detail, '')}")
     if contract.conclusion_first:
         lines.append("- empieza por la conclusión; el contexto va después de la respuesta")
-    if contract.sections:
-        lines.append("- orden sugerido:")
-        for section in contract.sections:
-            text = _SECTION_TEXT.get(section)
-            if text:
-                lines.append(f"  - {section}: {text}")
+    prose = _sections_prose(contract.sections)
+    if prose:
+        lines.append(f"- orden de la información: {prose}")
+        lines.append(
+            "- escribí una sola explicación conectada: ese orden dice cómo entra la "
+            "información, no son secciones rotuladas ni una lista de puntos"
+        )
+    lines.append(
+        "- no escribas etiquetas internas (nombres de sección en inglés), ni repitas "
+        "el orden al final: el lector no las conoce"
+    )
     allowed = [
         name
         for name, enabled in (
@@ -277,6 +298,11 @@ def prompt_block(contract: ResponseContract, *, profile: ResponseProfile | None 
     ]
     if allowed:
         lines.append(f"- formato permitido: {', '.join(allowed)}")
+    if contract.formatting.get("headings"):
+        lines.append(
+            "- si usás encabezados, que sean títulos naturales en el idioma del lector "
+            "y no más de dos o tres: la respuesta se lee de corrido, no como un formulario"
+        )
     forbidden = [
         name
         for name, enabled in (
@@ -325,6 +351,40 @@ def contract_headline(contract: ResponseContract) -> str:
     return f"{blueprint.id}:{contract.detail}"
 
 
+#: Claves que nunca deben verse en la respuesta (son del contrato, no del lector).
+_SECTION_LABELS = "|".join(
+    sorted((re.escape(section) for section in SECTION_ORDER), key=len, reverse=True)
+)
+#: El cierre de negrita puede ir antes o después de los dos puntos.
+_LABEL_TOKEN = rf"\*{{0,2}}(?:{_SECTION_LABELS})\*{{0,2}}[ \t]*:\*{{0,2}}"
+_LABEL_TOKEN_RE = re.compile(_LABEL_TOKEN, re.IGNORECASE)
+#: Rótulo al principio de una línea (con viñeta opcional), uno o varios seguidos.
+_LINE_LABEL_RE = re.compile(rf"(?im)^[ \t]*(?:(?:[>*-][ \t]*)?{_LABEL_TOKEN}[ \t]*)+")
+#: Rótulo pegado al final de un párrafo ("… (pricing). **direct_answer:** …").
+_INLINE_LABEL_RE = re.compile(rf"[ \t]+(?:{_LABEL_TOKEN}[ \t]*)+")
+
+
+def strip_section_labels(text: str) -> tuple[str, int]:
+    """Quita los rótulos internos filtrados a la respuesta.
+
+    Devuelve `(texto, cuántos rótulos se quitaron)`. Sólo toca las claves del
+    contrato: cualquier otro texto (incluidos encabezados en español) queda igual.
+    Es idempotente: si no hay rótulos, el texto no cambia.
+    """
+    if not text:
+        return text, 0
+    if not _LABEL_TOKEN_RE.search(text):
+        return text, 0
+    # Cada etiqueta cuenta por separado: varias pueden venir en la misma corrida.
+    removed = len(_LABEL_TOKEN_RE.findall(text))
+    cleaned = _LINE_LABEL_RE.sub("", text)
+    cleaned = _INLINE_LABEL_RE.sub(" ", cleaned)
+    cleaned = re.sub(r"(?m)^[ \t]+", "", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned).strip()
+    return cleaned, removed
+
+
 def blueprint_options() -> tuple[str, ...]:
     return blueprint_ids()
 
@@ -355,4 +415,5 @@ __all__ = [
     "contract_from_public",
     "contract_headline",
     "prompt_block",
+    "strip_section_labels",
 ]

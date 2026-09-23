@@ -599,6 +599,11 @@ zent_decision_preflight_uncertain_total = Counter(
     "Critical judgments left uncertain (information, not success)",
     labelnames=["phase"],
 )
+# --- Response Intelligence: forma de explicar --------------------------------
+zent_response_section_labels_stripped_total = Counter(
+    "zent_response_section_labels_stripped_total",
+    "Internal section labels leaked by the model and removed from the answer",
+)
 zent_adaptive_passage_judge_total = Counter(
     "zent_adaptive_passage_judge_total",
     "Passage judge verdicts composed in code",
