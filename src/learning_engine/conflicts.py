@@ -7,6 +7,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
+# El agregado Conflict vive en el dominio: es puro y lo comparte la
+# infraestructura (adapter del ledger). Se re-exporta para no romper imports.
+from src.core.domain.learning_cycle import Conflict
+
+__all__ = ["ClaimView", "Conflict", "detect_conflicts"]
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -24,37 +30,6 @@ class ClaimView:
     freshness: datetime | None = None
     effective_date: datetime | None = None
     version: int | None = None
-
-
-@dataclass(kw_only=True)
-class Conflict:
-    organization_id: UUID
-    subject: str
-    predicate: str
-    claims: list[dict]
-    suggestion: str = "human_review"
-    id: UUID = field(default_factory=uuid4)
-    status: str = "open"
-    resolved_by: UUID | None = None
-    chosen_claim_id: UUID | None = None
-    reason: str = ""
-    resolved_at: datetime | None = None
-
-    def to_public_dict(self) -> dict:
-        return {
-            "id": str(self.id),
-            "organization_id": str(self.organization_id),
-            "subject": self.subject,
-            "predicate": self.predicate,
-            "claims": list(self.claims),
-            "suggestion": self.suggestion,
-            "status": self.status,
-            "resolved_by": str(self.resolved_by) if self.resolved_by else None,
-            "chosen_claim_id": str(self.chosen_claim_id) if self.chosen_claim_id else None,
-            "reason": self.reason,
-            "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
-            "auto_resolved": False,
-        }
 
 
 def detect_conflicts(claims: list[ClaimView]) -> list[Conflict]:

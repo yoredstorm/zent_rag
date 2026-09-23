@@ -13,6 +13,7 @@ from uuid import UUID
 from sqlalchemy import bindparam, text
 
 from src.core.domain.learning_cycle import (
+    Conflict,
     EvaluationRecord,
     ExperimentRequest,
     ExperimentStatus,
@@ -23,9 +24,9 @@ from src.core.domain.learning_cycle import (
     RunSignal,
     StrategyComparison,
     ToolStep,
+    merge_finding,
 )
 from src.infrastructure.postgres.session import get_async_session
-from src.learning_engine.store import merge_finding
 
 
 def _default(value: Any) -> str:
@@ -147,8 +148,6 @@ def load_comparison(payload: Any) -> StrategyComparison:
 
 
 def load_conflict(payload: Any):
-    from src.learning_engine.conflicts import Conflict
-
     data = _load(payload)
     data["id"] = _uuid(data["id"])
     data["organization_id"] = _uuid(data["organization_id"])

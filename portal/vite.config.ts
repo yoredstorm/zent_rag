@@ -41,6 +41,9 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
+    // React resuelve su build de producción si NODE_ENV no es development/test
+    // y ahí `react.act` no existe: @testing-library/react falla al renderizar.
+    env: { NODE_ENV: "development" },
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
     css: false,

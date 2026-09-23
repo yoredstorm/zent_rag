@@ -11,36 +11,23 @@ from src.core.domain.learning_cycle import (
     ExperimentRequest,
     ExperimentStatus,
     Finding,
-    FindingStatus,
     Hypothesis,
     PromotionAudit,
     Recommendation,
     RunSignal,
     StrategyComparison,
+    merge_finding,
 )
+
+__all__ = [
+    "InMemoryLearningStore",
+    "LearningNotFound",
+    "merge_finding",
+]
 
 
 class LearningNotFound(KeyError):
     pass
-
-
-def merge_finding(current: Finding, incoming: Finding) -> Finding:
-    current.last_seen = incoming.last_seen
-    current.sample_size = incoming.sample_size
-    current.observed = incoming.observed
-    current.alternative = incoming.alternative
-    current.evidence = list(incoming.evidence)
-    current.affected = list(incoming.affected)
-    current.impact = dict(incoming.impact)
-    current.confidence = incoming.confidence
-    current.severity = incoming.severity
-    current.baseline_rate = incoming.baseline_rate
-    current.candidate_rate = incoming.candidate_rate
-    if current.memory_id is None:
-        current.memory_id = incoming.memory_id
-    if current.status == FindingStatus.OPEN:
-        current.status = incoming.status
-    return current
 
 
 class InMemoryLearningStore:

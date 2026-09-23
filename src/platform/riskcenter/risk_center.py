@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from sqlalchemy import text
@@ -462,7 +462,9 @@ async def compliance_posture(organization_id: UUID, framework: str = "eu_ai_act"
         group["total"] += 1
         if c.status == "pass":
             group["implemented"] += 1
-    today = date.today()
+    # UTC: el dashboard compara contra CURRENT_DATE de Postgres. Con la fecha
+    # local, el snapshot se guardaba con el día anterior durante la noche.
+    today = datetime.now(timezone.utc).date()
     session = await get_async_session()
     try:
         await session.execute(
@@ -501,7 +503,8 @@ async def compliance_posture(organization_id: UUID, framework: str = "eu_ai_act"
 
 
 async def posture_trend(organization_id: UUID, framework: str = "eu_ai_act", days: int = 30) -> dict:
-    since = date.today() - timedelta(days=days)
+    # Misma base temporal que el snapshot (UTC) para que la ventana no se corra.
+    since = datetime.now(timezone.utc).date() - timedelta(days=days)
     session = await get_async_session()
     try:
         rows = (

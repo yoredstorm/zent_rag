@@ -367,36 +367,48 @@ class PostgresMemoryRepository(MemoryRepository):
         limit: int = 50,
         offset: int = 0,
     ) -> list[MemoryRecord]:
+        # Filtros condicionales: un `:param IS NULL` deja el parámetro sin tipo
+        # resoluble para asyncpg, así que sólo se agregan las cláusulas activas.
+        clauses = [
+            "organization_id = :oid",
+            "visibility = 'tenant'",
+        ]
         params: dict[str, Any] = {
             "oid": organization_id,
-            "memory_type": memory_type,
-            "status": status,
-            "agent_id": agent_id,
-            "source_component": source_component,
-            "pattern": f"%{pattern[:80]}%" if pattern else None,
-            "confidence_min": confidence_min,
-            "updated_from": updated_from,
-            "updated_to": updated_to,
             "limit": min(limit, 100),
             "offset": max(offset, 0),
         }
+        if memory_type:
+            clauses.append("memory_type = :memory_type")
+            params["memory_type"] = memory_type
+        if status:
+            clauses.append("status = :status")
+            params["status"] = status
+        if agent_id:
+            clauses.append("agent_id = :agent_id")
+            params["agent_id"] = agent_id
+        if source_component:
+            clauses.append("source_component = :source_component")
+            params["source_component"] = source_component
+        if pattern:
+            clauses.append(
+                "(pattern_key ILIKE :pattern OR pattern_signature ILIKE :pattern)"
+            )
+            params["pattern"] = f"%{pattern[:80]}%"
+        if confidence_min is not None:
+            clauses.append("confidence >= :confidence_min")
+            params["confidence_min"] = confidence_min
+        if updated_from is not None:
+            clauses.append("updated_at >= :updated_from")
+            params["updated_from"] = updated_from
+        if updated_to is not None:
+            clauses.append("updated_at <= :updated_to")
+            params["updated_to"] = updated_to
+        where = " AND ".join(clauses)
         rows = await self._run(
-            """
+            f"""
             SELECT * FROM memory_records
-            WHERE organization_id = :oid
-              AND visibility = 'tenant'
-              AND (:memory_type IS NULL OR memory_type = :memory_type)
-              AND (:status IS NULL OR status = :status)
-              AND (:agent_id IS NULL OR agent_id = :agent_id)
-              AND (:source_component IS NULL OR source_component = :source_component)
-              AND (
-                    :pattern IS NULL
-                    OR pattern_key ILIKE :pattern
-                    OR pattern_signature ILIKE :pattern
-              )
-              AND (:confidence_min IS NULL OR confidence >= :confidence_min)
-              AND (:updated_from IS NULL OR updated_at >= :updated_from)
-              AND (:updated_to IS NULL OR updated_at <= :updated_to)
+            WHERE {where}
             ORDER BY updated_at DESC
             LIMIT :limit OFFSET :offset
             """,

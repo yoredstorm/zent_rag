@@ -93,6 +93,66 @@ class RecommendationStatus(StrEnum):
 
 
 @dataclass(kw_only=True)
+class Conflict:
+    """Conflicto entre claims con el mismo sujeto y predicado.
+
+    Puro: la resolución es un acto humano aparte (nunca automática).
+    """
+
+    organization_id: UUID
+    subject: str
+    predicate: str
+    claims: list[dict]
+    suggestion: str = "human_review"
+    id: UUID = field(default_factory=uuid4)
+    status: str = "open"
+    resolved_by: UUID | None = None
+    chosen_claim_id: UUID | None = None
+    reason: str = ""
+    resolved_at: datetime | None = None
+
+    def to_public_dict(self) -> dict:
+        return {
+            "id": str(self.id),
+            "organization_id": str(self.organization_id),
+            "subject": self.subject,
+            "predicate": self.predicate,
+            "claims": list(self.claims),
+            "suggestion": self.suggestion,
+            "status": self.status,
+            "resolved_by": str(self.resolved_by) if self.resolved_by else None,
+            "chosen_claim_id": str(self.chosen_claim_id) if self.chosen_claim_id else None,
+            "reason": self.reason,
+            "resolved_at": self.resolved_at.isoformat() if self.resolved_at else None,
+            "auto_resolved": False,
+        }
+
+
+def merge_finding(current: Finding, incoming: Finding) -> Finding:
+    """Fusiona dos observaciones del mismo finding.
+
+    Vive en el dominio (no en el motor ni en la infraestructura) porque es
+    lógica pura sobre el agregado: la usan tanto el ciclo como su adapter.
+    """
+    current.last_seen = incoming.last_seen
+    current.sample_size = incoming.sample_size
+    current.observed = incoming.observed
+    current.alternative = incoming.alternative
+    current.evidence = list(incoming.evidence)
+    current.affected = list(incoming.affected)
+    current.impact = dict(incoming.impact)
+    current.confidence = incoming.confidence
+    current.severity = incoming.severity
+    current.baseline_rate = incoming.baseline_rate
+    current.candidate_rate = incoming.candidate_rate
+    if current.memory_id is None:
+        current.memory_id = incoming.memory_id
+    if current.status == FindingStatus.OPEN:
+        current.status = incoming.status
+    return current
+
+
+@dataclass(kw_only=True)
 class RunSignal:
     """Una ejecución normalizada. No es chain-of-thought ni un documento."""
 
