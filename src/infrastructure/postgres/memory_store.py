@@ -515,12 +515,18 @@ class PostgresMemoryRepository(MemoryRepository):
         if run_id is None and conversation_id is None:
             return []
         rows = await self._run(
+            # Cast explícito: asyncpg no puede inferir el tipo de un parámetro
+            # NULL (impacto de memoria por run). Se usa CAST(... AS uuid) porque
+            # `::uuid` no lo parsea el binder de SQLAlchemy.
             """
             SELECT * FROM memory_events
             WHERE organization_id = :oid
               AND (
-                    (:run_id IS NOT NULL AND run_id = :run_id)
-                 OR (:conversation_id IS NOT NULL AND conversation_id = :conversation_id)
+                    (CAST(:run_id AS uuid) IS NOT NULL AND run_id = CAST(:run_id AS uuid))
+                 OR (
+                        CAST(:conversation_id AS uuid) IS NOT NULL
+                    AND conversation_id = CAST(:conversation_id AS uuid)
+                    )
               )
             ORDER BY created_at ASC
             """,

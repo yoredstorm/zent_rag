@@ -289,6 +289,24 @@ async def test_events_evidence_impact_and_idempotency():
 
 
 @pytest.mark.asyncio
+async def test_events_for_scope_por_run_en_postgres():
+    """Regresión: el filtro por run_id necesita tipo explícito en asyncpg.
+
+    Un parámetro UUID en NULL sin cast hace fallar la consulta
+    ("could not determine data type of parameter"), y el impacto de memoria por
+    run quedaba en 500. El endpoint debe responder ceros reales cuando el run
+    existe pero no dejó eventos.
+    """
+    from src.infrastructure.postgres.memory_store import PostgresMemoryRepository
+
+    repo = PostgresMemoryRepository()
+    assert await repo.events_for_scope(uuid4(), run_id=uuid4()) == []
+    assert await repo.events_for_scope(uuid4(), conversation_id=uuid4()) == []
+    # Sin scope no se consulta nada.
+    assert await repo.events_for_scope(uuid4()) == []
+
+
+@pytest.mark.asyncio
 async def test_chain_of_thought_is_not_persisted():
     org = uuid4()
     repo, service, _ = _stack()
