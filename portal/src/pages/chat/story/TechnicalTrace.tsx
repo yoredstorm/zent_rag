@@ -72,6 +72,82 @@ function JudgmentTechnical({ story }: { story: ExecutionStory }) {
   );
 }
 
+/** §53: la composición de la respuesta y el gate de presentación, auditables. */
+function ResponsePresentationTechnical({ story }: { story: ExecutionStory }) {
+  const composition = story.judgmentPacks.find(
+    (pack) => pack.phase === "response_composition" && pack.judgments.length,
+  );
+  const presentation = story.judgmentPacks.find(
+    (pack) =>
+      pack.phase === "post_generation" &&
+      pack.judgments.some((judgment) =>
+        ["structure", "usefulness", "clarity", "revision_reason"].includes(judgment.id),
+      ),
+  );
+  if (!composition && !presentation) return null;
+  return (
+    <details>
+      <summary className="cursor-pointer text-[11.5px] text-accent">
+        Ver composición de la respuesta
+      </summary>
+      <div className="mt-2 flex flex-col gap-2">
+        {composition ? (
+          <div className="rounded border border-border bg-surface/60 p-2">
+            <p className="text-[11.5px] text-text">
+              JEV · forma de respuesta: {composition.judgmentCount} preguntas · 1 llamada
+              {composition.durationMs ? ` · ${Math.round(composition.durationMs)} ms` : ""}
+              {composition.cached ? " · reutilizada" : ""}
+            </p>
+            <ul className="mt-1 flex flex-col gap-1 text-[11px] text-muted">
+              {composition.judgments.map((judgment) => (
+                <li key={judgment.id} className="mono flex flex-wrap gap-x-3 tabular-nums">
+                  <span className="text-text">{judgment.id}</span>
+                  <span>{judgment.decisionKey || "—"}</span>
+                  {judgment.confidence !== undefined ? (
+                    <span>conf {fmtNumber(judgment.confidence, 4)}</span>
+                  ) : null}
+                  {judgment.type === "noul" ? (
+                    <span>noul {fmtNumber(judgment.value, 4)}</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {presentation ? (
+          <div className="rounded border border-border bg-surface/60 p-2">
+            <p className="text-[11.5px] text-text">
+              Gate de presentación: {presentation.judgmentCount} comprobaciones
+              {presentation.applied === false ? " · sólo observado" : ""}
+            </p>
+            <ul className="mt-1 flex flex-col gap-1 text-[11px] text-muted">
+              {presentation.judgments
+                .filter((judgment) =>
+                  [
+                    "structure",
+                    "usefulness",
+                    "clarity",
+                    "revision_reason",
+                    "answer_explains_key_reason",
+                    "answer_is_needlessly_verbose",
+                    "important_context_missing",
+                  ].includes(judgment.id),
+                )
+                .map((judgment) => (
+                  <li key={judgment.id} className="mono flex flex-wrap gap-x-3 tabular-nums">
+                    <span className="text-text">{judgment.id}</span>
+                    <span>{judgment.decisionKey || "—"}</span>
+                    {judgment.value !== undefined ? <span>{fmtNumber(judgment.value, 2)}</span> : null}
+                  </li>
+                ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
 export function TechnicalTrace({ story }: { story: ExecutionStory }) {
   const technical = story.technical;
   const rows: Array<[string, string]> = [];
@@ -127,6 +203,34 @@ export function TechnicalTrace({ story }: { story: ExecutionStory }) {
     rows.push(["Answerability", JSON.stringify(technical.answerability)]);
   }
   rows.push(["Verificación", `${story.verification.label} (${story.verification.overall})`]);
+  // §51, §53: la composición de la respuesta es auditable.
+  if (story.response) {
+    rows.push(["Forma de respuesta", `${story.response.blueprint} (${story.response.label})`]);
+    rows.push(["Nivel de detalle", story.response.detail]);
+    rows.push(["Forma elegida por", story.response.decidedBy]);
+    rows.push([
+      "Composición",
+      [
+        story.response.needsExample ? "ejemplo" : "",
+        story.response.needsTable ? "tabla" : "",
+        story.response.needsStepByStep ? "paso a paso" : "",
+        story.response.citationsRequired ? "citas" : "",
+        story.response.hedgingRequired ? "sin certeza definitiva" : "",
+      ]
+        .filter(Boolean)
+        .join(", ") || "sin requisitos extra",
+    ]);
+  } else {
+    rows.push(["Forma de respuesta", "no registrada en este run"]);
+  }
+  if (story.performance.cumulativeSpanMs !== null) {
+    rows.push([
+      "Trabajo acumulado (spans)",
+      `${Math.round(story.performance.cumulativeSpanMs)} ms${
+        story.performance.overlaps ? " · contiene solapes" : ""
+      }`,
+    ]);
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -144,18 +248,28 @@ export function TechnicalTrace({ story }: { story: ExecutionStory }) {
         </dl>
       </div>
       <div>
+        {/* §39, §49: la matriz de observabilidad vive SÓLO acá. */}
         <p className="eyebrow mb-2">Observabilidad</p>
         <ul className="flex flex-col gap-1 text-[11.5px]">
           {story.telemetry.dimensions.map((dimension) => (
             <li key={dimension.key} className="flex items-center gap-2">
               <span className="w-40 shrink-0 text-faint">{dimension.label}</span>
-              <span className={dimension.state === "observed" ? "text-ok" : "text-muted"}>
-                {dimension.state}
+              <span
+                className={
+                  dimension.state === "observed"
+                    ? "text-ok"
+                    : dimension.state === "not_applicable"
+                      ? "text-muted"
+                      : "text-faint"
+                }
+              >
+                {dimension.stateLabel}
               </span>
             </li>
           ))}
         </ul>
       </div>
+      <ResponsePresentationTechnical story={story} />
       <JudgmentTechnical story={story} />
       <details>
         <summary className="cursor-pointer text-[11.5px] text-accent">Ver traza técnica</summary>

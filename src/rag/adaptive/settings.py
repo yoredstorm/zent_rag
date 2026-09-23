@@ -31,6 +31,11 @@ class AdaptiveRagSettings:
     claims_enabled: bool = True
     claims_max: int = 6
     claims_ledger_enabled: bool = True
+    #: Response Intelligence: el pack POST_GENERATION suma las preguntas de
+    #: presentación (claridad, estructura, utilidad, motivo de revisión).
+    presentation_gate: bool = True
+    #: Forma de explicar (contrato de respuesta) en el prompt del generador.
+    response_intelligence_mode: str = "rules"
     noul_yes: float = 0.65
     noul_no: float = 0.35
     estimated_cost_per_1k: float = 0.0005
@@ -78,6 +83,10 @@ def settings_from_app() -> AdaptiveRagSettings:
         claims_enabled=s.DECISION_CLAIMS,
         claims_max=s.DECISION_CLAIMS_MAX,
         claims_ledger_enabled=s.DECISION_CLAIMS_LEDGER,
+        presentation_gate=bool(getattr(s, "RAG_RESPONSE_PRESENTATION_GATE", True)),
+        response_intelligence_mode=str(
+            getattr(s, "RAG_RESPONSE_INTELLIGENCE_MODE", "rules") or "rules"
+        ),
         noul_yes=s.DECISION_NOUL_YES,
         noul_no=s.DECISION_NOUL_NO,
     )

@@ -53,8 +53,8 @@ export function AgentPurposeForm({
 
       <AgentField
         id="agent-studio-instructions"
-        label="Cómo debe responder"
-        hint="Instrucciones de tono, límites y formato."
+        label="Instrucciones libres"
+        hint="Texto libre para casos puntuales; el estilo general se define en «Cómo debe responder»."
       >
         <Textarea
           id="agent-studio-instructions"

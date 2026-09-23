@@ -39,6 +39,8 @@ PHASE_AGENT_STEP = "agent_step"
 PHASE_PRE_REASONING = "pre_reasoning"
 PHASE_POST_RECONSTRUCTION = "post_reconstruction"
 PHASE_PRE_GENERATION = "pre_generation"
+#: Response Intelligence: cómo explicar la respuesta (forma, no contenido).
+PHASE_RESPONSE_COMPOSITION = "response_composition"
 
 JUDGE_PHASES = frozenset(
     {
@@ -56,6 +58,7 @@ JUDGE_PHASES = frozenset(
         PHASE_PRE_REASONING,
         PHASE_POST_RECONSTRUCTION,
         PHASE_PRE_GENERATION,
+        PHASE_RESPONSE_COMPOSITION,
         PHASE_TARGET_SELECTION,
     }
 )

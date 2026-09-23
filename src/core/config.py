@@ -1003,6 +1003,27 @@ class Settings(BaseSettings):
         ),
     )
     # -------------------------------------------------------------------------
+    # Response Intelligence (docs/architecture/response-intelligence.md)
+    # -------------------------------------------------------------------------
+    RAG_RESPONSE_INTELLIGENCE_MODE: Literal["off", "rules", "on", "canary"] = Field(
+        default="rules",
+        description=(
+            "off = sin contrato de respuesta (comportamiento previo). "
+            "rules = contrato determinista (forma elegida por reglas). "
+            "on = rules + pack JEV cuando dos formas quedan empatadas. "
+            "canary = on para RAG_RESPONSE_INTELLIGENCE_CANARY_PERCENTAGE."
+        ),
+    )
+    RAG_RESPONSE_INTELLIGENCE_CANARY_PERCENTAGE: int = Field(default=0, ge=0, le=100)
+    RAG_RESPONSE_PRESENTATION_GATE: bool = Field(
+        default=True,
+        description=(
+            "on = el pack POST_GENERATION y el gate de respuesta del agente suman "
+            "las preguntas de presentacion (claridad, estructura, utilidad, motivo "
+            "de revision) en la MISMA llamada de verificacion."
+        ),
+    )
+    # -------------------------------------------------------------------------
     # Judgment Fabric — target selection + risk-aware thresholds
     # -------------------------------------------------------------------------
     DECISION_TARGET_SELECTION: Literal["off", "shadow", "on"] = Field(

@@ -26,6 +26,7 @@ from src.decision.judgment import (
     PHASE_POST_RECONSTRUCTION,
     PHASE_PRE_GENERATION,
     PHASE_PRE_REASONING,
+    PHASE_RESPONSE_COMPOSITION,
 )
 
 TYPE_CHOICE = "choice"
@@ -895,6 +896,269 @@ POST_GENERATION_QUESTIONS: tuple[QuestionDefinition, ...] = (
 )
 
 
+RESPONSE_BLUEPRINT_OPTIONS = (
+    "direct_fact",
+    "definition_explanation",
+    "technical_explanation",
+    "scenario_analysis",
+    "diagnostic",
+    "comparison",
+    "procedure",
+    "data_interpretation",
+    "executive_summary",
+    "tutorial",
+)
+
+RESPONSE_BLUEPRINT_CRITERIA: dict[str, str] = {
+    "direct_fact": "One value, code or name answers the question; no explanation needed.",
+    "definition_explanation": "The user asks what something is and where it applies.",
+    "technical_explanation": "The user asks what a field, byte, code or value means and what it implies.",
+    "scenario_analysis": "The answer depends on a sequence of records or events.",
+    "diagnostic": "The user asks why something happened or failed, with evidence.",
+    "comparison": "The user asks to contrast two or more options on the same criteria.",
+    "procedure": "The user asks how to do something, step by step.",
+    "data_interpretation": "The user provides data and asks what it shows.",
+    "executive_summary": "The user asks for the essentials or a summary, without technical detail.",
+    "tutorial": "The user asks to be taught the topic from the fundamentals.",
+}
+
+REQUIRED_DETAIL_OPTIONS = ("brief", "normal", "detailed", "deep")
+
+REQUIRED_DETAIL_CRITERIA: dict[str, str] = {
+    "brief": "One or two sentences are enough.",
+    "normal": "Direct answer plus a short explanation.",
+    "detailed": "Direct answer, meaning, practical effect and an example when useful.",
+    "deep": "Full explanation with steps or tables, because the case requires it.",
+}
+
+#: Composición de la respuesta (§5, §24): cómo explicarla, nunca qué decir.
+RESPONSE_COMPOSITION_QUESTIONS: tuple[QuestionDefinition, ...] = (
+    QuestionDefinition(
+        id="response_blueprint",
+        phase=PHASE_RESPONSE_COMPOSITION,
+        type=TYPE_CHOICE,
+        risk="medium",
+        threshold_key="response_blueprint",
+        options=RESPONSE_BLUEPRINT_OPTIONS,
+        criteria=RESPONSE_BLUEPRINT_CRITERIA,
+        ui_label="¿Cómo conviene explicar esta respuesta?",
+        description="Forma de explicación; no cambia hechos ni conclusiones.",
+        instructions=(
+            "Which explanation shape in `blueprint_options` best fits `user_request`, "
+            "given `verified_conclusions` and `audience`?"
+        ),
+    ),
+    QuestionDefinition(
+        id="required_detail",
+        phase=PHASE_RESPONSE_COMPOSITION,
+        type=TYPE_SCORE,
+        risk="low",
+        threshold_key="required_detail",
+        criteria=list(REQUIRED_DETAIL_OPTIONS),
+        ui_label="¿Qué nivel de detalle necesita?",
+        description="Profundidad necesaria; no se pide más de lo que el caso exige.",
+        instructions=(
+            "How much detail does `user_request` actually require: brief, normal, "
+            "detailed or deep?"
+        ),
+    ),
+    QuestionDefinition(
+        id="needs_example",
+        phase=PHASE_RESPONSE_COMPOSITION,
+        type=TYPE_NOUL,
+        ui_label="¿Conviene un ejemplo?",
+        description="Un caso mínimo aclararía la explicación.",
+        instructions=(
+            "Would a small concrete example make the explanation clearer for "
+            "`user_request`?"
+        ),
+    ),
+    QuestionDefinition(
+        id="needs_table",
+        phase=PHASE_RESPONSE_COMPOSITION,
+        type=TYPE_NOUL,
+        ui_label="¿Conviene una tabla?",
+        description="Hay componentes o valores comparables.",
+        instructions=(
+            "Would a table help, because two or more attributes or components in "
+            "`evidence` are comparable?"
+        ),
+    ),
+    QuestionDefinition(
+        id="needs_step_by_step",
+        phase=PHASE_RESPONSE_COMPOSITION,
+        type=TYPE_NOUL,
+        ui_label="¿Conviene paso a paso?",
+        description="La operación tiene pasos ordenados.",
+        instructions=(
+            "Does answering `user_request` require ordered steps (a procedure or a "
+            "sequence)?"
+        ),
+    ),
+    QuestionDefinition(
+        id="needs_warning",
+        phase=PHASE_RESPONSE_COMPOSITION,
+        type=TYPE_NOUL,
+        ui_label="¿Hay que advertir algo?",
+        description="Existe una excepción o riesgo que el lector debe conocer.",
+        instructions=(
+            "Does `evidence` contain an exception, precondition or risk that the "
+            "reader must be warned about?"
+        ),
+    ),
+    QuestionDefinition(
+        id="needs_definition",
+        phase=PHASE_RESPONSE_COMPOSITION,
+        type=TYPE_NOUL,
+        ui_label="¿Hay que definir algún término?",
+        description="El término técnico no es obvio para la audiencia.",
+        instructions=(
+            "Should the answer define a technical term, given `audience` and "
+            "`user_request`?"
+        ),
+    ),
+    QuestionDefinition(
+        id="needs_practical_implication",
+        phase=PHASE_RESPONSE_COMPOSITION,
+        type=TYPE_NOUL,
+        ui_label="¿Hay que explicar la consecuencia práctica?",
+        description="El lector necesita saber qué cambia en su caso.",
+        instructions=(
+            "Does the reader need the operational consequence of the conclusion for "
+            "`user_request`?"
+        ),
+    ),
+    QuestionDefinition(
+        id="needs_source_explanation",
+        phase=PHASE_RESPONSE_COMPOSITION,
+        type=TYPE_NOUL,
+        ui_label="¿Hay que explicar de dónde sale?",
+        description="Conviene decir qué fuente sostiene la afirmación.",
+        instructions=(
+            "Should the answer explain which source supports the conclusion "
+            "(authority, rule or document)?"
+        ),
+    ),
+    QuestionDefinition(
+        id="needs_citations",
+        phase=PHASE_RESPONSE_COMPOSITION,
+        type=TYPE_NOUL,
+        ui_label="¿Hay que citar fuentes?",
+        description="Las citas deben acompañar la afirmación.",
+        instructions=(
+            "Should the answer cite the sources next to each supported statement?"
+        ),
+    ),
+    # --- Gate de presentación (§24): se evalúa después del draft -------------
+    QuestionDefinition(
+        id="answer_explains_key_reason",
+        phase=PHASE_POST_GENERATION,
+        type=TYPE_NOUL,
+        source="presentation",
+        ui_label="¿Explica el motivo clave?",
+        description="Dice por qué, no sólo qué.",
+        instructions=(
+            "Does `draft_answer` explain the key reason behind the conclusion, not "
+            "only the conclusion itself?"
+        ),
+    ),
+    QuestionDefinition(
+        id="answer_is_needlessly_verbose",
+        phase=PHASE_POST_GENERATION,
+        type=TYPE_NOUL,
+        source="presentation",
+        ui_label="¿Es innecesariamente largo?",
+        description="Extensión sin valor agregado.",
+        instructions=(
+            "Is `draft_answer` needlessly verbose for the question asked: padding, "
+            "repetition or generic filler?"
+        ),
+    ),
+    QuestionDefinition(
+        id="important_context_missing",
+        phase=PHASE_POST_GENERATION,
+        type=TYPE_NOUL,
+        source="presentation",
+        ui_label="¿Falta contexto importante?",
+        description="El lector no puede entender o actuar sin ese contexto.",
+        instructions=(
+            "Is an important piece of context missing, without which the reader "
+            "cannot understand or act on `draft_answer`?"
+        ),
+    ),
+    QuestionDefinition(
+        id="structure",
+        phase=PHASE_POST_GENERATION,
+        type=TYPE_SCORE,
+        source="presentation",
+        ui_label="¿Qué tan clara es la estructura?",
+        description="Score ordinal de la organización de la respuesta.",
+        criteria=[
+            "hard to follow",
+            "acceptable",
+            "clear",
+            "very clear and scannable",
+        ],
+        instructions="How well structured is `draft_answer` for the question asked?",
+    ),
+    QuestionDefinition(
+        id="usefulness",
+        phase=PHASE_POST_GENERATION,
+        type=TYPE_SCORE,
+        source="presentation",
+        ui_label="¿Qué tan útil es?",
+        description="Score ordinal de utilidad para el caso del usuario.",
+        criteria=[
+            "does not help",
+            "partially useful",
+            "useful",
+            "directly actionable",
+        ],
+        instructions=(
+            "How useful is `draft_answer` for the user's actual case, given "
+            "`evidence_preview`?"
+        ),
+    ),
+    QuestionDefinition(
+        id="revision_reason",
+        phase=PHASE_POST_GENERATION,
+        type=TYPE_CHOICE,
+        source="presentation",
+        risk="medium",
+        threshold_key="revision_reason",
+        options=(
+            "unclear",
+            "too_verbose",
+            "too_short",
+            "missing_explanation",
+            "missing_example",
+            "missing_evidence",
+            "unsupported_claim",
+            "poor_structure",
+            "does_not_answer_question",
+        ),
+        criteria={
+            "unclear": "The answer is hard to understand.",
+            "too_verbose": "It says more than needed.",
+            "too_short": "It omits necessary explanation.",
+            "missing_explanation": "It states the conclusion without the reason.",
+            "missing_example": "An example would make it clear and is absent.",
+            "missing_evidence": "A claim lacks support in the evidence.",
+            "unsupported_claim": "It states something the evidence does not support.",
+            "poor_structure": "The order or sections make it hard to follow.",
+            "does_not_answer_question": "It answers a different question.",
+        },
+        ui_label="¿Por qué hay que revisarla?",
+        description="Motivo de revisión; el código construye el feedback.",
+        instructions=(
+            "If `draft_answer` must be revised, what is the single most important "
+            "reason? If it is fine, answer `unclear` is wrong: prefer the least "
+            "severe applicable option."
+        ),
+    ),
+)
+
+
 def register_preflight_questions(registry: QuestionRegistry | None = None) -> QuestionRegistry:
     """Registra las preguntas del preflight. Idempotente."""
     target = registry or _REGISTRY
@@ -902,6 +1166,7 @@ def register_preflight_questions(registry: QuestionRegistry | None = None) -> Qu
     target.register_many(POST_RECONSTRUCTION_QUESTIONS)
     target.register_many(PRE_GENERATION_QUESTIONS)
     target.register_many(POST_GENERATION_QUESTIONS)
+    target.register_many(RESPONSE_COMPOSITION_QUESTIONS)
     return target
 
 
@@ -920,6 +1185,11 @@ __all__ = [
     "POST_RECONSTRUCTION_QUESTIONS",
     "PRE_GENERATION_QUESTIONS",
     "PRE_REASONING_QUESTIONS",
+    "REQUIRED_DETAIL_CRITERIA",
+    "REQUIRED_DETAIL_OPTIONS",
+    "RESPONSE_BLUEPRINT_CRITERIA",
+    "RESPONSE_BLUEPRINT_OPTIONS",
+    "RESPONSE_COMPOSITION_QUESTIONS",
     "QuestionDefinition",
     "QuestionRegistry",
     "REASONING_SHAPE_OPTIONS",

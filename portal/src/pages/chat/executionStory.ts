@@ -13,7 +13,7 @@
 
 export type Flow = Record<string, unknown>;
 
-export type StoryStatus = "ok" | "warn" | "error" | "skipped" | "pending";
+export type StoryStatus = "ok" | "warn" | "uncertain" | "error" | "skipped" | "pending";
 
 export type StoryPhaseId =
   | "understanding"
@@ -208,6 +208,78 @@ export type StoryJevImpact = {
   facts: { label: string; value: string }[];
 };
 
+/**
+ * §51-§54 (Response Intelligence): la forma de explicar que eligió Zent.
+ * No es contenido: es la decisión de composición, en lenguaje humano.
+ */
+export type StoryResponseShape = {
+  blueprint: string;
+  label: string;
+  detail: string;
+  detailLabel: string;
+  decidedBy: string;
+  decidedByLabel: string;
+  conclusionFirst: boolean;
+  needsExample: boolean;
+  needsTable: boolean;
+  needsStepByStep: boolean;
+  citationsRequired: boolean;
+  hedgingRequired: boolean;
+  sections: string[];
+  uncertain: string[];
+  /** §54: cómo se anuncia el paso de generación según la forma elegida. */
+  generationTitle: string;
+  generationSubtitle: string;
+};
+
+/** §43-§47: rendimiento real del run. Wall-clock manda; los spans se declaran. */
+export type StoryPerformanceSegment = { key: string; label: string; ms: number };
+
+export type StoryLlmCall = {
+  index: number;
+  label: string;
+  ms?: number;
+  tokens?: number;
+  model?: string;
+};
+
+export type StorySearch = {
+  index: number;
+  label: string;
+  ms?: number;
+  chunks?: number;
+  evidences?: number;
+};
+
+export type StoryJevDecision = {
+  label: string;
+  phaseLabel: string;
+  purpose: string;
+  judgmentCount: number;
+  confidence?: number;
+  uncertain: number;
+  cached: boolean;
+};
+
+export type StoryPerformance = {
+  /** Tiempo real de pared. Es la base de la vista de rendimiento (§44). */
+  totalMs: number;
+  segments: StoryPerformanceSegment[];
+  attributedMs: number;
+  /** Tiempo real que ningún segmento explica. Nunca negativo. */
+  unattributedMs: number;
+  /** §44: suma de spans. Puede superar el wall-clock y se declara. */
+  cumulativeSpanMs: number | null;
+  overlaps: boolean;
+  note: string;
+  llmCalls: StoryLlmCall[];
+  llmCallCount: number | null;
+  searches: StorySearch[];
+  uniqueEvidence: number | null;
+  jevDecisions: StoryJevDecision[];
+  reusedJudgments: number;
+};
+
 
 export type ExecutionStory = {
   version: number;
@@ -241,6 +313,10 @@ export type ExecutionStory = {
   runId?: string;
   /** Llamadas al modelo realmente observadas (§42). */
   llmCalls?: number;
+  /** §51-§54: forma de explicar elegida (Response Intelligence). */
+  response: StoryResponseShape | null;
+  /** §43-§47: rendimiento real del run. */
+  performance: StoryPerformance;
   technical: {
     provider?: string;
     decider?: string;
@@ -375,6 +451,7 @@ const DECISION_KIND_TITLES: Record<string, string> = {
   answer_gate: "Revisó la respuesta antes de enviarla",
   answer_revision: "Revisó y ajustó la respuesta",
   reasoning_incomplete: "Retuvo la respuesta: análisis incompleto",
+  response_planning: "Preparó cómo explicar la respuesta",
   guardrail: "Aplicó una regla de seguridad",
 };
 
@@ -460,6 +537,9 @@ export function statusLabel(status: StoryStatus): string {
       return "Completado";
     case "warn":
       return "Requiere atención";
+    case "uncertain":
+      // §42: un juicio incierto no es un error: es confianza moderada.
+      return "Confianza moderada";
     case "error":
       return "No se pudo completar";
     case "skipped":
@@ -492,6 +572,7 @@ export const JUDGMENT_PACK_TITLES: Record<string, string> = {
   post_retrieval: "Evidencia",
   post_reconstruction: "Reconstrucción",
   pre_generation: "Antes de generar",
+  response_composition: "Cómo explicar",
   post_generation: "Verificación",
   agent_step: "Paso del agente",
 };
@@ -547,6 +628,23 @@ export const QUESTION_LABELS: Record<string, string> = {
   clarity: "¿Qué tan clara es la respuesta?",
   evidence_alignment: "¿Qué tan alineada está con la evidencia?",
   final_action: "¿Qué hacemos con esta respuesta?",
+  // Response Intelligence: forma de explicar y gate de presentación (§5, §24).
+  response_blueprint: "¿Cómo conviene explicar la respuesta?",
+  required_detail: "¿Qué nivel de detalle necesita?",
+  needs_example: "¿Conviene un ejemplo?",
+  needs_table: "¿Conviene una tabla?",
+  needs_step_by_step: "¿Conviene paso a paso?",
+  needs_warning: "¿Hay que advertir algo?",
+  needs_definition: "¿Hay que definir algún término?",
+  needs_practical_implication: "¿Hay que explicar la consecuencia práctica?",
+  needs_source_explanation: "¿Hay que explicar de dónde sale?",
+  needs_citations: "¿Hay que citar fuentes?",
+  answer_explains_key_reason: "¿Explica el motivo clave?",
+  answer_is_needlessly_verbose: "¿Es innecesariamente largo?",
+  important_context_missing: "¿Falta contexto importante?",
+  structure: "¿Qué tan clara es la estructura?",
+  usefulness: "¿Qué tan útil es?",
+  revision_reason: "¿Por qué revisarla?",
 };
 
 /** §40: el efecto dice si el juicio CAMBIÓ algo. */
@@ -631,6 +729,30 @@ export const JUDGMENT_VALUE_LABELS: Record<string, string> = {
   yes: "Sí",
   no: "No",
   uncertain: "Incierto",
+  // Formas de explicación (§5): el valor del Choice, en lenguaje humano.
+  direct_fact: "Respuesta directa",
+  definition_explanation: "Definición explicada",
+  technical_explanation: "Explicación técnica",
+  scenario_analysis: "Análisis de escenario",
+  comparison: "Comparación",
+  procedure: "Procedimiento",
+  data_interpretation: "Lectura de datos",
+  executive_summary: "Resumen ejecutivo",
+  tutorial: "Tutorial",
+  brief: "Breve",
+  normal: "Normal",
+  detailed: "Detallado",
+  deep: "Profundo",
+  // Motivos de revisión (§25).
+  unclear: "Poco clara",
+  too_verbose: "Demasiado extensa",
+  too_short: "Demasiado breve",
+  missing_explanation: "Le falta explicación",
+  missing_example: "Le falta un ejemplo",
+  missing_evidence: "Le falta evidencia",
+  unsupported_claim: "Afirmación sin respaldo",
+  poor_structure: "Estructura confusa",
+  does_not_answer_question: "No responde la pregunta",
 };
 
 /** Niveles de Score: se traducen los adjetivos declarados en los criterios. */
@@ -754,6 +876,374 @@ export const DATA_QUALITY_LABELS: Record<string, string> = {
   legacy: "Flujo histórico",
 };
 
+/** §51: formas de explicación en lenguaje humano. */
+export const BLUEPRINT_LABELS: Record<string, string> = {
+  direct_fact: "Respuesta directa",
+  definition_explanation: "Definición explicada",
+  technical_explanation: "Explicación técnica",
+  scenario_analysis: "Análisis de escenario",
+  diagnostic: "Diagnóstico",
+  comparison: "Comparación",
+  procedure: "Procedimiento",
+  data_interpretation: "Lectura de datos",
+  executive_summary: "Resumen ejecutivo",
+  tutorial: "Tutorial",
+};
+
+/** §54: cómo se anuncia la generación según la forma elegida. */
+export const BLUEPRINT_GENERATION_TITLES: Record<string, string> = {
+  direct_fact: "Respondió el dato",
+  definition_explanation: "Definió el concepto",
+  technical_explanation: "Explicó la conclusión",
+  scenario_analysis: "Explicó el escenario",
+  diagnostic: "Explicó la causa",
+  comparison: "Comparó las opciones",
+  procedure: "Indicó los pasos",
+  data_interpretation: "Leyó los datos",
+  executive_summary: "Resumió lo esencial",
+  tutorial: "Enseñó el tema",
+};
+
+export const DETAIL_LABELS: Record<string, string> = {
+  brief: "Breve",
+  normal: "Normal",
+  detailed: "Detallado",
+  deep: "Profundo",
+};
+
+export const SECTION_LABELS: Record<string, string> = {
+  direct_answer: "Respuesta directa",
+  meaning: "Qué significa",
+  practical_effect: "Qué implica en la práctica",
+  example: "Ejemplo",
+  sequence: "Qué ocurre en la secuencia",
+  why: "Por qué",
+  discarded_alternative: "Qué alternativa se descartó",
+  what_to_check: "Qué verificaría adicionalmente",
+  cause: "Causa principal",
+  evidence: "Evidencia",
+  comparison: "Comparación",
+  steps: "Pasos",
+  definition: "Definición",
+  uses: "Para qué sirve",
+  where_it_applies: "Dónde interviene",
+  data_reading: "Lectura de los datos",
+  summary: "Resumen",
+  limitations: "Importante / límites",
+  sources: "Fuentes",
+};
+
+export const DECIDED_BY_LABELS: Record<string, string> = {
+  deterministic: "Elegida por reglas",
+  rules: "Elegida por reglas",
+  jev: "Elegida por juicio previo",
+  profile: "Elegida por el perfil del agente",
+};
+
+export function blueprintLabel(blueprint: unknown): string {
+  const key = str(blueprint);
+  return BLUEPRINT_LABELS[key] ?? (key ? key.replace(/_/g, " ") : "");
+}
+
+export function detailLabel(detail: unknown): string {
+  const key = str(detail);
+  return DETAIL_LABELS[key] ?? key;
+}
+
+export function sectionLabel(section: unknown): string {
+  const key = str(section);
+  return SECTION_LABELS[key] ?? key.replace(/_/g, " ");
+}
+
+// ---------------------------------------------------------------------------
+// Rendimiento (§43-§47)
+// ---------------------------------------------------------------------------
+
+/** §45: la llamada al modelo se nombra por lo que hizo, si el backend lo dice. */
+const LLM_ACTION_LABELS: Record<string, string> = {
+  plan_search: "Preparó la búsqueda",
+  rewrite_query: "Refinó la búsqueda",
+  reason: "Analizó el caso",
+  analyze: "Analizó el caso",
+  answer: "Redactó la respuesta",
+  final: "Redactó la respuesta",
+  generation: "Redactó la respuesta",
+};
+
+export function llmActionLabel(action: unknown, fallback = "Llamada al modelo"): string {
+  const key = str(action).trim().toLowerCase();
+  if (!key) return fallback;
+  if (LLM_ACTION_LABELS[key]) return LLM_ACTION_LABELS[key];
+  if (key.includes("search") || key.includes("retriev")) return "Preparó la búsqueda";
+  if (key.includes("refine") || key.includes("rewrite")) return "Refinó la búsqueda";
+  if (key.includes("reason") || key.includes("analy")) return "Analizó el caso";
+  if (key.includes("answer") || key.includes("generat")) return "Redactó la respuesta";
+  return fallback;
+}
+
+/** §47: el propósito de cada decisión JEV, por su momento — nunca inventado. */
+export const JEV_PURPOSE_LABELS: Record<string, string> = {
+  pre_reasoning: "Preparó el análisis",
+  post_retrieval: "Evaluó la evidencia",
+  post_reconstruction: "Comprobó la reconstrucción",
+  pre_generation: "Decidió cómo responder",
+  response_composition: "Eligió cómo explicarlo",
+  post_generation: "Verificó la respuesta",
+  agent_step: "Eligió el siguiente paso",
+};
+
+export function jevPurposeLabel(phase: unknown): string {
+  const key = str(phase);
+  return JEV_PURPOSE_LABELS[key] ?? (key ? "Juicio previo" : "Juicio previo");
+}
+
+export const PERFORMANCE_SEGMENT_LABELS: Record<string, string> = {
+  llm: "Llamadas al modelo",
+  retrieval: "Búsqueda de conocimiento",
+  sql: "Datos estructurados",
+  jev: "Juicio previo y gates",
+  analysis: "Análisis y verificación",
+};
+
+export function responseShapeFor(
+  flow: Flow,
+  events: StoryEvent[],
+): StoryResponseShape | null {
+  const contract = record(record(flow.response_contract ?? record(flow.response).contract));
+  const planning = events.find((event) => event.kind === "response_planning");
+  const blueprint = str(contract.blueprint) || str(planning?.metrics.blueprint);
+  if (!blueprint) return null;
+  const detail = str(contract.detail) || str(planning?.metrics.detail_level) || "normal";
+  const sections = Array.isArray(contract.sections)
+    ? (contract.sections as unknown[]).map((item) => str(item))
+    : [];
+  const formatting = record(contract.formatting);
+  const evidence = record(contract.evidence);
+  const uncertain =
+    strings(contract.uncertainty_notes).length
+      ? strings(contract.uncertainty_notes)
+      : strings(record(planning?.metrics).uncertain);
+  const decidedBy = str(contract.decided_by) || str(planning?.metrics.decided_by) || "deterministic";
+  const pack = events.find((event) => event.kind === "jev_pack" && event.phase === "planning");
+  const packMetrics = record(pack?.metrics);
+  const packDetail = record(packMetrics.composition);
+  const needsExample =
+    sections.includes("example") ||
+    planning?.metrics.needs_example === true ||
+    packDetail.needs_example === true;
+  const needsTable = formatting.table === true || planning?.metrics.needs_table === true;
+  const needsStepByStep =
+    formatting.numbered_steps === true || planning?.metrics.needs_step_by_step === true;
+  const citationsRequired =
+    evidence.citations_required === true || planning?.metrics.citations_required === true;
+  const hedgingRequired =
+    contract.hedging_required === true || planning?.metrics.hedging_required === true;
+  const generation = record(flow.generation);
+  const tokens = num(generation.total_tokens);
+  const ms = num(generation.ms);
+  const subtitleParts = [
+    blueprintLabel(blueprint),
+    detailLabel(detail).toLowerCase(),
+    tokens ? `${tokens} tokens` : "",
+    ms ? `${(ms / 1000).toFixed(1)} s` : "",
+  ].filter(Boolean);
+  return {
+    blueprint,
+    label: blueprintLabel(blueprint),
+    detail,
+    detailLabel: detailLabel(detail),
+    decidedBy,
+    decidedByLabel: DECIDED_BY_LABELS[decidedBy] ?? decidedBy,
+    conclusionFirst: contract.conclusion_first !== false,
+    needsExample,
+    needsTable,
+    needsStepByStep,
+    citationsRequired,
+    hedgingRequired,
+    sections,
+    uncertain,
+    generationTitle: BLUEPRINT_GENERATION_TITLES[blueprint] ?? "Redactó la respuesta",
+    generationSubtitle: subtitleParts.join(" · "),
+  };
+}
+
+function performanceFor(flow: Flow, events: StoryEvent[]): StoryPerformance {
+  const timings = record(flow.timings);
+  const generation = record(flow.generation);
+  const retrieval = record(flow.retrieval);
+  const totalMs = num(timings.total_ms) ?? num(flow.total_ms) ?? 0;
+  const segments: StoryPerformanceSegment[] = [];
+  const add = (key: string, ms: number | undefined) => {
+    const value = num(ms) ?? 0;
+    if (value <= 0) return;
+    const existing = segments.find((segment) => segment.key === key);
+    if (existing) existing.ms = Math.round(existing.ms + value);
+    else segments.push({ key, label: PERFORMANCE_SEGMENT_LABELS[key] ?? key, ms: Math.round(value) });
+  };
+
+  // §43: atribución por lo que realmente declaró el backend.
+  const llmMs =
+    num(timings.llm_ms) ??
+    (num(timings.generation_ms) || num(generation.ms)
+      ? (num(timings.generation_ms) ?? num(generation.ms) ?? 0) +
+        events
+          .filter((event) => event.kind === "llm")
+          .reduce((sum, event) => sum + (event.durationMs ?? 0), 0) -
+        Math.min(
+          num(timings.generation_ms) ?? num(generation.ms) ?? 0,
+          events
+            .filter((event) => event.kind === "llm")
+            .reduce((sum, event) => sum + (event.durationMs ?? 0), 0),
+        )
+      : undefined);
+  add("llm", llmMs);
+  add(
+    "retrieval",
+    num(timings.retrieval_ms) ??
+      (retrieval.used === true || num(retrieval.chunks)
+        ? num(retrieval.ms) ?? sumDurations(events, ["retrieval", "tool_call"])
+        : undefined),
+  );
+  add("sql", num(timings.sql_ms) || num(record(flow.sql).ms));
+  const jevMs = sumDurations(events, ["jev_pack", "decision", "tool_routing", "answer_gate", "termination_gate"]);
+  add("jev", num(timings.gates_ms) ?? (jevMs || undefined));
+  const analysisMs =
+    (num(timings.plan_ms) ?? 0) +
+    (num(timings.evidence_ms) ?? 0) +
+    (num(timings.grounding_ms) ?? 0) +
+    sumDurations(events, [
+      "evidence",
+      "grounding",
+      "reasoning_plan",
+      "scenario_parse",
+      "state_reconstruction",
+      "timeline",
+      "hypothesis_test",
+      "inference_verification",
+      "analysis_completion",
+    ]);
+  add("analysis", analysisMs || undefined);
+
+  const attributedMs = segments.reduce((sum, segment) => sum + segment.ms, 0);
+  const spanStages = record(timings.span_stages);
+  const cumulativeSpanMs = Object.keys(spanStages).length
+    ? Math.round(
+        Object.values(spanStages).reduce<number>(
+          (sum, value) => sum + (num(value) ?? 0),
+          0,
+        ),
+      )
+    : null;
+  const overlaps =
+    cumulativeSpanMs !== null && totalMs > 0 && cumulativeSpanMs > totalMs + 1;
+  const unattributedMs = Math.max(0, Math.round(totalMs - attributedMs));
+  const note = overlaps
+    ? "El trabajo acumulado de los spans se solapa entre sí (una fase contiene a otra); la barra usa sólo el tiempo real de pared."
+    : attributedMs > totalMs && totalMs > 0
+      ? "Algunos tramos se solapan; el total mostrado es el tiempo real de pared."
+      : "";
+
+  // §45: desglose por llamada, sólo si el backend dejó el detalle.
+  const llmCalls: StoryLlmCall[] = events
+    .filter((event) => event.kind === "llm")
+    .map((event, index) => {
+      const technical = record(event.technical);
+      const metrics = record(event.metrics);
+      return {
+        index: num(technical.step) ?? index + 1,
+        label: llmActionLabel(technical.action ?? technical.step_kind ?? metrics.action),
+        ms: event.durationMs,
+        tokens: num(metrics.tokens) ?? num(technical.tokens),
+        model: technical.model ? str(technical.model) : undefined,
+      };
+    });
+  const declaredCalls = num(generation.calls);
+  const llmCallCount = declaredCalls ?? (llmCalls.length || null);
+
+  // §46: cada búsqueda con sus fragmentos; la evidencia única sale del backend.
+  const searches: StorySearch[] = events
+    .filter(
+      (event) =>
+        event.kind === "retrieval" ||
+        (event.kind === "tool_call" &&
+          /search|know|source|retriev/i.test(str(record(event.technical).tool))),
+    )
+    .map((event, index) => {
+      const metrics = record(event.metrics);
+      return {
+        index: index + 1,
+        label: event.kind === "retrieval" ? "Búsqueda en el conocimiento" : event.title,
+        ms: event.durationMs,
+        chunks: num(metrics.chunks) ?? num(metrics.results),
+        evidences: num(metrics.sources_used) ?? num(metrics.sources_total),
+      };
+    });
+  const uniqueEvidence =
+    num(record(events.find((event) => event.kind === "sources")?.metrics).sources) ??
+    (list(flow.sources).length || null);
+
+  // §47: decisiones JEV con propósito traducido; nunca repetir el mismo texto.
+  const jevDecisions: StoryJevDecision[] = [];
+  for (const pack of toJudgmentPacks(events)) {
+    if (pack.phase === "response_composition") {
+      jevDecisions.push({
+        label: jevPurposeLabel(pack.phase),
+        phaseLabel: pack.title,
+        purpose: pack.judgments.map((judgment) => judgment.decisionLabel).join(" · "),
+        judgmentCount: pack.judgmentCount,
+        confidence: minConfidence(pack.judgments),
+        uncertain: pack.uncertain.length,
+        cached: pack.cached,
+      });
+      continue;
+    }
+    const confidences = pack.judgments
+      .filter((judgment) => judgment.id === "preferred_capability" || judgment.id === "next_action")
+      .map((judgment) => judgment.confidence)
+      .filter((value): value is number => value !== undefined);
+    jevDecisions.push({
+      label: jevPurposeLabel(pack.phase),
+      phaseLabel: pack.title,
+      purpose: pack.judgments.length
+        ? pack.judgments.map((judgment) => judgment.decisionLabel).slice(0, 3).join(" · ")
+        : "",
+      judgmentCount: pack.judgmentCount,
+      confidence: confidences.length ? Math.min(...confidences) : minConfidence(pack.judgments),
+      uncertain: pack.uncertain.length,
+      cached: pack.cached,
+    });
+  }
+
+  return {
+    totalMs,
+    segments,
+    attributedMs,
+    unattributedMs,
+    cumulativeSpanMs,
+    overlaps,
+    note,
+    llmCalls,
+    llmCallCount,
+    searches,
+    uniqueEvidence,
+    jevDecisions,
+    reusedJudgments: toJudgmentPacks(events).filter((pack) => pack.cached).length,
+  };
+}
+
+function sumDurations(events: StoryEvent[], kinds: string[]): number {
+  return events
+    .filter((event) => kinds.includes(event.kind))
+    .reduce((sum, event) => sum + (event.durationMs ?? 0), 0);
+}
+
+function minConfidence(judgments: StoryJudgment[]): number | undefined {
+  const values = judgments
+    .map((judgment) => judgment.confidence)
+    .filter((value): value is number => value !== undefined);
+  return values.length ? Math.min(...values) : undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -779,9 +1269,17 @@ function str(value: unknown): string {
   return value === null || value === undefined ? "" : String(value);
 }
 
+/** Lista de strings sin inventar: lo que no es string se descarta. */
+function strings(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item) => typeof item === "string" || typeof item === "number").map((item) => String(item))
+    : [];
+}
+
 function status(value: unknown): StoryStatus {
   const key = str(value).toLowerCase();
   if (key === "warn" || key === "warning") return "warn";
+  if (key === "uncertain") return "uncertain";
   if (key === "error" || key === "failed") return "error";
   if (key === "skipped") return "skipped";
   if (key === "pending") return "pending";
@@ -793,6 +1291,7 @@ const PHASE_BY_KIND: Record<string, StoryPhaseId> = {
   context: "context",
   company_context: "context",
   reasoning_plan: "planning",
+  response_planning: "planning",
   decision: "decision",
   tool_routing: "decision",
   tool_filter: "decision",
@@ -1036,11 +1535,21 @@ function canonicalEvent(raw: Flow, index: number): StoryEvent {
   const reasonCodes = Array.isArray(decision.reason_codes)
     ? (decision.reason_codes as unknown[]).map((code) => str(code))
     : [];
+  const kind = str(raw.kind) || "step";
+  const uncertainJudgments = strings(metrics.uncertain).length;
+  const blocksGeneration =
+    decision.allow_generation === false || str(decision.action) === "abstain";
+  const resolved = status(raw.status);
   return {
     id: str(raw.id) || `event-${index}`,
     phase,
-    kind: str(raw.kind) || "step",
-    status: status(raw.status),
+    kind,
+    // §42: un juicio incierto que NO bloqueó nada se marca como incertidumbre,
+    // no como "Requiere atención".
+    status:
+      resolved === "warn" && kind === "jev_pack" && uncertainJudgments > 0 && !blocksGeneration
+        ? "uncertain"
+        : resolved,
     durationMs: num(raw.duration_ms),
     title: eventTitle(str(raw.kind), technical),
     statusLabel: raw.status_label ? str(raw.status_label) : undefined,
@@ -1252,6 +1761,8 @@ export function buildExecutionStory(flow: Flow | null | undefined): ExecutionSto
   const safe = record(flow);
   const { events: rawEvents, legacy } = storyEvents(safe);
   const events = enrichCompletionEvents(rawEvents);
+  const response = responseShapeFor(safe, events);
+  const performance = performanceFor(safe, events);
 
   const phases: StoryPhase[] = [];
   for (const id of PHASE_ORDER) {
@@ -1260,8 +1771,9 @@ export function buildExecutionStory(flow: Flow | null | undefined): ExecutionSto
     const worst = worstStatus(phaseEvents.map((event) => event.status));
     phases.push({
       id,
-      title: PHASE_TITLES[id],
-      subtitle: phaseSubtitle(id, phaseEvents),
+      // §54: el paso de generación se nombra por la forma de explicar elegida.
+      title: id === "generation" && response ? response.generationTitle : PHASE_TITLES[id],
+      subtitle: phaseSubtitle(id, phaseEvents, response),
       status: worst,
       durationMs: phaseEvents.reduce((total, event) => total + (event.durationMs ?? 0), 0),
       events: phaseEvents,
@@ -1349,6 +1861,8 @@ export function buildExecutionStory(flow: Flow | null | undefined): ExecutionSto
     telemetry,
     counts,
     runId: str(execution.id) || undefined,
+    response,
+    performance,
     technical: {
       provider: str(decision.provider) || undefined,
       decider: str(verdict.decider) || undefined,
@@ -1397,11 +1911,16 @@ function headlineStatusFor(input: {
 }
 
 function worstStatus(statuses: StoryStatus[]): StoryStatus {
-  const rank: StoryStatus[] = ["error", "warn", "pending", "ok", "skipped"];
+  // §42: la incertidumbre no es un warning. Va después de warn y antes de ok.
+  const rank: StoryStatus[] = ["error", "warn", "uncertain", "pending", "ok", "skipped"];
   return rank.find((candidate) => statuses.includes(candidate)) ?? "ok";
 }
 
-function phaseSubtitle(id: StoryPhaseId, events: StoryEvent[]): string {
+function phaseSubtitle(
+  id: StoryPhaseId,
+  events: StoryEvent[],
+  response: StoryResponseShape | null = null,
+): string {
   const parts: string[] = [];
   if (id === "understanding") {
     const shape = events.map((event) => str(record(event.metrics.reasoning).shape)).find(Boolean);
@@ -1424,6 +1943,10 @@ function phaseSubtitle(id: StoryPhaseId, events: StoryEvent[]): string {
   if (id === "planning") {
     const operations = list(record(events[0]?.plan).operations);
     if (operations.length) parts.push(`${operations.length} pasos requeridos`);
+    // §52: la planificación de la respuesta se declara junto al plan de análisis.
+    const planning = events.find((event) => event.kind === "response_planning");
+    const blueprint = str(record(planning?.metrics).blueprint);
+    if (blueprint) parts.push(blueprintLabel(blueprint));
   }
   if (id === "evidence") {
     const retrieval = events.find((event) => event.kind === "retrieval");
@@ -1449,7 +1972,8 @@ function phaseSubtitle(id: StoryPhaseId, events: StoryEvent[]): string {
   if (id === "generation") {
     const metrics = record(events[0]?.metrics);
     const tokens = num(metrics.total_tokens);
-    if (tokens) parts.push(`${tokens} tokens`);
+    if (response) parts.push(response.generationSubtitle);
+    else if (tokens) parts.push(`${tokens} tokens`);
     // §42, §43: si hubo varias llamadas al modelo, no se atribuye todo a
     // "redactar": se declara cuántas fueron de razonamiento y cuántas respuesta.
     const llmEvents = events.filter((event) => event.kind === "llm");

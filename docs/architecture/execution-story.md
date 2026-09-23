@@ -5,15 +5,50 @@ Zent llegó a la respuesta.
 
 ## Principio
 
-Dos niveles, un mismo dato:
+Tres niveles, un mismo dato:
 
 | Nivel | Para quién | Qué muestra |
 | --- | --- | --- |
-| **Historia** (default) | todos, incluido admin | fases, decisiones, evidencia, hipótesis, veredictos, límites |
-| **Técnico** | admin | proveedor, JEV, scores, tokens, costos, ids y traza cruda |
+| **Historia** (default) | todos, incluido admin | fases, decisiones, evidencia, hipótesis, veredictos, límites, cómo lo explicó |
+| **Rendimiento** | todos | por qué demoró: wall-clock real, llamadas al modelo, búsquedas, juicio previo |
+| **Técnico** | admin | proveedor, JEV, scores, tokens, costos, ids, matriz de observabilidad y traza cruda |
 
-La telemetría no se elimina: se separa. El administrador no es excusa para
-mostrar telemetría incomprensible por defecto.
+La telemetría no se elimina: se separa y se mueve a Técnico. El administrador no
+es excusa para mostrar telemetría incomprensible por defecto.
+
+### Rendimiento (§43-§47)
+
+- La barra principal usa **wall-clock real** (`timings.total_ms`).
+- `sum(spans)` puede superar ese total (los spans se contienen): en ese caso se
+  declara «el trabajo acumulado de los spans se solapa entre sí» y nunca se
+  muestra la suma como si fuera el tiempo del usuario.
+- Atribución por segmento sólo con lo medido: llamadas al modelo, búsqueda de
+  conocimiento, datos estructurados, juicio previo/gates, análisis y verificación.
+  El resto se muestra como «Otros / coordinación», nunca inventado.
+- Desglose de llamadas por acción (`step.action`) y de búsquedas con fragmentos.
+- Decisiones JEV con su **propósito traducido** por fase, para no repetir
+  «JEV eligió herramienta» tres veces.
+
+### Incertidumbre no es warning (§42)
+
+`uncertain` es un estado propio (etiqueta «Confianza moderada»). Un juicio con
+confianza moderada que **no bloqueó** nada no dice «Requiere atención»; sólo lo
+hace si impidió concluir. Orden de severidad: `error` → `warn` → `uncertain` →
+`pending` → `ok` → `skipped`.
+
+### Memoria (§50)
+
+La memoria se muestra **una sola vez** (Historia). Cero real ≠ telemetría
+ausente: «No utilizó ni generó memoria» vs «No hay telemetría de memoria».
+
+### Composición de la respuesta (§51-§54)
+
+La historia expone la forma elegida ("Cómo lo explicó": blueprint, nivel, si pidió
+ejemplo/tabla/citas) y nombra el paso de generación según esa forma («Explicó la
+conclusión» para `technical_explanation`). Técnico agrega el contrato, el pack de
+composición y el gate de presentación. Ver
+[response-intelligence.md](response-intelligence.md).
+
 
 ## Qué nunca se muestra
 

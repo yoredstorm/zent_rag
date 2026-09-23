@@ -339,7 +339,10 @@ async def verify_generation(
         )
         return verification
 
-    phase = build_post_generation_questions(claims=candidates)
+    phase = build_post_generation_questions(
+        claims=candidates,
+        include_presentation=bool(getattr(settings, "presentation_gate", True)),
+    )
     state = _claim_state(candidates, evidence)
     questions = phase.to_jevy()
     try:

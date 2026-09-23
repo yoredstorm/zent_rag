@@ -71,9 +71,14 @@ def tool_routing_questions(tool_criteria: dict[str, str]) -> dict[str, dict]:
     }
 
 
-def answer_gate_questions() -> dict[str, dict]:
-    """JEV verifica el borrador del agente contra la evidencia recolectada."""
-    return {
+def answer_gate_questions(*, include_presentation: bool = True) -> dict[str, dict]:
+    """JEV verifica el borrador del agente contra la evidencia recolectada.
+
+    Con `include_presentation` suma las preguntas de PRESENTACIÓN (§24) en la
+    MISMA llamada: claridad, estructura, utilidad y motivo de revisión. No es un
+    segundo veredicto: el veredicto (approve/revise/abstain) lo compone el código.
+    """
+    questions: dict[str, dict] = {
         "answer_grounded": {
             "type": "noul",
             "instructions": (
@@ -101,6 +106,74 @@ def answer_gate_questions() -> dict[str, dict]:
             ],
         },
     }
+    if include_presentation:
+        questions.update(
+            {
+                "answer_explains_key_reason": {
+                    "type": "noul",
+                    "instructions": (
+                        "Does `draft_answer` explain the key reason behind the "
+                        "conclusion, not only the conclusion itself?"
+                    ),
+                },
+                "answer_is_needlessly_verbose": {
+                    "type": "noul",
+                    "instructions": (
+                        "Is `draft_answer` needlessly verbose: padding, repetition "
+                        "or generic filler?"
+                    ),
+                },
+                "important_context_missing": {
+                    "type": "noul",
+                    "instructions": (
+                        "Is an important piece of context missing, without which the "
+                        "reader cannot understand or act on `draft_answer`?"
+                    ),
+                },
+                "structure": {
+                    "type": "score",
+                    "instructions": "How well structured is `draft_answer`?",
+                    "criteria": [
+                        "hard to follow",
+                        "acceptable",
+                        "clear",
+                        "very clear and scannable",
+                    ],
+                },
+                "usefulness": {
+                    "type": "score",
+                    "instructions": (
+                        "How useful is `draft_answer` for the user's actual case, "
+                        "given `evidence`?"
+                    ),
+                    "criteria": [
+                        "does not help",
+                        "partially useful",
+                        "useful",
+                        "directly actionable",
+                    ],
+                },
+                "revision_reason": {
+                    "type": "choice",
+                    "instructions": (
+                        "If `draft_answer` must be revised, the single most important "
+                        "reason to do so."
+                    ),
+                    "criteria": {
+                        "unclear": "The answer is hard to understand.",
+                        "too_verbose": "It says more than needed.",
+                        "too_short": "It omits necessary explanation.",
+                        "missing_explanation": "It states the conclusion without the reason.",
+                        "missing_example": "An example would make it clear and is absent.",
+                        "missing_evidence": "A claim lacks support in the evidence.",
+                        "unsupported_claim": "It states something the evidence does not support.",
+                        "poor_structure": "The order or sections make it hard to follow.",
+                        "does_not_answer_question": "It answers a different question.",
+                    },
+                },
+            }
+        )
+    return questions
 
 
 def termination_questions() -> dict[str, dict]:

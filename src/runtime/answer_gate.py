@@ -97,6 +97,42 @@ def _feedback(*, grounded: bool, complete: bool, quality: float, reason: str = "
     return "Verificador JEV: " + "; ".join(parts) + "."
 
 
+#: §25: motivos de revision del gate de presentacion, en lenguaje de instruccion.
+REVISION_REASON_FEEDBACK: dict[str, str] = {
+    "unclear": "hace falta que se entienda sin contexto previo",
+    "too_verbose": "quita lo que no agregue valor",
+    "too_short": "la explicacion quedo corta para lo que se pregunto",
+    "missing_explanation": "explica el motivo, no solo la conclusion",
+    "missing_example": "agrega un ejemplo breve que aclare la regla",
+    "missing_evidence": "cita la evidencia que sostiene cada afirmacion",
+    "unsupported_claim": "quita lo que la evidencia no sostiene",
+    "poor_structure": "ordena la respuesta para que se pueda leer de arriba abajo",
+    "does_not_answer_question": "responde la pregunta que se hizo",
+}
+
+
+def revision_feedback(answers: dict | None) -> str:
+    """§25: traduce el motivo de revision elegido por JEV. Nunca inventa."""
+    if not isinstance(answers, dict):
+        return ""
+    value = answers.get("revision_reason")
+    if isinstance(value, dict):
+        choice = str(value.get("choice") or value.get("decision") or "").strip()
+    else:
+        choice = str(value or "").strip()
+    return REVISION_REASON_FEEDBACK.get(choice, "")
+
+
+def presentation_gate_enabled() -> bool:
+    """El gate de presentación es una política del sistema, no del request."""
+    try:
+        from src.core.config import get_settings
+
+        return bool(getattr(get_settings(), "RAG_RESPONSE_PRESENTATION_GATE", True))
+    except Exception:  # noqa: BLE001
+        return True
+
+
 async def judge_answer(
     *,
     engine,
@@ -131,7 +167,9 @@ async def judge_answer(
         payload = await call_judge(
             engine,
             state=built.state,
-            questions=answer_gate_questions(),
+            questions=answer_gate_questions(
+                include_presentation=presentation_gate_enabled()
+            ),
             context=context or JudgmentContext(phase=PHASE_ANSWER_GATE),
         )
         result.latency_ms = (time.perf_counter() - started) * 1000
@@ -171,7 +209,12 @@ async def judge_answer(
         grounded=grounded,
         complete=complete,
         quality=quality,
-        feedback=_feedback(grounded=grounded, complete=complete, quality=quality),
+        feedback=_feedback(
+            grounded=grounded,
+            complete=complete,
+            quality=quality,
+            reason=revision_feedback(answers) if verdict == "revise" else "",
+        ),
         provider=str(payload.get("model") or "jev"),
         mode=mode,
         state_chars=built.chars,

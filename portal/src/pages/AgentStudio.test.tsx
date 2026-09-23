@@ -308,6 +308,43 @@ describe("AgentStudio", () => {
       expect(body.config.source_ids).toEqual([]);
     });
   });
+
+  it("§29, §30: ofrece presets de respuesta y los guarda en el perfil", async () => {
+    const { user, fetchMock } = await renderStudio();
+    await screen.findByDisplayValue("Soporte");
+    expect(screen.getByText("Cómo debe responder")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Técnico detallado" }));
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(
+        (call) => String(call[0]).includes("/agents/a1") && String(call[1]?.method || "").toUpperCase() === "PUT",
+      );
+      const body = JSON.parse(String(put?.[1]?.body || "{}"));
+      expect(body.config.response_profile.preset).toBe("technical_detailed");
+      expect(body.config.response_profile.technical_level).toBe("advanced");
+      expect(body.config.response_profile.use_tables).toBe(true);
+    });
+  });
+
+  it("§34: el preview avisa que el conocimiento es simulado", async () => {
+    await renderStudio();
+    await screen.findByDisplayValue("Soporte");
+    expect(screen.getByText(/conocimiento simulado/i)).toBeInTheDocument();
+    const profile = screen.getByTestId("agent-response-profile");
+    expect(within(profile).getByLabelText("Pregunta de prueba")).toBeInTheDocument();
+    expect(within(profile).getByRole("button", { name: "Ver cómo respondería" })).toBeInTheDocument();
+  });
+
+  it("§30: sin agente guardado no se simula la generación con IA", async () => {
+    const { user } = await renderStudio("/agents/new");
+    expect(
+      await screen.findByText(/Guardá el agente para generar con IA y ver el preview/i),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Generar con IA" }));
+    expect(
+      await screen.findByText(/Guardá el agente primero: el generador sólo usa datos reales del agente/i),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("AgentBuilderRedirect", () => {

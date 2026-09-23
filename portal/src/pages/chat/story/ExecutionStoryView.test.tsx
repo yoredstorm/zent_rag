@@ -8,7 +8,7 @@ import { useState } from "react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { buildExecutionStory } from "../executionStory";
-import { ExecutionStoryView } from "./ExecutionStoryView";
+import { ExecutionStoryView, type StoryMode } from "./ExecutionStoryView";
 
 const COMPLEX_FLOW = {
   flow_version: 2,
@@ -116,7 +116,7 @@ const COMPLEX_FLOW = {
   ],
 };
 
-function renderStory(mode: "story" | "technical" = "story") {
+function renderStory(mode: StoryMode = "story") {
   const story = buildExecutionStory(COMPLEX_FLOW);
   const utils = render(
     <StoryHarness story={story} initialMode={mode} />,
@@ -130,9 +130,9 @@ function StoryHarness({
   initialMode,
 }: {
   story: ReturnType<typeof buildExecutionStory>;
-  initialMode: "story" | "technical";
+  initialMode: StoryMode;
 }) {
-  const [mode, setMode] = useState<"story" | "technical">(initialMode);
+  const [mode, setMode] = useState<StoryMode>(initialMode);
   return (
     <ExecutionStoryView
       story={story}
@@ -222,6 +222,43 @@ describe("ExecutionStoryView (§30, §31)", () => {
     renderStory();
     const storyTab = screen.getByRole("tab", { name: "Historia" });
     expect(storyTab.getAttribute("aria-selected")).toBe("true");
+  });
+});
+
+describe("tres vistas (§37-§39, §62)", () => {
+  it("ofrece Historia, Rendimiento y Técnico", () => {
+    renderStory();
+    expect(screen.getByRole("tab", { name: "Historia" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Rendimiento" })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Técnico" })).toBeTruthy();
+  });
+
+  it("§62: la historia no muestra la matriz de observabilidad ni ids crudos", () => {
+    renderStory();
+    expect(screen.queryByText("Observabilidad")).toBeNull();
+    expect(screen.queryByText("Trabajo acumulado (spans)")).toBeNull();
+    expect(screen.queryByText(/Flow version/)).toBeNull();
+  });
+
+  it("§49: la matriz de observabilidad vive en Técnico, con estados explícitos", async () => {
+    const user = userEvent.setup();
+    renderStory();
+    await user.click(screen.getByRole("tab", { name: "Técnico" }));
+    expect(screen.getAllByText("Observabilidad").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Observado|No aplica|No disponible|No observado/).length).toBeGreaterThan(0);
+  });
+
+  it("§43: la vista de rendimiento explica el tiempo real de pared", async () => {
+    const user = userEvent.setup();
+    renderStory();
+    await user.click(screen.getByRole("tab", { name: "Rendimiento" }));
+    expect(screen.getByText(/Por qué demoró/)).toBeTruthy();
+    expect(screen.getAllByText(/Llamadas al modelo/).length).toBeGreaterThan(0);
+  });
+
+  it("§50: la memoria se muestra una sola vez", () => {
+    renderStory();
+    expect(screen.getAllByText("Memoria").length).toBe(1);
   });
 });
 

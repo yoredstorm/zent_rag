@@ -1,5 +1,151 @@
 export type AgentTone = "professional" | "friendly" | "concise";
 
+/** Cómo debe explicar el agente (§28). Estructura, no prompt libre. */
+export type ResponseProfile = {
+  preset?: string;
+  language: string;
+  tone: "professional" | "didactic" | "executive" | "neutral";
+  technical_level: "basic" | "intermediate" | "advanced" | "expert";
+  default_detail: "brief" | "normal" | "detailed" | "deep";
+  audience: "beginner" | "business" | "technical" | "expert";
+  conclusion_first: boolean;
+  use_headings: boolean;
+  use_bold: boolean;
+  use_tables: boolean;
+  use_examples: boolean;
+  cite_sources: boolean;
+  show_uncertainty: boolean;
+  show_practical_implications: boolean;
+  preserve_domain_terms: boolean;
+  preferred_blueprints?: string[];
+  custom_instructions: string;
+};
+
+export type ResponseProfilePreset = {
+  id: string;
+  label: string;
+  hint: string;
+  profile: Partial<ResponseProfile>;
+};
+
+/** Presets de Agent Studio (§29): el backend sólo guarda el resultado. */
+export const RESPONSE_PROFILE_PRESETS: ResponseProfilePreset[] = [
+  {
+    id: "clear_didactic",
+    label: "Claro y didáctico",
+    hint: "Explica el porqué y usa ejemplos.",
+    profile: {
+      tone: "didactic",
+      technical_level: "intermediate",
+      default_detail: "detailed",
+      use_examples: true,
+      show_practical_implications: true,
+    },
+  },
+  {
+    id: "technical_detailed",
+    label: "Técnico detallado",
+    hint: "Precisión técnica, sin explicar lo básico.",
+    profile: {
+      tone: "professional",
+      technical_level: "advanced",
+      default_detail: "detailed",
+      use_tables: true,
+      use_examples: true,
+      preserve_domain_terms: true,
+    },
+  },
+  {
+    id: "executive",
+    label: "Ejecutivo",
+    hint: "Conclusión e impacto, sin detalle técnico.",
+    profile: {
+      tone: "executive",
+      technical_level: "basic",
+      default_detail: "normal",
+      audience: "business",
+      use_examples: false,
+      cite_sources: false,
+    },
+  },
+  {
+    id: "concise",
+    label: "Conciso",
+    hint: "Lo mínimo necesario para responder.",
+    profile: {
+      tone: "neutral",
+      default_detail: "brief",
+      use_examples: false,
+      show_practical_implications: false,
+      cite_sources: false,
+    },
+  },
+  {
+    id: "analytical",
+    label: "Analítico",
+    hint: "Profundidad y contraste de opciones.",
+    profile: {
+      tone: "professional",
+      technical_level: "advanced",
+      default_detail: "deep",
+      audience: "expert",
+      use_tables: true,
+      show_uncertainty: true,
+    },
+  },
+  {
+    id: "evidence_first",
+    label: "Con evidencia",
+    hint: "Cada afirmación con su fuente.",
+    profile: {
+      tone: "professional",
+      default_detail: "detailed",
+      cite_sources: true,
+      show_uncertainty: true,
+      show_practical_implications: true,
+    },
+  },
+];
+
+export const DEFAULT_RESPONSE_PROFILE: ResponseProfile = {
+  language: "es",
+  tone: "professional",
+  technical_level: "intermediate",
+  default_detail: "normal",
+  audience: "technical",
+  conclusion_first: true,
+  use_headings: true,
+  use_bold: true,
+  use_tables: false,
+  use_examples: true,
+  cite_sources: true,
+  show_uncertainty: true,
+  show_practical_implications: true,
+  preserve_domain_terms: true,
+  custom_instructions: "",
+};
+
+/** Campos que el usuario puede activar o desactivar (§28). */
+export const RESPONSE_PROFILE_TOGGLES: Array<{
+  key: keyof ResponseProfile;
+  label: string;
+  hint: string;
+}> = [
+  { key: "conclusion_first", label: "Conclusión primero", hint: "Responde antes de explicar." },
+  { key: "show_practical_implications", label: "Implicación práctica", hint: "Qué cambia en el caso." },
+  { key: "use_examples", label: "Ejemplos", hint: "Cuando aclaran la explicación." },
+  { key: "use_tables", label: "Tablas", hint: "Para atributos comparables." },
+  { key: "cite_sources", label: "Citas", hint: "Fuente junto a la afirmación." },
+  { key: "show_uncertainty", label: "Declarar lo que falta", hint: "Sin especular." },
+  {
+    key: "preserve_domain_terms",
+    label: "Conservar términos del dominio",
+    hint: "Sin traducir lo que pierde sentido.",
+  },
+  { key: "use_headings", label: "Encabezados", hint: "Estructura visible." },
+  { key: "use_bold", label: "Negritas", hint: "Sólo valores y conceptos clave." },
+];
+
 export type AgentConfig = {
   purpose: string | null;
   temperature: number;
@@ -20,6 +166,8 @@ export type AgentConfig = {
     termination_gate?: boolean | null;
     answer_gate?: boolean | null;
   } | null;
+  /** Cómo debe responder: tono, nivel, detalle, formato, citas (§28). */
+  response_profile?: ResponseProfile | null;
 };
 
 export type Agent = {
@@ -176,6 +324,7 @@ export function buildAgentPayload(input: {
       retrieval: input.retrieval.strategy ? input.retrieval : undefined,
       output_schema: input.outputSchema.trim() ? parseSchema(input.outputSchema) : undefined,
       runtime: input.config.runtime ?? undefined,
+      response_profile: input.config.response_profile ?? undefined,
     },
     workspace_id: input.workspaceId || undefined,
   };

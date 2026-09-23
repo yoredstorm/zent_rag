@@ -21,10 +21,8 @@ export function StorySummary({ story }: { story: ExecutionStory }) {
   ];
   if (story.evidenceLabel) metrics.push({ label: "Evidencia", value: story.evidenceLabel });
   if (story.reasoningLabel) metrics.push({ label: "Análisis", value: story.reasoningLabel });
-  metrics.push({
-    label: "Verificación",
-    value: story.verification.label,
-  });
+  // §51: la forma de explicar es parte del resumen, en lenguaje humano.
+  if (story.response) metrics.push({ label: "Explicación", value: story.response.label });
   if (story.confidenceLabel) {
     metrics.push({ label: "Confianza de ruta", value: story.confidenceLabel });
   }
@@ -63,58 +61,6 @@ export function StorySummary({ story }: { story: ExecutionStory }) {
         <div className="mt-4 flex flex-col gap-2">
           <JevImpactCard impact={story.jevImpact} />
           <JudgmentUncertaintyNote impact={story.jevImpact} />
-        </div>
-      ) : null}
-
-      {story.telemetry.dimensions.length ? (
-        <div className="mt-4">
-          <p className="text-[11.5px] text-faint">Observabilidad</p>
-          <ul className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11.5px]">
-            {story.telemetry.dimensions.map((dimension) => {
-              const observed = dimension.state === "observed";
-              const notApplicable = dimension.state === "not_applicable";
-              return (
-                <li key={dimension.key} className={observed ? "text-muted" : "text-faint"}>
-                  <span className={observed ? "text-ok" : "text-faint"}>
-                    {observed ? "✓" : notApplicable ? "—" : "·"}
-                  </span>{" "}
-                  {dimension.label}
-                  {observed ? null : (
-                    <span className="text-faint"> {dimension.stateLabel.toLowerCase()}</span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      ) : null}
-
-      {story.breakdown.length > 1 ? (
-        <div className="mt-4">
-          <p className="text-[11.5px] text-faint">Distribución del tiempo</p>
-          <ul className="mt-1.5 flex flex-col gap-1">
-            {story.breakdown.map((row) => (
-              <li
-                key={row.label}
-                className="flex items-center gap-2 text-[11.5px] text-muted"
-              >
-                <span className="w-40 shrink-0 truncate">{row.label}</span>
-                <span
-                  className="h-1.5 rounded-full bg-accent/60"
-                  style={{
-                    width: `${Math.max(2, Math.round((row.ms / Math.max(1, story.totalMs)) * 100))}%`,
-                  }}
-                  aria-hidden
-                />
-                <span className="mono ml-auto shrink-0 tabular-nums text-faint">
-                  {fmtMs(row.ms)}
-                  {row.costUsd !== null && row.costUsd > 0
-                    ? ` · ${fmtCurrency(row.costUsd, 6)}`
-                    : ""}
-                </span>
-              </li>
-            ))}
-          </ul>
         </div>
       ) : null}
     </div>

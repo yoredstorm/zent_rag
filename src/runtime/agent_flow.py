@@ -19,6 +19,7 @@
 # =============================================================================
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 #: Tipos de step → campos que se copian VERBATIM al flow (nunca se inventan).
@@ -58,6 +59,23 @@ _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
     "termination_gate": ("stop", "provider", "score", "certain", "detail", "latency_ms"),
     "router_fallback": ("attempts", "final_model"),
     "reasoning_incomplete": ("detail", "shape"),
+    "response_planning": (
+        "blueprint",
+        "detail_level",
+        "decided_by",
+        "needs_example",
+        "needs_table",
+        "needs_step_by_step",
+        "needs_definition",
+        "needs_warning",
+        "needs_source_explanation",
+        "needs_practical_implication",
+        "citations_required",
+        "hedging_required",
+        "source_conflict",
+        "candidates",
+        "uncertain",
+    ),
     "guardrail": ("detail", "tool"),
     "error": ("detail",),
     "final": ("answer", "detail"),
@@ -726,6 +744,13 @@ def build_agent_flow(
             if str(step.get("type") or "") == "guardrail"
         ][:8],
     }
+    # Response Intelligence (§51): la forma de explicar es un dato de la traza.
+    response_plan = getattr(result, "response_plan", None)
+    if isinstance(response_plan, Mapping) and response_plan:
+        flow["response"] = dict(response_plan)
+        contract = response_plan.get("contract")
+        if isinstance(contract, Mapping):
+            flow["response_contract"] = dict(contract)
     if getattr(result, "injection_detected", False):
         flow["injection_detected"] = True
     if getattr(result, "trace_id", None):

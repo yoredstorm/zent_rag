@@ -10,11 +10,19 @@ import { ReplayCompare } from "../ReplayCompare";
 import type { ExecutionStory, StoryEvent } from "../executionStory";
 import ExecutionTimeline from "./ExecutionTimeline";
 import LearningSummary from "./LearningSummary";
+import PerformanceStory from "./PerformanceStory";
 import ReasoningStory from "./ReasoningStory";
+import ResponseShapeCard from "./ResponseShapeCard";
 import StorySummary from "./StorySummary";
 import TechnicalTrace from "./TechnicalTrace";
 
-export type StoryMode = "story" | "technical";
+export type StoryMode = "story" | "performance" | "technical";
+
+const MODE_LABELS: Record<StoryMode, string> = {
+  story: "Historia",
+  performance: "Rendimiento",
+  technical: "Técnico",
+};
 
 export function ExecutionStoryView({
   story,
@@ -54,21 +62,22 @@ export function ExecutionStoryView({
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-center gap-1" role="tablist" aria-label="Vista del flujo">
-        <ModeTab active={mode === "story"} onClick={() => onModeChange("story")}>
-          Historia
-        </ModeTab>
-        <ModeTab active={mode === "technical"} onClick={() => onModeChange("technical")}>
-          Técnico
-        </ModeTab>
+        {(Object.keys(MODE_LABELS) as StoryMode[]).map((value) => (
+          <ModeTab key={value} active={mode === value} onClick={() => onModeChange(value)}>
+            {MODE_LABELS[value]}
+          </ModeTab>
+        ))}
       </div>
 
       <StorySummary story={story} />
 
-      {mode === "story" ? (
-        <ExecutionTimeline story={story} />
-      ) : (
-        <TechnicalTrace story={story} />
-      )}
+      {mode === "story" ? <ExecutionTimeline story={story} /> : null}
+      {mode === "performance" ? <PerformanceStory story={story} /> : null}
+      {mode === "technical" ? <TechnicalTrace story={story} /> : null}
+
+      {mode !== "technical" && story.response ? (
+        <ResponseShapeCard story={story} expanded={mode === "story"} />
+      ) : null}
 
       {reasoningEvents.some((event) => isReasoningCard(event)) ? (
         <ReasoningDetail events={reasoningEvents.filter((event) => isReasoningCard(event))} />
@@ -76,10 +85,10 @@ export function ExecutionStoryView({
 
       {sqlView}
 
-      <section>
-        <p className="eyebrow mb-2">Memoria</p>
+      {/* §50: la memoria se muestra UNA vez, en la historia. */}
+      {mode === "story" ? (
         <LearningSummary state={impactState} impact={impact} memoryHits={memoryHits} />
-      </section>
+      ) : null}
 
       {showReplay ? (
         <section>

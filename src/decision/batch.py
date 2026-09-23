@@ -56,6 +56,8 @@ class JudgmentPhase(StrEnum):
     PRE_REASONING = "pre_reasoning"
     POST_RECONSTRUCTION = "post_reconstruction"
     PRE_GENERATION = "pre_generation"
+    # Response Intelligence: cómo explicar la respuesta (forma, no contenido).
+    RESPONSE_COMPOSITION = "response_composition"
 
 
 BATCH_MODES = ("off", "shadow", "on")
@@ -394,15 +396,27 @@ def build_post_generation_questions(
     *,
     claims: list[str] | None = None,
     include_verification: bool = True,
+    include_presentation: bool = True,
 ) -> PhaseQuestions:
     """Grounding + verificación de claims + verificación de la respuesta.
 
-    Un solo estado (draft + evidencia + claims), una sola llamada.
+    Un solo estado (draft + evidencia + claims), una sola llamada. Con
+    `include_presentation` se suman las preguntas de PRESENTACIÓN (§24): claridad,
+    estructura, utilidad y motivo de revisión.
     """
     specs = _grounding_specs()
     specs.extend(_claim_specs(list(claims or [])))
     if include_verification:
         specs.extend(_answer_verification_specs())
+    if not include_presentation:
+        from src.decision.registry import default_registry
+
+        presentation_ids = {
+            definition.id
+            for definition in default_registry().for_phase(JudgmentPhase.POST_GENERATION.value)
+            if definition.source == "presentation"
+        }
+        specs = [spec for spec in specs if spec.id not in presentation_ids]
     return _dedupe(specs, phase=JudgmentPhase.POST_GENERATION.value)
 
 
@@ -432,6 +446,15 @@ def build_pre_generation_questions() -> PhaseQuestions:
     """PRE_GENERATION: el gate antes del LLM generativo (§16)."""
     specs = _preflight_specs(JudgmentPhase.PRE_GENERATION.value)
     return _dedupe(specs, phase=JudgmentPhase.PRE_GENERATION.value)
+
+
+def build_response_composition_questions() -> PhaseQuestions:
+    """RESPONSE_COMPOSITION: cómo explicar la respuesta (una sola llamada).
+
+    El código compone el `ResponseContract`; JEV no redacta la respuesta.
+    """
+    specs = _preflight_specs(JudgmentPhase.RESPONSE_COMPOSITION.value)
+    return _dedupe(specs, phase=JudgmentPhase.RESPONSE_COMPOSITION.value)
 
 
 def build_agent_step_questions(
@@ -466,6 +489,8 @@ def build_phase_questions(phase: Any, **context: Any) -> PhaseQuestions:
         return build_post_reconstruction_questions(**context)
     if value == JudgmentPhase.PRE_GENERATION.value:
         return build_pre_generation_questions(**context)
+    if value == JudgmentPhase.RESPONSE_COMPOSITION.value:
+        return build_response_composition_questions(**context)
     raise ValueError(f"unknown judgment phase: {value!r}")
 
 
@@ -545,6 +570,11 @@ _PHASE_STATE_KEYS: dict[str, tuple[str, ...]] = {
         "question",
         "evidence_fingerprint",
         "analysis_fingerprint",
+    ),
+    JudgmentPhase.RESPONSE_COMPOSITION.value: (
+        "user_request",
+        "conclusions_fingerprint",
+        "audience",
     ),
 }
 

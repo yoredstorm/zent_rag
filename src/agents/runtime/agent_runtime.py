@@ -48,6 +48,8 @@ _SYSTEM_TEMPLATE = """You are an agent. You answer user questions by using tools
 {reasoning_rule}
 
 {agent_instructions}
+
+{response_shape}
 """
 
 _NEXT_STEP_TEMPLATE = """## HISTORY
@@ -62,6 +64,7 @@ Do not call tools.
 USER QUESTION: {question}
 
 {analytical_workspace}
+{response_shape}
 ## HISTORY
 {history}
 
@@ -112,6 +115,53 @@ def _reasoning_workspace_block(reasoning: object | None) -> str:
         return workspace_block(reasoning)
     except Exception:  # noqa: BLE001
         return ""
+
+
+def _response_shape_block(plan: object | None) -> str:
+    """Bloque de composición para el prompt (§7-§9). Vacío si no hay contrato."""
+    if plan is None or not getattr(plan, "active", False):
+        return ""
+    contract = getattr(plan, "contract", None)
+    if contract is None:
+        return ""
+    try:
+        from src.intelligence.response.contract import prompt_block
+
+        return prompt_block(contract)
+    except Exception:  # noqa: BLE001 — sin bloque, el prompt queda como antes
+        return ""
+
+
+def _response_planning_step(plan: object | None) -> dict | None:
+    """Step observable `response_planning` (§52): forma, detalle y necesidades."""
+    if plan is None or not getattr(plan, "active", False):
+        return None
+    contract = getattr(plan, "contract", None)
+    if contract is None:
+        return None
+    facts = plan.facts() if hasattr(plan, "facts") else {}
+    step: dict = {
+        "type": "response_planning",
+        "status": "ok",
+        "detail": f"{contract.blueprint} · {contract.detail}",
+        "blueprint": contract.blueprint,
+        "detail_level": contract.detail,
+        "decided_by": contract.decided_by,
+        **facts,
+    }
+    selection = getattr(plan, "selection", None)
+    if selection is not None:
+        step["candidates"] = list(getattr(selection, "candidates", ()) or ())[:4]
+        if getattr(selection, "ambiguous", False):
+            step["status"] = "warn"
+    if getattr(contract, "hedging_required", False):
+        step["hedging_required"] = True
+    if getattr(contract, "source_conflict", False):
+        step["source_conflict"] = True
+    uncertain = list(getattr(plan, "uncertain", ()) or ())
+    if uncertain:
+        step["uncertain"] = uncertain[:6]
+    return step
 
 
 def _blocks_early_answer(
@@ -206,6 +256,9 @@ class AgentRunResult:
     trace_id: str | None = None
     model: str | None = None
     provider: str | None = None
+    #: Response Intelligence: cómo se decidió explicar la respuesta (forma, no
+    #: contenido). Viaja al flujo para "Ver flujo".
+    response_plan: dict | None = None
 
 
 def _parse_action(content: str) -> dict:
@@ -394,6 +447,8 @@ class AgentRuntime:
         self._llm = llm_provider
         self._rate_limiter = ToolRateLimiter(cache_provider)
         self._loop_guard = LoopGuard()
+        # Response Intelligence: contrato de composición del run (§2).
+        self._pending_response_plan = None
 
     def _agent_config(self, agent: Agent) -> dict:
         settings = get_settings()
@@ -444,6 +499,7 @@ class AgentRuntime:
             analytical_workspace=(
                 f"{_reasoning_workspace_block(reasoning)}\n" if reasoning is not None else ""
             ),
+            response_shape=_response_shape_block(getattr(self, "_pending_response_plan", None)),
         )
         try:
             resp = await self._llm.generate(
@@ -722,6 +778,9 @@ class AgentRuntime:
         # runtime: la firma de _run_loop no cambia (los dobles de test siguen
         # siendo válidos).
         await self._prepare_reasoning(request)
+        # Response Intelligence: forma de explicar (determinista; JEV sólo si
+        # dos formas quedan empatadas). No cambia hechos.
+        await self._prepare_response_plan(request, getattr(self, "_pending_reasoning", None))
         try:
             await asyncio.wait_for(
                 self._run_loop(request, ctx, config, result),
@@ -944,6 +1003,43 @@ class AgentRuntime:
         self._pending_reasoning_steps = reasoning_steps_detailed(state)
         return state
 
+    async def _prepare_response_plan(self, request: AgentRunRequest, reasoning: object | None):
+        """Response Intelligence (§2): decide CÓMO explicar, nunca qué decir.
+
+        Determinista por defecto; JEV sólo cuando dos formas quedan empatadas y
+        el modo lo permite. Falla suave: sin contrato el prompt queda igual.
+        """
+        try:
+            from src.intelligence.response.wiring import (
+                compose_for_request,
+                signals_from_truth,
+            )
+
+            signals = signals_from_truth(reasoning=reasoning)
+            judge = None
+            try:
+                from src.decision.service import get_decision_engine
+
+                engine = get_decision_engine()
+                if engine.settings.jev_configured:
+                    judge = engine
+            except Exception:  # noqa: BLE001 — sin engine, contrato determinista
+                judge = None
+            plan = await compose_for_request(
+                question=request.message,
+                config_json=request.agent.config_json,
+                judge=judge,
+                request_id=getattr(request, "request_id", None),
+                organization_id=getattr(request.agent, "organization_id", None),
+                shape=str(getattr(getattr(self, "_pending_reasoning", None), "shape", "") or ""),
+                **signals,
+            )
+        except Exception as exc:  # noqa: BLE001 - el contrato nunca rompe el run
+            logger.warning("response plan failed", error=str(exc)[:150])
+            return None
+        self._pending_response_plan = plan
+        return plan
+
     async def _run_loop(
         self,
         request: AgentRunRequest,
@@ -983,14 +1079,22 @@ class AgentRuntime:
         tool_descriptions = _describe_tools(allowed_tools)
 
         agent_instructions = compose_agent_instructions(request.agent)
+        response_shape = _response_shape_block(getattr(self, "_pending_response_plan", None))
         system = _SYSTEM_TEMPLATE.format(
             tools=tool_descriptions,
             agent_instructions=agent_instructions,
             reasoning_rule=_reasoning_rule_text(reasoning),
+            response_shape=response_shape,
         )
         context_block = _render_context_block(request.context) if request.context else ""
         for reasoning_step in getattr(self, "_pending_reasoning_steps", None) or ():
             result.steps.append(reasoning_step)
+        response_step = _response_planning_step(getattr(self, "_pending_response_plan", None))
+        if response_step is not None:
+            result.steps.append(response_step)
+            plan = getattr(self, "_pending_response_plan", None)
+            if plan is not None and getattr(plan, "active", False):
+                result.response_plan = plan.to_public_dict()
         if request.context:
             result.steps.append(
                 {"type": "context", "sections": sorted(str(key) for key in request.context)}

@@ -3,6 +3,7 @@
 # =============================================================================
 from __future__ import annotations
 
+from dataclasses import replace
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -12,10 +13,13 @@ from sqlalchemy.exc import IntegrityError
 
 from src.api.deps import get_agent_repo
 from src.core.ports import AgentRepository
+from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.relational_db import PostgresAuditLogRepository
 from src.platform.audit.service import AuditLogService
 
 router = APIRouter(prefix="/api/v1/agents", tags=["Agents"])
+
+logger = get_logger(__name__)
 
 MAX_AGENT_SOURCE_IDS = 500
 AGENT_SOURCE_CAP_MSG = "Un agente admite como máximo 500 fuentes."
@@ -44,6 +48,28 @@ class AgentRuntimeConfig(BaseModel):
     answer_gate: bool | None = None
 
 
+class ResponseProfileConfig(BaseModel):
+    """Cómo debe explicar el agente (§28). Estructura, no un prompt gigante."""
+
+    preset: str | None = Field(default=None, max_length=40)
+    language: str | None = Field(default=None, max_length=16)
+    tone: str | None = Field(default=None, max_length=20)
+    technical_level: str | None = Field(default=None, max_length=20)
+    default_detail: str | None = Field(default=None, max_length=20)
+    audience: str | None = Field(default=None, max_length=20)
+    conclusion_first: bool | None = None
+    use_headings: bool | None = None
+    use_bold: bool | None = None
+    use_tables: bool | None = None
+    use_examples: bool | None = None
+    cite_sources: bool | None = None
+    show_uncertainty: bool | None = None
+    show_practical_implications: bool | None = None
+    preserve_domain_terms: bool | None = None
+    preferred_blueprints: list[str] | None = Field(default=None, max_length=6)
+    custom_instructions: str | None = Field(default=None, max_length=800)
+
+
 class AgentConfig(BaseModel):
     purpose: str | None = Field(default=None, max_length=2000)
     temperature: float = Field(default=0.2, ge=0, le=1)
@@ -63,6 +89,10 @@ class AgentConfig(BaseModel):
     runtime: AgentRuntimeConfig | None = Field(
         default=None,
         description="JEV por agente: tool_routing, termination_gate, answer_gate.",
+    )
+    response_profile: ResponseProfileConfig | None = Field(
+        default=None,
+        description="Cómo debe responder: tono, nivel, detalle, formato, citas (§28).",
     )
 
     @field_validator("source_ids")
@@ -396,6 +426,208 @@ async def delete_agent(
     await repo.delete_agent(ctx.organization_id, aid)
     await _audit().write(ctx, "agent.deleted", "agent", aid)
     return {"status": "deleted", "agent_id": str(aid)}
+
+
+@router.get("/response-profile/catalog", summary="Presets de respuesta y formas de explicación")
+async def response_profile_catalog(request: Request):
+    """Catálogo para Agent Studio: presets + blueprints (§29, §51)."""
+    from src.intelligence.response.blueprints import public_blueprints
+    from src.intelligence.response.profile import public_presets
+
+    return {
+        "presets": public_presets(),
+        "blueprints": public_blueprints(),
+        "defaults": ResponseProfileConfig().model_dump(),
+    }
+
+
+class GeneratePurposeRequest(BaseModel):
+    instructions: str | None = Field(default=None, max_length=1000)
+
+
+class GenerateProfileRequest(BaseModel):
+    preset: str | None = Field(default=None, max_length=40)
+    instructions: str | None = Field(default=None, max_length=1000)
+
+
+class PreviewRequest(BaseModel):
+    question: str = Field(min_length=3, max_length=1000)
+    mock_evidence: str | None = Field(default=None, max_length=4000)
+
+
+async def _agent_config_context(request: Request, ctx, agent) -> object:
+    """Contexto del configurador: sólo datos reales del agente (§31, §33)."""
+    from src.intelligence.response.generator import context_from_agent
+
+    source_kinds: list[str] = []
+    source_titles: list[str] = []
+    try:
+        from src.api.deps import get_source_repo
+
+        config = agent.config_json or {}
+        source_ids = list(config.get("source_ids") or [])[:20]
+        if source_ids:
+            repo = get_source_repo()
+            for raw_id in source_ids:
+                try:
+                    source = await repo.get_source(ctx.organization_id, UUID(str(raw_id)))
+                except Exception as exc:  # noqa: BLE001 — una fuente ilegible no rompe el draft
+                    logger.warning("source lookup failed for config draft", error=str(exc)[:150])
+                    continue
+                if source is None:
+                    continue
+                source_kinds.append(str(getattr(source, "source_type", "") or ""))
+                source_titles.append(
+                    str(getattr(source, "title", "") or getattr(source, "name", "") or "")[:80]
+                )
+    except Exception:  # noqa: BLE001
+        source_kinds = []
+        source_titles = []
+    return context_from_agent(
+        agent=agent,
+        source_kinds=[item for item in source_kinds if item],
+        source_titles=[item for item in source_titles if item],
+    )
+
+
+async def _generate_text(prompt: str, *, max_tokens: int = 400) -> str:
+    """Generación corta para el configurador. Fail-soft: sin LLM, sin draft."""
+    from src.api.deps import get_llm_provider
+    from src.core.config import get_settings
+
+    settings = get_settings()
+    provider = get_llm_provider()
+    model = getattr(settings, "LITELLM_DEFAULT_MODEL", None)
+    response = await provider.generate(
+        prompt=prompt, model=model, max_tokens=max_tokens, temperature=0.2
+    )
+    return str(getattr(response, "content", "") or "")
+
+
+@router.post("/{agent_id}/config/purpose", summary="Generar propósito con IA (§30-§31)")
+async def generate_agent_purpose(agent_id: str, body: GeneratePurposeRequest, request: Request):
+    from src.intelligence.response.generator import (
+        build_purpose_prompt,
+        validate_purpose,
+    )
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "agents:write")
+    agent = await _get_owned_agent(ctx, agent_id)
+    context = await _agent_config_context(request, ctx, agent)
+    if body.instructions:
+        context = replace(context, purpose=str(body.instructions)[:500])
+    prompt = build_purpose_prompt(context)
+    try:
+        raw = await _generate_text(prompt, max_tokens=300)
+    except Exception as exc:  # noqa: BLE001 — el usuario puede escribirlo a mano
+        raise HTTPException(503, f"No se pudo generar el propósito: {exc}") from exc
+    purpose, warnings = validate_purpose(raw, context)
+    if not purpose:
+        raise HTTPException(502, "El borrador no pasó la validación (mencionaba capacidades no configuradas).")
+    return {
+        "draft": purpose,
+        "warnings": warnings,
+        "grounded_in": {
+            "sources": list(context.source_titles)[:6],
+            "source_kinds": list(context.source_kinds)[:6],
+            "tools": list(context.tools)[:10],
+            "capabilities": sorted(context.capabilities),
+        },
+        "saved": False,
+    }
+
+
+@router.post(
+    "/{agent_id}/config/response-profile",
+    summary="Generar perfil de respuesta con IA (§30, §32)",
+)
+async def generate_response_profile(
+    agent_id: str, body: GenerateProfileRequest, request: Request
+):
+    from src.intelligence.response.generator import (
+        build_profile_prompt,
+        parse_profile_response,
+        suggest_profile,
+    )
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "agents:write")
+    agent = await _get_owned_agent(ctx, agent_id)
+    context = await _agent_config_context(request, ctx, agent)
+    prompt = build_profile_prompt(context)
+    try:
+        raw = await _generate_text(prompt, max_tokens=400)
+    except Exception:  # noqa: BLE001 — fallback determinista, no error
+        raw = ""
+    if raw.strip():
+        suggestion = parse_profile_response(raw, context)
+    else:
+        suggestion = suggest_profile(
+            context=context,
+            preset=body.preset,
+            instructions=str(body.instructions or ""),
+        )
+    return {"draft": suggestion, "saved": False}
+
+
+@router.post(
+    "/{agent_id}/config/preview",
+    summary="Preview de respuesta con conocimiento simulado (§34)",
+)
+async def preview_agent_response(agent_id: str, body: PreviewRequest, request: Request):
+    """Muestra cómo respondería el agente. No ejecuta tools reales."""
+    from src.intelligence.response.contract import prompt_block
+    from src.intelligence.response.wiring import compose_for_request
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "agents:write")
+    agent = await _get_owned_agent(ctx, agent_id)
+    plan = await compose_for_request(
+        question=body.question,
+        config_json=agent.config_json,
+        mode="rules",
+        request_id=None,
+        organization_id=ctx.organization_id,
+    )
+    mock = (
+        str(body.mock_evidence or "").strip()
+        or "[MOCK] Sin evidencia real: el preview muestra únicamente la forma y el estilo "
+        "configurados. No hay hechos de dominio en esta respuesta."
+    )
+    shape = prompt_block(plan.contract) if plan.contract is not None else ""
+    prompt = (
+        f"PREGUNTA DEL USUARIO:\n{body.question}\n\n"
+        f"EVIDENCIA DISPONIBLE (simulada, no son hechos reales):\n{mock}\n\n"
+        "Respondé la pregunta siguiendo la forma y el estilo indicados. "
+        "Si la evidencia simulada no alcanza para responder, decilo."
+    )
+    try:
+        draft = await _generate_text(
+            f"{shape}\n\n{prompt}" if shape else prompt, max_tokens=600
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, f"No se pudo generar el preview: {exc}") from exc
+    return {
+        "preview": draft,
+        "simulated_evidence": True,
+        "response_contract": plan.contract.to_public_dict() if plan.contract is not None else None,
+        "mode": plan.mode,
+        "source": plan.source,
+    }
+
+
+async def _get_owned_agent(ctx, agent_id: str):
+    from src.api.deps import get_agent_repo
+
+    try:
+        aid = UUID(agent_id)
+    except ValueError:
+        raise HTTPException(400, "agent_id must be a valid UUID")
+    agent = await get_agent_repo().get_agent(ctx.organization_id, aid)
+    if agent is None:
+        raise HTTPException(404, "Agent not found")
+    return agent
 
 
 @router.get("/{agent_id}/readiness", summary="Readiness score del agente (0-100)")

@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from "reac
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { AgentAdvancedPanel } from "../components/agentStudio/AgentAdvancedPanel";
+import { AgentResponseProfileSection } from "../components/agentStudio/AgentResponseProfileSection";
 import { AgentPurposeForm } from "../components/agentStudio/AgentPurposeForm";
 import { AgentSourcePicker, AGENT_SOURCE_CAP_MSG, MAX_AGENT_SOURCES } from "../components/agentStudio/AgentSourcePicker";
 import { AgentTestChat, type ChatTurn } from "../components/agentStudio/AgentTestChat";
@@ -18,6 +19,7 @@ import {
   type IngestionJob,
   type KnowledgeSource,
   type AgentConfig,
+  DEFAULT_RESPONSE_PROFILE,
   defaultConfig,
   legacyTabToGroup,
   sourceIdsFromSteps,
@@ -63,6 +65,9 @@ export default function AgentStudioPage() {
   const [routes, setRoutes] = useState<{ name: string; description: string }[]>([]);
   const [canCustomModel, setCanCustomModel] = useState(false);
   const [config, setConfig] = useState(defaultConfig());
+  // §28: el perfil de respuesta vive dentro de config; el componente necesita
+  // un objeto completo (el backend tolera campos ausentes).
+  const responseProfile = { ...DEFAULT_RESPONSE_PROFILE, ...(config.response_profile ?? {}) };
   const [semantic, setSemantic] = useState(true);
   const [sql, setSql] = useState(true);
   const [apiCalls, setApiCalls] = useState(true);
@@ -860,6 +865,22 @@ export default function AgentStudioPage() {
                 }}
                 onPurpose={(value) => setConfig({ ...config, purpose: value })}
                 onInstructions={setSystemPrompt}
+              />
+            </div>
+            <div className="shrink-0 overflow-y-auto border-t border-border pr-1 pt-4">
+              {/* §27-§36: propósito ("qué debe lograr") separado del perfil de
+                  respuesta ("cómo debe explicarlo"). */}
+              <AgentResponseProfileSection
+                profile={responseProfile}
+                onChange={(next) =>
+                  setConfig({ ...config, response_profile: { ...next, preset: next.preset } })
+                }
+                agentId={isNew ? undefined : id}
+                token={session?.token}
+                organizationId={session?.organizationId}
+                purpose={config.purpose || ""}
+                onPurpose={(value) => setConfig({ ...config, purpose: value })}
+                sourceTitles={sources.filter((s) => config.source_ids.includes(s.id)).map((s) => s.name)}
               />
             </div>
             <div className="flex min-h-0 flex-1 flex-col border-t border-border pt-4">

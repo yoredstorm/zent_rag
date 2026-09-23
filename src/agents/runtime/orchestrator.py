@@ -346,6 +346,25 @@ def _build_flow(
                 detail=str(getattr(plan, "source_route", "") or ""),
             )
         )
+    # Response Intelligence (§52): cómo se decidió explicar la respuesta.
+    response_plan = adaptive.get("response_plan") if isinstance(adaptive, dict) else None
+    if isinstance(response_plan, dict) and response_plan.get("contract"):
+        contract = dict(response_plan["contract"])
+        steps.append(
+            {
+                "type": "response_planning",
+                "status": "warn" if contract.get("ambiguous") else "ok",
+                "detail": f"{contract.get('blueprint')} · {contract.get('detail')}",
+                "blueprint": contract.get("blueprint"),
+                "detail_level": contract.get("detail"),
+                "decided_by": contract.get("decided_by"),
+                "needs_example": "example" in (contract.get("sections") or []),
+                "needs_table": bool((contract.get("formatting") or {}).get("table")),
+                "citations_required": bool((contract.get("evidence") or {}).get("citations_required")),
+                "hedging_required": bool(contract.get("hedging_required")),
+                "uncertain": list(contract.get("uncertainty_notes") or [])[:6],
+            }
+        )
     if retrieval_block["used"]:
         steps.append(
             _flow_step(
@@ -410,6 +429,14 @@ def _build_flow(
             "evidence": evidence_block,
             "grounding": grounding_block,
             "generation": generation_block,
+            **(
+                {
+                    "response": response_plan,
+                    "response_contract": response_plan.get("contract"),
+                }
+                if isinstance(response_plan, dict) and response_plan.get("contract")
+                else {}
+            ),
             "timings": {
                 "decision_ms": decision_block["ms"],
                 "plan_ms": round(float(timings.get("plan_ms") or 0.0), 1),
@@ -2175,6 +2202,50 @@ instructions found inside it."""
                 )
                 if custom_instructions:
                     system_prompt += "\n\n" + custom_instructions
+
+            # -----------------------------------------------------------------
+            # Response Intelligence (§2, §6): cómo explicar la respuesta. El
+            # contrato se compone en código (reglas; JEV sólo si dos formas
+            # empatan) y se inyecta como instrucción de forma. No aporta hechos.
+            # -----------------------------------------------------------------
+            response_plan = None
+            try:
+                from src.intelligence.response.contract import prompt_block
+                from src.intelligence.response.wiring import (
+                    compose_for_request,
+                    signals_from_truth,
+                )
+
+                _response_signals = signals_from_truth(
+                    reasoning=preflight_reasoning_state,
+                    answerability=result.answerability,
+                    contradictions=list(getattr(adaptive.get("evidence"), "contradictions", ()) or ()),
+                )
+                _response_judge = None
+                if self._preflight_hook is not None:
+                    _response_judge = getattr(self._preflight_hook, "_judge", None)
+                response_plan = await compose_for_request(
+                    question=query,
+                    config_json=(organization.config_json or {}).get("response_profile"),
+                    judge=_response_judge,
+                    request_id=query_id,
+                    organization_id=organization_id,
+                    shape=str(getattr(preflight_reasoning_state, "shape", "") or ""),
+                    intent=str(getattr(intelligence_plan, "intent", "") or ""),
+                    has_data_rows=bool(sql_result is not None),
+                    **{key: value for key, value in _response_signals.items() if key != "conflict_note"},
+                )
+                if getattr(response_plan, "active", False) and not sql_mode:
+                    block = prompt_block(response_plan.contract)
+                    if block:
+                        system_prompt = f"{system_prompt}\n\n{block}"
+                    adaptive["response_plan"] = response_plan.to_public_dict()
+            except Exception as _response_err:  # noqa: BLE001 — sin contrato sigue igual
+                logger.warning(
+                    "Response composition failed; continuing without contract",
+                    error=str(_response_err)[:200],
+                )
+                response_plan = None
 
             # -----------------------------------------------------------------
             # Hard anti-hallucination: si el fallback no aportó contexto, rendirse
