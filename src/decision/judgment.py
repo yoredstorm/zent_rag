@@ -34,6 +34,12 @@ PHASE_POST_RETRIEVAL = "post_retrieval"
 PHASE_POST_GENERATION = "post_generation"
 PHASE_AGENT_STEP = "agent_step"
 
+# Fases del JEV Preflight: juicio barato ANTES de pagar generación/razonamiento
+# caro. Ver `src/decision/preflight.py` y docs/architecture/jev-preflight.md.
+PHASE_PRE_REASONING = "pre_reasoning"
+PHASE_POST_RECONSTRUCTION = "post_reconstruction"
+PHASE_PRE_GENERATION = "pre_generation"
+
 JUDGE_PHASES = frozenset(
     {
         PHASE_ROUTING,
@@ -47,6 +53,9 @@ JUDGE_PHASES = frozenset(
         PHASE_POST_RETRIEVAL,
         PHASE_POST_GENERATION,
         PHASE_AGENT_STEP,
+        PHASE_PRE_REASONING,
+        PHASE_POST_RECONSTRUCTION,
+        PHASE_PRE_GENERATION,
         PHASE_TARGET_SELECTION,
     }
 )

@@ -162,7 +162,10 @@ class HypothesisEngine:
             hypotheses.append(hypothesis)
             user_id = hypothesis.id
 
-        for statement, origin in self._alternatives(
+        # Las alternativas derivadas de una regla quedan atadas a esa regla: el
+        # veredicto no depende de la morfología del enunciado generado.
+        generated_support: dict[UUID, tuple[UUID, ...]] = {}
+        for statement, origin, support_refs in self._alternatives(
             question=question,
             scenario=scenario,
             transitions=transitions,
@@ -173,7 +176,10 @@ class HypothesisEngine:
                 break
             if any(item.statement == statement for item in hypotheses):
                 continue
-            hypotheses.append(Hypothesis(statement=statement, origin=origin))
+            hypothesis = Hypothesis(statement=statement, origin=origin)
+            if support_refs:
+                generated_support[hypothesis.id] = support_refs
+            hypotheses.append(hypothesis)
 
         tested: list[Hypothesis] = []
         for hypothesis in hypotheses:
@@ -183,6 +189,7 @@ class HypothesisEngine:
                 rules=rule_list,
                 missing=missing,
                 user_hypothesis=hypothesis.id == user_id,
+                rule_support=generated_support.get(hypothesis.id, ()),
             )
             tested.append(verdict)
         return HypothesisSet(
@@ -208,30 +215,33 @@ class HypothesisEngine:
         transitions: StateTransitionSet | None,
         rules: list[Fact],
         memory_hints: tuple[str, ...],
-    ) -> list[tuple[str, HypothesisOrigin]]:
-        alternatives: list[tuple[str, HypothesisOrigin]] = []
-        renumbering = any(
-            rule_signals(rule.statement)["renumbers"]
+    ) -> list[tuple[str, HypothesisOrigin, tuple[UUID, ...]]]:
+        alternatives: list[tuple[str, HypothesisOrigin, tuple[UUID, ...]]] = []
+        renumber_rules = tuple(
+            rule.id
+            for rule in rules
+            if rule.usable_as_premise and rule_signals(rule.statement)["renumbers"]
+        )
+        coexist_rules = tuple(
+            rule.id
             for rule in rules
             if rule.usable_as_premise
+            and rule_signals(rule.statement)["allows_coexistence"]
         )
-        coexist = any(
-            rule_signals(rule.statement)["allows_coexistence"]
-            for rule in rules
-            if rule.usable_as_premise
-        )
-        if renumbering:
+        if renumber_rules:
             alternatives.append(
                 (
                     "La renumeración abrió espacio de ordenamiento; el salto es esperado",
                     HypothesisOrigin.RULE,
+                    renumber_rules,
                 )
             )
-        if coexist:
+        if coexist_rules:
             alternatives.append(
                 (
                     "Pueden coexistir varias secuencias activas: no falta un cierre",
                     HypothesisOrigin.RULE,
+                    coexist_rules,
                 )
             )
         if transitions and transitions.gaps:
@@ -239,15 +249,17 @@ class HypothesisEngine:
                 (
                     "El salto de numeración se debe a un evento no incluido en el input",
                     HypothesisOrigin.COMPANY_GRAPH,
+                    (),
                 )
             )
         for hint in memory_hints[:1]:
-            alternatives.append((hint, HypothesisOrigin.MEMORY))
+            alternatives.append((hint, HypothesisOrigin.MEMORY, ()))
         if not alternatives and scenario and scenario.unparsed_items:
             alternatives.append(
                 (
                     "El input está incompleto y no permite decidir",
                     HypothesisOrigin.USER,
+                    (),
                 )
             )
         return alternatives
@@ -260,6 +272,7 @@ class HypothesisEngine:
         rules: list[Fact],
         missing: list[MissingRequirement],
         user_hypothesis: bool,
+        rule_support: tuple[UUID, ...] = (),
     ) -> Hypothesis:
         supporting: list[UUID] = []
         contradicting: list[UUID] = []
@@ -287,6 +300,17 @@ class HypothesisEngine:
             if expects_space and (signals["renumbers"] or signals["allows_coexistence"]):
                 supporting.append(rule.id)
                 supporting_rules.append(rule)
+
+        # La alternativa nació de una regla: esa regla la respalda aunque el
+        # enunciado generado no repita sus palabras.
+        for rule in applicable:
+            if rule.id in rule_support and rule.id not in supporting:
+                supporting.append(rule.id)
+                supporting_rules.append(rule)
+                contradicting = [item for item in contradicting if item != rule.id]
+                contradicting_rules = [
+                    item for item in contradicting_rules if item.id != rule.id
+                ]
 
         for requirement in missing:
             if not requirement.resolved:

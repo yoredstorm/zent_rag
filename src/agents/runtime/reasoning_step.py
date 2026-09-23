@@ -8,7 +8,7 @@
 # =============================================================================
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
@@ -52,6 +52,7 @@ class ReasoningRunState:
     analysis_complete: bool = False
     blocked_direct_answers: int = 0
     company_context_sections: tuple[str, ...] = ()
+    company_context_counts: dict = field(default_factory=dict)
     company_context_used: bool = False
     company_context_chars: int = 0
     company_context_truncated: bool = False
@@ -263,6 +264,205 @@ def reasoning_steps(state: ReasoningRunState | None) -> list[dict]:
     return steps
 
 
+def reasoning_steps_detailed(state: ReasoningRunState | None) -> list[dict]:
+    """Pasos de razonamiento con semántica estructurada (Execution Story).
+
+    Cada paso lleva `type`, `status`, `duration_ms` opcional y un payload propio
+    con números, estados y referencias. Nunca texto de UI ni razonamiento
+    privado: el portal traduce.
+    """
+    if state is None or not state.enabled:
+        return []
+    steps: list[dict] = [
+        {
+            "type": "reasoning_classification",
+            "status": "ok",
+            "reasoning": {
+                "shape": state.shape,
+                "is_complex": state.is_complex,
+                "mode": state.mode,
+            },
+        }
+    ]
+    if state.company_context_used:
+        steps.append(
+            {
+                "type": "company_context",
+                "status": "ok",
+                "company_context": dict(state.company_context_counts or {}),
+                "truncated": state.company_context_truncated,
+                "memory_hits": state.memory_hits,
+            }
+        )
+    outcome = state.outcome
+    if outcome is None:
+        return steps
+    plan = getattr(outcome, "plan", None)
+    if plan is not None:
+        steps.append(
+            {
+                "type": "reasoning_plan",
+                "status": "ok",
+                "plan": {
+                    "shape": plan.reasoning_shape.value,
+                    "question_to_prove": plan.question_to_prove,
+                    "operations": [step.operation for step in plan.steps],
+                    "requires": {
+                        "scenario_parse": plan.requires_scenario_parse,
+                        "timeline": plan.requires_timeline,
+                        "state_reconstruction": plan.requires_state_reconstruction,
+                        "graph_traversal": plan.requires_graph_traversal,
+                        "hypothesis_testing": plan.requires_hypothesis_testing,
+                    },
+                    "completion_conditions": list(plan.completion_conditions),
+                    "status": plan.status.value,
+                },
+            }
+        )
+    workspace = getattr(outcome, "workspace", None)
+    scenario = getattr(workspace, "scenario", None) if workspace is not None else None
+    if scenario is not None:
+        steps.append(
+            {
+                "type": "scenario_parse",
+                "status": "warn" if scenario.partial else "ok",
+                "scenario": {
+                    "events": len(scenario.events),
+                    "items": len(scenario.items),
+                    "record_types": len(
+                        {
+                            event.record_type
+                            for event in scenario.events
+                            if event.record_type
+                        }
+                    ),
+                    "unparsed": len(scenario.unparsed_items),
+                    "schemas": len(scenario.schema_refs),
+                    "entities": list(scenario.entities[:8]),
+                    "unknown_fields": list(scenario.unknown_fields[:8]),
+                    "missing_requirements": [
+                        {"kind": item.kind.value, "subject": item.subject}
+                        for item in scenario.missing_requirements
+                        if not item.resolved
+                    ],
+                    "parse_confidence": scenario.parse_confidence,
+                },
+            }
+        )
+    timeline = getattr(workspace, "timeline", None) if workspace is not None else None
+    if timeline is not None:
+        steps.append(
+            {
+                "type": "timeline",
+                "status": "ok" if timeline.criteria.get("chronology_proven") else "warn",
+                "timeline": {
+                    "events": len(timeline.events),
+                    "criteria": dict(timeline.criteria),
+                    "unknown_dates": len(timeline.unknown_dates),
+                },
+            }
+        )
+    transitions = (
+        getattr(workspace, "transitions", None) if workspace is not None else None
+    )
+    if transitions is not None:
+        steps.append(
+            {
+                "type": "state_reconstruction",
+                "status": "ok" if transitions.resolved else "warn",
+                "transitions": {
+                    "subject": transitions.subject,
+                    "total": len(transitions.transitions),
+                    "confirmed": transitions.confirmed,
+                    "unresolved": transitions.unresolved,
+                    "gaps": list(transitions.gaps[:8]),
+                    "chain": [
+                        {
+                            "from": link.from_value,
+                            "to": link.to_value,
+                            "status": link.status.value,
+                            "event_ref": link.event_ref,
+                        }
+                        for link in transitions.chain[:80]
+                    ],
+                },
+            }
+        )
+    hypotheses = (
+        getattr(workspace, "hypotheses", None) if workspace is not None else None
+    )
+    if hypotheses is not None:
+        steps.append(
+            {
+                "type": "hypothesis_test",
+                "status": "warn" if hypotheses.unresolved else "ok",
+                "hypotheses": {
+                    "supported": len(hypotheses.supported),
+                    "rejected": len(hypotheses.rejected),
+                    "unresolved": len(hypotheses.unresolved),
+                    "items": [
+                        {
+                            "id": str(item.id),
+                            "statement": item.statement[:240],
+                            "origin": item.origin.value,
+                            "verdict": item.verdict.value,
+                            "supporting": len(item.supporting_fact_ids),
+                            "contradicting": len(item.contradicting_fact_ids),
+                            "missing_requirements": list(
+                                item.missing_requirement_ids[:6]
+                            ),
+                            "is_user_hypothesis": (
+                                item.id == hypotheses.user_hypothesis_id
+                            ),
+                        }
+                        for item in hypotheses.hypotheses[:6]
+                    ],
+                },
+            }
+        )
+    inferences = getattr(workspace, "inferences", ()) if workspace is not None else ()
+    if inferences:
+        supported = [
+            item for item in inferences if item.verdict.value == "SUPPORTED"
+        ]
+        steps.append(
+            {
+                "type": "inference_verification",
+                "status": "ok" if len(supported) == len(inferences) else "warn",
+                "inference": {
+                    "total": len(inferences),
+                    "supported": len(supported),
+                    "premises": len(inferences[0].premise_refs),
+                    "verdicts": [
+                        {
+                            "conclusion": item.conclusion[:200],
+                            "verdict": item.verdict.value,
+                        }
+                        for item in inferences[:4]
+                    ],
+                },
+            }
+        )
+    completion = getattr(outcome, "completion", None)
+    if completion is not None:
+        steps.append(
+            {
+                "type": "analysis_completion",
+                "status": "ok" if completion.complete else "warn",
+                "completion": {
+                    "complete": completion.complete,
+                    "blockers": list(completion.blockers[:8]),
+                    "reason_codes": list(completion.reason_codes[:8]),
+                    "checks": [
+                        {"name": check.name, "satisfied": check.satisfied}
+                        for check in completion.checks[:10]
+                    ],
+                },
+            }
+        )
+    return steps
+
+
 # ---------------------------------------------------------------------------
 # Preparación por run
 # ---------------------------------------------------------------------------
@@ -321,6 +521,19 @@ async def prepare_reasoning_state(
             state.company_context_chars = len(str(compiled_dict))
             state.company_context_truncated = state.company_context_chars > 6000
             state.memory_hits = len(compiled_dict.get("memories") or ())
+            state.company_context_counts = {
+                key: len(compiled_dict.get(key) or ())
+                for key in (
+                    "concepts",
+                    "mappings",
+                    "rules",
+                    "processes",
+                    "systems",
+                    "dependencies",
+                    "memories",
+                )
+                if compiled_dict.get(key)
+            }
         outcome = await engine.reason(
             message,
             organization_id=organization_id,

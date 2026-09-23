@@ -924,7 +924,7 @@ class AgentRuntime:
         try:
             from src.agents.runtime.reasoning_step import (
                 prepare_reasoning_state,
-                reasoning_steps,
+                reasoning_steps_detailed,
             )
 
             state = await prepare_reasoning_state(
@@ -941,7 +941,7 @@ class AgentRuntime:
             self._pending_reasoning = None
             return None
         self._pending_reasoning = state
-        self._pending_reasoning_steps = reasoning_steps(state)
+        self._pending_reasoning_steps = reasoning_steps_detailed(state)
         return state
 
     async def _run_loop(

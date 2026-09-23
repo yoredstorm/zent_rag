@@ -21,6 +21,7 @@ import re
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID, uuid4
 
 from src.core.config import get_settings
@@ -302,6 +303,8 @@ def _build_flow(
             "reason": str(getattr(quality, "reason", "") or "")[:160] or None,
             "items": int(getattr(evidence, "size", 0) or 0) if evidence is not None else 0,
             "ms": round(float(timings.get("evidence_ms") or 0.0), 1),
+            "jev_used": bool(getattr(quality, "jev_used", False)),
+            "jev_answers": _public_jev_answers(getattr(quality, "jev_answers", None)),
         }
 
     grounding_block = None
@@ -310,6 +313,8 @@ def _build_flow(
             "grounded": bool(getattr(grounding, "grounded", False)),
             "score": round(float(getattr(grounding, "score", 0.0) or 0.0), 4),
             "ms": round(float(timings.get("grounding_ms") or 0.0), 1),
+            "jev_used": bool(getattr(grounding, "jev_used", False)),
+            "jev_answers": _public_jev_answers(getattr(grounding, "jev_answers", None)),
         }
 
     generation_block = None
@@ -391,35 +396,265 @@ def _build_flow(
         "Documentos" if retrieval_block["used"] else "Directa"
     )
 
+    return _flow_with_story(
+        {
+            "query_id": str(query_id),
+            "organization_id": str(organization_id),
+            "conversation_id": str(conversation_id) if conversation_id else None,
+            "method": method,
+            "status": status,
+            "verdict": {"decider": decider, "route": route},
+            "decision": decision_block,
+            "retrieval": retrieval_block,
+            "sql": sql_block,
+            "evidence": evidence_block,
+            "grounding": grounding_block,
+            "generation": generation_block,
+            "timings": {
+                "decision_ms": decision_block["ms"],
+                "plan_ms": round(float(timings.get("plan_ms") or 0.0), 1),
+                "embedding_ms": round(float(timings.get("embedding_ms") or 0.0), 1),
+                "retrieval_ms": retrieval_block["ms"],
+                "sql_ms": round(float(timings.get("sql_ms") or 0.0), 1),
+                "evidence_ms": round(float(timings.get("evidence_ms") or 0.0), 1),
+                "grounding_ms": round(float(timings.get("grounding_ms") or 0.0), 1),
+                "generation_ms": generation_block["ms"] if generation_block else 0.0,
+                "total_ms": round(float(total_ms or 0.0), 1),
+            },
+            "steps": steps,
+            "sources": sources,
+            "pricing": pricing or None,
+            "fallbacks": list(fallbacks or [])[:8],
+        }
+    )
+
+
+def _flow_with_story(flow: dict) -> dict:
+    """Flow + eventos canónicos (flow_version 2). Aditivo y fail-soft."""
+    from src.rag.flow_story import with_story
+
+    return with_story(flow)
+
+
+async def _attach_reasoning_story(
+    flow: dict,
+    *,
+    organization_id: UUID,
+    question: str | None,
+    state: object | None = None,
+) -> dict:
+    """Suma el razonamiento observado (si el flag está activo) y reconstruye eventos.
+
+    Si el razonamiento ya corrió antes de generar (preflight), se reutiliza ese
+    estado: no se razona dos veces por la misma pregunta.
+    """
+    try:
+        from src.agents.runtime.reasoning_step import (
+            prepare_reasoning_state,
+            reasoning_steps_detailed,
+        )
+
+        if state is None:
+            state = await prepare_reasoning_state(
+                organization_id=organization_id,
+                message=str(question or ""),
+                request_context=None,
+            )
+        steps = reasoning_steps_detailed(state)
+        if steps:
+            flow = {**flow, "steps": list(flow.get("steps") or []) + steps}
+    except Exception as exc:  # noqa: BLE001 - la historia nunca rompe la respuesta
+        logger.warning("Reasoning story attach failed", error=str(exc)[:200])
+    return _flow_with_story(flow)
+
+
+# ---------------------------------------------------------------------------
+# JEV Preflight — auxiliares del camino RAG (sin JEV: sólo señales y formato)
+# ---------------------------------------------------------------------------
+
+
+def _preflight_available_sources(
+    *, sql_enabled: bool, knowledge_enabled: bool
+) -> tuple[str, ...]:
+    """Familias de fuente disponibles: sólo se pregunta lo que existe (§46)."""
+    sources: list[str] = []
+    if knowledge_enabled:
+        sources.append("documents")
+    if sql_enabled:
+        sources.append("structured")
+    sources.append("direct")
+    return tuple(sources)
+
+
+def _public_jev_answers(answers: object) -> dict:
+    """Respuestas públicas de JEV para la historia: sin CoT, acotadas."""
+    if not isinstance(answers, dict):
+        return {}
+    out: dict = {}
+    for key, value in list(answers.items())[:24]:
+        if not isinstance(value, dict):
+            continue
+        item: dict = {"type": value.get("type")}
+        for field in ("choice", "score", "noul", "confidence"):
+            if field in value:
+                item[field] = value[field]
+        probabilities = value.get("probabilities")
+        if isinstance(probabilities, dict):
+            item["probabilities"] = {
+                str(option): float(probability)
+                for option, probability in list(probabilities.items())[:8]
+            }
+        out[str(key)[:64]] = item
+    return out
+
+
+def _preflight_classification(plan: object | None) -> dict:
+    """Señales determinísticas ya calculadas del plan (sin costo extra)."""
+    if plan is None:
+        return {}
     return {
-        "query_id": str(query_id),
-        "organization_id": str(organization_id),
-        "conversation_id": str(conversation_id) if conversation_id else None,
-        "method": method,
-        "status": status,
-        "verdict": {"decider": decider, "route": route},
-        "decision": decision_block,
-        "retrieval": retrieval_block,
-        "sql": sql_block,
-        "evidence": evidence_block,
-        "grounding": grounding_block,
-        "generation": generation_block,
-        "timings": {
-            "decision_ms": decision_block["ms"],
-            "plan_ms": round(float(timings.get("plan_ms") or 0.0), 1),
-            "embedding_ms": round(float(timings.get("embedding_ms") or 0.0), 1),
-            "retrieval_ms": retrieval_block["ms"],
-            "sql_ms": round(float(timings.get("sql_ms") or 0.0), 1),
-            "evidence_ms": round(float(timings.get("evidence_ms") or 0.0), 1),
-            "grounding_ms": round(float(timings.get("grounding_ms") or 0.0), 1),
-            "generation_ms": generation_block["ms"] if generation_block else 0.0,
-            "total_ms": round(float(total_ms or 0.0), 1),
-        },
-        "steps": steps,
-        "sources": sources,
-        "pricing": pricing or None,
-        "fallbacks": list(fallbacks or [])[:8],
+        "route": str(getattr(plan, "source_route", "") or ""),
+        "strategy": str(getattr(plan, "retrieval_strategy", "") or ""),
+        "intent": str(getattr(plan, "intent", "") or ""),
+        "path": str(getattr(plan, "path", "") or ""),
     }
+
+
+def _preflight_budget_left(adaptive: dict) -> int:
+    """Rondas de retrieval que quedan según la configuración vigente."""
+    try:
+        from src.core.config import get_settings
+
+        max_attempts = int(get_settings().ADAPTIVE_RAG_MAX_RETRIEVAL_ATTEMPTS or 3)
+    except Exception:  # noqa: BLE001
+        max_attempts = 3
+    used = len(list(adaptive.get("attempts") or []))
+    return max(0, max_attempts - used)
+
+
+def _preflight_cost_pressure(routing_decision: object | None) -> bool:
+    """Presión de costo declarada por el motor de decisión, si existe.
+
+    No se inventa un baseline: sin señal de wallet/budget, no hay sesgo barato.
+    """
+    metadata = getattr(routing_decision, "metadata", None)
+    if not isinstance(metadata, dict):
+        return False
+    budget = metadata.get("budget")
+    if not isinstance(budget, dict):
+        return False
+    summary = budget.get("summary")
+    if isinstance(summary, dict) and summary.get("cost_pressure") is not None:
+        return bool(summary.get("cost_pressure"))
+    return bool(budget.get("cost_pressure"))
+
+
+def _preflight_evidence_fingerprint(adaptive: dict) -> str:
+    from src.decision.batch import state_fingerprint
+
+    evidence = adaptive.get("evidence")
+    preview_text = (
+        evidence.preview(600) if hasattr(evidence, "preview") else ""
+    )
+    return state_fingerprint(
+        "pre_generation",
+        {"evidence_preview": preview_text, "n_items": getattr(evidence, "size", 0)},
+    )
+
+
+def _scenario_summary(scenario: object | None) -> dict:
+    if scenario is None:
+        return {}
+    events = list(getattr(scenario, "events", ()) or ())
+    record_types = sorted(
+        {
+            str(getattr(item, "record_type", "") or "")
+            for item in events
+            if getattr(item, "record_type", None)
+        }
+    )
+    return {
+        "events": len(events),
+        "record_types": record_types[:8],
+        "summary": "; ".join(
+            f"{getattr(item, 'action', '')} {getattr(item, 'record_type', '')}".strip()
+            for item in events[:8]
+        ),
+    }
+
+
+def _transitions_summary(transitions: object | None) -> dict:
+    if transitions is None:
+        return {}
+    chain = list(getattr(transitions, "chain", ()) or ())
+    texts: list[str] = []
+    for link in chain[:8]:
+        source = getattr(link, "from_value", "")
+        target = getattr(link, "to_value", "")
+        event_ref = getattr(link, "event_ref", "")
+        texts.append(f"{source}->{target}{f' [{event_ref}]' if event_ref else ''}".strip())
+    return {
+        "confirmed": int(getattr(transitions, "confirmed", 0) or 0),
+        "unresolved": int(getattr(transitions, "unresolved", 0) or 0),
+        "gaps": [str(item)[:120] for item in list(getattr(transitions, "gaps", ()) or ())[:6]],
+        "chain_text": " | ".join(texts),
+    }
+
+
+def _completion_summary(completion: object | None, state: object | None) -> dict:
+    payload: dict = {
+        "shape": str(getattr(state, "shape", "") or ""),
+        "analysis_complete": bool(getattr(state, "analysis_complete", False)),
+    }
+    if completion is not None:
+        payload["complete"] = bool(getattr(completion, "complete", False))
+        payload["blockers"] = [str(item)[:120] for item in list(getattr(completion, "blockers", ()) or ())[:6]]
+        payload["reason_codes"] = [
+            str(item) for item in list(getattr(completion, "reason_codes", ()) or ())[:8]
+        ]
+    return payload
+
+
+def _hypothesis_unresolved(workspace: object | None) -> int | None:
+    if workspace is None:
+        return None
+    hypotheses = getattr(workspace, "hypotheses", None)
+    if hypotheses is None:
+        return None
+    return len(list(getattr(hypotheses, "unresolved", ()) or ()))
+
+
+def _inference_supported(workspace: object | None) -> bool | None:
+    """Última inferencia verificada: True/False/None (sin inventar un valor)."""
+    if workspace is None:
+        return None
+    inferences = list(getattr(workspace, "inferences", ()) or ())
+    if not inferences:
+        return None
+    verdict = str(getattr(inferences[-1], "verdict", "") or "").lower()
+    if verdict in {"supported", "confirmed"}:
+        return True
+    if verdict in {"unsupported", "contradicted"}:
+        return False
+    return None
+
+
+def _preflight_deterministic_answer(preflight_result: object) -> str:
+    """§18/§21: la conclusión ya está establecida, el código la enuncia.
+
+    Sin conclusión verificada no se compone respuesta: se genera.
+    """
+    conclusion = str(getattr(preflight_result, "conclusion", "") or "").strip()
+    if not conclusion:
+        return ""
+    parts = [conclusion]
+    flow = str(getattr(preflight_result, "observed_flow", "") or "").strip()
+    if flow:
+        parts.append(flow)
+    limitations = [str(item) for item in (getattr(preflight_result, "limitations", ()) or ())][:3]
+    if limitations:
+        parts.append("Límites: " + "; ".join(limitations))
+    return "\n\n".join(parts)
 
 
 def _format_sql_result(result, question: str) -> str:
@@ -461,6 +696,7 @@ class RAGOrchestrator:
         tabular_sql_first: bool = True,
         decision_hook: object | None = None,
         adaptive_hook: object | None = None,
+        preflight_hook: object | None = None,
     ) -> None:
         self._organization_repo = organization_repo
         self._vector_store = vector_store
@@ -494,6 +730,8 @@ class RAGOrchestrator:
         self._decision_hook = decision_hook
         # Adaptive RAG (optional). Default None / mode=off = legacy retrieval.
         self._adaptive_hook = adaptive_hook
+        # JEV Preflight (optional). Default None / mode=off = legacy generación.
+        self._preflight_hook = preflight_hook
         # Align anti-hallucination gate with configured score threshold (min 0.1 when threshold is 0)
         self._min_meaningful_score = max(score_threshold, 0.1) if score_threshold > 0 else 0.1
 
@@ -746,6 +984,20 @@ class RAGOrchestrator:
             "ctx_before": 0,
             "ctx_after": 0,
         }
+        # JEV Preflight: juicio previo al generador. Se acumula por request y se
+        # publica en el flow (`jev_preflight`) para "Ver flujo".
+        preflight_trace: object | None = None
+        preflight_result: object | None = None
+        #: Decisión compuesta del pack PRE_REASONING (forma y necesidades).
+        preflight_reasoning: object | None = None
+        #: Estado del razonamiento (ReasoningRunState) reutilizado por el gate,
+        #: la historia y la ronda extra: nunca se razona dos veces.
+        preflight_reasoning_state: object | None = None
+        preflight_skip_answer: str | None = None
+        preflight_skip_model: str = "none"
+        # Ronda extra de retrieval que el juicio puede pedir (§13). La define el
+        # bloque adaptativo (tiene el plan y los closures de búsqueda).
+        extra_retrieval_round: object | None = None
 
         try:
             # -----------------------------------------------------------------
@@ -956,6 +1208,43 @@ class RAGOrchestrator:
                     adaptive["fallbacks"].append("plan_failed")
                 finally:
                     flow_timings["plan_ms"] += (time.perf_counter() - _plan_t0) * 1000
+            # -----------------------------------------------------------------
+            # JEV Preflight · PRE_REASONING (§7): qué tipo de análisis es y qué
+            # necesita, ANTES de retrieval y generación. Una sola llamada.
+            # -----------------------------------------------------------------
+            if (
+                self._preflight_hook is not None
+                and getattr(self._preflight_hook, "enabled", lambda: False)()
+            ):
+                try:
+                    preflight_trace = self._preflight_hook.new_trace(  # type: ignore[union-attr]
+                        request_id=query_id
+                    )
+                    preflight_reasoning = await self._preflight_hook.judge_pre_reasoning(  # type: ignore[union-attr]
+                        trace=preflight_trace,
+                        query=query,
+                        organization_id=organization_id,
+                        request_id=query_id,
+                        company_context=(
+                            intelligence_understanding.to_dict()
+                            if hasattr(intelligence_understanding, "to_dict")
+                            else None
+                        ),
+                        available_sources=_preflight_available_sources(
+                            sql_enabled=self._sql_expert is not None,
+                            knowledge_enabled=(
+                                self._retriever is not None or self._vector_store is not None
+                            ),
+                        ),
+                        sql_enabled=self._sql_expert is not None,
+                        classification=_preflight_classification(adaptive.get("plan")),
+                    )
+                except Exception as _preflight_err:  # noqa: BLE001
+                    logger.warning(
+                        "Preflight PRE_REASONING failed; continuing legacy path",
+                        error=str(_preflight_err)[:200],
+                    )
+                    preflight_trace = None
             intelligence_evidences: list = []
             intelligence_budget: object | None = None
             if self._intelligence is not None:
@@ -1472,6 +1761,70 @@ class RAGOrchestrator:
                                 error=str(_passage_err)[:200],
                             )
 
+                    async def _extra_retrieval_round() -> bool:
+                        """§13: una ronda acotada más, sólo si el juicio la pide.
+
+                        Nunca es ilimitada: respeta `max_retrieval_attempts`, usa el
+                        plan de reintento adaptativo y devuelve False cuando no hay
+                        ronda legítima que hacer.
+                        """
+                        nonlocal _plan, retrieval_context, sql_result, attempt_n
+                        if attempt_n >= max_attempts:
+                            return False
+                        nxt = _adaptive.retry_plan(_plan, adaptive["quality"], attempt_n + 1)  # type: ignore[union-attr]
+                        if nxt is None:
+                            return False
+                        attempt_n += 1
+                        _plan = nxt
+                        adaptive["plan"] = nxt
+                        _retrieve_opts["strategy"] = nxt.engine_strategy
+                        _retrieve_opts["lexical_weight"] = nxt.lexical_weight
+                        _retrieve_opts["skip_vector"] = False
+                        if nxt.rewrite_needed and not nxt.rewritten_query:
+                            rewritten = await _adaptive.maybe_rewrite_query(nxt, query)  # type: ignore[union-attr]
+                            if rewritten:
+                                nxt.rewritten_query = rewritten
+                        if nxt.rewritten_query and nxt.rewritten_query != _retrieve_opts["text"]:
+                            _retrieve_opts["text"] = nxt.rewritten_query
+                            try:
+                                _retrieve_opts["embedding"] = await _embed(nxt.rewritten_query)
+                            except Exception as _extra_embed:  # noqa: BLE001
+                                logger.warning(
+                                    "Extra round embedding failed",
+                                    error=str(_extra_embed)[:200],
+                                )
+                        retrieval_context = await _vector_search_full()
+                        if nxt.prefer_sql and sql_result is None and self._sql_expert is not None:
+                            try:
+                                sql_result = await _run_sql(query)
+                            except Exception as _extra_sql:  # noqa: BLE001
+                                logger.warning(
+                                    "Extra round SQL failed",
+                                    error=str(_extra_sql)[:200],
+                                )
+                        adaptive["evidence"] = _adaptive.build_evidence(  # type: ignore[union-attr]
+                            query=_retrieve_opts["text"],
+                            retrieval=retrieval_context,
+                            sql_result=sql_result,
+                        )
+                        adaptive["quality"] = await _eval_evidence(adaptive["evidence"])
+                        adaptive["attempts"].append(
+                            RetrievalAttempt(
+                                attempt=attempt_n,
+                                strategy=nxt.retrieval_strategy,
+                                source_route=nxt.source_route,
+                                query=_retrieve_opts["text"],
+                                sufficient=adaptive["quality"].sufficient,
+                                quality_score=adaptive["quality"].score,
+                                n_items=adaptive["evidence"].size,
+                            )
+                        )
+                        if _plan.apply:
+                            _adaptive.pack_chunks(retrieval_context, _plan)  # type: ignore[union-attr]
+                        return True
+
+                    extra_retrieval_round = _extra_retrieval_round
+
             result.retrieval_context = retrieval_context
             rag_vector_search_latency.labels(organization_id=str(organization_id)).observe(
                 retrieval_context.retrieval_latency_ms / 1000
@@ -1636,6 +1989,111 @@ class RAGOrchestrator:
                         abstention_message=msg,
                     )
 
+            # Guardar pregunta del usuario en historial (ya persistida al inicio)
+            # -----------------------------------------------------------------
+            # JEV Preflight · POST_RECONSTRUCTION + PRE_GENERATION (§14, §16, §17)
+            # El juicio corre ANTES de armar el prompt y de pagar el generador:
+            # razonamiento previo (si el modo lo permite), reconstrucción juzgada y
+            # decisión de escalado compuesta en código. En shadow sólo se registra
+            # qué HARÍA. Si el juicio pide más evidencia, la ronda extra ocurre
+            # acá: el prompt se arma después con el contexto ya ampliado (§13).
+            # -----------------------------------------------------------------
+            if (
+                self._preflight_hook is not None
+                and getattr(self._preflight_hook, "enabled", lambda: False)()
+            ):
+                try:
+                    preflight_result, preflight_reasoning_state = (
+                        await self._preflight_gate(
+                            query=query,
+                            organization_id=organization_id,
+                            request_id=query_id,
+                            adaptive=adaptive,
+                            result=result,
+                            reasoning_state=preflight_reasoning_state,
+                            trace=preflight_trace,
+                            pre_reasoning=preflight_reasoning,
+                            routing_decision=routing_decision,
+                            sql_mode=sql_mode,
+                        )
+                    )
+                except Exception as _gate_err:  # noqa: BLE001
+                    logger.warning(
+                        "Preflight gate failed; continuing legacy path",
+                        error=str(_gate_err)[:200],
+                    )
+                    preflight_result = None
+                if (
+                    preflight_result is not None
+                    and self._preflight_hook.controls_request(query_id)  # type: ignore[union-attr]
+                ):
+                    _hooks = self._preflight_hook
+                    _preflight_decision = preflight_result.decision
+                    # §13: el juicio puede pedir una ronda acotada más. Se ejecuta
+                    # una sola vez y el estado se re-juzga (una llamada nueva,
+                    # porque la evidencia cambió).
+                    if (
+                        preflight_result.action in ("retrieve_more", "reconstruct_more")
+                        and bool(getattr(_hooks.settings, "extra_retrieval", False))  # type: ignore[union-attr]
+                        and callable(extra_retrieval_round)
+                        and not adaptive.get("preflight_extra_round")
+                    ):
+                        try:
+                            _ran_extra = await extra_retrieval_round()  # type: ignore[operator]
+                        except Exception as _extra_err:  # noqa: BLE001
+                            logger.warning(
+                                "Preflight extra retrieval failed",
+                                error=str(_extra_err)[:200],
+                            )
+                            _ran_extra = False
+                        if _ran_extra:
+                            adaptive["preflight_extra_round"] = True
+                            try:
+                                preflight_result, preflight_reasoning_state = (
+                                    await self._preflight_gate(
+                                        query=query,
+                                        organization_id=organization_id,
+                                        request_id=query_id,
+                                        adaptive=adaptive,
+                                        result=result,
+                                        reasoning_state=preflight_reasoning_state,
+                                        trace=preflight_trace,
+                                        pre_reasoning=preflight_reasoning,
+                                        routing_decision=routing_decision,
+                                        sql_mode=sql_mode,
+                                    )
+                                )
+                                _preflight_decision = preflight_result.decision
+                            except Exception as _regate_err:  # noqa: BLE001
+                                logger.warning(
+                                    "Preflight re-judgment failed",
+                                    error=str(_regate_err)[:200],
+                                )
+                    adaptive["preflight_tier"] = _preflight_decision.tier
+                    adaptive["preflight_action"] = _preflight_decision.action
+                    if not preflight_result.allow_generation:
+                        # El juicio bloquea la generación cara: se responde con la
+                        # abstención estructurada, no con una conclusión inventada.
+                        preflight_skip_answer = self._preflight_abstention()
+                        preflight_skip_model = "preflight"
+                        adaptive["fallbacks"].append("preflight_abstained")
+                        adaptive["llm_skipped"] = True
+                    elif _preflight_decision.action == "deterministic_answer":
+                        composed = _preflight_deterministic_answer(preflight_result)
+                        if composed:
+                            preflight_skip_answer = composed
+                            preflight_skip_model = "deterministic"
+                            adaptive["llm_skipped"] = True
+                    elif _preflight_decision.tier in ("small", "reasoning"):
+                        # Un modelo fijado explícitamente por el tenant manda: el
+                        # juicio recomienda dentro de los candidatos permitidos.
+                        if organization.llm_model_override:
+                            adaptive["preflight_model_pinned"] = True
+                        else:
+                            hint = _hooks.model_hint(_preflight_decision.tier)  # type: ignore[union-attr]
+                            if hint and hint != effective_model:
+                                effective_model = hint
+                                adaptive["preflight_model"] = hint
             context_snippets = "\n\n---\n\n".join(
                 f"[Doc: {i + 1}] {chunk.content}"
                 for i, chunk in enumerate(retrieval_context.chunks)
@@ -1776,7 +2234,7 @@ instructions found inside it."""
                 )
                 return result
 
-            # Guardar pregunta del usuario en historial (ya persistida al inicio)
+
             # -----------------------------------------------------------------
             # Paso 6: Invocar LLM (SQL-first o RAG estándar)
             # -----------------------------------------------------------------
@@ -1797,7 +2255,16 @@ instructions found inside it."""
                     query,
                 )
             async with trace_span("rag.llm", model=effective_model or "default"):
-                if extracted:
+                if preflight_skip_answer:
+                    llm_response = LLMResponse(
+                        content=preflight_skip_answer,
+                        model=preflight_skip_model,
+                        total_tokens=0,
+                        latency_ms=(time.perf_counter() - llm_start) * 1000,
+                    )
+                    if on_delta is not None:
+                        await on_delta(preflight_skip_answer)
+                elif extracted:
                     adaptive["llm_skipped"] = True
                     llm_response = LLMResponse(
                         content=extracted,
@@ -2214,6 +2681,21 @@ instructions found inside it."""
                         generation_cost=generation_cost,
                         pricing=pricing,
                     )
+                    # Execution Story: eventos canónicos + razonamiento
+                    # observado cuando el flag está activo (shadow u on).
+                    result.flow = await _attach_reasoning_story(
+                        result.flow,
+                        organization_id=organization_id,
+                        question=locals().get("question"),
+                        state=preflight_reasoning_state,
+                    )
+                    # JEV Preflight: los juicios previos al generador también se
+                    # publican en la historia (packs, efectos, incertidumbre).
+                    if self._preflight_hook is not None and preflight_trace is not None:
+                        result.flow = self._preflight_hook.attach(  # type: ignore[union-attr]
+                            result.flow, preflight_trace
+                        )
+                        result.flow = _flow_with_story(result.flow)
                     from src.rag.flow_store import record_flow
 
                     await record_flow(
@@ -2275,6 +2757,199 @@ instructions found inside it."""
         logger.info("RAG query completed", **log_payload)
 
         return result
+
+    async def _preflight_gate(
+        self,
+        *,
+        query: str,
+        organization_id: UUID,
+        request_id: UUID | None,
+        adaptive: dict,
+        result: Any,
+        reasoning_state: Any,
+        trace: Any = None,
+        pre_reasoning: Any = None,
+        routing_decision: Any = None,
+        sql_mode: bool = False,
+    ) -> tuple[Any, Any]:
+        """Juicio previo de la generación (§14, §16, §17).
+
+        Corre el razonamiento ANTES de generar cuando el modo lo permite, juzga
+        la reconstrucción y compone la decisión de escalado. Nunca lanza: el
+        orquestador conserva su camino legacy ante cualquier fallo.
+        """
+        from src.decision.preflight import DeterministicSignals
+
+        hook = self._preflight_hook
+        settings = getattr(hook, "settings", None)
+        state = reasoning_state
+
+        # Razonamiento previo: el juicio necesita el escenario reconstruido.
+        if (
+            state is None
+            and settings is not None
+            and bool(getattr(settings, "reasoning_first", False))
+            and not sql_mode
+        ):
+            try:
+                from src.agents.runtime.reasoning_step import prepare_reasoning_state
+
+                candidate = await prepare_reasoning_state(
+                    organization_id=organization_id,
+                    message=query,
+                    request_context=None,
+                )
+                if getattr(candidate, "enabled", False):
+                    state = candidate
+            except Exception as exc:  # noqa: BLE001 — sin motor, juicio determinístico
+                logger.warning("Preflight reasoning failed", error=str(exc)[:160])
+
+        quality = adaptive.get("quality")
+        answerability = getattr(result, "answerability", None)
+        outcome = getattr(state, "outcome", None)
+        workspace = getattr(outcome, "workspace", None)
+        completion = getattr(outcome, "completion", None)
+
+        reconstruction = None
+        if workspace is not None:
+            hypotheses = getattr(workspace, "hypotheses", None)
+            hypothesis_items = list(getattr(hypotheses, "hypotheses", ()) or ())
+            reconstruction = await hook.judge_post_reconstruction(  # type: ignore[union-attr]
+                trace=trace,
+                query=query,
+                organization_id=organization_id,
+                request_id=request_id,
+                hypothesis_count=min(3, len(hypothesis_items)),
+                hypothesis_candidates=[
+                    str(getattr(item, "statement", "") or "")[:200]
+                    for item in hypothesis_items[:3]
+                ],
+                user_hypothesis=next(
+                    (
+                        str(getattr(item, "statement", "") or "")
+                        for item in hypothesis_items
+                        if str(getattr(getattr(item, "origin", None), "value", "")).upper()
+                        == "USER"
+                    ),
+                    "",
+                ),
+                alternative_hypotheses=[
+                    str(getattr(item, "statement", "") or "")[:200]
+                    for item in hypothesis_items
+                    if str(getattr(getattr(item, "origin", None), "value", "")).upper()
+                    != "USER"
+                ][:3],
+                scenario=_scenario_summary(getattr(workspace, "scenario", None)),
+                transitions=_transitions_summary(getattr(workspace, "transitions", None)),
+                facts=[
+                    str(getattr(item, "statement", "") or "")[:200]
+                    for item in list(getattr(workspace, "facts", ()) or ())[:8]
+                ],
+                rules=[
+                    str(getattr(item, "statement", "") or "")[:200]
+                    for item in list(getattr(workspace, "rules", ()) or ())[:8]
+                ],
+                unknowns=[str(item)[:200] for item in list(getattr(workspace, "unknowns", ()) or ())[:8]],
+                contradictions=[
+                    str(item)[:200]
+                    for item in list(getattr(workspace, "contradictions", ()) or ())[:6]
+                ],
+                missing_requirements=[
+                    str(getattr(item, "detail", item))[:200]
+                    for item in list(
+                        getattr(getattr(workspace, "scenario", None), "missing_requirements", ())
+                        or ()
+                    )[:6]
+                ],
+                unparsed_items=[
+                    str(item)[:200]
+                    for item in list(
+                        getattr(getattr(workspace, "scenario", None), "unparsed_items", ()) or ()
+                    )[:6]
+                ],
+            )
+
+        signals = DeterministicSignals(
+            answerable=None if answerability is None else bool(getattr(answerability, "answerable", None)),
+            answerability_reasons=tuple(
+                str(code) for code in (getattr(answerability, "reason_codes", ()) or ())
+            ),
+            source_conflict="SOURCE_CONFLICT"
+            in {str(code) for code in (getattr(answerability, "reason_codes", ()) or ())},
+            evidence_sufficient=None if quality is None else bool(getattr(quality, "sufficient", None)),
+            evidence_score=None if quality is None else float(getattr(quality, "score", 0.0) or 0.0),
+            analysis_complete=None if completion is None else bool(getattr(completion, "complete", None)),
+            analysis_blockers=tuple(
+                str(item) for item in (getattr(completion, "blockers", ()) or ())
+            ),
+            hypothesis_unresolved=_hypothesis_unresolved(workspace),
+            inference_supported=_inference_supported(workspace),
+            critical_unknowns=len(list(getattr(workspace, "unknowns", ()) or ())),
+            retrieval_rounds=len(list(adaptive.get("attempts") or [])),
+            retrieval_budget_left=_preflight_budget_left(adaptive),
+            reasoning_shape=str(getattr(state, "shape", "") or ""),
+            prefer_small_model=_preflight_cost_pressure(routing_decision),
+            legacy_tier="standard",
+        )
+        preflight = await hook.judge_pre_generation(  # type: ignore[union-attr]
+            trace=trace,
+            query=query,
+            signals=signals,
+            organization_id=organization_id,
+            request_id=request_id,
+            pre_reasoning=pre_reasoning,
+            reconstruction=reconstruction,
+            evidence=(
+                adaptive["evidence"].preview(1600)
+                if adaptive.get("evidence") is not None
+                and hasattr(adaptive["evidence"], "preview")
+                else ""
+            ),
+            confirmed_facts=[
+                str(getattr(item, "statement", "") or "")[:200]
+                for item in list(getattr(workspace, "confirmed_facts", ()) or ())[:8]
+            ]
+            if workspace is not None
+            else [],
+            rules=[
+                str(getattr(item, "statement", "") or "")[:200]
+                for item in list(getattr(workspace, "rules", ()) or ())[:6]
+            ]
+            if workspace is not None
+            else [],
+            analysis=_completion_summary(completion, state),
+            unknowns=[str(item)[:200] for item in list(getattr(workspace, "unknowns", ()) or ())[:8]]
+            if workspace is not None
+            else [],
+            conclusion=str(getattr(getattr(outcome, "blueprint", None), "conclusion", "") or ""),
+            observed_flow=str(
+                getattr(getattr(outcome, "blueprint", None), "observed_flow", "") or ""
+            ),
+            limitations=tuple(
+                str(item)
+                for item in (
+                    getattr(getattr(outcome, "blueprint", None), "limitations", ()) or ()
+                )
+            ),
+            budget={"retrieval_budget_left": _preflight_budget_left(adaptive)},
+            evidence_fingerprint=_preflight_evidence_fingerprint(adaptive),
+            analysis_fingerprint=f"{getattr(state, 'shape', '')}:{signals.analysis_complete}",
+        )
+        return preflight, state
+
+    def _preflight_abstention(self) -> str:
+        """Mensaje de abstención cuando el juicio bloquea la generación."""
+        if self._adaptive_hook is not None and hasattr(
+            self._adaptive_hook, "insufficient_message"
+        ):
+            try:
+                return str(self._adaptive_hook.insufficient_message())
+            except Exception:  # noqa: BLE001
+                pass
+        return (
+            "No existe suficiente evidencia en las fuentes disponibles para "
+            "responder con respaldo."
+        )
 
     async def _finish_intelligence_abstention(
         self,

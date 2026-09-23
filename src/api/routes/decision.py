@@ -172,6 +172,29 @@ async def decision_selection(request: Request) -> dict:
     }
 
 
+@router.get("/preflight", summary="JEV preflight effectiveness (judgment before the LLM)")
+async def decision_preflight(request: Request, phase: str | None = None) -> dict:
+    """KPIs del juicio previo + registro de preguntas (§54, §55, §53).
+
+    Sólo agrega lo observado: sin baseline no se calcula "costo evitado".
+    """
+    require_platform_permission(request, "analytics.read")
+    from src.decision.preflight_report import preflight_questions, preflight_report
+    from src.rag.preflight_hook import settings_from_app
+
+    settings = settings_from_app()
+    report = preflight_report(settings=settings, mode=settings.mode)
+    report["registry"] = preflight_questions(phase=phase)
+    report["policy"] = _preflight_policy().to_public_dict()
+    return report
+
+
+def _preflight_policy():
+    from src.decision.confidence import default_policy
+
+    return default_policy()
+
+
 @router.get("/explain", summary="Operational explanation for a request")
 async def decision_explain(
     request: Request, request_id: UUID, organization_id: UUID, mode: str = "user"

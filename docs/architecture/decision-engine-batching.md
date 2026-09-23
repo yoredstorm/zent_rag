@@ -3,6 +3,10 @@
 Estado: **implementado** (rollout `off` por defecto). Depende de
 [decision-engine.md](decision-engine.md).
 
+> Las fases del **JEV Preflight** (`PRE_REASONING`, `POST_RECONSTRUCTION`,
+> `PRE_GENERATION`) usan este mismo motor, cache y dedupe: ver
+> [jev-preflight.md](jev-preflight.md).
+
 ## Contexto
 
 Antes del batching cada etapa pedía su propio `POST /v1/systemone`:

@@ -949,6 +949,60 @@ class Settings(BaseSettings):
         default=120.0, ge=1.0, le=900.0
     )
     # -------------------------------------------------------------------------
+    # JEV Preflight (docs/architecture/jev-preflight.md)
+    # -------------------------------------------------------------------------
+    RAG_JEV_PREFLIGHT_MODE: Literal["off", "shadow", "on", "canary"] = Field(
+        default="off",
+        validation_alias=AliasChoices(
+            "RAG_JEV_PREFLIGHT_MODE", "JEV_PREFLIGHT_MODE"
+        ),
+        description=(
+            "off = sin juicio previo (comportamiento previo). "
+            "shadow = JEV decide que HARIA; la ejecucion legacy manda. "
+            "on = la decision compuesta controla la generacion. "
+            "canary = on para RAG_JEV_PREFLIGHT_CANARY_PERCENTAGE de requests."
+        ),
+    )
+    RAG_JEV_PREFLIGHT_CANARY_PERCENTAGE: int = Field(default=0, ge=0, le=100)
+    RAG_JEV_PREFLIGHT_ENFORCE: bool = Field(
+        default=True,
+        description=(
+            "on/canary: aplica la decision compuesta (bloquear generacion, "
+            "cambiar tier). off en modo on = solo observa y registra."
+        ),
+    )
+    RAG_JEV_PREFLIGHT_STRICT_THRESHOLDS: float = Field(default=0.75, ge=0.0, le=1.0)
+    RAG_JEV_PREFLIGHT_NEXT_ACTION_CHOICE: float = Field(default=0.80, ge=0.0, le=1.0)
+    RAG_JEV_PREFLIGHT_ALLOW_DETERMINISTIC_ANSWER: bool = Field(
+        default=False,
+        description=(
+            "on = cuando el juicio dice que la conclusion ya esta establecida, "
+            "la respuesta se compone en codigo sin generador."
+        ),
+    )
+    RAG_JEV_PREFLIGHT_ALLOW_SMALL_TIER: bool = Field(
+        default=True,
+        description=(
+            "on = permite que el juicio recomiende el tier barato. "
+            "El tier solo se aplica si el juicio lo sostiene (nunca por ahorro)."
+        ),
+    )
+    RAG_JEV_PREFLIGHT_EXTRA_RETRIEVAL: bool = Field(
+        default=True,
+        description=(
+            "on = una ronda adicional acotada cuando el juicio pide mas "
+            "evidencia y queda presupuesto de retrieval."
+        ),
+    )
+    RAG_JEV_PREFLIGHT_REASONING_FIRST: bool = Field(
+        default=True,
+        description=(
+            "on = en modo on/canary el razonamiento corre ANTES de generar "
+            "(juicio previo real); off = se mantiene el razonamiento observado "
+            "post-generacion."
+        ),
+    )
+    # -------------------------------------------------------------------------
     # Judgment Fabric — target selection + risk-aware thresholds
     # -------------------------------------------------------------------------
     DECISION_TARGET_SELECTION: Literal["off", "shadow", "on"] = Field(

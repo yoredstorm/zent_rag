@@ -180,7 +180,14 @@ describe("AgentTestChat", () => {
               method: "agent",
               verdict: { decider: "Agente", route: "Herramientas" },
               steps: [
-                { name: "search_knowledge", status: "ok", ms: 120, detail: "tool_call" },
+                {
+                  name: "search_knowledge",
+                  status: "ok",
+                  ms: 120,
+                  detail: "tool_call",
+                  type: "tool_call",
+                  tool: "search_knowledge",
+                },
               ],
               timings: { total_ms: 900 },
             },
@@ -200,7 +207,11 @@ describe("AgentTestChat", () => {
     fireEvent.contextMenu(screen.getByText("respuesta").closest("article")!);
     const item = await screen.findByRole("menuitem", { name: "Ver flujo" });
     await user.click(item);
-    expect(await screen.findByText("Decidió Agente")).toBeInTheDocument();
+    // La historia reemplaza la telemetría: la herramienta se nombra en lenguaje
+    // humano y su nombre técnico sigue disponible al abrir la etapa.
+    expect(await screen.findByText("Respuesta completada")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Reunió evidencia/ }));
+    expect(await screen.findByText("Consultó el conocimiento")).toBeInTheDocument();
     expect(screen.getByText("search_knowledge")).toBeInTheDocument();
     expect(screen.getByText("900 ms")).toBeInTheDocument();
   });

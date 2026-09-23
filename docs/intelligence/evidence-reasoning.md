@@ -114,6 +114,12 @@ porcentaje de preguntas necesitó razonamiento de verdad.
 - `on`: el razonamiento controla los requests complejos.
 - `canary`: porcentaje configurable (`RAG_EVIDENCE_REASONING_CANARY_PERCENT`).
 
+Con el **JEV Preflight** activo (`RAG_JEV_PREFLIGHT_MODE=on|canary` y
+`RAG_JEV_PREFLIGHT_REASONING_FIRST=true`) el motor corre **antes** de generar:
+su reconstrucción alimenta el juicio `POST_RECONSTRUCTION` y la matriz de
+preparación que decide si se paga el generador caro. Ver
+[jev-preflight.md](../architecture/jev-preflight.md).
+
 Presupuestos: `RAG_EVIDENCE_REASONING_MAX_EVENTS`, `_MAX_HYPOTHESES`,
 `_MAX_REQUIREMENTS`, `_MAX_RETRIEVAL_ROUNDS`, `_MAX_ANALYSIS_STEPS`, más
 `ResearchBudgets` y `LoopGuard`.
@@ -123,6 +129,13 @@ Presupuestos: `RAG_EVIDENCE_REASONING_MAX_EVENTS`, `_MAX_HYPOTHESES`,
 Pasos observables (sin razonamiento privado): `reasoning_classification`,
 `company_context`, `reasoning_plan`, `scenario_parse`, `state_reconstruction`,
 `hypothesis_test`, `analysis_completion`.
+
+Se suman los **packs JEV** (`kind: jev_pack`) con las preguntas que el juicio
+previo hizo antes de generar, su decisión y su efecto.
+
+En el portal estos pasos se presentan como Execution Story (historia auditable):
+ver `docs/architecture/execution-story.md` para el contrato canónico de eventos
+y la separación Historia / Técnico.
 
 ## Golden scenarios (tests)
 

@@ -291,6 +291,9 @@ async def _maybe_dispatch(
             "fallbacks": [],
         }
         from src.rag.flow_store import record_flow
+        from src.rag.flow_story import with_story
+
+        result.flow = with_story(result.flow)
 
         await record_flow(
             query_id=result.query_id,

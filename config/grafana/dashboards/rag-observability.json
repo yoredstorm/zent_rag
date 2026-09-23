@@ -305,6 +305,53 @@
       ],
       "title": "Passage judge · claims · injection",
       "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 57 },
+      "id": 108,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(increase(zent_decision_preflight_questions_total[1h])) by (phase, type)",
+          "legendFormat": "{{phase}} {{type}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(zent_decision_preflight_uncertain_total[1h])) by (phase)",
+          "legendFormat": "inciertos {{phase}}",
+          "refId": "B"
+        }
+      ],
+      "title": "Preflight · juicios por fase y primitiva",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 57 },
+      "id": 109,
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" } },
+      "targets": [
+        {
+          "expr": "sum(increase(zent_decision_preflight_escalation_total[1h])) by (tier)",
+          "legendFormat": "tier {{tier}}",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(increase(zent_decision_preflight_avoided_total[1h])) by (reason)",
+          "legendFormat": "evitado {{reason}}",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(increase(zent_decision_preflight_total[1h])) by (outcome)",
+          "legendFormat": "packs {{outcome}}",
+          "refId": "C"
+        }
+      ],
+      "title": "Preflight · escalado de LLM y generación evitada",
+      "type": "timeseries"
     }
   ],
   "refresh": "10s",

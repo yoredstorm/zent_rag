@@ -122,7 +122,9 @@ describe("Playground Chat", () => {
     fireEvent.contextMenu(answer.closest(".bubble-assistant")!);
     const item = await screen.findByRole("menuitem", { name: "Ver flujo" });
     await user.click(item);
-    expect(await screen.findByText("Decidió Agente")).toBeInTheDocument();
+    // La vista por defecto es la historia, no la telemetría (§1).
+    expect(await screen.findByText("Respuesta completada")).toBeInTheDocument();
+    expect(await screen.findByRole("tab", { name: "Historia" })).toBeInTheDocument();
   });
 
   it("en conocimiento muestra Vista y pega al RAG", async () => {

@@ -305,6 +305,32 @@ async def test_hypothesis_is_unresolved_without_rules() -> None:
     assert "No hay regla aplicable" in user.rationale
 
 
+async def test_rule_derived_alternative_is_supported_without_keyword_match() -> None:
+    """La alternativa nace de una regla: se respalda aunque el enunciado no la cite.
+
+    Antes el veredicto dependía de la morfología del texto generado ("coexistir"
+    no matcheaba "coexisten") y descartaba una explicación válida.
+    """
+    rules = [
+        Fact(
+            statement=RENUMBER_RULE,
+            status=FactStatus.CONFIRMED,
+            authority="authoritative",
+        )
+    ]
+    workspace = _workspace_with_sequence(rules)
+    result = await _run_hypotheses(
+        HypothesisEngine(), MISSING_CLOSE_QUESTION, workspace, rules
+    )
+    coexist = next(
+        (item for item in result.hypotheses if "coexistir" in item.statement.lower()),
+        None,
+    )
+    assert coexist is not None
+    assert coexist.verdict is HypothesisVerdict.SUPPORTED
+    assert coexist.supporting_fact_ids
+
+
 async def test_user_hypothesis_is_never_assumed_true() -> None:
     """La pregunta sugiere que falta algo; el motor no lo asume."""
     rules = [

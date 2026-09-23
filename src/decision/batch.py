@@ -6,13 +6,19 @@
 # armaba su propio payload y pagaba su propia latencia/costo. TypeSafe acepta
 # varias preguntas independientes sobre el mismo `state`; el límite era nuestro.
 #
-# Este módulo compone preguntas de los builders existentes en cuatro fases de
-# estado, deduplica ids equivalentes y ejecuta una sola llamada por fase:
+# Este módulo compone preguntas de los builders existentes en fases de estado,
+# deduplica ids equivalentes y ejecuta una sola llamada por fase:
 #
 #   PRE_RETRIEVAL    routing + adaptive planner      (antes de retrieval)
 #   POST_RETRIEVAL   evidence gate + passage judge   (después de retrieval)
-#   POST_GENERATION  grounding + claim verification  (después del LLM)
+#   POST_GENERATION  grounding + claims + verificación de la respuesta
 #   AGENT_STEP       tool routing + termination      (por paso de agente)
+#
+# Y las fases del JEV Preflight (docs/architecture/jev-preflight.md):
+#
+#   PRE_REASONING        forma del análisis y necesidades (antes de retrieval)
+#   POST_RECONSTRUCTION  escenario, estados, reglas, hipótesis, inferencia
+#   PRE_GENERATION       el gate antes del generador (escalado de LLM)
 #
 # Reglas no negociables:
 #   - JEV decide; el LLM genera; el código autoriza y ejecuta.
@@ -46,6 +52,10 @@ class JudgmentPhase(StrEnum):
     POST_RETRIEVAL = "post_retrieval"
     POST_GENERATION = "post_generation"
     AGENT_STEP = "agent_step"
+    # JEV Preflight (§ fases): juicio barato antes de pagar generación cara.
+    PRE_REASONING = "pre_reasoning"
+    POST_RECONSTRUCTION = "post_reconstruction"
+    PRE_GENERATION = "pre_generation"
 
 
 BATCH_MODES = ("off", "shadow", "on")
@@ -298,6 +308,54 @@ def _claim_specs(claims: list[str]) -> list[QuestionSpec]:
     return specs
 
 
+def _preflight_specs(
+    phase: str,
+    *,
+    hypotheses: list[Any] | None = None,
+    available: set[str] | None = None,
+) -> list[QuestionSpec]:
+    """Preguntas del JEV Preflight, definidas en el registro central.
+
+    `available` filtra preguntas condicionales (`applicable_when`): lo que el
+    estado no puede sostener no se pregunta, ni se paga (§46).
+    """
+    from src.decision.registry import default_registry
+
+    registry = default_registry()
+    specs: list[QuestionSpec] = []
+    for definition in registry.for_phase(phase):
+        if definition.applicable_when and available is not None:
+            if definition.applicable_when not in available:
+                continue
+        specs.append(
+            QuestionSpec(
+                id=definition.id,
+                type=definition.type,
+                instructions=definition.instructions,
+                criteria=definition.criteria,
+                sources=(definition.source,),
+            )
+        )
+    for definition in registry.repeatable_for_phase(phase):
+        for index, _ in enumerate(hypotheses or []):
+            expanded = definition.expand(index)
+            specs.append(
+                QuestionSpec(
+                    id=expanded.id,
+                    type=expanded.type,
+                    instructions=expanded.instructions,
+                    criteria=expanded.criteria,
+                    sources=(definition.source,),
+                )
+            )
+    return specs
+
+
+def _answer_verification_specs() -> list[QuestionSpec]:
+    """Verificación de la respuesta (§22): mismo estado que grounding/claims."""
+    return _preflight_specs("post_generation")
+
+
 def build_pre_retrieval_questions(
     *,
     available_capabilities: tuple[str, ...] | list[str] = (),
@@ -332,11 +390,48 @@ def build_post_retrieval_questions(*, passages: list[Any] | None = None) -> Phas
     return _dedupe(specs, phase=JudgmentPhase.POST_RETRIEVAL.value)
 
 
-def build_post_generation_questions(*, claims: list[str] | None = None) -> PhaseQuestions:
-    """Grounding + verificación de claims (mismo draft + misma evidencia)."""
+def build_post_generation_questions(
+    *,
+    claims: list[str] | None = None,
+    include_verification: bool = True,
+) -> PhaseQuestions:
+    """Grounding + verificación de claims + verificación de la respuesta.
+
+    Un solo estado (draft + evidencia + claims), una sola llamada.
+    """
     specs = _grounding_specs()
     specs.extend(_claim_specs(list(claims or [])))
+    if include_verification:
+        specs.extend(_answer_verification_specs())
     return _dedupe(specs, phase=JudgmentPhase.POST_GENERATION.value)
+
+
+def build_pre_reasoning_questions(
+    *,
+    available: set[str] | None = None,
+) -> PhaseQuestions:
+    """PRE_REASONING: forma del análisis, familia de fuente, complejidad y
+    necesidades materiales (§7). Una llamada antes de retrieval/LLM caro."""
+    specs = _preflight_specs(JudgmentPhase.PRE_REASONING.value, available=available)
+    return _dedupe(specs, phase=JudgmentPhase.PRE_REASONING.value)
+
+
+def build_post_reconstruction_questions(
+    *,
+    hypotheses: list[Any] | None = None,
+) -> PhaseQuestions:
+    """POST_RECONSTRUCTION: escenario, cadena de estados, reglas, hipótesis e
+    inferencia (§14, §15). Las preguntas por hipótesis se expanden por candidato."""
+    specs = _preflight_specs(
+        JudgmentPhase.POST_RECONSTRUCTION.value, hypotheses=list(hypotheses or [])
+    )
+    return _dedupe(specs, phase=JudgmentPhase.POST_RECONSTRUCTION.value)
+
+
+def build_pre_generation_questions() -> PhaseQuestions:
+    """PRE_GENERATION: el gate antes del LLM generativo (§16)."""
+    specs = _preflight_specs(JudgmentPhase.PRE_GENERATION.value)
+    return _dedupe(specs, phase=JudgmentPhase.PRE_GENERATION.value)
 
 
 def build_agent_step_questions(
@@ -365,6 +460,12 @@ def build_phase_questions(phase: Any, **context: Any) -> PhaseQuestions:
         return build_post_generation_questions(**context)
     if value == JudgmentPhase.AGENT_STEP.value:
         return build_agent_step_questions(**context)
+    if value == JudgmentPhase.PRE_REASONING.value:
+        return build_pre_reasoning_questions(**context)
+    if value == JudgmentPhase.POST_RECONSTRUCTION.value:
+        return build_post_reconstruction_questions(**context)
+    if value == JudgmentPhase.PRE_GENERATION.value:
+        return build_pre_generation_questions(**context)
     raise ValueError(f"unknown judgment phase: {value!r}")
 
 
@@ -431,6 +532,20 @@ _PHASE_STATE_KEYS: dict[str, tuple[str, ...]] = {
     JudgmentPhase.POST_RETRIEVAL.value: ("user_request", "evidence_preview", "n_items"),
     JudgmentPhase.POST_GENERATION.value: ("user_request", "draft_answer", "evidence_preview"),
     JudgmentPhase.AGENT_STEP.value: ("user_request", "tool_results"),
+    # Preflight: la clave cambia cuando cambia el estado que la fase juzga. Si el
+    # fingerprint explícito no está, se hashea el estado completo (nunca se
+    # reutiliza un juicio sobre un estado distinto).
+    JudgmentPhase.PRE_REASONING.value: ("user_request",),
+    JudgmentPhase.POST_RECONSTRUCTION.value: (
+        "question",
+        "scenario_fingerprint",
+        "transitions_fingerprint",
+    ),
+    JudgmentPhase.PRE_GENERATION.value: (
+        "question",
+        "evidence_fingerprint",
+        "analysis_fingerprint",
+    ),
 }
 
 

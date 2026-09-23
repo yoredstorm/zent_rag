@@ -146,6 +146,15 @@ def step_to_flow(step: dict[str, Any]) -> dict[str, Any]:
         "status": status,
         "ms": round(_num(step.get("latency_ms")), 2),
         "detail": detail[:200],
+        # Semántica para Execution Story (aditivo: el portal viejo ignora estos
+        # campos y sigue usando name/status/ms/detail).
+        "type": step_type or "llm",
+        **({"tool": str(step.get("tool") or "")} if step_type == "tool_call" else {}),
+        **(
+            {"latency_ms": round(_num(step.get("latency_ms")), 2)}
+            if step_type
+            else {}
+        ),
     }
 
 

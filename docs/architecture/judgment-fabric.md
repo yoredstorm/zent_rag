@@ -4,6 +4,11 @@ Estado: **implementado** (rollout `RAG_DECISION_TARGET_SELECTION=off` por
 defecto). Depende de [decision-engine.md](decision-engine.md) y
 [decision-engine-batching.md](decision-engine-batching.md).
 
+El **JEV Preflight** ([jev-preflight.md](jev-preflight.md)) es la cara anticipada
+del fabric: pregunta antes de retrieval y antes de generar, en packs, y compone
+en código la decisión de escalado. Mismo principio, un momento antes:
+`JEV juzga → el código compone → el runtime ejecuta`.
+
 ## Contexto
 
 Zent decidía con el Decision Engine para Knowledge/Database, pero Agents,

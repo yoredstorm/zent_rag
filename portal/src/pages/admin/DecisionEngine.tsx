@@ -96,6 +96,56 @@ type CalibrationReport = {
   }>;
 };
 
+type PreflightReport = {
+  mode?: string;
+  config?: {
+    mode?: string;
+    canary_percentage?: number;
+    enforce?: boolean;
+    allow_deterministic_answer?: boolean;
+    allow_small_tier?: boolean;
+    extra_retrieval?: boolean;
+    reasoning_first?: boolean;
+  };
+  kpis?: {
+    requests_observed?: number;
+    judgments?: number;
+    batched_calls?: number;
+    questions_per_call?: number;
+    avg_latency_ms?: number;
+    judgments_per_request?: number;
+    uncertain_critical_judgments?: number;
+    decisions_influencing?: number;
+    llm_escalations_avoided?: number;
+    cost_usd_total?: number;
+  };
+  funnel?: Array<{ stage?: string; count?: number }>;
+  questions?: Array<{
+    id?: string;
+    phase?: string;
+    type?: string;
+    version?: number;
+    asked?: number;
+    uncertain?: number;
+    with_effect?: number;
+  }>;
+  decisions?: {
+    tiers?: Record<string, number>;
+    actions?: Record<string, number>;
+    effects?: Record<string, number>;
+    readiness_rows?: Record<string, number>;
+  };
+  registry?: Array<{
+    id?: string;
+    phase?: string;
+    type?: string;
+    version?: number;
+    ui_label?: string;
+    risk?: string;
+  }>;
+  note?: string;
+};
+
 type ModelReport = {
   production_model?: string;
   candidate_model?: string | null;
@@ -146,6 +196,7 @@ export default function AdminDecisionEnginePage() {
   const [models, setModels] = useState<ModelReport | null>(null);
   const [costs, setCosts] = useState<CostReport | null>(null);
   const [riskPolicy, setRiskPolicy] = useState<RiskPolicyReport | null>(null);
+  const [preflight, setPreflight] = useState<PreflightReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -155,7 +206,8 @@ export default function AdminDecisionEnginePage() {
       setLoading(true);
       setError(null);
       try {
-        const [st, board, recent, adp, sel, learn, calib, mdl, cost, risk] = await Promise.all([
+        const [st, board, recent, adp, sel, learn, calib, mdl, cost, risk, preflight] =
+          await Promise.all([
           platformApi<Status>("/api/v1/platform/decision/status", { token }),
           platformApi<Dashboard>("/api/v1/platform/decision/dashboard", { token }),
           platformApi<{ items: TraceRow[] }>("/api/v1/platform/decision/traces?limit=40", {
@@ -182,6 +234,9 @@ export default function AdminDecisionEnginePage() {
           platformApi<RiskPolicyReport>("/api/v1/platform/decision/risk-policy", {
             token,
           }).catch(() => null),
+          platformApi<PreflightReport>("/api/v1/platform/decision/preflight", {
+            token,
+          }).catch(() => null),
         ]);
         if (cancelled) return;
         setStatus(st);
@@ -194,6 +249,7 @@ export default function AdminDecisionEnginePage() {
         setModels(mdl);
         setCosts(cost);
         setRiskPolicy(risk);
+        setPreflight(preflight);
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : "Failed to load Decision Engine");
@@ -347,8 +403,76 @@ export default function AdminDecisionEnginePage() {
           </p>
         </Panel>
       ) : null}
-      {fabric || learning || calibration || models || costs || riskPolicy ? (
+      {fabric || learning || calibration || models || costs || riskPolicy || preflight ? (
         <SectionHeader title="Judgment Fabric" />
+      ) : null}
+      {preflight ? (
+        <Panel>
+          <PanelHeader title="JEV Effectiveness (juicio antes del LLM)" />
+          <MetricGrid>
+            <Metric label="Mode" value={preflight.mode ?? "off"} />
+            <Metric
+              label="Judgments"
+              value={fmtNum(preflight.kpis?.judgments ?? 0)}
+            />
+            <Metric
+              label="Batched calls"
+              value={fmtNum(preflight.kpis?.batched_calls ?? 0)}
+            />
+            <Metric
+              label="Questions / call"
+              value={(preflight.kpis?.questions_per_call ?? 0).toFixed(2)}
+            />
+            <Metric
+              label="Avg latency"
+              value={`${Math.round(preflight.kpis?.avg_latency_ms ?? 0)} ms`}
+            />
+            <Metric
+              label="Escalations avoided"
+              value={fmtNum(preflight.kpis?.llm_escalations_avoided ?? 0)}
+            />
+            <Metric
+              label="Uncertain judgments"
+              value={fmtNum(preflight.kpis?.uncertain_critical_judgments ?? 0)}
+            />
+            <Metric
+              label="Decisions influenced"
+              value={fmtNum(preflight.kpis?.decisions_influencing ?? 0)}
+            />
+          </MetricGrid>
+          {(preflight.funnel ?? []).length ? (
+            <div className="mt-3 flex flex-col gap-1 text-xs text-muted">
+              {(preflight.funnel ?? []).map((stage) => (
+                <div key={stage.stage} className="flex items-center gap-2">
+                  <span className="w-48 shrink-0">{stage.stage}</span>
+                  <span className="tabular-nums">{fmtNum(stage.count ?? 0)}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {(preflight.questions ?? []).length ? (
+            <div className="mt-3 text-xs text-muted">
+              <div className="mb-1">
+                Question utility (asked · uncertain · changed a decision)
+              </div>
+              {(preflight.questions ?? []).slice(0, 10).map((question) => (
+                <div key={`${question.id}-${question.version}`} className="flex gap-2">
+                  <span className="w-56 shrink-0 truncate">
+                    {question.id} v{question.version ?? 0}
+                  </span>
+                  <span className="tabular-nums">
+                    {fmtNum(question.asked ?? 0)} · {fmtNum(question.uncertain ?? 0)} ·{" "}
+                    {fmtNum(question.with_effect ?? 0)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <p className="mt-3 text-xs text-muted">
+            {preflight.note ??
+              "Sólo requests que llegaron al gate cuentan; sin baseline no se calcula costo evitado."}
+          </p>
+        </Panel>
       ) : null}
       {fabric ? (
         <Panel>

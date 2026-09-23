@@ -108,3 +108,48 @@ def record_trace_written(decision: RoutingDecision) -> None:
     except Exception:  # noqa: BLE001
         return
     m.zent_decision_traces_total.labels(provider=_provider(decision.provider)).inc()
+
+
+def record_preflight_pack(pack, *, mode: str = "") -> None:
+    """Un pack ejecutado: fase, resultado y preguntas por primitiva (fail-soft)."""
+    try:
+        from src.infrastructure.observability import metrics as m
+    except Exception:  # noqa: BLE001
+        return
+    phase = usage_phase_label(getattr(pack, "phase", "unknown"))
+    if getattr(pack, "skipped_reason", ""):
+        outcome = "skipped"
+    elif getattr(pack, "error", False):
+        outcome = "error"
+    else:
+        outcome = "ok"
+    m.zent_decision_preflight_total.labels(
+        mode=str(mode or getattr(pack, "mode", "unknown")), phase=phase, outcome=outcome
+    ).inc()
+    for question in getattr(pack, "questions", ()) or ():
+        m.zent_decision_preflight_questions_total.labels(
+            phase=phase, type=str(getattr(question, "type", "unknown"))
+        ).inc()
+
+
+def record_escalation(decision) -> None:
+    """La decisión compuesta: qué acción y qué tier salieron del juicio."""
+    try:
+        from src.infrastructure.observability import metrics as m
+    except Exception:  # noqa: BLE001
+        return
+    mode = str(getattr(decision, "mode", "") or "unknown")
+    action = str(getattr(decision, "action", "") or "unknown")
+    tier = str(getattr(decision, "tier", "") or "unknown")
+    m.zent_decision_preflight_escalation_total.labels(
+        mode=mode, action=action, tier=tier
+    ).inc()
+    if not getattr(decision, "applied", False):
+        return
+    if not getattr(decision, "allow_generation", True):
+        m.zent_decision_preflight_avoided_total.labels(reason=f"action_{action}").inc()
+    elif tier in ("small", "deterministic"):
+        m.zent_decision_preflight_avoided_total.labels(reason="cheaper_tier").inc()
+    uncertain = len(list(getattr(decision, "uncertain_critical", ()) or ()))
+    if uncertain:
+        m.zent_decision_preflight_uncertain_total.labels(phase="pre_generation").inc(uncertain)

@@ -573,6 +573,32 @@ zent_decision_batch_shadow_total = Counter(
     "Legacy vs batched agreement observed in shadow mode",
     labelnames=["phase", "agreement"],
 )
+# --- JEV Preflight: juicio barato antes de pagar generación cara -------------
+zent_decision_preflight_total = Counter(
+    "zent_decision_preflight_total",
+    "Preflight packs executed by phase and outcome",
+    labelnames=["mode", "phase", "outcome"],
+)
+zent_decision_preflight_questions_total = Counter(
+    "zent_decision_preflight_questions_total",
+    "Atomic questions answered by the preflight, by phase and primitive",
+    labelnames=["phase", "type"],
+)
+zent_decision_preflight_escalation_total = Counter(
+    "zent_decision_preflight_escalation_total",
+    "Composed escalation decisions (action + tier)",
+    labelnames=["mode", "action", "tier"],
+)
+zent_decision_preflight_avoided_total = Counter(
+    "zent_decision_preflight_avoided_total",
+    "Expensive LLM calls avoided by a judgment (no invented baseline)",
+    labelnames=["reason"],
+)
+zent_decision_preflight_uncertain_total = Counter(
+    "zent_decision_preflight_uncertain_total",
+    "Critical judgments left uncertain (information, not success)",
+    labelnames=["phase"],
+)
 zent_adaptive_passage_judge_total = Counter(
     "zent_adaptive_passage_judge_total",
     "Passage judge verdicts composed in code",

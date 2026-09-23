@@ -256,6 +256,20 @@ x-common-env: &common-env
   RAG_DECISION_CLAIMS_LEDGER: ${RAG_DECISION_CLAIMS_LEDGER:-true}
   RAG_DECISION_JUDGMENT_CACHE_TTL_SECONDS: ${RAG_DECISION_JUDGMENT_CACHE_TTL_SECONDS:-120}
   # =========================================================================
+  # JEV Preflight (docs/architecture/jev-preflight.md): juicio previo al LLM.
+  # off = sin juicio previo. shadow = decide qué haría y se registra.
+  # on = la decisión compuesta controla la generación. canary = on por %.
+  # =========================================================================
+  RAG_JEV_PREFLIGHT_MODE: ${RAG_JEV_PREFLIGHT_MODE:-off}
+  RAG_JEV_PREFLIGHT_CANARY_PERCENTAGE: ${RAG_JEV_PREFLIGHT_CANARY_PERCENTAGE:-0}
+  RAG_JEV_PREFLIGHT_ENFORCE: ${RAG_JEV_PREFLIGHT_ENFORCE:-true}
+  RAG_JEV_PREFLIGHT_STRICT_THRESHOLDS: ${RAG_JEV_PREFLIGHT_STRICT_THRESHOLDS:-0.75}
+  RAG_JEV_PREFLIGHT_NEXT_ACTION_CHOICE: ${RAG_JEV_PREFLIGHT_NEXT_ACTION_CHOICE:-0.80}
+  RAG_JEV_PREFLIGHT_ALLOW_DETERMINISTIC_ANSWER: ${RAG_JEV_PREFLIGHT_ALLOW_DETERMINISTIC_ANSWER:-false}
+  RAG_JEV_PREFLIGHT_ALLOW_SMALL_TIER: ${RAG_JEV_PREFLIGHT_ALLOW_SMALL_TIER:-true}
+  RAG_JEV_PREFLIGHT_EXTRA_RETRIEVAL: ${RAG_JEV_PREFLIGHT_EXTRA_RETRIEVAL:-true}
+  RAG_JEV_PREFLIGHT_REASONING_FIRST: ${RAG_JEV_PREFLIGHT_REASONING_FIRST:-true}
+  # =========================================================================
   # Judgment Fabric (ADR judgment-fabric.md): agent/workflow/tool selection.
   # off = target explícito obligatorio (comportamiento previo).
   # shadow = resuelve candidatos y observa la elección JEV sin ejecutar.

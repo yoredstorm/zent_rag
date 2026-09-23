@@ -478,6 +478,7 @@ zent_RAG/
 - **Decisión de herramienta ponderada**: JEV elige la herramienta con score (probabilidad + certeza); por debajo del umbral decide el LLM y el flujo lo indica
 - **Batcheo de preguntas System One**: una llamada JEV por fase de estado (`PRE_RETRIEVAL`, `POST_RETRIEVAL`, `POST_GENERATION`, `AGENT_STEP`) con cache request-scoped y rollout `RAG_DECISION_BATCH_MODE=off|shadow|on`; Passage Judge e verificación por claim reutilizan el Claim Ledger — [docs/architecture/decision-engine-batching.md](docs/architecture/decision-engine-batching.md)
 - **Judgment Fabric**: candidatos autorizados → JEV → política (`RAG_DECISION_RISK_*`, dos señales en HIGH/CRITICAL) → dispatcher → verificación; Control Center con learning, calibración, modelos y cost breakdown — [docs/architecture/judgment-fabric.md](docs/architecture/judgment-fabric.md)
+- **JEV Preflight**: juicio barato **antes** de pagar generación cara (`PRE_REASONING`, `POST_RECONSTRUCTION`, `PRE_GENERATION`): packs de Choice/Score/Noul en una llamada, decisión compuesta en código (bloquear, pedir otra ronda, cambiar tier) y matriz de preparación; rollout `RAG_JEV_PREFLIGHT_MODE=off|shadow|on|canary` — [docs/architecture/jev-preflight.md](docs/architecture/jev-preflight.md)
 - ADR: [docs/architecture/decision-engine.md](docs/architecture/decision-engine.md)
 
 ### Knowledge Platform y connectors
@@ -862,6 +863,8 @@ El plan SaaS evoluciona el core existente (Customer Portal, Control Center, enti
 | [docs/architecture/enterprise-knowledge-refactor.md](docs/architecture/enterprise-knowledge-refactor.md) | Phase A ADR: CURRENT→TARGET Knowledge Engine (V2 flag-off) |
 | [docs/architecture/decision-engine.md](docs/architecture/decision-engine.md) | Decision Engine (JEV), Adaptive RAG, dispatcher y rollout |
 | [docs/architecture/decision-engine-batching.md](docs/architecture/decision-engine-batching.md) | ADR propuesto: batcheo de preguntas System One |
+| [docs/architecture/jev-preflight.md](docs/architecture/jev-preflight.md) | JEV Preflight: juicio previo al generador, packs, escalado y rollout |
+| [docs/architecture/execution-story.md](docs/architecture/execution-story.md) | Execution Story: "Ver flujo" como historia auditable |
 | OpenAPI | `/docs`, `/redoc`, `/api/v1/openapi.json` |
 
 ---

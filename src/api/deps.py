@@ -96,6 +96,7 @@ _orchestrator: RAGOrchestrator | None = None
 _decision_engine = None
 _decision_hook = None
 _adaptive_hook = None
+_preflight_hook = None
 _knowledge_engine = None
 _knowledge_learning_repo = None
 _knowledge_learning_engine = None
@@ -1046,6 +1047,7 @@ def get_rag_orchestrator() -> RAGOrchestrator:
             tabular_sql_first=bool(settings.KNOWLEDGE_TABULAR_SQL_FIRST),
             decision_hook=_decision_hook_or_none(),
             adaptive_hook=_adaptive_hook_or_none(),
+            preflight_hook=_preflight_hook_or_none(),
         )
     return _orchestrator
 
@@ -1116,6 +1118,28 @@ def _adaptive_hook_or_none():
             claims_ledger=claims_ledger,
         )
     return _adaptive_hook
+
+
+def _preflight_hook_or_none():
+    """JEV Preflight: juicio barato antes de pagar generación cara.
+
+    Sin judge configurado el hook se construye igual pero queda inerte
+    (`enabled()` exige judge y modo distinto de off).
+    """
+    global _preflight_hook
+    if _preflight_hook is None:
+        from src.rag.preflight_hook import OrchestratorPreflightHook, settings_from_app
+
+        cfg = settings_from_app()
+        if not cfg.active:
+            return None
+        engine = get_decision_engine()
+        _preflight_hook = OrchestratorPreflightHook(
+            cfg,
+            judge=engine if engine.settings.jev_configured else None,
+            cache=getattr(engine, "batch_cache", None),
+        )
+    return _preflight_hook
 
 
 def get_decision_hook():
