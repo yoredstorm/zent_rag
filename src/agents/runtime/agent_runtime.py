@@ -718,11 +718,13 @@ class AgentRuntime:
                 pass
             return result
 
+        # El razonamiento se prepara antes del loop y viaja en el estado del
+        # runtime: la firma de _run_loop no cambia (los dobles de test siguen
+        # siendo válidos).
+        await self._prepare_reasoning(request)
         try:
             await asyncio.wait_for(
-                self._run_loop(
-                    request, ctx, config, result, reasoning=await self._prepare_reasoning(request)
-                ),
+                self._run_loop(request, ctx, config, result),
                 timeout=config["max_execution_seconds"],
             )
         except asyncio.TimeoutError:
@@ -935,7 +937,10 @@ class AgentRuntime:
             logger.warning("reasoning preparation failed", error=str(exc)[:150])
             return None
         if not state.enabled:
+            self._pending_reasoning_steps = None
+            self._pending_reasoning = None
             return None
+        self._pending_reasoning = state
         self._pending_reasoning_steps = reasoning_steps(state)
         return state
 
@@ -947,6 +952,8 @@ class AgentRuntime:
         result: AgentRunResult,
         reasoning: object | None = None,
     ) -> None:
+        if reasoning is None:
+            reasoning = getattr(self, "_pending_reasoning", None)
         effective_tools = _effective_tools(request.agent)
         settings = get_settings()
         omitted_tools: list[dict] = []
