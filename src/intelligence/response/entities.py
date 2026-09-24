@@ -279,7 +279,7 @@ def figures_note(figures: list[str]) -> str:
     return (
         f"La evidencia consultada no contiene: {listed}. "
         "No afirmes fechas, años ni cifras que no estén en la evidencia, ni los "
-        "aproximimes: si el valor no está, decí que no está en la documentación "
+        "aproximes: si el valor no está, decí que no está en la documentación "
         "consultada; si está, repetí el valor exacto de la fuente."
     )
 
