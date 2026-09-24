@@ -474,12 +474,17 @@ export default function KnowledgeSourcesPage() {
     setDeleting(true);
     setError("");
     try {
-      await api(`/api/v1/sources/${pendingDelete.id}`, {
+      const result = await api<{ agents_updated?: number }>(`/api/v1/sources/${pendingDelete.id}`, {
         method: "DELETE",
         token: session.token,
         organizationId: session.organizationId,
       });
-      setMsg(`Fuente «${pendingDelete.name}» eliminada.`);
+      const updated = result?.agents_updated ?? 0;
+      setMsg(
+        updated > 0
+          ? `Fuente «${pendingDelete.name}» eliminada. Se actualizaron ${updated} agente${updated === 1 ? "" : "s"} que la usaban.`
+          : `Fuente «${pendingDelete.name}» eliminada.`,
+      );
       setPendingDelete(null);
       load();
     } catch (err) {

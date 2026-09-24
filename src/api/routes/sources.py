@@ -494,8 +494,8 @@ async def delete_source(
     if source is None:
         raise HTTPException(404, "Source not found")
 
-    await repo.delete_source(ctx.organization_id, sid)
-    # Limpiar vectores y registry de la fuente (nunca org-cruzado)
+    # 1) Vectores y registry primero: si esto falla, la fuente sigue entera y se
+    #    puede reintentar la eliminación sin quedar a medias.
     from src.api.deps import get_doc_registry_repo, get_vector_store
 
     registry = get_doc_registry_repo()
@@ -505,10 +505,72 @@ async def delete_source(
             await get_vector_store().delete_points(ctx.organization_id, [str(i) for i in stale_ids])
         except Exception:
             raise HTTPException(500, "Failed to purge source vectors")
+    # 2) La fuente y sus documentos.
+    await repo.delete_source(ctx.organization_id, sid)
     await registry.delete_source_documents(sid)
+    # 3) Referencias: los agentes que la usaban dejan de apuntarle (es lo que
+    #    promete la advertencia del portal). Sin esto quedan ids colgados.
+    detached = await _detach_source_from_agents(ctx, sid)
 
-    await _audit().write(ctx, "source.deleted", "source", sid, metadata={"name": source.name})
-    return {"status": "deleted", "source_id": str(sid)}
+    await _audit().write(
+        ctx,
+        "source.deleted",
+        "source",
+        sid,
+        metadata={"name": source.name, "agents_updated": len(detached)},
+    )
+    return {
+        "status": "deleted",
+        "source_id": str(sid),
+        "agents_updated": len(detached),
+        "agents": detached[:20],
+    }
+
+
+async def _detach_source_from_agents(ctx, source_id: UUID) -> list[str]:
+    """Quita la fuente de `config_json.source_ids` en todos los agentes de la org.
+
+    `knowledge_base_ids` no se toca: la colección sigue existiendo aunque se borre
+    una de sus fuentes. Devuelve los nombres de los agentes actualizados.
+    """
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    session = await get_async_session()
+    try:
+        rows = (
+            await session.execute(
+                text(
+                    "UPDATE agents SET "
+                    "config_json = jsonb_set("
+                    "  config_json, '{source_ids}', coalesce(("
+                    "    SELECT jsonb_agg(value) FROM jsonb_array_elements_text("
+                    "      config_json->'source_ids') AS value WHERE value <> :sid"
+                    "  ), '[]'::jsonb)), updated_at = now() "
+                    "WHERE organization_id = :oid "
+                    "AND config_json->'source_ids' @> to_jsonb(ARRAY[:sid]::text[]) "
+                    "RETURNING name"
+                ),
+                {"oid": ctx.organization_id, "sid": str(source_id)},
+            )
+        ).fetchall()
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+    names = [str(row[0]) for row in rows]
+    if names:
+        logger.warning(
+            "source deleted; agents detached",
+            organization_id=str(ctx.organization_id),
+            source_id=str(source_id),
+            agents=names[:10],
+            agents_count=len(names),
+        )
+    return names
 
 
 @router.post("/sources/{source_id}/discover", summary="Descubrir elementos de la fuente")

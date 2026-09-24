@@ -483,6 +483,41 @@ async def test_fuente_inexistente_se_descarta_con_aviso(async_client: AsyncClien
 
 
 @pytest.mark.asyncio
+async def test_eliminar_fuente_la_quita_de_los_agentes(async_client: AsyncClient) -> None:
+    """La advertencia promete que los agentes dejan de usar la fuente: se cumple."""
+    from src.infrastructure.postgres.knowledge_repos import PostgresSourceRepository
+
+    org = await _create_org(async_client, "Agent Fuente Borrada Org")
+    org["session"] = await _owner_session(org["organization_id"])
+    headers = _headers(org)
+
+    fuente = await PostgresSourceRepository().create_source(
+        UUID(org["organization_id"]), f"manual-{uuid4().hex[:6]}", "file"
+    )
+    creado = await async_client.post(
+        "/api/v1/agents",
+        json={
+            "name": f"usa-fuente-{uuid4().hex[:6]}",
+            "config": {"source_ids": [str(fuente.id)]},
+        },
+        headers=headers,
+    )
+    assert creado.status_code == 201, creado.text
+    agent_id = creado.json()["id"]
+    assert creado.json()["config"]["source_ids"] == [str(fuente.id)]
+
+    borrado = await async_client.delete(
+        f"/api/v1/sources/{fuente.id}", headers=headers
+    )
+    assert borrado.status_code == 200, borrado.text
+    assert borrado.json()["agents_updated"] == 1
+
+    agente = await async_client.get(f"/api/v1/agents/{agent_id}", headers=headers)
+    assert agente.status_code == 200, agente.text
+    assert agente.json()["config"]["source_ids"] == []
+
+
+@pytest.mark.asyncio
 async def test_fuente_de_otra_organizacion_sigue_siendo_404(async_client: AsyncClient) -> None:
     """Aislamiento: una fuente de otro tenant nunca se acepta ni se descarta."""
     from src.infrastructure.postgres.knowledge_repos import PostgresSourceRepository
