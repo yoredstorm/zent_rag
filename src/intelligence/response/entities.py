@@ -155,7 +155,10 @@ def coverage_note(question: str, evidence_text: str) -> str:
         f"La evidencia consultada no menciona: {labels}.\n"
         "No lo expliques de memoria: decí que no está en la documentación "
         "consultada y qué fuente haría falta. Nada de cifras, porcentajes, "
-        "subcategorías ni ejemplos que la evidencia no sostenga."
+        "subcategorías ni ejemplos que la evidencia no sostenga.\n"
+        "No respondas sobre otra entidad parecida como si fuera la pedida (otro "
+        "byte, otra categoría, otro record): si el usuario nombró varias y sólo "
+        "tenés evidencia de algunas, respondé esas y decí cuál falta."
     )
 
 

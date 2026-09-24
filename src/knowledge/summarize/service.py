@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from typing import Any
 from uuid import uuid4
 
 from src.core.domain.catalog import CatalogProvenance
@@ -41,6 +42,30 @@ class SummarizerConfig:
     model: str | None = None
     temperature: float = 0.2
     max_tokens: int = 512
+    #: Tope de secciones resumidas por documento (0 = todas). Un manual de 700
+    #: páginas con cientos de secciones multiplicaba el costo sin control.
+    max_sections: int = 0
+
+
+@dataclass
+class SummaryUsage:
+    """Uso real de la corrida de resumen (tokens que reporta el provider)."""
+
+    calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    sections_total: int = 0
+    sections_skipped: int = 0
+    llm_disabled: bool = False
+
+    @property
+    def total_tokens(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
+
+    def add(self, response: Any) -> None:
+        self.calls += 1
+        self.prompt_tokens += int(getattr(response, "prompt_tokens", 0) or 0)
+        self.completion_tokens += int(getattr(response, "completion_tokens", 0) or 0)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -65,14 +90,30 @@ class DocumentSummarizer:
     async def summarize(
         self,
         document: StructuredDocument,
+        *,
+        usage: SummaryUsage | None = None,
+        allow_llm: bool = True,
     ) -> SummarizationOutput:
+        """Resume el documento. `usage` acumula los tokens reales por llamada.
+
+        `allow_llm=False` (presupuesto agotado) usa el camino extractivo
+        determinista sin gastar una sola llamada.
+        """
+        uso = usage if usage is not None else SummaryUsage()
+        uso.llm_disabled = not allow_llm
+        secciones = list(document.sections)
+        uso.sections_total = len(secciones)
+        if self._config.max_sections and len(secciones) > self._config.max_sections:
+            uso.sections_skipped = len(secciones) - self._config.max_sections
+            secciones = secciones[: self._config.max_sections]
+
         section_summaries: list[SectionSummary] = []
-        for section in document.sections:
+        for section in secciones:
             section_summaries.append(
-                await self._summarize_section(document, section)
+                await self._summarize_section(document, section, usage=uso, allow_llm=allow_llm)
             )
 
-        doc_summary = await self._summarize_document(document)
+        doc_summary = await self._summarize_document(document, usage=uso, allow_llm=allow_llm)
         mode_value = (
             doc_summary.metadata.get("mode", "extractive")
             if isinstance(doc_summary.metadata, dict)
@@ -88,16 +129,23 @@ class DocumentSummarizer:
     # Nivel documento
     # ------------------------------------------------------------------
     async def _summarize_document(
-        self, document: StructuredDocument
+        self,
+        document: StructuredDocument,
+        *,
+        usage: SummaryUsage,
+        allow_llm: bool = True,
     ) -> DocumentSummary:
         text = _document_source_text(document)
         model = self._config.model
         try:
+            if not allow_llm:
+                raise SummaryError("llm disabled")
             summary_text, key_points = await self._llm_summarize(
                 text,
                 kind="documento",
                 max_chars=self._config.document_max_chars,
                 model=model,
+                usage=usage,
             )
             mode = "llm"
         except (SummaryError, Exception):
@@ -125,16 +173,24 @@ class DocumentSummarizer:
     # Nivel sección
     # ------------------------------------------------------------------
     async def _summarize_section(
-        self, document: StructuredDocument, section: DocumentSection
+        self,
+        document: StructuredDocument,
+        section: DocumentSection,
+        *,
+        usage: SummaryUsage,
+        allow_llm: bool = True,
     ) -> SectionSummary:
         text = _section_source_text(document, section)
         model = self._config.model
         try:
+            if not allow_llm:
+                raise SummaryError("llm disabled")
             summary_text, key_points = await self._llm_summarize(
                 text,
                 kind="sección",
                 max_chars=self._config.section_max_chars,
                 model=model,
+                usage=usage,
             )
             mode = "llm"
         except (SummaryError, Exception):
@@ -165,6 +221,7 @@ class DocumentSummarizer:
         kind: str,
         max_chars: int,
         model: str | None,
+        usage: SummaryUsage | None = None,
     ) -> tuple[str, tuple[str, ...]]:
         text = source[:max_chars]
         if not text.strip():
@@ -184,6 +241,8 @@ class DocumentSummarizer:
                 "información que no esté en el texto."
             ),
         )
+        if usage is not None:
+            usage.add(response)
         raw = (response.content or "").strip()
         match = _JSON_BLOCK_RE.search(raw)
         if not match:

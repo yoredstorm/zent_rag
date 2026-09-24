@@ -193,6 +193,119 @@ def _validate_metadata(
 class KnowledgeIngestionEngine:
     """Motor de ingestion de la Knowledge Platform."""
 
+    @staticmethod
+    async def _embedding_cost(model: str | None, tokens: int) -> float:
+        """Costo real de los tokens de embedding (antes quedaba en 0)."""
+        if tokens <= 0:
+            return 0.0
+        try:
+            from src.platform.billing.pricing import estimate_cost
+
+            settings = None
+            try:
+                from src.core.config import get_settings
+
+                settings = get_settings()
+            except Exception:  # noqa: BLE001
+                settings = None
+            usado = model or getattr(settings, "EMBEDDING_MODEL", "") or "embeddings/default"
+            return float(
+                await estimate_cost(usado, 0, 0, embedding_tokens=tokens)
+            )
+        except Exception as exc:  # noqa: BLE001 — el costo nunca rompe la ingesta
+            logger.warning("Embedding cost estimate failed", error=str(exc)[:150])
+            return 0.0
+
+    @staticmethod
+    def _observe_ingest(kind: str, tokens: int, cost_usd: float) -> None:
+        """Métrica de ingesta: tokens y costo por tipo (nunca rompe la ingesta)."""
+        try:
+            from src.infrastructure.observability.metrics import (
+                knowledge_ingest_cost_usd,
+                knowledge_ingest_tokens_total,
+            )
+
+            knowledge_ingest_tokens_total.labels(kind=kind).inc(max(int(tokens), 0))
+            knowledge_ingest_cost_usd.labels(kind=kind).inc(max(float(cost_usd), 0.0))
+        except Exception:  # noqa: BLE001
+            return
+
+    @staticmethod
+    async def _record_ingest_usage_event(
+        *,
+        organization_id: UUID,
+        job_id: UUID,
+        kind: str,
+        tokens: int,
+        cost_usd: float,
+        index: int,
+        source_id: UUID | None = None,
+        model: str | None = None,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+    ) -> None:
+        """Evento canónico de uso (aparece en /billing/usage y FinOps).
+
+        `request_id` determinista: un reintento del mismo job no doble-cuenta.
+        """
+        if tokens <= 0:
+            return
+        try:
+            from uuid import NAMESPACE_URL, uuid5
+
+            from src.platform.usage.usage_engine import (
+                UsageEvent,
+                get_usage_counters,
+                record_event,
+            )
+
+            request_id = uuid5(
+                NAMESPACE_URL, f"knowledge:{job_id}:{source_id}:{kind}:{index}"
+            )
+            event = UsageEvent(
+                request_id=request_id,
+                organization_id=organization_id,
+                event_type=f"knowledge_ingest_{kind}",
+                model=model,
+                prompt_tokens=int(prompt_tokens),
+                completion_tokens=int(completion_tokens),
+                total_tokens=int(tokens),
+                embedding_tokens=int(tokens) if kind == "embedding" else 0,
+                estimated_cost=float(cost_usd),
+                cost_tags={
+                    "origin": "knowledge_ingest",
+                    "kind": kind,
+                    "source_id": str(source_id) if source_id else "",
+                },
+            )
+            if await record_event(event):
+                await get_usage_counters().record(
+                    organization_id,
+                    request_id,
+                    tokens=int(tokens),
+                    cost=float(cost_usd),
+                )
+        except Exception as exc:  # noqa: BLE001 — el metering nunca rompe la ingesta
+            logger.warning("Knowledge ingest usage event failed", error=str(exc)[:200])
+
+    @staticmethod
+    def _embed_texts(texts: list[str]) -> list[str]:
+        """Recorta lo que se manda a embeber, sin tocar el contenido del chunk.
+
+        Un chunk padre puede tener decenas de miles de caracteres (una sección
+        entera de un manual) y eso excede el límite del modelo de embeddings: el
+        provider devuelve 400 y se cae TODO el pipeline V2 del documento.
+        """
+        try:
+            from src.core.config import get_settings
+
+            tope = int(getattr(get_settings(), "RAG_EMBED_MAX_CHARS", 6000) or 0)
+        except Exception:  # noqa: BLE001
+            tope = 6000
+        if tope <= 0:
+            return texts
+        return [texto[:tope] for texto in texts]
+
     def __init__(
         self,
         job_repo: IngestionJobRepository,
@@ -359,6 +472,7 @@ class KnowledgeIngestionEngine:
         v2_external_ids: set[str] = set()
         pending_chunks: list[tuple[str, str]] = []  # (external_id, chunk_text)
         chunk_indexes: dict[str, int] = {}
+        flush_index = 0  # índice estable de lote (idempotencia del evento de uso)
 
         def next_index(external_id: str) -> int:
             index = chunk_indexes.get(external_id, 0)
@@ -366,9 +480,11 @@ class KnowledgeIngestionEngine:
             return index
 
         async def flush() -> None:
+            nonlocal flush_index
             if not pending_chunks:
                 return
-            texts = [t for _, t in pending_chunks]
+            flush_index += 1
+            texts = self._embed_texts([t for _, t in pending_chunks])
             embeddings = await self._embeddings.embed(texts, model=kb.embedding_model if kb else None)
             if embeddings and not isinstance(embeddings[0], list):
                 embeddings = [embeddings]  # provider devolvió un solo vector
@@ -379,11 +495,26 @@ class KnowledgeIngestionEngine:
                     from src.knowledge.structure.base import token_count as _tokens
 
                     batch_tokens = sum(_tokens(text) for text in texts)
+                    modelo = kb.embedding_model if kb else None
+                    costo = await self._embedding_cost(modelo, batch_tokens)
                     await self._usage_tracker.record_embedding_tokens(
                         job.organization_id,
                         batch_tokens,
+                        model=modelo,
+                        cost_usd=costo,
                         workspace_id=source.workspace_id,
                         source_id=source_id,
+                    )
+                    self._observe_ingest("embedding", batch_tokens, costo)
+                    await self._record_ingest_usage_event(
+                        organization_id=job.organization_id,
+                        job_id=job.id,
+                        kind="embedding",
+                        tokens=batch_tokens,
+                        cost_usd=costo,
+                        index=flush_index,
+                        source_id=source_id,
+                        model=modelo,
                     )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
@@ -617,6 +748,18 @@ class KnowledgeIngestionEngine:
                 stage=outcome,
                 error=str(exc)[:500],
             )
+            # Si falló DESPUÉS de persistir el documento, el hash nuevo ya quedó
+            # guardado y el próximo sync lo vería "unchanged" sin haber indexado
+            # nada: se marca para reindexar.
+            if outcome not in ("parse", "persist"):
+                try:
+                    await self._structured_v2.invalidate_content_hash(
+                        job.organization_id, document.id
+                    )
+                except Exception as inner:  # noqa: BLE001 — nunca tapar el error real
+                    logger.warning(
+                        "Knowledge V2 reindex mark failed", error=str(inner)[:200]
+                    )
         finally:
             knowledge_parse_total.labels(
                 organization_id=str(job.organization_id),
@@ -926,17 +1069,29 @@ class KnowledgeIngestionEngine:
         for start in range(0, len(chunks), _EMBED_BATCH):
             batch_chunks = chunks[start : start + _EMBED_BATCH]
             embeddings = await self._embeddings.embed(
-                [c.content for c in batch_chunks]
+                self._embed_texts([c.content for c in batch_chunks])
             )
             if embeddings and not isinstance(embeddings[0], list):
                 embeddings = [embeddings]
             if self._usage_tracker is not None:
                 try:
                     batch_tokens = sum(c.token_count for c in batch_chunks)
+                    costo = await self._embedding_cost(None, batch_tokens)
                     await self._usage_tracker.record_embedding_tokens(
                         job.organization_id,
                         batch_tokens,
+                        cost_usd=costo,
                         workspace_id=source.workspace_id,
+                        source_id=source.id,
+                    )
+                    self._observe_ingest("embedding", batch_tokens, costo)
+                    await self._record_ingest_usage_event(
+                        organization_id=job.organization_id,
+                        job_id=job.id,
+                        kind="embedding",
+                        tokens=batch_tokens,
+                        cost_usd=costo,
+                        index=start // _EMBED_BATCH,
                         source_id=source.id,
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -1086,17 +1241,29 @@ class KnowledgeIngestionEngine:
         for start in range(0, len(chunks), _EMBED_BATCH):
             batch_chunks = chunks[start : start + _EMBED_BATCH]
             embeddings = await self._embeddings.embed(
-                [c.content for c in batch_chunks]
+                self._embed_texts([c.content for c in batch_chunks])
             )
             if embeddings and not isinstance(embeddings[0], list):
                 embeddings = [embeddings]
             if self._usage_tracker is not None:
                 try:
                     batch_tokens = sum(c.token_count for c in batch_chunks)
+                    costo = await self._embedding_cost(None, batch_tokens)
                     await self._usage_tracker.record_embedding_tokens(
                         job.organization_id,
                         batch_tokens,
+                        cost_usd=costo,
                         workspace_id=source.workspace_id,
+                        source_id=source.id,
+                    )
+                    self._observe_ingest("embedding", batch_tokens, costo)
+                    await self._record_ingest_usage_event(
+                        organization_id=job.organization_id,
+                        job_id=job.id,
+                        kind="embedding",
+                        tokens=batch_tokens,
+                        cost_usd=costo,
+                        index=start // _EMBED_BATCH,
                         source_id=source.id,
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -1203,6 +1370,8 @@ class KnowledgeIngestionEngine:
         No persiste nada; sirve de calibración (métricas + logs). Si el
         summarizer no está inyectado o falla, el camino V1/V2 sigue intacto.
         Con change_kind=unchanged se SKIPEA (mismo contenido → mismo resumen).
+        El uso real (tokens y costo) se registra siempre, y si el costo
+        estimado supera el presupuesto se cae al resumen extractivo.
         """
         if self._summarizer is None:
             return
@@ -1212,8 +1381,13 @@ class KnowledgeIngestionEngine:
                 document_id=str(document.id),
             )
             return
+        from src.knowledge.summarize.service import SummaryUsage
+
+        uso = SummaryUsage()
+        permitido = True
         try:
-            output = await self._summarizer.summarize(document)
+            permitido = await self._summary_within_budget(document)
+            output = await self._summarizer.summarize(document, usage=uso, allow_llm=permitido)
             summary = getattr(output, "document_summary", None)
             summary_text = getattr(summary, "summary", "") if summary else ""
             logger.info(
@@ -1221,13 +1395,112 @@ class KnowledgeIngestionEngine:
                 document_id=str(document.id),
                 summary_chars=len(summary_text[:2000]),
                 mode=getattr(output, "mode", "unknown"),
+                llm_calls=uso.calls,
+                prompt_tokens=uso.prompt_tokens,
+                completion_tokens=uso.completion_tokens,
+                budget_exceeded=not permitido,
             )
+            await self._record_summary_usage(document, uso)
         except Exception as exc:
             logger.warning(
                 "Knowledge V2 summary shadow failed",
                 document_id=str(document.id),
                 error=str(exc)[:500],
             )
+            try:
+                await self._record_summary_usage(document, uso)
+            except Exception:  # noqa: BLE001 — el metering nunca rompe la ingesta
+                pass
+
+    async def _summary_within_budget(self, document) -> bool:
+        """¿El resumen LLM de este documento entra en el presupuesto por job?"""
+        try:
+            from src.core.config import get_settings
+
+            presupuesto = float(
+                getattr(get_settings(), "KNOWLEDGE_SUMMARY_BUDGET_USD", 0.0) or 0.0
+            )
+            if presupuesto <= 0:
+                return True
+            from src.knowledge.structure.base import token_count as _tokens
+            from src.platform.billing.pricing import estimate_cost
+
+            modelo = getattr(self._summarizer._config, "model", None)
+            texto = "\n".join(
+                [getattr(b, "text", "") for b in getattr(document, "blocks", ())]
+                + [getattr(t, "text", "") for t in getattr(document, "tables", ())]
+            )
+            tokens = _tokens(texto)
+            costo = float(await estimate_cost(modelo or "", 0, tokens))
+            if costo > presupuesto:
+                logger.warning(
+                    "Knowledge V2 summary skipped (budget)",
+                    document_id=str(getattr(document, "id", "")),
+                    estimated_cost_usd=round(costo, 6),
+                    budget_usd=presupuesto,
+                )
+                return False
+            return True
+        except Exception as exc:  # noqa: BLE001 — sin presupuesto, se resume
+            logger.warning("Summary budget check failed", error=str(exc)[:150])
+            return True
+
+    async def _record_summary_usage(self, document, uso) -> None:
+        """Registra tokens/costo del resumen en `knowledge_usage` y `usage_events`."""
+        if uso.calls <= 0:
+            return
+        try:
+            from src.platform.billing.pricing import estimate_cost
+
+            modelo = getattr(self._summarizer._config, "model", None) or ""
+            costo = float(
+                await estimate_cost(
+                    modelo or "",
+                    uso.prompt_tokens,
+                    uso.completion_tokens,
+                )
+            )
+            if self._usage_tracker is not None:
+                await self._usage_tracker.record_llm_tokens(
+                    document.organization_id,
+                    prompt_tokens=uso.prompt_tokens,
+                    completion_tokens=uso.completion_tokens,
+                    cost_usd=costo,
+                    model=modelo or None,
+                    purpose="knowledge_summary",
+                    workspace_id=getattr(document, "workspace_id", None),
+                    source_id=getattr(document, "source_id", None),
+                    metadata={
+                        "sections_skipped": uso.sections_skipped,
+                        "sections_total": uso.sections_total,
+                        "calls": uso.calls,
+                    },
+                )
+            from src.infrastructure.observability.metrics import (
+                knowledge_ingest_cost_usd,
+                knowledge_ingest_tokens_total,
+            )
+
+            knowledge_ingest_tokens_total.labels(kind="llm").inc(uso.total_tokens)
+            knowledge_ingest_cost_usd.labels(kind="llm").inc(costo)
+            await self._record_ingest_usage_event(
+                organization_id=document.organization_id,
+                job_id=(
+                    getattr(document, "id", None)
+                    or getattr(document, "source_id", None)
+                    or UUID(int=0)
+                ),
+                kind="llm",
+                tokens=uso.total_tokens,
+                cost_usd=costo,
+                index=0,
+                source_id=getattr(document, "source_id", None),
+                model=modelo or None,
+                prompt_tokens=uso.prompt_tokens,
+                completion_tokens=uso.completion_tokens,
+            )
+        except Exception as exc:  # noqa: BLE001 — el metering nunca rompe la ingesta
+            logger.warning("Summary usage record failed", error=str(exc)[:200])
 
 
 async def _set_source_status(organization_id: UUID, source_id: UUID, status: str) -> None:

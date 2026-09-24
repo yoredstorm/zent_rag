@@ -122,10 +122,19 @@ class PdfParser(StructuredParser):
                 )
                 order += len(page_tables)
                 table_bboxes = [t.bbox for t in page.find_tables()]
+                # Las tablas también son bloques: sin esto su contenido se perdía
+                # (las líneas dentro del bbox se saltean y `document.tables` no
+                # entra en los chunks). Se insertan en orden de lectura.
+                pending_tables = [
+                    _table_to_block(table, page_no) for table in page_tables
+                ]
 
                 for line in lines:
                     if _inside_any_table(line, table_bboxes):
                         continue
+                    order = _flush_tables_before(
+                        pending_tables, line.get("top"), order, page_blocks, blocks
+                    )
                     block = line_to_block(
                         line, order, page_no, StructuredBlockKind.PARAGRAPH
                     )
@@ -135,6 +144,9 @@ class PdfParser(StructuredParser):
                     page_blocks.append(block)
                     blocks.append(block)
                     order += 1
+                order = _flush_tables_before(
+                    pending_tables, None, order, page_blocks, blocks
+                )
 
                 page_text = "\n".join(ln["text"] for ln in lines)
                 pages.append(
@@ -221,6 +233,59 @@ def line_to_block(
             "width": round((line.get("x1") or 0.0) - (line.get("x0") or 0.0), 2),
         },
     )
+
+
+def _render_table_rows(table: DocumentTable) -> str:
+    """Filas de la tabla como texto plano (encabezado + cuerpo, sin perder celdas)."""
+    parts = [" | ".join(table.headers)] if table.headers else []
+    parts.extend(" | ".join(row) for row in table.rows)
+    return "\n".join(part for part in parts if part.strip())
+
+
+def _table_to_block(table: DocumentTable, page_no: int) -> dict:
+    """Bloque TABLE equivalente a una tabla extraída (aún sin `order`)."""
+    text = _render_table_rows(table)
+    return {
+        "table": table,
+        "top": table.bbox.y0 if table.bbox is not None else 0.0,
+        "text": text,
+        "page": page_no,
+    }
+
+
+def _flush_tables_before(
+    pending: list[dict],
+    line_top: float | None,
+    order: int,
+    page_blocks: list[StructuredBlock],
+    blocks: list[StructuredBlock],
+) -> int:
+    """Vuelca las tablas que van antes de la línea (o todas si `line_top` es None)."""
+    restantes: list[dict] = []
+    for item in sorted(pending, key=lambda entry: entry["top"]):
+        if line_top is not None and item["top"] > line_top:
+            restantes.append(item)
+            continue
+        table = item["table"]
+        block = StructuredBlock(
+            kind=StructuredBlockKind.TABLE,
+            text=item["text"] or str(table.headers),
+            order=order,
+            page=item["page"],
+            bbox=table.bbox,
+            token_count=token_count(item["text"]),
+            content_hash=content_hash(item["text"]),
+            metadata={
+                "table_id": str(table.id),
+                "table_index": table.metadata.get("table_index"),
+                "row_count": table.row_count,
+            },
+        )
+        page_blocks.append(block)
+        blocks.append(block)
+        order += 1
+    pending[:] = restantes
+    return order
 
 
 def _replace_block_kind(block: StructuredBlock, kind: StructuredBlockKind) -> StructuredBlock:
@@ -321,11 +386,14 @@ def _extract_tables(
     extracted: list[DocumentTable] = []
     for i, table in enumerate(found):
         rows = table.extract() or []
-        headers = tuple(str(c) if c is not None else "" for c in rows[0]) if rows else ()
-        body = tuple(
-            tuple(str(c) if c is not None else "" for c in row) for row in rows[1:]
-        )
-        rendered = "\n".join(" | ".join(r) for r in rows)
+        # Celdas vacías: pdfplumber devuelve None. Filtrarlas acá evita el crash
+        # que tiraba abajo TODO el parseo V2 del documento (caía a texto crudo).
+        filas_texto = [
+            [str(celda) if celda is not None else "" for celda in row] for row in rows
+        ]
+        headers = tuple(filas_texto[0]) if filas_texto else ()
+        body = tuple(tuple(row) for row in filas_texto[1:])
+        rendered = "\n".join(" | ".join(row) for row in filas_texto)
         table_doc_id = _DOC_PLACEHOLDER_PAGE
         dt = DocumentTable(
             id=uuid4(),

@@ -739,6 +739,107 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
             ),
         )
 
+    async def scan_text(
+        self,
+        organization_id: UUID,
+        needles: list[str],
+        *,
+        source_ids: list[UUID] | None = None,
+        knowledge_base_id: UUID | None = None,
+        workspace_id: UUID | None = None,
+        role: str = "admin",
+        user_id: UUID | None = None,
+        groups: list[str] | None = None,
+        limit: int = 5,
+        max_points: int = 3000,
+        max_ms: float = 1500.0,
+        heading_only: bool = False,
+    ) -> RetrievalContext:
+        """Busca frases literales dentro de los chunks (barrido determinista).
+
+        No hay índice de texto: se recorre el payload filtrando por organización
+        (y fuentes/colección cuando vienen) y se compara con los tokens de la
+        frase, así «byte 105» aparece aunque el embedding no lo acerque. Se corta
+        por `limit`, `max_points` o `max_ms` para no pagar un barrido completo.
+        Con `heading_only` la frase se busca sólo en el arranque del chunk: es la
+        sección cuyo título ES el campo pedido (la que lo explica, no la que lo
+        menciona al pasar en una tabla).
+        """
+        if organization_id is None:
+            raise ValueError("scan_text() requires organization_id (tenant isolation)")
+        if not needles:
+            return RetrievalContext(chunks=[], retrieval_latency_ms=0.0)
+        organization_id = bind_organization_id(organization_id)
+        client = await _get_client()
+        await self._ensure_collection()
+
+        from src.infrastructure.qdrant.bm25 import tokenize
+
+        buscados = [" ".join(tokenize(needle)) for needle in needles]
+        buscados = [aguja for aguja in buscados if aguja]
+        if not buscados:
+            return RetrievalContext(chunks=[], retrieval_latency_ms=0.0)
+
+        qdrant_filter = self._build_qdrant_filter(
+            organization_id, None, None, role, knowledge_base_id,
+            user_id, groups, workspace_id, source_ids)
+
+        start = time.perf_counter()
+        encontrados: list = []
+        escaneados = 0
+        offset = None
+        while escaneados < max_points:
+            pagina, offset = await _retry_on_transient_error(
+                client.scroll,
+                reset_client=True,
+                collection_name=RAG_DOCUMENTS_COLLECTION,
+                scroll_filter=qdrant_filter,
+                limit=200,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in pagina:
+                escaneados += 1
+                payload = point.payload or {}
+                cuerpo = " ".join(tokenize(str(payload.get("content") or "")))
+                if not cuerpo:
+                    continue
+                if heading_only:
+                    cuerpo = cuerpo[:160]
+                if any(aguja in cuerpo for aguja in buscados):
+                    encontrados.append(point)
+                    if len(encontrados) >= limit:
+                        break
+            if offset is None or len(encontrados) >= limit:
+                break
+            if (time.perf_counter() - start) * 1000 >= max_ms:
+                break
+
+        latency_ms = (time.perf_counter() - start) * 1000
+        chunks = [
+            RetrievalChunk(
+                document_id=UUID(point.id) if point.id else UUID(int=0),
+                content=(point.payload or {}).get("content", ""),
+                # Sin score de similitud: el llamador decide cómo ordenarlo.
+                score=0.0,
+                metadata={
+                    **((point.payload or {}).get("metadata") or {}),
+                    "retrieval": "entity_scan",
+                },
+            )
+            for point in encontrados
+        ]
+        logger.info(
+            "Entity phrase scan completed",
+            organization_id=str(organization_id),
+            needles=len(buscados),
+            scanned=escaneados,
+            matches=len(chunks),
+            scan_latency_ms=round(latency_ms, 2),
+        )
+        return RetrievalContext(chunks=chunks, retrieval_latency_ms=latency_ms)
+
     async def delete_points(self, organization_id: UUID, point_ids: list[str]) -> None:
         """Borra puntos por ID exacto. Los IDs son uuid5 deterministas scoped
         a la organización (generados por el Knowledge Engine desde su registry)."""

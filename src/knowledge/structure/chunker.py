@@ -20,6 +20,7 @@ from src.core.domain.knowledge_v2 import (
     DocumentSection,
     KnowledgeObjectStatus,
     StructuredBlock,
+    StructuredBlockKind,
     StructuredDocument,
 )
 from src.knowledge.structure.base import content_hash, token_count
@@ -70,6 +71,44 @@ def assign_blocks_to_sections(
         for section in ordered_sections
     )
     return dataclasses.replace(document, sections=new_sections)
+
+
+def _section_label(section: DocumentSection | None) -> str:
+    """Ruta legible de la sección: «4.6.2 Fee Application (byte 105)»."""
+    if section is None:
+        return ""
+    partes = [str(parte) for parte in (section.section_path or ()) if str(parte).strip()]
+    if section.heading and section.heading not in partes:
+        partes.append(section.heading)
+    return " ".join(partes).strip()
+
+
+def _table_pieces(titulo: str, table_text: str, config: ChunkingConfig) -> list[str]:
+    """Grupos de filas que caben en el presupuesto, repitiendo título y encabezado.
+
+    Una fila nunca se corta: un chunk de tabla sin encabezado ni título se vuelve
+    ilegible para el modelo y para el lector.
+    """
+    lineas = [linea for linea in (table_text or "").splitlines() if linea.strip()]
+    if not lineas:
+        return []
+    encabezado = lineas[0]
+    filas = lineas[1:]
+    prefijo = f"{titulo}\n{encabezado}".strip() if titulo else encabezado
+    if not filas:
+        return [prefijo]
+    presupuesto = max(config.child_max_chars - len(prefijo) - 1, 80)
+    piezas: list[str] = []
+    actual: list[str] = []
+    for fila in filas:
+        if actual and len("\n".join([*actual, fila])) > presupuesto:
+            piezas.append(f"{prefijo}\n" + "\n".join(actual))
+            actual = [fila]
+        else:
+            actual.append(fila)
+    if actual:
+        piezas.append(f"{prefijo}\n" + "\n".join(actual))
+    return piezas
 
 
 def _split_text(text: str, config: ChunkingConfig) -> list[str]:
@@ -148,10 +187,12 @@ def chunk_structured_document(
         parent: DocumentChunk,
         content: str,
         offset: int,
+        *,
+        pieces: list[str] | None = None,
     ) -> list[DocumentChunk]:
         nonlocal next_index
         made: list[DocumentChunk] = []
-        for piece in _split_text(content, config):
+        for piece in pieces if pieces is not None else _split_text(content, config):
             children_char_range = None
             if parent.char_range is not None:
                 start = offset + content.index(piece) if piece in content else offset
@@ -228,11 +269,23 @@ def chunk_structured_document(
         if not ids:
             continue
         covered_blocks.update(ids)
+        label = _section_label(section)
         items = []
+        texto_plano: list[str] = []
+        piezas_tabla: list[str] = []
         for b in ids:
             block = _find_block(document, b)
-            if block is not None:
-                items.append(block.text)
+            if block is None:
+                continue
+            if block.kind is StructuredBlockKind.TABLE:
+                # La tabla viaja con su ruta: sin eso, un chunk de filas sueltas
+                # no dice a qué campo pertenece.
+                con_titulo = f"{label}\n{block.text}".strip() if label else block.text
+                items.append(con_titulo)
+                piezas_tabla.extend(_table_pieces(label, block.text, config))
+                continue
+            items.append(block.text)
+            texto_plano.append(block.text)
         items = [section.heading] + items if section.heading else items
         content = "\n\n".join(items)
         start = block_offsets[ids[0]]
@@ -246,7 +299,13 @@ def chunk_structured_document(
             page_end=page_end,
             char_range=CharRange(start=start, end=max(start + 1, end)),
         )
-        make_children(parent, content, start)
+        texto_seccion = "\n\n".join(
+            ([section.heading] if section.heading else []) + texto_plano
+        )
+        if texto_seccion.strip():
+            make_children(parent, texto_seccion, start)
+        for pieza in piezas_tabla:
+            make_children(parent, pieza, start, pieces=[pieza])
 
     # bloques no cubiertos → root implícito del documento
     leftover = [b for b in document.blocks if b.id not in covered_blocks]
@@ -259,7 +318,14 @@ def chunk_structured_document(
             page_end=_last_page(leftover),
             char_range=None,
         )
-        make_children(parent, content, 0)
+        texto_plano = [b.text for b in leftover if b.kind is not StructuredBlockKind.TABLE]
+        if texto_plano:
+            make_children(parent, "\n\n".join(texto_plano), 0)
+        for block in leftover:
+            if block.kind is not StructuredBlockKind.TABLE:
+                continue
+            for pieza in _table_pieces("", block.text, config):
+                make_children(parent, pieza, 0, pieces=[pieza])
 
     return chunks
 

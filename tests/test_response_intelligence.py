@@ -460,6 +460,9 @@ def test_cobertura_marca_lo_que_la_evidencia_no_trae() -> None:
     note = coverage_note(pregunta, evidencia_cat10)
     assert "no menciona: categoría 31, byte 105" in note
     assert "No lo expliques de memoria" in note
+    # Y no debe responder otra entidad como si fuera la pedida (el caso real:
+    # preguntó por el byte 105 y la respuesta explicó el byte 50).
+    assert "otra entidad parecida" in note
     # Con la fuente correcta en la evidencia, no hay nada que declarar.
     with_source = evidencia_cat10 + " Category 31 Tour Conductor Discount, byte 105"
     assert coverage_note(pregunta, with_source) == ""

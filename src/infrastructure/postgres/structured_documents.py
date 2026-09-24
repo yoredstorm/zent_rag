@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import text
 
@@ -118,6 +118,33 @@ class PostgresStructuredDocumentRepository(StructuredDocumentRepository):
                 )
             await session.commit()
             return change_kind
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    async def invalidate_content_hash(self, organization_id, document_id) -> None:
+        """Marca el documento para reindexar en el próximo sync.
+
+        Se usa cuando el parseo/persistencia anduvo pero la indexación falló: el
+        hash nuevo ya quedó guardado y, sin esto, el reintento lo vería
+        "unchanged" y no volvería a chunquear nunca.
+        """
+        session = await get_async_session()
+        try:
+            await session.execute(
+                text(
+                    "UPDATE structured_documents SET content_hash = :hash "
+                    "WHERE id = :did AND organization_id = :oid"
+                ),
+                {
+                    "hash": f"needs-reindex:{uuid4().hex[:8]}",
+                    "did": str(document_id),
+                    "oid": str(organization_id),
+                },
+            )
+            await session.commit()
         except Exception:
             await session.rollback()
             raise

@@ -1340,6 +1340,80 @@ class Settings(BaseSettings):
     RAG_RERANK_ENABLED: bool = Field(default=False)
     RAG_RERANK_TOP_N: int = Field(default=20, ge=1, le=100)
     RAG_RERANK_MODEL: str = Field(default="")
+    RAG_EMBED_MAX_CHARS: int = Field(
+        default=6000,
+        ge=0,
+        le=100000,
+        description=(
+            "Tope de caracteres que se envian al modelo de embeddings por chunk "
+            "(los chunks padre de una seccion entera excedian el limite del "
+            "provider y hacian fallar toda la indexacion V2 del documento). "
+            "0 = sin tope."
+        ),
+    )
+    KNOWLEDGE_SUMMARY_MAX_SECTIONS: int = Field(
+        default=0,
+        ge=0,
+        le=5000,
+        description=(
+            "Tope de secciones resumidas por documento en la ingesta (0 = todas). "
+            "Cada seccion es una llamada al LLM."
+        ),
+    )
+    KNOWLEDGE_SUMMARY_BUDGET_USD: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Presupuesto por documento para el resumen LLM de ingesta: si el costo "
+            "estimado lo supera, se usa el resumen extractivo determinista (0 = sin "
+            "limite)."
+        ),
+    )
+    KNOWLEDGE_SUMMARY_MAX_TOKENS: int = Field(
+        default=512,
+        ge=64,
+        le=8000,
+        description="Max tokens de salida de cada llamada de resumen de ingesta.",
+    )
+    KNOWLEDGE_SUMMARY_DOC_MAX_CHARS: int = Field(
+        default=24000,
+        ge=1000,
+        le=200000,
+        description="Caracteres del documento que entran al prompt de resumen.",
+    )
+    KNOWLEDGE_SUMMARY_SECTION_MAX_CHARS: int = Field(
+        default=6000,
+        ge=500,
+        le=100000,
+        description="Caracteres de cada seccion que entran al prompt de resumen.",
+    )
+    RAG_RETRIEVAL_ENTITY_PIN: str = Field(
+        default="on",
+        description=(
+            "Pin de entidades nombradas en la pregunta (byte 105, categoria 31, "
+            "record 4, tabla 961): pata lexica con el label exacto y, si sigue sin "
+            "aparecer, barrido por frase acotado en las fuentes. 'off' = solo la "
+            "pata normal del motor."
+        ),
+    )
+    RAG_RETRIEVAL_ENTITY_PIN_CHUNKS: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description="Chunks que puede aportar cada etapa del pin de entidades.",
+    )
+    RAG_RETRIEVAL_ENTITY_SCAN_MAX_POINTS: int = Field(
+        default=3000,
+        ge=0,
+        le=200000,
+        description="Tope de puntos del barrido por frase (0 = sin barrido).",
+    )
+    RAG_RETRIEVAL_ENTITY_SCAN_MAX_MS: float = Field(
+        default=1500.0,
+        ge=0.0,
+        le=30000.0,
+        description="Tope de tiempo del barrido por frase, en milisegundos.",
+    )
     RAG_RETRIEVAL_STRATEGY: str = Field(
         default="vector",
         description="Estrategia por defecto del motor: vector|lexical|hybrid.",

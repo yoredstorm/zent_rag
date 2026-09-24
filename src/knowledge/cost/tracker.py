@@ -72,19 +72,56 @@ class KnowledgeUsageTracker:
         organization_id: UUID,
         chunk_token_count: int,
         *,
+        model: str | None = None,
+        cost_usd: float = 0.0,
         workspace_id: UUID | None = None,
         corpus_id: UUID | None = None,
         source_id: UUID | None = None,
     ) -> None:
         """Estima tokens de embedding desde el token_count de los chunks."""
+        metadata = {"method": "token_count_estimate"}
+        if model:
+            metadata["model"] = model
         await self.record(
             organization_id,
             category="embedding",
             tokens=chunk_token_count,
+            cost_usd=cost_usd,
             workspace_id=workspace_id,
             corpus_id=corpus_id,
             source_id=source_id,
-            metadata={"method": "token_count_estimate"},
+            metadata=metadata,
+        )
+
+    async def record_llm_tokens(
+        self,
+        organization_id: UUID,
+        *,
+        prompt_tokens: int,
+        completion_tokens: int,
+        cost_usd: float = 0.0,
+        model: str | None = None,
+        purpose: str = "",
+        workspace_id: UUID | None = None,
+        source_id: UUID | None = None,
+        metadata: dict | None = None,
+    ) -> None:
+        """Uso real de LLM durante la ingesta (hoy: resúmenes en shadow)."""
+        payload = dict(metadata or {})
+        if model:
+            payload["model"] = model
+        if purpose:
+            payload["purpose"] = purpose
+        payload["prompt_tokens"] = int(prompt_tokens)
+        payload["completion_tokens"] = int(completion_tokens)
+        await self.record(
+            organization_id,
+            category="llm",
+            tokens=int(prompt_tokens) + int(completion_tokens),
+            cost_usd=cost_usd,
+            workspace_id=workspace_id,
+            source_id=source_id,
+            metadata=payload,
         )
 
     async def summary(

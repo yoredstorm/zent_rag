@@ -422,7 +422,11 @@ def get_knowledge_engine():
             summarizer = DocumentSummarizer(
                 llm=get_llm_provider(),
                 config=SummarizerConfig(
-                    model=settings.KNOWLEDGE_SUMMARY_MODEL or None
+                    model=settings.KNOWLEDGE_SUMMARY_MODEL or None,
+                    max_tokens=settings.KNOWLEDGE_SUMMARY_MAX_TOKENS,
+                    document_max_chars=settings.KNOWLEDGE_SUMMARY_DOC_MAX_CHARS,
+                    section_max_chars=settings.KNOWLEDGE_SUMMARY_SECTION_MAX_CHARS,
+                    max_sections=settings.KNOWLEDGE_SUMMARY_MAX_SECTIONS,
                 ),
             )
 

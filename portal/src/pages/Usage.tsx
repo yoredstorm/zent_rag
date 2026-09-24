@@ -43,6 +43,12 @@ type Usage = {
     created_at: string;
   }[];
   top_users?: { user_id: string; requests: number }[];
+  knowledge?: {
+    embedding?: { tokens: number; cost_usd: number };
+    llm?: { tokens: number; cost_usd: number };
+    total_tokens?: number;
+    total_cost_usd?: number;
+  };
 };
 
 /** Skeleton con la forma final: foco + métricas + tabla. */
@@ -226,6 +232,38 @@ export default function UsagePage() {
                 icon={Coins}
               />
             </MetricGrid>
+
+            {usage.knowledge ? (
+              <Panel>
+                <PanelHeader
+                  title="Ingesta de conocimiento"
+                  description="Tokens y costo de indexar documentos: embeddings y resúmenes."
+                />
+                <div className="grid gap-3 p-4 sm:grid-cols-3">
+                  <Metric
+                    size="md"
+                    label="Tokens de ingesta"
+                    value={fmtNum(
+                      usage.knowledge.total_tokens ??
+                        (usage.knowledge.embedding?.tokens ?? 0) + (usage.knowledge.llm?.tokens ?? 0),
+                    )}
+                    hint="acumulado"
+                  />
+                  <Metric
+                    size="md"
+                    label="Embeddings"
+                    value={fmtNum(usage.knowledge.embedding?.tokens ?? 0)}
+                    hint={fmtCurrency(usage.knowledge.embedding?.cost_usd ?? 0)}
+                  />
+                  <Metric
+                    size="md"
+                    label="Resúmenes"
+                    value={fmtNum(usage.knowledge.llm?.tokens ?? 0)}
+                    hint={fmtCurrency(usage.knowledge.llm?.cost_usd ?? 0)}
+                  />
+                </div>
+              </Panel>
+            ) : null}
           </div>
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">

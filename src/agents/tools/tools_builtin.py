@@ -170,6 +170,22 @@ class SearchKnowledgeTool(Tool):
         raw = (ctx.agent_config or {}).get("retrieval")
         return raw if isinstance(raw, dict) else {}
 
+    @staticmethod
+    def _default_strategy() -> str:
+        """Cascada real: lo que diga el motor (RAG_RETRIEVAL_STRATEGY) y si no, vector.
+
+        Antes la tool fijaba "vector" y el default del sistema quedaba ignorado:
+        el agente nunca podía usar la pata léxica que sí existe en el motor.
+        """
+        try:
+            from src.core.config import get_settings
+            from src.rag.retrieval.models import RETRIEVAL_STRATEGIES, STRATEGY_VECTOR
+
+            strategy = str(getattr(get_settings(), "RAG_RETRIEVAL_STRATEGY", "") or "")
+            return strategy if strategy in RETRIEVAL_STRATEGIES else STRATEGY_VECTOR
+        except Exception:  # noqa: BLE001 — nunca romper la tool por un flag
+            return "vector"
+
     async def execute(self, ctx: ToolContext, arguments: dict) -> ToolResult:
         start = time.perf_counter()
         stage_ms: dict[str, float] = {}
@@ -181,7 +197,7 @@ class SearchKnowledgeTool(Tool):
             agent_top_k = overrides.get("top_k")
             if agent_top_k is not None:
                 top_k = min(top_k, int(agent_top_k))
-            strategy = str(overrides.get("strategy") or "vector")
+            strategy = str(overrides.get("strategy") or self._default_strategy())
             score_threshold = float(overrides.get("score_threshold") or 0.0)
             source_ids = self._uuids(ctx, "source_ids")
             kb_ids = self._uuids(ctx, "knowledge_base_ids")
@@ -268,6 +284,11 @@ class SearchKnowledgeTool(Tool):
             lines: list[str] = []
             evidence: list[dict] = []
             seen_refs: set[str] = set()
+            pinned = sum(
+                1
+                for chunk in chunks
+                if str((chunk.metadata or {}).get("retrieval") or "").startswith("entity")
+            )
             if exact_block:
                 lines.append(exact_block)
             full_tabular_left = _TABULAR_FULL_CHUNKS
@@ -346,11 +367,10 @@ class SearchKnowledgeTool(Tool):
                     "evidence": evidence[:24],
                     "retrieval": {
                         "chunks": len(chunks),
-                        "strategy": (exact_result.metadata or {}).get("strategy")
-                        if exact_result is not None
-                        else None,
+                        "strategy": strategy,
                         "exact": bool(exact_block),
                         "top_score": round(top_score, 4),
+                        "entity_pin": pinned,
                     },
                     "stage_ms": stage_ms,
                     "exact": bool(exact_block),

@@ -608,6 +608,23 @@ zent_response_ungrounded_figures_total = Counter(
     "zent_response_ungrounded_figures_total",
     "Dates/years stated in an answer that the retrieved evidence does not contain",
 )
+# --- Retrieval: pin de entidades nombradas en la pregunta ----------------------
+zent_retrieval_entity_pin_total = Counter(
+    "zent_retrieval_entity_pin_total",
+    "Queries whose asked entity (byte 105, categoria 31, ...) was pinned into evidence",
+    labelnames=["outcome", "stage"],
+)
+# --- Ingesta: tokens y costo (embeddings + resumen) ----------------------------
+knowledge_ingest_tokens_total = Counter(
+    "knowledge_ingest_tokens_total",
+    "Tokens consumidos por la ingesta de conocimiento",
+    labelnames=["kind"],  # embedding | llm
+)
+knowledge_ingest_cost_usd = Counter(
+    "knowledge_ingest_cost_usd",
+    "Costo estimado (USD) de la ingesta de conocimiento",
+    labelnames=["kind"],
+)
 # --- Agent JEV Loop: juicio por paso + re-consultas dirigidas -----------------
 zent_agent_jev_action_total = Counter(
     "zent_agent_jev_action_total",

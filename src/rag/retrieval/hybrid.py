@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import time
+from typing import Any
 
 from src.core.domain.entities import RetrievalContext
 from src.core.ports import HybridStore, LexicalStore, VectorStore
@@ -58,6 +60,7 @@ class HybridRetriever(Retriever):
             LexicalRetriever(lexical_store) if lexical_store is not None else None
         )
         self._hybrid_store = hybrid_store
+        self._store = vector_store
         self._reranker = reranker
         self._builder = context_builder or ContextBuilder(max_context_tokens=32000)
 
@@ -86,6 +89,11 @@ class HybridRetriever(Retriever):
             # el umbral coseno descartaría hits válidos, así que se omiten
             # (las patas ya fueron filtradas por el store).
             chunks = filter_by_threshold(chunks, query.score_threshold)
+
+        # Pin por entidad: lo que la pregunta nombra (byte 105, categoría 31,
+        # record 4, tabla 961) tiene que estar. Va después del umbral para que
+        # el umbral no lo descarte y antes del rerank para que el reranker lo vea.
+        chunks = await self._pin_asked_entities(query, chunks)
 
         if self._reranker is not None and chunks:
             try:
@@ -124,6 +132,238 @@ class HybridRetriever(Retriever):
         if self._lexical is None:
             raise ValueError("Lexical strategy requires a LexicalStore")
         return await self._lexical.retrieve(query)
+
+    # ------------------------------------------------------------------
+    # Pin por entidad nombrada en la pregunta
+    # ------------------------------------------------------------------
+    def _entity_pin_settings(self) -> tuple[bool, int, int, float]:
+        """(activo, límite de chunks, puntos, ms) del pin. Tolerante a settings."""
+        try:
+            from src.core.config import get_settings
+
+            settings = get_settings()
+
+            def _leer(nombre: str, default):
+                return getattr(settings, nombre, default)
+
+            activo = str(_leer("RAG_RETRIEVAL_ENTITY_PIN", "on")).lower() not in (
+                "off",
+                "0",
+                "false",
+            )
+            return (
+                activo,
+                max(int(_leer("RAG_RETRIEVAL_ENTITY_PIN_CHUNKS", 3) or 3), 1),
+                max(int(_leer("RAG_RETRIEVAL_ENTITY_SCAN_MAX_POINTS", 3000) or 0), 0),
+                max(float(_leer("RAG_RETRIEVAL_ENTITY_SCAN_MAX_MS", 1500) or 0), 0.0),
+            )
+        except Exception:  # noqa: BLE001 — el pin nunca rompe el retrieval
+            return True, 3, 3000, 1500.0
+
+    async def _pin_asked_entities(
+        self,
+        query: RetrievalQuery,
+        chunks: list[Any],
+    ) -> list[Any]:
+        """Garantiza que lo que la pregunta nombra esté en la evidencia.
+
+        Dos etapas, ambas deterministas y sin LLM:
+        1. pata léxica con **sólo** el label de la entidad («byte 105»): la
+           pregunta completa diluye el token exacto, el label no;
+        2. si la entidad sigue sin aparecer, barrido por frase acotado
+           (puntos + tiempo) sobre las fuentes de la consulta.
+        Los aciertos se ordenan al frente con el score del mejor hit primario
+        para que el recorte por presupuesto no los descarte.
+        """
+        activo, pin_chunks, max_points, max_ms = self._entity_pin_settings()
+        if not activo:
+            return chunks
+
+        from src.intelligence.response.entities import (
+            AskedEntity,
+            asked_entities,
+            normalize,
+        )
+
+        entidades = asked_entities(query.query)
+        if not entidades:
+            return chunks
+
+        def _texto(items: list[Any]) -> str:
+            return "\n".join(getattr(item, "content", "") or "" for item in items)
+
+        def _presente(entidad: AskedEntity, texto: str) -> bool:
+            """Frase exacta del label («byte 105»), no el número suelto.
+
+            `entity_covered` es deliberadamente laxo para la nota de cobertura
+            (cualquier «105» cuenta); para el pin hace falta precisión: si no
+            aparece la frase, hay que ir a buscarla.
+            """
+            haystack = normalize(texto)
+            if not haystack:
+                return False
+            return any(variante and variante in haystack for variante in entidad.variants)
+
+        etapas: dict[str, int] = {}
+        pinned: list[Any] = []
+
+        def _fuentes_relevantes() -> list[Any]:
+            """Fuentes que ya aparecieron en la búsqueda: las del tema."""
+            vistas: list[Any] = []
+            for chunk in chunks + pinned:
+                metadata = getattr(chunk, "metadata", None) or {}
+                source_id = metadata.get("source_id")
+                if source_id and source_id not in vistas:
+                    vistas.append(source_id)
+            return vistas
+
+        def _objetivos() -> list[list[Any] | None]:
+            relevantes = _fuentes_relevantes()
+            grupos: list[list[Any] | None] = []
+            if relevantes:
+                grupos.append(relevantes)
+            resto = [
+                sid
+                for sid in (query.source_ids or [])
+                if str(sid) not in {str(item) for item in relevantes}
+            ]
+            if resto:
+                grupos.append(resto)
+            if not grupos:
+                # Sin fuentes declaradas (p. ej. chat por colección): barrido de
+                # organización, acotado por puntos y tiempo.
+                grupos.append(None)
+            return grupos
+
+        async def _barrer(
+            needles: list[str], *, heading_only: bool, solo_relevantes: bool = False
+        ) -> int:
+            scan = getattr(self._store, "scan_text", None)
+            if not callable(scan) or not needles:
+                return 0
+            encontrados_total = 0
+            for objetivo in _objetivos():
+                if solo_relevantes and objetivo is None:
+                    break
+                try:
+                    encontrados = await scan(
+                        organization_id=query.organization_id,
+                        needles=needles,
+                        source_ids=objetivo,
+                        knowledge_base_id=query.knowledge_base_id,
+                        workspace_id=query.workspace_id,
+                        role=query.role,
+                        user_id=query.user_id,
+                        groups=query.groups,
+                        limit=pin_chunks,
+                        max_points=max_points,
+                        max_ms=max_ms,
+                        heading_only=heading_only,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Entity phrase scan failed", error=str(exc)[:150])
+                    continue
+                encontrados_total += len(encontrados.chunks)
+                pinned.extend(encontrados.chunks)
+                if encontrados.chunks:
+                    break
+            return encontrados_total
+
+        # Etapa 0: la sección cuyo TÍTULO es lo que se pregunta («4.6.2 Fee
+        # Application (byte 105)»). Una mención al pasar en una tabla de campos
+        # no explica nada: el título sí. Se busca por entidad y con el label
+        # exacto: las variantes sueltas («cat 31») matchean títulos de documento
+        # y desplazan a la sección que importa.
+        etapas["heading"] = 0
+        if max_points > 0:
+            for entidad in entidades:
+                needles_titulo = [entidad.label]
+                normalizado = normalize(entidad.label)
+                if normalizado and normalizado != entidad.label:
+                    needles_titulo.append(normalizado)
+                etapas["heading"] += await _barrer(
+                    needles_titulo, heading_only=True, solo_relevantes=True
+                )
+                if _presente(entidad, _texto(pinned)):
+                    break
+
+        # Etapa 1: léxico por entidad (una consulta por entidad, sin el resto).
+        if self._lexical is not None:
+            for entidad in entidades[:2]:
+                if _presente(entidad, _texto(chunks + pinned)):
+                    continue
+                try:
+                    parte = await self._lexical.retrieve(
+                        dataclasses.replace(
+                            query,
+                            query=entidad.label,
+                            top_k=pin_chunks,
+                            effective_top_k=pin_chunks,
+                            score_threshold=0.0,
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Entity lexical pin failed", error=str(exc)[:150])
+                    continue
+                pinned.extend(
+                    dataclasses.replace(chunk, metadata={**chunk.metadata, "retrieval": "entity_lexical"})
+                    for chunk in parte.chunks[:pin_chunks]
+                )
+            etapas["lexical"] = len(pinned)
+
+        # Etapa 2: barrido por frase cuando sigue faltando.
+        faltantes = [
+            entidad
+            for entidad in entidades
+            if not _presente(entidad, _texto(chunks + pinned))
+        ]
+        escaneados = 0
+        if faltantes and max_points > 0:
+            needle_variants: list[str] = []
+            for entidad in faltantes:
+                needle_variants.append(entidad.label)
+                normalizado = normalize(entidad.label)
+                if normalizado and normalizado not in needle_variants:
+                    needle_variants.append(normalizado)
+            # Primero las fuentes que ya aparecieron en la búsqueda (son las
+            # relevantes al tema); si no alcanza, el resto. Sin este orden, con
+            # 60+ fuentes el barrido puede no llegar nunca a la que tiene el dato.
+            escaneados = await _barrer(needle_variants, heading_only=False)
+        etapas["scan"] = escaneados
+
+        if not pinned:
+            self._observe_entity_pin(query, etapas, cubiertas=True)
+            return chunks
+
+        conocido = {getattr(chunk, "document_id", None) for chunk in chunks}
+        nuevos = [c for c in pinned if getattr(c, "document_id", None) not in conocido]
+        top_score = max((float(getattr(c, "score", 0.0) or 0.0) for c in chunks), default=0.0)
+        destacados = [
+            dataclasses.replace(chunk, score=max(float(chunk.score or 0.0), top_score))
+            for chunk in nuevos
+        ]
+        self._observe_entity_pin(query, etapas, cubiertas=bool(destacados))
+        return destacados + chunks
+
+    @staticmethod
+    def _observe_entity_pin(query: RetrievalQuery, etapas: dict[str, int], *, cubiertas: bool) -> None:
+        try:
+            from src.infrastructure.observability.metrics import (
+                zent_retrieval_entity_pin_total,
+            )
+
+            zent_retrieval_entity_pin_total.labels(
+                outcome="hit" if cubiertas else "miss",
+                stage="lexical" if etapas.get("lexical") else "scan",
+            ).inc()
+        except Exception:  # noqa: BLE001 — métrica nunca rompe el retrieval
+            return
+        logger.info(
+            "Entity pin applied",
+            entity_lexical=etapas.get("lexical", 0),
+            entity_scan=etapas.get("scan", 0),
+            organization_id=str(query.organization_id),
+        )
 
     async def _retrieve_hybrid(
         self,

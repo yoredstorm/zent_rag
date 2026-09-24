@@ -355,14 +355,44 @@ async def get_usage(
     days: int = 30,
     limit: int = 50,
 ):
-    """Agregados desde usage_logs para el dashboard del portal."""
+    """Agregados desde usage_logs para el dashboard del portal.
+
+    Incluye `knowledge`: tokens y costo de la ingesta (embeddings y resumen),
+    que antes se contaban sin costo y no aparecían en el dashboard.
+    """
     from src.platform.rbac.policy import require_permission
     from src.platform.usage.aggregation import get_organization_usage
 
     require_permission(request, "billing:read")
 
     organization_id = _organization_from_request(request, x_organization_id)
-    return await get_organization_usage(organization_id, days=days, limit=limit)
+    usage = await get_organization_usage(organization_id, days=days, limit=limit)
+    usage["knowledge"] = await _knowledge_usage(organization_id)
+    return usage
+
+
+async def _knowledge_usage(organization_id) -> dict:
+    """Uso de ingesta por categoría (fail-silent: nunca rompe el dashboard)."""
+    try:
+        from src.knowledge.cost import KnowledgeUsageTracker
+
+        por_categoria = await KnowledgeUsageTracker().summary(organization_id)
+    except Exception:  # noqa: BLE001
+        return {"embedding": {"tokens": 0, "cost_usd": 0.0}, "llm": {"tokens": 0, "cost_usd": 0.0}}
+    for categoria in ("embedding", "llm"):
+        por_categoria.setdefault(categoria, {"tokens": 0, "cost_usd": 0.0})
+    por_categoria["total_tokens"] = sum(
+        int(valor.get("tokens", 0) or 0) for valor in por_categoria.values() if isinstance(valor, dict)
+    )
+    por_categoria["total_cost_usd"] = round(
+        sum(
+            float(valor.get("cost_usd", 0.0) or 0.0)
+            for valor in por_categoria.values()
+            if isinstance(valor, dict)
+        ),
+        6,
+    )
+    return por_categoria
 
 
 @router.get("/admin/subscriptions", summary="Listar todas las suscripciones (admin)")
