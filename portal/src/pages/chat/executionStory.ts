@@ -440,6 +440,11 @@ export const REASON_LABELS: Record<string, string> = {
   no_questions: "no había preguntas que hacer",
   questions_unavailable: "las preguntas no se pudieron preparar",
   judgment_blocked_generation: "el juicio previo impidió generar",
+  // Agent JEV Loop: por qué el paso decidió lo que decidió.
+  evidence_gap: "faltaba evidencia para lo que se preguntó",
+  termination_satisfied: "la evidencia alcanzaba para responder",
+  no_usable_evidence: "no había evidencia utilizable",
+  tool_choice_pending: "faltaba elegir herramienta",
 };
 
 const DECISION_KIND_TITLES: Record<string, string> = {
@@ -452,6 +457,8 @@ const DECISION_KIND_TITLES: Record<string, string> = {
   answer_revision: "Revisó y ajustó la respuesta",
   reasoning_incomplete: "Retuvo la respuesta: análisis incompleto",
   response_planning: "Preparó cómo explicar la respuesta",
+  // Agent JEV Loop: el juicio del paso, con su veredicto compuesto.
+  agent_step: "JEV juzgó el paso",
   guardrail: "Aplicó una regla de seguridad",
 };
 
@@ -463,6 +470,8 @@ const EVIDENCE_KIND_TITLES: Record<string, string> = {
   evidence: "Evaluó si la evidencia alcanzaba",
   fallback: "Activó un respaldo",
   grounding: "Comprobó el respaldo de la respuesta",
+  // Búsqueda extra pedida por JEV porque faltaba evidencia para lo preguntado.
+  jev_retrieval: "Volvió a buscar: faltaba evidencia",
 };
 
 const REASONING_KIND_TITLES: Record<string, string> = {
@@ -1292,6 +1301,8 @@ const PHASE_BY_KIND: Record<string, StoryPhaseId> = {
   company_context: "context",
   reasoning_plan: "planning",
   response_planning: "planning",
+  agent_step: "decision",
+  jev_retrieval: "evidence",
   decision: "decision",
   tool_routing: "decision",
   tool_filter: "decision",

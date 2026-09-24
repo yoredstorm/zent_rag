@@ -8,6 +8,7 @@ import { useState } from "react";
 import { Badge, type Tone } from "../../../components/ui";
 import {
   eventReasonsText,
+  judgmentValueLabel,
   statusLabel,
   type ExecutionStory,
   type StoryEvent,
@@ -114,6 +115,10 @@ export function ExecutionTimeline({ story }: { story: ExecutionStory }) {
 
 function FlowEventRow({ event, detailed }: { event: StoryEvent; detailed: boolean }) {
   const reasons = eventReasonsText(event);
+  // Cobertura: qué pidió la pregunta y la evidencia no trae. Es un dato del run.
+  const coverageGap = typeof event.metrics.coverage_gap === "string" ? event.metrics.coverage_gap : "";
+  // Veredicto del paso JEV (buscó de nuevo, respondió, se abstuvo).
+  const verdict = event.decisionAction ? judgmentValueLabel(event.decisionAction) : "";
   return (
     <div className="rounded-sm border border-border-soft px-2.5 py-2" data-state={event.status}>
       <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
@@ -127,7 +132,9 @@ function FlowEventRow({ event, detailed }: { event: StoryEvent; detailed: boolea
           </span>
         ) : null}
       </div>
+      {verdict ? <p className="mt-1 text-[11.5px] text-muted">Decidió: {verdict}</p> : null}
       {reasons ? <p className="mt-1 text-[11.5px] text-muted">Falta: {reasons}</p> : null}
+      {coverageGap ? <p className="mt-1 text-[11.5px] text-muted">{coverageGap}</p> : null}
       <StoryCard event={event} detailed={detailed} />
     </div>
   );

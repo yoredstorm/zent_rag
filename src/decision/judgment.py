@@ -69,7 +69,8 @@ JUDGE_PHASES = frozenset(
 _USAGE_PHASE_LABELS = {
     PHASE_POST_RETRIEVAL: PHASE_EVIDENCE,
     PHASE_POST_GENERATION: PHASE_GROUNDING,
-    PHASE_AGENT_STEP: PHASE_TOOL_ROUTING,
+    # `agent_step` ya no se aliasa a tool_routing: el loop JEV del agente se mide
+    # como lo que es (una llamada por paso con routing + evidencia + cierre).
 }
 
 

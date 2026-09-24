@@ -273,6 +273,10 @@ x-common-env: &common-env
   RAG_RESPONSE_INTELLIGENCE_MODE: ${RAG_RESPONSE_INTELLIGENCE_MODE:-rules}
   RAG_RESPONSE_INTELLIGENCE_CANARY_PERCENTAGE: ${RAG_RESPONSE_INTELLIGENCE_CANARY_PERCENTAGE:-0}
   RAG_RESPONSE_PRESENTATION_GATE: ${RAG_RESPONSE_PRESENTATION_GATE:-true}
+  # Agent JEV Loop: una llamada JEV por paso; el veredicto manda (con re-busqueda).
+  RUNTIME_AGENT_JEV_LOOP: ${RUNTIME_AGENT_JEV_LOOP:-on}
+  RUNTIME_AGENT_JEV_LOOP_CANARY_PERCENTAGE: ${RUNTIME_AGENT_JEV_LOOP_CANARY_PERCENTAGE:-0}
+  RUNTIME_AGENT_MAX_RETRIEVAL_ROUNDS: ${RUNTIME_AGENT_MAX_RETRIEVAL_ROUNDS:-2}
   # =========================================================================
   # Judgment Fabric (ADR judgment-fabric.md): agent/workflow/tool selection.
   # off = target explícito obligatorio (comportamiento previo).

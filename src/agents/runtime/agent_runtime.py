@@ -13,6 +13,7 @@ import json
 import re
 import time
 from dataclasses import dataclass, field
+from typing import Any
 from uuid import UUID, uuid4
 
 from src.agents.policies.authorization import has_injection_indicators
@@ -26,6 +27,8 @@ from src.core.ports import CacheProvider, LLMProvider
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.observability.metrics import (
     rag_agent_loop_preventions_total,
+    zent_agent_jev_action_total,
+    zent_agent_jev_retrieval_total,
     zent_response_section_labels_stripped_total,
 )
 from src.intelligence.loop_guard import LoopGuard
@@ -260,6 +263,10 @@ class AgentRunResult:
     #: Response Intelligence: cómo se decidió explicar la respuesta (forma, no
     #: contenido). Viaja al flujo para "Ver flujo".
     response_plan: dict | None = None
+    #: Packs JEV del loop (una llamada por paso) y los veredictos compuestos.
+    jev_packs: list[dict] = field(default_factory=list)
+    jev_decisions: list[dict] = field(default_factory=list)
+    jev_mode: str = ""
 
 
 def _parse_action(content: str) -> dict:
@@ -295,6 +302,21 @@ def _direct_answer(action: dict) -> str | None:
     if _tool_shaped(answer):
         return None
     return _clean_answer(answer)
+
+
+def _canary_allows(settings, run_id: Any) -> bool:
+    """Canary estable por run para el loop JEV. Sin id, no se activa."""
+    try:
+        from src.decision.routing import in_canary
+
+        percent = int(getattr(settings, "RUNTIME_AGENT_JEV_LOOP_CANARY_PERCENTAGE", 0) or 0)
+        if percent <= 0:
+            return False
+        if percent >= 100:
+            return True
+        return bool(run_id) and in_canary(run_id, percent)
+    except Exception:  # noqa: BLE001 — sin canary, el flag decide
+        return False
 
 
 def _coverage_history_note(question: str, evidence_text: str) -> str:
@@ -470,6 +492,212 @@ async def _circuit_check(config: dict, organization_id: UUID) -> None:
                 config["_circuit_open"] = True
     except Exception as exc:  # noqa: BLE001
         logger.warning("Circuit check failed", error=str(exc)[:150])
+
+
+def _uncovered_labels(question: str, evidence_text: str) -> list[str]:
+    """Entidades de la pregunta que la evidencia consultada no menciona."""
+    try:
+        from src.intelligence.response.entities import uncovered_entities
+
+        return [entity.label for entity in uncovered_entities(question, evidence_text)][:4]
+    except Exception:  # noqa: BLE001 — la cobertura nunca rompe el run
+        return []
+
+
+#: Palabras sin valor de consulta al armar una búsqueda refinada.
+_QUERY_STOPWORDS = frozenset(
+    {
+        "sobre", "cuentame", "cuéntame", "explicame", "explícame", "dime", "que", "qué",
+        "como", "cómo", "cual", "cuál", "para", "por", "con", "los", "las", "del", "una",
+        "unos", "unas", "esto", "esta", "este", "the", "and", "for", "with", "about",
+    }
+)
+
+
+def _refined_retrieval_query(question: str, entities: list[str]) -> str:
+    """Consulta enfocada en lo que falta. Determinista: entidades + tema, nada más.
+
+    Las entidades se escriben con su forma compacta (`cat31`) porque los nombres
+    de fuente del dominio suelen venir así (`Cat31_dapp_C.pdf`).
+    """
+    from src.intelligence.response.entities import asked_entities
+
+    tokens: list[str] = []
+    seen: set[str] = set()
+
+    def add(token: str) -> None:
+        value = token.strip()
+        key = value.lower()
+        if value and key not in seen:
+            seen.add(key)
+            tokens.append(value)
+
+    wanted = {label.lower() for label in entities}
+    for entity in asked_entities(question):
+        if wanted and entity.label.lower() not in wanted:
+            continue
+        for variant in entity.variants[:2]:
+            add(variant)
+
+    for word in re.findall(r"[\wÁÉÍÓÚÑáéíóúñ]{3,}", question, flags=re.UNICODE):
+        if len(tokens) >= 10:
+            break
+        if word.lower() in _QUERY_STOPWORDS:
+            continue
+        add(word)
+
+    query = " ".join(tokens)[:200].strip()
+    return query or question[:200]
+
+
+class _JevRetrievalOutcome:
+    """Resultado de una ronda de búsqueda pedida por JEV."""
+
+    OK = "ok"
+    UNAVAILABLE = "unavailable"
+    BLOCKED = "blocked"
+    ERROR = "error"
+
+
+async def _execute_jev_retrieval(
+    *,
+    runtime: AgentRuntime,
+    request: AgentRunRequest,
+    result: AgentRunResult,
+    history: list[str],
+    ctx: ToolContext,
+    effective_tools: list[str],
+    query: str,
+    round_number: int,
+    entities: list[str],
+    failed_tools: dict[str, str],
+) -> str:
+    """Ejecuta la búsqueda que pidió JEV, con los mismos guards que el LLM.
+
+    No depende de que el modelo decida reintentar: el veredicto manda. Devuelve
+    el desenlace para métrica y presupuesto.
+    """
+    tool_name = "search_knowledge"
+    if tool_name not in effective_tools:
+        history.append(
+            "## JEV · acción no aplicable: este agente no tiene búsqueda en el conocimiento"
+        )
+        result.steps.append(
+            {
+                "type": "jev_retrieval",
+                "round": round_number,
+                "reason": "evidence_gap",
+                "entities": list(entities)[:4],
+                "outcome": _JevRetrievalOutcome.UNAVAILABLE,
+            }
+        )
+        return _JevRetrievalOutcome.UNAVAILABLE
+    tool = get_tool(tool_name)
+    if tool is None or not tool_allowed(tool, effective_tools, ctx):
+        history.append(
+            "## JEV · acción no aplicable: la búsqueda no está permitida en este run"
+        )
+        result.steps.append(
+            {
+                "type": "jev_retrieval",
+                "round": round_number,
+                "reason": "evidence_gap",
+                "entities": list(entities)[:4],
+                "outcome": _JevRetrievalOutcome.UNAVAILABLE,
+            }
+        )
+        return _JevRetrievalOutcome.UNAVAILABLE
+
+    arguments: dict = {"query": query, "top_k": 5}
+    fingerprint = ToolFingerprint.compute(
+        tool=tool_name,
+        source="jev",
+        arguments=arguments,
+        query=request.message,
+        agent_id=str(request.agent.id),
+        organization_id=str(request.agent.organization_id),
+    )
+    if not runtime._loop_guard.check(
+        fingerprint,
+        new_information=f"jev_retrieval:{round_number}",
+        retry_reason="evidence_gap",
+        modified_plan=query,
+    ):
+        rag_agent_loop_preventions_total.labels(
+            organization_id=str(request.agent.organization_id),
+            scope="agent_runtime",
+        ).inc()
+        result.steps.append(
+            {
+                "type": "guardrail",
+                "tool": tool_name,
+                "detail": "loop prevention: JEV pidió la misma búsqueda ya hecha",
+            }
+        )
+        return _JevRetrievalOutcome.BLOCKED
+
+    tool_start = time.perf_counter()
+    tool_result = await execute_tool_guarded(tool, ctx, arguments, runtime._rate_limiter)
+    latency = (time.perf_counter() - tool_start) * 1000
+    result.spans.append(
+        {
+            "stage": "retrieval",
+            "name": f"tool:{tool_name}",
+            "duration_ms": round(latency, 2),
+            "tokens": 0,
+            "started_ms": round(tool_start * 1000, 1),
+            "status": "ok" if not tool_result.error else "error",
+            "metadata": {"tool": tool_name, "directed_by": "jev"},
+        }
+    )
+    step: dict = {
+        "type": "jev_retrieval",
+        "tool": tool_name,
+        "query": query,
+        "round": round_number,
+        "reason": "evidence_gap",
+        "entities": list(entities)[:4],
+        "latency_ms": round(latency, 2),
+    }
+    if tool_result.error:
+        step["error"] = tool_result.error[:300]
+        history.append(f"OBSERVATION (untrusted): error: {tool_result.error}")
+        result.steps.append(step)
+        failed_tools[tool_name] = _classify_tool_failure(tool_result.error)
+        return _JevRetrievalOutcome.ERROR
+    step["output"] = tool_result.output[:500]
+    if tool_result.meta:
+        step["meta"] = tool_result.meta
+    history.append(
+        "OBSERVATION (búsqueda pedida por JEV, datos no confiables):\n"
+        f"{tool_result.output[:3000]}"
+    )
+    coverage = _coverage_history_note(request.message, tool_result.output)
+    if coverage:
+        history.append(coverage)
+        step["coverage_gap"] = coverage.splitlines()[1][:200]
+    result.steps.append(step)
+    return _JevRetrievalOutcome.OK
+
+
+def _record_step_judgment(
+    result: AgentRunResult, judgment: Any, *, latency_ms: float
+) -> None:
+    """Publica el pack del paso en el flujo (misma forma que el preflight del RAG)."""
+    try:
+        from src.decision.preflight import build_pack
+
+        answers = getattr(judgment, "answers", None)
+        payload = {"answers": answers} if isinstance(answers, dict) and answers else None
+        pack = build_pack(
+            phase="agent_step",
+            payload=payload,
+            mode=getattr(judgment, "mode", "") or "on",
+            latency_ms=latency_ms,
+        )
+        result.jev_packs.append(pack.to_public_dict())
+    except Exception as exc:  # noqa: BLE001 — el flujo nunca se rompe por el pack
+        logger.warning("agent step pack failed", error=str(exc)[:150])
 
 
 class AgentRuntime:
@@ -1144,9 +1372,32 @@ class AgentRuntime:
         max_tokens = int(config["max_tokens"])
         max_cost = float(config["max_cost"])
         from src.platform.billing.pricing import estimate_cost
+        from src.runtime.agent_step import (
+            ACTION_ABSTAIN,
+            ACTION_RETRIEVE,
+            loop_enabled,
+            loop_mode,
+        )
         from src.runtime.answer_gate import INSUFFICIENT_ANSWER, answer_gate_mode
 
         answer_mode = answer_gate_mode(settings, request.agent.config_json)
+        # Agent JEV Loop: el gate de respuesta corre por defecto cuando el agente
+        # responde con conocimiento (ahí es donde el borrador puede no estar
+        # respaldado); en agentes puramente de tools manda su config.
+        jev_loop_mode = loop_mode(settings, request.agent.config_json)
+        jev_loop_active = loop_enabled(settings, request.agent.config_json)
+        if jev_loop_active and jev_loop_mode == "canary":
+            jev_loop_active = _canary_allows(settings, result.run_id)
+        # Shadow juzga y registra; sólo on/canary actúan sobre el veredicto.
+        jev_loop_acts = jev_loop_active and jev_loop_mode in ("on", "canary")
+        knowledge_agent = "search_knowledge" in effective_tools
+        if jev_loop_acts and knowledge_agent:
+            runtime_config = (request.agent.config_json or {}).get("runtime")
+            if not isinstance(runtime_config, dict) or runtime_config.get("answer_gate") is None:
+                answer_mode = "on"
+        result.jev_mode = jev_loop_mode
+        max_retrieval_rounds = int(getattr(settings, "RUNTIME_AGENT_MAX_RETRIEVAL_ROUNDS", 2) or 0)
+        retrieval_rounds = 0
         revision_used = False
         pending_step_judgment = None
 
@@ -1260,6 +1511,9 @@ class AgentRuntime:
                         tools=tool_descriptions,
                         agent_instructions=agent_instructions,
                         reasoning_rule=_reasoning_rule_text(reasoning),
+                        response_shape=_response_shape_block(
+                            getattr(self, "_pending_response_plan", None)
+                        ),
                     )
                     result.steps.append(
                         {
@@ -1618,11 +1872,19 @@ class AgentRuntime:
 
             from src.runtime.termination import gate_enabled, original_request_satisfied
 
-            if gate_enabled(settings, request.agent.config_json) and not tool_result.error:
+            judge_this_step = not tool_result.error and (
+                jev_loop_active or gate_enabled(settings, request.agent.config_json)
+            )
+            if judge_this_step:
                 try:
                     from src.decision.judgment import PHASE_AGENT_STEP, JudgmentContext
                     from src.decision.service import get_decision_engine
-                    from src.runtime.agent_step import judge_agent_step, step_batch_enabled
+                    from src.runtime.agent_step import (
+                        MODE_ON,
+                        judge_agent_step,
+                        step_batch_enabled,
+                        step_verdict_note,
+                    )
 
                     _gate_t0 = time.perf_counter()
                     step_context = JudgmentContext(
@@ -1633,8 +1895,13 @@ class AgentRuntime:
                         run_id=result.run_id,
                         trace_id=request.trace_id,
                     )
-                    if step_batch_enabled(settings, request.agent.config_json):
-                        # Tool routing + termination del mismo estado en UNA llamada.
+                    observation_text = "\n".join(
+                        line for line in history[-10:] if line.startswith("OBSERVATION")
+                    )
+                    gap_labels = _uncovered_labels(request.message, observation_text)
+                    rounds_left = max(0, max_retrieval_rounds - retrieval_rounds)
+                    if jev_loop_active or step_batch_enabled(settings, request.agent.config_json):
+                        # Tool routing + evidencia faltante + terminación en UNA llamada.
                         step_judgment = await judge_agent_step(
                             engine=get_decision_engine(),
                             tools=allowed_tools,
@@ -1648,14 +1915,75 @@ class AgentRuntime:
                             confidence_threshold=settings.RUNTIME_JEV_TOOL_CONFIDENCE,
                             min_tools=getattr(settings, "RUNTIME_JEV_MIN_TOOLS", 3),
                             context=step_context,
+                            retrieval_rounds_left=rounds_left,
+                            uncovered_entities=gap_labels,
+                            has_usable_evidence=_history_has_usable_observation(history),
+                            include_evidence_gap=jev_loop_active,
+                            mode=jev_loop_mode if jev_loop_active else MODE_ON,
                         )
                         if step_judgment is not None:
                             pending_step_judgment = step_judgment
+                            gate_latency = round((time.perf_counter() - _gate_t0) * 1000, 2)
                             step_record = step_judgment.to_step()
-                            step_record["latency_ms"] = round(
-                                (time.perf_counter() - _gate_t0) * 1000, 2
-                            )
+                            step_record["latency_ms"] = gate_latency
                             result.steps.append(step_record)
+                            _record_step_judgment(result, step_judgment, latency_ms=gate_latency)
+                            # El veredicto manda cuando el loop actúa (on/canary).
+                            verdict_action = step_judgment.next_action if jev_loop_acts else ""
+                            if verdict_action:
+                                zent_agent_jev_action_total.labels(
+                                    mode=jev_loop_mode,
+                                    action=verdict_action,
+                                    reason=step_judgment.action_reason or "unknown",
+                                ).inc()
+                                result.jev_decisions.append(
+                                    {
+                                        "phase": PHASE_AGENT_STEP,
+                                        "action": verdict_action,
+                                        "reasons": [step_judgment.action_reason]
+                                        + [
+                                            f"uncovered:{label}"
+                                            for label in step_judgment.uncovered_entities[:3]
+                                        ],
+                                        "applied": True,
+                                    }
+                                )
+                            if verdict_action == ACTION_ABSTAIN:
+                                history.append(step_verdict_note(step_judgment))
+                                result.answer = INSUFFICIENT_ANSWER
+                                result.status = "completed"
+                                result.steps.append(
+                                    {
+                                        "type": "final",
+                                        "answer": INSUFFICIENT_ANSWER[:500],
+                                        "detail": "jev_agent_step: sin evidencia suficiente",
+                                    }
+                                )
+                                return
+                            if verdict_action == ACTION_RETRIEVE:
+                                history.append(step_verdict_note(step_judgment))
+                                refined = _refined_retrieval_query(
+                                    request.message, list(step_judgment.uncovered_entities)
+                                )
+                                outcome = await _execute_jev_retrieval(
+                                    runtime=self,
+                                    request=request,
+                                    result=result,
+                                    history=history,
+                                    ctx=ctx,
+                                    effective_tools=list(effective_tools),
+                                    query=refined,
+                                    round_number=retrieval_rounds + 1,
+                                    entities=list(step_judgment.uncovered_entities),
+                                    failed_tools=failed_tools,
+                                )
+                                zent_agent_jev_retrieval_total.labels(
+                                    round=str(retrieval_rounds + 1), outcome=outcome
+                                ).inc()
+                                if outcome in {"ok", "error"}:
+                                    retrieval_rounds += 1
+                                    tool_calls += 1
+                                continue
                             if step_judgment.termination.get("stop"):
                                 held = _holds_termination(
                                     reasoning, reason="agent_step_batched"
@@ -1672,6 +2000,8 @@ class AgentRuntime:
                                         reasoning=reasoning,
                                     )
                                     return
+                            elif jev_loop_active:
+                                history.append(step_verdict_note(step_judgment))
                         else:
                             gate = await original_request_satisfied(
                                 engine=get_decision_engine(),

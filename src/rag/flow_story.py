@@ -64,6 +64,9 @@ STEP_KIND_PHASES: dict[str, str] = {
     "reasoning_incomplete": PHASE_VERIFICATION,
     "answer_revision": PHASE_VERIFICATION,
     "verification": PHASE_VERIFICATION,
+    # Agent JEV Loop: juicio del paso y búsqueda dirigida por JEV.
+    "agent_step": PHASE_DECISION,
+    "jev_retrieval": PHASE_EVIDENCE,
     "scenario_parse": PHASE_REASONING,
     "state_reconstruction": PHASE_REASONING,
     "timeline": PHASE_REASONING,
@@ -663,6 +666,18 @@ def build_flow_events(flow: dict) -> list[dict]:
                     ref = str(item.get("ref") or item.get("document_id") or item.get("source_id") or "")
                     if ref:
                         evidence_refs.append(ref)
+        # El veredicto del paso JEV viaja como decisión: el portal lo muestra
+        # como "JEV decidió: …" sin reinterpretar nada.
+        decision: dict[str, Any] | None = None
+        if kind == "agent_step":
+            action = str(step.get("next_action") or "")
+            if action:
+                reason = str(step.get("action_reason") or "")
+                decision = {
+                    "action": action,
+                    "reason_codes": [reason] if reason else [],
+                    "applied": True,
+                }
         events.append(
             _event(
                 event_id=str(step.get("id") or f"step-{index}"),
@@ -673,6 +688,7 @@ def build_flow_events(flow: dict) -> list[dict]:
                 metrics=metrics or None,
                 evidence_refs=evidence_refs or None,
                 technical=technical or None,
+                decision=decision,
             )
         )
 

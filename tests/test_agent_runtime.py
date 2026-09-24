@@ -30,6 +30,9 @@ def _runtime_flags_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "RUNTIME_TOOL_ROUTING_MODE", "off")
     monkeypatch.setattr(settings, "RUNTIME_TERMINATION_GATE", "off")
     monkeypatch.setattr(settings, "RUNTIME_ANSWER_GATE", "off")
+    # El Agent JEV Loop se prueba en su propia clase; por defecto acá queda off
+    # para que cada test fije el comportamiento que verifica.
+    monkeypatch.setattr(settings, "RUNTIME_AGENT_JEV_LOOP", "off")
     # El filtro por fuentes consulta Postgres; en unit tests se apaga salvo
     # en los casos dedicados (que mockean `_agent_source_types`).
     monkeypatch.setattr(settings, "RUNTIME_SOURCE_AWARE_TOOLS", False)
@@ -276,6 +279,237 @@ class TestReActLoop:
         assert result.status == "completed"
         assert "Miguel" in result.answer
         assert any(s.get("detail") == "max_tokens exceeded" for s in result.steps)
+
+
+class _FakeSearchTool(Tool):
+    """Búsqueda de conocimiento fake: registra las consultas que recibe."""
+
+    name: ClassVar[str] = "search_knowledge"
+    description: ClassVar[str] = "Busca en el conocimiento."
+    input_schema: ClassVar[dict] = {
+        "type": "object",
+        "required": ["query"],
+        "properties": {"query": {"type": "string"}, "top_k": {"type": "integer"}},
+    }
+
+    def __init__(self, output: str = "sin resultados") -> None:
+        self.queries: list[str] = []
+        self._output = output
+
+    async def execute(self, ctx: ToolContext, arguments: dict) -> ToolResult:
+        self.queries.append(str(arguments.get("query") or ""))
+        return ToolResult(output=self._output)
+
+
+class _LoopJevClient:
+    """Cliente JEV fake para el loop: responde según el paso.
+
+    `evidence_gap_steps` = cuántos pasos dicen "falta evidencia"; después el
+    veredicto dice que ya se puede responder.
+    """
+
+    def __init__(self, *, evidence_gap_steps: int = 0) -> None:
+        self.calls = 0
+        self.questions: list[list[str]] = []
+        self._gap_steps = evidence_gap_steps
+
+    async def system_one(self, *, state, questions, model, timeout):
+        self.calls += 1
+        self.questions.append(sorted(questions))
+        answers: dict = {}
+        gap = self.calls <= self._gap_steps
+        for question_id, spec in questions.items():
+            qtype = str((spec or {}).get("type") or "noul")
+            if qtype == "choice":
+                criteria = (spec or {}).get("criteria") or {}
+                choice = next(iter(criteria), "none")
+                answers[question_id] = {
+                    "type": "choice",
+                    "choice": choice,
+                    "confidence": 0.9,
+                    "probabilities": {choice: 0.9},
+                }
+            elif qtype == "score":
+                answers[question_id] = {"type": "score", "score": 2.0, "confidence": 0.8}
+            elif question_id == "needs_more_evidence":
+                answers[question_id] = {"type": "noul", "noul": 0.9 if gap else 0.1}
+            elif question_id == "satisfied":
+                answers[question_id] = {"type": "noul", "noul": 0.1 if gap else 0.9}
+            else:
+                answers[question_id] = {"type": "noul", "noul": 0.5}
+        return {
+            "model": "jev-loop-test",
+            "answers": answers,
+            "usage": {"input_tokens": 30, "output_tokens": 8},
+        }
+
+
+def _loop_engine(client) -> object:
+    from src.decision.batch import JudgmentCache
+    from src.decision.engine import DecisionEngine
+    from src.decision.providers.jev import JevDecisionProvider
+    from src.decision.settings import DecisionEngineSettings
+
+    settings = DecisionEngineSettings(
+        routing_mode="jev",
+        canary_percentage=100,
+        fallback_model="cheap",
+        jev_api_key="test-key",
+        batch_mode="on",
+    )
+    cache = JudgmentCache()
+    provider = JevDecisionProvider(settings, client=client, cache=cache)
+    return DecisionEngine(provider, settings, jev=provider, cache=cache)
+
+
+def _install_engine(monkeypatch: pytest.MonkeyPatch, engine) -> None:
+    import src.decision.service as service
+
+    monkeypatch.setattr(service, "get_decision_engine", lambda: engine)
+
+
+class TestAgentJevLoop:
+    @pytest.mark.asyncio
+    async def test_una_llamada_jev_por_paso_con_el_veredicto_en_el_step(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.core.config import get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "RUNTIME_AGENT_JEV_LOOP", "on")
+        search = _FakeSearchTool("La política de RRHH dice X.")
+        register_tool(search)
+        client = _LoopJevClient(evidence_gap_steps=0)
+        _install_engine(monkeypatch, _loop_engine(client))
+        llm = _FakeLLM(
+            [
+                '{"tool": "search_knowledge", "arguments": {"query": "politica rrhh"}}',
+                '{"answer": "La política es X"}',
+            ]
+        )
+        runtime = AgentRuntime(llm_provider=llm)
+        result = await runtime.run(
+            _request(_agent(tools=["search_knowledge"]), "cual es la politica")
+        )
+
+        assert result.status == "completed"
+        step_judgments = [s for s in result.steps if s["type"] == "agent_step"]
+        assert len(step_judgments) == 1
+        assert step_judgments[0]["next_action"] in {"generate_answer", "retrieve_more"}
+        assert client.calls == 1
+        # El juicio viaja al flujo como pack (una llamada, N preguntas).
+        assert result.jev_packs and result.jev_packs[0]["phase"] == "agent_step"
+        assert result.jev_mode == "on"
+
+    @pytest.mark.asyncio
+    async def test_jev_pide_otra_busqueda_con_consulta_refinada(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.core.config import get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "RUNTIME_AGENT_JEV_LOOP", "on")
+        search = _FakeSearchTool("No encontré nada sobre eso.")
+        register_tool(search)
+        client = _LoopJevClient(evidence_gap_steps=1)
+        _install_engine(monkeypatch, _loop_engine(client))
+        llm = _FakeLLM(
+            [
+                '{"tool": "search_knowledge", "arguments": {"query": "byte 105"}}',
+                '{"answer": "No tengo documentación de la categoría 31."}',
+            ]
+        )
+        runtime = AgentRuntime(llm_provider=llm)
+        result = await runtime.run(
+            _request(
+                _agent(tools=["search_knowledge"]),
+                "cuentame sobre la categoria 31 y el byte 105",
+            )
+        )
+
+        retrievals = [s for s in result.steps if s["type"] == "jev_retrieval"]
+        assert len(retrievals) == 1
+        assert retrievals[0]["round"] == 1
+        assert retrievals[0]["reason"] == "evidence_gap"
+        assert "cat31" in retrievals[0]["query"].lower()
+        # La búsqueda dirigida por JEV se ejecutó de verdad, con la query refinada.
+        assert any("cat31" in query.lower() for query in search.queries)
+        assert any(
+            decision.get("action") == "retrieve_more" for decision in result.jev_decisions
+        )
+
+    @pytest.mark.asyncio
+    async def test_el_tope_de_rondas_corta_las_reconsultas(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.core.config import get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "RUNTIME_AGENT_JEV_LOOP", "on")
+        monkeypatch.setattr(settings, "RUNTIME_AGENT_MAX_RETRIEVAL_ROUNDS", 1)
+        register_tool(_FakeSearchTool("nada sobre la categoría 31"))
+        client = _LoopJevClient(evidence_gap_steps=5)  # siempre pide más
+        _install_engine(monkeypatch, _loop_engine(client))
+        llm = _FakeLLM(
+            [
+                '{"tool": "search_knowledge", "arguments": {"query": "categoria 31"}}',
+                '{"answer": "No está documentado."}',
+            ]
+        )
+        runtime = AgentRuntime(llm_provider=llm)
+        result = await runtime.run(
+            _request(
+                _agent(tools=["search_knowledge"]), "cuentame sobre la categoria 31"
+            )
+        )
+        assert result.status == "completed"
+        assert len([s for s in result.steps if s["type"] == "jev_retrieval"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_loop_off_conserva_el_comportamiento_previo(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        register_tool(_FakeSearchTool("algo"))
+        client = _LoopJevClient(evidence_gap_steps=0)
+        _install_engine(monkeypatch, _loop_engine(client))
+        llm = _FakeLLM(
+            [
+                '{"tool": "search_knowledge", "arguments": {"query": "x"}}',
+                '{"answer": "listo"}',
+            ]
+        )
+        runtime = AgentRuntime(llm_provider=llm)
+        result = await runtime.run(_request(_agent(tools=["search_knowledge"]), "pregunta"))
+        assert result.status == "completed"
+        assert not [s for s in result.steps if s["type"] == "agent_step"]
+        assert not [s for s in result.steps if s["type"] == "jev_retrieval"]
+        assert client.calls == 0
+        assert result.jev_packs == []
+
+    @pytest.mark.asyncio
+    async def test_shadow_juzga_pero_no_actua(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from src.core.config import get_settings
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "RUNTIME_AGENT_JEV_LOOP", "shadow")
+        register_tool(_FakeSearchTool("nada"))
+        client = _LoopJevClient(evidence_gap_steps=3)
+        _install_engine(monkeypatch, _loop_engine(client))
+        llm = _FakeLLM(
+            [
+                '{"tool": "search_knowledge", "arguments": {"query": "categoria 31"}}',
+                '{"answer": "No está documentado."}',
+            ]
+        )
+        runtime = AgentRuntime(llm_provider=llm)
+        result = await runtime.run(
+            _request(_agent(tools=["search_knowledge"]), "cuentame sobre la categoria 31")
+        )
+        assert result.status == "completed"
+        # Juzgó y lo registró, pero no lanzó la re-consulta.
+        assert [s for s in result.steps if s["type"] == "agent_step"]
+        assert not [s for s in result.steps if s["type"] == "jev_retrieval"]
+        assert result.jev_mode == "shadow"
 
 
 class _FailingSqlishTool(Tool):

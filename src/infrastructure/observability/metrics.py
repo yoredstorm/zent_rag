@@ -604,6 +604,17 @@ zent_response_section_labels_stripped_total = Counter(
     "zent_response_section_labels_stripped_total",
     "Internal section labels leaked by the model and removed from the answer",
 )
+# --- Agent JEV Loop: juicio por paso + re-consultas dirigidas -----------------
+zent_agent_jev_action_total = Counter(
+    "zent_agent_jev_action_total",
+    "Agent step verdicts composed in code (action taken by the loop)",
+    labelnames=["mode", "action", "reason"],
+)
+zent_agent_jev_retrieval_total = Counter(
+    "zent_agent_jev_retrieval_total",
+    "JEV-directed retrieval rounds (extra search when evidence was missing)",
+    labelnames=["round", "outcome"],
+)
 zent_adaptive_passage_judge_total = Counter(
     "zent_adaptive_passage_judge_total",
     "Passage judge verdicts composed in code",

@@ -1107,6 +1107,31 @@ class Settings(BaseSettings):
             "finalizar (una revision maximo). shadow = solo observa."
         ),
     )
+    # -------------------------------------------------------------------------
+    # Agent JEV Loop (docs/architecture/agent-jev-loop.md)
+    # -------------------------------------------------------------------------
+    RUNTIME_AGENT_JEV_LOOP: Literal["off", "shadow", "on", "canary"] = Field(
+        default="on",
+        description=(
+            "off = sin juicio por paso (comportamiento previo). "
+            "shadow = una llamada JEV por paso, veredicto registrado, sin cambiar "
+            "el comportamiento. "
+            "on = el veredicto manda: elige herramienta, pide otra busqueda con "
+            "consulta refinada cuando falta evidencia, y decide si ya se puede "
+            "responder. "
+            "canary = on para RUNTIME_AGENT_JEV_LOOP_CANARY_PERCENTAGE de runs."
+        ),
+    )
+    RUNTIME_AGENT_JEV_LOOP_CANARY_PERCENTAGE: int = Field(default=0, ge=0, le=100)
+    RUNTIME_AGENT_MAX_RETRIEVAL_ROUNDS: int = Field(
+        default=2,
+        ge=0,
+        le=10,
+        description=(
+            "Rondas de busqueda que el loop JEV puede pedir por run cuando falta "
+            "evidencia para lo que la pregunta nombra (0 = sin re-consultas)."
+        ),
+    )
     RUNTIME_JEV_STATE_MAX_CHARS: int = Field(
         default=30000,
         ge=2000,

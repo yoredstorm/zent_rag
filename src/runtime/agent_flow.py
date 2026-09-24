@@ -25,7 +25,29 @@ from typing import Any
 #: Tipos de step → campos que se copian VERBATIM al flow (nunca se inventan).
 _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
     "llm": ("step", "model", "action", "tokens", "latency_ms"),
-    "tool_call": ("tool", "output", "error", "meta", "latency_ms"),
+    "tool_call": ("tool", "output", "error", "meta", "latency_ms", "coverage_gap"),
+    "jev_retrieval": (
+        "tool",
+        "query",
+        "round",
+        "reason",
+        "entities",
+        "latency_ms",
+        "output",
+        "error",
+        "meta",
+        "coverage_gap",
+    ),
+    "agent_step": (
+        "questions",
+        "routing",
+        "termination",
+        "next_action",
+        "action_reason",
+        "uncovered_entities",
+        "state_chars",
+        "mode",
+    ),
     "tool_routing": (
         "mode",
         "skip_reason",
@@ -98,11 +120,12 @@ _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
 #: acá, la razón tiene que estar escrita (test de invariante lo verifica).
 INTENTIONALLY_HIDDEN_STEPS: frozenset[str] = frozenset()
 
-#: Tipos que representan una llamada real a JEV (tool routing / gates).
+#: Tipos que representan una llamada real a JEV (loop por paso / gates).
 _JEV_STEP_TYPES: dict[str, str] = {
     "tool_routing": "tool_routing",
     "termination_gate": "termination",
     "answer_gate": "answer_gate",
+    "agent_step": "agent_step",
 }
 
 STEP_LABEL: dict[str, str] = {
@@ -113,6 +136,8 @@ STEP_LABEL: dict[str, str] = {
     "termination_gate": "JEV verifica cierre",
     "answer_gate": "JEV verifica respuesta",
     "answer_revision": "Revisión con feedback de JEV",
+    "agent_step": "JEV juzga el paso",
+    "jev_retrieval": "JEV pidió otra búsqueda",
     "final": "Respuesta final",
     "guardrail": "Límite",
     "error": "Error",
@@ -674,6 +699,39 @@ def _route_for(steps: list[dict[str, Any]]) -> str:
     return "Directa"
 
 
+def _jev_preflight_block(result: Any) -> dict[str, Any]:
+    """Packs y veredictos JEV del loop, con el mismo contrato que el RAG.
+
+    El portal renderiza cada pack como "N preguntas · 1 llamada · Xms" y el
+    veredicto compuesto como decisión del paso.
+    """
+    packs = [dict(pack) for pack in (getattr(result, "jev_packs", None) or []) if isinstance(pack, Mapping)]
+    decisions = [
+        dict(decision)
+        for decision in (getattr(result, "jev_decisions", None) or [])
+        if isinstance(decision, Mapping)
+    ]
+    mode = str(getattr(result, "jev_mode", "") or "")
+    if not packs and not decisions:
+        return {}
+    executed = [pack for pack in packs if str(pack.get("status") or "") == "ok"]
+    payload: dict[str, Any] = {
+        "mode": mode or "on",
+        "packs": packs,
+    }
+    if decisions:
+        payload["decisions"] = decisions
+    payload["summary"] = {
+        "calls": len(executed),
+        "judgments": sum(int(pack.get("question_count") or 0) for pack in executed),
+        "decisions_influenced": sum(1 for decision in decisions if decision.get("applied")),
+        "latency_ms": round(
+            sum(_num(pack.get("latency_ms")) for pack in executed), 2
+        ),
+    }
+    return payload
+
+
 def build_agent_flow(
     *,
     result: Any,
@@ -751,6 +809,9 @@ def build_agent_flow(
         contract = response_plan.get("contract")
         if isinstance(contract, Mapping):
             flow["response_contract"] = dict(contract)
+    jev_block = _jev_preflight_block(result)
+    if jev_block:
+        flow["jev_preflight"] = jev_block
     if getattr(result, "injection_detected", False):
         flow["injection_detected"] = True
     if getattr(result, "trace_id", None):

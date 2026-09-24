@@ -225,6 +225,25 @@ def _tool_routing_specs(tool_criteria: dict[str, str]) -> list[QuestionSpec]:
     return _specs(tool_routing_questions(tool_criteria), source="tool_routing")
 
 
+def _evidence_gap_specs() -> list[QuestionSpec]:
+    """Noul: ¿falta evidencia para lo que la pregunta nombra?
+
+    Viaja aparte del routing para que un agente con una sola herramienta (sólo
+    búsqueda) también pueda pedir otra ronda: el loop JEV lo necesita.
+    """
+    return [
+        QuestionSpec(
+            id="needs_more_evidence",
+            type="noul",
+            sources=("agent_step",),
+            instructions=(
+                "Does the evidence gathered still lack what `user_request` asks "
+                "about (entities, records, fields or values it names)?"
+            ),
+        )
+    ]
+
+
 def _termination_specs() -> list[QuestionSpec]:
     from src.runtime.questions import termination_questions
 
@@ -462,11 +481,14 @@ def build_agent_step_questions(
     tool_criteria: dict[str, str] | None = None,
     include_tool_routing: bool = True,
     include_termination: bool = True,
+    include_evidence_gap: bool = False,
 ) -> PhaseQuestions:
-    """Tool routing + termination del mismo paso incremental."""
+    """Tool routing + evidencia faltante + termination del mismo paso."""
     specs: list[QuestionSpec] = []
     if include_tool_routing:
         specs.extend(_tool_routing_specs(dict(tool_criteria or {})))
+    if include_evidence_gap:
+        specs.extend(_evidence_gap_specs())
     if include_termination:
         specs.extend(_termination_specs())
     return _dedupe(specs, phase=JudgmentPhase.AGENT_STEP.value)

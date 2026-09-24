@@ -7,7 +7,9 @@ import {
   buildExecutionStory,
   detailLabel,
   jevPurposeLabel,
+  judgmentValueLabel,
   llmActionLabel,
+  reasonText,
   responseShapeFor,
   sectionLabel,
   statusLabel,
@@ -310,5 +312,123 @@ describe("§64 sin cadena de pensamiento", () => {
     ]) {
       expect(serialized).not.toContain(marker);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Agent JEV Loop: el juicio del paso y la re-consulta quedan en la historia
+// ---------------------------------------------------------------------------
+
+const LOOP_FLOW = {
+  flow_version: 2,
+  status: "completed",
+  verdict: { decider: "JEV", route: "Documentos" },
+  timings: { total_ms: 5200 },
+  generation: { model: "zent-default", total_tokens: 900, ms: 2100 },
+  jev_preflight: {
+    mode: "on",
+    packs: [
+      {
+        phase: "agent_step",
+        mode: "on",
+        status: "ok",
+        question_count: 4,
+        latency_ms: 120,
+        questions: [
+          { id: "needs_more_evidence", type: "noul", decision: "yes", confidence: 0.9 },
+        ],
+      },
+    ],
+    decisions: [
+      { phase: "agent_step", action: "retrieve_more", reasons: ["evidence_gap"], applied: true },
+    ],
+    summary: { calls: 1, judgments: 4, decisions_influenced: 1, latency_ms: 120 },
+  },
+  events: [
+    {
+      id: "l-1",
+      phase: "evidence",
+      kind: "tool_call",
+      status: "ok",
+      duration_ms: 810,
+      metrics: {
+        coverage_gap: "La evidencia consultada no menciona: categoría 31.",
+      },
+      technical: { tool: "search_knowledge" },
+    },
+    {
+      id: "l-2",
+      phase: "decision",
+      kind: "agent_step",
+      status: "ok",
+      duration_ms: 120,
+      metrics: {
+        questions: ["needs_tool", "tool", "needs_more_evidence", "satisfied"],
+        next_action: "retrieve_more",
+        action_reason: "evidence_gap",
+        uncovered_entities: ["categoría 31"],
+      },
+      decision: { action: "retrieve_more", reason_codes: ["evidence_gap"], applied: true },
+    },
+    {
+      id: "l-3",
+      phase: "evidence",
+      kind: "jev_retrieval",
+      status: "ok",
+      duration_ms: 700,
+      metrics: { query: "cat 31 cat31", round: 1, reason: "evidence_gap" },
+      technical: { tool: "search_knowledge" },
+    },
+    {
+      // El pack del paso, tal como lo emite `with_story` desde jev_preflight.
+      id: "jev-1",
+      phase: "decision",
+      kind: "jev_pack",
+      status: "ok",
+      duration_ms: 120,
+      metrics: {
+        phase: "agent_step",
+        judgment_count: 4,
+        questions: [
+          {
+            id: "needs_more_evidence",
+            type: "noul",
+            decision: "yes",
+            confidence: 0.9,
+            version: 1,
+          },
+        ],
+      },
+      technical: { mode: "on", model: "jev-test", question_count: 4 },
+    },
+  ],
+};
+
+describe("Agent JEV Loop en la historia", () => {
+  it("nombra el juicio del paso y la búsqueda que pidió", () => {
+    const story = buildExecutionStory(LOOP_FLOW);
+    const events = story.phases.flatMap((phase) => phase.events);
+    const step = events.find((event) => event.kind === "agent_step");
+    const retry = events.find((event) => event.kind === "jev_retrieval");
+    expect(step?.title).toBe("JEV juzgó el paso");
+    expect(step?.phase).toBe("decision");
+    expect(step?.decisionAction).toBe("retrieve_more");
+    expect(retry?.title).toBe("Volvió a buscar: faltaba evidencia");
+    expect(retry?.phase).toBe("evidence");
+    expect(retry?.metrics.coverage_gap).toBeUndefined();
+    // La cobertura faltante viaja como dato, no como incidente.
+    expect(events.some((event) => event.metrics.coverage_gap)).toBe(true);
+  });
+
+  it("traduce el veredicto y el motivo a lenguaje humano", () => {
+    expect(judgmentValueLabel("retrieve_more")).toBe("Buscar más evidencia");
+    expect(reasonText("evidence_gap")).toBe("faltaba evidencia para lo que se preguntó");
+  });
+
+  it("el pack del paso JEV se muestra como una llamada con N preguntas", () => {
+    const story = buildExecutionStory(LOOP_FLOW);
+    expect(story.performance.jevDecisions.map((decision) => decision.label)).toContain(
+      "Eligió el siguiente paso",
+    );
   });
 });

@@ -493,3 +493,113 @@ def test_build_flow_events_sigue_siendo_puro() -> None:
 def test_jev_summary_ignora_passthrough() -> None:
     assert jev_summary([{"type": "tool_routing", "mode": "passthrough"}])["used"] is False
     assert jev_summary([{"type": "tool_routing", "mode": "jev", "choice": "x"}])["used"] is True
+
+
+# ---------------------------------------------------------------------------
+# Agent JEV Loop: juicio del paso y re-consulta dirigida, evidenciados
+# ---------------------------------------------------------------------------
+
+LOOP_STEPS: list[dict] = [
+    {
+        "type": "tool_call",
+        "tool": "search_knowledge",
+        "latency_ms": 810.0,
+        "output": "tabla de bytes",
+        "coverage_gap": "La evidencia consultada no menciona: categoría 31.",
+        "meta": {
+            "evidence": [
+                {"ref": "doc-1", "title": "Cat10_dapp_C.pdf", "score": 0.66, "status": "USED"}
+            ]
+        },
+    },
+    {
+        "type": "agent_step",
+        "latency_ms": 120.0,
+        "questions": ["needs_tool", "tool", "needs_more_evidence", "satisfied"],
+        "state_chars": 571,
+        "mode": "on",
+        "next_action": "retrieve_more",
+        "action_reason": "evidence_gap",
+        "uncovered_entities": ["categoría 31", "byte 105"],
+        "routing": {"choice": "search_knowledge", "needs_more_evidence": True},
+        "termination": {"stop": False, "provider": "jev"},
+    },
+    {
+        "type": "jev_retrieval",
+        "tool": "search_knowledge",
+        "query": "cat 31 cat31 categoria 31",
+        "round": 1,
+        "reason": "evidence_gap",
+        "entities": ["categoría 31"],
+        "latency_ms": 700.0,
+        "output": "Category 31 Tour Conductor Discount",
+    },
+    {"type": "final", "answer": "La categoría 31 es Tour Conductor Discount."},
+]
+
+
+def test_loop_jev_se_mapea_y_publica_el_pack() -> None:
+    flow = _flow(
+        LOOP_STEPS,
+        jev_packs=[
+            {
+                "phase": "agent_step",
+                "mode": "on",
+                "status": "ok",
+                "question_count": 4,
+                "latency_ms": 120.0,
+                "questions": [
+                    {
+                        "id": "needs_more_evidence",
+                        "type": "noul",
+                        "decision": "yes",
+                        "confidence": 0.9,
+                        "version": 1,
+                    }
+                ],
+            }
+        ],
+        jev_decisions=[
+            {
+                "phase": "agent_step",
+                "action": "retrieve_more",
+                "reasons": ["evidence_gap"],
+                "applied": True,
+            }
+        ],
+        jev_mode="on",
+    )
+    kinds = [event["kind"] for event in flow["events"]]
+    assert "agent_step" in kinds
+    assert "jev_retrieval" in kinds
+    # Ya no caen en "sin mapping": son steps canónicos.
+    assert all(
+        (event.get("technical") or {}).get("unmapped") is not True for event in flow["events"]
+    )
+
+    step_event = next(event for event in flow["events"] if event["kind"] == "agent_step")
+    assert step_event["phase"] == "decision"
+    assert step_event["decision"]["action"] == "retrieve_more"
+    assert step_event["metrics"]["next_action"] == "retrieve_more"
+
+    retry_event = next(event for event in flow["events"] if event["kind"] == "jev_retrieval")
+    assert retry_event["phase"] == "evidence"
+    assert retry_event["metrics"]["query"].startswith("cat 31")
+
+    pack = flow["jev_preflight"]["packs"][0]
+    assert pack["phase"] == "agent_step"
+    assert flow["jev_preflight"]["summary"]["calls"] == 1
+    assert flow["jev_preflight"]["summary"]["judgments"] == 4
+    assert flow["jev_preflight"]["summary"]["decisions_influenced"] == 1
+    pack_events = [event for event in flow["events"] if event["kind"] == "jev_pack"]
+    assert pack_events and pack_events[0]["technical"]["question_count"] == 4
+
+    tool_event = next(event for event in flow["events"] if event["kind"] == "tool_call")
+    assert tool_event["metrics"]["coverage_gap"].startswith("La evidencia consultada")
+
+
+def test_loop_jev_cuenta_como_intervencion_real() -> None:
+    flow = _flow(LOOP_STEPS, jev_mode="on")
+    assert flow["jev"]["used"] is True
+    assert flow["jev"]["calls"] == 1
+    assert "agent_step" in flow["jev"]["phases"]
