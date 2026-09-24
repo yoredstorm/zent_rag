@@ -159,12 +159,141 @@ def coverage_note(question: str, evidence_text: str) -> str:
     )
 
 
+# -----------------------------------------------------------------------------
+# Fechas y años: verificación determinista contra la evidencia
+# -----------------------------------------------------------------------------
+# Un número inventado es el error más caro y el más difícil de detectar leyendo:
+# «a partir del 12 de julio de 2026» cuando la fuente dice «10 July 2024». Acá no
+# se opina sobre el texto: se compara lo que la respuesta AFIRMA con lo que la
+# evidencia CONTIENE, y se devuelve la lista de referencias sin respaldo.
+_MONTHS: dict[str, int] = {
+    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+    "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10,
+    "noviembre": 11, "diciembre": 12,
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11,
+    "december": 12,
+}
+_MONTH_ALT = "|".join(sorted(_MONTHS, key=len, reverse=True))
+_YEAR = r"(?:19|20)\d{2}"
+
+#: Cada patrón viene con el orden de sus grupos: "dmy", "mdy" o "ymd".
+_DATE_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(rf"\b(\d{{1,2}})\s*(?:de\s+)?({_MONTH_ALT})\.?\s*(?:de\s+|,\s*|\s+)({_YEAR})\b", re.I), "dmy"),
+    (re.compile(rf"\b({_MONTH_ALT})\.?\s+(\d{{1,2}})(?:st|nd|rd|th)?,?\s+({_YEAR})\b", re.I), "mdy"),
+    (re.compile(rf"\b({_YEAR})-(\d{{1,2}})-(\d{{1,2}})\b"), "ymd"),
+    (re.compile(rf"\b(\d{{1,2}})/(\d{{1,2}})/({_YEAR})\b"), "dmy"),
+    (re.compile(rf"\b(\d{{1,2}})-(\d{{1,2}})-({_YEAR})\b"), "dmy"),
+)
+
+
+@dataclass(frozen=True)
+class StatedDate:
+    """Fecha concreta afirmada en un texto, con su forma canónica comparable."""
+
+    canonical: str
+    original: str
+    span: tuple[int, int]
+
+
+def _date_parts(match: re.Match[str], order: str) -> tuple[int, int, int] | None:
+    """(día, mes, año) del match, o None si no es una fecha válida."""
+    groups = match.groups()
+    try:
+        if order == "ymd":
+            year, month, day = (
+                int(groups[0]),
+                int(groups[1]),
+                int(groups[2]),
+            )
+        elif order == "mdy":
+            month = _MONTHS[groups[0].lower().rstrip(".")]
+            day, year = int(groups[1]), int(groups[2])
+        else:
+            day = int(groups[0])
+            month = _MONTHS[groups[1].lower().rstrip(".")]
+            year = int(groups[2])
+    except (KeyError, ValueError, IndexError):
+        return None
+    if not (1 <= day <= 31 and 1 <= month <= 12):
+        return None
+    return day, month, year
+
+
+def stated_dates(text: str) -> list[StatedDate]:
+    """Fechas completas (día + mes + año) del texto, sin repetir."""
+    found: list[StatedDate] = []
+    seen: set[str] = set()
+    for pattern, order in _DATE_PATTERNS:
+        for match in pattern.finditer(text or ""):
+            parts = _date_parts(match, order)
+            if parts is None:
+                continue
+            day, month, year = parts
+            canonical = f"{year:04d}-{month:02d}-{day:02d}"
+            if canonical in seen:
+                continue
+            seen.add(canonical)
+            found.append(StatedDate(canonical, match.group(0).strip(), match.span()))
+    return sorted(found, key=lambda item: item.span[0])
+
+
+def ungrounded_figures(
+    answer: str,
+    evidence_text: str,
+    question: str = "",
+) -> list[str]:
+    """Fechas y años que la respuesta afirma y la evidencia (ni la pregunta) contiene.
+
+    Devuelve las formas tal como las escribió la respuesta, para poder citarlas en
+    el pedido de corrección. Vacío = todo lo afirmado tiene respaldo.
+    """
+    allowed_text = f"{evidence_text or ''}\n{question or ''}"
+    allowed_dates = {item.canonical for item in stated_dates(allowed_text)}
+    allowed_years = set(re.findall(_YEAR, allowed_text))
+
+    flagged: list[str] = []
+    flagged_spans: list[tuple[int, int]] = []
+    for item in stated_dates(answer or ""):
+        if item.canonical in allowed_dates:
+            continue
+        flagged.append(item.original)
+        flagged_spans.append(item.span)
+
+    for match in re.finditer(_YEAR, answer or ""):
+        year = match.group(0)
+        if year in allowed_years:
+            continue
+        if any(start <= match.start() < end for start, end in flagged_spans):
+            continue
+        flagged.append(year)
+
+    return list(dict.fromkeys(flagged))
+
+
+def figures_note(figures: list[str]) -> str:
+    """Pedido de corrección determinista para figuras sin respaldo."""
+    if not figures:
+        return ""
+    listed = ", ".join(figures[:5])
+    return (
+        f"La evidencia consultada no contiene: {listed}. "
+        "No afirmes fechas, años ni cifras que no estén en la evidencia, ni los "
+        "aproximimes: si el valor no está, decí que no está en la documentación "
+        "consultada; si está, repetí el valor exacto de la fuente."
+    )
+
+
 __all__ = [
     "MAX_ENTITIES",
     "AskedEntity",
+    "StatedDate",
     "asked_entities",
     "coverage_note",
     "entity_covered",
+    "figures_note",
     "normalize",
+    "stated_dates",
     "uncovered_entities",
+    "ungrounded_figures",
 ]

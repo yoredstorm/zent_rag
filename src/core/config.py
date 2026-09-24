@@ -1132,6 +1132,14 @@ class Settings(BaseSettings):
             "evidencia para lo que la pregunta nombra (0 = sin re-consultas)."
         ),
     )
+    RUNTIME_ANSWER_FACT_CHECK: str = Field(
+        default="on",
+        description=(
+            "Verificacion determinista de fechas y anios de la respuesta contra la "
+            "evidencia consultada: 'on' = corrige una vez y deja registro; 'off' = "
+            "no verifica. No inventa ni borra texto: pide la correccion al modelo."
+        ),
+    )
     RUNTIME_FINALIZE_MAX_TOKENS: int = Field(
         default=0,
         ge=0,

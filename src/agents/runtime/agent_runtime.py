@@ -815,6 +815,7 @@ class AgentRuntime:
         *,
         reason: str,
         reasoning: object | None = None,
+        fact_retry: bool = True,
     ) -> bool:
         if not _history_has_usable_observation(history):
             return False
@@ -851,6 +852,35 @@ class AgentRuntime:
         answer = _direct_answer(action)
         if answer is None:
             return False
+        # Mismo chequeo determinista que en el loop: figuras sin respaldo se
+        # corrigen una vez (sin inventar ni borrar en silencio) y, si persisten,
+        # quedan visibles en el flujo.
+        if fact_retry and str(getattr(get_settings(), "RUNTIME_ANSWER_FACT_CHECK", "on")).lower() not in (
+            "off",
+            "0",
+            "false",
+        ):
+            from src.intelligence.response.entities import figures_note, ungrounded_figures
+
+            figures = ungrounded_figures(answer, "\n".join(history), request.message)
+            if figures:
+                result.steps.append(
+                    {
+                        "type": "answer_revision",
+                        "detail": f"figuras sin respaldo: {', '.join(figures[:5])}",
+                        "figures": figures[:5],
+                    }
+                )
+                history.append(f"OBSERVATION (untrusted): {figures_note(figures)}")
+                return await self._try_finalize_answer(
+                    request,
+                    history,
+                    config,
+                    result,
+                    reason=f"{reason} (figuras sin respaldo)",
+                    reasoning=reasoning,
+                    fact_retry=False,
+                )
         result.answer = answer
         result.status = "completed"
         result.steps.append(
@@ -1469,6 +1499,15 @@ class AgentRuntime:
         retrieval_rounds = 0
         revision_used = False
         pending_step_judgment = None
+        fact_check_on = str(getattr(settings, "RUNTIME_ANSWER_FACT_CHECK", "on")).lower() not in (
+            "off",
+            "0",
+            "false",
+        )
+
+        def _evidence_text() -> str:
+            """Observaciones de tools: es la evidencia sobre la que se responde."""
+            return "\n".join(history)
 
         async def _confidence_gate(draft: str):
             from src.decision.judgment import PHASE_ANSWER_GATE, JudgmentContext
@@ -1504,6 +1543,40 @@ class AgentRuntime:
         async def _gate_draft(draft: str) -> str:
             """Registra el veredicto de JEV. Devuelve skip|shadow|approve|revise|abstain."""
             nonlocal revision_used
+            # Chequeo determinista ANTES del juicio: una fecha o un año que la
+            # evidencia no contiene se corrige una vez sin gastar un LLM. No
+            # depende del gate JEV: es gratis y no opina, sólo compara.
+            if fact_check_on:
+                from src.intelligence.response.entities import (
+                    figures_note,
+                    ungrounded_figures,
+                )
+
+                figures = ungrounded_figures(draft, _evidence_text(), request.message)
+                if figures:
+                    if not revision_used:
+                        revision_used = True
+                        feedback = figures_note(figures)
+                        history.append(f"OBSERVATION (untrusted): {feedback}")
+                        result.steps.append(
+                            {
+                                "type": "answer_revision",
+                                "detail": f"figuras sin respaldo: {', '.join(figures[:5])}",
+                                "figures": figures[:5],
+                            }
+                        )
+                        return "revise"
+                    result.steps.append(
+                        {
+                            "type": "answer_revision",
+                            "verdict": "figures_unverified",
+                            "detail": (
+                                "figuras sin respaldo en la evidencia: "
+                                f"{', '.join(figures[:5])}"
+                            ),
+                            "figures": figures[:5],
+                        }
+                    )
             if answer_mode == "off":
                 return "skip"
             gate = await _confidence_gate(draft)

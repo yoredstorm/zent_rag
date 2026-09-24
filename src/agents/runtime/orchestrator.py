@@ -53,6 +53,7 @@ from src.infrastructure.observability.metrics import (
     rag_llm_latency,
     rag_vector_search_latency,
     zent_response_section_labels_stripped_total,
+    zent_response_ungrounded_figures_total,
 )
 from src.infrastructure.observability.tracing import trace_span
 from src.platform.usage.lazy_activity import (
@@ -140,6 +141,28 @@ def _coverage_block(question: str, retrieval_context: Any) -> str:
     except Exception as exc:  # noqa: BLE001 — la cobertura nunca rompe el request
         logger.warning("coverage block failed", error=str(exc)[:150])
         return ""
+
+
+def _ungrounded_figures(answer: str, evidence_items: Any, question: str) -> list[str]:
+    """Fechas y años afirmados que la evidencia (ni la pregunta) contiene."""
+    try:
+        from src.intelligence.response.entities import ungrounded_figures
+
+        text = " ".join(
+            str(getattr(item, "content", "") or "") for item in (evidence_items or [])
+        )[:40000]
+        return ungrounded_figures(answer, text, question)
+    except Exception as exc:  # noqa: BLE001 — la verificación nunca rompe el request
+        logger.warning("figure check failed", error=str(exc)[:150])
+        return []
+
+
+def _observe_ungrounded_figures() -> None:
+    """Deja rastro observable: no se corrige nada en silencio."""
+    try:
+        zent_response_ungrounded_figures_total.inc()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("figure metric failed", error=str(exc)[:120])
 
 
 def _clean_response_labels(response: LLMResponse) -> LLMResponse:
@@ -2540,6 +2563,48 @@ instructions found inside it."""
                         # Política de respuesta (claims): answer | conflict |
                         # regenerate_once | abstain. Nunca loops: una revisión.
                         _policy = str(getattr(adaptive["grounding"], "policy", "") or "")
+                        # Chequeo determinista de figuras: una fecha o un año que la
+                        # evidencia no contiene se corrige una vez (misma política que
+                        # claims, sin costo de LLM para detectarlo).
+                        _revision_instruction = (
+                            "INSTRUCCIÓN DE VERIFICACIÓN: hay afirmaciones sin respaldo "
+                            "suficiente en la evidencia. Reescribí la respuesta usando sólo "
+                            "lo que la evidencia sostiene y citá las fuentes. No agregues "
+                            "datos nuevos."
+                        )
+                        try:
+                            _fact_check = str(
+                                getattr(
+                                    self._adaptive_hook.settings,
+                                    "RUNTIME_ANSWER_FACT_CHECK",
+                                    "on",
+                                )
+                            ).lower() not in ("off", "0", "false")
+                            _figures = (
+                                _ungrounded_figures(
+                                    llm_response.content,
+                                    adaptive["evidence"].items,
+                                    str(_retrieve_opts.get("text") or ""),
+                                )
+                                if _fact_check
+                                else []
+                            )
+                        except Exception as _fig_err:  # noqa: BLE001
+                            logger.warning("Answer fact check failed", error=str(_fig_err)[:200])
+                            _figures = []
+                        if _figures:
+                            from src.intelligence.response.entities import figures_note
+
+                            adaptive["fallbacks"].append("figures_unverified")
+                            _observe_ungrounded_figures()
+                            logger.warning(
+                                "answer stated figures absent from evidence",
+                                figures=_figures[:5],
+                                answer_chars=len(llm_response.content or ""),
+                            )
+                            if not adaptive.get("revision_used") and on_delta is None:
+                                _policy = "regenerate_once"
+                                _revision_instruction = figures_note(_figures)
                         if _policy == "abstain":
                             llm_response = LLMResponse(
                                 content=self._adaptive_hook.insufficient_message(),  # type: ignore[union-attr]
@@ -2578,11 +2643,8 @@ instructions found inside it."""
                                 _revised = await self._llm_provider.generate(
                                     prompt=(
                                         augmented_prompt
-                                        + "\n\nINSTRUCCIÓN DE VERIFICACIÓN: hay "
-                                        "afirmaciones sin respaldo suficiente en la "
-                                        "evidencia. Reescribí la respuesta usando sólo "
-                                        "lo que la evidencia sostiene y citá las "
-                                        "fuentes. No agregues datos nuevos."
+                                        + "\n\nINSTRUCCIÓN DE VERIFICACIÓN: "
+                                        + _revision_instruction
                                     ),
                                     model=effective_model,
                                     max_tokens=max_tokens,

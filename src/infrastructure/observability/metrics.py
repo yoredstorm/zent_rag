@@ -604,6 +604,10 @@ zent_response_section_labels_stripped_total = Counter(
     "zent_response_section_labels_stripped_total",
     "Internal section labels leaked by the model and removed from the answer",
 )
+zent_response_ungrounded_figures_total = Counter(
+    "zent_response_ungrounded_figures_total",
+    "Dates/years stated in an answer that the retrieved evidence does not contain",
+)
 # --- Agent JEV Loop: juicio por paso + re-consultas dirigidas -----------------
 zent_agent_jev_action_total = Counter(
     "zent_agent_jev_action_total",

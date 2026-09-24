@@ -134,6 +134,7 @@ FALLBACK_REASONS = {
     "claims_abstain": "claims_abstained",
     "claims_conflict": "claims_conflict",
     "claims_revision": "claims_revised",
+    "figures_unverified": "figures_unverified",
     "plan_failed": "plan_failed",
     "preflight_abstained": "judgment_blocked_generation",
 }

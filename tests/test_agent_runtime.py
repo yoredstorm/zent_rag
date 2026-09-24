@@ -200,6 +200,52 @@ class TestReActLoop:
         assert result.status == "completed"
         assert result.answer == "Sin tools"
 
+
+class TestFactCheck:
+    """Fechas y años inventados: el caso real «12 de julio de 2026» vs la guía.
+
+    El chequeo es determinista (regex + contención de texto): no depende del gate
+    JEV ni gasta un LLM, así que corre con los flags apagados como en producción.
+    """
+
+    @pytest.mark.asyncio
+    async def test_figura_sin_respaldo_se_corrige_una_vez(self) -> None:
+        register_tool(_EchoTool())
+        llm = _FakeLLM(
+            [
+                '{"tool": "echo", "arguments": {"text": "NEW Category 31 system '
+                'assumption in effect on 10 July 2024 applies"}}',
+                '{"answer": "El cambio aplica desde el 12 de julio de 2026."}',
+                '{"answer": "El cambio aplica desde el 10 de julio de 2024."}',
+            ]
+        )
+        runtime = AgentRuntime(llm_provider=llm)
+        result = await runtime.run(
+            _request(_agent(), "¿desde cuándo aplica el cambio de la categoría 31?")
+        )
+
+        assert result.answer == "El cambio aplica desde el 10 de julio de 2024."
+        revisiones = [s for s in result.steps if s["type"] == "answer_revision"]
+        assert revisiones and "2026" in str(revisiones[0].get("figures"))
+
+    @pytest.mark.asyncio
+    async def test_figura_respaldada_no_gasta_revision(self) -> None:
+        register_tool(_EchoTool())
+        llm = _FakeLLM(
+            [
+                '{"tool": "echo", "arguments": {"text": "in effect on 10 July 2024"}}',
+                '{"answer": "Aplica desde el 10 de julio de 2024."}',
+            ]
+        )
+        runtime = AgentRuntime(llm_provider=llm)
+        result = await runtime.run(
+            _request(_agent(), "¿desde cuándo aplica el cambio de la categoría 31?")
+        )
+
+        assert result.answer == "Aplica desde el 10 de julio de 2024."
+        assert not [s for s in result.steps if s["type"] == "answer_revision"]
+        assert llm.calls == 2  # una tool + una respuesta, sin revisión extra
+
     @pytest.mark.asyncio
     async def test_max_steps_reached(self) -> None:
         register_tool(_EchoTool())
