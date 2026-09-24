@@ -62,8 +62,12 @@ _NEXT_STEP_TEMPLATE = """## HISTORY
 Next step (JSON only):"""
 
 _FINALIZE_TEMPLATE = """You already collected tool observations. Answer the user now.
-JSON only: {{"answer": "<text>"}}
-Do not call tools.
+
+Rules:
+- Write ONLY the final text for the user (Markdown allowed). No JSON, no wrappers,
+  no labels like "answer:" or "direct_answer:".
+- Do not call tools.
+- Only assert what the observations support; if something is missing, say so.
 
 USER QUESTION: {question}
 
@@ -72,7 +76,7 @@ USER QUESTION: {question}
 ## HISTORY
 {history}
 
-Final answer (JSON only):"""
+Final answer (text only, no JSON):"""
 
 
 _CONTEXT_BLOCK_MAX_CHARS = 6_000
@@ -269,10 +273,56 @@ class AgentRunResult:
     jev_mode: str = ""
 
 
+_ANSWER_FIELD_RE = re.compile(r'"answer"\s*:\s*"', re.IGNORECASE)
+_JSON_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "/": "/", "b": "\b", "f": "\f"}
+
+
+def _decode_json_string(body: str) -> str:
+    """Deshace los escapes del campo `answer`. Corta en la comilla sin escapar."""
+    out: list[str] = []
+    index = 0
+    while index < len(body):
+        char = body[index]
+        if char == "\\" and index + 1 < len(body):
+            nxt = body[index + 1]
+            if nxt == "u":
+                hexpart = body[index + 2 : index + 6]
+                if len(hexpart) == 4 and all(c in "0123456789abcdefABCDEF" for c in hexpart):
+                    out.append(chr(int(hexpart, 16)))
+                    index += 6
+                    continue
+                break  # escape cortado por truncamiento
+            out.append(_JSON_ESCAPES.get(nxt, nxt))
+            index += 2
+            continue
+        if char == "\\":
+            break  # barra final: escape cortado por truncamiento
+        if char == '"':
+            break
+        out.append(char)
+        index += 1
+    return "".join(out).strip()
+
+
+def _salvage_answer(content: str) -> str | None:
+    """Rescata el texto de `"answer": "…"` cuando el JSON no se pudo parsear.
+
+    Pasa cuando la generación se corta por tokens: el envoltorio queda abierto y,
+    sin esto, el usuario vería el JSON crudo. Determinista: sólo deshace los
+    escapes del propio campo, no inventa texto.
+    """
+    match = _ANSWER_FIELD_RE.search(content or "")
+    if match is None:
+        return None
+    salvaged = _decode_json_string(content[match.end() :])
+    return salvaged or None
+
+
 def _parse_action(content: str) -> dict:
     """Extrae el primer objeto JSON válido de la respuesta del LLM.
 
-    Fallback: respuesta sin JSON se trata como answer directa.
+    Fallback: respuesta sin JSON se trata como answer directa; un envoltorio
+    truncado se rescata campo por campo para no mostrar JSON al usuario.
     """
     text = (content or "").strip()
     match = _JSON_OBJECT_RE.search(text)
@@ -283,7 +333,18 @@ def _parse_action(content: str) -> dict:
                 return parsed
         except json.JSONDecodeError:
             pass
+    if _looks_like_envelope(text):
+        salvaged = _salvage_answer(text)
+        if salvaged:
+            logger.warning("answer JSON malformed or truncated; salvaged text field")
+            return {"answer": salvaged}
     return {"answer": text}
+
+
+def _looks_like_envelope(text: str) -> bool:
+    """El texto es (o intenta ser) el envoltorio `{"answer": "…"}`, no prosa."""
+    body = text.lstrip("`").lstrip()
+    return body.startswith("{") and _ANSWER_FIELD_RE.search(text) is not None
 
 
 def _tool_shaped(text: str) -> bool:
@@ -757,6 +818,12 @@ class AgentRuntime:
     ) -> bool:
         if not _history_has_usable_observation(history):
             return False
+        # La respuesta final necesita su propio presupuesto: el del loop (o 512)
+        # cortaba explicaciones técnicas y dejaba el JSON abierto.
+        configured_max_tokens = int(
+            getattr(get_settings(), "RUNTIME_FINALIZE_MAX_TOKENS", 0) or 0
+        )
+        finalize_max_tokens = configured_max_tokens or min(int(config["max_tokens"]), 1200)
         prompt = _FINALIZE_TEMPLATE.format(
             question=request.message,
             history="\n".join(history[-10:]),
@@ -769,7 +836,9 @@ class AgentRuntime:
             resp = await self._llm.generate(
                 prompt=prompt,
                 model=config["model"],
-                max_tokens=512,
+                # Presupuesto propio de la respuesta final: 512 tokens cortaba
+                # respuestas técnicas largas y el envoltorio JSON quedaba abierto.
+                max_tokens=finalize_max_tokens,
                 temperature=min(float(config["temperature"]), 0.3),
             )
         except Exception as exc:  # noqa: BLE001

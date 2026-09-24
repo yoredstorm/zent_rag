@@ -1132,6 +1132,16 @@ class Settings(BaseSettings):
             "evidencia para lo que la pregunta nombra (0 = sin re-consultas)."
         ),
     )
+    RUNTIME_FINALIZE_MAX_TOKENS: int = Field(
+        default=0,
+        ge=0,
+        le=32000,
+        description=(
+            "Presupuesto de tokens de la respuesta final del agente (0 = derivado "
+            "del agente, tope 1200). Un presupuesto corto trunca el JSON y el "
+            "usuario veria el envoltorio crudo."
+        ),
+    )
     RUNTIME_JEV_STATE_MAX_CHARS: int = Field(
         default=30000,
         ge=2000,

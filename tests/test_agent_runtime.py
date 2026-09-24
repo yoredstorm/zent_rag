@@ -125,6 +125,28 @@ class TestParseAction:
         action = _parse_action('Sure! {"tool": "echo", "arguments": {}} ok')
         assert action["tool"] == "echo"
 
+    def test_truncated_answer_json_shows_text_not_json(self) -> None:
+        """Un corte por tokens no debe mostrarle el envoltorio al usuario."""
+        truncated = (
+            '{"answer": "La **Categoría 31** define los cambios voluntarios. '
+            'El pasajero reemite el boleto y el sistema revalida (\\u00f3) las tarifas'
+        )
+        action = _parse_action(truncated)
+        assert action.get("tool") is None
+        assert action["answer"].startswith("La **Categoría 31** define")
+        assert not action["answer"].startswith("{")
+        assert '"answer"' not in action["answer"]
+        assert "(ó)" in action["answer"]
+
+    def test_truncated_answer_json_with_closing_brace(self) -> None:
+        truncated = '{"answer": "uno dos tres\\'
+        assert _parse_action(truncated)["answer"] == "uno dos tres"
+
+    def test_prose_mentioning_answer_key_stays_prose(self) -> None:
+        """Prosa que menciona la clave no se confunde con un envoltorio."""
+        prose = 'El campo "answer": "x" documenta la clave del protocolo.'
+        assert _parse_action(prose) == {"answer": prose}
+
 
 class TestReActLoop:
     @pytest.mark.asyncio
