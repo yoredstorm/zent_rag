@@ -396,7 +396,15 @@ class FakeUsageTracker:
         self.calls: list[tuple] = []
 
     async def record_embedding_tokens(
-        self, organization_id, tokens, *, workspace_id=None, source_id=None, corpus_id=None
+        self,
+        organization_id,
+        tokens,
+        *,
+        workspace_id=None,
+        source_id=None,
+        corpus_id=None,
+        model=None,
+        cost_usd=0.0,
     ) -> None:
         self.calls.append(
             {
@@ -404,6 +412,8 @@ class FakeUsageTracker:
                 "tokens": tokens,
                 "workspace_id": workspace_id,
                 "source_id": source_id,
+                "model": model,
+                "cost_usd": cost_usd,
             }
         )
 
@@ -432,3 +442,5 @@ async def test_v1_embedding_tokens_are_tracked(context) -> None:
     assert total_tokens > 0
     assert all(call["organization_id"] == context["organization"].id for call in tracker.calls)
     assert all(call["source_id"] == context["source"].id for call in tracker.calls)
+    # El costo ya no queda en 0: los embeddings se valorizan con el registro de precios.
+    assert any(call["cost_usd"] > 0 for call in tracker.calls)
