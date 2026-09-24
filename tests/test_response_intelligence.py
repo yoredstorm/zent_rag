@@ -427,6 +427,84 @@ def test_respuesta_con_rotulos_se_limpia_en_el_agente() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Cobertura de la evidencia: lo que la pregunta nombra y la evidencia no trae
+# ---------------------------------------------------------------------------
+
+
+def test_entidades_reconoce_lo_que_se_pregunta() -> None:
+    from src.intelligence.response.entities import asked_entities
+
+    labels = [
+        entity.label
+        for entity in asked_entities("cuentame sobre la categorria 31 y sobre el byte 105")
+    ]
+    assert labels == ["categoría 31", "byte 105"]
+    assert [e.label for e in asked_entities("me explicas el record 4?")] == ["record 4"]
+    assert [e.label for e in asked_entities("que dice la tabla 961 del campo Fare Basis")] == [
+        "tabla 961",
+        "campo Fare Basis",
+    ]
+    # «campo de la tabla» no es una entidad; una pregunta abierta tampoco.
+    assert [e.label for e in asked_entities("cual es el campo de la tabla 5")] == ["tabla 5"]
+    assert asked_entities("dame un resumen de ventas") == []
+
+
+def test_cobertura_marca_lo_que_la_evidencia_no_trae() -> None:
+    from src.intelligence.response.entities import coverage_note
+
+    pregunta = "cuentame sobre la categoria 31 y sobre el byte 105"
+    evidencia_cat10 = (
+        "Byte table: | 17 | Bytes 18-20 | Cxr 1 | AA | CO | permitted within the "
+        "confines of the Major Subcategory Record 3s"
+    )
+    note = coverage_note(pregunta, evidencia_cat10)
+    assert "no menciona: categoría 31, byte 105" in note
+    assert "No lo expliques de memoria" in note
+    # Con la fuente correcta en la evidencia, no hay nada que declarar.
+    with_source = evidencia_cat10 + " Category 31 Tour Conductor Discount, byte 105"
+    assert coverage_note(pregunta, with_source) == ""
+    # El nombre de archivo también cuenta como mención.
+    assert coverage_note("que dice del cat31?", "Cat31_dapp_C.pdf") == ""
+    assert coverage_note("dame un resumen", "") == ""
+
+
+def test_prompt_del_contrato_lleva_la_regla_de_grounding() -> None:
+    from src.intelligence.response.contract import GROUNDING_RULE
+
+    contract = compose_contract(
+        question="¿Qué significa el campo X cuando su valor es 2?",
+        profile=RESPONSE_PROFILE_PRESETS["technical_detailed"],
+    )
+    block = prompt_block(contract)
+    assert GROUNDING_RULE in block
+    assert "nunca lo completes con conocimiento propio" in block
+    # El ejemplo deja de ser una orden: es condicional a la evidencia.
+    assert "si la evidencia trae un caso" in block
+
+
+@pytest.mark.asyncio
+async def test_agente_marca_el_hueco_de_cobertura_en_el_paso() -> None:
+    """La evidencia que no menciona lo pedido queda registrada como dato."""
+    from src.agents.runtime.agent_runtime import AgentRuntime
+    from src.agents.tools.registry import register_tool
+    from tests.test_agent_runtime import _agent, _EchoTool, _FakeLLM, _request
+
+    register_tool(_EchoTool())
+    llm = _FakeLLM(
+        [
+            '{"tool": "echo", "arguments": {"text": "no habla del tema"}}',
+            '{"answer": "No tengo esa información documentada."}',
+        ]
+    )
+    runtime = AgentRuntime(llm_provider=llm)
+    result = await runtime.run(_request(_agent(), "cuentame sobre la categoria 31"))
+
+    tool_steps = [step for step in result.steps if step["type"] == "tool_call"]
+    assert tool_steps and "coverage_gap" in tool_steps[0]
+    assert "categoría 31" in tool_steps[0]["coverage_gap"]
+
+
+# ---------------------------------------------------------------------------
 # Selección: determinista primero, JEV sólo con ambigüedad
 # ---------------------------------------------------------------------------
 

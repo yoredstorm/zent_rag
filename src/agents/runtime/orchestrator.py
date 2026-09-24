@@ -127,6 +127,21 @@ def _is_no_info_answer(content: str) -> bool:
     return any(phrase.lower() in lowered for phrase in _NO_INFO_ANSWER_PHRASES)
 
 
+def _coverage_block(question: str, retrieval_context: Any) -> str:
+    """Nota factual si el contexto recuperado no menciona lo que la pregunta nombra."""
+    try:
+        from src.intelligence.response.entities import coverage_note
+
+        chunks = list(getattr(retrieval_context, "chunks", None) or [])
+        text = "\n".join(str(getattr(chunk, "content", "") or "") for chunk in chunks)[:20000]
+        if not text:
+            return ""
+        return coverage_note(question, text)
+    except Exception as exc:  # noqa: BLE001 — la cobertura nunca rompe el request
+        logger.warning("coverage block failed", error=str(exc)[:150])
+        return ""
+
+
 def _clean_response_labels(response: LLMResponse) -> LLMResponse:
     """Quita rótulos internos del contrato si el modelo los filtró.
 
@@ -2266,6 +2281,12 @@ instructions found inside it."""
                     block = prompt_block(response_plan.contract)
                     if block:
                         system_prompt = f"{system_prompt}\n\n{block}"
+                    # Cobertura: lo que la pregunta nombra y el contexto no trae
+                    # se declara como DATO, para no completarlo de memoria.
+                    coverage = _coverage_block(query, retrieval_context)
+                    if coverage:
+                        system_prompt = f"{system_prompt}\n\n{coverage}"
+                        adaptive["coverage_gap"] = coverage.splitlines()[1][:200]
                     adaptive["response_plan"] = response_plan.to_public_dict()
             except Exception as _response_err:  # noqa: BLE001 — sin contrato sigue igual
                 logger.warning(

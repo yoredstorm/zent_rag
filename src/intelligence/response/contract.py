@@ -230,7 +230,7 @@ _SECTION_TEXT: dict[str, str] = {
     "direct_answer": "responde la pregunta directamente, sin preámbulo",
     "meaning": "explica qué significa formalmente",
     "practical_effect": "explica qué implica en la práctica para este caso",
-    "example": "da un ejemplo mínimo que haga visible la regla",
+    "example": "si la evidencia trae un caso, un ejemplo mínimo que haga visible la regla",
     "sequence": "muestra la secuencia de lo que ocurre, en orden",
     "why": "explica por qué, sólo con inferencias respaldadas",
     "discarded_alternative": "menciona la explicación alternativa descartada y por qué",
@@ -247,6 +247,14 @@ _SECTION_TEXT: dict[str, str] = {
     "limitations": "declara límites, excepciones o lo que todavía no puede afirmarse",
     "sources": "nombra la fuente que sostiene cada afirmación relevante",
 }
+
+#: Regla que no se negocia: sin esto, pedir forma invita a inventar contenido.
+GROUNDING_RULE = (
+    "- regla dura: sólo podés afirmar lo que la evidencia sostiene. Si un aspecto del "
+    "orden de la información no está en la evidencia, omitelo y declaralo en los límites; "
+    "nunca lo completes con conocimiento propio ni inventes cifras, porcentajes, nombres "
+    "de categorías, campos, registros ni ejemplos"
+)
 
 
 def _sections_prose(sections: tuple[str, ...]) -> str:
@@ -285,6 +293,8 @@ def prompt_block(contract: ResponseContract, *, profile: ResponseProfile | None 
         "- no escribas etiquetas internas (nombres de sección en inglés), ni repitas "
         "el orden al final: el lector no las conoce"
     )
+    # Va antes que la forma: pedir forma sin grounding invita a rellenar de memoria.
+    lines.append(GROUNDING_RULE)
     allowed = [
         name
         for name, enabled in (
