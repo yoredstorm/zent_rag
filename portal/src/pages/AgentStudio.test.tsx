@@ -384,6 +384,48 @@ describe("AgentStudio", () => {
     );
   });
 
+  it("avisa y limpia las fuentes guardadas que ya no existen", async () => {
+    const AGENTE_CON_FANTASMA = {
+      ...AGENT,
+      config: {
+        ...AGENT.config,
+        source_ids: ["s1", "fuente-borrada"],
+      },
+    };
+    const fetchMock = fetchRouter();
+    const original = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method || "GET").toUpperCase();
+      if (url.includes("/agents/a1") && method !== "PUT") {
+        return Promise.resolve(json(AGENTE_CON_FANTASMA));
+      }
+      return original!(input, init);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/agents/a1"]}>
+        {authShell(
+          <>
+            <Routes>
+              <Route path="/agents/:id" element={<AgentStudioPage />} />
+            </Routes>
+            <LocationProbe />
+          </>,
+        )}
+      </MemoryRouter>,
+    );
+    await screen.findByDisplayValue("Soporte");
+
+    const aviso = await screen.findByTestId("source-missing-copy");
+    expect(aviso).toHaveTextContent(/de 2 fuentes guardadas ya no existen/i);
+
+    await user.click(screen.getByRole("button", { name: "Quitar las que faltan" }));
+    expect(screen.queryByTestId("source-missing-copy")).toBeNull();
+    expect(screen.getByRole("checkbox", { name: /Políticas RRHH/ })).toBeChecked();
+  });
+
   it("§30: sin agente guardado no se simula la generación con IA", async () => {
     const { user } = await renderStudio("/agents/new");
     await screen.findByText("Identidad");

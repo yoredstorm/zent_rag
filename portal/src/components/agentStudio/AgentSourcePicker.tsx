@@ -133,6 +133,10 @@ export function AgentSourcePicker({
   }
 
   const waiting = sources.some((source) => selectedIds.includes(source.id) && !source.document_count);
+  // Config vieja: ids guardados que ya no existen (la fuente se borró o se volvió
+  // a importar). Se avisa antes de guardar y se puede limpiar en un clic.
+  const knownIds = new Set(sources.map((source) => source.id));
+  const missingIds = selectedIds.filter((id) => !knownIds.has(id));
 
   return (
     <fieldset className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -140,6 +144,28 @@ export function AgentSourcePicker({
       <p className="mt-0.5 text-xs leading-relaxed text-muted">
         Elige con qué material responde este agente.
       </p>
+      {missingIds.length ? (
+        <div
+          className="mt-3 shrink-0 rounded-md border border-warn/25 bg-warn-soft px-3 py-2.5 text-xs leading-relaxed text-warn"
+          data-testid="source-missing-copy"
+          role="status"
+        >
+          <p>
+            {missingIds.length === selectedIds.length
+              ? "Todas las fuentes guardadas ya no existen en la organización. Este agente no va a encontrar nada en el conocimiento hasta que elijas fuentes vigentes."
+              : `${missingIds.length} de ${selectedIds.length} fuentes guardadas ya no existen en la organización (se borraron o se volvieron a importar).`}
+          </p>
+          <div className="mt-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => onSetSelected?.(selectedIds.filter((id) => knownIds.has(id)))}
+            >
+              Quitar las que faltan
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <div className="mt-3 shrink-0">
         <Input
           type="search"

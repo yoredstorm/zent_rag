@@ -133,8 +133,8 @@ def parse_agent_config(raw: dict | None) -> dict:
         return AgentConfig().model_dump(mode="json")
 
 
-def _agent_response(agent) -> dict:
-    return {
+def _agent_response(agent, *, warnings: list[str] | None = None) -> dict:
+    payload = {
         "id": str(agent.id),
         "name": agent.name,
         "description": agent.description,
@@ -151,6 +151,9 @@ def _agent_response(agent) -> dict:
         "created_at": agent.created_at.isoformat(),
         "config": parse_agent_config(agent.config_json),
     }
+    if warnings:
+        payload["warnings"] = list(warnings)
+    return payload
 
 
 @router.get("", summary="Listar agentes")
@@ -198,8 +201,9 @@ async def create_agent(
     if body.workspace_id is not None:
         await _require_own_workspace(ctx, body.workspace_id)
     config_payload = None
+    warnings: list[str] = []
     if body.config is not None:
-        config = await _apply_source_config(ctx, body.config)
+        config, warnings = await _apply_source_config(ctx, body.config)
         config_payload = config.model_dump(mode="json")
     try:
         agent = await repo.create_agent(
@@ -232,7 +236,7 @@ async def create_agent(
         await sync_progress(ctx.organization_id)
     except Exception:  # noqa: BLE001
         pass
-    return _agent_response(agent)
+    return _agent_response(agent, warnings=warnings)
 
 
 @router.get("/assistants", summary="Living assistants: agentes y sus automatizaciones")
@@ -382,9 +386,10 @@ async def update_agent(
     if body.workspace_id is not None:
         await _require_own_workspace(ctx, body.workspace_id)
     fields = body.model_dump(exclude_none=True)
+    warnings: list[str] = []
     if "config" in fields:
         if body.config is not None:
-            applied = await _apply_source_config(ctx, body.config)
+            applied, warnings = await _apply_source_config(ctx, body.config)
             fields["config_json"] = applied.model_dump(mode="json")
         else:
             fields["config_json"] = {}
@@ -405,7 +410,7 @@ async def update_agent(
             },
         ) from exc
     await _audit().write(ctx, "agent.updated", "agent", aid, metadata={"name": agent.name})
-    return _agent_response(agent)
+    return _agent_response(agent, warnings=warnings)
 
 
 @router.delete("/{agent_id}", summary="Eliminar agente")
@@ -818,9 +823,65 @@ async def _require_own_sources(ctx, source_ids: list[UUID]) -> list:
     return sources
 
 
-async def _apply_source_config(ctx, config: AgentConfig) -> AgentConfig:
+async def _classify_source_ids(ctx, source_ids: list[UUID]) -> tuple[list, list[UUID], list[UUID]]:
+    """Separa las fuentes del agente en vigentes, inexistentes y de otra organización.
+
+    Un id **inexistente** es configuración vieja (la fuente se borró o se volvió a
+    importar): se descarta con aviso, nunca se bloquea el guardado. Un id de **otra
+    organización** sí es un 404: es aislamiento, no configuración.
+    """
+    from sqlalchemy import bindparam
+    from sqlalchemy import text as sql_text
+
+    from src.api.deps import get_source_repo
+    from src.infrastructure.postgres.session import get_async_session
+
+    repo = get_source_repo()
+    found: list = []
+    missing: list[UUID] = []
+    foreign: list[UUID] = []
+    pending: list[UUID] = []
+    for source_id in source_ids:
+        source = await repo.get_source(ctx.organization_id, source_id)
+        if source is not None:
+            found.append(source)
+        else:
+            pending.append(source_id)
+    if not pending:
+        return found, missing, foreign
+    session = await get_async_session()
+    rows = (
+        await session.execute(
+            sql_text(
+                "SELECT id::text AS id, organization_id::text AS organization_id "
+                "FROM kb_sources WHERE id::text IN :ids"
+            ).bindparams(bindparam("ids", expanding=True)),
+            {"ids": [str(item) for item in pending]},
+        )
+    ).fetchall()
+    owners = {str(row[0]): str(row[1]) for row in rows}
+    for source_id in pending:
+        owner = owners.get(str(source_id))
+        if owner is None:
+            missing.append(source_id)
+        elif owner != str(ctx.organization_id):
+            foreign.append(source_id)
+        else:
+            # Existe y es de la organización, pero el repo no la devolvió.
+            missing.append(source_id)
+    return found, missing, foreign
+
+
+async def _apply_source_config(ctx, config: AgentConfig) -> tuple[AgentConfig, list[str]]:
+    """Config con las fuentes vigentes + avisos de lo que se descartó."""
     if config.source_ids:
-        sources = await _require_own_sources(ctx, config.source_ids)
+        sources, missing, foreign = await _classify_source_ids(ctx, config.source_ids)
+        if foreign:
+            raise HTTPException(
+                404,
+                "Source not found in this organization: "
+                + ", ".join(str(item) for item in foreign[:5]),
+            )
         derived: list[UUID] = []
         seen: set[UUID] = set()
         for source in sources:
@@ -828,10 +889,26 @@ async def _apply_source_config(ctx, config: AgentConfig) -> AgentConfig:
             if kb_id and kb_id not in seen:
                 seen.add(kb_id)
                 derived.append(kb_id)
-        return config.model_copy(update={"knowledge_base_ids": derived})
+        warnings: list[str] = []
+        if missing:
+            logger.warning(
+                "agent config referenced unknown sources; dropped",
+                organization_id=str(ctx.organization_id),
+                dropped=[str(item) for item in missing][:10],
+                dropped_count=len(missing),
+            )
+            warnings.append(
+                f"Se quitaron {len(missing)} fuente(s) que ya no existen en la "
+                "organización. Volvé a elegirlas en Fuentes."
+            )
+        kept = [source.id for source in sources]
+        return (
+            config.model_copy(update={"source_ids": kept, "knowledge_base_ids": derived}),
+            warnings,
+        )
     if config.knowledge_base_ids:
         await _require_own_kbs(ctx, config.knowledge_base_ids)
-    return config
+    return config, []
 
 # ---------------------------------------------------------------------------
 # Marketplace & Sharing (tenant)

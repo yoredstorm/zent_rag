@@ -443,3 +443,71 @@ async def test_create_duplicate_agent_name_returns_409(async_client: AsyncClient
         headers=headers,
     )
     assert conflict.status_code == 409, conflict.text
+
+
+# ---------------------------------------------------------------------------
+# Fuentes que ya no existen: config vieja se descarta con aviso, aislamiento no
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fuente_inexistente_se_descarta_con_aviso(async_client: AsyncClient) -> None:
+    """Una fuente borrada no puede bloquear el guardado del agente."""
+    org = await _create_org(async_client, "Agent Fuentes Org")
+    org["session"] = await _owner_session(org["organization_id"])
+    headers = _headers(org)
+
+    creado = await async_client.post(
+        "/api/v1/agents",
+        json={"name": f"fuentes-{uuid4().hex[:6]}"},
+        headers=headers,
+    )
+    assert creado.status_code == 201, creado.text
+    agent_id = creado.json()["id"]
+
+    fantasma = str(uuid4())
+    guardado = await async_client.put(
+        f"/api/v1/agents/{agent_id}",
+        json={
+            "config": {
+                "purpose": "probar fuentes viejas",
+                "source_ids": [fantasma],
+            }
+        },
+        headers=headers,
+    )
+    assert guardado.status_code == 200, guardado.text
+    data = guardado.json()
+    assert data["config"]["source_ids"] == []
+    assert data["warnings"] and "ya no existen" in data["warnings"][0]
+
+
+@pytest.mark.asyncio
+async def test_fuente_de_otra_organizacion_sigue_siendo_404(async_client: AsyncClient) -> None:
+    """Aislamiento: una fuente de otro tenant nunca se acepta ni se descarta."""
+    from src.infrastructure.postgres.knowledge_repos import PostgresSourceRepository
+
+    otra = await _create_org(async_client, "Agent Fuentes Otra Org")
+    fuente = await PostgresSourceRepository().create_source(
+        UUID(otra["organization_id"]), f"fuente-{uuid4().hex[:6]}", "file"
+    )
+
+    org = await _create_org(async_client, "Agent Fuentes Org 2")
+    org["session"] = await _owner_session(org["organization_id"])
+    headers = _headers(org)
+
+    creado = await async_client.post(
+        "/api/v1/agents",
+        json={"name": f"ajena-{uuid4().hex[:6]}"},
+        headers=headers,
+    )
+    assert creado.status_code == 201, creado.text
+    agent_id = creado.json()["id"]
+
+    intento = await async_client.put(
+        f"/api/v1/agents/{agent_id}",
+        json={"config": {"source_ids": [str(fuente.id)]}},
+        headers=headers,
+    )
+    assert intento.status_code == 404, intento.text
+    assert "Source not found in this organization" in intento.text

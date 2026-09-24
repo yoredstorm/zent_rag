@@ -475,7 +475,9 @@ export default function AgentStudioPage() {
         body: JSON.stringify(payload),
       });
       applyAgent(updated);
-      setMsg("Cambios guardados.");
+      // El backend avisa cuando descartó config vieja (fuentes que ya no existen).
+      const warnings = (updated as { warnings?: string[] }).warnings;
+      setMsg(warnings?.length ? `Cambios guardados. ${warnings.join(" ")}` : "Cambios guardados.");
       return updated;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al guardar");
