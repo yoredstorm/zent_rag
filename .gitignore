@@ -63,6 +63,8 @@ coverage.json
 # Agent skills (local tooling)
 .agents/
 skills-lock.json
+# Estado local del agente (taste/learnings): nunca se versiona
+.commandcode/
 
 # Local scratch requests (contain webhook secrets)
 bruno/RAG/prueba.bru

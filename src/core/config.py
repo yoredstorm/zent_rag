@@ -1166,6 +1166,18 @@ class Settings(BaseSettings):
         le=200000,
         description="Presupuesto de estado (caracteres) que recibe JEV por juicio.",
     )
+    RUNTIME_EVIDENCE_BUDGET_CHARS: int = Field(
+        default=12000,
+        ge=500,
+        le=200000,
+        description=(
+            "Presupuesto de contexto de EVIDENCIA (caracteres) del run. El "
+            "selector reparte ese presupuesto por relevancia (entidad exacta > "
+            "nombre de fuente > entity pin > seccion > lexico > semantico) y el "
+            "MISMO texto va al generador y a JEV: reemplaza el recorte ciego por "
+            "posicion (tool: 3000, gate: 1500 chars por observacion)."
+        ),
+    )
     RUNTIME_JEV_TOOL_CONFIDENCE: float = Field(
         default=0.60,
         ge=0.0,
