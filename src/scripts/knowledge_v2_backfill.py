@@ -44,22 +44,34 @@ def _print(line: str) -> None:
 async def find_candidates(
     organization_id: UUID | None,
     limit: int,
+    force: bool = False,
+    name_contains: str | None = None,
 ) -> list[dict]:
     session = await get_async_session()
     try:
         query = (
-            "SELECT s.id, s.organization_id, s.knowledge_base_id, s.name, s.type "
-            "FROM kb_sources s "
-            "WHERE s.type = ANY(:source_types) "
-            "AND NOT EXISTS ("
+            "SELECT s.id, s.organization_id, s.knowledge_base_id, s.name, s.type, "
+            "EXISTS ("
             "  SELECT 1 FROM structured_documents sd "
             "  WHERE sd.source_id = s.id AND sd.organization_id = s.organization_id"
-            ") "
+            ") AS tiene_documento "
+            "FROM kb_sources s "
+            "WHERE s.type = ANY(:source_types) "
         )
         params: dict = {"source_types": list(V2_CAPABLE_TYPES), "limit": limit}
+        if not force:
+            query += (
+                "AND NOT EXISTS ("
+                "  SELECT 1 FROM structured_documents sd "
+                "  WHERE sd.source_id = s.id AND sd.organization_id = s.organization_id"
+                ") "
+            )
         if organization_id is not None:
             query += "AND s.organization_id = :oid "
             params["oid"] = organization_id
+        if name_contains:
+            query += "AND s.name ILIKE :nombre "
+            params["nombre"] = f"%{name_contains}%"
         query += "ORDER BY s.created_at ASC LIMIT :limit"
         result = await session.execute(text(query), params)
         rows = result.fetchall()
@@ -70,6 +82,7 @@ async def find_candidates(
                 "knowledge_base_id": row.knowledge_base_id,
                 "name": row.name,
                 "type": row.type,
+                "tiene_documento": bool(row.tiene_documento),
             }
             for row in rows
         ]
@@ -81,12 +94,16 @@ async def backfill(
     organization_id: UUID | None,
     limit: int,
     dry_run: bool,
+    force: bool = False,
+    name_contains: str | None = None,
 ) -> int:
-    candidates = await find_candidates(organization_id, limit)
+    candidates = await find_candidates(
+        organization_id, limit, force=force, name_contains=name_contains
+    )
     if not candidates:
         _print(
             "No hay fuentes pendientes de reproceso V2 "
-            f"({', '.join(V2_CAPABLE_TYPES)} sin structured_documents)."
+            f"({', '.join(V2_CAPABLE_TYPES)})."
         )
         return 0
 
@@ -98,7 +115,8 @@ async def backfill(
             continue
         _print(
             f"[{'DRY' if dry_run else 'ENQ'}] org={source['organization_id']} "
-            f"source={source['id']} kb={source['knowledge_base_id']} name={source['name']!r}"
+            f"source={source['id']} kb={source['knowledge_base_id']} "
+            f"doc={'sí' if source['tiene_documento'] else 'no'} name={source['name']!r}"
         )
         if dry_run:
             continue
@@ -125,7 +143,13 @@ async def _main(args: argparse.Namespace) -> None:
     organization_id: UUID | None = None
     if args.org:
         organization_id = UUID(args.org)
-    await backfill(organization_id, args.limit, args.dry_run)
+    await backfill(
+        organization_id,
+        args.limit,
+        args.dry_run,
+        force=args.force,
+        name_contains=args.name_contains,
+    )
 
 
 def main() -> None:
@@ -133,6 +157,18 @@ def main() -> None:
     parser.add_argument("--org", help="Organization UUID (default: todas)")
     parser.add_argument("--limit", type=int, default=50, help="Máx. fuentes a encolar")
     parser.add_argument("--dry-run", action="store_true", help="Solo lista candidatas")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Incluye fuentes que ya tienen documento estructurado: tras un cambio "
+            "de parser/chunker hay que reprocesarlas para que el índice refleje lo nuevo."
+        ),
+    )
+    parser.add_argument(
+        "--name-contains",
+        help="Filtra por nombre de fuente (ej: Cat31) para reindexar por tandas",
+    )
     args = parser.parse_args()
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
