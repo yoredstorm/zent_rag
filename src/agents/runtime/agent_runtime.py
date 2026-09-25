@@ -293,6 +293,22 @@ def _budget_answer(history: list[str], reason: str) -> str:
     )
 
 
+def _evidence_window(history: list[str], limit: int = 6) -> list[str]:
+    """Últimas observaciones CON evidencia (documentos), no los avisos internos.
+
+    El gate y el juicio del paso miraban `history[-8:]`: los avisos del propio
+    loop (cobertura, «no busques más», revisiones) empujaban afuera la evidencia
+    real y el veredicto terminaba en «sin evidencia suficiente» con el dato ya
+    recuperado.
+    """
+    con_evidencia = [
+        item for item in history if item.startswith("OBSERVATION") and "[Doc" in item
+    ]
+    if con_evidencia:
+        return con_evidencia[-limit:]
+    return history[-limit:]
+
+
 def compose_agent_instructions(agent: Agent) -> str:
     """Une purpose + system_prompt. Purpose vacío no altera el prompt."""
     prompt = (agent.system_prompt or "").strip()
@@ -1645,7 +1661,7 @@ class AgentRuntime:
                     mode=answer_mode,
                     user_request=request.message,
                     draft=draft,
-                    observations=history[-8:],
+                    observations=_evidence_window(history, limit=6),
                     agent_instructions=agent_instructions,
                     settings=settings,
                     max_state_chars=settings.RUNTIME_JEV_STATE_MAX_CHARS,
@@ -2225,7 +2241,8 @@ class AgentRuntime:
                         trace_id=request.trace_id,
                     )
                     observation_text = "\n".join(
-                        line for line in history[-10:] if line.startswith("OBSERVATION")
+                        line for line in _evidence_window(history, limit=8)
+                        if line.startswith("OBSERVATION")
                     )
                     gap_labels = _uncovered_labels(request.message, observation_text)
                     rounds_left = max(0, max_retrieval_rounds - retrieval_rounds)
