@@ -46,6 +46,7 @@ async def find_candidates(
     limit: int,
     force: bool = False,
     name_contains: str | None = None,
+    only_with_document: bool = False,
 ) -> list[dict]:
     session = await get_async_session()
     try:
@@ -59,7 +60,16 @@ async def find_candidates(
             "WHERE s.type = ANY(:source_types) "
         )
         params: dict = {"source_types": list(V2_CAPABLE_TYPES), "limit": limit}
-        if not force:
+        if only_with_document:
+            # Ya tienen documento: hay que reprocesarlas cuando cambió el parser
+            # o el chunker (el índice tiene la versión vieja).
+            query += (
+                "AND EXISTS ("
+                "  SELECT 1 FROM structured_documents sd "
+                "  WHERE sd.source_id = s.id AND sd.organization_id = s.organization_id"
+                ") "
+            )
+        elif not force:
             query += (
                 "AND NOT EXISTS ("
                 "  SELECT 1 FROM structured_documents sd "
@@ -96,9 +106,14 @@ async def backfill(
     dry_run: bool,
     force: bool = False,
     name_contains: str | None = None,
+    only_with_document: bool = False,
 ) -> int:
     candidates = await find_candidates(
-        organization_id, limit, force=force, name_contains=name_contains
+        organization_id,
+        limit,
+        force=force,
+        name_contains=name_contains,
+        only_with_document=only_with_document,
     )
     if not candidates:
         _print(
@@ -149,6 +164,7 @@ async def _main(args: argparse.Namespace) -> None:
         args.dry_run,
         force=args.force,
         name_contains=args.name_contains,
+        only_with_document=args.only_with_document,
     )
 
 
@@ -168,6 +184,14 @@ def main() -> None:
     parser.add_argument(
         "--name-contains",
         help="Filtra por nombre de fuente (ej: Cat31) para reindexar por tandas",
+    )
+    parser.add_argument(
+        "--only-with-document",
+        action="store_true",
+        help=(
+            "Solo fuentes que YA tienen documento estructurado (reprocesarlas tras "
+            "un cambio de parser/chunker: el índice quedó con la versión vieja)"
+        ),
     )
     args = parser.parse_args()
     if sys.platform == "win32":
