@@ -675,6 +675,46 @@ def test_bateria_de_escenarios(caso, pregunta, kwargs, check) -> None:
     assert check(contract, policy), caso
 
 
+def test_revision_de_presentacion_sin_motivo_igual_da_instruccion() -> None:
+    """Una revisión sin feedback quema un ciclo: siempre hay instrucción."""
+    import asyncio
+
+    from src.core.domain.adaptive import EvidenceItem
+    from src.runtime.answer_gate import judge_answer
+
+    class _Editor:
+        async def judge(self, *, state, questions, context=None):
+            return {
+                "model": "jev-editor",
+                "answers": {
+                    "answer_grounded": {"type": "noul", "noul": 0.95},
+                    "answer_complete": {"type": "noul", "noul": 0.95},
+                    "answer_quality": {"type": "score", "score": 3.0},
+                    "structure": {"type": "score", "score": 1.0},
+                },
+            }
+
+    result = asyncio.run(
+        judge_answer(
+            engine=_Editor(),
+            mode="on",
+            user_request=PREGUNTA,
+            draft="Bloque único y desordenado.",
+            evidence=[
+                EvidenceItem(
+                    source_type="qdrant",
+                    content=EVIDENCIA_BYTE_105,
+                    title="Cat31_dapp_C.pdf",
+                )
+            ],
+            settings=object(),
+        )
+    )
+    assert result.verdict == "revise"
+    assert result.feedback.strip()
+    assert "legibilidad" in result.feedback.lower()
+
+
 def test_wiring_expone_la_politica_en_el_contrato_publico() -> None:
     """§21: el flujo muestra qué se explicó y qué quedó afuera, sin scores."""
     import asyncio

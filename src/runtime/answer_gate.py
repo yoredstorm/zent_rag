@@ -621,6 +621,13 @@ async def judge_answer(
         quality=quality,
         reason=revision_feedback(answers) if action == ACTION_REVISE else "",
     )
+    if action == ACTION_REVISE and not feedback:
+        # Una revisión sin instrucción quema un ciclo sin decirle nada al
+        # generador: se pide la mejora de legibilidad por defecto.
+        feedback = (
+            "Verificador JEV: mejorá la legibilidad del borrador (una idea por "
+            "párrafo, la respuesta primero) y quitá lo que no aporte valor."
+        )
     if action == ACTION_REVISE and unsupported and not feedback:
         feedback = "Verificador JEV: quita lo que la evidencia no sostiene."
 
