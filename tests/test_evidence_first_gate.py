@@ -402,26 +402,35 @@ async def test_la_jerarquia_respaldada_en_otra_ronda_no_se_marca(
 async def test_respuesta_que_se_contradice_se_revisa(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """«La información disponible no contiene…» seguido de la explicación."""
+    """«La información disponible no contiene…» seguido de la explicación.
+
+    Si el modelo insiste en la advertencia tras la revisión, el saneo determinista
+    la quita igual: una frase falsa respecto de la evidencia no llega al lector.
+    """
     stub = _SearchStub()
+    insistente = (
+        '{"answer": "La información disponible no contiene una definición técnica '
+        "del byte 105.\\n\\n### Byte 105\\nEl byte 105 es el campo Fee Application "
+        '[Doc 1]."}'
+    )
     llm = _FakeLLM(
         [
             '{"tool": "search_knowledge", "arguments": {"query": "categoría 31 byte 105"}}',
-            (
-                '{"answer": "La información disponible no contiene una definición '
-                "técnica del byte 105.\\n\\n### Byte 105\\nEl byte 105 es el campo Fee "
-                'Application [Doc 1]."}'
-            ),
-            '{"answer": "El byte 105 es el campo Fee Application: decide cómo aplicar '
-            'el cambio de tarifa [Doc 1]."}',
+            insistente,
+            insistente,
         ]
     )
     result, _ = await _run(monkeypatch, llm=llm, judge=_Judge(), search=stub)
 
-    revisiones = [step for step in result.steps if step["type"] == "answer_revision"]
-    assert any("contradice" in str(step.get("detail")) for step in revisiones)
     assert "no contiene" not in result.answer.lower()
     assert "Fee Application" in result.answer
+    saneos = [
+        step
+        for step in result.steps
+        if step.get("type") == "answer_revision"
+        and step.get("verdict") == "disclaimer_removed"
+    ]
+    assert saneos, "el saneo determinista debe quedar registrado en el flujo"
 
 
 # ---------------------------------------------------------------------------

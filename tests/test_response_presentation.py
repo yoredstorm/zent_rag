@@ -351,6 +351,23 @@ def test_las_notas_de_correccion_no_piden_declarar_que_falta_info() -> None:
     assert "No declares que falta información" in hierarchy_note(["jerarquía x"])
 
 
+def test_saneo_final_quita_la_advertencia_contradictoria() -> None:
+    from src.intelligence.response.entities import strip_contradicting_disclaimer
+
+    texto = (
+        "La evidencia disponible no contiene una explicación directa del byte 105.\n\n"
+        "### Byte 105\nEl byte 105 es el campo Fee Application y decide el cargo [Doc 1].\n\n"
+        "El valor 2 usa el fee más alto entre todos los componentes [Doc 1]."
+    )
+    limpio, quitadas = strip_contradicting_disclaimer(texto, entities_covered=True)
+    assert quitadas == 1
+    assert "no contiene" not in limpio.lower()
+    assert "Fee Application" in limpio
+    assert "El valor 2 usa el fee más alto" in limpio
+    # Sin cobertura completa no se toca nada.
+    assert strip_contradicting_disclaimer(texto, entities_covered=False) == (texto, 0)
+
+
 def test_universo_de_chequeo_es_toda_la_evidencia_del_run() -> None:
     """El chequeo mira todo lo recuperado, no sólo la selección vigente."""
     from src.runtime.evidence import (

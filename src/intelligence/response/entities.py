@@ -285,6 +285,33 @@ def disclaimer_note(phrase: str) -> str:
     )
 
 
+def strip_contradicting_disclaimer(
+    answer: str,
+    *,
+    entities_covered: bool,
+) -> tuple[str, int]:
+    """Quita las frases que declaran que falta información cuando sí la hay.
+
+    Es saneo de presentación, no de contenido: esas frases son falsas respecto de
+    la evidencia del run (que cubre lo preguntado). El resto de la respuesta queda
+    intacto. Devuelve `(texto, frases_quitadas)`.
+    """
+    if not answer or not entities_covered:
+        return answer, 0
+    conservadas: list[str] = []
+    quitadas = 0
+    for parrafo in re.split(r"\n{2,}", answer):
+        frases = re.split(r"(?<=[.!?])\s+", parrafo)
+        restantes = [frase for frase in frases if not _DISCLAIMER_RE.search(frase)]
+        quitadas += len(frases) - len(restantes)
+        limpio = " ".join(frase.strip() for frase in restantes if frase.strip()).strip()
+        if limpio:
+            conservadas.append(limpio)
+    if not quitadas:
+        return answer, 0
+    return "\n\n".join(conservadas).strip(), quitadas
+
+
 def coverage_note(question: str, evidence_text: str) -> str:
     """Bloque factual para el generador. Vacío cuando todo está cubierto.
 
@@ -447,6 +474,7 @@ __all__ = [
     "normalize",
     "self_contradicting_disclaimer",
     "stated_dates",
+    "strip_contradicting_disclaimer",
     "uncovered_entities",
     "ungrounded_figures",
     "ungrounded_hierarchy_claims",

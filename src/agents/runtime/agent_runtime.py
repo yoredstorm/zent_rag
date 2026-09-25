@@ -1871,7 +1871,12 @@ class AgentRuntime:
                 logger.warning("presentation refresh failed", error=str(exc)[:150])
 
         def _polish_answer(text: str) -> str:
-            """Higiene final con los títulos del run (fuentes legibles, markdown)."""
+            """Higiene final con los títulos del run (fuentes legibles, markdown).
+
+            Incluye el saneo de una advertencia que contradice la respuesta: si la
+            evidencia cubre todo lo que la pregunta nombra, decir «no hay
+            información» es falso y no puede llegar al lector (se registra).
+            """
             titulos = tuple(
                 dict.fromkeys(
                     str(item.title)
@@ -1879,7 +1884,32 @@ class AgentRuntime:
                     if getattr(item, "title", None)
                 )
             )
-            return _clean_answer(text, titles=titulos)
+            limpio = _clean_answer(text, titles=titulos)
+            try:
+                from src.intelligence.response.entities import (
+                    strip_contradicting_disclaimer,
+                )
+
+                cubierto = bool(
+                    sufficiency is not None and sufficiency.exact_entity_match is True
+                )
+                limpio, quitadas = strip_contradicting_disclaimer(
+                    limpio, entities_covered=cubierto
+                )
+                if quitadas:
+                    result.steps.append(
+                        {
+                            "type": "answer_revision",
+                            "verdict": "disclaimer_removed",
+                            "detail": (
+                                "se quitó una advertencia que contradecía la "
+                                "respuesta: la evidencia sí cubre lo preguntado"
+                            ),
+                        }
+                    )
+            except Exception as exc:  # noqa: BLE001 — la respuesta nunca se rompe
+                logger.warning("disclaimer strip failed", error=str(exc)[:150])
+            return limpio
 
         def _refresh_selection():
             """Recalcula la selección de evidencia del run (misma para todos)."""

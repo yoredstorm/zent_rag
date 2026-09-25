@@ -203,18 +203,31 @@ def _observe_ungrounded_figures() -> None:
         logger.warning("figure metric failed", error=str(exc)[:120])
 
 
-def _clean_response_labels(response: LLMResponse, *, titles: Any = ()) -> LLMResponse:
+def _clean_response_labels(
+    response: LLMResponse,
+    *,
+    titles: Any = (),
+    entities_covered: bool = False,
+) -> LLMResponse:
     """Higiene del texto final: rótulos internos, escapes de markdown y fuentes.
 
     El prompt de composición ya no nombra las secciones ni pide una lista de
     fuentes; esto cubre prompts viejos, modelos que igual los copian y respuestas
-    en caché. Se registra porque cambia el texto que ve el usuario.
+    en caché. Además quita una advertencia de «no hay información» cuando la
+    evidencia del run sí cubre lo que la pregunta nombra. Se registra porque
+    cambia el texto que ve el usuario.
     """
     try:
         from src.intelligence.response.contract import normalize_answer_text
+        from src.intelligence.response.entities import (
+            strip_contradicting_disclaimer,
+        )
 
         hygiene = normalize_answer_text(response.content or "", titles=titles)
-        if not hygiene.changed:
+        content, quitadas = strip_contradicting_disclaimer(
+            hygiene.text, entities_covered=entities_covered
+        )
+        if not hygiene.changed and not quitadas:
             return response
         if hygiene.labels_stripped:
             zent_response_section_labels_stripped_total.inc(hygiene.labels_stripped)
@@ -223,12 +236,13 @@ def _clean_response_labels(response: LLMResponse, *, titles: Any = ()) -> LLMRes
             labels_stripped=hygiene.labels_stripped,
             markdown_escapes_fixed=hygiene.markdown_escapes_fixed,
             sources_normalized=hygiene.sources_normalized,
+            disclaimers_removed=quitadas,
             answer_chars=len(response.content or ""),
         )
     except Exception as exc:  # noqa: BLE001 — la respuesta nunca se rompe por esto
         logger.warning("answer label cleanup failed", error=str(exc)[:150])
         return response
-    return replace(response, content=hygiene.text)
+    return replace(response, content=content)
 
 
 def _evidence_titles(adaptive: dict | None) -> tuple[str, ...]:
@@ -245,6 +259,12 @@ def _evidence_titles(adaptive: dict | None) -> tuple[str, ...]:
         if title:
             titles.append(title)
     return tuple(dict.fromkeys(titles))
+
+
+def _entities_covered(adaptive: dict | None) -> bool:
+    """¿La evidencia del run cubre TODAS las entidades que la pregunta nombra?"""
+    sufficiency = (adaptive or {}).get("sufficiency")
+    return bool(getattr(sufficiency, "exact_entity_match", None) is True)
 
 
 def _presentation_policy(*, query: str, adaptive: dict, signals: dict | None = None) -> Any:
@@ -2754,7 +2774,9 @@ instructions found inside it."""
             # Se limpia antes de cachear/registrar: la respuesta que se guarda y
             # la que se muestra son la misma.
             result.llm_response = _clean_response_labels(
-                llm_response, titles=_evidence_titles(adaptive)
+                llm_response,
+                titles=_evidence_titles(adaptive),
+                entities_covered=_entities_covered(adaptive),
             )
             llm_response = result.llm_response
 
@@ -3142,7 +3164,9 @@ instructions found inside it."""
             # La respuesta sale limpia de rótulos internos del contrato (una sola
             # vez, después de cualquier revisión o abstención).
             result.llm_response = _clean_response_labels(
-                llm_response, titles=_evidence_titles(adaptive)
+                llm_response,
+                titles=_evidence_titles(adaptive),
+                entities_covered=_entities_covered(adaptive),
             )
             llm_response = result.llm_response
             result.status = QueryStatus.COMPLETED
