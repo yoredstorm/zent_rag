@@ -367,7 +367,9 @@ async def test_circuit_breaker_and_runtime_guard(async_client: AsyncClient) -> N
         json={"message": "hola"},
     )
     assert run.status_code == 200, run.text
-    assert run.json()["answer"] == ""
+    # El circuito abierto no deja al usuario sin respuesta: se explica el motivo.
+    assert run.json()["answer"].strip()
+    assert "bloqueado" in run.json()["answer"]
     assert any("model_circuit_open" in (s.get("detail") or "") for s in run.json().get("steps", []))
     await reset_circuit("zent-test")
 
