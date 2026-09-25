@@ -100,6 +100,8 @@ class AnswerGateResult:
     #: Veredictos separados (§14) y señales de evidencia observadas.
     grounding_verdict: str = GROUNDING_UNKNOWN
     presentation_verdict: str = PRESENTATION_UNKNOWN
+    #: Motivo concreto de la revisión de forma (vacío si no hubo).
+    presentation_revision_reason: str = ""
     evidence_ids: tuple[str, ...] = ()
     evidence_chars: int = 0
     evidence_used: bool = False
@@ -129,6 +131,8 @@ class AnswerGateResult:
             payload["grounding_verdict"] = self.grounding_verdict
         if self.presentation_verdict != PRESENTATION_UNKNOWN:
             payload["presentation_verdict"] = self.presentation_verdict
+        if self.presentation_revision_reason:
+            payload["presentation_revision_reason"] = self.presentation_revision_reason
         if self.evidence_used:
             payload["evidence_ids"] = list(self.evidence_ids)[:24]
             payload["evidence_chars"] = self.evidence_chars
@@ -193,7 +197,19 @@ REVISION_REASON_FEEDBACK: dict[str, str] = {
     "unsupported_claim": "quita lo que la evidencia no sostiene",
     "poor_structure": "ordena la respuesta para que se pueda leer de arriba abajo",
     "does_not_answer_question": "responde la pregunta que se hizo",
+    # Legibilidad: qué hace difícil leer una respuesta correcta. Nunca abstención.
+    "wall_of_text": "parti el texto en bloques: una idea por párrafo, con la respuesta primero",
+    "poor_chunking": "separa las ideas: cada párrafo desarrolla una sola",
+    "buried_answer": "pone la respuesta en la primera frase; el detalle va después",
+    "irrelevant_detail": "quita el detalle secundario que la pregunta no pide",
+    "bad_enumeration_format": "enumerá los valores uno por uno, con viñetas o tabla",
+    "unnecessary_limitations": "quita los límites o advertencias que el caso no necesita",
 }
+
+#: Motivos de PRESENTACIÓN: una mala forma se revisa, nunca se abstiene (§8, §18).
+PRESENTATION_REVISION_REASONS = frozenset(
+    reason for reason in REVISION_REASON_FEEDBACK if reason not in CONTENT_REVISION_REASONS
+)
 
 
 def revision_feedback(answers: dict | None) -> str:
@@ -622,6 +638,7 @@ async def judge_answer(
         answers=answers,
         grounding_verdict=grounding_verdict,
         presentation_verdict=presentation_verdict,
+        presentation_revision_reason=(revision_reason(answers) if needs_presentation else ""),
         evidence_ids=selection.ids if selection is not None else (),
         evidence_chars=selection.chars if selection is not None else 0,
         evidence_used=bool(items),
@@ -648,6 +665,7 @@ __all__ = [
     "MAX_CLAIM_QUESTIONS",
     "PRESENTATION_NEEDS_REVISION",
     "PRESENTATION_OK",
+    "PRESENTATION_REVISION_REASONS",
     "PRESENTATION_UNKNOWN",
     "REVISION_REASON_FEEDBACK",
     "AnswerGateResult",

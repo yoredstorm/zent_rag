@@ -361,9 +361,12 @@ def test_prompt_no_expone_las_claves_de_las_secciones() -> None:
         assert f"{section}:" not in block
         assert f"- {section}" not in block
     assert "orden de la información" in block
-    assert "una sola explicación conectada" in block
     assert "no escribas etiquetas internas" in block
-    assert "no más de dos o tres" in block
+    # El orden es un ritmo, no un formulario: la estructura se adapta al caso.
+    assert "no son secciones rotuladas" in block
+    assert "capa 1" in block.lower()
+    assert "una idea por" in block.lower()
+    assert "no más de dos o tres" not in block
 
 
 def test_strip_section_labels_quita_rotulos_filtrados() -> None:

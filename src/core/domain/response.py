@@ -59,10 +59,14 @@ SECTION_DATA_READING = "data_reading"
 SECTION_SUMMARY = "summary"
 SECTION_LIMITATIONS = "limitations"
 SECTION_SOURCES = "sources"
+#: Enumeraciones (valores, opciones, casos): cuando hay 3+ conviene lista o
+#: tabla en lugar de una frase que los encadene (legibilidad, no contenido).
+SECTION_KEY_VALUES = "key_values"
 
 SECTION_ORDER: tuple[str, ...] = (
     SECTION_DIRECT_ANSWER,
     SECTION_MEANING,
+    SECTION_KEY_VALUES,
     SECTION_PRACTICAL_EFFECT,
     SECTION_EXAMPLE,
     SECTION_SEQUENCE,
@@ -131,7 +135,9 @@ class ResponseProfile:
     conclusion_first: bool = True
     use_headings: bool = True
     use_bold: bool = True
-    use_tables: bool = False
+    #: Las tablas no se prohíben por defecto: el blueprint decide cuándo una
+    #: comparación las justifica (`table_when`). Un perfil puede vetarlas.
+    use_tables: bool = True
     use_examples: bool = True
     cite_sources: bool = True
     show_uncertainty: bool = True
@@ -196,6 +202,13 @@ class ResponseContract:
     source_conflict: bool = False
     missing_information: tuple[str, ...] = ()
     runner_up: str = ""
+    #: Capas de lectura que el generador debe respetar (ritmo de presentación).
+    layers: tuple[str, ...] = ()
+    #: Política de presentación observada: conceptos, enumeraciones, cuánta
+    #: evidencia se explica y cuánta queda disponible sin volcarse.
+    presentation: dict[str, Any] = field(default_factory=dict)
+    #: Los límites se declaran sólo cuando son materialmente relevantes.
+    show_limitations: bool = False
 
     def to_public_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -211,6 +224,12 @@ class ResponseContract:
             "audience": self.audience,
             "decided_by": self.decided_by,
         }
+        if self.layers:
+            payload["layers"] = list(self.layers)
+        if self.presentation:
+            payload["presentation"] = dict(self.presentation)
+        if self.show_limitations:
+            payload["show_limitations"] = True
         if self.confidence is not None:
             payload["confidence"] = round(float(self.confidence), 4)
         if self.ambiguous:
@@ -253,6 +272,7 @@ __all__ = [
     "SECTION_DISCARDED_ALTERNATIVE",
     "SECTION_EVIDENCE",
     "SECTION_EXAMPLE",
+    "SECTION_KEY_VALUES",
     "SECTION_LIMITATIONS",
     "SECTION_MEANING",
     "SECTION_ORDER",

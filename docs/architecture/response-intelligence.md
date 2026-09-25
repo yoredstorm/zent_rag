@@ -33,14 +33,20 @@ Catálogo **extensible** en `src/intelligence/response/blueprints.py`
 |---|---|---|
 | `direct_fact` | Un dato puntual | respuesta directa |
 | `definition_explanation` | Definir y ubicar un concepto | definición, para qué sirve, dónde interviene |
-| `technical_explanation` | Qué significa un campo/valor y qué implica | respuesta directa, significado, implicación, ejemplo, límites |
+| `technical_explanation` | Qué significa un campo/valor y qué implica | respuesta directa, significado, valores (enumeración), implicación, ejemplo |
 | `scenario_analysis` | Concluir sobre una secuencia | respuesta directa, secuencia, por qué, alternativa descartada, qué verificar |
-| `diagnostic` | Por qué ocurrió algo | causa, evidencia, secuencia, qué revisar, límites |
+| `diagnostic` | Por qué ocurrió algo | causa, evidencia, secuencia, qué revisar |
 | `comparison` | Contrastar opciones | comparación (tabla), implicación, evidencia |
-| `procedure` | Cómo hacer algo | pasos, qué revisar, límites |
+| `procedure` | Cómo hacer algo | pasos, qué revisar |
 | `data_interpretation` | Leer un conjunto de datos | respuesta directa, lectura, implicación |
-| `executive_summary` | Lo esencial sin detalle | resumen, implicación, límites |
+| `executive_summary` | Lo esencial sin detalle | resumen, implicación |
 | `tutorial` | Enseñar desde los fundamentos | respuesta directa, significado, ejemplo, pasos, dónde aplica |
+
+`limitations` **no** es una sección fija de ningún blueprint: el contrato la
+agrega sólo cuando hay una señal material (falta información, conflicto de
+fuentes o inferencia sin resolver). El ritmo con que esas secciones entran al
+lector —capas, enumeraciones, conceptos separados— se define en
+[answer-experience.md](answer-experience.md).
 
 ## 3. Selección (§4)
 

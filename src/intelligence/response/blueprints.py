@@ -25,7 +25,7 @@ from src.core.domain.response import (
     SECTION_DISCARDED_ALTERNATIVE,
     SECTION_EVIDENCE,
     SECTION_EXAMPLE,
-    SECTION_LIMITATIONS,
+    SECTION_KEY_VALUES,
     SECTION_MEANING,
     SECTION_PRACTICAL_EFFECT,
     SECTION_SEQUENCE,
@@ -48,40 +48,7 @@ DATA_INTERPRETATION = "data_interpretation"
 EXECUTIVE_SUMMARY = "executive_summary"
 TUTORIAL = "tutorial"
 
-
-@dataclass(frozen=True, kw_only=True)
-class Blueprint:
-    """Forma de explicación. Inmutable y descriptiva."""
-
-    id: str
-    label: str
-    purpose: str
-    sections: tuple[str, ...]
-    detail: str = DETAIL_NORMAL
-    formatting: dict[str, bool] = field(default_factory=dict)
-    evidence: dict[str, bool] = field(default_factory=dict)
-    example_when: str = ""
-    table_when: str = ""
-    version: int = 1
-
-    def to_public_dict(self) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "id": self.id,
-            "label": self.label,
-            "purpose": self.purpose,
-            "sections": list(self.sections),
-            "detail": self.detail,
-            "formatting": dict(self.formatting),
-            "evidence": dict(self.evidence),
-            "version": self.version,
-        }
-        if self.example_when:
-            payload["example_when"] = self.example_when
-        if self.table_when:
-            payload["table_when"] = self.table_when
-        return payload
-
-
+#: Defaults de todo blueprint: la experiencia base ya es legible y citable.
 _FORMATTING_BASE = {
     "headings": True,
     "bold_key_concepts": True,
@@ -107,6 +74,40 @@ def _evidence(**overrides: bool) -> dict[str, bool]:
     return {**_EVIDENCE_BASE, **overrides}
 
 
+@dataclass(frozen=True, kw_only=True)
+class Blueprint:
+    """Forma de explicación. Inmutable y descriptiva."""
+
+    id: str
+    label: str
+    purpose: str
+    sections: tuple[str, ...]
+    detail: str = DETAIL_NORMAL
+    #: Defaults legibles: un blueprint que no los declare hereda la base.
+    formatting: dict[str, bool] = field(default_factory=_formatting)
+    evidence: dict[str, bool] = field(default_factory=_evidence)
+    example_when: str = ""
+    table_when: str = ""
+    version: int = 1
+
+    def to_public_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "id": self.id,
+            "label": self.label,
+            "purpose": self.purpose,
+            "sections": list(self.sections),
+            "detail": self.detail,
+            "formatting": dict(self.formatting),
+            "evidence": dict(self.evidence),
+            "version": self.version,
+        }
+        if self.example_when:
+            payload["example_when"] = self.example_when
+        if self.table_when:
+            payload["table_when"] = self.table_when
+        return payload
+
+
 BLUEPRINTS: dict[str, Blueprint] = {
     DIRECT_FACT: Blueprint(
         id=DIRECT_FACT,
@@ -128,12 +129,15 @@ BLUEPRINTS: dict[str, Blueprint] = {
         id=TECHNICAL_EXPLANATION,
         label="Explicación técnica",
         purpose="Explicar qué significa un campo, valor o mecanismo y qué implica.",
+        # El orden de las secciones es un RITMO, no un formulario: respuesta,
+        # conceptos, enumeraciones (valores u opciones) y práctica. `limitations`
+        # no va fija: el contrato la agrega sólo si hay algo material que declarar.
         sections=(
             SECTION_DIRECT_ANSWER,
             SECTION_MEANING,
+            SECTION_KEY_VALUES,
             SECTION_PRACTICAL_EFFECT,
             SECTION_EXAMPLE,
-            SECTION_LIMITATIONS,
         ),
         detail=DETAIL_DETAILED,
         formatting=_formatting(table=True),
@@ -164,7 +168,6 @@ BLUEPRINTS: dict[str, Blueprint] = {
             SECTION_EVIDENCE,
             SECTION_SEQUENCE,
             SECTION_WHAT_TO_CHECK,
-            SECTION_LIMITATIONS,
         ),
         detail=DETAIL_DETAILED,
         evidence=_evidence(separate_fact_from_inference=True),
@@ -182,7 +185,7 @@ BLUEPRINTS: dict[str, Blueprint] = {
         id=PROCEDURE,
         label="Procedimiento",
         purpose="Indicar cómo hacer algo, paso a paso.",
-        sections=(SECTION_STEPS, SECTION_WHAT_TO_CHECK, SECTION_LIMITATIONS),
+        sections=(SECTION_STEPS, SECTION_WHAT_TO_CHECK),
         detail=DETAIL_DETAILED,
         formatting=_formatting(numbered_steps=True, table=False),
     ),
@@ -198,7 +201,7 @@ BLUEPRINTS: dict[str, Blueprint] = {
         id=EXECUTIVE_SUMMARY,
         label="Resumen ejecutivo",
         purpose="Dar la conclusión y su impacto, sin detalle técnico.",
-        sections=(SECTION_SUMMARY, SECTION_PRACTICAL_EFFECT, SECTION_LIMITATIONS),
+        sections=(SECTION_SUMMARY, SECTION_PRACTICAL_EFFECT),
         detail=DETAIL_NORMAL,
         formatting=_formatting(headings=True, bullets=True),
         evidence=_evidence(citations_required=False),

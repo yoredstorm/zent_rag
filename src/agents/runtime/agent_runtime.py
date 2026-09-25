@@ -544,28 +544,46 @@ def _coverage_history_note(question: str, evidence_text: str) -> str:
         return ""
 
 
-def _clean_answer(answer: str) -> str:
-    """Quita rótulos internos del contrato si el modelo los filtró.
+def _presentation_from_question(question: str, *, detail: str = ""):
+    """Ritmo de lectura antes de tener evidencia (el contrato se compone al inicio).
 
-    El prompt de composición no nombra las secciones; esto cubre prompts viejos,
-    modelos que igual las copian y respuestas en caché. Se registra porque no es
-    silencioso: cambia el texto que ve el usuario.
+    Cuando llega la evidencia, `_refresh_selection` enriquece la política con
+    enumeraciones, material secundario y conteos reales.
     """
     try:
-        from src.intelligence.response.contract import strip_section_labels
+        from src.core.domain.response import DETAIL_NORMAL
+        from src.intelligence.response.presentation import build_presentation_policy
 
-        cleaned, removed = strip_section_labels(answer)
-        if removed:
-            zent_response_section_labels_stripped_total.inc(removed)
+        return build_presentation_policy(question=question, detail=detail or DETAIL_NORMAL)
+    except Exception:  # noqa: BLE001 — la presentación nunca rompe el run
+        return None
+
+
+def _clean_answer(answer: str, *, titles: Any = ()) -> str:
+    """Higiene del texto final: rótulos internos, escapes y bloque de fuentes.
+
+    El prompt de composición no nombra las secciones ni pide una lista de
+    fuentes; esto cubre prompts viejos, modelos que igual los copian y respuestas
+    en caché. Se registra porque no es silencioso: cambia el texto que ve el usuario.
+    """
+    try:
+        from src.intelligence.response.contract import normalize_answer_text
+
+        hygiene = normalize_answer_text(answer, titles=titles)
+        if hygiene.changed:
+            if hygiene.labels_stripped:
+                zent_response_section_labels_stripped_total.inc(hygiene.labels_stripped)
             logger.warning(
-                "answer carried internal section labels; stripped",
-                removed=removed,
+                "answer text normalized",
+                labels_stripped=hygiene.labels_stripped,
+                markdown_escapes_fixed=hygiene.markdown_escapes_fixed,
+                sources_normalized=hygiene.sources_normalized,
                 answer_chars=len(answer),
             )
-            return cleaned
+        return hygiene.text
     except Exception as exc:  # noqa: BLE001 — la respuesta nunca se rompe por esto
-        logger.warning("answer label cleanup failed", error=str(exc)[:150])
-    return answer
+        logger.warning("answer cleanup failed", error=str(exc)[:150])
+        return answer
 
 
 def _effective_tools(agent: Agent) -> list[str]:
@@ -959,6 +977,8 @@ class AgentRuntime:
         self._last_evidence_selection = None
         # Suficiencia del último run: el cierre por presupuesto declara sus límites.
         self._last_sufficiency: dict | None = None
+        # Pulido de presentación del run (títulos de evidencia para las fuentes).
+        self._polish_answer = None
 
     def _agent_config(self, agent: Agent) -> dict:
         settings = get_settings()
@@ -1045,6 +1065,9 @@ class AgentRuntime:
         answer = _direct_answer(action)
         if answer is None:
             return False
+        polish = getattr(self, "_polish_answer", None)
+        if polish is not None:
+            answer = polish(answer)
         # Mismo chequeo determinista que en el loop: figuras sin respaldo se
         # corrigen una vez (sin inventar ni borrar en silencio) y, si persisten,
         # quedan visibles en el flujo.
@@ -1632,6 +1655,7 @@ class AgentRuntime:
                 request_id=getattr(request, "request_id", None),
                 organization_id=getattr(request.agent, "organization_id", None),
                 shape=str(getattr(getattr(self, "_pending_reasoning", None), "shape", "") or ""),
+                presentation=_presentation_from_question(request.message),
                 **signals,
             )
         except Exception as exc:  # noqa: BLE001 - el contrato nunca rompe el run
@@ -1780,6 +1804,64 @@ class AgentRuntime:
                 cited_ids=cited_ids or (),
             )
 
+        def _refresh_presentation() -> None:
+            """Enriquece el contrato con el ritmo medido de la evidencia real.
+
+            El contrato se compone antes del retrieval; acá gana enumeraciones,
+            material secundario y conteos. Blueprint, detalle y grounding no
+            cambian: sólo se decide qué merece aparecer y cómo se presenta.
+            """
+            nonlocal selection
+            try:
+                from src.intelligence.response.presentation import (
+                    presentation_from_selection,
+                    refresh_contract_presentation,
+                )
+
+                plan = getattr(self, "_pending_response_plan", None)
+                if plan is None or getattr(plan, "contract", None) is None:
+                    return
+                policy = presentation_from_selection(
+                    question=request.message,
+                    detail=str(getattr(plan.contract, "detail", "") or ""),
+                    selected_items=list(selection.items if selection is not None else ()),
+                    registry_items=list(registry.all_items()),
+                    missing_information=list(
+                        (sufficiency.missing_entities if sufficiency is not None else ()) or ()
+                    ),
+                )
+                contrato = refresh_contract_presentation(plan.contract, policy)
+                if contrato is None:
+                    return
+                plan.contract = contrato
+                result.response_plan = plan.to_public_dict()
+                self._pending_response_plan = plan
+                result.steps.append(
+                    {
+                        "type": "response_presentation",
+                        "status": "ok" if not policy.show_limitations else "warn",
+                        "detail": (
+                            f"{len(policy.layers)} capas · "
+                            f"{policy.content_selected} de "
+                            f"{policy.content_selected + policy.content_omitted} fragmentos"
+                        ),
+                        **policy.to_public_dict(),
+                    }
+                )
+            except Exception as exc:  # noqa: BLE001 — la presentación nunca rompe el run
+                logger.warning("presentation refresh failed", error=str(exc)[:150])
+
+        def _polish_answer(text: str) -> str:
+            """Higiene final con los títulos del run (fuentes legibles, markdown)."""
+            titulos = tuple(
+                dict.fromkeys(
+                    str(item.title)
+                    for item in (selection.items if selection is not None else ())
+                    if getattr(item, "title", None)
+                )
+            )
+            return _clean_answer(text, titles=titulos)
+
         def _refresh_selection():
             """Recalcula la selección de evidencia del run (misma para todos)."""
             nonlocal selection, sufficiency
@@ -1794,6 +1876,7 @@ class AgentRuntime:
                 request.message,
                 retrieval_rounds_left=max(0, max_retrieval_rounds - retrieval_rounds),
             )
+            _refresh_presentation()
             _publish_evidence()
             result.evidence_sufficiency = sufficiency.to_public_dict()
             self._last_sufficiency = result.evidence_sufficiency
@@ -1894,7 +1977,9 @@ class AgentRuntime:
             if fact_check_on:
                 from src.intelligence.response.entities import (
                     figures_note,
+                    hierarchy_note,
                     ungrounded_figures,
+                    ungrounded_hierarchy_claims,
                 )
 
                 figures = ungrounded_figures(draft, _evidence_text(), request.message)
@@ -1920,6 +2005,29 @@ class AgentRuntime:
                                 f"{', '.join(figures[:5])}"
                             ),
                             "figures": figures[:5],
+                        }
+                    )
+                # Jerarquía de valores inventada: la fuente define valores, no un
+                # orden de prioridad. Determinista y con la misma política.
+                jerarquias = ungrounded_hierarchy_claims(draft, _evidence_text())
+                if jerarquias:
+                    if not revision_used:
+                        revision_used = True
+                        feedback = hierarchy_note(jerarquias)
+                        history.append(f"OBSERVATION (untrusted): {feedback}")
+                        result.steps.append(
+                            {
+                                "type": "answer_revision",
+                                "detail": "jerarquía no respaldada por la evidencia",
+                                "figures": [],
+                            }
+                        )
+                        return "revise"
+                    result.steps.append(
+                        {
+                            "type": "answer_revision",
+                            "verdict": "hierarchy_unverified",
+                            "detail": "jerarquía no respaldada en la evidencia",
                         }
                     )
             if answer_mode == "off":
@@ -1992,8 +2100,10 @@ class AgentRuntime:
                 return "answer_with_limits"
             return "approve"
 
-        # El cierre por termination/guardrail reusa el mismo verificador.
+        # El cierre por termination/guardrail reusa el mismo verificador y el
+        # mismo pulido de presentación.
         self._draft_gate = _gate_draft
+        self._polish_answer = _polish_answer
 
         for step_index in range(max_steps):
             from src.runtime.tool_routing import routing_enabled, select_relevant_tools
@@ -2152,6 +2262,9 @@ class AgentRuntime:
 
             direct = _direct_answer(action)
             if direct is not None:
+                # Higiene de presentación con los títulos del run: markdown sin
+                # escapes y bloque de fuentes legible (no cambia contenido).
+                direct = _polish_answer(direct)
                 if (
                     knowledge_agent
                     and tool_calls == 0

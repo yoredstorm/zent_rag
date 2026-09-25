@@ -5,6 +5,7 @@
 #   - selección de blueprint (determinista o JEV)
 #   - respuestas del pack de composición (JEV, opcional)
 #   - perfil del agente (Agent Studio)
+#   - política de presentación (ritmo de lectura, conceptos, enumeraciones)
 #   - señales de verdad: inferencia sin resolver, conflictos de autoridad,
 #     información faltante
 #
@@ -15,7 +16,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, Iterable, Mapping
 
 from src.core.domain.response import (
@@ -26,6 +27,7 @@ from src.core.domain.response import (
     DETAIL_NORMAL,
     SECTION_DIRECT_ANSWER,
     SECTION_EXAMPLE,
+    SECTION_KEY_VALUES,
     SECTION_LIMITATIONS,
     SECTION_ORDER,
     SECTION_SOURCES,
@@ -40,6 +42,11 @@ from src.intelligence.response.blueprints import (
     Blueprint,
     blueprint_ids,
     get_blueprint,
+)
+from src.intelligence.response.presentation import (
+    PresentationPolicy,
+    build_presentation_policy,
+    render_presentation_block,
 )
 from src.intelligence.response.profile import (
     apply_turn_overrides,
@@ -87,6 +94,7 @@ def compose_contract(
     missing_information: Iterable[str] = (),
     source_conflict: bool = False,
     conflict_note: str = "",
+    presentation: PresentationPolicy | None = None,
 ) -> ResponseContract:
     """Compone el contrato de respuesta. Fail-soft y determinista."""
     base_profile = apply_turn_overrides(profile or ResponseProfile(), question)
@@ -107,6 +115,18 @@ def compose_contract(
 
     detail = _detail_for(blueprint, base_profile, pack, chosen)
     blueprint = _apply_detail(blueprint, detail)
+
+    unresolved_list = [str(item) for item in unresolved if str(item)][:6]
+    missing_list = [str(item) for item in missing_information if str(item)][:6]
+    policy = presentation or build_presentation_policy(
+        question=question,
+        detail=detail,
+        missing_information=missing_list,
+        unresolved=unresolved_list,
+        source_conflict=source_conflict,
+    )
+    # La política pudo medirse antes de conocer el detalle final: se alinea.
+    policy = replace(policy, detail=detail)
 
     extra_sections: list[str] = []
     for need, section in _NEED_SECTIONS.items():
@@ -140,19 +160,27 @@ def compose_contract(
     if pack.needs_flag("needs_citations"):
         evidence["citations_required"] = True
 
-    unresolved_list = [str(item) for item in unresolved if str(item)][:6]
-    missing_list = [str(item) for item in missing_information if str(item)][:6]
     hedging = bool(unresolved_list)
     if hedging or missing_list:
         evidence["disclose_missing_information"] = True
-        if SECTION_LIMITATIONS not in extra_sections:
-            extra_sections.append(SECTION_LIMITATIONS)
     if source_conflict:
         evidence["disclose_conflicts"] = True
         if conflict_note and SECTION_SOURCES not in extra_sections:
             extra_sections.append(SECTION_SOURCES)
 
+    # Los límites se declaran sólo cuando son materialmente relevantes: faltan
+    # datos, hay conflicto o queda una inferencia sin resolver. Nunca porque el
+    # blueprint "los tenga" (§12).
+    show_limitations = bool(policy.show_limitations or hedging or missing_list or source_conflict)
+    if show_limitations:
+        if SECTION_LIMITATIONS not in extra_sections:
+            extra_sections.append(SECTION_LIMITATIONS)
+    else:
+        extra_sections = [s for s in extra_sections if s != SECTION_LIMITATIONS]
+
     sections = _ordered_sections(blueprint, extra_sections)
+    if policy.needs_list:
+        sections = _with_key_values(sections)
     if not base_profile.conclusion_first:
         sections = tuple(
             section for section in sections if section != SECTION_DIRECT_ANSWER
@@ -193,7 +221,26 @@ def compose_contract(
         source_conflict=source_conflict,
         missing_information=tuple(missing_list),
         runner_up=(pack.blueprint_runner_up or chosen.runner_up),
+        layers=policy.layers,
+        presentation=policy.to_public_dict(),
+        show_limitations=show_limitations,
     )
+
+
+def _with_key_values(sections: tuple[str, ...]) -> tuple[str, ...]:
+    """Inserta la enumeración después de la respuesta, sin duplicarla."""
+    if SECTION_KEY_VALUES in sections:
+        return sections
+    orden: list[str] = []
+    inserted = False
+    for section in sections:
+        orden.append(section)
+        if not inserted and section == SECTION_DIRECT_ANSWER:
+            orden.append(SECTION_KEY_VALUES)
+            inserted = True
+    if not inserted:
+        orden.append(SECTION_KEY_VALUES)
+    return tuple(orden)
 
 
 def _detail_for(
@@ -229,6 +276,8 @@ def _apply_detail(blueprint: Blueprint, detail: str) -> Blueprint:
 _SECTION_TEXT: dict[str, str] = {
     "direct_answer": "responde la pregunta directamente, sin preámbulo",
     "meaning": "explica qué significa formalmente",
+    "key_values": "enumera los valores, opciones o casos uno por uno (viñeta o tabla), "
+    "cada uno con su significado, sin encadenarlos en una frase",
     "practical_effect": "explica qué implica en la práctica para este caso",
     "example": "si la evidencia trae un caso, un ejemplo mínimo que haga visible la regla",
     "sequence": "muestra la secuencia de lo que ocurre, en orden",
@@ -245,7 +294,8 @@ _SECTION_TEXT: dict[str, str] = {
     "data_reading": "lee los datos y di qué muestran",
     "summary": "resume la conclusión y su impacto, sin detalle técnico",
     "limitations": "declara límites, excepciones o lo que todavía no puede afirmarse",
-    "sources": "nombra la fuente que sostiene cada afirmación relevante",
+    "sources": "cita la fuente con su marca junto a cada afirmación; no armes una lista "
+    "de fuentes al final",
 }
 
 #: Regla que no se negocia: sin esto, pedir forma invita a inventar contenido.
@@ -274,7 +324,8 @@ def prompt_block(contract: ResponseContract, *, profile: ResponseProfile | None 
     """Bloque compacto de composición para el generador.
 
     Es una instrucción de forma: no contiene hechos ni conclusiones, y nunca
-    expone las claves internas de las secciones.
+    expone las claves internas de las secciones. El ritmo (capas, conceptos,
+    enumeraciones) lo aporta la política de presentación del caso.
     """
     blueprint = get_blueprint(contract.blueprint)
     lines: list[str] = ["## FORMA DE LA RESPUESTA (cómo explicarlo, no qué decir)"]
@@ -285,16 +336,18 @@ def prompt_block(contract: ResponseContract, *, profile: ResponseProfile | None 
     prose = _sections_prose(contract.sections)
     if prose:
         lines.append(f"- orden de la información: {prose}")
-        lines.append(
-            "- escribí una sola explicación conectada: ese orden dice cómo entra la "
-            "información, no son secciones rotuladas ni una lista de puntos"
-        )
+    lines.append(
+        "- ese orden dice cómo entra la información, no son secciones rotuladas: "
+        "escribí títulos naturales sólo cuando ayuden a navegar"
+    )
     lines.append(
         "- no escribas etiquetas internas (nombres de sección en inglés), ni repitas "
         "el orden al final: el lector no las conoce"
     )
     # Va antes que la forma: pedir forma sin grounding invita a rellenar de memoria.
     lines.append(GROUNDING_RULE)
+    # Ritmo de lectura del caso (capas, conceptos, enumeraciones, límites).
+    lines.append(render_presentation_block(build_presentation_policy_from_contract(contract)))
     allowed = [
         name
         for name, enabled in (
@@ -308,11 +361,6 @@ def prompt_block(contract: ResponseContract, *, profile: ResponseProfile | None 
     ]
     if allowed:
         lines.append(f"- formato permitido: {', '.join(allowed)}")
-    if contract.formatting.get("headings"):
-        lines.append(
-            "- si usás encabezados, que sean títulos naturales en el idioma del lector "
-            "y no más de dos o tres: la respuesta se lee de corrido, no como un formulario"
-        )
     forbidden = [
         name
         for name, enabled in (
@@ -335,7 +383,7 @@ def prompt_block(contract: ResponseContract, *, profile: ResponseProfile | None 
         lines.append(
             "- si dos fuentes se contradicen, dilo y nombra ambas; no las fusiones en silencio"
         )
-    if contract.evidence.get("disclose_missing_information"):
+    if contract.evidence.get("disclose_missing_information") and contract.show_limitations:
         lines.append("- declara qué información falta antes de cualquier especulación")
     if contract.hedging_required:
         lines.append(
@@ -344,7 +392,7 @@ def prompt_block(contract: ResponseContract, *, profile: ResponseProfile | None 
         )
     if contract.preserve_domain_terms:
         lines.append("- conserva los términos técnicos del dominio (puedes glosarlos una vez)")
-    if contract.missing_information:
+    if contract.missing_information and contract.show_limitations:
         lines.append(f"- información faltante a declarar: {', '.join(list(contract.missing_information)[:4])}")
     if contract.custom_instructions:
         lines.append(f"- instrucciones del agente: {contract.custom_instructions}")
@@ -353,6 +401,29 @@ def prompt_block(contract: ResponseContract, *, profile: ResponseProfile | None 
     if profile is not None:
         block = f"{profile_prompt_block(profile)}\n\n{block}"
     return block
+
+
+def build_presentation_policy_from_contract(contract: ResponseContract) -> PresentationPolicy:
+    """Política que viaja dentro del contrato (lectura defensiva del flujo)."""
+    payload = contract.presentation if isinstance(contract.presentation, Mapping) else {}
+    return PresentationPolicy(
+        concepts=tuple(str(item) for item in (payload.get("concepts") or ()) if str(item)),
+        multi_concept=bool(payload.get("multi_concept")),
+        layers=tuple(str(item) for item in (payload.get("layers") or contract.layers or ()) if str(item)),
+        headings_budget=int(payload.get("headings_budget") or 1),
+        needs_list=bool(payload.get("needs_list")),
+        enumeration_count=int(payload.get("enumeration_count") or 0),
+        content_selected=int(payload.get("content_selected") or 0),
+        content_omitted=int(payload.get("content_omitted") or 0),
+        secondary_count=int(payload.get("secondary_count") or 0),
+        secondary_labels=tuple(
+            str(item) for item in (payload.get("secondary_labels") or ()) if str(item)
+        ),
+        show_limitations=bool(contract.show_limitations or payload.get("show_limitations")),
+        limitations_reason=str(payload.get("limitations_reason") or ""),
+        followup_allowed=bool(payload.get("followup_allowed")),
+        detail=contract.detail,
+    )
 
 
 def contract_headline(contract: ResponseContract) -> str:
@@ -399,6 +470,120 @@ def blueprint_options() -> tuple[str, ...]:
     return blueprint_ids()
 
 
+# ---------------------------------------------------------------------------
+# Higiene del texto final: lo que el usuario NO debe ver
+# ---------------------------------------------------------------------------
+# Tres defectos de presentación que llegan al lector y no son de contenido:
+#   1. escapes de markdown que el modelo agrega (`\*\*negrita\*\*`) y el lector
+#      ve como asteriscos;
+#   2. un bloque final de «Fuentes/Referencias» con los nombres pegados, que
+#      duplica lo que la interfaz ya muestra y rompe la lectura;
+#   3. rótulos internos del contrato filtrados por el modelo.
+#
+# Las tres correcciones son deterministas y conservan el contenido: no resumen,
+# no reescriben y no borran afirmaciones.
+#: Caracteres de markdown cuyo escape previo el lector no debería ver.
+_ESCAPED_MARKDOWN_RE = re.compile(r"\\([*_`#\[\]()~>+=\-.])")
+#: Encabezado de un bloque final de fuentes (el cuerpo puede seguir en la misma línea).
+_SOURCES_HEADING_RE = re.compile(
+    r"(?im)^[ \t]*(?:#{1,6}[ \t]*)?(?:\*{0,2})(fuentes|referencias|sources|references)"
+    r"(?:\*{0,2})[ \t]*:?[ \t]*"
+)
+
+
+@dataclass(frozen=True)
+class AnswerHygiene:
+    """Resultado de normalizar el texto final, con lo que se cambió (auditable)."""
+
+    text: str
+    labels_stripped: int = 0
+    markdown_escapes_fixed: int = 0
+    sources_normalized: bool = False
+    changed: bool = False
+
+
+def normalize_markdown_escapes(text: str) -> tuple[str, int]:
+    """Quita el escape que oculta el formato (`\\*\\*` → `**`).
+
+    Sólo toca caracteres de markdown escapados; una ruta de Windows como
+    `C:\\Users` no se modifica porque la barra no precede a un carácter de
+    formato. Es idempotente.
+    """
+    if not text or "\\" not in text:
+        return text, 0
+    corregidos = len(_ESCAPED_MARKDOWN_RE.findall(text))
+    if not corregidos:
+        return text, 0
+    return _ESCAPED_MARKDOWN_RE.sub(r"\1", text), corregidos
+
+
+def normalize_sources_block(
+    text: str,
+    *,
+    titles: Iterable[str] = (),
+) -> tuple[str, bool]:
+    """Reordena un bloque final de fuentes con nombres pegados.
+
+    Sólo actúa cuando el bloque final es un encabezado de fuentes y su cuerpo
+    contiene DOS O MÁS nombres conocidos de la evidencia (el caso
+    `Fuentes**Cat31_dapp_C.pdfRec2_Cat10_dapp_C.pdf**`). Reescribe ese cuerpo
+    como lista, uno por línea, sin inventar ni quitar fuentes. Cualquier otro
+    contenido queda intacto.
+    """
+    if not text:
+        return text, False
+    matches = list(_SOURCES_HEADING_RE.finditer(text))
+    if not matches:
+        return text, False
+    heading = matches[-1]
+    body = text[heading.end() :]
+    if not body.strip():
+        return text, False
+    conocidos = [
+        str(title).strip()
+        for title in titles
+        if str(title).strip() and str(title).strip() in body
+    ]
+    # Sólo los títulos presentes, sin repetir y sin los que son subcadena de otro.
+    unicos: list[str] = []
+    for title in dict.fromkeys(conocidos):
+        if any(title != other and title in other for other in conocidos):
+            continue
+        unicos.append(title)
+    if len(unicos) < 2:
+        return text, False
+    if all(f"- {title}" in body or f"* {title}" in body for title in unicos):
+        # Ya está como lista.
+        return text, False
+    limpio = body
+    for title in sorted(unicos, key=len, reverse=True):
+        limpio = limpio.replace(title, "")
+    resto = re.sub(r"[\s*_·,;|/-]+", " ", limpio).strip()
+    if resto:
+        # Hay contenido además de los nombres: no es un bloque de fuentes puro.
+        return text, False
+    listado = "\n".join(f"- {title}" for title in unicos)
+    return f"{text[: heading.end()]}\n{listado}\n", True
+
+
+def normalize_answer_text(
+    text: str,
+    *,
+    titles: Iterable[str] = (),
+) -> AnswerHygiene:
+    """Higiene del texto final en un solo paso (rótulos, escapes y fuentes)."""
+    limpio, labels = strip_section_labels(text or "")
+    limpio, escapes = normalize_markdown_escapes(limpio)
+    limpio, fuentes = normalize_sources_block(limpio, titles=titles)
+    return AnswerHygiene(
+        text=limpio.strip(),
+        labels_stripped=labels,
+        markdown_escapes_fixed=escapes,
+        sources_normalized=fuentes,
+        changed=bool(labels or escapes or fuentes),
+    )
+
+
 def contract_from_public(payload: Mapping[str, Any] | None) -> ResponseContract | None:
     """Reconstruye un contrato desde el flujo (lectura defensiva)."""
     if not isinstance(payload, Mapping) or not payload.get("blueprint"):
@@ -420,10 +605,15 @@ def contract_from_public(payload: Mapping[str, Any] | None) -> ResponseContract 
 
 
 __all__ = [
+    "AnswerHygiene",
     "blueprint_options",
+    "build_presentation_policy_from_contract",
     "compose_contract",
     "contract_from_public",
     "contract_headline",
+    "normalize_answer_text",
+    "normalize_markdown_escapes",
+    "normalize_sources_block",
     "prompt_block",
     "strip_section_labels",
 ]

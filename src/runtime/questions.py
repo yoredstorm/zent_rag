@@ -169,6 +169,16 @@ def answer_gate_questions(*, include_presentation: bool = True) -> dict[str, dic
                         "unsupported_claim": "It states something the evidence does not support.",
                         "poor_structure": "The order or sections make it hard to follow.",
                         "does_not_answer_question": "It answers a different question.",
+                        # Legibilidad (§18): qué hace difícil leer una respuesta correcta.
+                        "wall_of_text": "It is one continuous block of text, without visual breaks.",
+                        "poor_chunking": "A paragraph mixes several main ideas at once.",
+                        "buried_answer": "The answer appears late, after context or detail.",
+                        "irrelevant_detail": "It explains secondary material the question did not ask for.",
+                        "bad_enumeration_format": (
+                            "Values or options are chained in a sentence instead of "
+                            "a list or table."
+                        ),
+                        "unnecessary_limitations": "It declares limitations or warnings the case does not need.",
                     },
                 },
             }

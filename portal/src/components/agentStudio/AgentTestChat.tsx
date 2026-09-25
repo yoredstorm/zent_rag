@@ -13,6 +13,7 @@ import {
   useState,
 } from "react";
 import type { Session } from "../../api";
+import { renderMarkdownHtml } from "../../lib/markdown";
 import FlowDrawer from "../../pages/chat/FlowDrawer";
 import { Badge, Button, IconButton, LoadingDots, Panel, PanelHeader, Textarea } from "../ui";
 import { SUGGESTED_QUESTIONS, type KnowledgeSource } from "./types";
@@ -194,7 +195,15 @@ export function AgentTestChat({
             className={`bubble ${turn.role === "user" ? "bubble-user ml-auto" : "bubble-assistant"}`}
             onContextMenu={(event) => handleContextMenu(event, turn)}
           >
-            <p className="whitespace-pre-wrap">{turn.text}</p>
+            {turn.role === "assistant" ? (
+              <div
+                className="chat-markdown"
+                data-testid="agent-answer"
+                dangerouslySetInnerHTML={renderMarkdownHtml(turn.text)}
+              />
+            ) : (
+              <p className="whitespace-pre-wrap">{turn.text}</p>
+            )}
             {turn.role === "assistant" && (turn.sources?.length ?? 0) > 0 && (
               <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-border-soft pt-2">
                 <span className="text-[11px] text-faint">Fuentes</span>

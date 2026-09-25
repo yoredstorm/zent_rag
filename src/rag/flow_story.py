@@ -70,6 +70,9 @@ STEP_KIND_PHASES: dict[str, str] = {
     # Evidence Sufficiency: la evidencia recuperada (y su cobertura de entidades)
     # es un paso de la fase de evidencia, antes de generar.
     "evidence_sufficiency": PHASE_EVIDENCE,
+    # Ritmo de lectura: las capas y qué evidencia merece aparecer se deciden en
+    # la fase de planificación de la respuesta.
+    "response_presentation": PHASE_PLANNING,
     "scenario_parse": PHASE_REASONING,
     "state_reconstruction": PHASE_REASONING,
     "timeline": PHASE_REASONING,

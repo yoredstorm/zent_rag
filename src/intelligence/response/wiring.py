@@ -21,6 +21,7 @@ from uuid import UUID
 from src.core.domain.response import ResponseContract, ResponseProfile
 from src.infrastructure.observability.logging_config import get_logger
 from src.intelligence.response.contract import compose_contract
+from src.intelligence.response.presentation import PresentationPolicy
 from src.intelligence.response.profile import profile_from_config
 from src.intelligence.response.questions import (
     CompositionAnswers,
@@ -198,8 +199,14 @@ async def compose_for_request(
     missing_information: Iterable[str] = (),
     source_conflict: bool = False,
     conflict_note: str = "",
+    presentation: PresentationPolicy | None = None,
 ) -> ResponsePlan:
-    """Compone el contrato de respuesta del request. Nunca lanza."""
+    """Compone el contrato de respuesta del request. Nunca lanza.
+
+    `presentation` es el ritmo de lectura medido del caso (conceptos, capas,
+    enumeraciones, cuánta evidencia se explica). Si no se pasa, se deriva de la
+    pregunta: el comportamiento por defecto ya es legible sin configurar nada.
+    """
     active_mode = normalize_mode(mode if mode is not None else mode_from_settings())
     if active_mode == MODE_OFF:
         return ResponsePlan(mode=active_mode, source=SOURCE_OFF)
@@ -253,6 +260,7 @@ async def compose_for_request(
         missing_information=missing_information,
         source_conflict=source_conflict,
         conflict_note=conflict_note,
+        presentation=presentation,
     )
     return plan
 

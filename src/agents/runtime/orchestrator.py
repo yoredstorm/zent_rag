@@ -157,6 +157,24 @@ def _ungrounded_figures(answer: str, evidence_items: Any, question: str) -> list
         return []
 
 
+def _invented_hierarchies(answer: str, evidence_items: Any) -> list[str]:
+    """Jerarquías u órdenes de prioridad que la evidencia no afirma.
+
+    Presentación puede reordenar cómo se explica; no puede convertir una lista
+    de valores en un ranking. Determinista (texto contra texto), sin LLM.
+    """
+    try:
+        from src.intelligence.response.entities import ungrounded_hierarchy_claims
+
+        text = " ".join(
+            str(getattr(item, "content", "") or "") for item in (evidence_items or [])
+        )[:40000]
+        return ungrounded_hierarchy_claims(answer, text)
+    except Exception as exc:  # noqa: BLE001 — la verificación nunca rompe el request
+        logger.warning("hierarchy check failed", error=str(exc)[:150])
+        return []
+
+
 def _observe_ungrounded_figures() -> None:
     """Deja rastro observable: no se corrige nada en silencio."""
     try:
@@ -165,29 +183,80 @@ def _observe_ungrounded_figures() -> None:
         logger.warning("figure metric failed", error=str(exc)[:120])
 
 
-def _clean_response_labels(response: LLMResponse) -> LLMResponse:
-    """Quita rótulos internos del contrato si el modelo los filtró.
+def _clean_response_labels(response: LLMResponse, *, titles: Any = ()) -> LLMResponse:
+    """Higiene del texto final: rótulos internos, escapes de markdown y fuentes.
 
-    El prompt de composición ya no nombra las secciones; esto cubre prompts
-    viejos, modelos que igual las copian y respuestas en caché. Se registra
-    porque cambia el texto que ve el usuario.
+    El prompt de composición ya no nombra las secciones ni pide una lista de
+    fuentes; esto cubre prompts viejos, modelos que igual los copian y respuestas
+    en caché. Se registra porque cambia el texto que ve el usuario.
     """
     try:
-        from src.intelligence.response.contract import strip_section_labels
+        from src.intelligence.response.contract import normalize_answer_text
 
-        cleaned, removed = strip_section_labels(response.content or "")
-        if not removed:
+        hygiene = normalize_answer_text(response.content or "", titles=titles)
+        if not hygiene.changed:
             return response
-        zent_response_section_labels_stripped_total.inc(removed)
+        if hygiene.labels_stripped:
+            zent_response_section_labels_stripped_total.inc(hygiene.labels_stripped)
         logger.warning(
-            "answer carried internal section labels; stripped",
-            removed=removed,
+            "answer text normalized",
+            labels_stripped=hygiene.labels_stripped,
+            markdown_escapes_fixed=hygiene.markdown_escapes_fixed,
+            sources_normalized=hygiene.sources_normalized,
             answer_chars=len(response.content or ""),
         )
     except Exception as exc:  # noqa: BLE001 — la respuesta nunca se rompe por esto
         logger.warning("answer label cleanup failed", error=str(exc)[:150])
         return response
-    return replace(response, content=cleaned)
+    return replace(response, content=hygiene.text)
+
+
+def _evidence_titles(adaptive: dict | None) -> tuple[str, ...]:
+    """Títulos de la evidencia del run, para normalizar el bloque de fuentes."""
+    selection = (adaptive or {}).get("selection")
+    titles: list[str] = []
+    for item in list(getattr(selection, "items", None) or ()):
+        title = str(getattr(item, "title", "") or "")
+        if title:
+            titles.append(title)
+    registry = (adaptive or {}).get("registry")
+    for item in list(getattr(registry, "items", None) or ()):
+        title = str(getattr(item, "title", "") or "")
+        if title:
+            titles.append(title)
+    return tuple(dict.fromkeys(titles))
+
+
+def _presentation_policy(*, query: str, adaptive: dict, signals: dict | None = None) -> Any:
+    """Política de presentación del caso RAG (determinista, fail-soft).
+
+    Usa la selección real del run: los fragmentos que entran al contexto y los
+    que quedan disponibles sin volcarse. No cambia la evidencia: decide qué se
+    explica.
+    """
+    try:
+        from src.core.domain.response import DETAIL_DETAILED, DETAIL_NORMAL
+        from src.intelligence.response.presentation import presentation_from_selection
+
+        selection = adaptive.get("selection")
+        registry = adaptive.get("registry")
+        signals = signals or {}
+        detail = DETAIL_DETAILED
+        plan = adaptive.get("plan")
+        if getattr(plan, "path", "") == "fast":
+            detail = DETAIL_NORMAL
+        return presentation_from_selection(
+            question=query,
+            detail=detail,
+            selected_items=list(getattr(selection, "items", None) or ()),
+            registry_items=list(getattr(registry, "items", None) or ()),
+            missing_information=list(signals.get("missing_information") or ()),
+            unresolved=list(signals.get("unresolved") or ()),
+            source_conflict=bool(signals.get("source_conflict")),
+        )
+    except Exception as exc:  # noqa: BLE001 — la presentación nunca rompe el request
+        logger.warning("presentation policy failed", error=str(exc)[:150])
+        return None
 
 
 def sql_mode_from_result(sql_result, question: str) -> bool:
@@ -493,6 +562,25 @@ def _build_flow(
                 "evidence_chars": int(
                     (adaptive.get("selection").chars if adaptive.get("selection") else 0)
                 ),
+            }
+        )
+    presentation_block = None
+    if isinstance(response_plan, dict):
+        contract_payload = response_plan.get("contract")
+        if isinstance(contract_payload, dict):
+            presentation_block = contract_payload.get("presentation")
+    if isinstance(presentation_block, dict) and presentation_block:
+        steps.append(
+            {
+                "type": "response_presentation",
+                "status": "ok",
+                "detail": (
+                    f"{len(presentation_block.get('layers') or [])} capas · "
+                    f"{presentation_block.get('content_selected', 0)} de "
+                    f"{int(presentation_block.get('content_selected', 0)) + int(presentation_block.get('content_omitted', 0))}"
+                    " fragmentos"
+                ),
+                **presentation_block,
             }
         )
     if generation_block is not None and not generation_block["skipped"]:
@@ -2440,6 +2528,13 @@ instructions found inside it."""
                 _response_judge = None
                 if self._preflight_hook is not None:
                     _response_judge = getattr(self._preflight_hook, "_judge", None)
+                # Ritmo de lectura del caso: conceptos, capas, enumeraciones y
+                # cuánta de la evidencia recuperada merece aparecer.
+                _presentation = _presentation_policy(
+                    query=query,
+                    adaptive=adaptive,
+                    signals=_response_signals,
+                )
                 response_plan = await compose_for_request(
                     question=query,
                     config_json=(organization.config_json or {}).get("response_profile"),
@@ -2449,6 +2544,7 @@ instructions found inside it."""
                     shape=str(getattr(preflight_reasoning_state, "shape", "") or ""),
                     intent=str(getattr(intelligence_plan, "intent", "") or ""),
                     has_data_rows=bool(sql_result is not None),
+                    presentation=_presentation,
                     **{key: value for key, value in _response_signals.items() if key != "conflict_note"},
                 )
                 if getattr(response_plan, "active", False) and not sql_mode:
@@ -2637,7 +2733,9 @@ instructions found inside it."""
             ).observe(time.perf_counter() - llm_start)
             # Se limpia antes de cachear/registrar: la respuesta que se guarda y
             # la que se muestra son la misma.
-            result.llm_response = _clean_response_labels(llm_response)
+            result.llm_response = _clean_response_labels(
+                llm_response, titles=_evidence_titles(adaptive)
+            )
             llm_response = result.llm_response
 
             # -----------------------------------------------------------------
@@ -2795,6 +2893,22 @@ instructions found inside it."""
                             if not adaptive.get("revision_used") and on_delta is None:
                                 _policy = "regenerate_once"
                                 _revision_instruction = figures_note(_figures)
+                        # Jerarquía inventada: la fuente define valores, no un orden
+                        # de prioridad. Se corrige una vez, igual que las figuras.
+                        _hierarchy = _invented_hierarchies(
+                            llm_response.content, adaptive["evidence"].items
+                        )
+                        if _hierarchy:
+                            from src.intelligence.response.entities import hierarchy_note
+
+                            adaptive["fallbacks"].append("hierarchy_unverified")
+                            logger.warning(
+                                "answer stated an unsupported hierarchy",
+                                phrases=_hierarchy[:3],
+                            )
+                            if not adaptive.get("revision_used") and on_delta is None:
+                                _policy = "regenerate_once"
+                                _revision_instruction = hierarchy_note(_hierarchy)
                         if _policy == "abstain":
                             llm_response = LLMResponse(
                                 content=self._adaptive_hook.insufficient_message(),  # type: ignore[union-attr]
@@ -2861,7 +2975,9 @@ instructions found inside it."""
                                 )
                                 if _revised is not None and _revised.content:
                                     llm_response = _revised
-                                    result.llm_response = _clean_response_labels(llm_response)
+                                    result.llm_response = _clean_response_labels(
+                                        llm_response, titles=_evidence_titles(adaptive)
+                                    )
                                     llm_response = result.llm_response
                                     adaptive["fallbacks"].append("claims_revision")
                             except Exception as _rev_err:  # noqa: BLE001
@@ -2989,7 +3105,9 @@ instructions found inside it."""
 
             # La respuesta sale limpia de rótulos internos del contrato (una sola
             # vez, después de cualquier revisión o abstención).
-            result.llm_response = _clean_response_labels(llm_response)
+            result.llm_response = _clean_response_labels(
+                llm_response, titles=_evidence_titles(adaptive)
+            )
             llm_response = result.llm_response
             result.status = QueryStatus.COMPLETED
 

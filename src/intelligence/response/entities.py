@@ -141,6 +141,90 @@ def uncovered_entities(question: str, evidence_text: str) -> list[AskedEntity]:
     ]
 
 
+#: Palabras vacías que no forman parte de un concepto compuesto.
+_CONCEPT_STOPWORDS = frozenset(
+    {
+        "sobre", "entre", "para", "como", "cuando", "donde", "desde", "hasta",
+        "tambien", "también", "ademas", "además", "puede", "pueden", "debe",
+        "deben", "tiene", "tienen", "hace", "hacen", "cuenta", "quiero", "necesito",
+    }
+)
+_CONCEPT_PAIR_RE = re.compile(
+    r"\b([\wÁÉÍÓÚÑáéíóúñ]{4,})\s+y\s+(?:sobre\s+)?(?:el\s+|la\s+|los\s+|las\s+)?"
+    r"([\wÁÉÍÓÚÑáéíóúñ]{4,})\b",
+    re.IGNORECASE,
+)
+
+
+def asked_concepts(question: str, *, max_items: int = MAX_ENTITIES) -> tuple[str, ...]:
+    """Conceptos que la pregunta nombra, en orden y sin repetir.
+
+    Son las entidades explícitas («categoría 31», «byte 105») y, si no alcanzan,
+    los pares unidos por «y» («reembolsos y garantías»). Sirve para decidir si la
+    respuesta debe separar conceptos o explicar uno solo. Es reconocimiento de lo
+    que el usuario escribió, no interpretación del dominio.
+    """
+    labels: list[str] = [entity.label for entity in asked_entities(question)]
+    if len(labels) < 2:
+        for match in _CONCEPT_PAIR_RE.finditer(question or ""):
+            for candidate in match.groups():
+                value = candidate.strip().lower()
+                if not value or value in _CONCEPT_STOPWORDS:
+                    continue
+                if any(value in existing.lower() for existing in labels):
+                    continue
+                labels.append(value)
+            break
+    return tuple(dict.fromkeys(labels))[:max_items]
+
+
+# -----------------------------------------------------------------------------
+# Jerarquías inventadas: una lista de valores no es un orden de prioridad
+# -----------------------------------------------------------------------------
+# El caso real: la fuente define los valores 1-5 del byte 105 y la respuesta
+# afirmó «la jerarquía de valores, de mayor a menor prioridad, es: 3, 2, 5, 4, 1».
+# Es una inferencia que cambia el significado de la evidencia. Se detecta por
+# comparación de texto (no hay opinión de modelo): la respuesta habla de jerarquía
+# o prioridad y la evidencia no contiene esas palabras.
+_HIERARCHY_RE = re.compile(
+    r"(?:jerarqu[ií]a|orden\s+de\s+(?:mayor\s+a\s+menor\s+)?(?:prioridad|precedencia)|"
+    r"de\s+mayor\s+a\s+menor|ranking|orden\s+de\s+importancia|prioridad\s+(?:de|entre)\s+valores)",
+    re.IGNORECASE,
+)
+_HIERARCHY_SUPPORT_HINTS = ("jerarqu", "priorit", "precedence", "priority", "rank")
+
+
+def ungrounded_hierarchy_claims(answer: str, evidence_text: str) -> list[str]:
+    """Frases que afirman un orden de prioridad que la evidencia no menciona.
+
+    Devuelve las frases tal como aparecen en la respuesta (para poder pedir la
+    corrección). Vacío = no se detectó ninguna jerarquía inventada.
+    """
+    text = answer or ""
+    if not _HIERARCHY_RE.search(text):
+        return []
+    evidence = (evidence_text or "").lower()
+    if any(hint in evidence for hint in _HIERARCHY_SUPPORT_HINTS):
+        return []
+    phrases: list[str] = []
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        if _HIERARCHY_RE.search(sentence):
+            phrases.append(" ".join(sentence.split())[:160])
+    return list(dict.fromkeys(phrases))
+
+
+def hierarchy_note(phrases: list[str]) -> str:
+    """Pedido de corrección determinista para una jerarquía no respaldada."""
+    if not phrases:
+        return ""
+    return (
+        "La evidencia consultada define los valores u opciones, pero NO afirma un "
+        "orden de prioridad, jerarquía ni ranking entre ellos. No lo agregues: "
+        "presentá los valores como la fuente los presenta (por su número o su "
+        "nombre), sin ordenarlos por importancia."
+    )
+
+
 def coverage_note(question: str, evidence_text: str) -> str:
     """Bloque factual para el generador. Vacío cuando todo está cubierto.
 
@@ -291,12 +375,15 @@ __all__ = [
     "MAX_ENTITIES",
     "AskedEntity",
     "StatedDate",
+    "asked_concepts",
     "asked_entities",
     "coverage_note",
     "entity_covered",
     "figures_note",
+    "hierarchy_note",
     "normalize",
     "stated_dates",
     "uncovered_entities",
     "ungrounded_figures",
+    "ungrounded_hierarchy_claims",
 ]
