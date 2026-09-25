@@ -311,6 +311,88 @@ def test_el_prompt_prohibe_convertir_una_lista_en_jerarquia() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Coherencia: la respuesta no puede decir «no hay información» y responder
+# ---------------------------------------------------------------------------
+
+
+def test_detecta_advertencia_que_contradice_la_respuesta() -> None:
+    from src.intelligence.response.entities import (
+        disclaimer_note,
+        self_contradicting_disclaimer,
+    )
+
+    contradictoria = (
+        "La información disponible no contiene una definición técnica del byte 105 "
+        "ni una explicación detallada de los campos de la Categoría 31.\n\n"
+        "### Byte 105\nEl byte 105 determina cómo se aplica la tarifa de cambio."
+    )
+    frase = self_contradicting_disclaimer(contradictoria, entities_covered=True)
+    assert frase.startswith("La información disponible no")
+    nota = disclaimer_note(frase)
+    assert "SÍ cubre" in nota
+    assert "respondé directo" in nota
+    # Sin cobertura de entidades no se marca: ahí la advertencia es legítima.
+    assert self_contradicting_disclaimer(contradictoria, entities_covered=False) == ""
+    # Y una respuesta limpia no se toca.
+    assert (
+        self_contradicting_disclaimer(
+            "El byte 105 determina cómo se aplica la tarifa de cambio.",
+            entities_covered=True,
+        )
+        == ""
+    )
+
+
+def test_las_notas_de_correccion_no_piden_declarar_que_falta_info() -> None:
+    """Una corrección puntual no puede convertirse en un «no tengo información»."""
+    from src.intelligence.response.entities import figures_note, hierarchy_note
+
+    assert "No agregues una advertencia general" in figures_note(["2026"])
+    assert "No declares que falta información" in hierarchy_note(["jerarquía x"])
+
+
+def test_universo_de_chequeo_es_toda_la_evidencia_del_run() -> None:
+    """El chequeo mira todo lo recuperado, no sólo la selección vigente."""
+    from src.runtime.evidence import (
+        EvidenceRegistry,
+        render_evidence,
+        run_evidence_text,
+        select_evidence,
+    )
+
+    jerarquia = (
+        "Fee Application (byte 105): the applicable value is determined according "
+        "to this hierarchy, reading from top to bottom: 3, 2, 5, 4, 1."
+    )
+    registry = EvidenceRegistry()
+    registry.add_from_meta(
+        {
+            "evidence": [
+                {
+                    "ref": "grande",
+                    "document_id": "grande",
+                    "title": "Cat31_dapp_C.pdf",
+                    "score": 0.9,
+                    "content": "Byte 105 Fee Application categoría 31. " + ("relleno " * 900),
+                },
+                {
+                    "ref": "jerarquia",
+                    "document_id": "jerarquia",
+                    "title": "Cat31_dapp_C.pdf",
+                    "score": 0.5,
+                    "content": jerarquia,
+                },
+            ]
+        }
+    )
+    seleccion = select_evidence(
+        registry.all_items(), PREGUNTA, budget_chars=1500, max_item_chars=4000
+    )
+    assert "hierarchy" not in render_evidence(seleccion).lower()
+    assert "hierarchy" in run_evidence_text(registry.all_items()).lower()
+
+
+# ---------------------------------------------------------------------------
 # §14, §15 — Estructura del caso byte 105 y cierre conversacional
 # ---------------------------------------------------------------------------
 

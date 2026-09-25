@@ -658,6 +658,33 @@ def citations_payload(
     return payload
 
 
+def run_evidence_text(
+    items: Sequence[EvidenceItem],
+    *,
+    max_chars: int = 60_000,
+) -> str:
+    """TODA la evidencia recuperada por el run, para chequeos deterministas.
+
+    Un chequeo que compara la respuesta contra el contexto («¿la fuente dice
+    esto?») necesita el universo completo: el modelo pudo ver un fragmento en una
+    ronda anterior que ya no está en la selección vigente. Comparar contra la
+    selección produce falsos positivos (y un pedido de corrección que empeora la
+    respuesta).
+    """
+    partes: list[str] = []
+    usado = 0
+    for item in items:
+        content = item.content or ""
+        if not content:
+            continue
+        bloque = f"[{item.evidence_id} | {item.label}]\n{content}"
+        if usado + len(bloque) > max(1000, int(max_chars)):
+            break
+        partes.append(bloque)
+        usado += len(bloque)
+    return "\n\n".join(partes)
+
+
 def evidence_state_text(
     items: Sequence[EvidenceItem],
     question: str,
@@ -697,5 +724,6 @@ __all__ = [
     "observe_sufficiency",
     "rank_evidence",
     "render_evidence",
+    "run_evidence_text",
     "select_evidence",
 ]

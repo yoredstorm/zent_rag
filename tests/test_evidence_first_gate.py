@@ -329,6 +329,102 @@ async def _run(
 
 
 # ---------------------------------------------------------------------------
+# Coherencia del chequeo determinista: toda la evidencia del run, no la selección
+# ---------------------------------------------------------------------------
+
+#: Texto real de la fuente: la jerarquía del byte 105 está en el procedimiento.
+JERARQUIA_BYTE_105 = (
+    "Fee Application (byte 105). Determine the highest Fee Application value of "
+    "all fare components on the previous ticket according to this hierarchy, "
+    "reading from top to bottom: 3 Sum of the change fees of all changed fare "
+    "components, 2 Highest change fee among all fare components, changed and "
+    "unchanged, 5 Highest change fee among all fare components within changed "
+    "pricing units, 4 Highest change fee within changed pricing units, "
+    "1 Highest change fee among all changed fare components."
+)
+
+
+@pytest.mark.asyncio
+async def test_la_jerarquia_respaldada_en_otra_ronda_no_se_marca(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caso real: el fragmento con la jerarquía quedó fuera de la selección del
+    último refresh, pero el modelo lo vio (está en la evidencia del run). Marcarlo
+    como inventado producía una respuesta que se contradecía."""
+    from src.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "RUNTIME_EVIDENCE_BUDGET_CHARS", 1500)
+    stub = _SearchStub(
+        respuestas=[
+            (
+                _documento_grande(),
+                {
+                    "evidence": [
+                        {
+                            "ref": "grande",
+                            "document_id": "grande",
+                            "title": FUENTE_CAT31,
+                            "score": 0.9,
+                            "content": "Byte 105 Fee Application categoría 31. "
+                            + (RELLENO * 400),
+                        },
+                        {
+                            "ref": "jerarquia",
+                            "document_id": "jerarquia",
+                            "title": FUENTE_CAT31,
+                            "score": 0.5,
+                            "content": JERARQUIA_BYTE_105,
+                        },
+                    ]
+                },
+            )
+        ]
+    )
+    llm = _FakeLLM(
+        [
+            '{"tool": "search_knowledge", "arguments": {"query": "categoría 31 byte 105"}}',
+            (
+                '{"answer": "El byte 105 decide cómo se aplica el fee. La jerarquía '
+                "documentada, de mayor a menor prioridad, es: 3, 2, 5, 4, 1 [Doc 1].\"}"
+            ),
+        ]
+    )
+    result, _ = await _run(monkeypatch, llm=llm, judge=_Judge(), search=stub)
+
+    revisiones = [
+        step for step in result.steps if step["type"] == "answer_revision"
+    ]
+    assert not any("jerarquía" in str(step.get("detail")) for step in revisiones)
+    assert "3, 2, 5, 4, 1" in result.answer
+
+
+@pytest.mark.asyncio
+async def test_respuesta_que_se_contradice_se_revisa(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """«La información disponible no contiene…» seguido de la explicación."""
+    stub = _SearchStub()
+    llm = _FakeLLM(
+        [
+            '{"tool": "search_knowledge", "arguments": {"query": "categoría 31 byte 105"}}',
+            (
+                '{"answer": "La información disponible no contiene una definición '
+                "técnica del byte 105.\\n\\n### Byte 105\\nEl byte 105 es el campo Fee "
+                'Application [Doc 1]."}'
+            ),
+            '{"answer": "El byte 105 es el campo Fee Application: decide cómo aplicar '
+            'el cambio de tarifa [Doc 1]."}',
+        ]
+    )
+    result, _ = await _run(monkeypatch, llm=llm, judge=_Judge(), search=stub)
+
+    revisiones = [step for step in result.steps if step["type"] == "answer_revision"]
+    assert any("contradice" in str(step.get("detail")) for step in revisiones)
+    assert "no contiene" not in result.answer.lower()
+    assert "Fee Application" in result.answer
+
+
+# ---------------------------------------------------------------------------
 # Regresión: repetir la misma pregunta no puede perder la evidencia
 # ---------------------------------------------------------------------------
 

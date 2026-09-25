@@ -1928,6 +1928,20 @@ class AgentRuntime:
             active = selection if selection is not None else _refresh_selection()
             return render_evidence(active)
 
+        def _run_evidence_text() -> str:
+            """TODA la evidencia recuperada por el run (todas las rondas).
+
+            Es el universo sobre el que se juzgan las afirmaciones deterministas
+            (figuras, jerarquías, advertencias): el modelo puede haber visto en una
+            ronda anterior un fragmento que ya no está en la selección actual, así
+            que comparar contra la selección daría falsos positivos.
+            """
+            if registry.is_empty():
+                return "\n".join(history)
+            from src.runtime.evidence import run_evidence_text
+
+            return run_evidence_text(registry.all_items())
+
         def _sufficiency_step() -> dict | None:
             if sufficiency is None:
                 return None
@@ -1995,13 +2009,18 @@ class AgentRuntime:
             # depende del gate JEV: es gratis y no opina, sólo compara.
             if fact_check_on:
                 from src.intelligence.response.entities import (
+                    disclaimer_note,
                     figures_note,
                     hierarchy_note,
+                    self_contradicting_disclaimer,
                     ungrounded_figures,
                     ungrounded_hierarchy_claims,
                 )
 
-                figures = ungrounded_figures(draft, _evidence_text(), request.message)
+                # El universo del chequeo es TODA la evidencia del run, no la
+                # selección vigente: el modelo pudo ver el dato en otra ronda.
+                evidencia_run = _run_evidence_text()
+                figures = ungrounded_figures(draft, evidencia_run, request.message)
                 if figures:
                     if not revision_used:
                         revision_used = True
@@ -2028,7 +2047,7 @@ class AgentRuntime:
                     )
                 # Jerarquía de valores inventada: la fuente define valores, no un
                 # orden de prioridad. Determinista y con la misma política.
-                jerarquias = ungrounded_hierarchy_claims(draft, _evidence_text())
+                jerarquias = ungrounded_hierarchy_claims(draft, evidencia_run)
                 if jerarquias:
                     if not revision_used:
                         revision_used = True
@@ -2047,6 +2066,36 @@ class AgentRuntime:
                             "type": "answer_revision",
                             "verdict": "hierarchy_unverified",
                             "detail": "jerarquía no respaldada en la evidencia",
+                        }
+                    )
+                # Coherencia: una advertencia de «no hay información» cuando la
+                # evidencia del run SÍ cubre TODO lo preguntado contradice la
+                # respuesta. Con cobertura parcial la advertencia es legítima.
+                contradiccion = self_contradicting_disclaimer(
+                    draft,
+                    entities_covered=bool(
+                        sufficiency is not None
+                        and sufficiency.exact_entity_match is True
+                    ),
+                )
+                if contradiccion:
+                    if not revision_used:
+                        revision_used = True
+                        feedback = disclaimer_note(contradiccion)
+                        history.append(f"OBSERVATION (untrusted): {feedback}")
+                        result.steps.append(
+                            {
+                                "type": "answer_revision",
+                                "detail": "advertencia que contradice la respuesta",
+                                "figures": [],
+                            }
+                        )
+                        return "revise"
+                    result.steps.append(
+                        {
+                            "type": "answer_revision",
+                            "verdict": "disclaimer_unverified",
+                            "detail": "la respuesta se contradice: la evidencia sí cubre lo pedido",
                         }
                     )
             if answer_mode == "off":

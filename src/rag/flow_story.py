@@ -144,6 +144,8 @@ FALLBACK_REASONS = {
     "weak_alignment_overridden_by_claims": "grounding_confirmed_by_claims",
     "partial_evidence_answer_with_limits": "partial_evidence_answer_with_limits",
     "figures_unverified": "figures_unverified",
+    "hierarchy_unverified": "hierarchy_unverified",
+    "disclaimer_contradiction": "disclaimer_contradiction",
     "plan_failed": "plan_failed",
     "preflight_abstained": "judgment_blocked_generation",
 }

@@ -191,7 +191,18 @@ _HIERARCHY_RE = re.compile(
     r"de\s+mayor\s+a\s+menor|ranking|orden\s+de\s+importancia|prioridad\s+(?:de|entre)\s+valores)",
     re.IGNORECASE,
 )
-_HIERARCHY_SUPPORT_HINTS = ("jerarqu", "priorit", "precedence", "priority", "rank")
+#: Pistas de que la fuente SÍ habla de un orden (español e inglés: las fuentes
+#: técnicas suelen estar en inglés, p. ej. «according to this hierarchy»).
+_HIERARCHY_SUPPORT_HINTS = (
+    "jerarqu",
+    "hierarch",
+    "priorit",
+    "precedence",
+    "rank",
+    "orden de",
+    "from top to bottom",
+    "top-to-bottom",
+)
 
 
 def ungrounded_hierarchy_claims(answer: str, evidence_text: str) -> list[str]:
@@ -221,7 +232,56 @@ def hierarchy_note(phrases: list[str]) -> str:
         "La evidencia consultada define los valores u opciones, pero NO afirma un "
         "orden de prioridad, jerarquía ni ranking entre ellos. No lo agregues: "
         "presentá los valores como la fuente los presenta (por su número o su "
-        "nombre), sin ordenarlos por importancia."
+        "nombre), sin ordenarlos por importancia. No declares que falta información "
+        "por esto ni reescribas el resto de la respuesta."
+    )
+
+
+# -----------------------------------------------------------------------------
+# Advertencia que se contradice con la propia respuesta
+# -----------------------------------------------------------------------------
+# Caso real: la respuesta abre con «La información disponible no contiene…» y
+# después explica justamente eso. No es un problema de contenido (el dato está y
+# el chequeo de figuras/jerarquía no encontró nada): es una contradicción de
+# presentación que hay que revisar. Nunca produce abstención.
+_DISCLAIMER_RE = re.compile(
+    r"(?:no (?:hay|existe|se encontr[oó]|contiene|incluye|aporta|proporciona|"
+    r"dispone de)\s+(?:suficiente\s+)?(?:informaci[oó]n|evidencia|datos|detalle|"
+    r"detalles|contenido)|no tengo (?:informaci[oó]n|suficiente)|"
+    r"la informaci[oó]n disponible no|las? fuentes? (?:consultad[ao]s?|"
+    r"proporcionad[ao]s?|disponibles?) no|la evidencia (?:consultada|disponible) no)",
+    re.IGNORECASE,
+)
+
+
+def self_contradicting_disclaimer(
+    answer: str,
+    *,
+    entities_covered: bool,
+) -> str:
+    """Frase que declara que falta información cuando la evidencia sí la cubre.
+
+    Devuelve la frase (para citarla en el pedido de corrección) o "" si la
+    respuesta no se contradice. Sólo se evalúa cuando las entidades que la
+    pregunta nombra están cubiertas por la evidencia del run.
+    """
+    if not answer or not entities_covered:
+        return ""
+    for oracion in re.split(r"(?<=[.!?\n])\s+", answer):
+        if _DISCLAIMER_RE.search(oracion):
+            return " ".join(oracion.split())[:160]
+    return ""
+
+
+def disclaimer_note(phrase: str) -> str:
+    """Pedido de corrección para una advertencia que contradice la respuesta."""
+    if not phrase:
+        return ""
+    return (
+        "La evidencia del run SÍ cubre lo que la pregunta nombra, así que la "
+        f"respuesta no puede abrir con «{phrase}». Quitá esa advertencia (y "
+        "cualquier sección de límites que la repita) y respondé directo con lo que "
+        "la evidencia sostiene. No borres el contenido respaldado."
     )
 
 
@@ -367,7 +427,9 @@ def figures_note(figures: list[str]) -> str:
         f"La evidencia consultada no contiene: {listed}. "
         "No afirmes fechas, años ni cifras que no estén en la evidencia, ni los "
         "aproximes: si el valor no está, decí que no está en la documentación "
-        "consultada; si está, repetí el valor exacto de la fuente."
+        "consultada; si está, repetí el valor exacto de la fuente. "
+        "No agregues una advertencia general de que falta información ni "
+        "reescribas el resto de la respuesta: sólo corregí esas referencias."
     )
 
 
@@ -378,10 +440,12 @@ __all__ = [
     "asked_concepts",
     "asked_entities",
     "coverage_note",
+    "disclaimer_note",
     "entity_covered",
     "figures_note",
     "hierarchy_note",
     "normalize",
+    "self_contradicting_disclaimer",
     "stated_dates",
     "uncovered_entities",
     "ungrounded_figures",

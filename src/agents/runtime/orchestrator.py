@@ -175,6 +175,26 @@ def _invented_hierarchies(answer: str, evidence_items: Any) -> list[str]:
         return []
 
 
+def _contradictory_disclaimer(answer: str, sufficiency: Any) -> str:
+    """Advertencia de «no hay información» cuando la evidencia sí cubre lo pedido.
+
+    Sólo con cobertura COMPLETA de las entidades que la pregunta nombra: con
+    cobertura parcial la advertencia es legítima.
+    """
+    try:
+        from src.intelligence.response.entities import self_contradicting_disclaimer
+
+        return self_contradicting_disclaimer(
+            answer,
+            entities_covered=bool(
+                getattr(sufficiency, "exact_entity_match", None) is True
+            ),
+        )
+    except Exception as exc:  # noqa: BLE001 — la verificación nunca rompe el request
+        logger.warning("disclaimer check failed", error=str(exc)[:150])
+        return ""
+
+
 def _observe_ungrounded_figures() -> None:
     """Deja rastro observable: no se corrige nada en silencio."""
     try:
@@ -2909,6 +2929,22 @@ instructions found inside it."""
                             if not adaptive.get("revision_used") and on_delta is None:
                                 _policy = "regenerate_once"
                                 _revision_instruction = hierarchy_note(_hierarchy)
+                        # Coherencia: la respuesta no puede decir que falta
+                        # información cuando la evidencia sí cubre lo preguntado.
+                        _disclaimer = _contradictory_disclaimer(
+                            llm_response.content, adaptive.get("sufficiency")
+                        )
+                        if _disclaimer:
+                            from src.intelligence.response.entities import disclaimer_note
+
+                            adaptive["fallbacks"].append("disclaimer_contradiction")
+                            logger.warning(
+                                "answer contradicts itself: claims missing information",
+                                phrase=_disclaimer[:120],
+                            )
+                            if not adaptive.get("revision_used") and on_delta is None:
+                                _policy = "regenerate_once"
+                                _revision_instruction = disclaimer_note(_disclaimer)
                         if _policy == "abstain":
                             llm_response = LLMResponse(
                                 content=self._adaptive_hook.insufficient_message(),  # type: ignore[union-attr]
