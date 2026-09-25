@@ -805,6 +805,7 @@ async def _execute_jev_retrieval(
     failed_tools: dict[str, str],
     seen_refs: set[str] | None = None,
     registry: Any = None,
+    guard: Any = None,
 ) -> str:
     """Ejecuta la búsqueda que pidió JEV, con los mismos guards que el LLM.
 
@@ -852,7 +853,7 @@ async def _execute_jev_retrieval(
         agent_id=str(request.agent.id),
         organization_id=str(request.agent.organization_id),
     )
-    if not runtime._loop_guard.check(
+    if not (guard if guard is not None else runtime._loop_guard).check(
         fingerprint,
         new_information=f"jev_retrieval:{round_number}",
         retry_reason="evidence_gap",
@@ -1029,9 +1030,22 @@ class AgentRuntime:
         reason: str,
         reasoning: object | None = None,
         fact_retry: bool = True,
+        plan: object | None = None,
+        selection: object | None = None,
+        sufficiency: dict | None = None,
     ) -> bool:
         if not _history_has_usable_observation(history):
             return False
+        # Estado del run que llega por parámetro: el runtime es un singleton de
+        # proceso, así que leer atributos de instancia podía mezclar dos runs
+        # concurrentes (contrato, citas y límites).
+        run_plan = plan if plan is not None else getattr(self, "_pending_response_plan", None)
+        run_selection = (
+            selection if selection is not None else getattr(self, "_last_evidence_selection", None)
+        )
+        run_sufficiency = (
+            sufficiency if sufficiency is not None else getattr(self, "_last_sufficiency", None)
+        )
         # La respuesta final necesita su propio presupuesto: el del loop (o 512)
         # cortaba explicaciones técnicas y dejaba el JSON abierto.
         configured_max_tokens = int(
@@ -1044,7 +1058,7 @@ class AgentRuntime:
             analytical_workspace=(
                 f"{_reasoning_workspace_block(reasoning)}\n" if reasoning is not None else ""
             ),
-            response_shape=_response_shape_block(getattr(self, "_pending_response_plan", None)),
+            response_shape=_response_shape_block(run_plan),
         )
         try:
             resp = await self._llm.generate(
@@ -1096,14 +1110,16 @@ class AgentRuntime:
                     reason=f"{reason} (figuras sin respaldo)",
                     reasoning=reasoning,
                     fact_retry=False,
+                    plan=run_plan,
+                    selection=run_selection,
+                    sufficiency=run_sufficiency,
                 )
         # El cierre por termination/guardrail también pasa por el verificador
         # cuando hay evidencia registrada: una respuesta sin evidencia no se
         # entrega sólo porque el run terminó antes. Sin evidencia estructurada
         # (tools que sólo devuelven texto) se conserva el cierre previo.
         draft_gate = getattr(self, "_draft_gate", None)
-        last_selection = getattr(self, "_last_evidence_selection", None)
-        if draft_gate is not None and last_selection is not None and not last_selection.empty:
+        if draft_gate is not None and run_selection is not None and not run_selection.empty:
             verdict = await draft_gate(answer, final=True)
             if verdict == "abstain":
                 result.answer = INSUFFICIENT_ANSWER
@@ -1119,14 +1135,10 @@ class AgentRuntime:
             if verdict in {"answer_with_limits", "revise"}:
                 # Cierre del run: no hay otra pasada de generación, así que lo
                 # que se entrega declara explícitamente lo que quedó sin cubrir.
-                limits = list(
-                    (getattr(self, "_last_sufficiency", None) or {}).get("missing_entities") or ()
-                )
+                limits = list((run_sufficiency or {}).get("missing_entities") or ())
                 answer = f"{answer}{_limits_note(list(limits))}"
         result.answer = answer
-        result.citations = _citations_from_evidence(
-            answer, getattr(self, "_last_evidence_selection", None)
-        )
+        result.citations = _citations_from_evidence(answer, run_selection)
         result.status = "completed"
         result.steps.append(
             {
@@ -1676,6 +1688,11 @@ class AgentRuntime:
             reasoning = getattr(self, "_pending_reasoning", None)
         effective_tools = _effective_tools(request.agent)
         settings = get_settings()
+        # Loop prevention POR RUN: el guard no puede recordar llamadas de runs
+        # anteriores. El runtime es un singleton de proceso y el fingerprint no
+        # incluye el run: sin esto, repetir la misma pregunta quedaba bloqueado
+        # como «duplicate tool call» y el agente respondía sin evidencia.
+        guard = LoopGuard()
         omitted_tools: list[dict] = []
         if bool(getattr(settings, "RUNTIME_SOURCE_AWARE_TOOLS", True)):
             source_types = await _agent_source_types(request.agent)
@@ -1694,6 +1711,9 @@ class AgentRuntime:
                         {"type": "tool_filter", "omitted": omitted_tools}
                     )
         allowed_tools = resolve_allowed_tools(effective_tools, ctx)
+        # Contrato de composición del run, capturado una vez: es por run (el
+        # runtime es compartido entre requests).
+        run_plan = getattr(self, "_pending_response_plan", None)
 
         def _describe_tools(tools) -> str:
             return "\n".join(
@@ -1703,7 +1723,7 @@ class AgentRuntime:
         tool_descriptions = _describe_tools(allowed_tools)
 
         agent_instructions = compose_agent_instructions(request.agent)
-        response_shape = _response_shape_block(getattr(self, "_pending_response_plan", None))
+        response_shape = _response_shape_block(run_plan)
         system = _SYSTEM_TEMPLATE.format(
             tools=tool_descriptions,
             agent_instructions=agent_instructions,
@@ -1713,12 +1733,11 @@ class AgentRuntime:
         context_block = _render_context_block(request.context) if request.context else ""
         for reasoning_step in getattr(self, "_pending_reasoning_steps", None) or ():
             result.steps.append(reasoning_step)
-        response_step = _response_planning_step(getattr(self, "_pending_response_plan", None))
+        response_step = _response_planning_step(run_plan)
         if response_step is not None:
             result.steps.append(response_step)
-            plan = getattr(self, "_pending_response_plan", None)
-            if plan is not None and getattr(plan, "active", False):
-                result.response_plan = plan.to_public_dict()
+            if run_plan is not None and getattr(run_plan, "active", False):
+                result.response_plan = run_plan.to_public_dict()
         if request.context:
             result.steps.append(
                 {"type": "context", "sections": sorted(str(key) for key in request.context)}
@@ -1811,14 +1830,14 @@ class AgentRuntime:
             material secundario y conteos. Blueprint, detalle y grounding no
             cambian: sólo se decide qué merece aparecer y cómo se presenta.
             """
-            nonlocal selection
+            nonlocal selection, run_plan
             try:
                 from src.intelligence.response.presentation import (
                     presentation_from_selection,
                     refresh_contract_presentation,
                 )
 
-                plan = getattr(self, "_pending_response_plan", None)
+                plan = run_plan
                 if plan is None or getattr(plan, "contract", None) is None:
                     return
                 policy = presentation_from_selection(
@@ -2248,7 +2267,14 @@ class AgentRuntime:
                     {"type": "guardrail", "detail": "max_tokens exceeded"}
                 )
                 await self._try_finalize_answer(
-                    request, history, config, result, reason="max_tokens exceeded"
+                    request,
+                    history,
+                    config,
+                    result,
+                    reason="max_tokens exceeded",
+                    plan=run_plan,
+                    selection=selection,
+                    sufficiency=(sufficiency.to_public_dict() if sufficiency else None),
                 )
                 self._ensure_answer(result, history, reason="max_tokens exceeded")
                 return
@@ -2335,6 +2361,7 @@ class AgentRuntime:
                         failed_tools=failed_tools,
                         seen_refs=retrieved_refs,
                         registry=registry,
+                        guard=guard,
                     )
                     zent_agent_jev_retrieval_total.labels(
                         round=str(retrieval_rounds + 1), outcome=outcome
@@ -2404,7 +2431,14 @@ class AgentRuntime:
                     {"type": "guardrail", "detail": "max_tool_calls exceeded"}
                 )
                 await self._try_finalize_answer(
-                    request, history, config, result, reason="max_tool_calls exceeded"
+                    request,
+                    history,
+                    config,
+                    result,
+                    reason="max_tool_calls exceeded",
+                    plan=run_plan,
+                    selection=selection,
+                    sufficiency=(sufficiency.to_public_dict() if sufficiency else None),
                 )
                 self._ensure_answer(result, history, reason="max_tool_calls exceeded")
                 return
@@ -2520,7 +2554,7 @@ class AgentRuntime:
                 agent_id=str(request.agent.id),
                 organization_id=str(request.agent.organization_id),
             )
-            if not self._loop_guard.check(fingerprint):
+            if not guard.check(fingerprint):
                 rag_agent_loop_preventions_total.labels(
                     organization_id=str(request.agent.organization_id),
                     scope="agent_runtime",
@@ -2788,6 +2822,7 @@ class AgentRuntime:
                                     failed_tools=failed_tools,
                                     seen_refs=retrieved_refs,
                                     registry=registry,
+                                    guard=guard,
                                 )
                                 zent_agent_jev_retrieval_total.labels(
                                     round=str(retrieval_rounds + 1), outcome=outcome
@@ -2840,6 +2875,11 @@ class AgentRuntime:
                                         result,
                                         reason="agent_step_batched",
                                         reasoning=reasoning,
+                                        plan=run_plan,
+                                        selection=selection,
+                                        sufficiency=(
+                                            sufficiency.to_public_dict() if sufficiency else None
+                                        ),
                                     )
                                     return
                             elif jev_loop_active:
@@ -2872,6 +2912,11 @@ class AgentRuntime:
                                         result,
                                         reason="termination_gate",
                                         reasoning=reasoning,
+                                        plan=run_plan,
+                                        selection=selection,
+                                        sufficiency=(
+                                            sufficiency.to_public_dict() if sufficiency else None
+                                        ),
                                     )
                                     return
                                 result.steps.append(held)
@@ -2903,6 +2948,11 @@ class AgentRuntime:
                                     result,
                                     reason="termination_gate",
                                     reasoning=reasoning,
+                                    plan=run_plan,
+                                    selection=selection,
+                                    sufficiency=(
+                                        sufficiency.to_public_dict() if sufficiency else None
+                                    ),
                                 )
                                 return
                             result.steps.append(held)
@@ -2918,6 +2968,9 @@ class AgentRuntime:
             result,
             reason="max_steps reached",
             reasoning=reasoning,
+            plan=run_plan,
+            selection=selection,
+            sufficiency=(sufficiency.to_public_dict() if sufficiency else None),
         )
         self._ensure_answer(result, history, reason="max_steps reached")
 

@@ -329,6 +329,76 @@ async def _run(
 
 
 # ---------------------------------------------------------------------------
+# Regresión: repetir la misma pregunta no puede perder la evidencia
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_repetir_la_misma_pregunta_no_bloquea_la_busqueda(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caso real: la 1.ª vez respondió; la 2.ª y 3.ª dijeron «sin evidencia».
+
+    El runtime es un singleton de proceso y `LoopGuard` recordaba la llamada del
+    run anterior: la búsqueda quedaba bloqueada como «duplicate tool call» y el
+    agente respondía sin evidencia.
+    """
+    from src.runtime.answer_gate import INSUFFICIENT_ANSWER
+
+    search = _SearchStub()
+    register_tool(search)
+    _install_engine(monkeypatch, _Judge())
+    # Un solo runtime (como en la API) y la misma secuencia pregunta→respuesta
+    # repetida tres veces.
+    llm = _FakeLLM(
+        [
+            '{"tool": "search_knowledge", "arguments": {"query": "categoría 31 byte 105"}}',
+            '{"answer": "El byte 105 es Fee Application (sección 4.6.2) [Doc 1]."}',
+        ]
+        * 3
+    )
+    runtime = AgentRuntime(llm_provider=llm)
+    agent = _agent(["search_knowledge"])
+
+    respuestas = []
+    for _ in range(3):
+        result = await runtime.run(
+            AgentRunRequest(agent=agent, message=PREGUNTA, role="admin")
+        )
+        respuestas.append(result)
+
+    assert len(search.queries) == 3, "cada run debe poder buscar: el guard es por run"
+    for result in respuestas:
+        assert "loop prevention" not in str(result.steps)
+        assert result.answer != INSUFFICIENT_ANSWER
+        assert "Fee Application" in result.answer
+
+
+@pytest.mark.asyncio
+async def test_la_misma_llamada_dentro_del_run_sigue_bloqueada(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """El guard conserva su función: repetir la misma tool en el mismo run se corta."""
+    search = _SearchStub()
+    register_tool(search)
+    llm = _FakeLLM(
+        [
+            '{"tool": "search_knowledge", "arguments": {"query": "categoría 31 byte 105"}}',
+            '{"tool": "search_knowledge", "arguments": {"query": "categoría 31 byte 105"}}',
+            '{"answer": "El byte 105 es Fee Application [Doc 1]."}',
+        ]
+    )
+    result, _ = await _run(monkeypatch, llm=llm, judge=_Judge(), search=search)
+
+    assert len(search.queries) == 1
+    assert any(
+        step.get("detail") == "loop prevention: duplicate tool call without new information"
+        for step in result.steps
+    )
+    assert "Fee Application" in result.answer
+
+
+# ---------------------------------------------------------------------------
 # §18 — Truncamiento: la posición del chunk no decide qué evidencia llega
 # ---------------------------------------------------------------------------
 
