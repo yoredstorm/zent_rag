@@ -180,11 +180,22 @@ class OrchestratorAdaptiveHook:
         passages=None,
     ) -> EvidenceQuality:
         async with trace_span("adaptive.evidence"):
+            # JEV mira la misma evidencia (fragmentos completos elegidos por
+            # relevancia) dentro del presupuesto configurado del run.
+            try:
+                from src.core.config import get_settings
+
+                budget = int(
+                    getattr(get_settings(), "RUNTIME_EVIDENCE_BUDGET_CHARS", 0) or 0
+                )
+            except Exception:  # noqa: BLE001
+                budget = 0
             quality = await self._evaluator.evaluate(
                 evidence,
                 organization_id=organization_id,
                 request_id=request_id,
                 passages=passages,
+                state_char_budget=budget or 12_000,
             )
         record_quality(quality)
         return quality

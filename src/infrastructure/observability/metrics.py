@@ -656,6 +656,21 @@ zent_adaptive_claims_ledger_total = Counter(
     "Claim ledger writes from claim verification",
     labelnames=["outcome"],
 )
+# --- Evidencia del run (registry + selector + suficiencia) ---------------------
+zent_evidence_sufficiency_total = Counter(
+    "zent_evidence_sufficiency_total",
+    "Evidence sufficiency verdicts per run (objective signals, no LLM)",
+    labelnames=["action", "reason"],
+)
+zent_evidence_selection_total = Counter(
+    "zent_evidence_selection_total",
+    "Evidence selection outcomes: fragments kept and fragments dropped by budget",
+)
+zent_evidence_selected_chars = Histogram(
+    "zent_evidence_selected_chars",
+    "Characters of evidence actually sent to the generator (budget-bounded)",
+    buckets=(500, 1000, 2000, 4000, 8000, 12000, 16000, 24000, 48000),
+)
 zent_decision_candidates_total = Histogram(
     "zent_decision_candidates_total",
     "Authorized candidates offered to JEV per kind",

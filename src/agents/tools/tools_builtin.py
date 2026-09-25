@@ -28,6 +28,8 @@ _TABULAR_FULL_CHARS = 6_000
 _TABULAR_TAIL_CHARS = 1_500
 _TABULAR_FULL_CHUNKS = 2
 _MAX_OUTPUT_CHARS = 14_000
+#: Contenido de cada fragmento en la evidencia estructurada (registry del run).
+_EVIDENCE_CONTENT_CHARS = 4_000
 
 
 def _format_tabular_result(result) -> str:
@@ -370,12 +372,18 @@ class SearchKnowledgeTool(Tool):
                     used.append(source_id)
                 knowledge_type = str(metadata.get("knowledge_type") or "")
                 is_tabular = knowledge_type.startswith("table_")
-                # Evidencia estructurada para "Ver flujo": la UI no debe
-                # reconstruir fuentes a partir del texto del output.
+                # Evidencia estructurada para "Ver flujo" y para el registry del
+                # run: la UI y JEV no reconstruyen fuentes a partir del texto del
+                # output. `content` viaja COMPLETO: el recorte de contexto es una
+                # decisión del selector (por relevancia), no del string de salida.
                 document_id = str(getattr(chunk, "document_id", "") or "")
                 ref = document_id or source_id or f"chunk-{i}"
                 if ref not in seen_refs:
                     seen_refs.add(ref)
+                    retrieval = str(metadata.get("retrieval") or "")
+                    section_path = metadata.get("section_path")
+                    if isinstance(section_path, str):
+                        section_path = [section_path]
                     item: dict = {
                         "ref": ref,
                         "document_id": document_id or None,
@@ -391,6 +399,19 @@ class SearchKnowledgeTool(Tool):
                         "score": round(float(getattr(chunk, "score", 0.0) or 0.0), 4),
                         "status": "USED",
                         "knowledge_type": knowledge_type or None,
+                        "content": str(getattr(chunk, "content", "") or "")[
+                            :_EVIDENCE_CONTENT_CHARS
+                        ],
+                        "doc_index": i + 1,
+                        "retrieval": retrieval or None,
+                        "entity_pin": retrieval.startswith("entity"),
+                        "page": metadata.get("page_start")
+                        if isinstance(metadata.get("page_start"), int)
+                        else None,
+                        "section_path": [
+                            str(part) for part in (section_path or []) if part
+                        ]
+                        or None,
                     }
                     authority = str(metadata.get("authority") or "")
                     if authority:

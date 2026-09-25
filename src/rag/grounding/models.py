@@ -33,6 +33,9 @@ class Citation:
     excerpt: str = ""
     char_range: tuple[int, int] | None = None
     relevance: float = 0.0
+    #: Identificador de la evidencia del run (`E1`, `E2`, …): la cita sigue
+    #: apuntando a la misma evidencia aunque se renumeren las marcas del texto.
+    evidence_id: str | None = None
 
     @property
     def locator(self) -> str:

@@ -16,6 +16,12 @@ from src.decision.questions import noul_is_no, noul_is_uncertain, noul_is_yes
 from src.rag.adaptive.questions import build_evidence_questions, public_answers
 from src.rag.adaptive.settings import AdaptiveRagSettings
 from src.rag.retrieval.classify import normalize_query
+from src.runtime.evidence import (
+    ACTION_GENERATE,
+    ACTION_RETRIEVE_MORE,
+    DEFAULT_BUDGET_CHARS,
+    evidence_state_text,
+)
 
 _TOKEN_RE = re.compile(r"[a-z0-9]{2,}")
 _CODE_RE = re.compile(r"\b[a-z]{1,4}[-\s]?\d{2,}\b", re.IGNORECASE)
@@ -26,6 +32,10 @@ def evidence_from_chunks(chunks: list[RetrievalChunk] | None) -> list[EvidenceIt
     for index, chunk in enumerate(chunks or []):
         meta = chunk.metadata or {}
         doc_id = str(chunk.document_id)
+        section_path = meta.get("section_path")
+        if isinstance(section_path, str):
+            section_path = (section_path,)
+        retrieval = str(meta.get("retrieval") or "")
         items.append(
             EvidenceItem(
                 source_type="qdrant",
@@ -37,6 +47,20 @@ def evidence_from_chunks(chunks: list[RetrievalChunk] | None) -> list[EvidenceIt
                 metadata={k: str(v)[:200] for k, v in list(meta.items())[:12]},
                 freshness=str(meta.get("freshness") or meta.get("updated_at") or "") or None,
                 citation=f"[Doc: {index + 1}]",
+                title=str(
+                    meta.get("filename")
+                    or meta.get("title")
+                    or meta.get("external_id")
+                    or meta.get("source")
+                    or ""
+                )
+                or None,
+                page=meta.get("page_start") if isinstance(meta.get("page_start"), int) else None,
+                section_path=tuple(str(part) for part in (section_path or ()) if part),
+                retrieval_method=retrieval,
+                entity_pin=retrieval.startswith("entity"),
+                authority=str(meta.get("authority") or "") or None,
+                knowledge_type=str(meta.get("knowledge_type") or "") or None,
             )
         )
     return items
@@ -94,6 +118,38 @@ def _content_tokens(text: str) -> set[str]:
     return set(_TOKEN_RE.findall(normalize_query(text)))
 
 
+def entity_signals(
+    query: str,
+    items: list[EvidenceItem],
+) -> dict[str, Any]:
+    """Señales objetivas de entidades: qué pidió la pregunta y qué trae la evidencia.
+
+    No es una inferencia: regex + contención de texto sobre los fragmentos
+    recuperados. Devuelve cobertura 1.0 y `exact_entity_match` cuando TODAS las
+    entidades pedidas aparecen en la evidencia.
+    """
+    try:
+        from src.intelligence.response.entities import asked_entities, entity_covered
+    except Exception:  # noqa: BLE001 — sin extractor, no se inventan señales
+        return {}
+    if not items:
+        return {}
+    entities = asked_entities(query)
+    if not entities:
+        return {}
+    joined = "\n".join(item.content or "" for item in items)
+    asked = [entity.label for entity in entities]
+    covered = [entity.label for entity in entities if entity_covered(entity, joined)]
+    missing = [label for label in asked if label not in covered]
+    return {
+        "entities_asked": tuple(asked),
+        "entities_covered": tuple(covered),
+        "missing_entities": tuple(missing),
+        "entity_coverage": len(covered) / len(asked),
+        "exact_entity_match": not missing,
+    }
+
+
 def evaluate_deterministic(
     evidence: EvidenceSet,
     settings: AdaptiveRagSettings,
@@ -104,6 +160,9 @@ def evaluate_deterministic(
             sufficient=False,
             score=0.0,
             reason="empty",
+            has_evidence=False,
+            recommended_action=ACTION_RETRIEVE_MORE,
+            supporting_chunks=0,
         )
     scores = [max(0.0, float(item.score)) for item in items]
     max_score = max(scores)
@@ -126,7 +185,17 @@ def evaluate_deterministic(
         str((item.metadata or {}).get("authority") or "").strip() for item in items
     )
     freshness = any(str(item.freshness or "").strip() for item in items)
-    if has_sql and max_score >= 0.99:
+    entity = entity_signals(evidence.query or "", items)
+    entity_exact = bool(entity.get("exact_entity_match"))
+    entity_coverage = entity.get("entity_coverage")
+    if entity_exact:
+        # La pregunta nombra «categoría 31 byte 105» y la evidencia los menciona:
+        # regla determinística fuerte, JEV no la puede revertir (sólo pedir lo
+        # que falte de OTRAS entidades).
+        sufficient = True
+        reason = "entity_match"
+        quality = min(1.0, 0.65 + 0.35 * max_score)
+    elif has_sql and max_score >= 0.99:
         sufficient = True
         reason = "structured"
         quality = 0.9
@@ -161,6 +230,14 @@ def evaluate_deterministic(
         reason=reason,
         authority=authority,
         freshness=freshness,
+        has_evidence=True,
+        entity_coverage=entity_coverage,
+        entities_asked=entity.get("entities_asked", ()),
+        entities_covered=entity.get("entities_covered", ()),
+        missing_entities=entity.get("missing_entities", ()),
+        exact_entity_match=entity.get("exact_entity_match"),
+        supporting_chunks=len(items),
+        recommended_action=ACTION_GENERATE if sufficient else ACTION_RETRIEVE_MORE,
     )
 
 
@@ -174,8 +251,11 @@ def apply_passage_summary(quality: EvidenceQuality, passages: Any) -> None:
     quality.passage_relevance = float(summary["passage_relevance"])
     quality.contradictions = int(summary["contradictions"])
     quality.injection_suspected = int(summary["injection_suspected"])
-    if quality.reason in {"structured", "exact_match"}:
-        # Regla determinística fuerte: JEV/reglas de passage no la pisan.
+    quality.conflicting_chunks = int(summary["contradictions"])
+    if quality.reason in {"structured", "exact_match", "entity_match"}:
+        # Regla determinística fuerte: JEV/reglas de passage no la pisan. Si la
+        # pregunta nombra «categoría 31 byte 105» y la evidencia los contiene, la
+        # evidencia existe aunque el judge dude.
         return
     if summary["judged"] and summary["kept"] == 0:
         quality.sufficient = False
@@ -195,27 +275,45 @@ class EvidenceEvaluator:
         organization_id: UUID | None = None,
         request_id: UUID | None = None,
         passages: Any = None,
+        state_char_budget: int = DEFAULT_BUDGET_CHARS,
     ) -> EvidenceQuality:
         quality = evaluate_deterministic(evidence, self._settings)
         if passages is not None:
             apply_passage_summary(quality, passages)
         if not self._settings.jev_evidence_enabled or self._judge is None:
             return quality
-        if quality.reason in {"empty", "structured", "exact_match"}:
+        if quality.reason in {"empty", "structured", "exact_match", "entity_match"}:
             return quality
         uncertain = noul_is_uncertain(
             quality.score, 0.7, 0.35
         ) or quality.reason == "weak"
         if not uncertain:
             return quality
+        # JEV ve la MISMA evidencia que verá el generador (fragmentos completos
+        # elegidos por relevancia), no un preview de 240 chars por ítem: el
+        # veredicto no puede degradarse por el recorte del juez.
+        evidence_text, selection = evidence_state_text(
+            evidence.items,
+            evidence.query,
+            budget_chars=max(500, int(state_char_budget or 0) or DEFAULT_BUDGET_CHARS),
+        )
         state = {
             "user_request": (evidence.query or "")[:2000],
-            "evidence_preview": evidence.preview(1500),
+            "evidence": evidence_text or evidence.preview(1500),
+            "evidence_index": "; ".join(
+                f"{item.evidence_id} · {item.label}" for item in selection.items[:12]
+            ),
             "n_items": evidence.size,
             "max_score": quality.max_retrieval_score,
             "coverage": quality.coverage,
             "organization_id": str(organization_id) if organization_id else "",
         }
+        if quality.entity_coverage is not None:
+            state["entity_coverage"] = quality.entity_coverage
+            state["entities_asked"] = list(quality.entities_asked)[:6]
+            state["entities_covered"] = list(quality.entities_covered)[:6]
+            if quality.missing_entities:
+                state["missing_entities"] = list(quality.missing_entities)[:6]
         batch_questions = None
         questions = build_evidence_questions()
         if passages is not None and getattr(passages, "candidates", None):
@@ -224,6 +322,7 @@ class EvidenceEvaluator:
 
             state = {
                 **passage_state(evidence, passages),
+                "evidence": evidence_text or state["evidence"],
                 "max_score": quality.max_retrieval_score,
                 "coverage": quality.coverage,
                 "organization_id": str(organization_id) if organization_id else "",
@@ -259,9 +358,16 @@ class EvidenceEvaluator:
         quality.jev_used = True
         quality.jev_answers = public_answers(answers)
         if sufficient_noul is not None and noul_is_no(sufficient_noul, self._settings.noul_no):
+            if quality.exact_entity_match:
+                # La pregunta y la evidencia coinciden en las entidades nombradas:
+                # el veredicto negativo de JEV no puede borrar ese hecho medido.
+                quality.reason = "entity_match"
+                quality.sufficient = True
+                return quality
             quality.sufficient = False
             quality.reason = "jev_insufficient"
             quality.score = min(quality.score, 0.3)
+            quality.recommended_action = ACTION_RETRIEVE_MORE
         elif (
             sufficient_noul is not None
             and noul_is_yes(sufficient_noul, self._settings.noul_yes)
@@ -270,6 +376,7 @@ class EvidenceEvaluator:
             quality.sufficient = True
             quality.reason = "jev_sufficient"
             quality.score = max(quality.score, 0.7)
+            quality.recommended_action = ACTION_GENERATE
         return quality
 
 

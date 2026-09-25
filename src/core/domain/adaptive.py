@@ -111,7 +111,17 @@ class AdaptivePlan:
 
 @dataclass(kw_only=True)
 class EvidenceItem:
-    """Normalized evidence from any source. Tenant isolation stays in the caller."""
+    """Normalized evidence from any source. Tenant isolation stays in the caller.
+
+    Es la MISMA evidencia que consumen el generador, JEV, el grounding, las
+    citas y «Ver flujo»: `evidence_id` es el identificador estable del run y el
+    contenido no se recorta acá (la selección decide después qué entra al
+    prompt y con cuántos caracteres).
+
+    SOURCE (documento disponible) != EVIDENCE (fragmento recuperado) != CLAIM
+    (afirmación respaldada): este objeto es el fragmento, nunca el documento
+    entero ni la afirmación.
+    """
 
     source_type: str
     content: str
@@ -125,9 +135,29 @@ class EvidenceItem:
     metadata: dict[str, Any] = field(default_factory=dict)
     freshness: str | None = None
     citation: str | None = None
+    #: Identificador estable dentro del run (`E1`, `E2`, …). Vacío = sin registrar.
+    evidence_id: str = ""
+    #: Nombre legible de la fuente (filename/título) y localización del fragmento.
+    title: str | None = None
+    page: int | None = None
+    section_path: tuple[str, ...] = ()
+    #: Cómo se recuperó: vector | lexical | hybrid | entity_lexical | entity_scan | tabular.
+    retrieval_method: str = ""
+    #: La recuperación vino del pin de entidades (label exacto de la pregunta).
+    entity_pin: bool = False
+    authority: str | None = None
+    knowledge_type: str | None = None
+
+    @property
+    def label(self) -> str:
+        """Etiqueta corta y honesta para trazas: título + sección, sin inventar."""
+        parts = [self.title or self.document_id or self.source_id or self.source_type]
+        if self.section_path:
+            parts.append(".".join(str(item) for item in self.section_path))
+        return " · ".join(part for part in parts if part)
 
     def to_public_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "source_type": self.source_type,
             "source_id": self.source_id,
             "document_id": self.document_id,
@@ -140,6 +170,26 @@ class EvidenceItem:
             "citation": self.citation,
             "chars": len(self.content or ""),
         }
+        # UNKNOWN != ZERO: sólo se publica lo que existió.
+        if self.evidence_id:
+            payload["evidence_id"] = self.evidence_id
+        if self.title:
+            payload["title"] = self.title
+        if self.page is not None:
+            payload["page"] = self.page
+        if self.section_path:
+            payload["section_path"] = [str(item) for item in self.section_path]
+        if self.retrieval_method:
+            payload["retrieval"] = self.retrieval_method
+        if self.entity_pin:
+            payload["entity_pin"] = True
+        if self.authority:
+            payload["authority"] = self.authority
+        if self.knowledge_type:
+            payload["knowledge_type"] = self.knowledge_type
+        if self.content:
+            payload["excerpt"] = " ".join(self.content.split())[:400]
+        return payload
 
 
 @dataclass(kw_only=True)
@@ -183,9 +233,25 @@ class EvidenceQuality:
     injection_suspected: int = 0
     authority: bool = False
     freshness: bool = False
+    # --- Evidence Sufficiency (señales objetivas, no cuotas de LLM) ----------
+    #: ¿Hay fragmentos recuperados? (medido siempre).
+    has_evidence: bool = False
+    #: Cobertura de las entidades que la pregunta nombra (None = no se midió).
+    entity_coverage: float | None = None
+    entities_asked: tuple[str, ...] = ()
+    entities_covered: tuple[str, ...] = ()
+    missing_entities: tuple[str, ...] = ()
+    #: ¿La evidencia contiene TODAS las entidades pedidas? (None = no se midió).
+    exact_entity_match: bool | None = None
+    #: Fragmentos que sostienen algo de lo pedido (None = no se midió).
+    supporting_chunks: int | None = None
+    #: Fragmentos marcados en conflicto por el Passage Judge (None = no se midió).
+    conflicting_chunks: int | None = None
+    #: generate | retrieve_more | answer_with_limits | abstain.
+    recommended_action: str = ""
 
     def to_public_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "sufficient": self.sufficient,
             "score": round(self.score, 4),
             "max_retrieval_score": round(self.max_retrieval_score, 4),
@@ -200,7 +266,24 @@ class EvidenceQuality:
             "injection_suspected": self.injection_suspected,
             "authority": self.authority,
             "freshness": self.freshness,
+            "has_evidence": self.has_evidence,
         }
+        # UNKNOWN != ZERO: lo no medido se omite, no se rellena con 0.
+        if self.entity_coverage is not None:
+            payload["entity_coverage"] = round(self.entity_coverage, 4)
+            payload["entities_asked"] = list(self.entities_asked)[:6]
+            payload["entities_covered"] = list(self.entities_covered)[:6]
+            if self.missing_entities:
+                payload["missing_entities"] = list(self.missing_entities)[:6]
+        if self.exact_entity_match is not None:
+            payload["exact_entity_match"] = self.exact_entity_match
+        if self.supporting_chunks is not None:
+            payload["supporting_chunks"] = self.supporting_chunks
+        if self.conflicting_chunks is not None:
+            payload["conflicting_chunks"] = self.conflicting_chunks
+        if self.recommended_action:
+            payload["recommended_action"] = self.recommended_action
+        return payload
 
 
 @dataclass(kw_only=True)

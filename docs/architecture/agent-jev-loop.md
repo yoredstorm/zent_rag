@@ -76,6 +76,24 @@ completitud, calidad y presentación; permite **una** revisión y puede abstener
 En agentes puramente de tools no se activa solo (ahí la evidencia no es
 documental y la config del agente manda).
 
+El gate juzga **la misma evidencia** que vio el generador (`evidence_id`
+estables, ver [evidence-first-gate.md](evidence-first-gate.md)) y compone la
+acción en código:
+
+| Situación | Acción |
+|---|---|
+| Sin evidencia usable | `retrieve_more` (con presupuesto) → `abstain` |
+| Evidencia irrelevante a lo pedido | `retrieve_more` → `abstain` |
+| Evidencia relevante y borrador sin respaldo | `retrieve_more` → `revise` |
+| Respaldo ok, falta completitud o forma | `revise` (nunca abstención) |
+| Claims sin respaldo | `revise` (se corrigen; no se anula la respuesta) |
+| Respaldo parcial (falta una entidad) | `answer_with_limits` |
+| Todo ok | `approve` |
+
+El cierre por termination/guardrail **también** verifica (con evidencia
+registrada): una respuesta sin respaldo no se entrega porque el run terminó
+antes; se abstiene o se entrega con los límites declarados.
+
 ## Evidencia en "Ver flujo"
 
 - Step `agent_step` con `questions`, `routing`, `termination`, `next_action`,
@@ -83,13 +101,20 @@ documental y la config del agente manda).
   rotulado ("JEV decidió: …").
 - Step `jev_retrieval` con `query`, `round`, `reason` y `entities` → fase
   **Evidencia** ("Volvió a buscar: faltaba evidencia").
+- Step `evidence_sufficiency` con la cobertura de entidades, `exact_entity_match`
+  y la acción recomendada → fase **Evidencia**.
+- `flow["evidence"]` con los fragmentos recuperados (`evidence_id`, título,
+  sección, página, score, método de recuperación, `doc_index` del prompt,
+  `status` USED/RETRIEVED y `cited`) y `flow["citations"]` ancladas a esos ids.
 - `flow["jev_preflight"]` con los **packs** del run (mismo contrato que el RAG):
   tarjeta "Paso del agente · N preguntas · 1 llamada · Xms", con cada juicio y su
   distribución, más los veredictos aplicados.
 - `coverage_gap` en el step de la tool: qué pidió la pregunta y la evidencia no
   trae (se muestra como dato en la historia).
 - Métricas: `zent_agent_jev_action_total{mode,action,reason}`,
-  `zent_agent_jev_retrieval_total{round,outcome}` y `zent_decision_judge_*` con
+  `zent_agent_jev_retrieval_total{round,outcome}`,
+  `zent_evidence_sufficiency_total{action,reason}`,
+  `zent_evidence_selected_chars` y `zent_decision_judge_*` con
   `phase=agent_step` (ya no aliasado a `tool_routing`).
 
 ## Nunca

@@ -44,6 +44,27 @@ def citation_from_chunk(
     )
 
 
+def citation_from_evidence_item(item, *, relevance: float | None = None) -> Citation:
+    """Mapea la evidencia del run (`EvidenceItem`) a una Citation con evidence_id.
+
+    La procedencia queda anclada al fragmento recuperado: renumerar las marcas
+    `[Doc: N]` del texto no cambia a qué evidencia apunta la cita.
+    """
+    return Citation(
+        source_id=_uuid_of(getattr(item, "source_id", None)),
+        document_id=_uuid_of(getattr(item, "document_id", None)),
+        document_name=str(getattr(item, "title", "") or ""),
+        page=getattr(item, "page", None),
+        section_path=tuple(str(part) for part in (getattr(item, "section_path", ()) or ())),
+        chunk_id=_uuid_of(getattr(item, "chunk_id", None)),
+        excerpt=str(getattr(item, "content", "") or "")[:1200],
+        relevance=float(
+            relevance if relevance is not None else getattr(item, "score", 0.0) or 0.0
+        ),
+        evidence_id=str(getattr(item, "evidence_id", "") or "") or None,
+    )
+
+
 def build_citations(
     assembled: AssembledContext,
     *,

@@ -68,17 +68,25 @@ def build_agent_state(
     criteria: dict[str, str],
     agent_instructions: str = "",
     max_state_chars: int = 30000,
+    observations: str | None = None,
 ):
     """Prioridad del state: request → tool results → instrucciones → choices.
 
     Nunca se manda la KB completa: el builder recorta por presupuesto y reporta
     `chars` + `truncated` (secciones recortadas).
+
+    `observations` permite pasar la evidencia ya seleccionada del run (misma que
+    vio el generador) en lugar del recorte ciego por línea del historial.
     """
-    observations = "\n".join(line[:1200] for line in history[-8:])
+    tool_results = (
+        observations
+        if observations is not None
+        else "\n".join(line[:1200] for line in history[-8:])
+    )
     return build_jev_state(
         [
             StateSection("user_request", 1, (user_request or "")[:4000]),
-            StateSection("tool_results", 2, observations),
+            StateSection("tool_results", 2, tool_results),
             StateSection("agent_instructions", 3, agent_instructions),
             StateSection("available_tools", 4, ", ".join(criteria.keys())),
         ],

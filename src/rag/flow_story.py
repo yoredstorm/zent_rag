@@ -67,6 +67,9 @@ STEP_KIND_PHASES: dict[str, str] = {
     # Agent JEV Loop: juicio del paso y búsqueda dirigida por JEV.
     "agent_step": PHASE_DECISION,
     "jev_retrieval": PHASE_EVIDENCE,
+    # Evidence Sufficiency: la evidencia recuperada (y su cobertura de entidades)
+    # es un paso de la fase de evidencia, antes de generar.
+    "evidence_sufficiency": PHASE_EVIDENCE,
     "scenario_parse": PHASE_REASONING,
     "state_reconstruction": PHASE_REASONING,
     "timeline": PHASE_REASONING,
@@ -134,6 +137,9 @@ FALLBACK_REASONS = {
     "claims_abstain": "claims_abstained",
     "claims_conflict": "claims_conflict",
     "claims_revision": "claims_revised",
+    "claims_answer_with_limits": "claims_answer_with_limits",
+    "weak_alignment_overridden_by_claims": "grounding_confirmed_by_claims",
+    "partial_evidence_answer_with_limits": "partial_evidence_answer_with_limits",
     "figures_unverified": "figures_unverified",
     "plan_failed": "plan_failed",
     "preflight_abstained": "judgment_blocked_generation",

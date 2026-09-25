@@ -154,11 +154,14 @@ async def judge_agent_step(
     has_usable_evidence: bool = True,
     include_evidence_gap: bool = False,
     mode: str = MODE_ON,
+    evidence_text: str | None = None,
 ) -> AgentStepJudgment | None:
     """Una llamada AGENT_STEP con tool routing + termination del mismo estado.
 
     Con `retrieval_rounds_left`/`uncovered_entities` también compone el veredicto
-    del paso (`next_action`), que es lo que el runtime ejecuta.
+    del paso (`next_action`), que es lo que el runtime ejecuta. `evidence_text`
+    es la evidencia ya seleccionada del run (la misma que vio el generador): sin
+    ella, el estado sale del historial con su recorte por línea.
     """
     include_routing = len(tools) >= max(1, int(min_tools or 3))
     include_termination = tool_calls > 0
@@ -171,6 +174,7 @@ async def judge_agent_step(
         criteria=criteria or {"none": "No tool. Answer or finish without a tool."},
         agent_instructions=agent_instructions,
         max_state_chars=max_state_chars,
+        observations=evidence_text,
     )
     phase = build_agent_step_questions(
         tool_criteria=criteria,

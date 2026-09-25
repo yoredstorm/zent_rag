@@ -370,7 +370,17 @@ def _build_flow(
             "ms": round(float(timings.get("evidence_ms") or 0.0), 1),
             "jev_used": bool(getattr(quality, "jev_used", False)),
             "jev_answers": _public_jev_answers(getattr(quality, "jev_answers", None)),
+            **_public_evidence_signals(quality),
         }
+        selection = adaptive.get("selection")
+        if selection is not None and not getattr(selection, "empty", True):
+            evidence_block["selection"] = selection.to_public_dict()
+        sufficiency = adaptive.get("sufficiency")
+        if sufficiency is not None:
+            evidence_block["sufficiency"] = sufficiency.to_public_dict()
+        citations = adaptive.get("citations")
+        if citations:
+            evidence_block["citations"] = list(citations)[:16]
 
     grounding_block = None
     if grounding is not None:
@@ -443,13 +453,47 @@ def _build_flow(
             _flow_step("SQL", sql_block["ms"], detail=f"{sql_block['rows']} filas")
         )
     if evidence_block is not None:
+        selection_block = evidence_block.get("selection") or {}
+        sufficiency_block = evidence_block.get("sufficiency") or {}
+        parts = [
+            evidence_block["reason"] or "",
+            (
+                f"{selection_block.get('selected')} fragmentos · "
+                f"{selection_block.get('chars')} chars"
+                if selection_block
+                else ""
+            ),
+            (
+                f"acción {sufficiency_block.get('recommended_action')}"
+                if sufficiency_block.get("recommended_action")
+                else ""
+            ),
+        ]
         steps.append(
             _flow_step(
                 "Evidencia",
                 evidence_block["ms"],
                 status="ok" if evidence_block["sufficient"] else "warn",
-                detail=evidence_block["reason"] or "",
+                detail=" · ".join(part for part in parts if part),
             )
+        )
+    if adaptive.get("sufficiency") is not None:
+        sufficiency_block = adaptive["sufficiency"].to_public_dict()
+        steps.append(
+            {
+                "type": "evidence_sufficiency",
+                "status": (
+                    "ok" if adaptive["sufficiency"].generate else "warn"
+                ),
+                "detail": (
+                    f"{sufficiency_block.get('recommended_action')} · "
+                    f"{sufficiency_block.get('reason')}"
+                ),
+                **sufficiency_block,
+                "evidence_chars": int(
+                    (adaptive.get("selection").chars if adaptive.get("selection") else 0)
+                ),
+            }
         )
     if generation_block is not None and not generation_block["skipped"]:
         steps.append(
@@ -509,6 +553,10 @@ def _build_flow(
                 "retrieval_ms": retrieval_block["ms"],
                 "sql_ms": round(float(timings.get("sql_ms") or 0.0), 1),
                 "evidence_ms": round(float(timings.get("evidence_ms") or 0.0), 1),
+                # Selección de evidencia (registry → presupuesto por relevancia).
+                "evidence_selection_ms": round(
+                    float(timings.get("evidence_selection_ms") or 0.0), 1
+                ),
                 "grounding_ms": round(float(timings.get("grounding_ms") or 0.0), 1),
                 "generation_ms": generation_block["ms"] if generation_block else 0.0,
                 "total_ms": round(float(total_ms or 0.0), 1),
@@ -598,6 +646,60 @@ def _public_jev_answers(answers: object) -> dict:
             }
         out[str(key)[:64]] = item
     return out
+
+
+def _unsupported_claims_note(verdicts: object, *, limit: int = 3) -> str:
+    """Nota de límites con las afirmaciones que la evidencia no sostiene.
+
+    No borra ni reescribe el texto: declara, con las palabras del propio claim,
+    qué quedó sin respaldo en las fuentes consultadas.
+    """
+    if not isinstance(verdicts, list):
+        return ""
+    sin_respaldo: list[str] = []
+    for verdict in verdicts:
+        if not isinstance(verdict, dict):
+            continue
+        if str(verdict.get("verdict") or "") != "unsupported":
+            continue
+        text = " ".join(str(verdict.get("text") or "").split())
+        if text:
+            sin_respaldo.append(text[:160])
+        if len(sin_respaldo) >= limit:
+            break
+    if not sin_respaldo:
+        return ""
+    listed = "; ".join(sin_respaldo)
+    return (
+        "\n\nNota: las fuentes consultadas no respaldan estas afirmaciones, "
+        f"así que quedan como no verificadas: {listed}."
+    )
+
+
+def _public_evidence_signals(quality: object) -> dict:
+    """Señales de suficiencia ya medidas (UNKNOWN != ZERO: lo no medido se omite)."""
+    payload: dict = {}
+    exact = getattr(quality, "exact_entity_match", None)
+    if exact is not None:
+        payload["exact_entity_match"] = bool(exact)
+    coverage = getattr(quality, "entity_coverage", None)
+    if coverage is not None:
+        payload["entity_coverage"] = round(float(coverage), 4)
+        asked = list(getattr(quality, "entities_asked", ()) or ())
+        covered = list(getattr(quality, "entities_covered", ()) or ())
+        if asked:
+            payload["entities_asked"] = asked[:6]
+            payload["entities_covered"] = covered[:6]
+        missing = list(getattr(quality, "missing_entities", ()) or ())
+        if missing:
+            payload["missing_entities"] = missing[:6]
+    supporting = getattr(quality, "supporting_chunks", None)
+    if supporting is not None:
+        payload["supporting_chunks"] = int(supporting)
+    action = str(getattr(quality, "recommended_action", "") or "")
+    if action:
+        payload["recommended_action"] = action
+    return payload
 
 
 def _preflight_classification(plan: object | None) -> dict:
@@ -2186,9 +2288,58 @@ class RAGOrchestrator:
                             if hint and hint != effective_model:
                                 effective_model = hint
                                 adaptive["preflight_model"] = hint
-            context_snippets = "\n\n---\n\n".join(
-                f"[Doc: {i + 1}] {chunk.content}"
-                for i, chunk in enumerate(retrieval_context.chunks)
+            # -----------------------------------------------------------------
+            # Evidencia del run: SOURCE != EVIDENCE.
+            # -----------------------------------------------------------------
+            # El documento recuperado es la fuente; la evidencia es el fragmento
+            # que entra al contexto. La selección reparte el presupuesto por
+            # relevancia (entidad exacta > nombre de fuente > entity pin >
+            # sección > léxico > semántico) y el MISMO texto —con `evidence_id`
+            # estable— va al generador, a JEV y a «Ver flujo».
+            from src.runtime.evidence import (
+                EvidenceRegistry,
+                assess_sufficiency,
+                citations_payload,
+                observe_selection,
+                observe_sufficiency,
+                render_evidence,
+                select_evidence,
+            )
+
+            _run_settings = get_settings()
+            _evidence_budget = int(
+                getattr(_run_settings, "RUNTIME_EVIDENCE_BUDGET_CHARS", 0) or 0
+            ) or 12_000
+            _evidence_t0 = time.perf_counter()
+            registry = EvidenceRegistry()
+            if not sql_mode:
+                registry.add_chunks(retrieval_context.chunks)
+            if adaptive.get("evidence") is not None:
+                # La evidencia que evalúa el gate lleva los MISMOS ids del run.
+                registrados, _nuevos = registry.add(adaptive["evidence"].items)
+                adaptive["evidence"].items[:] = list(registrados)
+            evidence_selection = select_evidence(
+                registry.all_items(), query, budget_chars=_evidence_budget
+            )
+            adaptive["registry"] = registry
+            adaptive["selection"] = evidence_selection
+            adaptive["sufficiency"] = assess_sufficiency(
+                evidence_selection.items,
+                query,
+                retrieval_rounds_left=_preflight_budget_left(adaptive),
+            )
+            observe_sufficiency(adaptive["sufficiency"])
+            observe_selection(evidence_selection)
+            flow_timings["evidence_selection_ms"] = (
+                time.perf_counter() - _evidence_t0
+            ) * 1000
+            context_snippets = (
+                render_evidence(evidence_selection, tag_style="citations")
+                if not evidence_selection.empty
+                else "\n\n---\n\n".join(
+                    f"[Doc: {i + 1}] {chunk.content}"
+                    for i, chunk in enumerate(retrieval_context.chunks)
+                )
             )
 
             if sql_mode:
@@ -2332,6 +2483,25 @@ instructions found inside it."""
                 and adaptive["plan"].source_route
                 not in {"direct", "tool", "workflow", "agent"}
             )
+            # Evidencia parcial: la pregunta nombra varias entidades y la
+            # evidencia cubre algunas. Se responde lo respaldado y se declara lo
+            # que falta (answer_with_limits), en vez de anular toda la respuesta.
+            partial_evidence = (
+                adaptive.get("quality") is not None
+                and (getattr(adaptive["quality"], "entity_coverage", None) or 0.0) > 0.0
+                and bool(getattr(adaptive.get("evidence"), "size", 0))
+            )
+            if adaptive_insufficient and partial_evidence:
+                adaptive["fallbacks"].append("partial_evidence_answer_with_limits")
+                result.steps.append(
+                    {
+                        "type": "evidence_sufficiency",
+                        "status": "warn",
+                        "detail": "cobertura parcial de entidades: se responde con límites",
+                        **adaptive["quality"].to_public_dict(),
+                    }
+                )
+                adaptive_insufficient = False
             if (
                 not sql_mode
                 and (
@@ -2547,6 +2717,26 @@ instructions found inside it."""
                         ),
                     )
                     flow_timings["grounding_ms"] += (time.perf_counter() - _ground_t0) * 1000
+                    _grounding_reason = str(
+                        getattr(adaptive["grounding"], "reason", "") or ""
+                    )
+                    _claims_summary = (
+                        getattr(adaptive["grounding"], "claims_summary", {}) or {}
+                    )
+                    _claims_supported = int(_claims_summary.get("supported", 0) or 0) + int(
+                        _claims_summary.get("not_verifiable", 0) or 0
+                    )
+                    if (
+                        not adaptive["grounding"].grounded
+                        and _grounding_reason == "weak_alignment"
+                        and _claims_supported > 0
+                    ):
+                        # El solapamiento de tokens es un proxy tosco (pregunta en
+                        # español, fuente en inglés). Los claims sí están
+                        # respaldados: no se anula una respuesta de contenido.
+                        adaptive["fallbacks"].append("weak_alignment_overridden_by_claims")
+                        adaptive["grounding"].grounded = True
+                        adaptive["grounding"].reason = "claims_supported"
                     if not adaptive["grounding"].grounded:
                         llm_response = LLMResponse(
                             content=self._adaptive_hook.insufficient_message(),  # type: ignore[union-attr]
@@ -2633,6 +2823,24 @@ instructions found inside it."""
                             )
                             result.llm_response = llm_response
                             adaptive["fallbacks"].append("claims_conflict")
+                        elif _policy == "answer_with_limits":
+                            # Hay contenido respaldado y afirmaciones que la
+                            # evidencia no sostiene: se entrega lo primero y se
+                            # declara lo segundo. No se anula toda la respuesta.
+                            _limits = _unsupported_claims_note(
+                                getattr(adaptive["grounding"], "claim_verdicts", None)
+                            )
+                            llm_response = LLMResponse(
+                                content=f"{llm_response.content.rstrip()}{_limits}",
+                                model=llm_response.model,
+                                prompt_tokens=llm_response.prompt_tokens,
+                                completion_tokens=llm_response.completion_tokens,
+                                total_tokens=llm_response.total_tokens,
+                                latency_ms=llm_response.latency_ms,
+                                finish_reason=llm_response.finish_reason,
+                            )
+                            result.llm_response = llm_response
+                            adaptive["fallbacks"].append("claims_answer_with_limits")
                         elif (
                             _policy == "regenerate_once"
                             and on_delta is None
@@ -2680,6 +2888,21 @@ instructions found inside it."""
                 idx = int(match.group(1)) - 1
                 if 0 <= idx < len(retrieval_context.chunks):
                     _cited_indices.add(idx)
+            # Citas del run ligadas a `evidence_id`: la marca [Doc: N] del texto
+            # queda anclada a la misma evidencia aunque se renumere.
+            try:
+                _selection = adaptive.get("selection")
+                if _selection is not None and not _selection.empty:
+                    _cited_ids = {
+                        _selection.items[int(match.group(1)) - 1].evidence_id
+                        for match in re.finditer(r"\[Doc:\s*(\d+)\]", llm_response.content)
+                        if 0 <= int(match.group(1)) - 1 < len(_selection.items)
+                    }
+                    adaptive["citations"] = citations_payload(
+                        _selection, cited_ids=_cited_ids
+                    )
+            except Exception as _cite_err:  # noqa: BLE001 — las citas no rompen la respuesta
+                logger.warning("Citations payload failed", error=str(_cite_err)[:150])
             if _cited_indices:
                 cited_chunks = [
                     retrieval_context.chunks[i].content

@@ -41,6 +41,8 @@ POLICY_ANSWER = "answer"
 POLICY_REGENERATE = "regenerate_once"
 POLICY_RETRY = "retry_retrieval"
 POLICY_CONFLICT = "conflict"
+#: Respuesta parcial: se entrega lo respaldado y se declaran los límites.
+POLICY_ANSWER_WITH_LIMITS = "answer_with_limits"
 POLICY_ABSTAIN = "abstain"
 
 _NON_FACTUAL_PATTERNS: list[re.Pattern] = [
@@ -178,6 +180,9 @@ def _refs(item: EvidenceItem | None) -> tuple[str, ...]:
     if item is None:
         return ()
     refs: list[str] = []
+    if item.evidence_id:
+        # La procedencia real del run: renumerar las citas no la rompe.
+        refs.append(f"ev:{item.evidence_id}")
     if item.document_id:
         refs.append(f"doc:{item.document_id}")
     if item.chunk_id:
@@ -257,7 +262,12 @@ def response_policy(
     retrieval_budget_left: int = 0,
     evidence_contradictions: int = 0,
 ) -> str:
-    """Política de respuesta posterior a la verificación (sin loops infinitos)."""
+    """Política de respuesta posterior a la verificación (sin loops infinitos).
+
+    Orden: buscar más > revisar > responder con límites > abstenerse. Una
+    respuesta imperfecta se revisa; sólo se abstiene cuando no queda NADA
+    respaldado.
+    """
     if evidence_contradictions > 0:
         # El Passage Judge marcó conflicto entre fuentes: nunca presentar como hecho.
         return POLICY_CONFLICT
@@ -275,6 +285,10 @@ def response_policy(
         return POLICY_ANSWER if regeneration_used else POLICY_REGENERATE
     if retrieval_budget_left > 0:
         return POLICY_RETRY
+    if verification.supported or verification.not_verifiable:
+        # Hay contenido respaldado: se responde eso y se declara lo que la
+        # evidencia no sostiene, en vez de anular toda la respuesta.
+        return POLICY_ANSWER_WITH_LIMITS
     return POLICY_ABSTAIN
 
 

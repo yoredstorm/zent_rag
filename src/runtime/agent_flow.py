@@ -25,7 +25,16 @@ from typing import Any
 #: Tipos de step → campos que se copian VERBATIM al flow (nunca se inventan).
 _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
     "llm": ("step", "model", "action", "tokens", "latency_ms"),
-    "tool_call": ("tool", "output", "error", "meta", "latency_ms", "coverage_gap"),
+    "tool_call": (
+        "tool",
+        "output",
+        "error",
+        "meta",
+        "latency_ms",
+        "coverage_gap",
+        "new_evidence",
+        "evidence",
+    ),
     "jev_retrieval": (
         "tool",
         "query",
@@ -37,6 +46,8 @@ _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
         "error",
         "meta",
         "coverage_gap",
+        "new_evidence",
+        "evidence",
     ),
     "agent_step": (
         "questions",
@@ -76,8 +87,29 @@ _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
         "latency_ms",
         "detail",
         "answers",
+        "grounding_verdict",
+        "presentation_verdict",
+        "evidence_ids",
+        "evidence_chars",
+        "missing_entities",
+        "claims",
     ),
-    "answer_revision": ("feedback", "latency_ms"),
+    # Evidence Sufficiency: señales objetivas antes de generar (no una cuota).
+    "evidence_sufficiency": (
+        "has_evidence",
+        "supporting_chunks",
+        "recommended_action",
+        "reason",
+        "top_score",
+        "entity_coverage",
+        "entities_asked",
+        "entities_covered",
+        "missing_entities",
+        "exact_entity_match",
+        "conflicting_chunks",
+        "evidence_chars",
+    ),
+    "answer_revision": ("feedback", "latency_ms", "verdict", "detail", "figures"),
     "termination_gate": ("stop", "provider", "score", "certain", "detail", "latency_ms"),
     "router_fallback": ("attempts", "final_model"),
     "reasoning_incomplete": ("detail", "shape"),
@@ -138,6 +170,7 @@ STEP_LABEL: dict[str, str] = {
     "answer_revision": "Revisión con feedback de JEV",
     "agent_step": "JEV juzga el paso",
     "jev_retrieval": "JEV pidió otra búsqueda",
+    "evidence_sufficiency": "Evidencia suficiente",
     "final": "Respuesta final",
     "guardrail": "Límite",
     "error": "Error",
@@ -153,6 +186,8 @@ VERDICT_LABEL: dict[str, str] = {
     "approve": "aprobada",
     "revise": "revisar",
     "revise_exhausted": "aprobada (revisión ya usada)",
+    "retrieve_more": "pedir más evidencia",
+    "answer_with_limits": "responder con límites",
     "abstain": "abstención",
 }
 
@@ -238,6 +273,20 @@ def _detail_for(step: dict[str, Any], step_type: str) -> str:
         return " · ".join(parts)
     if step_type == "termination_gate":
         return "cerró el run" if step.get("stop") else "continuó"
+    if step_type == "evidence_sufficiency":
+        action = str(step.get("recommended_action") or "")
+        parts = [action or "sin acción"]
+        coverage = step.get("entity_coverage")
+        if isinstance(coverage, (int, float)):
+            asked = step.get("entities_asked") if isinstance(step.get("entities_asked"), list) else []
+            parts.append(
+                f"entidades {int(round(float(coverage) * len(asked)))}/{len(asked)}"
+                if asked
+                else f"cobertura {float(coverage):.2f}"
+            )
+        if step.get("missing_entities"):
+            parts.append("falta " + ", ".join(str(item) for item in step["missing_entities"][:3]))
+        return " · ".join(parts)
     if step_type == "answer_revision":
         return str(step.get("feedback") or "corrección pedida por JEV")[:200]
     if step_type == "tool_call":
@@ -616,6 +665,7 @@ def telemetry_completeness(
     agent_tools: tuple[str, ...] = (),
     reasoning_mode: str = "",
     jev_configured: bool | None = None,
+    evidence_observed: bool = False,
 ) -> dict[str, str]:
     """Qué señales llegaron de verdad: observed | not_applicable | not_available."""
     types = {str(step.get("type") or "") for step in steps}
@@ -648,7 +698,7 @@ def telemetry_completeness(
         if tool_steps
         else ("not_applicable" if not agent_tools else "not_available"),
         "evidence": "observed"
-        if sources
+        if (sources or evidence_observed)
         else ("not_applicable" if not retrieval_ran else "not_available"),
         "generation": "observed" if generation else "not_available",
         "verification": "observed"
@@ -776,6 +826,10 @@ def build_agent_flow(
         agent_tools=agent_tools,
         reasoning_mode=reasoning_mode,
         jev_configured=jev_configured,
+        evidence_observed=bool(
+            isinstance(getattr(result, "evidence", None), Mapping)
+            and (getattr(result, "evidence", None) or {}).get("count")
+        ),
     )
     flow: dict[str, Any] = {
         "execution": {
@@ -809,6 +863,17 @@ def build_agent_flow(
         contract = response_plan.get("contract")
         if isinstance(contract, Mapping):
             flow["response_contract"] = dict(contract)
+    # Evidencia del run: fragmentos con `evidence_id` + citas ancladas a esos ids.
+    # SOURCE != EVIDENCE: `sources` son los documentos; esto es lo recuperado.
+    evidence_block = getattr(result, "evidence", None)
+    if isinstance(evidence_block, Mapping) and evidence_block.get("count"):
+        flow["evidence"] = dict(evidence_block)
+    sufficiency_block = getattr(result, "evidence_sufficiency", None)
+    if isinstance(sufficiency_block, Mapping) and sufficiency_block:
+        flow["evidence_sufficiency"] = dict(sufficiency_block)
+    citations = getattr(result, "citations", None)
+    if citations:
+        flow["citations"] = [dict(item) for item in citations if isinstance(item, Mapping)][:16]
     jev_block = _jev_preflight_block(result)
     if jev_block:
         flow["jev_preflight"] = jev_block
