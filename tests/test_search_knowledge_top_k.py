@@ -16,6 +16,13 @@ from src.core.domain.entities import RetrievalChunk, RetrievalContext
 ORG = UUID("11111111-1111-1111-1111-111111111111")
 
 
+class _EmbedderFalso:
+    """Embedder local: el test no debe depender del proveedor real."""
+
+    async def embed(self, texts, model=None):  # noqa: ANN001
+        return [[0.1, 0.2, 0.3] for _ in texts]
+
+
 class _RetrieverFalso:
     def __init__(self) -> None:
         self.query = None
@@ -59,7 +66,7 @@ def _ctx() -> ToolContext:
 )
 async def test_top_k_acotado(pedido: int | None, esperado: int) -> None:
     retriever = _RetrieverFalso()
-    tool = SearchKnowledgeTool(retriever, embedder=None)
+    tool = SearchKnowledgeTool(retriever, embedder=_EmbedderFalso())
     argumentos: dict = {"query": "byte 105"}
     if pedido is not None:
         argumentos["top_k"] = pedido
