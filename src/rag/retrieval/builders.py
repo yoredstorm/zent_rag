@@ -9,6 +9,11 @@ from src.core.domain.entities import RetrievalChunk
 # en el orchestrator para el presupuesto de contexto.
 _CHARS_PER_TOKEN = 4
 
+#: Lo que se le sirve al modelo por chunk está acotado (el tool corta a ~1200
+#: caracteres): contar el contenido completo de un chunk padre de una sección
+#: entera hacía que UN solo chunk se comiera el presupuesto y expulsara al resto.
+_COST_CAP_CHARS = 2000
+
 
 class ContextBuilder:
     """Ensambla el contexto final respetando RAG_MAX_CONTEXT_TOKENS."""
@@ -29,7 +34,7 @@ class ContextBuilder:
         selected: list[RetrievalChunk] = []
         used = 0
         for chunk in ordered:
-            cost = len(chunk.content or "")
+            cost = min(len(chunk.content or ""), _COST_CAP_CHARS)
             if selected and used + cost > budget_chars:
                 continue
             selected.append(chunk)

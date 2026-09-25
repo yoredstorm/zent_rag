@@ -204,6 +204,23 @@ class HybridRetriever(Retriever):
                 return False
             return any(variante and variante in haystack for variante in entidad.variants)
 
+        def _presente_en_titulo(entidad: AskedEntity, items: list[Any]) -> bool:
+            """¿La entidad aparece en el TÍTULO de algún chunk ya recuperado?
+
+            Sólo cuenta la primera línea y sólo si es una línea de título: una
+            fila de tabla («Byte 105 | Fee application | …») menciona el campo en
+            su arranque pero NO lo explica, y daba la entidad por cubierta.
+            """
+            for item in items:
+                contenido = str(getattr(item, "content", "") or "")
+                primera = contenido.splitlines()[0] if contenido.strip() else ""
+                if not primera or "|" in primera:
+                    continue
+                linea = normalize(primera)
+                if any(variante and variante in linea for variante in entidad.variants):
+                    return True
+            return False
+
         etapas: dict[str, int] = {}
         pinned: list[Any] = []
 
@@ -220,12 +237,21 @@ class HybridRetriever(Retriever):
         def _objetivos() -> list[list[Any] | None]:
             relevantes = _fuentes_relevantes()
             grupos: list[list[Any] | None] = []
+            # 1) Las fuentes cuyo NOMBRE coincide con lo que la pregunta nombra
+            #    («Cat31_dapp_C.pdf» para «categoría 31»): ahí está la sección.
+            if query.source_priority:
+                grupos.append(list(query.source_priority))
+            # 2) Las que ya aparecieron en la búsqueda (del tema).
             if relevantes:
                 grupos.append(relevantes)
+            # 3) El resto de las fuentes de la consulta.
+            ya_vistas = {
+                str(item)
+                for grupo in grupos
+                for item in (grupo or [])
+            }
             resto = [
-                sid
-                for sid in (query.source_ids or [])
-                if str(sid) not in {str(item) for item in relevantes}
+                sid for sid in (query.source_ids or []) if str(sid) not in ya_vistas
             ]
             if resto:
                 grupos.append(resto)
@@ -242,9 +268,13 @@ class HybridRetriever(Retriever):
             if not callable(scan) or not needles:
                 return 0
             encontrados_total = 0
-            for objetivo in _objetivos():
+            for indice, objetivo in enumerate(_objetivos()):
                 if solo_relevantes and objetivo is None:
                     break
+                # El primer grupo (fuentes prioritarias/relevantes) se lleva el
+                # presupuesto completo; los siguientes, la mitad: ahí el barrido
+                # es una red de seguridad, no la vía principal.
+                factor = 1.0 if indice == 0 else 0.5
                 try:
                     encontrados = await scan(
                         organization_id=query.organization_id,
@@ -256,8 +286,8 @@ class HybridRetriever(Retriever):
                         user_id=query.user_id,
                         groups=query.groups,
                         limit=pin_chunks,
-                        max_points=max_points,
-                        max_ms=max_ms,
+                        max_points=max(200, int(max_points * factor)),
+                        max_ms=max(200.0, max_ms * factor),
                         heading_only=heading_only,
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -277,20 +307,24 @@ class HybridRetriever(Retriever):
         etapas["heading"] = 0
         if max_points > 0:
             for entidad in entidades:
+                # Sin atajos: la sección cuyo título ES el campo pedido es la que
+                # lo explica, y cuesta milisegundos traerla. Los atajos por
+                # «mención presente» dejaban afuera justamente esa sección.
                 needles_titulo = [entidad.label]
                 normalizado = normalize(entidad.label)
                 if normalizado and normalizado != entidad.label:
                     needles_titulo.append(normalizado)
-                etapas["heading"] += await _barrer(
-                    needles_titulo, heading_only=True, solo_relevantes=True
-                )
-                if _presente(entidad, _texto(pinned)):
+                etapas["heading"] += await _barrer(needles_titulo, heading_only=True)
+                # Sólo se corta cuando TODAS las entidades nombradas aparecieron:
+                # cortar con la primera dejaba sin buscar la segunda («categoría
+                # 31» encontrada, «byte 105» nunca buscado).
+                if all(_presente(e, _texto(pinned)) for e in entidades):
                     break
 
         # Etapa 1: léxico por entidad (una consulta por entidad, sin el resto).
         if self._lexical is not None:
             for entidad in entidades[:2]:
-                if _presente(entidad, _texto(chunks + pinned)):
+                if _presente_en_titulo(entidad, chunks + pinned):
                     continue
                 try:
                     parte = await self._lexical.retrieve(
@@ -311,7 +345,8 @@ class HybridRetriever(Retriever):
                 )
             etapas["lexical"] = len(pinned)
 
-        # Etapa 2: barrido por frase cuando sigue faltando.
+        # Etapa 2: barrido por frase cuando la entidad no aparece ni siquiera
+        # mencionada (el título ya se intentó arriba).
         faltantes = [
             entidad
             for entidad in entidades

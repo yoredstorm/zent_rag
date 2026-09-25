@@ -56,6 +56,10 @@ class RetrievalQuery:
     # Tipos de documento que se priorizan en orden (comportamiento
     # "aggregated first" del pipeline original, generalizado).
     doc_type_priority: list[str] = field(default_factory=lambda: ["aggregated"])
+    # Fuentes a mirar PRIMERO cuando la pregunta nombra algo concreto: la que se
+    # llama «Cat31_…» para «categoría 31». Lo resuelve el llamador (conoce los
+    # nombres); el motor sólo respeta el orden.
+    source_priority: list[UUID] = field(default_factory=list)
     # Embedding de la query (lo calcula el llamador para reuso en ambas patas)
     query_embedding: list[float] | None = None
 

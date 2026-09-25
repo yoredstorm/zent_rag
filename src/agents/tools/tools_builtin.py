@@ -171,6 +171,69 @@ class SearchKnowledgeTool(Tool):
         return raw if isinstance(raw, dict) else {}
 
     @staticmethod
+    async def _priority_sources(
+        ctx: ToolContext, query_text: str, source_ids: list[UUID]
+    ) -> list[UUID]:
+        """Fuentes cuyo NOMBRE coincide con lo que la pregunta nombra, en orden.
+
+        «categoría 31 byte 105» → `Cat31_dapp_C.pdf` primero: la sección que
+        explica el campo vive ahí, aunque la búsqueda densa haya traído otro
+        documento. Determinista y barato (una consulta por búsqueda).
+        """
+        try:
+            from src.intelligence.response.entities import asked_entities
+
+            entidades = asked_entities(query_text)
+            if not entidades or not source_ids:
+                return []
+            agujas: list[str] = []
+            for entidad in entidades:
+                valor = entidad.value.strip().lower()
+                if not valor:
+                    continue
+                agujas.append(valor)
+                if entidad.kind == "categoría":
+                    agujas.extend([f"cat{valor}", f"cat {valor}", f"cat_{valor}"])
+            if not agujas:
+                return []
+
+            from sqlalchemy import bindparam
+            from sqlalchemy import text as sql_text
+
+            from src.infrastructure.postgres.session import get_async_session
+
+            session = await get_async_session()
+            try:
+                stmt = sql_text(
+                    "SELECT id::text, name FROM kb_sources "
+                    "WHERE organization_id = :oid AND id::text IN :ids"
+                ).bindparams(bindparam("ids", expanding=True))
+                filas = (
+                    await session.execute(
+                        stmt,
+                        {
+                            "oid": str(ctx.tenant_id),
+                            "ids": [str(sid) for sid in source_ids],
+                        },
+                    )
+                ).fetchall()
+            finally:
+                await session.close()
+
+            prioridad: list[UUID] = []
+            for fila in filas:
+                nombre = str(fila[1] or "").lower().replace("-", " ")
+                if any(aguja in nombre for aguja in agujas):
+                    try:
+                        prioridad.append(UUID(str(fila[0])))
+                    except ValueError:
+                        continue
+            return prioridad
+        except Exception as exc:  # noqa: BLE001 — la prioridad es opcional
+            logger.warning("Priority sources lookup failed", error=str(exc)[:150])
+            return []
+
+    @staticmethod
     def _default_strategy() -> str:
         """Cascada real: lo que diga el motor (RAG_RETRIEVAL_STRATEGY) y si no, vector.
 
@@ -193,7 +256,13 @@ class SearchKnowledgeTool(Tool):
             from src.rag.retrieval.models import RetrievalQuery
 
             overrides = self._retrieval_overrides(ctx)
-            top_k = int(arguments.get("top_k") or 5)
+            try:
+                top_k = int(arguments.get("top_k") or 5)
+            except (TypeError, ValueError):
+                top_k = 5
+            # El modelo puede mandar 0 o negativos (el schema no lo garantiza):
+            # `chunks[:top_k]` con negativo devuelve todo menos los últimos.
+            top_k = max(1, min(top_k, 50))
             agent_top_k = overrides.get("top_k")
             if agent_top_k is not None:
                 top_k = min(top_k, int(agent_top_k))
@@ -225,12 +294,14 @@ class SearchKnowledgeTool(Tool):
             ) * 1000
             retrieval_start = time.perf_counter()
             chunks = []
+            prioridad = await self._priority_sources(ctx, query_text, source_ids)
             if source_ids:
                 rquery = RetrievalQuery(
                     query=query_text,
                     organization_id=ctx.tenant_id,
                     role=ctx.role,
                     source_ids=source_ids,
+                    source_priority=prioridad,
                     top_k=top_k,
                     effective_top_k=top_k,
                     score_threshold=score_threshold,

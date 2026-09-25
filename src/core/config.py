@@ -1132,6 +1132,16 @@ class Settings(BaseSettings):
             "evidencia para lo que la pregunta nombra (0 = sin re-consultas)."
         ),
     )
+    RUNTIME_AGENT_MAX_SEARCHES: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description=(
+            "Tope de busquedas a la knowledge base por corrida de agente (modelo + "
+            "JEV). Evita que el ciclo gaste el presupuesto re-buscando y termine sin "
+            "responder. 0 = sin tope."
+        ),
+    )
     RUNTIME_ANSWER_FACT_CHECK: str = Field(
         default="on",
         description=(
@@ -1403,13 +1413,16 @@ class Settings(BaseSettings):
         description="Chunks que puede aportar cada etapa del pin de entidades.",
     )
     RAG_RETRIEVAL_ENTITY_SCAN_MAX_POINTS: int = Field(
-        default=3000,
+        default=4000,
         ge=0,
         le=200000,
-        description="Tope de puntos del barrido por frase (0 = sin barrido).",
+        description=(
+            "Tope de puntos del barrido por frase (0 = sin barrido). El primer "
+            "grupo de fuentes se lleva el presupuesto completo; el resto, la mitad."
+        ),
     )
     RAG_RETRIEVAL_ENTITY_SCAN_MAX_MS: float = Field(
-        default=1500.0,
+        default=3000.0,
         ge=0.0,
         le=30000.0,
         description="Tope de tiempo del barrido por frase, en milisegundos.",

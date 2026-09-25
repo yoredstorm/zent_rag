@@ -802,11 +802,18 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
             for point in pagina:
                 escaneados += 1
                 payload = point.payload or {}
-                cuerpo = " ".join(tokenize(str(payload.get("content") or "")))
+                contenido = str(payload.get("content") or "")
+                cuerpo = " ".join(tokenize(contenido))
                 if not cuerpo:
                     continue
                 if heading_only:
-                    cuerpo = cuerpo[:160]
+                    # Sólo la primera línea y sólo si es un título: una fila de
+                    # tabla («Byte 105 | Fee application») menciona el campo pero
+                    # no lo explica.
+                    primera = contenido.splitlines()[0] if contenido.strip() else ""
+                    if not primera or "|" in primera:
+                        continue
+                    cuerpo = " ".join(tokenize(primera))
                 if any(aguja in cuerpo for aguja in buscados):
                     encontrados.append(point)
                     if len(encontrados) >= limit:
