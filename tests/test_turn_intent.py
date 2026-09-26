@@ -112,7 +112,11 @@ class _FakeEngine:
         ),
         ("qué puedes hacer?", "capability_question", ROUTE_DIRECT, False),
         ("quién eres", "capability_question", ROUTE_DIRECT, False),
+        ("quien es el gerente", "knowledge_question", ROUTE_KNOWLEDGE, True),
+        ("¿quién?", "clarification", ROUTE_CLARIFY, False),
         ("ejecuta el proceso X", "action_request", ROUTE_TOOL, True),
+        ("usa la tool", "action_request", ROUTE_TOOL, True),
+        ("graba esto", "action_request", ROUTE_TOOL, True),
         ("qué significa byte 999?", "knowledge_question", ROUTE_KNOWLEDGE, True),
     ],
 )

@@ -158,7 +158,9 @@ _CAPABILITY_RE = re.compile(
 _ACTION_RE = re.compile(
     r"\b(ejecuta|ejecut[aá]|ejecutar|corre|corr[eé]|lanza|lanz[aá]|dispara|"
     r"crea|cre[aá]|env[ií]a|envi[aá]|actualiza|elimina|borra|programa|agenda|"
-    r"inicia|inici[aá]|run|execute|deploy)\b",
+    r"inicia|inici[aá]|run|execute|deploy|usa|us[aá]|usar|llama|llam[aá]|"
+    r"invoca|graba|grab[aá]|guarda|guard[aá]|registra|registr[aá]|manda|"
+    r"mand[aá]|procesa|proces[aá])\b",
     re.IGNORECASE,
 )
 _KNOWLEDGE_RE = re.compile(
@@ -169,8 +171,9 @@ _KNOWLEDGE_RE = re.compile(
     re.IGNORECASE,
 )
 _QUESTION_WORD_RE = re.compile(
-    r"\b(qu[eé]|que|cu[aá]l|cual|cu[aá]les|cuales|cu[aá]ndo|cuando|d[oó]nde|"
-    r"donde|por\s+qu[eé]|por\s+que|porque|para\s+qu[eé]|para\s+que)\b",
+    r"\b(qu[eé]|que|qui[eé]n|quien|cu[aá]l|cual|cu[aá]les|cuales|cu[aá]ndo|"
+    r"cuando|d[oó]nde|donde|por\s+qu[eé]|por\s+que|porque|para\s+qu[eé]|"
+    r"para\s+que)\b",
     re.IGNORECASE,
 )
 _SOCIAL_FALSE_KNOWLEDGE_RE = re.compile(
@@ -190,8 +193,10 @@ _COMPLAINT_RE = re.compile(
     r"no\s+me\s+gusta\s+(?:la|tu)\s+respuesta)",
     re.IGNORECASE,
 )
-_REFERENTIAL_RE = re.compile(
-    r"\b(eso|esa|ese|esto|esta|este|aquello|aquella|el|la|los|las|ah[ií]|ahi)\b",
+#: Referencias de follow-up: SIEMPRE al arranque («y el 5?», «eso?»). Un «el»
+#: suelto en una pregunta normal («quién es el gerente») no es un follow-up.
+_FOLLOWUP_START_RE = re.compile(
+    r"^\s*(?:y\s+)?(?:eso|esto|esa|ese|aquello|aquella|el\s+\d+|la\s+\d+|\d+)\b",
     re.IGNORECASE,
 )
 
@@ -317,6 +322,19 @@ def rules_turn_intent(message: str, *, has_context: bool = False) -> "TurnIntent
         )
     if "question_word" in señales and "social" not in señales:
         tokens = [token for token in re.split(r"\s+", texto) if token]
+        if len(tokens) <= 2:
+            # «¿quién?», «¿qué?» sin objeto: cabe pedir aclaración, no buscar.
+            return _decision(
+                intent="clarification",
+                confidence=_RULES_FOLLOWUP_CONFIDENCE,
+                provider="rules",
+                route=ROUTE_CLARIFY,
+                needs_external_evidence=False,
+                evidence_source="rules",
+                model_tier=MODEL_TIER_FAST,
+                signals=señales,
+                reasons=("pregunta_sin_objeto",),
+            )
         if len(tokens) >= 3:
             return _decision(
                 intent="knowledge_question",
@@ -366,9 +384,10 @@ def rules_turn_intent(message: str, *, has_context: bool = False) -> "TurnIntent
             reasons=("acto_conversacional_obvio",),
         )
     # Follow-up corto («y el 5?», «eso?»): con contexto se puede resolver; sin
-    # contexto sólo cabe pedir una aclaración.
+    # contexto sólo cabe pedir una aclaración. La referencia tiene que ABRIR el
+    # mensaje: «quién es el gerente» no es un follow-up.
     tokens = [token for token in re.split(r"\s+", texto) if token]
-    if len(tokens) <= 6 and _REFERENTIAL_RE.search(texto):
+    if len(tokens) <= 6 and _FOLLOWUP_START_RE.match(texto):
         if has_context:
             factual = bool(_FACTUAL_FOLLOWUP_RE.search(texto))
             return _decision(
@@ -642,6 +661,20 @@ def fallback_turn_intent(
         return rules
     señales = _signals(message or "")
     if not any(s in señales for s in ("entity", "knowledge_verb", "question_word", "action")):
+        tokens = [token for token in re.split(r"\s+", message or "") if token]
+        if len(tokens) > 6:
+            # Mensaje largo sin señal clara: conservador, no charla.
+            return _decision(
+                intent="ambiguous",
+                confidence=_RULES_FALLBACK_CONFIDENCE,
+                provider="rules_fallback",
+                route=ROUTE_KNOWLEDGE,
+                needs_external_evidence=True,
+                evidence_source="rules",
+                model_tier=MODEL_TIER_DEFAULT,
+                signals=señales,
+                reasons=("sin_jev_mensaje_largo_sin_senal",),
+            )
         return _decision(
             intent="social_conversation",
             confidence=_RULES_FALLBACK_CONFIDENCE,
