@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -28,6 +28,7 @@ const SQL_SOURCE = {
   knowledge_base_id: null,
 };
 
+/** Agente legacy: valores propios que NO coinciden con ningún preset nuevo. */
 const AGENT = {
   id: "a1",
   name: "Soporte",
@@ -46,36 +47,73 @@ const AGENT = {
     source_ids: ["s1"],
     limits: { max_steps: 8, max_tokens: 4000, max_cost_usd: 0.5 },
     security: { sql_enabled: false, api_calls_enabled: false },
-    retrieval: { strategy: "vector", top_k: 8, score_threshold: 0 },
+    retrieval: { strategy: "vector", top_k: 8, score_threshold: 0.1 },
   },
 };
 
+const READINESS = {
+  score: 80,
+  items: [
+    { key: "model", label: "Modelo configurado", met: true, weight: 15, detail: "zent-default" },
+    { key: "prompt", label: "Prompt configurado", met: true, weight: 15, detail: "Prompt listo" },
+    { key: "knowledge", label: "Knowledge configurada", met: true, weight: 20, detail: "KB vinculada" },
+    { key: "version", label: "Versión lista", met: false, weight: 10, detail: "Sin versión" },
+    { key: "deployment", label: "Deployment activo", met: false, weight: 10, detail: "Sin deployment" },
+  ],
+};
+
 function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
-function fetchRouter() {
+function fetchRouter(agent: Record<string, unknown> = AGENT) {
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = (init?.method || "GET").toUpperCase();
     if (url.includes("/auth/me"))
-      return Promise.resolve(json({ organization_id: "org-1", company_name: "Acme", email: "a@b.cl", roles: ["owner"], permissions: [] }));
+      return Promise.resolve(
+        json({
+          organization_id: "org-1",
+          company_name: "Acme",
+          email: "a@b.cl",
+          roles: ["owner"],
+          permissions: [],
+        }),
+      );
     if (url.includes("/api/v1/sources")) return Promise.resolve(json({ sources: [SOURCE, SQL_SOURCE] }));
     if (url.includes("/api/v1/jobs")) return Promise.resolve(json({ jobs: [] }));
-    if (url.includes("/agents/a1/readiness"))
-      return Promise.resolve(json({ score: 80, items: [{ key: "model", label: "Modelo", met: true, weight: 15, detail: "ok" }] }));
-    if (url.includes("/agents/a1/versions")) return Promise.resolve(json({ versions: [] }));
-    if (url.includes("/agents/a1") && method === "PUT") {
-      const body = JSON.parse(String(init?.body || "{}"));
-      return Promise.resolve(json({ ...AGENT, ...body, config: { ...AGENT.config, ...body.config } }));
-    }
-    if (url.includes("/agents/a1")) return Promise.resolve(json(AGENT));
-    if (url.includes("/gateway/routes")) return Promise.resolve(json({ routes: [] }));
-    if (url.includes("/billing/entitlements")) return Promise.resolve(json({ entitlements: {} }));
+    if (url.includes("/readiness")) return Promise.resolve(json(READINESS));
+    if (url.includes("/versions") && method === "POST") return Promise.resolve(json({ id: "v1" }));
+    if (url.includes("/versions")) return Promise.resolve(json({ versions: [] }));
+    if (url.includes("/embed/token")) return Promise.resolve(json({ token: "tok-1", public_id: "pub-1" }));
+    if (url.includes("/embed/revoke")) return Promise.resolve(json({ status: "revoked" }));
     if (url.includes("/deployments")) return Promise.resolve(json({ deployments: [] }));
     if (url.includes("/environments")) return Promise.resolve(json({ environments: [] }));
+    if (url.includes("/gateway/routes")) return Promise.resolve(json({ routes: [] }));
+    if (url.includes("/billing/entitlements")) return Promise.resolve(json({ entitlements: {} }));
     if (url.includes("/organizations/quality-gates"))
-      return Promise.resolve(json({ gate: { thresholds: {}, max_hallucination: 0.3, max_regression_pct: 10 } }));
+      return Promise.resolve(
+        json({ gate: { thresholds: {}, max_hallucination: 0.3, max_regression_pct: 10 } }),
+      );
+    if (url.includes("/config/response-profile"))
+      return Promise.resolve(json({ draft: { preset: "analytical", default_detail: "deep" } }));
+    if (url.includes("/run/stream")) {
+      const frame = [
+        "event: done",
+        'data: {"answer":"Listo.","status":"completed","steps":[],"total_latency_ms":12,"model":"zent-default"}',
+        "",
+        "",
+      ].join("\n");
+      return Promise.resolve(new Response(frame, { status: 200 }));
+    }
+    if (url.includes(`/agents/${agent.id}`) && (method === "PUT" || method === "POST")) {
+      const body = JSON.parse(String(init?.body || "{}"));
+      return Promise.resolve(json({ ...agent, ...body, config: { ...(agent.config as object), ...body.config } }));
+    }
+    if (url.includes(`/agents/${agent.id}`)) return Promise.resolve(json(agent));
     return Promise.resolve(json({ detail: "not mocked: " + url }, 500));
   });
 }
@@ -92,8 +130,8 @@ function authShell(ui: ReactNode) {
   return <AuthProvider>{ui}</AuthProvider>;
 }
 
-async function renderStudio(path = "/agents/a1") {
-  const fetchMock = fetchRouter();
+async function renderStudio(path = "/agents/a1", agent: Record<string, unknown> = AGENT) {
+  const fetchMock = fetchRouter(agent);
   vi.stubGlobal("fetch", fetchMock);
   const user = userEvent.setup();
   render(
@@ -111,6 +149,40 @@ async function renderStudio(path = "/agents/a1") {
     </MemoryRouter>,
   );
   return { user, fetchMock };
+}
+
+/** Último PUT enviado: el guardado se dispara más de una vez por test. */
+function sentBody(fetchMock: ReturnType<typeof fetchRouter>) {
+  const puts = fetchMock.mock.calls.filter(
+    (entry) =>
+      String(entry[0]).includes("/agents/a1") &&
+      String(entry[1]?.method || "").toUpperCase() === "PUT",
+  );
+  const last = puts[puts.length - 1];
+  return JSON.parse(String(last?.[1]?.body || "{}"));
+}
+
+/** Espera a que el Studio termine de cargar (la barra de etapas es fija). */
+async function waitForStudio() {
+  const nav = await screen.findByRole("tablist", { name: "Etapas del agente" });
+  expect(nav).toBeInTheDocument();
+  return nav;
+}
+
+/** Abre el grupo avanzado si su detalle está plegado. */
+async function openGroup(user: ReturnType<typeof userEvent.setup>, id: string) {
+  const group = screen.getByTestId(`agent-group-${id}`);
+  const toggle = within(group).queryByRole("button", { name: "Personalizar" });
+  if (toggle) await user.click(toggle);
+  return group;
+}
+
+/** Los `input[type=number]` controlados se manejan mejor con change directo. */
+function setNumber(label: string | RegExp, value: string, scope?: HTMLElement) {
+  const input = scope
+    ? within(scope).getByLabelText(label)
+    : screen.getByLabelText(label);
+  fireEvent.change(input, { target: { value } });
 }
 
 afterEach(() => {
@@ -142,232 +214,389 @@ describe("toolErrorsFromSteps", () => {
   });
 });
 
-describe("AgentStudio", () => {
-  it("muestra propósito, fuentes y chat de prueba", async () => {
+describe("AgentStudio · identidad y conocimiento", () => {
+  it("muestra las cuatro decisiones esenciales y el playground", async () => {
     await renderStudio();
     expect(await screen.findByDisplayValue("Soporte")).toBeInTheDocument();
     expect(screen.getByLabelText("Propósito")).toHaveValue("Atender clientes");
-    expect(screen.getByText("Fuentes que ya cargaste")).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: /Políticas RRHH/ })).toBeChecked();
+    expect(screen.getByRole("heading", { name: /Conocimiento/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Comportamiento/ })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Inteligencia/ })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Probar" })).toBeInTheDocument();
     expect(screen.getByPlaceholderText("Pregunta al agente…")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Probar en Playground" })).toHaveAttribute(
-      "href",
-      "/chat?target=agent&id=a1",
+  });
+
+  it("las instrucciones adicionales arrancan plegadas", async () => {
+    const { user } = await renderStudio();
+    await screen.findByDisplayValue("Soporte");
+    expect(screen.queryByLabelText("Texto libre")).toBeNull();
+    await user.click(screen.getByRole("button", { name: /Instrucciones adicionales/ }));
+    expect(screen.getByLabelText("Texto libre")).toBeInTheDocument();
+  });
+
+  it("resume el conocimiento conectado y lo administra aparte", async () => {
+    const { user } = await renderStudio();
+    await screen.findByDisplayValue("Soporte");
+    expect(screen.getByText("1 fuente conectada")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /Políticas RRHH/ })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Administrar conocimiento" }));
+    expect(screen.getByRole("checkbox", { name: /Políticas RRHH/ })).toBeChecked();
+  });
+
+  it("avisa y limpia las fuentes guardadas que ya no existen", async () => {
+    const conFantasma = {
+      ...AGENT,
+      config: { ...AGENT.config, source_ids: ["s1", "fuente-borrada"] },
+    };
+    const { user } = await renderStudio("/agents/a1", conFantasma);
+    await screen.findByDisplayValue("Soporte");
+    await user.click(screen.getByRole("button", { name: "Administrar conocimiento" }));
+    const aviso = await screen.findByTestId("source-missing-copy");
+    expect(aviso).toHaveTextContent(/de 2 fuentes guardadas ya no existen/i);
+    await user.click(screen.getByRole("button", { name: "Quitar las que faltan" }));
+    expect(screen.queryByTestId("source-missing-copy")).toBeNull();
+  });
+});
+
+describe("AgentStudio · creación simple", () => {
+  it("crea un agente con sólo nombre, propósito y fuentes", async () => {
+    const fetchMock = fetchRouter();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/agents/new"]}>
+        {authShell(
+          <>
+            <Routes>
+              <Route path="/agents/new" element={<AgentStudioPage />} />
+            </Routes>
+            <LocationProbe />
+          </>,
+        )}
+      </MemoryRouter>,
+    );
+    await screen.findByText("Identidad");
+    await user.type(screen.getByLabelText("Nombre"), "Mesa de ayuda");
+    await user.type(screen.getByLabelText("Propósito"), "Responder dudas de RRHH");
+    await user.click(screen.getByRole("button", { name: "Administrar conocimiento" }));
+    await user.click(screen.getByRole("checkbox", { name: /Políticas RRHH/ }));
+    await user.click(screen.getByRole("button", { name: "Crear agente" }));
+
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(
+        (entry) => String(entry[0]).endsWith("/api/v1/agents") && entry[1]?.method === "POST",
+      );
+      expect(post).toBeTruthy();
+      const body = JSON.parse(String(post?.[1]?.body || "{}"));
+      expect(body.name).toBe("Mesa de ayuda");
+      expect(body.description).toBe("Responder dudas de RRHH");
+      expect(body.config.purpose).toBe("Responder dudas de RRHH");
+      expect(body.config.source_ids).toEqual(["s1"]);
+      expect(body.tools).toEqual(expect.arrayContaining(["search_knowledge"]));
+      // El payload sigue llevando la forma histórica completa.
+      expect(body.config.retrieval).toEqual({ strategy: "hybrid", top_k: 10, score_threshold: 0 });
+      expect(body.config.tone).toBe("professional");
+    });
+  });
+});
+
+describe("AgentStudio · agente legacy", () => {
+  it("no marca cambios sin guardar al cargar y respeta sus valores propios", async () => {
+    const { user } = await renderStudio();
+    await waitForStudio();
+    expect(screen.queryByText("Cambios sin guardar")).toBeNull();
+    // sin response_profile guardado → el perfil por defecto, no "personalizado"
+    expect(screen.getByRole("button", { name: /Equilibrado/ })).toHaveAttribute("aria-pressed", "true");
+    // retrieval propio (vector/8/0.1) → no es el recomendado
+    await user.click(screen.getByRole("button", { name: /Configuración avanzada/ }));
+    expect(await screen.findByTestId("agent-group-retrieval-summary")).toHaveTextContent(
+      "Personalizada · por significado · 8 fragmentos · similitud mínima 0.1",
     );
   });
 
-  it("no marca dirty al cargar un agente guardado", async () => {
-    await renderStudio();
+  it("clasifica un perfil guardado que no coincide con ningún preset como Personalizado", async () => {
+    const legacy = {
+      ...AGENT,
+      config: {
+        ...AGENT.config,
+        response_profile: { preset: "executive", tone: "didactic", default_detail: "deep" },
+      },
+    };
+    await renderStudio("/agents/a1", legacy);
     await screen.findByDisplayValue("Soporte");
-    expect(screen.queryByText("Cambios sin guardar")).toBeNull();
+    expect(screen.getByTestId("agent-behavior")).toHaveTextContent("Personalizado");
+    expect(screen.getByTestId("agent-behavior-summary")).toHaveTextContent(/didáctico/);
+    // No se pisa el perfil guardado.
+    expect(screen.getByRole("button", { name: /Equilibrado/ })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: /Ejecutivo/ })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("marca cambios sin guardar al editar el nombre", async () => {
     const { user } = await renderStudio();
     await screen.findByDisplayValue("Soporte");
-    const nameInput = await screen.findByLabelText("Nombre");
-    expect(screen.queryByText("Cambios sin guardar")).toBeNull();
+    const nameInput = screen.getByLabelText("Nombre");
     await user.clear(nameInput);
     await user.type(nameInput, "Soporte v2");
     await waitFor(() => expect(screen.getByText("Cambios sin guardar")).toBeInTheDocument());
   });
+});
 
-  it("muestra breadcrumb hacia la lista", async () => {
-    await renderStudio();
-    await screen.findByDisplayValue("Soporte");
-    expect(screen.getByLabelText("Miga de pan")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Agentes" })).toHaveAttribute("href", "/agents");
+describe("AgentStudio · etapas y URLs", () => {
+  it("navega entre Desarrollar, Probar y Publicar con tabs accesibles", async () => {
+    const { user } = await renderStudio();
+    const nav = await waitForStudio();
+    expect(within(nav).getAllByRole("tab")).toHaveLength(3);
+    expect(within(nav).getByRole("tab", { name: "Desarrollar" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await user.click(within(nav).getByRole("tab", { name: "Publicar" }));
+    await waitFor(() => expect(screen.getByTestId("loc").textContent).toContain("panel=publish"));
+    expect(await screen.findByText("Listo para producción")).toBeInTheDocument();
   });
 
-  it("abre Ajustes avanzados en Publicar con un tab antiguo y muestra readiness", async () => {
-    await renderStudio("/agents/a1?panel=advanced&tab=readiness");
-    await screen.findByDisplayValue("Soporte");
-    expect(screen.getByText("Ajustes avanzados")).toBeInTheDocument();
+  it("una pestaña antigua de publicación abre la etapa Publicar", async () => {
+    await renderStudio("/agents/a1?panel=advanced&tab=versions");
+    await waitForStudio();
     expect(screen.getByRole("tab", { name: "Publicar" })).toHaveAttribute("aria-selected", "true");
-    await waitFor(() => expect(screen.getByText("Listo para producción")).toBeInTheDocument());
+    // El panel de versiones está presente aunque todavía no haya ninguna.
+    expect(screen.getAllByText("Sin versiones").length).toBeGreaterThan(0);
+  });
+
+  it("una pestaña antigua de configuración abre su grupo avanzado", async () => {
+    await renderStudio("/agents/a1?panel=advanced&tab=retrieval");
+    await waitForStudio();
+    const group = await screen.findByTestId("agent-group-retrieval");
+    expect(within(group).getByLabelText("Fragmentos a usar")).toHaveValue(8);
+  });
+});
+
+describe("AgentStudio · comportamiento", () => {
+  it("aplica un preset y lo persiste aplanado en el perfil", async () => {
+    const { user, fetchMock } = await renderStudio();
+    await screen.findByDisplayValue("Soporte");
+    await user.click(screen.getByRole("button", { name: /Ejecutivo/ }));
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => {
+      const body = sentBody(fetchMock);
+      expect(body.config.response_profile.preset).toBe("executive");
+      expect(body.config.response_profile.tone).toBe("executive");
+      expect(body.config.response_profile.audience).toBe("business");
+      expect(body.config.response_profile.use_examples).toBe(false);
+    });
+  });
+
+  it("abre los controles detallados sólo al personalizar", async () => {
+    const { user } = await renderStudio();
+    await screen.findByDisplayValue("Soporte");
+    expect(screen.queryByLabelText("Nivel de detalle")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Personalizar comportamiento" }));
+    expect(screen.getByLabelText("Nivel de detalle")).toBeInTheDocument();
+    expect(screen.getByLabelText("Instrucciones de estilo")).toBeInTheDocument();
+  });
+
+  it("pide un borrador de estilo con IA y avisa que es un borrador", async () => {
+    const { user } = await renderStudio();
+    await screen.findByDisplayValue("Soporte");
+    await user.click(screen.getByRole("button", { name: /Crear configuración con IA/ }));
+    const panel = await screen.findByTestId("agent-ai-suggestion");
+    expect(within(panel).getByTestId("agent-ai-decisions")).toHaveTextContent("Equilibrado");
+    await user.click(within(panel).getByRole("button", { name: "Pedir borrador de estilo con IA" }));
+    expect(await within(panel).findByText(/datos reales del agente/)).toBeInTheDocument();
+  });
+
+  it("sin agente guardado no simula la generación con IA", async () => {
+    const fetchMock = fetchRouter();
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/agents/new"]}>
+        {authShell(
+          <Routes>
+            <Route path="/agents/new" element={<AgentStudioPage />} />
+          </Routes>,
+        )}
+      </MemoryRouter>,
+    );
+    await screen.findByText("Identidad");
+    await user.click(screen.getByRole("button", { name: /Crear configuración con IA/ }));
+    const panel = await screen.findByTestId("agent-ai-suggestion");
+    await user.click(within(panel).getByRole("button", { name: "Pedir borrador de estilo con IA" }));
+    expect(await within(panel).findByText(/Guardá el agente primero/)).toBeInTheDocument();
+  });
+});
+
+describe("AgentStudio · configuración avanzada", () => {
+  it("el modelo arranca Automático y se puede fijar una prioridad", async () => {
+    const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=model");
+    await screen.findByDisplayValue("Soporte");
+    const group = screen.getByTestId("agent-group-model");
+    expect(within(group).getByTestId("agent-group-model-summary")).toHaveTextContent(
+      "Automático · Zent elige el motor",
+    );
+    await user.selectOptions(within(group).getByLabelText("Prioridad del motor"), "zent-quality");
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(sentBody(fetchMock).model).toBe("zent-quality"));
+  });
+
+  it("vuelve a Automático con el radiogroup", async () => {
+    const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=model", {
+      ...AGENT,
+      model: "zent-quality",
+    });
+    await screen.findByDisplayValue("Soporte");
+    const group = screen.getByTestId("agent-group-model");
+    expect(within(group).getByTestId("agent-group-model-summary")).toHaveTextContent("Priorizar calidad");
+    await user.click(within(group).getByRole("radio", { name: /Automático \(recomendado\)/ }));
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(sentBody(fetchMock).model).toBe("zent-default"));
+  });
+
+  it("nunca activa una capacidad incompatible con las fuentes", async () => {
+    await renderStudio("/agents/a1?panel=advanced&tab=tools");
+    await screen.findByDisplayValue("Soporte");
+    const group = screen.getByTestId("agent-group-tools");
+    expect(within(group).getByRole("checkbox", { name: /Consultar datos/ })).toBeDisabled();
     expect(
-      within(screen.getByText("Listo para producción").closest(".panel")!).getByText("80%"),
+      within(group).getByText(/Tus fuentes no incluyen base de datos/),
     ).toBeInTheDocument();
   });
 
-  it("explica el modelo y la creatividad en Cómo responde", async () => {
-    const { user } = await renderStudio("/agents/a1?panel=advanced");
-    await screen.findByDisplayValue("Soporte");
-    expect(screen.getByLabelText("Qué modelo usar")).toHaveValue("zent-default");
-    expect(screen.getByRole("option", { name: /Equilibrado \(recomendado\) · zent-default/ })).toBeInTheDocument();
-    expect(screen.getByLabelText(/Creatividad · 0\.20/)).toBeInTheDocument();
-    await user.click(screen.getByRole("tab", { name: "Qué puede hacer" }));
-    expect(screen.getByRole("checkbox", { name: /Buscar en el conocimiento/ })).toBeChecked();
-    expect(screen.getByLabelText("Fragmentos a usar")).toHaveValue(8);
-  });
-
-  it("guarda los permisos elegidos en Qué puede hacer", async () => {
+  it("habilita Consultar datos cuando hay fuentes SQL y lo persiste", async () => {
     const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=tools");
     await screen.findByDisplayValue("Soporte");
-    // SQL solo se habilita cuando el agente suma una fuente de datos.
+    await user.click(screen.getByRole("button", { name: "Administrar conocimiento" }));
     await user.click(screen.getByRole("checkbox", { name: /Ventas DB/ }));
-    await user.click(screen.getByRole("checkbox", { name: /Consultar la base de datos/ }));
+    const group = screen.getByTestId("agent-group-tools");
+    const data = within(group).getByRole("checkbox", { name: /Consultar datos/ });
+    expect(data).toBeEnabled();
+    await user.click(data);
     await user.click(screen.getByRole("button", { name: "Guardar" }));
     await waitFor(() => {
-      const put = fetchMock.mock.calls.find(
-        (call) => String(call[0]).includes("/agents/a1") && String(call[1]?.method || "").toUpperCase() === "PUT",
-      );
-      const body = JSON.parse(String(put?.[1]?.body || "{}"));
+      const body = sentBody(fetchMock);
       expect(body.tools).toContain("query_database");
       expect(body.config.security.sql_enabled).toBe(true);
     });
   });
 
-  it("deshabilita SQL cuando las fuentes no incluyen datos", async () => {
-    await renderStudio("/agents/a1?panel=advanced&tab=tools");
-    await screen.findByDisplayValue("Soporte");
-    expect(screen.getByRole("checkbox", { name: /Consultar la base de datos/ })).toBeDisabled();
-    expect(
-      screen.getByText("Tus fuentes no incluyen base de datos: SQL se omite en este agente."),
-    ).toBeInTheDocument();
-  });
-
-  it("cambia a panel test en mobile tabs", async () => {
-    const { user } = await renderStudio();
-    await screen.findByDisplayValue("Soporte");
-    await user.click(screen.getByRole("tab", { name: "Probar" }));
-    await waitFor(() => expect(screen.getByTestId("loc").textContent).toContain("panel=test"));
-  });
-
-  it("permite apagar JEV por agente y lo guarda en runtime", async () => {
-    const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=tools");
-    await screen.findByDisplayValue("Soporte");
-    await user.selectOptions(screen.getByLabelText(/JEV en este agente/), "off");
+  it("hereda JEV por defecto y permite override por campo", async () => {
+    const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=intelligence");
+    await waitForStudio();
+    const group = screen.getByTestId("agent-group-intelligence");
+    expect(within(group).getByTestId("agent-group-intelligence-summary")).toHaveTextContent(
+      "Ruteo de herramientas: heredado",
+    );
+    await user.selectOptions(within(group).getByLabelText("Ruteo de herramientas"), "off");
+    await user.selectOptions(
+      within(group).getByLabelText("Verificación de la respuesta"),
+      "on",
+    );
     await user.click(screen.getByRole("button", { name: "Guardar" }));
     await waitFor(() => {
-      const put = fetchMock.mock.calls.find(
-        (call) =>
-          String(call[0]).includes("/agents/a1") &&
-          String(call[1]?.method || "").toUpperCase() === "PUT",
-      );
-      const body = JSON.parse(String(put?.[1]?.body || "{}"));
-      expect(body.config.runtime).toEqual({
-        tool_routing: false,
-        termination_gate: false,
-      });
+      const runtime = sentBody(fetchMock).config.runtime;
+      expect(runtime.tool_routing).toBe(false);
+      expect(runtime.answer_gate).toBe(true);
+      expect(runtime.termination_gate).toBeUndefined();
     });
   });
 
-  it("Activar todas enciende las herramientas aplicables a las fuentes", async () => {
-    const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=tools");
-    await screen.findByDisplayValue("Soporte");
-    await user.click(screen.getByRole("checkbox", { name: /Ventas DB/ }));
-    await user.click(screen.getByRole("button", { name: "Activar todas" }));
+  it("Answer Gate se puede apagar en el agente", async () => {
+    const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=intelligence");
+    await waitForStudio();
+    const group = screen.getByTestId("agent-group-intelligence");
+    await user.selectOptions(within(group).getByLabelText("Verificación de la respuesta"), "off");
     await user.click(screen.getByRole("button", { name: "Guardar" }));
-    await waitFor(() => {
-      const put = fetchMock.mock.calls.find(
-        (call) =>
-          String(call[0]).includes("/agents/a1") &&
-          String(call[1]?.method || "").toUpperCase() === "PUT",
-      );
-      const body = JSON.parse(String(put?.[1]?.body || "{}"));
-      expect(body.tools).toEqual(
-        expect.arrayContaining(["search_knowledge", "query_database", "call_api"]),
-      );
-      expect(body.config.security).toEqual({
-        sql_enabled: true,
-        api_calls_enabled: true,
-      });
-    });
+    await waitFor(() => expect(sentBody(fetchMock).config.runtime.answer_gate).toBe(false));
   });
 
-  it("permite apagar el verificador de JEV por agente", async () => {
-    const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=tools");
+  it("vuelve a heredar la inteligencia de Zent", async () => {
+    const conOverride = {
+      ...AGENT,
+      config: {
+        ...AGENT.config,
+        runtime: { tool_routing: false, termination_gate: false, answer_gate: true },
+      },
+    };
+    const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=intelligence", conOverride);
     await screen.findByDisplayValue("Soporte");
-    await user.selectOptions(screen.getByLabelText(/JEV verifica la respuesta/), "off");
+    const group = screen.getByTestId("agent-group-intelligence");
+    await user.click(within(group).getByRole("radio", { name: /Heredar inteligencia de Zent/ }));
     await user.click(screen.getByRole("button", { name: "Guardar" }));
-    await waitFor(() => {
-      const put = fetchMock.mock.calls.find(
-        (call) =>
-          String(call[0]).includes("/agents/a1") &&
-          String(call[1]?.method || "").toUpperCase() === "PUT",
-      );
-      const body = JSON.parse(String(put?.[1]?.body || "{}"));
-      expect(body.config.runtime.answer_gate).toBe(false);
-    });
+    await waitFor(() => expect(sentBody(fetchMock).config.runtime).toBeUndefined());
   });
 
-  it("persiste source_ids al guardar", async () => {
-    const { user, fetchMock } = await renderStudio("/agents/a1");
-    const checkbox = await screen.findByRole("checkbox", { name: /Políticas RRHH/ });
-    expect(checkbox).toBeChecked();
-    await user.click(checkbox);
+  it("permite retrieval avanzado y lo restaura a lo recomendado", async () => {
+    const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=retrieval");
+    await waitForStudio();
+    const group = screen.getByTestId("agent-group-retrieval");
+    await user.selectOptions(within(group).getByLabelText("Forma de buscar"), "lexical");
+    setNumber("Fragmentos a usar", "4", group);
     await user.click(screen.getByRole("button", { name: "Guardar" }));
-    await waitFor(() => {
-      const put = fetchMock.mock.calls.find(
-        (call) => String(call[0]).includes("/agents/a1") && String(call[1]?.method || "").toUpperCase() === "PUT",
-      );
-      expect(put).toBeTruthy();
-      const body = JSON.parse(String(put?.[1]?.body || "{}"));
-      expect(body.config.source_ids).toEqual([]);
-    });
-  });
+    await waitFor(() => expect(sentBody(fetchMock).config.retrieval.strategy).toBe("lexical"));
+    expect(sentBody(fetchMock).config.retrieval.top_k).toBe(4);
 
-  it("§29, §30: ofrece presets de respuesta y los guarda en el perfil", async () => {
-    const { user, fetchMock } = await renderStudio();
-    await screen.findByDisplayValue("Soporte");
-    expect(screen.getByText("Cómo debe responder")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /Técnico detallado/ }));
+    await user.click(within(group).getByRole("button", { name: "Restaurar valores recomendados" }));
     await user.click(screen.getByRole("button", { name: "Guardar" }));
-    await waitFor(() => {
-      const put = fetchMock.mock.calls.find(
-        (call) => String(call[0]).includes("/agents/a1") && String(call[1]?.method || "").toUpperCase() === "PUT",
-      );
-      const body = JSON.parse(String(put?.[1]?.body || "{}"));
-      expect(body.config.response_profile.preset).toBe("technical_detailed");
-      expect(body.config.response_profile.technical_level).toBe("advanced");
-      expect(body.config.response_profile.use_tables).toBe(true);
-    });
+    await waitFor(() =>
+      expect(sentBody(fetchMock).config.retrieval).toEqual({
+        strategy: "hybrid",
+        top_k: 10,
+        score_threshold: 0,
+      }),
+    );
   });
 
-  it("§34: el preview avisa que el conocimiento es simulado", async () => {
-    await renderStudio();
-    await screen.findByDisplayValue("Soporte");
-    expect(screen.getByText(/conocimiento simulado/i)).toBeInTheDocument();
-    const profile = screen.getByTestId("agent-response-profile");
-    expect(within(profile).getByLabelText("Pregunta de prueba")).toBeInTheDocument();
-    expect(within(profile).getByRole("button", { name: "Ver cómo respondería" })).toBeInTheDocument();
+  it("mantiene los topes personalizables y los restaura", async () => {
+    const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=limits");
+    await waitForStudio();
+    const group = screen.getByTestId("agent-group-limits");
+    expect(within(group).getByTestId("agent-group-limits-summary")).toHaveTextContent(
+      "Protección automática",
+    );
+    setNumber("Tope de pasos", "12", group);
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(sentBody(fetchMock).config.limits.max_steps).toBe(12));
+    expect(sentBody(fetchMock).config.limits.max_cost_usd).toBe(0.5);
+
+    await user.click(within(group).getByRole("button", { name: "Restaurar valores recomendados" }));
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(sentBody(fetchMock).config.limits.max_steps).toBe(8));
   });
 
-  it("el propósito tiene label y acción de IA propia", async () => {
-    await renderStudio();
-    await screen.findByDisplayValue("Soporte");
-    expect(screen.getByLabelText("Propósito")).toHaveValue("Atender clientes");
-    expect(screen.getByRole("button", { name: "Generar propósito con IA" })).toBeInTheDocument();
+  it("guarda la salida estructurada y rechaza un JSON inválido", async () => {
+    const { user, fetchMock } = await renderStudio("/agents/a1?panel=advanced&tab=integration");
+    await waitForStudio();
+    const group = await openGroup(user, "integration");
+    const editor = within(group).getByLabelText(/Formato de respuesta/);
+    fireEvent.change(editor, { target: { value: '{"producto": "string"' } });
+    expect(within(group).getByText(/JSON inválido/)).toBeInTheDocument();
+    fireEvent.change(editor, { target: { value: '{"producto": "string"}' } });
+    expect(within(group).queryByText(/JSON inválido/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(sentBody(fetchMock).config.output_schema).toEqual({ producto: "string" }));
   });
 
-  it("las instrucciones libres arrancan plegadas y se abren al pedirlas", async () => {
-    const { user } = await renderStudio();
-    await screen.findByDisplayValue("Soporte");
-    expect(screen.queryByLabelText("Texto libre")).toBeNull();
-    await user.click(screen.getByRole("button", { name: /Instrucciones libres/ }));
-    expect(screen.getByLabelText("Texto libre")).toBeInTheDocument();
+  it("una pestaña sin tab deja todos los grupos con su resumen", async () => {
+    await renderStudio("/agents/a1?panel=advanced");
+    await waitForStudio();
+    expect(screen.getByTestId("agent-group-model-summary")).toBeInTheDocument();
+    expect(screen.getByTestId("agent-group-limits-summary")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Fragmentos a usar")).toBeNull();
   });
+});
 
-  it("el encabezado muestra el estado del agente", async () => {
-    await renderStudio();
-    await screen.findByDisplayValue("Soporte");
-    expect(screen.getByTestId("agent-status")).toHaveTextContent("Activo");
-  });
-
-  it("Probar sugiere preguntas y las ejecuta al clic", async () => {
+describe("AgentStudio · playground", () => {
+  it("sugiere preguntas y las ejecuta al clic", async () => {
     const { user, fetchMock } = await renderStudio();
     await screen.findByDisplayValue("Soporte");
     expect(screen.getByText("Preguntale a Soporte")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /Resumí lo más importante en 3 puntos/ }));
     await waitFor(() => {
-      const stream = fetchMock.mock.calls.find((call) =>
-        String(call[0]).includes("/run/stream"),
-      );
+      const stream = fetchMock.mock.calls.find((call) => String(call[0]).includes("/run/stream"));
       expect(stream).toBeTruthy();
-      const body = JSON.parse(String(stream?.[1]?.body || "{}"));
-      expect(body.message).toBe("Resumí lo más importante en 3 puntos.");
+      expect(JSON.parse(String(stream?.[1]?.body || "{}")).message).toBe(
+        "Resumí lo más importante en 3 puntos.",
+      );
     });
   });
 
@@ -376,68 +605,41 @@ describe("AgentStudio", () => {
     await screen.findByDisplayValue("Soporte");
     await user.click(screen.getByRole("button", { name: /¿Qué cubre la documentación/ }));
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Limpiar conversación de prueba" })).toBeInTheDocument(),
+      expect(
+        screen.getByRole("button", { name: "Limpiar conversación de prueba" }),
+      ).toBeInTheDocument(),
     );
     await user.click(screen.getByRole("button", { name: "Limpiar conversación de prueba" }));
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /¿Qué cubre la documentación/ })).toBeInTheDocument(),
     );
   });
+});
 
-  it("avisa y limpia las fuentes guardadas que ya no existen", async () => {
-    const AGENTE_CON_FANTASMA = {
-      ...AGENT,
-      config: {
-        ...AGENT.config,
-        source_ids: ["s1", "fuente-borrada"],
-      },
-    };
-    const fetchMock = fetchRouter();
-    const original = fetchMock.getMockImplementation();
-    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = (init?.method || "GET").toUpperCase();
-      if (url.includes("/agents/a1") && method !== "PUT") {
-        return Promise.resolve(json(AGENTE_CON_FANTASMA));
-      }
-      return original!(input, init);
-    });
-    vi.stubGlobal("fetch", fetchMock);
-    const user = userEvent.setup();
-    render(
-      <MemoryRouter initialEntries={["/agents/a1"]}>
-        {authShell(
-          <>
-            <Routes>
-              <Route path="/agents/:id" element={<AgentStudioPage />} />
-            </Routes>
-            <LocationProbe />
-          </>,
-        )}
-      </MemoryRouter>,
+describe("AgentStudio · publicación", () => {
+  it("crea una versión desde Publicar", async () => {
+    const { user, fetchMock } = await renderStudio("/agents/a1?panel=publish");
+    await waitForStudio();
+    await user.click(screen.getByRole("button", { name: "Crear versión" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          (call) => String(call[0]).includes("/agents/a1/versions") && call[1]?.method === "POST",
+        ),
+      ).toBe(true),
     );
-    await screen.findByDisplayValue("Soporte");
-
-    const aviso = await screen.findByTestId("source-missing-copy");
-    expect(aviso).toHaveTextContent(/de 2 fuentes guardadas ya no existen/i);
-
-    await user.click(screen.getByRole("button", { name: "Quitar las que faltan" }));
-    expect(screen.queryByTestId("source-missing-copy")).toBeNull();
-    expect(screen.getByRole("checkbox", { name: /Políticas RRHH/ })).toBeChecked();
   });
 
-  it("§30: sin agente guardado no se simula la generación con IA", async () => {
-    const { user } = await renderStudio("/agents/new");
-    await screen.findByText("Identidad");
-    await user.click(screen.getByRole("button", { name: "Generar con IA" }));
-    expect(
-      await screen.findByText(/Guardá el agente primero: el generador sólo usa datos reales del agente/i),
-    ).toBeInTheDocument();
+  it("genera el token del widget desde Publicar", async () => {
+    const { user } = await renderStudio("/agents/a1?tab=embed");
+    await waitForStudio();
+    await user.click(screen.getByRole("button", { name: "Crear token" }));
+    expect(await screen.findByText("tok-1")).toBeInTheDocument();
   });
 });
 
 describe("AgentBuilderRedirect", () => {
-  it("playground va al chat de prueba", async () => {
+  it("playground va al panel de prueba", async () => {
     render(
       <MemoryRouter initialEntries={["/agents/a1/builder?tab=playground"]}>
         <Routes>
@@ -450,7 +652,7 @@ describe("AgentBuilderRedirect", () => {
     await waitFor(() => expect(screen.getByTestId("loc").textContent).toBe("/agents/a1?panel=test"));
   });
 
-  it("tab de versiones abre Avanzado", async () => {
+  it("una pestaña de publicación va a la etapa Publicar", async () => {
     render(
       <MemoryRouter initialEntries={["/agents/a1/builder?tab=versions"]}>
         <Routes>
@@ -461,7 +663,22 @@ describe("AgentBuilderRedirect", () => {
       </MemoryRouter>,
     );
     await waitFor(() =>
-      expect(screen.getByTestId("loc").textContent).toBe("/agents/a1?panel=advanced&tab=versions"),
+      expect(screen.getByTestId("loc").textContent).toBe("/agents/a1?panel=publish&tab=versions"),
+    );
+  });
+
+  it("una pestaña de configuración va a su grupo avanzado", async () => {
+    render(
+      <MemoryRouter initialEntries={["/agents/a1/builder?tab=retrieval"]}>
+        <Routes>
+          <Route path="/agents/:id/builder" element={<AgentBuilderRedirect />} />
+          <Route path="/agents/:id" element={<p>studio</p>} />
+        </Routes>
+        <LocationProbe />
+      </MemoryRouter>,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("loc").textContent).toBe("/agents/a1?panel=advanced&tab=retrieval"),
     );
   });
 });

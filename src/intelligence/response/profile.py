@@ -38,7 +38,22 @@ from src.core.domain.response import (
 PROFILE_CONFIG_KEY = "response_profile"
 
 #: Presets de Agent Studio (§29). El usuario elige y después ajusta.
+#:
+#: `balanced` es el estado "Auto" del Studio: equivale a los defaults del
+#: dominio, así que un agente sin perfil guardado y uno con `balanced` se
+#: comportan igual. El portal siempre persiste el perfil aplanado, no el preset:
+#: un preset que el backend no conozca no degrada a valores equivocados.
 RESPONSE_PROFILE_PRESETS: dict[str, ResponseProfile] = {
+    "balanced": ResponseProfile(),
+    "precise": ResponseProfile(
+        tone=TONE_PROFESSIONAL,
+        technical_level=TECHNICAL_LEVEL_ADVANCED,
+        default_detail=DETAIL_NORMAL,
+        audience=AUDIENCE_TECHNICAL,
+        use_examples=False,
+        use_tables=True,
+        preserve_domain_terms=True,
+    ),
     "clear_didactic": ResponseProfile(
         tone=TONE_DIDACTIC,
         technical_level=TECHNICAL_LEVEL_INTERMEDIATE,
@@ -95,8 +110,10 @@ RESPONSE_PROFILE_PRESETS: dict[str, ResponseProfile] = {
 }
 
 PRESET_LABELS: dict[str, str] = {
+    "balanced": "Equilibrado",
+    "precise": "Preciso",
     "clear_didactic": "Claro y didáctico",
-    "technical_detailed": "Técnico detallado",
+    "technical_detailed": "Experto técnico",
     "executive": "Ejecutivo",
     "concise": "Conciso",
     "analytical": "Analítico",

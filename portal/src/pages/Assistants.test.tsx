@@ -145,8 +145,8 @@ describe("AssistantDetailPage", () => {
       "/chat?target=agent&id=agent-1",
     );
     expect(screen.getByText("Qué está vigilando")).toBeInTheDocument();
-    expect(screen.getByText(/Equilibrado · zent-default/)).toBeInTheDocument();
-    expect(screen.getByText("Buscar en el conocimiento")).toBeInTheDocument();
+    expect(screen.getByText(/Automático · zent-default/)).toBeInTheDocument();
+    expect(screen.getByText("Consultar conocimiento")).toBeInTheDocument();
     expect(screen.getByText(/· Inventario/)).toBeInTheDocument();
     expect(screen.queryByText("Abrir Agent Studio")).toBeNull();
   });

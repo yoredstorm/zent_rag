@@ -50,6 +50,7 @@ export function AgentPublishSection({
   isNew,
   id,
   session,
+  focus,
   readiness,
   versions,
   versionsLoading,
@@ -80,6 +81,8 @@ export function AgentPublishSection({
   isNew: boolean;
   id?: string;
   session: Session | null;
+  /** Sub-sección que pidió la URL (`?tab=evaluation`), para abrirla directo. */
+  focus?: string | null;
   readiness: Readiness | null;
   versions: AgentVersion[];
   versionsLoading: boolean;
@@ -107,7 +110,7 @@ export function AgentPublishSection({
   onCreateEmbed: () => void;
   onRevokeEmbed: () => void;
 }) {
-  const [evaluationOpen, setEvaluationOpen] = useState(false);
+  const [evaluationOpen, setEvaluationOpen] = useState(focus === "evaluation");
   const [gatesOpen, setGatesOpen] = useState(false);
 
   return (

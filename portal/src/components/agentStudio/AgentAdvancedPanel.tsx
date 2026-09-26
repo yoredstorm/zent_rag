@@ -1,240 +1,150 @@
-import type { Session } from "../../api";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../ui";
+// =============================================================================
+// AgentAdvancedPanel — configuración avanzada con progressive disclosure.
+// =============================================================================
+// No es un cajón de parámetros: son siete grupos, cada uno con su estado
+// resumido y su detalle detrás de "Personalizar". Todos leen y escriben el
+// mismo `AgentConfig`; ningún grupo guarda copia propia del estado.
+// =============================================================================
 import { AgentDisclosure } from "./AgentField";
-import { AgentBehaviorSection } from "./AgentBehaviorSection";
-import { AgentCapabilitiesSection } from "./AgentCapabilitiesSection";
+import { AgentResponseProfileSection } from "./AgentResponseProfileSection";
 import {
-  AgentPublishSection,
-  type DeploymentEvents,
-  type Readiness,
-} from "./AgentPublishSection";
-import { ADVANCED_SUMMARY_TITLE } from "./advancedCopy";
-import {
-  ADVANCED_TAB_LABELS,
-  ADVANCED_TABS,
-  type AdvancedTab,
-  type AgentConfig,
-  type AgentVersion,
-  type Deployment,
-  type Environment,
-} from "./types";
+  AgentIntegrationGroup,
+  AgentIntelligenceGroup,
+  AgentLimitsGroup,
+  AgentModelGroup,
+  AgentRetrievalGroup,
+  AgentToolsGroup,
+} from "./AgentSettingGroups";
+import { ADVANCED_SUMMARY_HINT, ADVANCED_SUMMARY_TITLE } from "./advancedCopy";
+import { ADVANCED_GROUP_LABELS, ADVANCED_GROUPS, type AdvancedGroup } from "./types";
+import type { AgentStudioModel } from "./useAgentStudio";
+import { cn } from "../ui";
 
-const TABS = ADVANCED_TABS.map((id) => ({ id, label: ADVANCED_TAB_LABELS[id] }));
-
-/**
- * Ajustes extra del agente en tres grupos: cómo responde, qué puede hacer y
- * cómo se publica. Colapsado por defecto: la vista principal es propósito,
- * fuentes y prueba. Cada sección vive en su propio archivo.
- */
 export function AgentAdvancedPanel({
-  tab,
-  onTab,
+  studio,
+  group,
+  onGroup,
   open,
-  onToggle,
-  isNew,
-  id,
-  session,
-  model,
-  setModel,
-  routes,
-  canCustomModel,
-  config,
-  setConfig,
-  semantic,
-  setSemantic,
-  sql,
-  setSql,
-  apiCalls,
-  setApiCalls,
-  retrieval,
-  setRetrieval,
-  jevMode,
-  setJevMode,
-  answerGate,
-  setAnswerGate,
-  sourceTypes,
-  onEnableAll,
-  outputSchema,
-  setOutputSchema,
-  readiness,
-  versions,
-  versionsLoading,
-  deployments,
-  environments,
-  deployVersionId,
-  setDeployVersionId,
-  deployEnvId,
-  setDeployEnvId,
-  deployBusy,
-  deployMsg,
-  deployError,
-  eventsFor,
-  embedOrigins,
-  setEmbedOrigins,
-  embedToken,
-  embedScript,
-  embedBusy,
-  onCreateSnapshot,
-  onPromote,
-  onDeploy,
-  onGoLive,
-  onRollback,
-  onLoadEvents,
-  onCreateEmbed,
-  onRevokeEmbed,
+  onOpenChange,
 }: {
-  tab: AdvancedTab;
-  onTab: (tab: AdvancedTab) => void;
+  studio: AgentStudioModel;
+  group: AdvancedGroup | null;
+  onGroup: (group: AdvancedGroup | null) => void;
   open: boolean;
-  onToggle: (open: boolean) => void;
-  isNew: boolean;
-  id?: string;
-  session: Session | null;
-  model: string;
-  setModel: (value: string) => void;
-  routes: { name: string; description: string }[];
-  canCustomModel: boolean;
-  config: AgentConfig;
-  setConfig: (config: AgentConfig) => void;
-  semantic: boolean;
-  setSemantic: (value: boolean) => void;
-  sql: boolean;
-  setSql: (value: boolean) => void;
-  apiCalls: boolean;
-  setApiCalls: (value: boolean) => void;
-  retrieval: { strategy: string; top_k: number; score_threshold: number };
-  setRetrieval: (value: { strategy: string; top_k: number; score_threshold: number }) => void;
-  jevMode: "inherit" | "on" | "off";
-  setJevMode: (value: "inherit" | "on" | "off") => void;
-  answerGate: "inherit" | "on" | "off";
-  setAnswerGate: (value: "inherit" | "on" | "off") => void;
-  /** Tipos de fuente del agente; `null` = desconocido (no se restringe). */
-  sourceTypes?: string[] | null;
-  onEnableAll: () => void;
-  outputSchema: string;
-  setOutputSchema: (value: string) => void;
-  readiness: Readiness | null;
-  versions: AgentVersion[];
-  versionsLoading: boolean;
-  deployments: Deployment[];
-  environments: Environment[];
-  deployVersionId: string;
-  setDeployVersionId: (value: string) => void;
-  deployEnvId: string;
-  setDeployEnvId: (value: string) => void;
-  deployBusy: boolean;
-  deployMsg: string;
-  deployError: string;
-  eventsFor: DeploymentEvents | null;
-  embedOrigins: string;
-  setEmbedOrigins: (value: string) => void;
-  embedToken: string;
-  embedScript: string;
-  embedBusy: boolean;
-  onCreateSnapshot: () => void;
-  onPromote: (versionId: string, status: string) => void;
-  onDeploy: () => void;
-  onGoLive: () => void;
-  onRollback: (deploymentId: string) => void;
-  onLoadEvents: (deploymentId: string) => void;
-  onCreateEmbed: () => void;
-  onRevokeEmbed: () => void;
+  onOpenChange: (open: boolean) => void;
 }) {
-  const toolCount = [semantic, sql, apiCalls].filter(Boolean).length;
-  const summaryHint = [
-    `${toolCount} de 3 herramientas activas`,
-    model ? model : "",
-    versions.length ? `${versions.length} versión${versions.length === 1 ? "" : "es"}` : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const isOpen = (id: AdvancedGroup) => open && group === id;
+  const toggle = (id: AdvancedGroup) => (next: boolean) => onGroup(next ? id : null);
 
   return (
     <AgentDisclosure
       id="agent-advanced"
       className="mt-4"
       title={ADVANCED_SUMMARY_TITLE}
-      hint={summaryHint}
+      hint={ADVANCED_SUMMARY_HINT}
       open={open}
-      onToggle={onToggle}
+      onToggle={onOpenChange}
     >
-      <Tabs value={tab} onValueChange={(next) => onTab(next as AdvancedTab)}>
-        <TabsList>
-          {TABS.map((item) => (
-            <TabsTrigger key={item.id} value={item.id}>
-              {item.label}
-            </TabsTrigger>
+      <div className="grid gap-6">
+        <div
+          className="flex flex-wrap gap-1.5"
+          role="list"
+          aria-label="Secciones de configuración avanzada"
+        >
+          {ADVANCED_GROUPS.map((id) => (
+            <button
+              key={id}
+              type="button"
+              role="listitem"
+              aria-pressed={group === id}
+              onClick={() => onGroup(group === id ? null : id)}
+              className={cn(
+                "cursor-pointer rounded-sm border px-2.5 py-1.5 text-[12.5px] transition-colors duration-150",
+                group === id
+                  ? "border-accent-line bg-accent-soft/40 text-text"
+                  : "border-border bg-raised text-muted hover:border-border-strong hover:text-text",
+              )}
+            >
+              {ADVANCED_GROUP_LABELS[id]}
+            </button>
           ))}
-        </TabsList>
+        </div>
 
-        <TabsContent value="behavior">
-          <AgentBehaviorSection
-            model={model}
-            setModel={setModel}
-            routes={routes}
-            canCustomModel={canCustomModel}
-            config={config}
-            setConfig={setConfig}
-            outputSchema={outputSchema}
-            setOutputSchema={setOutputSchema}
-          />
-        </TabsContent>
+        <AgentModelGroup
+          model={studio.model}
+          setModel={studio.setModel}
+          routes={studio.routes}
+          canCustomModel={studio.canCustomModel}
+          config={studio.config}
+          setConfig={studio.setConfig}
+          open={isOpen("model")}
+          onOpenChange={toggle("model")}
+        />
 
-        <TabsContent value="capabilities">
-          <AgentCapabilitiesSection
-            config={config}
-            setConfig={setConfig}
-            semantic={semantic}
-            setSemantic={setSemantic}
-            sql={sql}
-            setSql={setSql}
-            apiCalls={apiCalls}
-            setApiCalls={setApiCalls}
-            retrieval={retrieval}
-            setRetrieval={setRetrieval}
-            jevMode={jevMode}
-            setJevMode={setJevMode}
-            answerGate={answerGate}
-            setAnswerGate={setAnswerGate}
-            sourceTypes={sourceTypes}
-            onEnableAll={onEnableAll}
-          />
-        </TabsContent>
+        <div className="grid gap-3" data-testid="agent-group-response">
+          <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+            <h4 className="text-[13px] font-semibold tracking-[-0.01em] text-text">Respuesta</h4>
+            <button
+              type="button"
+              className="cursor-pointer rounded-sm px-1.5 py-1 text-[12.5px] font-medium text-accent transition-colors hover:text-accent-strong"
+              aria-expanded={isOpen("response")}
+              aria-controls="agent-group-response-detail"
+              onClick={() => onGroup(isOpen("response") ? null : "response")}
+            >
+              {isOpen("response") ? "Ocultar" : "Personalizar"}
+            </button>
+          </div>
+          {isOpen("response") && (
+            <div id="agent-group-response-detail" className="animate-rise">
+              <AgentResponseProfileSection
+                profile={studio.profile}
+                onChange={studio.applyResponseProfile}
+                agentId={studio.isNew ? undefined : studio.id}
+                token={studio.session?.token}
+                organizationId={studio.session?.organizationId}
+                sourceTitles={studio.selectedSources.map((source) => source.name)}
+              />
+            </div>
+          )}
+        </div>
 
-        <TabsContent value="publish">
-          <AgentPublishSection
-            isNew={isNew}
-            id={id}
-            session={session}
-            readiness={readiness}
-            versions={versions}
-            versionsLoading={versionsLoading}
-            deployments={deployments}
-            environments={environments}
-            deployVersionId={deployVersionId}
-            setDeployVersionId={setDeployVersionId}
-            deployEnvId={deployEnvId}
-            setDeployEnvId={setDeployEnvId}
-            deployBusy={deployBusy}
-            deployMsg={deployMsg}
-            deployError={deployError}
-            eventsFor={eventsFor}
-            embedOrigins={embedOrigins}
-            setEmbedOrigins={setEmbedOrigins}
-            embedToken={embedToken}
-            embedScript={embedScript}
-            embedBusy={embedBusy}
-            onCreateSnapshot={onCreateSnapshot}
-            onPromote={onPromote}
-            onDeploy={onDeploy}
-            onGoLive={onGoLive}
-            onRollback={onRollback}
-            onLoadEvents={onLoadEvents}
-            onCreateEmbed={onCreateEmbed}
-            onRevokeEmbed={onRevokeEmbed}
-          />
-        </TabsContent>
-      </Tabs>
+        <AgentToolsGroup
+          flags={studio.capabilities}
+          onToggle={studio.toggleCapability}
+          sourceTypes={studio.sourceTypes}
+          onEnableAvailable={studio.enableAvailableCapabilities}
+          open={isOpen("tools")}
+          onOpenChange={toggle("tools")}
+        />
+
+        <AgentRetrievalGroup
+          retrieval={studio.retrieval}
+          setRetrieval={studio.setRetrieval}
+          open={isOpen("retrieval")}
+          onOpenChange={toggle("retrieval")}
+        />
+
+        <AgentIntelligenceGroup
+          runtime={studio.config.runtime}
+          onOverride={studio.updateRuntime}
+          open={isOpen("intelligence")}
+          onOpenChange={toggle("intelligence")}
+        />
+
+        <AgentLimitsGroup
+          config={studio.config}
+          setConfig={studio.setConfig}
+          open={isOpen("limits")}
+          onOpenChange={toggle("limits")}
+        />
+
+        <AgentIntegrationGroup
+          outputSchema={studio.outputSchema}
+          setOutputSchema={studio.setOutputSchema}
+          open={isOpen("integration")}
+          onOpenChange={toggle("integration")}
+        />
+      </div>
     </AgentDisclosure>
   );
 }

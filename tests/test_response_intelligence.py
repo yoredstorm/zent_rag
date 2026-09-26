@@ -41,6 +41,7 @@ from src.intelligence.response.profile import (
     detect_turn_overrides,
     profile_from_config,
     profile_prompt_block,
+    public_presets,
 )
 from src.intelligence.response.questions import (
     NUOL_QUESTIONS,
@@ -661,6 +662,34 @@ def test_perfil_desde_config_es_tolerante() -> None:
     )
     assert broken.tone == "professional"
     assert broken.default_detail == "normal"
+
+
+def test_presets_del_studio_estan_en_el_catalogo() -> None:
+    """El catálogo del Agent Studio y el backend no pueden divergir.
+
+    `balanced` es el estado "Auto" del Studio: un agente sin `response_profile`
+    y uno con `balanced` tienen que resolver al mismo perfil.
+    """
+    public = {item["id"]: item for item in public_presets()}
+    assert {"balanced", "precise", "clear_didactic", "technical_detailed"} <= set(public)
+    assert public["balanced"]["label"] == "Equilibrado"
+    assert public["precise"]["label"] == "Preciso"
+
+    sin_perfil = profile_from_config(None)
+    con_balanced = profile_from_config({"response_profile": {"preset": "balanced"}})
+    assert con_balanced == sin_perfil
+
+    preciso = profile_from_config({"response_profile": {"preset": "precise"}})
+    assert preciso.technical_level == "advanced"
+    assert preciso.use_examples is False
+    assert preciso.use_tables is True
+    assert preciso.preserve_domain_terms is True
+
+
+def test_un_preset_desconocido_cae_en_los_defaults_sin_romper() -> None:
+    """Un preset que el backend no conozca no debe degradar a valores raros."""
+    profile = profile_from_config({"response_profile": {"preset": "inventado"}})
+    assert profile == ResponseProfile()
 
 
 def test_override_del_turno_no_cambia_el_perfil() -> None:

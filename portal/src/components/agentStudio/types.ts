@@ -25,6 +25,7 @@ export type ResponseProfilePreset = {
   id: string;
   label: string;
   hint: string;
+  /** Delta sobre `DEFAULT_RESPONSE_PROFILE`. */
   profile: Partial<ResponseProfile>;
 };
 
@@ -35,8 +36,34 @@ export const SUGGESTED_QUESTIONS: string[] = [
   "¿Qué límites o excepciones debería conocer?",
 ];
 
-/** Presets de Agent Studio (§29): el backend sólo guarda el resultado. */
+/**
+ * Presets de Agent Studio (§29). El backend guarda el resultado, no el preset:
+ * cada delta se aplana sobre el perfil antes de persistir (§32).
+ * `balanced` equivale a los defaults recomendados: es el estado "Auto".
+ */
+export const BALANCED_PRESET = "balanced";
+
 export const RESPONSE_PROFILE_PRESETS: ResponseProfilePreset[] = [
+  {
+    id: BALANCED_PRESET,
+    label: "Equilibrado",
+    hint: "Recomendado. Conciso, con evidencia y sin relleno.",
+    profile: { use_tables: true },
+  },
+  {
+    id: "precise",
+    label: "Preciso",
+    hint: "Terminología exacta y cero explicaciones de base.",
+    profile: {
+      tone: "professional",
+      technical_level: "advanced",
+      default_detail: "normal",
+      audience: "technical",
+      use_examples: false,
+      use_tables: true,
+      preserve_domain_terms: true,
+    },
+  },
   {
     id: "clear_didactic",
     label: "Claro y didáctico",
@@ -50,19 +77,6 @@ export const RESPONSE_PROFILE_PRESETS: ResponseProfilePreset[] = [
     },
   },
   {
-    id: "technical_detailed",
-    label: "Técnico detallado",
-    hint: "Precisión técnica, sin explicar lo básico.",
-    profile: {
-      tone: "professional",
-      technical_level: "advanced",
-      default_detail: "detailed",
-      use_tables: true,
-      use_examples: true,
-      preserve_domain_terms: true,
-    },
-  },
-  {
     id: "executive",
     label: "Ejecutivo",
     hint: "Conclusión e impacto, sin detalle técnico.",
@@ -73,6 +87,21 @@ export const RESPONSE_PROFILE_PRESETS: ResponseProfilePreset[] = [
       audience: "business",
       use_examples: false,
       cite_sources: false,
+      show_practical_implications: true,
+    },
+  },
+  {
+    id: "technical_detailed",
+    label: "Experto técnico",
+    hint: "Precisión técnica, sin explicar lo básico.",
+    profile: {
+      tone: "professional",
+      technical_level: "advanced",
+      default_detail: "detailed",
+      audience: "expert",
+      use_tables: true,
+      use_examples: true,
+      preserve_domain_terms: true,
     },
   },
   {
@@ -106,6 +135,7 @@ export const RESPONSE_PROFILE_PRESETS: ResponseProfilePreset[] = [
     hint: "Cada afirmación con su fuente.",
     profile: {
       tone: "professional",
+      technical_level: "intermediate",
       default_detail: "detailed",
       cite_sources: true,
       show_uncertainty: true,
@@ -114,6 +144,11 @@ export const RESPONSE_PROFILE_PRESETS: ResponseProfilePreset[] = [
   },
 ];
 
+/**
+ * Espejo de `ResponseProfile` del dominio (`src/core/domain/response.py:127`).
+ * Si estos valores se desalinean, la UI muestra un perfil distinto del que
+ * aplica el runtime en agentes sin `response_profile` guardado.
+ */
 export const DEFAULT_RESPONSE_PROFILE: ResponseProfile = {
   language: "es",
   tone: "professional",
@@ -123,7 +158,7 @@ export const DEFAULT_RESPONSE_PROFILE: ResponseProfile = {
   conclusion_first: true,
   use_headings: true,
   use_bold: true,
-  use_tables: false,
+  use_tables: true,
   use_examples: true,
   cite_sources: true,
   show_uncertainty: true,
@@ -172,6 +207,8 @@ export type AgentConfig = {
     tool_routing?: boolean | null;
     termination_gate?: boolean | null;
     answer_gate?: boolean | null;
+    /** Modo del loop JEV (off|shadow|on|canary). No se edita desde el Studio. */
+    jev_loop?: string | null;
   } | null;
   /** Cómo debe responder: tono, nivel, detalle, formato, citas (§28). */
   response_profile?: ResponseProfile | null;
@@ -230,40 +267,120 @@ export type Deployment = {
   rollback_from_id: string | null;
 };
 
-export const ADVANCED_TABS = ["behavior", "capabilities", "publish"] as const;
+// ---------------------------------------------------------------------------
+// Etapas del Studio: DESARROLLAR → PROBAR → PUBLICAR
+// ---------------------------------------------------------------------------
 
-export type AdvancedTab = (typeof ADVANCED_TABS)[number];
+export const AGENT_STAGES = ["develop", "test", "publish"] as const;
+export type AgentStage = (typeof AGENT_STAGES)[number];
 
-export const ADVANCED_TAB_LABELS: Record<AdvancedTab, string> = {
-  behavior: "Cómo responde",
-  capabilities: "Qué puede hacer",
+export const AGENT_STAGE_LABELS: Record<AgentStage, string> = {
+  develop: "Desarrollar",
+  test: "Probar",
   publish: "Publicar",
 };
 
-/** Las 11 pestañas antiguas siguen llegando por URL (enlaces guardados, redirects). */
-const LEGACY_TAB_GROUPS: Record<string, AdvancedTab> = {
-  model: "behavior",
-  output: "behavior",
-  tools: "capabilities",
-  security: "capabilities",
-  retrieval: "capabilities",
-  limits: "capabilities",
-  readiness: "publish",
-  evaluation: "publish",
-  versions: "publish",
-  deployments: "publish",
-  embed: "publish",
+// ---------------------------------------------------------------------------
+// Configuración avanzada: grupos con estado resumido + Personalizar
+// ---------------------------------------------------------------------------
+
+export const ADVANCED_GROUPS = [
+  "model",
+  "response",
+  "tools",
+  "retrieval",
+  "intelligence",
+  "limits",
+  "integration",
+] as const;
+
+export type AdvancedGroup = (typeof ADVANCED_GROUPS)[number];
+
+/** Volver a la raíz del grupo (no abre su detalle) falta a propósito: el
+ *  resumen se lee primero y el detalle aparece al pulsar Personalizar. */
+export const ADVANCED_GROUP_LABELS: Record<AdvancedGroup, string> = {
+  model: "Modelo",
+  response: "Respuesta",
+  tools: "Herramientas",
+  retrieval: "Conocimiento y búsqueda",
+  intelligence: "Orquestación JEV",
+  limits: "Seguridad y límites",
+  integration: "Integración y salida",
 };
 
-export function isAdvancedTab(value: string | null): value is AdvancedTab {
-  return ADVANCED_TABS.includes(value as AdvancedTab);
+export const DEFAULT_ADVANCED_GROUP: AdvancedGroup = "model";
+
+export function isAdvancedGroup(value: string | null): value is AdvancedGroup {
+  return ADVANCED_GROUPS.includes(value as AdvancedGroup);
 }
 
-/** Resuelve el grupo visible a partir de `?tab=`, o null si no es una pestaña conocida. */
-export function legacyTabToGroup(value: string | null): AdvancedTab | null {
+/**
+ * Pestañas que existieron en URLs guardadas. Las de publicación ya no son
+ * grupos avanzados: ahora viven en la etapa Publicar.
+ */
+const LEGACY_ADVANCED_TABS: Record<string, AdvancedGroup> = {
+  behavior: "model",
+  model: "model",
+  output: "integration",
+  capabilities: "tools",
+  tools: "tools",
+  security: "tools",
+  retrieval: "retrieval",
+  jev: "intelligence",
+  limits: "limits",
+};
+
+const LEGACY_PUBLISH_TABS = new Set([
+  "publish",
+  "readiness",
+  "evaluation",
+  "versions",
+  "deployments",
+  "embed",
+]);
+
+/** Resuelve un `?tab=` legacy al grupo avanzado, o `null` si no es un grupo. */
+export function legacyTabToGroup(value: string | null): AdvancedGroup | null {
   if (!value) return null;
-  if (isAdvancedTab(value)) return value;
-  return LEGACY_TAB_GROUPS[value] ?? null;
+  if (isAdvancedGroup(value)) return value;
+  return LEGACY_ADVANCED_TABS[value] ?? null;
+}
+
+export type StudioView = {
+  stage: AgentStage;
+  /** Sub-sección de Publicar que la URL pidió enfocar. */
+  publishFocus: string | null;
+  advancedOpen: boolean;
+  /** Grupo avanzado expandido; `null` = todos plegados mostrando su resumen. */
+  advancedGroup: AdvancedGroup | null;
+};
+
+/**
+ * Traduce `?panel=` / `?tab=` (incluidos los valores viejos) a la vista.
+ * Compatibilidad: `configure`, `advanced`, `publish` y las 11 pestañas
+ * antiguas siguen resolviendo a una pantalla con sentido.
+ */
+export function resolveStudioView(panel: string | null, tab: string | null): StudioView {
+  const base: StudioView = {
+    stage: "develop",
+    publishFocus: null,
+    advancedOpen: false,
+    advancedGroup: null,
+  };
+  if (tab && LEGACY_PUBLISH_TABS.has(tab)) {
+    return { ...base, stage: "publish", publishFocus: tab === "publish" ? null : tab };
+  }
+  if (panel === "publish") {
+    return { ...base, stage: "publish" };
+  }
+  const group = legacyTabToGroup(tab);
+  if (panel === "advanced" || group !== null) {
+    return { ...base, advancedOpen: true, advancedGroup: group };
+  }
+  if (panel === "test") {
+    return { ...base, stage: "test" };
+  }
+  return base;
 }
 
 export function defaultConfig(): AgentConfig {

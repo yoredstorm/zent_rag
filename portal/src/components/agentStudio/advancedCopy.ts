@@ -1,9 +1,11 @@
-// Copy en español del panel "Ajustes extra" del Agent Studio.
-// Los identificadores técnicos (zent-default, search_knowledge, top_k…) se
-// muestran como pista secundaria: quien ya los conoce los sigue encontrando.
-
-export const ADVANCED_SUMMARY_TITLE = "Ajustes avanzados";
-export const ADVANCED_SUMMARY_HINT = "modelo, herramientas, versiones y publicación";
+// =============================================================================
+// advancedCopy — copy de la configuración avanzada del Agent Studio.
+// =============================================================================
+// Regla: primero el nombre entendible, después el identificador técnico. Quien
+// ya conoce `zent-default` o `top_k` los sigue encontrando; quien no, entiende
+// igual. Los defaults recomendados viven en `agentModes.ts`.
+// =============================================================================
+import { MODEL_PRIORITIES } from "./agentModes";
 
 export type Choice = { value: string; label: string; tech: string };
 
@@ -14,19 +16,8 @@ export function choiceOptionLabel(choice: Choice): string {
 
 export const CUSTOM_MODEL_VALUE = "__custom__";
 
-export const GATEWAY_ROUTES: Choice[] = [
-  { value: "zent-default", label: "Equilibrado (recomendado)", tech: "zent-default" },
-  { value: "zent-fast", label: "Rápido", tech: "zent-fast" },
-  { value: "zent-cheap", label: "Económico", tech: "zent-cheap" },
-  { value: "zent-quality", label: "Máxima calidad", tech: "zent-quality" },
-  { value: "zent-routed", label: "Automático según reglas", tech: "zent-routed" },
-];
-
-export const TONE_CHOICES: { value: string; label: string; hint: string }[] = [
-  { value: "professional", label: "Profesional", hint: "formal y directo" },
-  { value: "friendly", label: "Cercano", hint: "cálido y conversacional" },
-  { value: "concise", label: "Conciso", hint: "lo mínimo para responder" },
-];
+/** Espejo de las rutas del gateway: el usuario elige prioridad, no motor. */
+export const GATEWAY_ROUTES: Choice[] = MODEL_PRIORITIES;
 
 export const RETRIEVAL_STRATEGIES: Choice[] = [
   { value: "vector", label: "Por significado", tech: "vector" },
@@ -36,29 +27,41 @@ export const RETRIEVAL_STRATEGIES: Choice[] = [
 
 export type ToolChoice = { tool: string; label: string; hint: string };
 
+/** Tool real → nombre humano. Es la traducción que ve el usuario. */
 export const TOOL_CHOICES: ToolChoice[] = [
   {
     tool: "search_knowledge",
-    label: "Buscar en el conocimiento",
-    hint: "Lee tus fuentes y documentos antes de responder.",
+    label: "Consultar conocimiento",
+    hint: "Lee tus documentos y tablas antes de responder.",
   },
   {
     tool: "query_database",
-    label: "Consultar la base de datos",
-    hint: "Escribe y ejecuta consultas SQL de solo lectura sobre tus datos conectados.",
+    label: "Consultar datos",
+    hint: "Ejecuta consultas SQL de solo lectura sobre tus datos conectados.",
   },
   {
     tool: "call_api",
-    label: "Llamar APIs externas",
+    label: "Usar integraciones externas",
     hint: "Usa integraciones y servicios fuera de Zent para traer o enviar datos.",
   },
 ];
 
+export const TECH_TOOL_LABELS: Record<string, string> = {
+  search_knowledge: "Consultar conocimiento",
+  query_tabular_data: "Consultar tablas",
+  query_database: "Consultar datos",
+  call_api: "Integraciones externas",
+};
+
+export function toolHumanLabel(tool: string): string {
+  return TECH_TOOL_LABELS[tool] ?? tool;
+}
+
 export const COPY = {
   model: {
-    label: "Qué modelo usar",
+    label: "Prioridad del motor",
     hint: "Zent elige el motor real por ti. Aquí decides si prioriza velocidad, costo o calidad.",
-    customLabel: "Modelo propio",
+    customLabel: "Modelo específico",
     customHint: "Nombre exacto del modelo en el proveedor, por ejemplo openai/gpt-4o-mini.",
   },
   temperature: {
@@ -67,10 +70,6 @@ export const COPY = {
     min: "Preciso",
     max: "Variado",
   },
-  tone: {
-    label: "Tono",
-    hint: "Matiz sobre tus instrucciones. Si el propósito ya define el estilo, deja Profesional.",
-  },
   output: {
     label: "Formato de respuesta (JSON, opcional)",
     hint: "Vacío: responde en texto libre. Con campos: responde siempre con ese JSON, útil para conectarlo a otro sistema.",
@@ -78,7 +77,7 @@ export const COPY = {
   },
   tools: {
     title: "Herramientas",
-    hint: "Cada herramienta activa le da un permiso extra al agente. Enciende solo las que necesite.",
+    hint: "Qué información puede consultar el agente. Zent decide cómo consultarla.",
   },
   retrieval: {
     title: "Cómo busca en tus fuentes",
@@ -91,14 +90,14 @@ export const COPY = {
     thresholdHint: "0 no filtra nada. Sube si trae resultados poco relacionados (score_threshold).",
   },
   limits: {
-    title: "Topes por respuesta",
+    title: "Límites y costos",
     hint: "Cortan al agente si se pasa. Protegen tu gasto y evitan bucles.",
     stepsLabel: "Tope de pasos",
-    stepsHint: "Cuántas veces puede pensar o usar herramientas en un mismo turno.",
+    stepsHint: "Cuántas veces puede pensar o usar herramientas en un mismo turno (max_steps).",
     tokensLabel: "Tope de texto (tokens)",
-    tokensHint: "Largo máximo entre lo que lee y lo que responde.",
+    tokensHint: "Largo máximo entre lo que lee y lo que responde (max_tokens).",
     costLabel: "Tope de costo (USD)",
-    costHint: "Gasto máximo de una sola respuesta.",
+    costHint: "Gasto máximo de una sola respuesta (max_cost_usd).",
   },
   publish: {
     versionsTitle: "Versiones",
@@ -112,3 +111,6 @@ export const COPY = {
     gatesTitle: "Reglas de calidad antes de publicar",
   },
 } as const;
+
+export const ADVANCED_SUMMARY_TITLE = "Configuración avanzada";
+export const ADVANCED_SUMMARY_HINT = "modelo, respuesta, herramientas, búsqueda, JEV, límites e integración";

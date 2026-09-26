@@ -68,27 +68,6 @@ export function AgentField({
   );
 }
 
-/** Bloque con título y explicación para agrupar varios campos. */
-export function AgentFieldGroup({
-  title,
-  hint,
-  children,
-}: {
-  title: string;
-  hint?: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="grid gap-3">
-      <div>
-        <h3 className="text-h3">{title}</h3>
-        {hint && <p className="mt-0.5 text-xs leading-relaxed text-muted">{hint}</p>}
-      </div>
-      {children}
-    </section>
-  );
-}
-
 /**
  * Sección del estudio dentro de un panel: el título pesa más que el borde, así
  * el panel se lee como una lista de decisiones y no como un formulario largo.

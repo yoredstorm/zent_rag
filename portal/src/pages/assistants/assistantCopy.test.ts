@@ -24,8 +24,10 @@ describe("parseAssistantTab", () => {
 
 describe("labels humanas", () => {
   it("traduce modelo, tools y status de workflow", () => {
-    expect(modelHumanLabel("zent-default")).toBe("Equilibrado · zent-default");
-    expect(toolHumanLabel("search_knowledge")).toBe("Buscar en el conocimiento");
+    expect(modelHumanLabel("zent-default")).toBe("Automático · zent-default");
+    expect(modelHumanLabel("zent-cheap")).toBe("Priorizar economía · zent-cheap");
+    expect(toolHumanLabel("search_knowledge")).toBe("Consultar conocimiento");
+    expect(toolHumanLabel("desconocida")).toBe("desconocida");
     expect(workflowStatusLabel("active")).toBe("Activo");
   });
 

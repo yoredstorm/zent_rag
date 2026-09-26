@@ -120,7 +120,7 @@ export function AgentPurposeForm({
 
       <AgentCollapsible
         id="agent-studio-instructions-panel"
-        title="Instrucciones libres"
+        title="Instrucciones adicionales"
         summary={instructionsSummary(instructions)}
         open={instructionsOpen}
         onToggle={setInstructionsOpen}
@@ -128,7 +128,7 @@ export function AgentPurposeForm({
         <AgentField
           id="agent-studio-instructions"
           label="Texto libre"
-          hint="Para casos puntuales. El estilo general se define en «Cómo debe responder»."
+          hint="Para casos puntuales. El estilo general se define en Comportamiento."
         >
           <Textarea
             id="agent-studio-instructions"
