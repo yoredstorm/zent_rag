@@ -145,10 +145,10 @@ export function NeuralBrain({
       // El cerebro se corre hacia el centro-derecha: queda entre la declaración
       // y la tarjeta, con el lóbulo occipital, el cerebelo y el tronco a la vista.
       const originX = width * (small ? 0.5 : 0.57) + driftX;
-      const originY = height * (small ? 0.6 : 0.5) + driftY;
+      const originY = height * (small ? 0.6 : 0.52) + driftY;
       const scale = small
         ? Math.min(width * 1.05, height * 0.52)
-        : Math.min(height * 0.94, width * 0.44);
+        : Math.min(height * 0.88, width * 0.47);
       // Deriva lenta: el cerebro respira en lugar de quedarse clavado.
       tilt = Math.sin(now / 9000) * 0.02;
       const cos = Math.cos(tilt);
