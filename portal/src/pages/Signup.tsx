@@ -1,10 +1,12 @@
 import { RocketLaunch } from "@phosphor-icons/react";
 import { FormEvent, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
+import { motion, useReducedMotion } from "motion/react";
 import { useAuth } from "../auth";
 import { afterLoginPath } from "../api";
 import { AuthShell } from "../components/auth/AuthShell";
-import { Button } from "../components/ui/Button";
+import { AuthButton } from "../components/auth/AuthButton";
+import { useReveal } from "../components/auth/reveal";
 import { Field, Input, PasswordInput } from "../components/ui/form";
 import { Progress } from "../components/ui/states";
 
@@ -23,6 +25,8 @@ function passwordStrength(pw: string): { label: string; pct: number; tone: "dang
 
 export default function SignupPage() {
   const { session, ready, signup } = useAuth();
+  const reduce = useReducedMotion();
+  const reveal = useReveal({ step: 0.06 });
   const [company, setCompany] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -58,13 +62,13 @@ export default function SignupPage() {
 
   return (
     <AuthShell
-      eyebrow="Trial de 14 días"
+      eyebrow="Nuevo workspace"
       title="Crear tu workspace"
       subtitle="Empezá con un trial de Zent. Vas a configurar tu organización, conectar tus primeras fuentes y tener un agente respondiendo con tus datos."
       footer={
-        <div className="border-t border-border pt-5 text-[13px] text-muted">
+        <div className="text-[13px]">
           ¿Ya tenés cuenta?{" "}
-          <Link className="font-medium text-accent hover:underline" to="/login">
+          <Link className="auth-link" to="/login">
             Iniciar sesión
           </Link>
         </div>
@@ -72,89 +76,96 @@ export default function SignupPage() {
     >
       <form className="flex flex-col gap-4" onSubmit={onSubmit} noValidate>
         {error && (
-          <p
-            className="rounded-md border border-danger/25 bg-danger-soft px-3 py-2.5 text-sm text-danger"
+          <motion.p
+            initial={reduce ? { opacity: 0 } : { opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ type: "spring", bounce: 0, duration: 0.34 }}
+            className="auth-alert rounded-xl border px-3 py-2.5 text-sm"
             role="alert"
           >
             {error}
-          </p>
+          </motion.p>
         )}
 
-        <Field label="Nombre de empresa" required hint="Así va a aparecer en tu workspace.">
-          <Input
-            id="company"
-            placeholder="Mi empresa S.A.C."
-            value={company}
-            onChange={(e) => setCompany(e.target.value)}
+        <motion.div {...reveal(0)}>
+          <Field label="Nombre de empresa" required hint="Así va a aparecer en tu workspace.">
+            <Input
+              id="company"
+              placeholder="Mi empresa S.A.C."
+              value={company}
+              onChange={(e) => setCompany(e.target.value)}
+              required
+              autoFocus
+            />
+          </Field>
+        </motion.div>
+
+        <motion.div {...reveal(1)}>
+          <Field label="Email" required>
+            <Input
+              id="email"
+              type="email"
+              autoComplete="username"
+              placeholder="tu@empresa.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </Field>
+        </motion.div>
+
+        <motion.div {...reveal(2)}>
+          <Field label="Contraseña" required>
+            <PasswordInput
+              id="password"
+              autoComplete="new-password"
+              placeholder="Mínimo 8 caracteres"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={8}
+            />
+            {password.length > 0 && (
+              <div className="mt-0.5 flex items-center gap-2" aria-live="polite">
+                <Progress
+                  value={strength.pct}
+                  tone={strength.tone}
+                  className="flex-1"
+                  label="Seguridad de la contraseña"
+                />
+                <span className="text-[11px] text-white/45">{strength.label}</span>
+              </div>
+            )}
+          </Field>
+        </motion.div>
+
+        <motion.div {...reveal(3)}>
+          <Field
+            label="Confirmar contraseña"
             required
-            autoFocus
-          />
-        </Field>
+            error={mismatch ? "Las contraseñas no coinciden" : undefined}
+          >
+            <PasswordInput
+              id="confirm"
+              autoComplete="new-password"
+              placeholder="Repetí la contraseña"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              required
+              minLength={8}
+            />
+          </Field>
+        </motion.div>
 
-        <Field label="Email" required>
-          <Input
-            id="email"
-            type="email"
-            autoComplete="username"
-            placeholder="tu@empresa.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </Field>
-
-        <Field label="Contraseña" required>
-          <PasswordInput
-            id="password"
-            autoComplete="new-password"
-            placeholder="Mínimo 8 caracteres"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            minLength={8}
-          />
-          {password.length > 0 && (
-            <div className="mt-0.5 flex items-center gap-2" aria-live="polite">
-              <Progress
-                value={strength.pct}
-                tone={strength.tone}
-                className="flex-1"
-                label="Seguridad de la contraseña"
-              />
-              <span className="text-[11px] text-faint">{strength.label}</span>
-            </div>
-          )}
-        </Field>
-
-        <Field
-          label="Confirmar contraseña"
-          required
-          error={mismatch ? "Las contraseñas no coinciden" : undefined}
-        >
-          <PasswordInput
-            id="confirm"
-            autoComplete="new-password"
-            placeholder="Repetí la contraseña"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            required
-            minLength={8}
-          />
-        </Field>
-
-        <Button
-          type="submit"
-          variant="primary"
-          className="min-h-10 w-full"
-          loading={loading}
-          leadingIcon={RocketLaunch}
-        >
-          {loading ? "Creando tu workspace…" : "Empezar trial"}
-        </Button>
-
-        <p className="text-xs leading-relaxed text-faint">
-          Al crear la cuenta aceptás los términos del servicio y la política de privacidad de Zent.
-        </p>
+        <motion.div {...reveal(4)} className="flex flex-col gap-2">
+          <AuthButton type="submit" icon={RocketLaunch} loading={loading}>
+            {loading ? "Creando tu workspace…" : "Empezar trial"}
+          </AuthButton>
+          <p className="text-xs leading-relaxed text-white/40">
+            Al crear la cuenta aceptás los términos del servicio y la política de privacidad de
+            Zent.
+          </p>
+        </motion.div>
       </form>
     </AuthShell>
   );

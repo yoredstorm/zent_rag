@@ -1,4 +1,4 @@
-import { CaretRight, CheckCircle, SignIn } from "@phosphor-icons/react";
+import { ArrowRight, CaretRight, CheckCircle, SignIn } from "@phosphor-icons/react";
 import { AnimatePresence, motion, useAnimation, useReducedMotion } from "motion/react";
 import { FormEvent, useRef, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
@@ -6,6 +6,7 @@ import { api, afterLoginPath } from "../api";
 import { useAuth } from "../auth";
 import { usePlatformAuth } from "../platformAuth";
 import { AuthShell } from "../components/auth/AuthShell";
+import { AuthButton } from "../components/auth/AuthButton";
 import { Button } from "../components/ui/Button";
 import { ErrorInline, SuccessInline } from "../components/ui/states";
 import { Field, Input, PasswordInput } from "../components/ui/form";
@@ -139,17 +140,18 @@ export default function LoginPage() {
 
   return (
     <AuthShell
+      eyebrow="Acceso"
       title="Entrar a Zent"
       subtitle="Plataforma de IA empresarial. Iniciá sesión con el email y la contraseña de tu cuenta."
       footer={
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5 text-[13px] text-muted">
+        <div className="flex flex-wrap items-center justify-between gap-3 text-[13px]">
           <span>
             ¿Nuevo en Zent?{" "}
-            <Link className="font-medium text-accent hover:underline" to="/signup">
+            <Link className="auth-link" to="/signup">
               Crear trial
             </Link>
           </span>
-          <Link className="font-medium text-muted hover:text-text" to="/admin/login">
+          <Link className="auth-link--quiet" to="/admin/login">
             Control Center
           </Link>
         </div>
@@ -165,7 +167,7 @@ export default function LoginPage() {
               exit={reduce ? { opacity: 0 } : { opacity: 0, y: -4, scale: 0.99 }}
               transition={{ type: "spring", bounce: 0, duration: 0.34 }}
             >
-              <ErrorInline message={error} className="mb-0" />
+              <ErrorInline message={error} className="auth-alert mb-0" />
             </motion.div>
           )}
         </AnimatePresence>
@@ -193,14 +195,14 @@ export default function LoginPage() {
                   {emailReady && (
                     <motion.span
                       key="ok"
-                      className="pointer-events-none absolute top-1/2 right-2.5 inline-flex -translate-y-1/2 text-ok"
+                      className="pointer-events-none absolute top-1/2 right-2.5 inline-flex -translate-y-1/2 text-[#34d3a6]"
                       initial={{ opacity: 0, scale: 0.6 }}
                       animate={{ opacity: 1, scale: 1 }}
                       exit={{ opacity: 0, scale: 0.6 }}
                       transition={{ type: "spring", bounce: 0, duration: 0.3 }}
                       aria-hidden
                     >
-                      <CheckCircle size={15} weight="fill" />
+                      <CheckCircle size={15} weight="light" />
                     </motion.span>
                   )}
                 </AnimatePresence>
@@ -222,14 +224,9 @@ export default function LoginPage() {
           </motion.div>
 
           <motion.div {...rise(2)} className="flex flex-col gap-2">
-            <Button
-              type="submit"
-              variant="primary"
-              className="auth-cta min-h-10 w-full"
-              loading={loading}
-            >
+            <AuthButton type="submit" icon={ArrowRight} loading={loading}>
               {loading ? "Entrando…" : "Continuar"}
-            </Button>
+            </AuthButton>
             <AnimatePresence initial={false}>
               {loading && (
                 <motion.div
@@ -238,7 +235,7 @@ export default function LoginPage() {
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
-                  transition={{ duration: 0.16, ease: "easeOut" }}
+                  transition={{ duration: 0.16, ease: [0.32, 0.72, 0, 1] }}
                   role="status"
                   aria-label="Verificando credenciales"
                 />
@@ -249,7 +246,7 @@ export default function LoginPage() {
           <motion.div {...rise(3)}>
             <button
               type="button"
-              className="inline-flex cursor-pointer items-center gap-1 text-[13px] font-medium text-muted transition-colors duration-150 hover:text-text"
+              className="auth-toggle inline-flex cursor-pointer items-center gap-1 text-[13px]"
               aria-expanded={forgotOpen}
               aria-controls="forgot-panel"
               onClick={() => {
@@ -264,7 +261,7 @@ export default function LoginPage() {
                 transition={{ type: "spring", bounce: 0, duration: 0.32 }}
                 aria-hidden
               >
-                <CaretRight size={12} weight="bold" />
+                <CaretRight size={12} weight="light" />
               </motion.span>
             </button>
             <AnimatePresence initial={false}>
@@ -278,20 +275,20 @@ export default function LoginPage() {
                   transition={{ type: "spring", bounce: 0, duration: 0.4 }}
                 >
                   <div className="flex flex-col gap-2.5 pt-3">
-                    <p className="text-[12.5px] leading-relaxed text-muted">
+                    <p className="text-[12.5px] leading-relaxed text-white/50">
                       Te enviamos un enlace de restablecimiento al email de la cuenta.
                     </p>
                     <Button
                       variant="secondary"
                       size="sm"
-                      className="self-start"
+                      className="auth-secondary self-start"
                       loading={forgotLoading}
                       onClick={() => void onForgot()}
                       leadingIcon={SignIn}
                     >
                       Enviar enlace
                     </Button>
-                    <SuccessInline message={forgotMsg} className="mb-0" />
+                    <SuccessInline message={forgotMsg} className="auth-ok mb-0" />
                   </div>
                 </motion.div>
               )}
