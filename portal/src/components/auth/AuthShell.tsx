@@ -1,6 +1,12 @@
 import { GitBranch, Quotes, ShieldCheck, Stack } from "@phosphor-icons/react";
-import { motion, useReducedMotion } from "motion/react";
-import type { ReactNode } from "react";
+import {
+  motion,
+  useReducedMotion,
+  useSpring,
+  useTransform,
+  type MotionValue,
+} from "motion/react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Brand } from "../Brand";
 import { cn } from "../ui/cn";
 
@@ -150,6 +156,61 @@ function KnowledgeField({ className }: { className?: string }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Paralaje ambiental                                                  */
+/* ------------------------------------------------------------------ */
+
+/** Amplitud del campo y de la aurora. Baja a propósito: es ambiente, no foco. */
+const FIELD_DRIFT = 12;
+const AURORA_DRIFT = 26;
+
+function useFinePointer(): boolean {
+  const [fine, setFine] = useState(false);
+  useEffect(() => {
+    const query = window.matchMedia?.("(pointer: fine)");
+    if (!query) return;
+    setFine(query.matches);
+    const onChange = (event: MediaQueryListEvent) => setFine(event.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  return fine;
+}
+
+/**
+ * Posición del puntero traducida a desplazamiento, con springs: el ambiente
+ * persigue al puntero y se puede revertir en cualquier momento (§ respuesta,
+ * interrumpibilidad). Apagado con reduced motion, sin puntero fino o en táctil.
+ */
+function useAmbientParallax(amplitude: number): {
+  x: MotionValue<number>;
+  y: MotionValue<number>;
+} {
+  const reduce = useReducedMotion();
+  const fine = useFinePointer();
+  const x = useSpring(0, { stiffness: 55, damping: 22, mass: 0.7 });
+  const y = useSpring(0, { stiffness: 55, damping: 22, mass: 0.7 });
+  const enabled = fine && !reduce;
+
+  useEffect(() => {
+    if (!enabled) {
+      x.set(0);
+      y.set(0);
+      return;
+    }
+    function onMove(event: PointerEvent) {
+      const nx = (event.clientX / window.innerWidth) * 2 - 1;
+      const ny = (event.clientY / window.innerHeight) * 2 - 1;
+      x.set(nx * amplitude);
+      y.set(ny * amplitude);
+    }
+    window.addEventListener("pointermove", onMove, { passive: true });
+    return () => window.removeEventListener("pointermove", onMove);
+  }, [enabled, amplitude, x, y]);
+
+  return { x, y };
+}
+
+/* ------------------------------------------------------------------ */
 /* Shell de autenticación                                              */
 /* ------------------------------------------------------------------ */
 
@@ -191,23 +252,62 @@ export function AuthShell({
   footer?: ReactNode;
   variant?: "tenant" | "platform";
 }) {
+  const reduce = useReducedMotion();
+  const field = useAmbientParallax(FIELD_DRIFT);
+  const aurora = useAmbientParallax(AURORA_DRIFT);
+  // Contramovimiento: la aurora y el campo van en direcciones opuestas, así el
+  // ambiente tiene profundidad en vez de moverse como una sola lámina.
+  const fieldX = useTransform(field.x, (v) => -v);
+  const fieldY = useTransform(field.y, (v) => -v);
+
+  // Sólo transform y opacity: lo que el compositor anima sin costo de layout.
+  const enter = reduce ? { opacity: 0 } : { opacity: 0, y: 10 };
+  const settled = { opacity: 1, y: 0 };
+  const spring = { type: "spring" as const, bounce: 0, duration: 0.55 };
+
   return (
     <div className="relative grid min-h-[100dvh] grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] xl:grid-cols-[minmax(0,600px)_minmax(0,1fr)]">
       {/* Composición ambiental en móvil: fondo tenue detrás del formulario */}
-      <div className="pointer-events-none absolute inset-0 opacity-[0.14] lg:hidden">
+      <motion.div
+        className="pointer-events-none absolute inset-0 opacity-[0.14] lg:hidden"
+        style={{ x: fieldX, y: fieldY }}
+      >
         <KnowledgeField />
-      </div>
+      </motion.div>
+
+      {/* Aurora: capa de material que acompaña al puntero y da jerarquía al
+          formulario sin taparlo. Decorativa, fuera del árbol accesible. */}
+      <motion.div
+        className="auth-aurora"
+        style={{ x: aurora.x, y: aurora.y }}
+        aria-hidden
+      />
 
       <main className="relative flex flex-col justify-center px-5 py-10 sm:px-8 lg:px-14">
         <div className="mx-auto w-full max-w-[400px]">
-          <div className="mb-9">
+          <motion.div
+            initial={enter}
+            animate={settled}
+            transition={spring}
+            className="mb-9"
+          >
             <Brand />
-          </div>
-          <p className="eyebrow mb-2">{eyebrow}</p>
-          <h1 className="text-display">{title}</h1>
-          {subtitle && (
-            <p className="prose-measure mt-2.5 text-sm leading-relaxed text-muted">{subtitle}</p>
-          )}
+          </motion.div>
+          <motion.div
+            initial={enter}
+            animate={settled}
+            transition={{ ...spring, delay: reduce ? 0 : 0.06 }}
+          >
+            <p className="eyebrow mb-2">{eyebrow}</p>
+            <h1 className="text-display text-balance lg:text-[2.1rem] lg:leading-[1.08]">
+              {title}
+            </h1>
+            {subtitle && (
+              <p className="prose-measure mt-2.5 text-sm leading-relaxed text-muted text-pretty">
+                {subtitle}
+              </p>
+            )}
+          </motion.div>
           <div className="mt-8">{children}</div>
           {footer && <div className="mt-6">{footer}</div>}
         </div>
@@ -217,9 +317,9 @@ export function AuthShell({
         className="relative hidden overflow-hidden border-l border-border bg-surface lg:block"
         aria-hidden
       >
-        <div className="absolute inset-0">
+        <motion.div className="absolute inset-0" style={{ x: field.x, y: field.y }}>
           <KnowledgeField />
-        </div>
+        </motion.div>
         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-surface via-surface/90 to-transparent p-10 pt-32">
           <p className="eyebrow mb-4">
             {variant === "platform" ? "Control Center" : "Qué estás operando"}

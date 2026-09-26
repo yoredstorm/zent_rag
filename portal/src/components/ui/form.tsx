@@ -171,31 +171,90 @@ export function Select({ className, id, children, placeholder, ...rest }: Select
   );
 }
 
-/** Input de contraseña con toggle de visibilidad (microinteracción de confianza). */
-export function PasswordInput({ className, id, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
+/**
+ * Input de contraseña con toggle de visibilidad y aviso de Bloq Mayús.
+ *
+ * Respuesta en el pointer-down (`active:`) y transición CSS de los iconos: el
+ * control se siente inmediato sin costo de render (este módulo lo importa casi
+ * toda la app). El aviso de Bloq Mayús aparece con el estado real del teclado y
+ * se va solo al desenfocar.
+ */
+export function PasswordInput({ className, id, onKeyDown, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
   const [visible, setVisible] = useState(false);
+  const [capsLock, setCapsLock] = useState(false);
   const ctx = useFieldContext();
+  const inputId = ctx.id ?? id;
+  const capsId = `${inputId}-caps`;
+
+  const describedBy =
+    [ctx.describedBy, capsLock && !visible ? capsId : undefined].filter(Boolean).join(" ") ||
+    undefined;
+
+  function syncCapsLock(nativeEvent: Event) {
+    const read = (nativeEvent as KeyboardEvent).getModifierState;
+    if (typeof read !== "function") return;
+    setCapsLock(read.call(nativeEvent, "CapsLock"));
+  }
+
+  const iconBase =
+    "absolute inset-0 transition-[opacity,transform] duration-200 ease-[var(--ease-out)]";
+
   return (
-    <span className="relative block">
-      <input
-        type={visible ? "text" : "password"}
-        id={ctx.id ?? id}
-        aria-describedby={ctx.describedBy}
-        aria-invalid={ctx.invalid || undefined}
-        aria-required={ctx.required || undefined}
-        className={cn("input pr-10", className)}
-        {...rest}
-      />
-      <button
-        type="button"
-        className="absolute top-1/2 right-1.5 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-xs text-ghost transition-colors duration-150 hover:bg-soft hover:text-text"
-        title={visible ? "Ocultar contraseña" : "Mostrar contraseña"}
-        aria-pressed={visible}
-        onClick={() => setVisible((v) => !v)}
-      >
-        {visible ? <EyeSlash size={16} aria-hidden /> : <Eye size={16} aria-hidden />}
-        <span className="sr-only">{visible ? "Ocultar contraseña" : "Mostrar contraseña"}</span>
-      </button>
+    <span className="block">
+      <span className="relative block">
+        <input
+          type={visible ? "text" : "password"}
+          id={inputId}
+          aria-describedby={describedBy}
+          aria-invalid={ctx.invalid || undefined}
+          aria-required={ctx.required || undefined}
+          className={cn("input pr-10", className)}
+          onKeyDown={(event) => {
+            syncCapsLock(event.nativeEvent);
+            onKeyDown?.(event);
+          }}
+          onKeyUp={(event) => syncCapsLock(event.nativeEvent)}
+          onBlur={() => setCapsLock(false)}
+          {...rest}
+        />
+        <button
+          type="button"
+          className="absolute top-1/2 right-1.5 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-xs text-ghost transition-[background-color,color,transform] duration-150 hover:bg-soft hover:text-text active:scale-90"
+          title={visible ? "Ocultar contraseña" : "Mostrar contraseña"}
+          aria-pressed={visible}
+          onClick={() => setVisible((v) => !v)}
+        >
+          <span className="relative inline-flex h-4 w-4 items-center justify-center">
+            <Eye
+              size={16}
+              aria-hidden
+              className={cn(
+                iconBase,
+                visible ? "scale-75 -rotate-12 opacity-0" : "scale-100 rotate-0 opacity-100"
+              )}
+            />
+            <EyeSlash
+              size={16}
+              aria-hidden
+              className={cn(
+                iconBase,
+                visible ? "scale-100 rotate-0 opacity-100" : "scale-75 rotate-12 opacity-0"
+              )}
+            />
+          </span>
+          <span className="sr-only">{visible ? "Ocultar contraseña" : "Mostrar contraseña"}</span>
+        </button>
+      </span>
+      {capsLock && !visible && (
+        <span
+          id={capsId}
+          role="status"
+          className="animate-rise mt-1 flex items-center gap-1.5 text-xs font-medium text-warn"
+        >
+          <WarningCircle size={13} weight="fill" aria-hidden />
+          Bloq Mayús está activado
+        </span>
+      )}
     </span>
   );
 }

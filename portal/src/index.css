@@ -1052,6 +1052,78 @@
 }
 
 /* ------------------------------------------------------------------ */
+/* Autenticación                                                      */
+/* ------------------------------------------------------------------ */
+
+/* Aurora: capa ambiental que sigue al puntero con springs (ver AuthShell).
+   Es decorativa y de baja frecuencia: no compite con el contenido. Se ancla
+   detrás de la columna del formulario, no del viewport. */
+.auth-aurora {
+  position: absolute;
+  top: 38%;
+  left: 30%;
+  width: min(560px, 92%);
+  aspect-ratio: 1;
+  margin: -280px 0 0 -280px;
+  border-radius: 999px;
+  pointer-events: none;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--color-accent) 12%, transparent),
+    color-mix(in srgb, var(--color-accent) 4%, transparent) 44%,
+    transparent 76%
+  );
+}
+
+/* El CTA de acceso es la pieza más táctil: luz en el borde superior y sombra
+   corta, para que se lea como un objeto que se puede presionar. */
+.auth-cta {
+  @apply min-h-10 w-full font-semibold;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 1px 2px rgba(0, 0, 0, 0.18);
+}
+.auth-cta:active:not(:disabled) {
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.22);
+}
+
+/* Rail de progreso del envío: feedback continuo durante la espera. */
+.auth-progress {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-accent-soft);
+}
+.auth-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--color-accent), transparent);
+  animation: shimmer 1.4s linear infinite;
+}
+
+/* En pantallas táctiles no hay hover real: el brillo del CTA queda apagado. */
+@media (hover: hover) {
+  .auth-cta:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-accent) 88%, white);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .auth-aurora {
+    display: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .auth-aurora {
+    display: none;
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* Accesibilidad                                                      */
 /* ------------------------------------------------------------------ */
 
