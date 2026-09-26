@@ -1,14 +1,18 @@
 import { RocketLaunch } from "@phosphor-icons/react";
-import { FormEvent, useState } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { FormEvent, useEffect, useState } from "react";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import { motion, useReducedMotion } from "motion/react";
 import { useAuth } from "../auth";
 import { afterLoginPath } from "../api";
 import { AuthShell } from "../components/auth/AuthShell";
 import { AuthButton } from "../components/auth/AuthButton";
+import { emitNeuralEvent } from "../components/auth/neuralSignal";
 import { useReveal } from "../components/auth/reveal";
 import { Field, Input, PasswordInput } from "../components/ui/form";
 import { Progress } from "../components/ui/states";
+
+/** Cuánto se sostiene la confirmación antes de entrar al workspace. */
+const SUCCESS_HOLD_MS = 620;
 
 function passwordStrength(pw: string): { label: string; pct: number; tone: "danger" | "warn" | "ok" } {
   if (pw.length === 0) return { label: "", pct: 0, tone: "danger" };
@@ -25,6 +29,7 @@ function passwordStrength(pw: string): { label: string; pct: number; tone: "dang
 
 export default function SignupPage() {
   const { session, ready, signup } = useAuth();
+  const navigate = useNavigate();
   const reduce = useReducedMotion();
   const reveal = useReveal({ step: 0.06 });
   const [company, setCompany] = useState("");
@@ -33,8 +38,21 @@ export default function SignupPage() {
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [holdExit, setHoldExit] = useState(false);
 
-  if (ready && session) return <Navigate to={afterLoginPath(session)} replace />;
+  const succeeded = holdExit && Boolean(session);
+  const busy = loading || succeeded;
+
+  useEffect(() => {
+    if (!holdExit || !session) return;
+    const timer = window.setTimeout(
+      () => navigate(afterLoginPath(session), { replace: true }),
+      SUCCESS_HOLD_MS
+    );
+    return () => window.clearTimeout(timer);
+  }, [holdExit, session, navigate]);
+
+  if (ready && session && !holdExit) return <Navigate to={afterLoginPath(session)} replace />;
 
   const strength = passwordStrength(password);
   const mismatch = confirm.length > 0 && password !== confirm;
@@ -43,17 +61,24 @@ export default function SignupPage() {
     e.preventDefault();
     setError("");
     if (password.length < 8) {
+      emitNeuralEvent({ type: "error" });
       setError("La contraseña debe tener al menos 8 caracteres.");
       return;
     }
     if (password !== confirm) {
+      emitNeuralEvent({ type: "error" });
       setError("Las contraseñas no coinciden.");
       return;
     }
     setLoading(true);
+    setHoldExit(true);
+    emitNeuralEvent({ type: "submit" });
     try {
       await signup(company.trim(), email.trim(), password);
+      emitNeuralEvent({ type: "success" });
     } catch (err) {
+      setHoldExit(false);
+      emitNeuralEvent({ type: "error" });
       setError(err instanceof Error ? err.message : "No pudimos crear el trial. Intentá de nuevo.");
     } finally {
       setLoading(false);
@@ -62,9 +87,15 @@ export default function SignupPage() {
 
   return (
     <AuthShell
-      eyebrow="Nuevo workspace"
-      title="Crear tu workspace"
-      subtitle="Empezá con un trial de Zent. Vas a configurar tu organización, conectar tus primeras fuentes y tener un agente respondiendo con tus datos."
+      kicker="Nuevo workspace"
+      eyebrow="Alta de cuenta"
+      title={
+        <>
+          Creá tu{" "}
+          <span className="auth-display__accent">workspace.</span>
+        </>
+      }
+      subtitle="Trial de Zent: conectá tus primeras fuentes y tené un agente respondiendo con tus datos."
       footer={
         <div className="text-[13px]">
           ¿Ya tenés cuenta?{" "}
@@ -96,6 +127,7 @@ export default function SignupPage() {
               onChange={(e) => setCompany(e.target.value)}
               required
               autoFocus
+              disabled={busy}
             />
           </Field>
         </motion.div>
@@ -109,7 +141,10 @@ export default function SignupPage() {
               placeholder="tu@empresa.com"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              onFocus={() => emitNeuralEvent({ type: "focus", zone: "email" })}
+              onBlur={() => emitNeuralEvent({ type: "focus", zone: null })}
               required
+              disabled={busy}
             />
           </Field>
         </motion.div>
@@ -122,8 +157,11 @@ export default function SignupPage() {
               placeholder="Mínimo 8 caracteres"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              onFocus={() => emitNeuralEvent({ type: "focus", zone: "password" })}
+              onBlur={() => emitNeuralEvent({ type: "focus", zone: null })}
               required
               minLength={8}
+              disabled={busy}
             />
             {password.length > 0 && (
               <div className="mt-0.5 flex items-center gap-2" aria-live="polite">
@@ -151,15 +189,18 @@ export default function SignupPage() {
               placeholder="Repetí la contraseña"
               value={confirm}
               onChange={(e) => setConfirm(e.target.value)}
+              onFocus={() => emitNeuralEvent({ type: "focus", zone: "password" })}
+              onBlur={() => emitNeuralEvent({ type: "focus", zone: null })}
               required
               minLength={8}
+              disabled={busy}
             />
           </Field>
         </motion.div>
 
         <motion.div {...reveal(4)} className="flex flex-col gap-2">
-          <AuthButton type="submit" icon={RocketLaunch} loading={loading}>
-            {loading ? "Creando tu workspace…" : "Empezar trial"}
+          <AuthButton type="submit" icon={RocketLaunch} loading={loading && !succeeded}>
+            {succeeded ? "Workspace listo" : loading ? "Creando tu workspace…" : "Empezar trial"}
           </AuthButton>
           <p className="text-xs leading-relaxed text-white/40">
             Al crear la cuenta aceptás los términos del servicio y la política de privacidad de

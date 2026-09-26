@@ -1,13 +1,17 @@
 import { ArrowLeft, Key, ShieldCheck } from "@phosphor-icons/react";
-import { FormEvent, useState } from "react";
-import { Link, Navigate, useLocation } from "react-router-dom";
+import { FormEvent, useEffect, useState } from "react";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
 import { usePlatformAuth } from "../../platformAuth";
 import { AuthShell } from "../../components/auth/AuthShell";
 import { AuthButton } from "../../components/auth/AuthButton";
+import { emitNeuralEvent } from "../../components/auth/neuralSignal";
 import { useReveal } from "../../components/auth/reveal";
 import { ErrorInline } from "../../components/ui/states";
 import { Field, Input, PasswordInput } from "../../components/ui/form";
+
+/** Cuánto se sostiene la confirmación antes de entrar al Control Center. */
+const SUCCESS_HOLD_MS = 620;
 
 function redirectAfterLogin(state: unknown): string {
   const from =
@@ -21,6 +25,7 @@ function redirectAfterLogin(state: unknown): string {
 export default function AdminLoginPage() {
   const { session, login, loginMfa } = usePlatformAuth();
   const location = useLocation();
+  const navigate = useNavigate();
   const reveal = useReveal({ step: 0.06 });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -28,20 +33,42 @@ export default function AdminLoginPage() {
   const [mfaCode, setMfaCode] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [holdExit, setHoldExit] = useState(false);
 
-  if (session) return <Navigate to={redirectAfterLogin(location.state)} replace />;
+  const succeeded = holdExit && Boolean(session);
+
+  // Transición de éxito: la red confirma y recién después se entra.
+  useEffect(() => {
+    if (!holdExit || !session) return;
+    const timer = window.setTimeout(
+      () => navigate(redirectAfterLogin(location.state), { replace: true }),
+      SUCCESS_HOLD_MS
+    );
+    return () => window.clearTimeout(timer);
+  }, [holdExit, session, navigate, location.state]);
+
+  if (session && !holdExit) return <Navigate to={redirectAfterLogin(location.state)} replace />;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError("");
     setLoading(true);
+    setHoldExit(true);
+    emitNeuralEvent({ type: "submit" });
     try {
       const mfa = await login(email.trim(), password);
       if (mfa?.mfaRequired && mfa.mfaSession) {
+        // Todavía no hay sesión: el segundo paso decide.
+        setHoldExit(false);
         setMfaSession(mfa.mfaSession);
         setPassword("");
+        emitNeuralEvent({ type: "focus", zone: null });
+      } else {
+        emitNeuralEvent({ type: "success" });
       }
     } catch (err) {
+      setHoldExit(false);
+      emitNeuralEvent({ type: "error" });
       setError(err instanceof Error ? err.message : "No pudimos iniciar sesión.");
     } finally {
       setLoading(false);
@@ -53,9 +80,14 @@ export default function AdminLoginPage() {
     if (!mfaCode.trim()) return;
     setError("");
     setLoading(true);
+    setHoldExit(true);
+    emitNeuralEvent({ type: "submit" });
     try {
       await loginMfa(mfaSession, mfaCode.trim());
+      emitNeuralEvent({ type: "success" });
     } catch (err) {
+      setHoldExit(false);
+      emitNeuralEvent({ type: "error" });
       setError(err instanceof Error ? err.message : "El código no es válido o ya expiró.");
     } finally {
       setLoading(false);
@@ -66,8 +98,14 @@ export default function AdminLoginPage() {
     return (
       <AuthShell
         variant="platform"
+        kicker="Control Center"
         eyebrow="Verificación en dos pasos"
-        title="Confirmá tu identidad"
+        title={
+          <>
+            Confirmá tu{" "}
+            <span className="auth-display__accent">identidad.</span>
+          </>
+        }
         subtitle="Ingresá el código de 6 dígitos de tu autenticador para entrar al Control Center."
         footer={
           <button
@@ -77,6 +115,7 @@ export default function AdminLoginPage() {
               setMfaSession("");
               setMfaCode("");
               setError("");
+              emitNeuralEvent({ type: "focus", zone: null });
             }}
           >
             <ArrowLeft size={14} weight="light" aria-hidden />
@@ -101,6 +140,7 @@ export default function AdminLoginPage() {
                 className="mono text-center text-lg tracking-[0.4em]"
                 required
                 autoFocus
+                disabled={succeeded}
               />
             </Field>
           </motion.div>
@@ -108,10 +148,10 @@ export default function AdminLoginPage() {
             <AuthButton
               type="submit"
               icon={ShieldCheck}
-              loading={loading}
+              loading={loading && !succeeded}
               disabled={!mfaCode.trim()}
             >
-              Verificar
+              {succeeded ? "Acceso concedido" : "Verificar"}
             </AuthButton>
           </motion.div>
         </form>
@@ -122,9 +162,15 @@ export default function AdminLoginPage() {
   return (
     <AuthShell
       variant="platform"
-      eyebrow="Control Center"
-      title="Acceso de plataforma"
-      subtitle="Acceso de platform admin. Si sos dueño de una organización, entrá por el portal de clientes."
+      kicker="Control Center"
+      eyebrow="Acceso restringido"
+      title={
+        <>
+          Acceso de{" "}
+          <span className="auth-display__accent">plataforma.</span>
+        </>
+      }
+      subtitle="Si sos dueño de una organización, entrá por el portal de clientes."
       footer={
         <div className="text-[13px]">
           <Link className="auth-link" to="/login">
@@ -145,8 +191,11 @@ export default function AdminLoginPage() {
               placeholder="admin@zent.dev"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              onFocus={() => emitNeuralEvent({ type: "focus", zone: "email" })}
+              onBlur={() => emitNeuralEvent({ type: "focus", zone: null })}
               required
               autoFocus
+              disabled={succeeded}
             />
           </Field>
         </motion.div>
@@ -158,14 +207,17 @@ export default function AdminLoginPage() {
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
+              onFocus={() => emitNeuralEvent({ type: "focus", zone: "password" })}
+              onBlur={() => emitNeuralEvent({ type: "focus", zone: null })}
               required
+              disabled={succeeded}
             />
           </Field>
         </motion.div>
 
         <motion.div {...reveal(2)}>
-          <AuthButton type="submit" icon={Key} loading={loading}>
-            Entrar
+          <AuthButton type="submit" icon={Key} loading={loading && !succeeded}>
+            {succeeded ? "Acceso concedido" : "Entrar"}
           </AuthButton>
         </motion.div>
       </form>

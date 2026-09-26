@@ -179,7 +179,14 @@ export function Select({ className, id, children, placeholder, ...rest }: Select
  * toda la app). El aviso de Bloq Mayús aparece con el estado real del teclado y
  * se va solo al desenfocar.
  */
-export function PasswordInput({ className, id, onKeyDown, ...rest }: InputHTMLAttributes<HTMLInputElement>) {
+export function PasswordInput({
+  className,
+  id,
+  onKeyDown,
+  onKeyUp,
+  onBlur,
+  ...rest
+}: InputHTMLAttributes<HTMLInputElement>) {
   const [visible, setVisible] = useState(false);
   const [capsLock, setCapsLock] = useState(false);
   const ctx = useFieldContext();
@@ -213,8 +220,14 @@ export function PasswordInput({ className, id, onKeyDown, ...rest }: InputHTMLAt
             syncCapsLock(event.nativeEvent);
             onKeyDown?.(event);
           }}
-          onKeyUp={(event) => syncCapsLock(event.nativeEvent)}
-          onBlur={() => setCapsLock(false)}
+          onKeyUp={(event) => {
+            syncCapsLock(event.nativeEvent);
+            onKeyUp?.(event);
+          }}
+          onBlur={(event) => {
+            setCapsLock(false);
+            onBlur?.(event);
+          }}
           {...rest}
         />
         <button

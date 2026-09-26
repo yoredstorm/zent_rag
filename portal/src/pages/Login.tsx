@@ -1,18 +1,22 @@
-import { ArrowRight, CaretRight, CheckCircle, SignIn } from "@phosphor-icons/react";
+import { ArrowRight, CaretRight, Check, CheckCircle, SignIn } from "@phosphor-icons/react";
 import { AnimatePresence, motion, useAnimation, useReducedMotion } from "motion/react";
-import { FormEvent, useRef, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { Link, Navigate, useNavigate } from "react-router-dom";
 import { api, afterLoginPath } from "../api";
 import { useAuth } from "../auth";
 import { usePlatformAuth } from "../platformAuth";
 import { AuthShell } from "../components/auth/AuthShell";
 import { AuthButton } from "../components/auth/AuthButton";
+import { emitNeuralEvent } from "../components/auth/neuralSignal";
 import { Button } from "../components/ui/Button";
 import { ErrorInline, SuccessInline } from "../components/ui/states";
 import { Field, Input, PasswordInput } from "../components/ui/form";
 
 /** Ritmo de entrada: encabezado → campos → CTA → enlaces. */
 const STAGGER = 0.06;
+
+/** Cuánto se sostiene la confirmación antes de entrar al workspace. */
+const SUCCESS_HOLD_MS = 620;
 
 /**
  * Mensajes del backend traducidos a algo que una persona pueda leer. El código
@@ -45,16 +49,31 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [holdExit, setHoldExit] = useState(false);
   const [forgotOpen, setForgotOpen] = useState(false);
   const [forgotMsg, setForgotMsg] = useState("");
   const [forgotLoading, setForgotLoading] = useState(false);
 
   const emailReady = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
+  const succeeded = holdExit && Boolean(session);
+  const busy = loading || succeeded;
 
-  if (ready && session) return <Navigate to={afterLoginPath(session)} replace />;
+  // Transición de éxito: el sistema confirma (destello en la red) y recién
+  // después se entra. No cambia la lógica de auth: sólo se demora el redirect.
+  useEffect(() => {
+    if (!holdExit || !session) return;
+    const timer = window.setTimeout(
+      () => navigate(afterLoginPath(session), { replace: true }),
+      SUCCESS_HOLD_MS
+    );
+    return () => window.clearTimeout(timer);
+  }, [holdExit, session, navigate]);
+
+  if (ready && session && !holdExit) return <Navigate to={afterLoginPath(session)} replace />;
 
   /** Avisa sin castigar: el error entra con un resorte y el formulario se mueve. */
   function fail(message: string, focusId?: string) {
+    emitNeuralEvent({ type: "error" });
     setError(message);
     if (focusId) formRef.current?.querySelector<HTMLInputElement>(`#${focusId}`)?.focus();
     if (!reduce) void nudge.start({ x: [0, -6, 6, -3, 0] }, { duration: 0.34, ease: "easeOut" });
@@ -68,13 +87,18 @@ export default function LoginPage() {
     }
     setError("");
     setLoading(true);
+    setHoldExit(true);
+    emitNeuralEvent({ type: "submit" });
     try {
       await login(email.trim(), password);
+      emitNeuralEvent({ type: "success" });
     } catch (err) {
+      setHoldExit(false);
       const msg = err instanceof Error ? err.message : "";
       if (msg.includes("platform_login_required") || msg.includes("/admin/login")) {
         try {
           await platformLogin(email.trim(), password);
+          emitNeuralEvent({ type: "success" });
           navigate("/admin", { replace: true });
           return;
         } catch (platformErr) {
@@ -140,9 +164,18 @@ export default function LoginPage() {
 
   return (
     <AuthShell
-      eyebrow="Acceso"
-      title="Entrar a Zent"
-      subtitle="Plataforma de IA empresarial. Iniciá sesión con el email y la contraseña de tu cuenta."
+      kicker="Portal de clientes"
+      eyebrow="Entrar a Zent"
+      title={
+        <>
+          Conectá.
+          <br />
+          Comprendé.
+          <br />
+          <span className="auth-display__accent">Decidí.</span>
+        </>
+      }
+      subtitle="Tu conocimiento empresarial, conectado y listo para responder."
       footer={
         <div className="flex flex-wrap items-center justify-between gap-3 text-[13px]">
           <span>
@@ -184,9 +217,11 @@ export default function LoginPage() {
                   placeholder="tu@empresa.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  onFocus={() => emitNeuralEvent({ type: "focus", zone: "email" })}
+                  onBlur={() => emitNeuralEvent({ type: "focus", zone: null })}
                   required
                   autoFocus
-                  disabled={loading}
+                  disabled={busy}
                   className={emailReady ? "pr-8" : undefined}
                 />
                 {/* Validación viva: confirma el formato apenas está listo, sin
@@ -217,18 +252,27 @@ export default function LoginPage() {
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                onFocus={() => emitNeuralEvent({ type: "focus", zone: "password" })}
+                onBlur={() => emitNeuralEvent({ type: "focus", zone: null })}
                 required
-                disabled={loading}
+                disabled={busy}
               />
             </Field>
           </motion.div>
 
           <motion.div {...rise(2)} className="flex flex-col gap-2">
-            <AuthButton type="submit" icon={ArrowRight} loading={loading}>
-              {loading ? "Entrando…" : "Continuar"}
+            <AuthButton
+              type="submit"
+              icon={succeeded ? Check : ArrowRight}
+              loading={loading && !succeeded}
+            >
+              {succeeded ? "Acceso concedido" : loading ? "Entrando…" : "Continuar"}
             </AuthButton>
+            <span className="sr-only" role="status">
+              {succeeded ? "Acceso concedido. Entrando al workspace." : ""}
+            </span>
             <AnimatePresence initial={false}>
-              {loading && (
+              {loading && !succeeded && (
                 <motion.div
                   key="progress"
                   className="auth-progress"

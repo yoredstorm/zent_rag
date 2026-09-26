@@ -1,6 +1,7 @@
 import { render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { NeuralBrain, type NeuralStats } from "./NeuralBrain";
+import { NeuralFieldCanvas, type NeuralStats } from "./NeuralFieldCanvas";
+import { onNeuralEvent, type NeuralEvent } from "./neuralSignal";
 
 function mockReducedMotion(reduce: boolean) {
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
@@ -25,6 +26,8 @@ function stubCanvasContext() {
     fillStyle: "",
     strokeStyle: "",
     lineWidth: 1,
+    lineCap: "butt",
+    lineJoin: "miter",
     setTransform: vi.fn(),
     translate: vi.fn(),
     rotate: vi.fn(),
@@ -62,13 +65,13 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("NeuralBrain", () => {
+describe("NeuralFieldCanvas", () => {
   it("dibuja un frame estático y reporta métricas reales con reduced motion", async () => {
     mockReducedMotion(true);
     const raf = vi.spyOn(window, "requestAnimationFrame");
     const stats: NeuralStats[] = [];
 
-    const { container } = render(<NeuralBrain onStats={(value) => stats.push(value)} />);
+    const { container } = render(<NeuralFieldCanvas onStats={(value) => stats.push(value)} />);
 
     const canvas = container.querySelector("canvas");
     expect(canvas).not.toBeNull();
@@ -85,10 +88,23 @@ describe("NeuralBrain", () => {
     const raf = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1);
     const cancel = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
 
-    const { unmount } = render(<NeuralBrain />);
+    const { unmount } = render(<NeuralFieldCanvas />);
 
     expect(raf).toHaveBeenCalled();
     unmount();
     expect(cancel).toHaveBeenCalled();
+  });
+
+  it("publica las métricas en el bus del acceso", async () => {
+    mockReducedMotion(true);
+    const events: NeuralEvent[] = [];
+    const unsubscribe = onNeuralEvent((event) => events.push(event));
+
+    render(<NeuralFieldCanvas />);
+
+    await waitFor(() => expect(events.some((e) => e.type === "stats")).toBe(true));
+    const statsEvent = events.find((e) => e.type === "stats");
+    expect(statsEvent && statsEvent.type === "stats" && statsEvent.stats.neurons).toBeGreaterThan(0);
+    unsubscribe();
   });
 });
