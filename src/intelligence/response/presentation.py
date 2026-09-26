@@ -217,12 +217,12 @@ def render_presentation_block(policy: PresentationPolicy) -> str:
     conceptos = ", ".join(policy.concepts) if policy.concepts else ""
     lines: list[str] = ["## RITMO DE LA RESPUESTA (legibilidad, no contenido)"]
     lines.append(
-        "- escribí como una explicación humana bien editada: ni un formulario de "
+        "- escribe como una explicación humana bien editada: ni un formulario de "
         "secciones rotuladas ni un bloque continuo de texto"
     )
     lines.append(
         "- una idea por párrafo: si un párrafo mezcla dos ideas, partilo; "
-        "evitá los párrafos de más de cuatro o cinco líneas"
+        "evita los párrafos de más de cuatro o cinco líneas"
     )
     if LAYER_ANSWER in policy.layers:
         lines.append(
@@ -245,14 +245,14 @@ def render_presentation_block(policy: PresentationPolicy) -> str:
         if policy.needs_list:
             lines.append(
                 f"capa 3 — detalle: la evidencia enumera {policy.enumeration_count} "
-                "valores u opciones; usá viñetas o tabla, un ítem por valor con su "
+                "valores u opciones; usa viñetas o tabla, un ítem por valor con su "
                 "significado en la misma línea (negrita en el número o el nombre, no "
                 "en la explicación). No los encadenes en una sola frase"
             )
         else:
             lines.append(
                 "capa 3 — detalle: sólo el detalle que la pregunta pide; si aparece "
-                "una enumeración de tres o más elementos, usá viñetas o tabla"
+                "una enumeración de tres o más elementos, usa viñetas o tabla"
             )
     if LAYER_PRACTICAL in policy.layers:
         lines.append(
@@ -291,7 +291,7 @@ def render_presentation_block(policy: PresentationPolicy) -> str:
         "orden de prioridad: si la fuente no lo dice, no existe"
     )
     lines.append(
-        "- no escribas una sección «Fuentes» ni «Referencias» al final: citá en la "
+        "- no escribas una sección «Fuentes» ni «Referencias» al final: cita en la "
         "línea ([Doc: N]) junto a la afirmación que sostiene; la interfaz ya muestra "
         "las fuentes"
     )

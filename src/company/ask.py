@@ -515,7 +515,7 @@ class CompanyAskService:
                 return ("", [], {}, "unknown")
             raise ValueError(
                 "No encontré ninguna entidad del grafo relacionada con la pregunta. "
-                "Nombrá la entidad o preguntá desde su página."
+                "Nombra la entidad o pregunta desde su página."
             )
         return await self._answer_about_entity(
             organization_id, question, intent, target, as_of=as_of

@@ -1126,7 +1126,7 @@ async def test_ask_explains_when_nothing_matches() -> None:
     ask = CompanyAskService(_demo_graph(), _studio())
     answer = await ask.ask(ORG, "¿Qué aprendió Zent sobre esto?")
     assert "No encontré" in answer.answer
-    assert "Nombrá la entidad" in answer.answer
+    assert "Nombra la entidad" in answer.answer
 
 
 # ---------------------------------------------------------------------------

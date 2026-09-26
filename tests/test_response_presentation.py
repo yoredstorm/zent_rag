@@ -330,7 +330,7 @@ def test_detecta_advertencia_que_contradice_la_respuesta() -> None:
     assert frase.startswith("La información disponible no")
     nota = disclaimer_note(frase)
     assert "SÍ cubre" in nota
-    assert "respondé directo" in nota
+    assert "responde directo" in nota
     # Sin cobertura de entidades no se marca: ahí la advertencia es legítima.
     assert self_contradicting_disclaimer(contradictoria, entities_covered=False) == ""
     # Y una respuesta limpia no se toca.

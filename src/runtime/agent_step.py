@@ -254,7 +254,7 @@ def step_verdict_note(judgment: AgentStepJudgment, *, refined_query: str = "") -
     elif judgment.next_action == ACTION_ABSTAIN:
         lines.append("- acción: no hay evidencia suficiente; declaralo en la respuesta")
     elif judgment.termination.get("stop"):
-        lines.append("- acción: la evidencia alcanza; respondé con lo consultado")
+        lines.append("- acción: la evidencia alcanza; responde con lo consultado")
     else:
-        lines.append("- acción: seguí con lo que la evidencia sostenga")
+        lines.append("- acción: sigue con lo que la evidencia sostenga")
     return "\n".join(lines)

@@ -300,7 +300,7 @@ _SECTION_TEXT: dict[str, str] = {
 
 #: Regla que no se negocia: sin esto, pedir forma invita a inventar contenido.
 GROUNDING_RULE = (
-    "- regla dura: sólo podés afirmar lo que la evidencia sostiene. Si un aspecto del "
+    "- regla dura: solo puedes afirmar lo que la evidencia sostiene. Si un aspecto del "
     "orden de la información no está en la evidencia, omitelo y declaralo en los límites; "
     "nunca lo completes con conocimiento propio ni inventes cifras, porcentajes, nombres "
     "de categorías, campos, registros ni ejemplos"
@@ -338,7 +338,7 @@ def prompt_block(contract: ResponseContract, *, profile: ResponseProfile | None 
         lines.append(f"- orden de la información: {prose}")
     lines.append(
         "- ese orden dice cómo entra la información, no son secciones rotuladas: "
-        "escribí títulos naturales sólo cuando ayuden a navegar"
+        "escribe títulos naturales solo cuando ayuden a navegar"
     )
     lines.append(
         "- no escribas etiquetas internas (nombres de sección en inglés), ni repitas "

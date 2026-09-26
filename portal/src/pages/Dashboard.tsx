@@ -204,15 +204,15 @@ export default function DashboardPage() {
   if (!loading && hasRealData === false) {
     const steps = [
       {
-        title: "Conectá tus fuentes",
+        title: "Conecta tus fuentes",
         body: "Documentos, bases de datos, APIs o conectores. Zent los interpreta y los deja consultables.",
       },
       {
-        title: "Preguntá en el Playground",
+        title: "Pregunta en el Playground",
         body: "Comprobá respuestas con citas antes de que las use un usuario real.",
       },
       {
-        title: "Publicá un agente",
+        title: "Publica un agente",
         body: "Elegí conocimiento, herramientas y comportamiento. Después lo servís por chat, API o workflows.",
       },
     ];

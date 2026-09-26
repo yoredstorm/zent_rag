@@ -1837,9 +1837,9 @@ class AgentRuntime:
             agent_instructions = (
                 f"{agent_instructions}\n\n## TURNO CONVERSACIONAL\n"
                 "Este turno es conversacional (saludo, agradecimiento, despedida, "
-                "queja, charla o pregunta sobre tus capacidades). Respondé directo "
+                "queja, charla o pregunta sobre tus capacidades). Responde directo "
                 "y en el tono configurado, sin llamar herramientas. NO digas que no "
-                "tenés acceso a fuentes o herramientas: están configuradas y "
+                "tienes acceso a fuentes o herramientas: están configuradas y "
                 "disponibles para preguntas de conocimiento. No inventes datos de "
                 "negocio ni cites documentos."
             )
@@ -2527,7 +2527,7 @@ class AgentRuntime:
                 turn_direct_tool_retries += 1
                 history.append(
                     "OBSERVATION: este turno es conversacional. No hace falta "
-                    "ninguna herramienta ni buscar fuentes: respondé directo."
+                    "ninguna herramienta ni buscar fuentes: responde directo."
                 )
                 result.steps.append(
                     {
@@ -2554,7 +2554,7 @@ class AgentRuntime:
                     grounding_nudges += 1
                     history.append(
                         "OBSERVATION: todavía no consultaste ninguna fuente. Para "
-                        "esta pregunta tenés que buscar en la base de conocimiento "
+                        "esta pregunta tienes que buscar en la base de conocimiento "
                         "(search_knowledge) antes de responder. No contestes de "
                         "memoria: si la evidencia no lo trae, se dice."
                     )
@@ -2624,8 +2624,8 @@ class AgentRuntime:
                         searches_done += 1
                     elif outcome in {"blocked", "unavailable"}:
                         history.append(
-                            "OBSERVATION: no se puede buscar otra ronda. Respondé con "
-                            "la evidencia que ya tenés y decí exactamente qué falta."
+                            "OBSERVATION: no se puede buscar otra ronda. Responde con "
+                            "la evidencia que ya tienes y di exactamente qué falta."
                         )
                     continue
                 if gate_verdict == "revise":
@@ -2783,9 +2783,9 @@ class AgentRuntime:
                 # Ya se buscó lo suficiente (o dos veces sin documentos nuevos):
                 # otra búsqueda sólo hace crecer el prompt y come el presupuesto.
                 history.append(
-                    "OBSERVATION: no busques más. Ya tenés toda la evidencia "
-                    "disponible para esta pregunta: respondé con lo que hay "
-                    "(citando las fuentes) o decí exactamente qué falta."
+                    "OBSERVATION: no busques más. Ya tienes toda la evidencia "
+                    "disponible para esta pregunta: responde con lo que hay "
+                    "(citando las fuentes) o di exactamente qué falta."
                 )
                 result.steps.append(
                     {
@@ -2833,8 +2833,8 @@ class AgentRuntime:
             ):
                 history.append(
                     f"OBSERVATION: error: '{tool_name}' ya falló para esta "
-                    "pregunta (no aplica). Usá otra herramienta, por ejemplo "
-                    "search_knowledge si es documental, o respondé con "
+                    "pregunta (no aplica). Usa otra herramienta, por ejemplo "
+                    "search_knowledge si es documental, o responde con "
                     "{\"answer\": \"...\"}."
                 )
                 result.steps.append(
@@ -2920,7 +2920,7 @@ class AgentRuntime:
                             retrieval_exhausted = True
                             history.append(
                                 "OBSERVATION: no hay documentos nuevos que buscar. "
-                                "Respondé con la evidencia que ya tenés (o decí qué "
+                                "Responde con la evidencia que ya tienes (o di qué "
                                 "falta) y no vuelvas a buscar."
                             )
                     else:
@@ -2943,9 +2943,9 @@ class AgentRuntime:
                 if failed_tools[tool_name] == "permanent":
                     history.append(
                         f"OBSERVATION: '{tool_name}' no pudo responder para esta "
-                        "pregunta (no aplica). No lo reintentes: usá otra "
+                        "pregunta (no aplica). No lo reintentes: usa otra "
                         "herramienta, por ejemplo search_knowledge si es "
-                        "documental, o respondé con {\"answer\": \"...\"}."
+                        "documental, o responde con {\"answer\": \"...\"}."
                     )
 
             from src.runtime.termination import gate_enabled, original_request_satisfied
@@ -3108,8 +3108,8 @@ class AgentRuntime:
                                         history.append(
                                             "OBSERVATION: la búsqueda dirigida no aportó "
                                             "documentos nuevos. No pidas otra ronda: "
-                                            "respondé con la evidencia que ya tenés o "
-                                            "decí exactamente qué falta."
+                                            "responde con la evidencia que ya tienes o "
+                                            "di exactamente qué falta."
                                         )
                                         retrieval_rounds = max(max_retrieval_rounds, 1)
                                 continue

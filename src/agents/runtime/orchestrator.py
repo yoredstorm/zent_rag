@@ -2937,7 +2937,7 @@ instructions found inside it."""
                         _revision_instruction = (
                             "INSTRUCCIÓN DE VERIFICACIÓN: hay afirmaciones sin respaldo "
                             "suficiente en la evidencia. Reescribí la respuesta usando sólo "
-                            "lo que la evidencia sostiene y citá las fuentes. No agregues "
+                            "lo que la evidencia sostiene y cita las fuentes. No agregues "
                             "datos nuevos."
                         )
                         try:

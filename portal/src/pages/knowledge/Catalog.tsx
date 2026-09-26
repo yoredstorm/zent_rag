@@ -191,7 +191,7 @@ export default function KnowledgeCatalogPage() {
         <EmptyState
           icon={Binoculars}
           title="Todavía no hay catálogo"
-          body="Conectá una fuente SQL y ejecutá la primera exploración. Zent descubre tablas, columnas y relaciones, y las deja listas para revisar."
+          body="Conecta una fuente SQL y ejecuta la primera exploración. Zent descubre tablas, columnas y relaciones, y las deja listas para revisar."
           hint="La exploración también se puede relanzar por fuente cuando cambia el esquema."
           action={
             <ButtonLink to="/knowledge/add" variant="primary" leadingIcon={Database}>

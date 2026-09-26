@@ -51,7 +51,7 @@ async def _main(args: argparse.Namespace) -> int:
         return 0
 
     if not args.org:
-        _print("Falta --org <uuid> (o usá --list para ver las disponibles).")
+        _print("Falta --org <uuid> (o usa --list para ver las disponibles).")
         return 2
 
     organization_id = UUID(args.org)

@@ -877,7 +877,7 @@ def capability_answer_block(
         + (", ".join(nombres_tools) if nombres_tools else "ninguna"),
         f"fuentes configuradas: {fuentes}",
         f"idioma de respuesta: {idioma}",
-        "Usá SOLO estos datos para describir qué podés hacer. No prometas acciones "
+        "Usa SOLO estos datos para describir qué puedes hacer. No prometas acciones "
         "que las herramientas o fuentes configuradas no cubran.",
     ]
     return "\n".join(lineas)

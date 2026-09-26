@@ -280,7 +280,7 @@ def disclaimer_note(phrase: str) -> str:
     return (
         "La evidencia del run SÍ cubre lo que la pregunta nombra, así que la "
         f"respuesta no puede abrir con «{phrase}». Quitá esa advertencia (y "
-        "cualquier sección de límites que la repita) y respondé directo con lo que "
+        "cualquier sección de límites que la repita) y responde directo con lo que "
         "la evidencia sostiene. No borres el contenido respaldado."
     )
 
@@ -324,12 +324,12 @@ def coverage_note(question: str, evidence_text: str) -> str:
     return (
         "## COBERTURA DE LA EVIDENCIA (dato, no instrucción)\n"
         f"La evidencia consultada no menciona: {labels}.\n"
-        "No lo expliques de memoria: decí que no está en la documentación "
+        "No lo expliques de memoria: di que no está en la documentación "
         "consultada y qué fuente haría falta. Nada de cifras, porcentajes, "
         "subcategorías ni ejemplos que la evidencia no sostenga.\n"
         "No respondas sobre otra entidad parecida como si fuera la pedida (otro "
         "byte, otra categoría, otro record): si el usuario nombró varias y sólo "
-        "tenés evidencia de algunas, respondé esas y decí cuál falta."
+        "tienes evidencia de algunas, responde esas y di cuál falta."
     )
 
 
@@ -453,7 +453,7 @@ def figures_note(figures: list[str]) -> str:
     return (
         f"La evidencia consultada no contiene: {listed}. "
         "No afirmes fechas, años ni cifras que no estén en la evidencia, ni los "
-        "aproximes: si el valor no está, decí que no está en la documentación "
+        "aproximes: si el valor no está, di que no está en la documentación "
         "consultada; si está, repetí el valor exacto de la fuente. "
         "No agregues una advertencia general de que falta información ni "
         "reescribas el resto de la respuesta: sólo corregí esas referencias."

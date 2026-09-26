@@ -792,7 +792,7 @@ class QueryDatabaseTool(Tool):
             return ToolResult(
                 error=(
                     "Esta pregunta no parece ser sobre datos/tablas (SQL no "
-                    "aplica). Usá search_knowledge para documentos o formulá "
+                    "aplica). Usa search_knowledge para documentos o formula "
                     "una pregunta de datos con tablas, columnas o métricas."
                 ),
                 latency_ms=(time.perf_counter() - start) * 1000,

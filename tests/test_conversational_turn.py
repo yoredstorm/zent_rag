@@ -380,7 +380,7 @@ async def test_queja_simple_responde_directo(
     assert result.turn_intent["intent"] == "complaint"
     prompt = llm.prompts[0]
     assert "TURNO CONVERSACIONAL" in prompt
-    assert "NO digas que no tenés acceso" in prompt
+    assert "NO digas que no tienes acceso" in prompt
 
 
 @pytest.mark.asyncio

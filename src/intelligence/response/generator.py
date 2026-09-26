@@ -213,7 +213,7 @@ def suggest_profile(
 
 def build_purpose_prompt(context: AgentConfigContext) -> str:
     return (
-        "Escribí un propósito profesional para este agente.\n\n"
+        "Escribe un propósito profesional para este agente.\n\n"
         "DATOS REALES DEL AGENTE (única fuente permitida):\n"
         f"{context.facts_block()}\n\n"
         "REGLAS:\n"

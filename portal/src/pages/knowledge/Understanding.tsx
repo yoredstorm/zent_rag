@@ -299,7 +299,7 @@ export default function KnowledgeUnderstandingPage() {
         <EmptyState
           icon={MagnifyingGlass}
           title="Todavía no hay catálogo"
-          body="Conectá una base o subí un archivo. Luego confirmá qué significa cada campo."
+          body="Conecta una base o sube un archivo. Luego confirmá qué significa cada campo."
           hint="El mapeo se hace campo por campo: solo lo que confirmás alimenta las respuestas."
           action={
             <ButtonLink to="/knowledge/add" variant="primary" leadingIcon={Plus}>

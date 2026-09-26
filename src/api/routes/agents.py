@@ -225,7 +225,7 @@ async def create_agent(
                 "error_code": "duplicate_agent_name",
                 "message": (
                     f"Ya existe un agente llamado «{body.name}» en esta organización. "
-                    "Abrilo para editarlo o elegí otro nombre."
+                    "Ábrelo para editarlo o elige otro nombre."
                 ),
             },
         ) from exc
@@ -604,8 +604,8 @@ async def preview_agent_response(agent_id: str, body: PreviewRequest, request: R
     prompt = (
         f"PREGUNTA DEL USUARIO:\n{body.question}\n\n"
         f"EVIDENCIA DISPONIBLE (simulada, no son hechos reales):\n{mock}\n\n"
-        "Respondé la pregunta siguiendo la forma y el estilo indicados. "
-        "Si la evidencia simulada no alcanza para responder, decilo."
+        "Responde la pregunta siguiendo la forma y el estilo indicados. "
+        "Si la evidencia simulada no alcanza para responder, dilo."
     )
     try:
         draft = await _generate_text(
@@ -899,7 +899,7 @@ async def _apply_source_config(ctx, config: AgentConfig) -> tuple[AgentConfig, l
             )
             warnings.append(
                 f"Se quitaron {len(missing)} fuente(s) que ya no existen en la "
-                "organización. Volvé a elegirlas en Fuentes."
+                "organización. Vuelve a elegirlas en Fuentes."
             )
         kept = [source.id for source in sources]
         return (

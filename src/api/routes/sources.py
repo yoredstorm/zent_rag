@@ -1222,7 +1222,7 @@ async def source_sql(
     if unknown:
         raise HTTPException(
             403,
-            "Solo podés consultar tablas materializadas de la organización: "
+            "Solo puedes consultar tablas materializadas de la organización: "
             + ", ".join(sorted(allowed_tables)),
         )
 
