@@ -160,7 +160,7 @@ class TestReActLoop:
         )
         agent = _agent()
         runtime = AgentRuntime(llm_provider=llm)
-        result = await runtime.run(_request(agent, "saluda"))
+        result = await runtime.run(_request(agent, "cuentame sobre el record 4"))
 
         assert result.status == "completed"
         assert result.answer == "Todo listo"
@@ -252,7 +252,7 @@ class TestFactCheck:
         llm = _FakeLLM(['{"tool": "echo", "arguments": {"text": "x"}}'] * 20)
         agent = _agent(config_json={"max_steps": 2})
         runtime = AgentRuntime(llm_provider=llm)
-        result = await runtime.run(_request(agent, "loop"))
+        result = await runtime.run(_request(agent, "cuentame sobre el record 4"))
         assert result.status == "limit_reached"
         assert any(s.get("detail") == "max_steps reached" for s in result.steps)
 
@@ -275,7 +275,7 @@ class TestFactCheck:
         )
         agent = _agent(tools=["failing"])
         runtime = AgentRuntime(llm_provider=llm)
-        result = await runtime.run(_request(agent))
+        result = await runtime.run(_request(agent, "cuentame sobre el record 4"))
         assert result.status == "completed"
         assert result.answer == "recuperado"
         tool_steps = [s for s in result.steps if s["type"] == "tool_call"]
@@ -287,7 +287,7 @@ class TestFactCheck:
         llm = _FakeLLM(['{"tool": "slow", "arguments": {}}', '{"answer": "ok"}'])
         agent = _agent(tools=["slow"])
         runtime = AgentRuntime(llm_provider=llm)
-        result = await runtime.run(_request(agent))
+        result = await runtime.run(_request(agent, "cuentame sobre el record 4"))
         tool_steps = [s for s in result.steps if s["type"] == "tool_call"]
         assert "timed out" in tool_steps[0]["error"]
 
@@ -547,7 +547,7 @@ class TestAgentJevLoop:
             ]
         )
         runtime = AgentRuntime(llm_provider=llm)
-        result = await runtime.run(_request(_agent(tools=["search_knowledge"]), "pregunta"))
+        result = await runtime.run(_request(_agent(tools=["search_knowledge"]), "cuentame sobre la categoria 31"))
         assert result.status == "completed"
         assert not [s for s in result.steps if s["type"] == "agent_step"]
         assert not [s for s in result.steps if s["type"] == "jev_retrieval"]
@@ -655,7 +655,7 @@ class TestFailedToolGuard:
             ]
         )
         runtime = AgentRuntime(llm_provider=llm)
-        result = await runtime.run(_request(_agent(tools=["flaky"])))
+        result = await runtime.run(_request(_agent(tools=["flaky"]), "cuentame sobre el record 4"))
         assert result.status == "completed"
         assert tool.calls == 2
 

@@ -112,6 +112,26 @@ _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
         "limitations_reason",
         "detail",
     ),
+    # Turn intent: qué está haciendo el usuario y si el turno necesita evidencia.
+    "conversation_intent": (
+        "intent",
+        "confidence",
+        "provider",
+        "route",
+        "model_tier",
+        "needs_external_evidence",
+        "evidence_source",
+        "knowledge_probability",
+        "probabilities",
+        "signals",
+        "reasons",
+        "retrieval",
+        "answer_gate",
+        "latency_ms",
+        "detail",
+    ),
+    "turn_route": ("route", "retrieval", "answer_gate", "model_tier", "detail"),
+    "turn_guard": ("detail", "attempted_tool"),
     # Evidence Sufficiency: señales objetivas antes de generar (no una cuota).
     "evidence_sufficiency": (
         "has_evidence",
@@ -186,6 +206,9 @@ STEP_LABEL: dict[str, str] = {
     "termination_gate": "JEV verifica cierre",
     "answer_gate": "JEV verifica respuesta",
     "answer_revision": "Revisión con feedback de JEV",
+    "conversation_intent": "Entendió el turno",
+    "turn_route": "Ruta del turno",
+    "turn_guard": "Herramienta innecesaria",
     "agent_step": "JEV juzga el paso",
     "jev_retrieval": "JEV pidió otra búsqueda",
     "evidence_sufficiency": "Evidencia suficiente",
@@ -890,6 +913,11 @@ def build_agent_flow(
     sufficiency_block = getattr(result, "evidence_sufficiency", None)
     if isinstance(sufficiency_block, Mapping) and sufficiency_block:
         flow["evidence_sufficiency"] = dict(sufficiency_block)
+    # Turn intent: qué entendió el sistema del turno, con qué distribución y si
+    # la fase documental aplicaba (not_applicable != failed).
+    turn_block = getattr(result, "turn_intent", None)
+    if isinstance(turn_block, Mapping) and turn_block:
+        flow["turn"] = dict(turn_block)
     citations = getattr(result, "citations", None)
     if citations:
         flow["citations"] = [dict(item) for item in citations if isinstance(item, Mapping)][:16]

@@ -207,7 +207,11 @@ async def test_runtime_injects_source_ids_into_org_config() -> None:
         system_prompt="Sé breve.",
     )
     runtime = AgentRuntime(llm_provider=_CaptureLLM())
-    await runtime.run(AgentRunRequest(agent=agent, message="hola", role="admin"))
+    await runtime.run(
+        AgentRunRequest(
+            agent=agent, message="cuentame sobre el record 4", role="admin"
+        )
+    )
     assert echo.calls
     assert echo.calls[0].org_config.get("source_ids") == [str(source_id)]
     assert prompts

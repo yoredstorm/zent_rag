@@ -1108,6 +1108,63 @@ class Settings(BaseSettings):
         ),
     )
     # -------------------------------------------------------------------------
+    # Turn intent (capa conversacional: docs/architecture/turn-intent.md)
+    # -------------------------------------------------------------------------
+    RUNTIME_TURN_INTENT: Literal["off", "rules", "on"] = Field(
+        default="on",
+        description=(
+            "off = sin capa conversacional (comportamiento previo). "
+            "rules = solo reglas, sin JEV. "
+            "on = reglas para lo obvio y JEV para la ambiguedad semantica."
+        ),
+    )
+    RUNTIME_TURN_INTENT_RULES_CONFIDENCE: float = Field(
+        default=0.80,
+        ge=0.0,
+        le=1.0,
+        description="Confianza minima de las reglas para no consultar a JEV.",
+    )
+    RUNTIME_TURN_INTENT_KNOWLEDGE_FLOOR: float = Field(
+        default=0.30,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Probabilidad de knowledge_question a partir de la cual la intencion "
+            "material manda sobre una conversacional secundaria."
+        ),
+    )
+    RUNTIME_TURN_INTENT_ACTION_FLOOR: float = Field(
+        default=0.35,
+        ge=0.0,
+        le=1.0,
+        description="Probabilidad de action_request a partir de la cual decide el route TOOL.",
+    )
+    RUNTIME_TURN_INTENT_CONVERSATIONAL_FLOOR: float = Field(
+        default=0.60,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Masa de probabilidad de las familias conversacionales para una "
+            "respuesta directa."
+        ),
+    )
+    RUNTIME_TURN_INTENT_AMBIGUOUS_FLOOR: float = Field(
+        default=0.45,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Confianza por debajo de la cual una distribucion plana se trata como "
+            "ambigua (aclaracion o contexto), nunca como fallo."
+        ),
+    )
+    RUNTIME_TURN_FAST_MODEL: str = Field(
+        default="",
+        description=(
+            "Modelo barato opcional para turnos conversacionales directos "
+            "(saludo, agradecimiento, despedida, charla). Vacio = modelo del agente."
+        ),
+    )
+    # -------------------------------------------------------------------------
     # Agent JEV Loop (docs/architecture/agent-jev-loop.md)
     # -------------------------------------------------------------------------
     RUNTIME_AGENT_JEV_LOOP: Literal["off", "shadow", "on", "canary"] = Field(

@@ -19,6 +19,7 @@ from src.core.domain.decision import RoutingDecision
 from src.decision.batch import answer_for, noul_for
 from src.decision.judgment import PHASE_PRE_RETRIEVAL, JudgmentContext, call_phase_judge
 from src.decision.questions import noul_from_answer, noul_is_yes
+from src.infrastructure.observability.logging_config import get_logger
 from src.rag.adaptive.cache import deserialize_plan, plan_cache_key, serialize_plan
 from src.rag.adaptive.classifier import RulesClassifier, overlay_modality, overlay_strategy
 from src.rag.adaptive.questions import build_query_questions, public_answers
@@ -26,6 +27,8 @@ from src.rag.adaptive.rewrite import rewrite_needed_from_jev, rules_need_rewrite
 from src.rag.adaptive.settings import AdaptiveRagSettings
 from src.rag.adaptive.top_k import resolve_top_k
 from src.rag.retrieval.models import STRATEGY_HYBRID, STRATEGY_VECTOR
+
+logger = get_logger(__name__)
 
 _COMPARE_RE = re.compile(
     r"\b(compara|comparar|contradic|versus|vs\.?|difference|diferenc)\w*\b",
@@ -77,6 +80,7 @@ class AdaptivePlanner:
         routing: RoutingDecision | None = None,
         knowledge_base_id: UUID | None = None,
         tenant_top_k_max: int | None = None,
+        conversation_present: bool = False,
     ) -> AdaptivePlan:
         apply = self._settings.should_apply(request_id)
         mode = self._settings.effective_mode
@@ -100,10 +104,28 @@ class AdaptivePlanner:
         greeting = bool(_GREETING_RE.match(query or ""))
         compare = bool(_COMPARE_RE.search(query or ""))
         multi = compare and bool(_MULTI_DOC_RE.search(query or ""))
+        # Turn intent (capa conversacional): reglas para lo obvio, JEV para la
+        # ambigüedad semántica. Una señal, no un route: la política compone.
+        turn_rules = None
+        turn_decision = None
+        try:
+            from src.runtime.turn_intent import rules_turn_intent
+
+            turn_rules = rules_turn_intent(query, has_context=conversation_present)
+        except Exception as exc:  # noqa: BLE001 — la capa conversacional nunca rompe el plan
+            logger.warning("turn intent rules failed", error=str(exc)[:150])
+        turn_direct = bool(
+            turn_rules is not None
+            and turn_rules.direct
+            and not (sql_enabled and sql_score >= 0.5)
+        )
+        if turn_rules is not None and turn_rules.confidence >= 0.8:
+            turn_decision = turn_rules
         # Deterministic signal is strong enough on its own: do not spend a
         # second System One call on routing/understanding questions.
         deterministic = (
             greeting
+            or turn_direct
             or classification.kind == "lexical"
             or (sql_enabled and sql_score >= 0.8)
         )
@@ -129,6 +151,15 @@ class AdaptivePlanner:
             path = AdaptivePath.STANDARD.value
             rewrite = False
             complexity = "bounded"
+        elif turn_direct:
+            # Charla, queja, aclaración o pregunta de capacidad: no es un turno
+            # documental. La respuesta directa no exige evidencia externa.
+            modality = DataModality.CONVERSATIONAL.value
+            strategy = RetrievalStrategyName.VECTOR.value
+            route = SourceRoute.DIRECT.value
+            path = AdaptivePath.FAST.value
+            rewrite = False
+            complexity = "trivial"
         elif classification.kind == "lexical":
             modality = DataModality.DOCUMENTS.value
             strategy = (
@@ -220,11 +251,17 @@ class AdaptivePlanner:
             )
             if payload is None and not deterministic:
                 try:
+                    from src.runtime.turn_intent import build_turn_intent_questions
+
+                    preguntas = {
+                        **build_query_questions(),
+                        **build_turn_intent_questions(),
+                    }
                     payload = await call_phase_judge(
                         self._judge,
                         phase=PHASE_PRE_RETRIEVAL,
                         state=state,
-                        questions=build_query_questions(),
+                        questions=preguntas,
                         context=context,
                     )
                 except Exception:  # noqa: BLE001
@@ -234,6 +271,36 @@ class AdaptivePlanner:
                 if isinstance(answers, dict) and answers:
                     jev_answers = public_answers(answers)
                     provider = "hybrid"
+                    # Turn intent: una señal más de la MISMA llamada. El route lo
+                    # compone la política en turn_intent (no el choice suelto).
+                    if turn_decision is None or turn_decision.provider != "jev":
+                        try:
+                            from src.runtime.turn_intent import decision_from_jev
+
+                            jev_turn = decision_from_jev(
+                                payload,
+                                rules=turn_rules,
+                                has_context=conversation_present,
+                                settings=None,
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            logger.warning(
+                                "turn intent from judge failed", error=str(exc)[:150]
+                            )
+                            jev_turn = None
+                        if jev_turn is not None:
+                            turn_decision = jev_turn
+                    if (
+                        turn_decision is not None
+                        and turn_decision.direct
+                        and route == SourceRoute.KNOWLEDGE_SEARCH.value
+                        and not (sql_enabled and sql_score >= 0.5)
+                    ):
+                        route = SourceRoute.DIRECT.value
+                        modality = DataModality.CONVERSATIONAL.value
+                        path = AdaptivePath.FAST.value
+                        complexity = "trivial"
+                        rewrite = False
                     modality_ans = answer_for(answers, "modality") or {}
                     strategy_ans = answer_for(answers, "retrieval_strategy") or {}
                     modality = overlay_modality(
@@ -274,6 +341,8 @@ class AdaptivePlanner:
                     ]
                     if confs:
                         confidence = max(confidence, sum(confs) / len(confs))
+                    if turn_decision is not None and turn_decision.provider == "jev":
+                        confidence = max(confidence, turn_decision.confidence)
 
         engine, lexical_weight = _engine_strategy(strategy)
         if strategy in {RetrievalStrategyName.LEXICAL.value, RetrievalStrategyName.EXACT.value}:
@@ -314,7 +383,11 @@ class AdaptivePlanner:
         plan = AdaptivePlan(
             mode=mode,
             apply=apply,
-            intent=classification.kind if not greeting else "conversational",
+            intent=(
+                turn_decision.intent
+                if turn_decision is not None
+                else ("conversational" if greeting else classification.kind)
+            ),
             modality=modality,
             retrieval_requirement=retrieval_req,
             reasoning_requirement=reasoning,
@@ -334,6 +407,19 @@ class AdaptivePlanner:
             classification_kind=classification.kind,
             classification_lexical_ratio=classification.lexical_ratio,
             jev_answers=jev_answers,
+            turn_intent=(turn_decision.intent if turn_decision is not None else ""),
+            intent_probabilities=(
+                dict(turn_decision.probabilities) if turn_decision is not None else {}
+            ),
+            needs_external_evidence=(
+                bool(turn_decision.needs_external_evidence)
+                if turn_decision is not None
+                else None
+            ),
+            turn_route=(turn_decision.route if turn_decision is not None else ""),
+            turn_provider=(turn_decision.provider if turn_decision is not None else ""),
+            model_tier=(turn_decision.model_tier if turn_decision is not None else ""),
+            turn_signals=(list(turn_decision.signals) if turn_decision is not None else []),
         )
         if self._cache is not None:
             try:

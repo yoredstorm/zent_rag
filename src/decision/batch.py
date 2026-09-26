@@ -207,6 +207,18 @@ def _planner_specs() -> list[QuestionSpec]:
     return _specs(build_query_questions(), source="planner")
 
 
+def _turn_intent_specs() -> list[QuestionSpec]:
+    """Capa conversacional: qué hace el usuario y si necesita evidencia externa.
+
+    Viaja en la misma fase PRE_RETRIEVAL (una sola llamada con el routing y el
+    planner): la decisión de intención es parte de entender la pregunta, no una
+    plataforma paralela.
+    """
+    from src.runtime.turn_intent import build_turn_intent_questions
+
+    return _specs(build_turn_intent_questions(), source="turn_intent")
+
+
 def _evidence_specs() -> list[QuestionSpec]:
     from src.rag.adaptive.questions import build_evidence_questions
 
@@ -388,6 +400,7 @@ def build_pre_retrieval_questions(
     specs = _routing_specs(available_capabilities)
     if include_planner:
         specs.extend(_planner_specs())
+        specs.extend(_turn_intent_specs())
     phase = _dedupe(specs, phase=JudgmentPhase.PRE_RETRIEVAL.value)
     # Canonicalizar la señal duplicada: id canónico `needs_reasoning`.
     canonical = phase.questions.pop("needs_complex_reasoning", None)

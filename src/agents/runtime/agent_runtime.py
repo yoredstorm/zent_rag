@@ -255,6 +255,20 @@ def _looks_like_knowledge_question(message: str) -> bool:
     return not any(texto.startswith(saludo) and len(texto) <= len(saludo) + 25 for saludo in saludos)
 
 
+def _decision_engine_or_none():
+    """Engine de decisión con JEV configurado; None = reglas/fallback sin costo."""
+    try:
+        from src.decision.service import get_decision_engine
+
+        engine = get_decision_engine()
+        settings = getattr(engine, "settings", None)
+        if settings is not None and not bool(getattr(settings, "jev_configured", False)):
+            return None
+        return engine
+    except Exception:  # noqa: BLE001 — sin engine decide la política de reglas
+        return None
+
+
 def _budget_answer(history: list[str], reason: str) -> str:
     """Respuesta de cierre cuando el presupuesto se agotó: nunca vacía.
 
@@ -424,6 +438,9 @@ class AgentRunResult:
     evidence: dict | None = None
     citations: list[dict] = field(default_factory=list)
     evidence_sufficiency: dict | None = None
+    #: Turn intent (capa conversacional): intención, distribución JEV, route y
+    #: si el turno necesitó evidencia externa. Visible en «Ver flujo».
+    turn_intent: dict | None = None
 
 
 _ANSWER_FIELD_RE = re.compile(r'"answer"\s*:\s*"', re.IGNORECASE)
@@ -1715,14 +1732,117 @@ class AgentRuntime:
         # runtime es compartido entre requests).
         run_plan = getattr(self, "_pending_response_plan", None)
 
+        # ---------------------------------------------------------------------
+        # Turn intent: ¿qué está haciendo el usuario? Reglas para lo obvio, JEV
+        # para la ambigüedad. Un saludo/queja/capacidad NO necesita evidencia
+        # documental: la respuesta directa es válida y el gate documental no aplica.
+        # ---------------------------------------------------------------------
+        turn_decision = None
+        try:
+            from src.decision.judgment import JudgmentContext as _TurnContext
+            from src.runtime.turn_intent import resolve_turn_intent
+
+            intent_t0 = time.perf_counter()
+            turn_decision = await resolve_turn_intent(
+                engine=_decision_engine_or_none(),
+                message=request.message,
+                conversation_state={
+                    "has_prior_turns": bool(request.conversation_id),
+                    "has_business_context": bool(request.context),
+                },
+                agent_purpose=str(
+                    (request.agent.config_json or {}).get("purpose") or ""
+                ),
+                has_context=bool(request.conversation_id or request.context),
+                settings=settings,
+                context=_TurnContext(
+                    phase="pre_retrieval",
+                    organization_id=request.agent.organization_id,
+                    request_id=result.run_id,
+                    agent_id=request.agent.id,
+                    run_id=result.run_id,
+                    trace_id=request.trace_id,
+                ),
+            )
+            result.spans.append(
+                {
+                    "stage": "intent",
+                    "name": "turn_intent",
+                    "duration_ms": round((time.perf_counter() - intent_t0) * 1000, 2),
+                    "tokens": 0,
+                    "metadata": (
+                        {
+                            "intent": turn_decision.intent,
+                            "provider": turn_decision.provider,
+                            "route": turn_decision.route,
+                        }
+                        if turn_decision is not None
+                        else {"mode": "off"}
+                    ),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 — la capa conversacional nunca rompe el run
+            logger.warning("turn intent failed", error=str(exc)[:150])
+            turn_decision = None
+        turn_direct = bool(turn_decision is not None and turn_decision.direct)
+        gate_note = {"noted": False}
+        turn_direct_tool_retries = 0
+        if turn_decision is not None:
+            result.turn_intent = turn_decision.to_public_dict()
+            result.steps.append(
+                {
+                    "type": "conversation_intent",
+                    "detail": (
+                        f"{turn_decision.intent} · {turn_decision.route} · "
+                        + (
+                            "sin evidencia externa"
+                            if not turn_decision.needs_external_evidence
+                            else "requiere evidencia"
+                        )
+                    ),
+                    **turn_decision.to_public_dict(),
+                }
+            )
+            if turn_direct:
+                fast_model = str(
+                    getattr(settings, "RUNTIME_TURN_FAST_MODEL", "") or ""
+                ).strip()
+                if fast_model and turn_decision.model_tier == "fast":
+                    config["model"] = fast_model
+                result.steps.append(
+                    {
+                        "type": "turn_route",
+                        "route": turn_decision.route,
+                        "retrieval": "not_applicable",
+                        "answer_gate": "not_applicable",
+                        "model_tier": turn_decision.model_tier,
+                        "detail": "respuesta directa: el turno no requiere fuentes",
+                    }
+                )
+
         def _describe_tools(tools) -> str:
             return "\n".join(
                 f"- {t.name}: {t.description}" for t in tools
             ) or "(no tools available)"
 
-        tool_descriptions = _describe_tools(allowed_tools)
+        # Turno conversacional: el modelo no ve herramientas (no las necesita) y
+        # la pregunta de capacidad se responde con la configuración REAL del agente.
+        prompt_tools = [] if turn_direct else allowed_tools
+        tool_descriptions = _describe_tools(prompt_tools)
 
         agent_instructions = compose_agent_instructions(request.agent)
+        if turn_direct:
+            # Sin esto el modelo interpreta «no tools» como «no puedo»: un saludo
+            # o una queja no se contestan diciendo que faltan fuentes.
+            agent_instructions = (
+                f"{agent_instructions}\n\n## TURNO CONVERSACIONAL\n"
+                "Este turno es conversacional (saludo, agradecimiento, despedida, "
+                "queja, charla o pregunta sobre tus capacidades). Respondé directo "
+                "y en el tono configurado, sin llamar herramientas. NO digas que no "
+                "tenés acceso a fuentes o herramientas: están configuradas y "
+                "disponibles para preguntas de conocimiento. No inventes datos de "
+                "negocio ni cites documentos."
+            )
         response_shape = _response_shape_block(run_plan)
         system = _SYSTEM_TEMPLATE.format(
             tools=tool_descriptions,
@@ -1731,6 +1851,17 @@ class AgentRuntime:
             response_shape=response_shape,
         )
         context_block = _render_context_block(request.context) if request.context else ""
+        if turn_direct and turn_decision is not None and turn_decision.intent == "capability_question":
+            from src.runtime.turn_intent import capability_answer_block
+
+            capability_block = capability_answer_block(
+                agent=request.agent,
+                tools=allowed_tools,
+                org_config=request.org_config,
+            )
+            context_block = (
+                f"{capability_block}\n\n{context_block}" if context_block else capability_block
+            )
         for reasoning_step in getattr(self, "_pending_reasoning_steps", None) or ():
             result.steps.append(reasoning_step)
         response_step = _response_planning_step(run_plan)
@@ -2034,6 +2165,25 @@ class AgentRuntime:
             abstenerse.
             """
             nonlocal revision_used
+            if turn_direct:
+                # «Sin evidencia» sólo es un problema cuando la intención REQUIERE
+                # evidencia. Un saludo/queja/capacidad se responde directo: el gate
+                # documental no aplica (se registra como not_applicable, no como fail).
+                if not gate_note["noted"]:
+                    gate_note["noted"] = True
+                    result.steps.append(
+                        {
+                            "type": "answer_gate",
+                            "verdict": "not_applicable",
+                            "mode": answer_mode,
+                            "detail": (
+                                "turno conversacional: no requiere evidencia "
+                                "documental (intent="
+                                f"{turn_decision.intent if turn_decision else 'direct'})"
+                            ),
+                        }
+                    )
+                return "skip"
             # Chequeo determinista ANTES del juicio: una fecha o un año que la
             # evidencia no contiene se corrige una vez sin gastar un LLM. No
             # depende del gate JEV: es gratis y no opina, sólo compara.
@@ -2206,7 +2356,7 @@ class AgentRuntime:
         for step_index in range(max_steps):
             from src.runtime.tool_routing import routing_enabled, select_relevant_tools
 
-            if routing_enabled(settings, request.agent.config_json):
+            if routing_enabled(settings, request.agent.config_json) and not turn_direct:
                 try:
                     from src.decision.judgment import PHASE_TOOL_ROUTING, JudgmentContext
                     from src.decision.service import get_decision_engine
@@ -2327,6 +2477,26 @@ class AgentRuntime:
             )
 
             action = _parse_action(resp.content)
+            if (
+                turn_direct
+                and str(action.get("tool") or "").strip()
+                and turn_direct_tool_retries < 1
+            ):
+                # El turno no necesita herramientas (no se ofrecieron): si el
+                # modelo igual intenta una, se corrige sin ejecutarla.
+                turn_direct_tool_retries += 1
+                history.append(
+                    "OBSERVATION: este turno es conversacional. No hace falta "
+                    "ninguna herramienta ni buscar fuentes: respondé directo."
+                )
+                result.steps.append(
+                    {
+                        "type": "turn_guard",
+                        "detail": "tool call ignorado: turno conversacional",
+                        "attempted_tool": str(action.get("tool"))[:80],
+                    }
+                )
+                continue
             result.steps.append(
                 {
                     "type": "llm",
@@ -2373,6 +2543,7 @@ class AgentRuntime:
                 if (
                     knowledge_agent
                     and tool_calls == 0
+                    and not turn_direct
                     and grounding_nudges < 1
                     and _looks_like_knowledge_question(request.message)
                 ):
@@ -2392,7 +2563,7 @@ class AgentRuntime:
                         }
                     )
                     continue
-                if _blocks_early_answer(reasoning, step_index=step_index, config=config):
+                if _blocks_early_answer(reasoning, step_index=step_index, config=config) and not turn_direct:
                     history.append(
                         "OBSERVATION: analysis incomplete. The scenario has not been "
                         "fully reconstructed yet, so a conclusion now would be "

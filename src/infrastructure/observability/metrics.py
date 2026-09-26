@@ -614,6 +614,23 @@ zent_retrieval_entity_pin_total = Counter(
     "Queries whose asked entity (byte 105, categoria 31, ...) was pinned into evidence",
     labelnames=["outcome", "stage"],
 )
+# --- Turn intent: capa conversacional (saludo/queja/capacidad/charla) ----------
+zent_turn_intent_total = Counter(
+    "zent_turn_intent_total",
+    "Turn intent decisions (conversational vs knowledge vs action) with their route",
+    labelnames=["intent", "provider", "route", "needs_evidence"],
+)
+zent_turn_retrieval_skipped_total = Counter(
+    "zent_turn_retrieval_skipped_total",
+    "Turns that did not need external evidence: retrieval was skipped by policy",
+    labelnames=["intent"],
+)
+zent_turn_intent_latency_seconds = Histogram(
+    "zent_turn_intent_latency_seconds",
+    "Latencia de la clasificación de intención del turno",
+    labelnames=["provider"],
+    buckets=(0.005, 0.02, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0),
+)
 # --- Ingesta: tokens y costo (embeddings + resumen) ----------------------------
 knowledge_ingest_tokens_total = Counter(
     "knowledge_ingest_tokens_total",

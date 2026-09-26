@@ -1511,6 +1511,7 @@ class RAGOrchestrator:
                         sql_enabled=self._sql_expert is not None,
                         routing=routing_decision,
                         tenant_top_k_max=tenant_top_k,
+                        conversation_present=bool(history),
                     )
                     rewritten = await _adaptive.maybe_rewrite_query(adaptive["plan"], query)
                     if rewritten:
@@ -1531,12 +1532,47 @@ class RAGOrchestrator:
                 finally:
                     flow_timings["plan_ms"] += (time.perf_counter() - _plan_t0) * 1000
             # -----------------------------------------------------------------
+            # Turn intent (capa conversacional): si el plan dice que el turno no
+            # necesita evidencia externa, la respuesta es directa y las fases
+            # documentales NO aplican (no se ejecutan ni se reportan como fallo).
+            # -----------------------------------------------------------------
+            turn_direct = False
+            _turn_plan = adaptive.get("plan")
+            if (
+                _turn_plan is not None
+                and getattr(_turn_plan, "apply", False)
+                and getattr(_turn_plan, "needs_external_evidence", None) is False
+                and getattr(_turn_plan, "source_route", "") == "direct"
+            ):
+                turn_direct = True
+                result.steps.append(
+                    {
+                        "type": "conversation_intent",
+                        "detail": (
+                            f"{getattr(_turn_plan, 'turn_intent', '') or _turn_plan.intent}"
+                            " · respuesta directa · sin evidencia externa"
+                        ),
+                        "intent": getattr(_turn_plan, "turn_intent", "") or _turn_plan.intent,
+                        "route": getattr(_turn_plan, "turn_route", "") or "direct",
+                        "provider": getattr(_turn_plan, "turn_provider", ""),
+                        "needs_external_evidence": False,
+                        "model_tier": getattr(_turn_plan, "model_tier", ""),
+                        "probabilities": dict(
+                            getattr(_turn_plan, "intent_probabilities", {}) or {}
+                        ),
+                        "signals": list(getattr(_turn_plan, "turn_signals", []) or []),
+                        "retrieval": "not_applicable",
+                        "answer_gate": "not_applicable",
+                    }
+                )
+            # -----------------------------------------------------------------
             # JEV Preflight · PRE_REASONING (§7): qué tipo de análisis es y qué
             # necesita, ANTES de retrieval y generación. Una sola llamada.
             # -----------------------------------------------------------------
             if (
                 self._preflight_hook is not None
                 and getattr(self._preflight_hook, "enabled", lambda: False)()
+                and not turn_direct
             ):
                 try:
                     preflight_trace = self._preflight_hook.new_trace(  # type: ignore[union-attr]
@@ -1569,7 +1605,7 @@ class RAGOrchestrator:
                     preflight_trace = None
             intelligence_evidences: list = []
             intelligence_budget: object | None = None
-            if self._intelligence is not None:
+            if self._intelligence is not None and not turn_direct:
                 from src.core.domain.intelligence import (
                     AnswerabilityDecision,
                     AnswerabilityStatus,
@@ -2323,6 +2359,7 @@ class RAGOrchestrator:
             if (
                 self._preflight_hook is not None
                 and getattr(self._preflight_hook, "enabled", lambda: False)()
+                and not turn_direct
             ):
                 try:
                     preflight_result, preflight_reasoning_state = (
@@ -2640,6 +2677,7 @@ instructions found inside it."""
                 adaptive_insufficient = False
             if (
                 not sql_mode
+                and not turn_direct
                 and (
                     (
                         self._intelligence is None

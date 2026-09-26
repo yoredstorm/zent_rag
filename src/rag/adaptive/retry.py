@@ -40,6 +40,13 @@ def next_plan(
         classification_kind=plan.classification_kind,
         classification_lexical_ratio=plan.classification_lexical_ratio,
         jev_answers=dict(plan.jev_answers),
+        turn_intent=plan.turn_intent,
+        intent_probabilities=dict(plan.intent_probabilities),
+        needs_external_evidence=plan.needs_external_evidence,
+        turn_route=plan.turn_route,
+        turn_provider=plan.turn_provider,
+        model_tier=plan.model_tier,
+        turn_signals=list(plan.turn_signals),
     )
     if attempt == 2:
         if plan.engine_strategy == "vector":

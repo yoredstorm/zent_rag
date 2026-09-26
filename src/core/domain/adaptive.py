@@ -82,9 +82,18 @@ class AdaptivePlan:
     classification_lexical_ratio: float = 0.2
     jev_answers: dict[str, Any] = field(default_factory=dict)
     cache_hit: bool = False
+    #: Turn intent (capa conversacional): qué está haciendo el usuario y si el
+    #: turno necesita evidencia externa. Señal, no ejecución.
+    turn_intent: str = ""
+    intent_probabilities: dict[str, float] = field(default_factory=dict)
+    needs_external_evidence: bool | None = None
+    turn_route: str = ""
+    turn_provider: str = ""
+    model_tier: str = ""
+    turn_signals: list[str] = field(default_factory=list)
 
     def to_public_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "mode": self.mode,
             "apply": self.apply,
             "intent": self.intent,
@@ -107,6 +116,20 @@ class AdaptivePlan:
             "classification_kind": self.classification_kind,
             "cache_hit": self.cache_hit,
         }
+        if self.turn_intent:
+            payload["turn"] = {
+                "intent": self.turn_intent,
+                "route": self.turn_route,
+                "provider": self.turn_provider,
+                "needs_external_evidence": self.needs_external_evidence,
+                "model_tier": self.model_tier,
+                "probabilities": {
+                    key: round(float(value), 4)
+                    for key, value in self.intent_probabilities.items()
+                },
+                "signals": list(self.turn_signals),
+            }
+        return payload
 
 
 @dataclass(kw_only=True)

@@ -51,6 +51,7 @@ STATUS_PENDING = "pending"
 #: `type` de los steps del runtime → (fase, tipo canónico).
 STEP_KIND_PHASES: dict[str, str] = {
     "reasoning_classification": PHASE_UNDERSTANDING,
+    "conversation_intent": PHASE_UNDERSTANDING,
     "context": PHASE_CONTEXT,
     "company_context": PHASE_CONTEXT,
     "reasoning_plan": PHASE_PLANNING,
@@ -60,6 +61,8 @@ STEP_KIND_PHASES: dict[str, str] = {
     "tool_routing": PHASE_DECISION,
     "router_fallback": PHASE_DECISION,
     "termination_gate": PHASE_DECISION,
+    "turn_route": PHASE_DECISION,
+    "turn_guard": PHASE_DECISION,
     "answer_gate": PHASE_VERIFICATION,
     "reasoning_incomplete": PHASE_VERIFICATION,
     "answer_revision": PHASE_VERIFICATION,

@@ -46,6 +46,7 @@ def deserialize_plan(raw: str | None, *, apply: bool, mode: str) -> AdaptivePlan
         return None
     if not isinstance(data, dict):
         return None
+    turn = data.get("turn") if isinstance(data.get("turn"), dict) else {}
     plan = AdaptivePlan(
         mode=mode,
         apply=apply,
@@ -68,5 +69,21 @@ def deserialize_plan(raw: str | None, *, apply: bool, mode: str) -> AdaptivePlan
         provider=str(data.get("provider") or "rules"),
         classification_kind=str(data.get("classification_kind") or "semantic"),
         cache_hit=True,
+        turn_intent=str(turn.get("intent") or ""),
+        intent_probabilities={
+            str(key): float(value or 0.0)
+            for key, value in (turn.get("probabilities") or {}).items()
+        }
+        if isinstance(turn.get("probabilities"), dict)
+        else {},
+        needs_external_evidence=(
+            bool(turn["needs_external_evidence"])
+            if isinstance(turn, dict) and turn.get("needs_external_evidence") is not None
+            else None
+        ),
+        turn_route=str(turn.get("route") or ""),
+        turn_provider=str(turn.get("provider") or ""),
+        model_tier=str(turn.get("model_tier") or ""),
+        turn_signals=[str(item) for item in (turn.get("signals") or [])],
     )
     return plan
