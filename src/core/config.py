@@ -180,6 +180,15 @@ class Settings(BaseSettings):
     LITELLM_DEFAULT_MODEL: str = "gpt-4o-mini"
     LITELLM_TIMEOUT_SECONDS: int = Field(default=300, ge=1, le=600)
     LITELLM_MAX_RETRIES: int = Field(default=2, ge=0, le=5)
+    #: Reintentos explícitos de embeddings ante un fallo transitorio del
+    #: proveedor (429/5xx/timeout). No se delega en `litellm.num_retries`: ese
+    #: global se pisa en runtime y quedaba en None, así que un 429 tumbaba la
+    #: búsqueda entera sin un solo reintento.
+    LITELLM_EMBED_MAX_RETRIES: int = Field(default=2, ge=0, le=5)
+    #: Base del backoff exponencial con jitter (segundos) entre reintentos.
+    LITELLM_EMBED_BACKOFF_SECONDS: float = Field(default=0.6, ge=0.0, le=10.0)
+    #: Techo del tiempo total que puede consumir un `embed` con sus reintentos.
+    LITELLM_EMBED_TOTAL_BUDGET_SECONDS: float = Field(default=20.0, ge=1.0, le=120.0)
     GATEWAY_FALLBACK_MODEL: str = Field(
         default="",
         description="Modelo real si el primary falla. Vacío = sin fallback.",

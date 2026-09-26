@@ -7,6 +7,8 @@
 # =============================================================================
 from __future__ import annotations
 
+import asyncio
+import random
 import time
 
 import litellm
@@ -41,6 +43,55 @@ def _get_llm_kwargs() -> dict:
     if settings.LITELLM_API_KEY:
         kwargs["api_key"] = settings.LITELLM_API_KEY.get_secret_value()
     return kwargs
+
+
+#: Marcadores de un fallo TRANSITORIO del proveedor. Un 429 por saturación o un
+#: 5xx se reintenta; un 400 por payload inválido no.
+_TRANSIENT_EMBED_MARKERS = (
+    "rate limit",
+    "ratelimiterror",
+    "server overload",
+    "overloaded",
+    "try again",
+    "temporarily",
+    "timeout",
+    "timed out",
+    "connection",
+    "service unavailable",
+    "internal server error",
+    "bad gateway",
+    "502",
+    "503",
+    "504",
+)
+
+
+def _is_transient_embed_error(exc: BaseException) -> bool:
+    """True si vale la pena reintentar el embedding.
+
+    LiteLLM expone excepciones propias (`RateLimitError`, `Timeout`,
+    `APIConnectionError`, `ServiceUnavailableError`), pero un proveedor
+    compatible OpenAI puede devolver un 429 disfrazado de `OpenAIError`, así que
+    la comprobación por tipo se completa con los marcadores del mensaje.
+    """
+    for name in (
+        "RateLimitError",
+        "Timeout",
+        "APIConnectionError",
+        "ServiceUnavailableError",
+        "InternalServerError",
+    ):
+        cls = getattr(litellm, name, None) or getattr(litellm.exceptions, name, None)
+        if cls is not None and isinstance(exc, cls):
+            return True
+    text = str(exc).lower()
+    return any(marker in text for marker in _TRANSIENT_EMBED_MARKERS)
+
+
+def _embed_backoff_seconds(attempt: int, base: float) -> float:
+    """Backoff exponencial con jitter completo (evita reintentos sincronizados)."""
+    ceiling = base * (2 ** max(0, attempt - 1))
+    return random.uniform(base * 0.5, ceiling)  # noqa: S311 - jitter, no crypto
 
 
 async def _call_generate(
@@ -263,24 +314,55 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
             llm_kwargs.pop("api_key", None)
 
         start = time.perf_counter()
-        try:
-            response = await aembedding(
-                model=model_name,
-                input=texts,
-                timeout=settings.LITELLM_TIMEOUT_SECONDS,
-                **llm_kwargs,
-            )
-        except Exception as exc:
-            latency_ms = (time.perf_counter() - start) * 1000
-            logger.error(
-                "Embedding generation failed",
-                model=model_name,
-                embedding_latency_ms=round(latency_ms, 2),
-                batch_size=len(texts),
-                error=str(exc),
-                exc_info=True,
-            )
-            raise
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                response = await aembedding(
+                    model=model_name,
+                    input=texts,
+                    timeout=settings.LITELLM_TIMEOUT_SECONDS,
+                    # Nuestro retry es el único: se apaga el de LiteLLM para no
+                    # multiplicar intentos (2×2) y para que el backoff quede
+                    # bajo control y sea observable.
+                    num_retries=0,
+                    **llm_kwargs,
+                )
+                break
+            except Exception as exc:
+                retriable = _is_transient_embed_error(exc)
+                elapsed = time.perf_counter() - start
+                budget_left = settings.LITELLM_EMBED_TOTAL_BUDGET_SECONDS - elapsed
+                if (
+                    not retriable
+                    or attempt > settings.LITELLM_EMBED_MAX_RETRIES
+                    or budget_left <= 0
+                ):
+                    latency_ms = elapsed * 1000
+                    logger.error(
+                        "Embedding generation failed",
+                        model=model_name,
+                        embedding_latency_ms=round(latency_ms, 2),
+                        batch_size=len(texts),
+                        attempts=attempt,
+                        transient=retriable,
+                        error=str(exc),
+                        exc_info=True,
+                    )
+                    raise
+                delay = min(
+                    _embed_backoff_seconds(attempt, settings.LITELLM_EMBED_BACKOFF_SECONDS),
+                    max(0.0, budget_left),
+                )
+                logger.warning(
+                    "Embedding generation retrying after transient provider failure",
+                    model=model_name,
+                    attempt=attempt,
+                    max_attempts=settings.LITELLM_EMBED_MAX_RETRIES + 1,
+                    delay_seconds=round(delay, 3),
+                    error=str(exc)[:180],
+                )
+                await asyncio.sleep(delay)
 
         latency_ms = (time.perf_counter() - start) * 1000
         rag_embeddings_latency.labels(

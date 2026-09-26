@@ -69,6 +69,24 @@ INSUFFICIENT_ANSWER = (
     "con confianza. Probá reformular la pregunta o cargar más información."
 )
 
+#: Abstención cuando la recuperación NO llegó a ejecutarse (proveedor de
+#: embeddings caído, timeout, 429). Es un estado distinto del anterior: no falta
+#: información, falta la búsqueda. Decir "no hay evidencia en las fuentes"
+#: cuando nunca se consultaron es falso y manda al usuario a cargar documentos
+#: que quizá ya tiene.
+RETRIEVAL_UNAVAILABLE_ANSWER = (
+    "No pude consultar tus fuentes: la búsqueda de conocimiento no llegó a "
+    "ejecutarse, así que todavía no hay nada que concluir. No es un problema de "
+    "tu información ni de la pregunta. Reintentá en unos minutos."
+)
+
+
+def retrieval_unavailable_answer(reason: str = "") -> str:
+    """Abstención honesta: fallo operativo, no ausencia de evidencia."""
+    if not reason:
+        return RETRIEVAL_UNAVAILABLE_ANSWER
+    return f"{RETRIEVAL_UNAVAILABLE_ANSWER} Causa: {reason.strip()[:160]}."
+
 #: Motivos de revisión que son de CONTENIDO (no de forma).
 CONTENT_REVISION_REASONS = frozenset({"missing_evidence", "unsupported_claim"})
 

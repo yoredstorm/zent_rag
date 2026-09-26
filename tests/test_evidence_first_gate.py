@@ -1268,3 +1268,122 @@ def test_respuesta_parcial_no_se_anula_cuando_hay_contenido_respaldado() -> None
         ]
     )
     assert response_policy(sin_respaldo, retrieval_budget_left=0) == "abstain"
+
+
+# ---------------------------------------------------------------------------
+# Regresión 2026-09-26: «no pude buscar» NO es «no hay evidencia»
+# ---------------------------------------------------------------------------
+# El proveedor de embeddings devolvió 429 «server overload» de forma sostenida.
+# `search_knowledge` fallaba sin recuperar un solo fragmento, el LoopGuard
+# bloqueaba el reintento (el intento fallido ya contaba como duplicado) y el run
+# cerraba con «No hay evidencia suficiente en las fuentes consultadas… cargá más
+# información». Falso: las fuentes nunca se consultaron. El usuario iba a subir
+# documentos que ya tenía.
+
+#: Error textual del proveedor (mismo formato que devuelve LiteLLM en el run real).
+OVERLOAD_429 = (
+    "litellm.RateLimitError: RateLimitError: OpenAIException - Error code: 429 - "
+    "{'message': 'server overload, please try again later trace_id: abc123', "
+    "'type': 'server_overload'}"
+)
+
+
+class _FailingSearch(_SearchStub):
+    """`search_knowledge` que falla siempre: nunca devuelve evidencia."""
+
+    def __init__(self, error: str = OVERLOAD_429) -> None:
+        super().__init__()
+        self.error = error
+
+    async def execute(self, ctx: ToolContext, arguments: dict) -> ToolResult:
+        self.queries.append(str(arguments.get("query") or ""))
+        return ToolResult(output="", error=self.error)
+
+
+@pytest.mark.asyncio
+async def test_busqueda_caida_no_culpa_a_las_fuentes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regresión del run real: la abstención debe declarar el fallo operativo."""
+    from src.runtime.answer_gate import INSUFFICIENT_ANSWER, RETRIEVAL_UNAVAILABLE_ANSWER
+
+    stub = _FailingSearch()
+    llm = _FakeLLM(
+        [
+            '{"tool": "search_knowledge", "arguments": {"query": "categoría 31 byte 105"}}',
+            # El modelo insiste: el intento anterior no produjo ninguna
+            # observación, así que este reintento tiene que poder ejecutarse.
+            '{"tool": "search_knowledge", "arguments": {"query": "categoría 31 byte 105"}}',
+            '{"answer": "La categoría 31 cubre cambios voluntarios y el byte 105 es Fee Application."}',
+        ]
+    )
+    result, search = await _run(monkeypatch, llm=llm, judge=_Judge(), search=stub)
+
+    # El reintento idéntico se ejecutó: un intento fallido no es un duplicado.
+    assert len(search.queries) == 2
+    assert any(step["type"] == "retry_released" for step in result.steps)
+
+    # Y el mensaje es el honesto, no el que culpa al corpus.
+    assert result.answer.startswith(RETRIEVAL_UNAVAILABLE_ANSWER)
+    assert "Causa:" in result.answer
+    assert result.answer != INSUFFICIENT_ANSWER
+    assert "en las fuentes consultadas" not in result.answer
+    assert "cargar más información" not in result.answer
+
+    final = [step for step in result.steps if step["type"] == "final"][-1]
+    assert final["degraded"] is True
+    assert final["failure_kind"] == "transient"
+    assert final["detail"].startswith("retrieval_unavailable")
+
+
+@pytest.mark.asyncio
+async def test_error_no_transitorio_tampoco_culpa_a_las_fuentes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Un fallo permanente también es operativo: tampoco es falta de información."""
+    from src.runtime.answer_gate import RETRIEVAL_UNAVAILABLE_ANSWER
+
+    #: Error que no se arregla reintentando y que no matchea los marcadores
+    #: transitorios (payload inválido, política, permisos).
+    stub = _FailingSearch(error="tool disabled by policy: no access to this source")
+    llm = _FakeLLM(
+        [
+            '{"tool": "search_knowledge", "arguments": {"query": "categoría 31"}}',
+            '{"answer": "La categoría 31 cubre cambios voluntarios."}',
+        ]
+    )
+    result, _ = await _run(monkeypatch, llm=llm, judge=_Judge(), search=stub)
+
+    assert result.answer.startswith(RETRIEVAL_UNAVAILABLE_ANSWER)
+    assert "devolvió un error" in result.answer
+    final = [step for step in result.steps if step["type"] == "final"][-1]
+    assert final["degraded"] is True
+    assert final["failure_kind"] == "permanent"
+    # Un error no transitorio no se reintenta: reintentarlo no lo arregla.
+    assert not any(step["type"] == "retry_released" for step in result.steps)
+
+
+@pytest.mark.asyncio
+async def test_buscar_sin_encontrar_si_culpa_a_las_fuentes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Contraprueba: si la búsqueda SÍ corrió y no alcanza, el mensaje es el otro.
+
+    Sin esta distinción, el arreglo anterior taparía el caso legítimo.
+    """
+    from src.runtime.answer_gate import RETRIEVAL_UNAVAILABLE_ANSWER
+
+    stub = _SearchStub(respuestas=[("", {"evidence": []})])
+    llm = _FakeLLM(
+        [
+            '{"tool": "search_knowledge", "arguments": {"query": "categoría 31"}}',
+            '{"answer": "La categoría 31 cubre cambios voluntarios."}',
+        ]
+    )
+    result, search = await _run(monkeypatch, llm=llm, judge=_Judge(), search=stub)
+
+    assert search.queries, "la búsqueda tiene que haber corrido"
+    assert result.answer != RETRIEVAL_UNAVAILABLE_ANSWER
+    # Ningún paso puede declarar degradación: la búsqueda sí se ejecutó.
+    assert not any(step.get("degraded") for step in result.steps)
+

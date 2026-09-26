@@ -233,3 +233,45 @@ Cuatro cambios, todos deterministas:
   (`Rec2_Cat10_dapp_C.pdf`) no ocupan el top; el filtro nunca deja la búsqueda
   vacía.
 
+## 13. «No pude buscar» no es «no hay evidencia» (2026-09-26)
+
+Segunda regresión de la **misma frase**. El proveedor de embeddings (Novita,
+`openai/baai/bge-m3`) devolvió `429 server overload` de forma sostenida durante
+~una hora. Cuatro preguntas seguidas terminaron en «No hay evidencia suficiente
+en las fuentes consultadas… cargá más información» sin que **una sola búsqueda
+llegara a ejecutarse**. La frase era falsa: no faltaba información, faltaba la
+búsqueda. El usuario iba a subir documentos que ya tenía.
+
+Tres causas, las tres corregidas:
+
+1. **Sin reintento real** (`src/infrastructure/llm/provider.py`). `embed()` hacía
+   una única llamada y propagaba el error. El retry global de LiteLLM no
+   cubría: `litellm.num_retries` quedaba en `None` en runtime aunque el módulo lo
+   asignara al importar. Ahora hay retry propio, acotado y observable:
+   `LITELLM_EMBED_MAX_RETRIES` (2), backoff exponencial con jitter
+   (`LITELLM_EMBED_BACKOFF_SECONDS`) y techo de tiempo total
+   (`LITELLM_EMBED_TOTAL_BUDGET_SECONDS`). Se pasa `num_retries=0` a LiteLLM para
+   que los intentos no se multipliquen. Sólo se reintenta lo transitorio
+   (429/5xx/timeout/conexión).
+2. **El intento fallido envenenaba el loop guard**
+   (`src/agents/runtime/agent_runtime.py`). `guard.check(fingerprint)` registraba
+   el fingerprint como «ya visto» aunque la ejecución hubiera fallado, así que el
+   reintento idéntico se bloqueaba como duplicado y el run quedaba sin ninguna
+   búsqueda real. `LoopGuard.release()` deshace ese registro cuando el fallo es
+   transitorio, acotado por `MAX_RELEASES` para que un proveedor caído no se
+   vuelva un reintento infinito.
+3. **Una sola frase para dos estados distintos**
+   (`src/runtime/answer_gate.py`). `INSUFFICIENT_ANSWER` se usa cuando se buscó y
+   no alcanza. El fallo operativo tiene su propio texto
+   (`RETRIEVAL_UNAVAILABLE_ANSWER`), que declara que la búsqueda no llegó a
+   ejecutarse y **no** manda a cargar documentos. La distinción se decide con la
+   evidencia del run: cero `retrieved_refs` **y** una tool de consulta fallida
+   (`_retrieval_unavailable`). El paso `final` correspondiente queda marcado
+   `degraded: true` con `failure_kind` (`transient` | `permanent`) y se cuenta en
+   `rag_agent_retrieval_unavailable_total`.
+
+Un turno conversacional no entra en este camino (no hay tool que falle), y una
+búsqueda que sí corrió y no encontró nada sigue usando el mensaje de
+insuficiencia: la contraprueba está en los tests.
+
+

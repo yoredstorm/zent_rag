@@ -27,12 +27,13 @@ from src.core.ports import CacheProvider, LLMProvider
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.observability.metrics import (
     rag_agent_loop_preventions_total,
+    rag_agent_retrieval_unavailable_total,
     zent_agent_jev_action_total,
     zent_agent_jev_retrieval_total,
     zent_response_section_labels_stripped_total,
 )
 from src.intelligence.loop_guard import LoopGuard
-from src.runtime.answer_gate import INSUFFICIENT_ANSWER
+from src.runtime.answer_gate import INSUFFICIENT_ANSWER, retrieval_unavailable_answer
 
 logger = get_logger(__name__)
 
@@ -642,6 +643,33 @@ def _classify_tool_failure(error: str) -> str:
     if any(marker in text for marker in _TRANSIENT_TOOL_ERROR_MARKERS):
         return "transient"
     return "permanent"
+
+
+#: Tools que consultan las fuentes del agente. Si una falla y no quedó ninguna
+#: evidencia, la abstención es OPERATIVA: la búsqueda no llegó a ejecutarse.
+_CONSULT_TOOLS = ("search_knowledge", "query_tabular_data", "query_database")
+
+
+def _retrieval_unavailable(
+    failed_tools: dict[str, str], retrieved_refs: set[str]
+) -> tuple[str, str]:
+    """``(kind, reason)`` si no se pudo consultar; ``("", "")`` si sí se consultó.
+
+    Distingue "no se pudo buscar" de "se buscó y no hay". Sólo el primero es un
+    fallo del proveedor y no debe presentarse como falta de información: culpar
+    a las fuentes ahí es falso y manda al usuario a cargar documentos que quizá
+    ya tiene.
+    """
+    if retrieved_refs:
+        return "", ""
+    for tool in _CONSULT_TOOLS:
+        kind = failed_tools.get(tool)
+        if not kind:
+            continue
+        if kind == "transient":
+            return kind, "la búsqueda de conocimiento está saturada o sin respuesta"
+        return kind, "la herramienta de consulta devolvió un error"
+    return "", ""
 
 
 def _filter_tools_by_sources(
@@ -2582,15 +2610,35 @@ class AgentRuntime:
                     continue
                 gate_verdict = await _gate_draft(direct)
                 if gate_verdict == "abstain":
-                    result.answer = INSUFFICIENT_ANSWER
+                    failure_kind, reason = _retrieval_unavailable(failed_tools, retrieved_refs)
+                    if failure_kind:
+                        # Fallo operativo: no se pudo buscar. Devolver el mensaje
+                        # de "no hay evidencia en las fuentes" acá sería falso.
+                        result.answer = retrieval_unavailable_answer(reason)
+                        result.steps.append(
+                            {
+                                "type": "final",
+                                "answer": result.answer[:500],
+                                "detail": "jev_answer_gate: busqueda no disponible",
+                                "degraded": True,
+                                "failure_kind": failure_kind,
+                                "reason": reason,
+                            }
+                        )
+                        rag_agent_retrieval_unavailable_total.labels(
+                            organization_id=str(request.agent.organization_id),
+                            failure_kind=failure_kind,
+                        ).inc()
+                    else:
+                        result.answer = INSUFFICIENT_ANSWER
+                        result.steps.append(
+                            {
+                                "type": "final",
+                                "answer": result.answer[:500],
+                                "detail": "jev_answer_gate: sin evidencia usable",
+                            }
+                        )
                     result.status = "completed"
-                    result.steps.append(
-                        {
-                            "type": "final",
-                            "answer": result.answer[:500],
-                            "detail": "jev_answer_gate: sin evidencia usable",
-                        }
-                    )
                     return
                 if gate_verdict == "retrieve_more":
                     # JEV pidió evidencia antes de responder: se busca con la
@@ -2651,6 +2699,29 @@ class AgentRuntime:
                             "detail": f"answer_with_limits: {', '.join(limits[:4])}",
                         }
                     )
+                    return
+                # La búsqueda falló y no quedó ninguna evidencia: entregar la
+                # respuesta del modelo sería afirmar sin respaldo, y culpar a las
+                # fuentes sería directamente falso. Se declara el fallo operativo.
+                # (Un turno conversacional no llega acá: no hay tool que falle.)
+                failure_kind, reason = _retrieval_unavailable(failed_tools, retrieved_refs)
+                if failure_kind:
+                    result.answer = retrieval_unavailable_answer(reason)
+                    result.status = "completed"
+                    result.steps.append(
+                        {
+                            "type": "final",
+                            "answer": result.answer[:500],
+                            "detail": "retrieval_unavailable: busqueda no disponible",
+                            "degraded": True,
+                            "failure_kind": failure_kind,
+                            "reason": reason,
+                        }
+                    )
+                    rag_agent_retrieval_unavailable_total.labels(
+                        organization_id=str(request.agent.organization_id),
+                        failure_kind=failure_kind,
+                    ).inc()
                     return
                 result.answer = direct
                 result.citations = _citations_from_evidence(direct, selection)
@@ -2940,6 +3011,19 @@ class AgentRuntime:
                 and bool(getattr(settings, "RUNTIME_FAILED_TOOL_GUARD", True))
             ):
                 failed_tools[tool_name] = _classify_tool_failure(tool_result.error)
+                if failed_tools[tool_name] == "transient":
+                    # Un intento que falló por el proveedor no produjo ninguna
+                    # observación: no puede contar como duplicado y bloquear su
+                    # reintento (el modelo pedía buscar de nuevo y el guard lo
+                    # cortaba, dejando el run sin una sola búsqueda real).
+                    if guard.release(fingerprint, reason="transient_tool_failure"):
+                        result.steps.append(
+                            {
+                                "type": "retry_released",
+                                "tool": tool_name,
+                                "detail": "el intento falló por el proveedor: el reintento queda permitido",
+                            }
+                        )
                 if failed_tools[tool_name] == "permanent":
                     history.append(
                         f"OBSERVATION: '{tool_name}' no pudo responder para esta "

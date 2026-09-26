@@ -26,9 +26,16 @@ class RetryRecord:
 class LoopGuard:
     """Guarda de loops: bloquea operaciones idénticas sin nueva información."""
 
+    #: Cuántas veces se puede liberar un fingerprint ya registrado. Un intento
+    #: que falló por el proveedor (429/5xx/timeout) no produjo información, así
+    #: que su reintento no es un duplicado; pero el perdón está acotado para que
+    #: un fallo permanente no se vuelva un reintento infinito.
+    MAX_RELEASES = 1
+
     def __init__(self) -> None:
         self._seen: dict[str, int] = {}
         self._observations: dict[str, str] = {}
+        self._released: dict[str, int] = {}
         self.retry_records: list[RetryRecord] = []
         self.prevented: int = 0
 
@@ -85,6 +92,40 @@ class LoopGuard:
 
         self.prevented += 1
         return False
+
+    def release(
+        self, fingerprint: ToolFingerprint, *, reason: str = "failed_attempt"
+    ) -> bool:
+        """Deshace el registro de un intento que no llegó a ejecutarse.
+
+        Se llama cuando la ejecución terminó en un fallo TRANSITORIO del
+        proveedor: no hubo observación, así que el fingerprint no debería contar
+        como "ya visto" y el reintento tiene que poder pasar. Devuelve True si
+        quedó libre.
+        """
+        digest = fingerprint.digest
+        previous = self._seen.get(digest, 0)
+        if previous <= 0:
+            return False
+        released = self._released.get(digest, 0)
+        if released >= self.MAX_RELEASES:
+            return False
+        self._released[digest] = released + 1
+        remaining = previous - 1
+        if remaining > 0:
+            self._seen[digest] = remaining
+        else:
+            self._seen.pop(digest, None)
+            self._observations.pop(digest, None)
+        self.retry_records.append(
+            RetryRecord(
+                fingerprint_digest=digest,
+                retry_reason=reason,
+                previous_attempt=previous,
+                new_information="El intento anterior falló sin ejecutarse",
+            )
+        )
+        return True
 
     @property
     def prevented_count(self) -> int:

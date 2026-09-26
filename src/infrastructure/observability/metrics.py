@@ -281,6 +281,11 @@ rag_agent_loop_preventions_total = Counter(
     "Operaciones idénticas bloqueadas por loop prevention",
     labelnames=["organization_id", "scope"],  # scope: sql_repair | agent_runtime
 )
+rag_agent_retrieval_unavailable_total = Counter(
+    "rag_agent_retrieval_unavailable_total",
+    "Abstenciones donde la búsqueda no llegó a ejecutarse (fallo operativo del proveedor)",
+    labelnames=["organization_id", "failure_kind"],  # failure_kind: transient | permanent
+)
 
 # -----------------------------------------------------------------------------
 # Zent Discovery Engine & Semantic Catalog (FASE 24)
