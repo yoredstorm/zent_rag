@@ -290,14 +290,26 @@ class StructuredRetriever:
         if not parent_ids:
             return []
 
+        fetch_by_chunk_id = getattr(self._vector, "get_documents_by_chunk_ids", None)
         try:
-            ctx = await self._vector.get_documents(
-                query.organization_id,
-                parent_ids[:16],
-                role=query.role,
-                user_id=query.user_id,
-                groups=query.groups or None,
-            )
+            if callable(fetch_by_chunk_id):
+                # El `parent_id` del hijo es el `chunk_id` lógico del padre: el
+                # lookup correcto es por payload, no por id de punto.
+                ctx = await fetch_by_chunk_id(
+                    query.organization_id,
+                    [str(parent_id) for parent_id in parent_ids[:16]],
+                    role=query.role,
+                    user_id=query.user_id,
+                    groups=query.groups or None,
+                )
+            else:
+                ctx = await self._vector.get_documents(
+                    query.organization_id,
+                    parent_ids[:16],
+                    role=query.role,
+                    user_id=query.user_id,
+                    groups=query.groups or None,
+                )
         except Exception as exc:
             logger.warning(
                 "V2 parent expansion failed, degrading to children only",
@@ -306,12 +318,17 @@ class StructuredRetriever:
             )
             return []
 
-        by_id = {chunk.document_id: chunk for chunk in ctx.chunks}
+        by_chunk_id = {
+            str(chunk.metadata.get("chunk_id") or ""): chunk for chunk in ctx.chunks
+        }
+        by_point_id = {chunk.document_id: chunk for chunk in ctx.chunks}
         ordered: list[RetrievalChunk] = []
         for pid in parent_ids:
-            parent = by_id.get(pid)
+            parent = by_chunk_id.get(str(pid)) or by_point_id.get(pid)
             if parent is not None:
-                ordered.append(parent)
+                ordered.append(
+                    replace(parent, metadata={**parent.metadata, "retrieval": "entity_section"})
+                )
         return ordered
 
     # ------------------------------------------------------------------

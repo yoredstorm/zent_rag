@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ipaddress
+import re
 import socket
 import time
 from typing import ClassVar
@@ -30,6 +31,22 @@ _TABULAR_FULL_CHUNKS = 2
 _MAX_OUTPUT_CHARS = 14_000
 #: Contenido de cada fragmento en la evidencia estructurada (registry del run).
 _EVIDENCE_CONTENT_CHARS = 4_000
+#: Una sección expandida (padre del fragmento) puede ser grande: la sección
+#: 4.6.2 del caso real son ~9 KB. Se conserva completa hasta este tope; el
+#: recorte por relevancia lo hace `relevance_window` al armar el prompt.
+_EVIDENCE_SECTION_CHARS = 40_000
+
+#: «Cat10_dapp_C.pdf», «Rec2_Cat10_dapp_C.pdf», «Cat 31_33 …».
+#: El `_` de «Rec2_Cat10» es carácter de palabra: un `\b` no matchea ahí.
+_CATEGORY_IN_NAME_RE = re.compile(
+    r"(?<![a-zA-Z])(?:cat(?:egor(?:y|ia|ía))?)\s*[._-]?\s*(\d{1,3})(?!\d)",
+    re.IGNORECASE,
+)
+
+
+def _declared_category_numbers(name: str) -> set[str]:
+    """Números de categoría que declara el nombre de una fuente."""
+    return {match.group(1) for match in _CATEGORY_IN_NAME_RE.finditer(name or "")}
 
 
 def _format_tabular_result(result) -> str:
@@ -174,7 +191,11 @@ class SearchKnowledgeTool(Tool):
 
     @staticmethod
     async def _priority_sources(
-        ctx: ToolContext, query_text: str, source_ids: list[UUID]
+        ctx: ToolContext,
+        query_text: str,
+        source_ids: list[UUID],
+        *,
+        nombres: dict[str, str] | None = None,
     ) -> list[UUID]:
         """Fuentes cuyo NOMBRE coincide con lo que la pregunta nombra, en orden.
 
@@ -199,6 +220,31 @@ class SearchKnowledgeTool(Tool):
             if not agujas:
                 return []
 
+            if nombres is None:
+                nombres = await SearchKnowledgeTool._source_names(ctx, source_ids, [])
+            prioridad: list[UUID] = []
+            for source_id, nombre in nombres.items():
+                nombre_normalizado = str(nombre or "").lower().replace("-", " ")
+                if any(aguja in nombre_normalizado for aguja in agujas):
+                    try:
+                        prioridad.append(UUID(source_id))
+                    except ValueError:
+                        continue
+            return prioridad
+        except Exception as exc:  # noqa: BLE001 — la prioridad es opcional
+            logger.warning("Priority sources lookup failed", error=str(exc)[:150])
+            return []
+
+    @staticmethod
+    async def _source_names(
+        ctx: ToolContext,
+        source_ids: list[UUID],
+        kb_ids: list[UUID],
+    ) -> dict[str, str]:
+        """Nombres de las fuentes declaradas (id → nombre); {} si no se puede."""
+        if not source_ids and not kb_ids:
+            return {}
+        try:
             from sqlalchemy import bindparam
             from sqlalchemy import text as sql_text
 
@@ -206,34 +252,83 @@ class SearchKnowledgeTool(Tool):
 
             session = await get_async_session()
             try:
-                stmt = sql_text(
-                    "SELECT id::text, name FROM kb_sources "
-                    "WHERE organization_id = :oid AND id::text IN :ids"
-                ).bindparams(bindparam("ids", expanding=True))
-                filas = (
-                    await session.execute(
-                        stmt,
-                        {
-                            "oid": str(ctx.tenant_id),
-                            "ids": [str(sid) for sid in source_ids],
-                        },
-                    )
-                ).fetchall()
+                nombres: dict[str, str] = {}
+                if source_ids:
+                    stmt = sql_text(
+                        "SELECT id::text, name FROM kb_sources "
+                        "WHERE organization_id = :oid AND id::text IN :ids"
+                    ).bindparams(bindparam("ids", expanding=True))
+                    filas = (
+                        await session.execute(
+                            stmt,
+                            {
+                                "oid": str(ctx.tenant_id),
+                                "ids": [str(sid) for sid in source_ids],
+                            },
+                        )
+                    ).fetchall()
+                    for fila in filas:
+                        nombres[str(fila[0])] = str(fila[1] or "")
+                if kb_ids:
+                    stmt = sql_text(
+                        "SELECT id::text, name FROM kb_sources "
+                        "WHERE organization_id = :oid "
+                        "AND knowledge_base_id::text IN :kbs"
+                    ).bindparams(bindparam("kbs", expanding=True))
+                    filas = (
+                        await session.execute(
+                            stmt,
+                            {
+                                "oid": str(ctx.tenant_id),
+                                "kbs": [str(kb) for kb in kb_ids],
+                            },
+                        )
+                    ).fetchall()
+                    for fila in filas:
+                        nombres.setdefault(str(fila[0]), str(fila[1] or ""))
+                return nombres
             finally:
                 await session.close()
+        except Exception as exc:  # noqa: BLE001 — el filtro es opcional
+            logger.warning("Source names lookup failed", error=str(exc)[:150])
+            return {}
 
-            prioridad: list[UUID] = []
-            for fila in filas:
-                nombre = str(fila[1] or "").lower().replace("-", " ")
-                if any(aguja in nombre for aguja in agujas):
-                    try:
-                        prioridad.append(UUID(str(fila[0])))
-                    except ValueError:
-                        continue
-            return prioridad
-        except Exception as exc:  # noqa: BLE001 — la prioridad es opcional
-            logger.warning("Priority sources lookup failed", error=str(exc)[:150])
-            return []
+    @staticmethod
+    def _drop_off_category_sources(
+        chunks: list,
+        query_text: str,
+        nombres: dict[str, str],
+    ) -> list:
+        """Descarta chunks de fuentes de OTRA categoría cuando la pregunta nombra una.
+
+        «categoría 31» no debe llenar el top con Rec2_Cat10 (misma familia de
+        palabras: «Category», «Record 2», «bytes»). Determinista y conservador:
+        sólo actúa si el nombre de la fuente declara un número de categoría
+        distinto al pedido, y nunca deja la búsqueda sin resultados.
+        """
+        if not chunks or not nombres:
+            return chunks
+        try:
+            from src.intelligence.response.entities import asked_entities
+
+            pedidas = {
+                str(entity.value).strip()
+                for entity in asked_entities(query_text)
+                if getattr(entity, "kind", "") == "categoría"
+            }
+        except Exception:  # noqa: BLE001 — el filtro es opcional
+            return chunks
+        if not pedidas:
+            return chunks
+        filtrados = []
+        for chunk in chunks:
+            metadata = getattr(chunk, "metadata", None) or {}
+            nombre = nombres.get(str(metadata.get("source_id") or ""))
+            declaradas = _declared_category_numbers(nombre or "")
+            if declaradas and not (declaradas & pedidas):
+                continue
+            filtrados.append(chunk)
+        return filtrados or chunks
 
     @staticmethod
     def _default_strategy() -> str:
@@ -296,7 +391,10 @@ class SearchKnowledgeTool(Tool):
             ) * 1000
             retrieval_start = time.perf_counter()
             chunks = []
-            prioridad = await self._priority_sources(ctx, query_text, source_ids)
+            nombres = await self._source_names(ctx, source_ids, kb_ids)
+            prioridad = await self._priority_sources(
+                ctx, query_text, source_ids, nombres=nombres
+            )
             if source_ids:
                 rquery = RetrievalQuery(
                     query=query_text,
@@ -328,6 +426,7 @@ class SearchKnowledgeTool(Tool):
                     part: RetrievalContext = await self._retriever.retrieve(rquery)
                     chunks.extend(part.chunks)
             stage_ms["retrieve_ms"] = (time.perf_counter() - retrieval_start) * 1000
+            chunks = self._drop_off_category_sources(chunks, query_text, nombres)
             chunks = chunks[:top_k]
             stage_ms["total_ms"] = (time.perf_counter() - start) * 1000
             self._observe_stages(ctx.tenant_id, stage_ms)
@@ -362,6 +461,9 @@ class SearchKnowledgeTool(Tool):
                 for chunk in chunks
                 if str((chunk.metadata or {}).get("retrieval") or "").startswith("entity")
             )
+            from src.runtime.evidence import question_needles, relevance_window
+
+            needles = question_needles(query_text)
             if exact_block:
                 lines.append(exact_block)
             full_tabular_left = _TABULAR_FULL_CHUNKS
@@ -372,15 +474,18 @@ class SearchKnowledgeTool(Tool):
                     used.append(source_id)
                 knowledge_type = str(metadata.get("knowledge_type") or "")
                 is_tabular = knowledge_type.startswith("table_")
+                retrieval = str(metadata.get("retrieval") or "")
+                es_pineado = retrieval.startswith("entity")
                 # Evidencia estructurada para "Ver flujo" y para el registry del
                 # run: la UI y JEV no reconstruyen fuentes a partir del texto del
                 # output. `content` viaja COMPLETO: el recorte de contexto es una
                 # decisión del selector (por relevancia), no del string de salida.
+                # Una sección expandida (~9 KB) conserva todo su texto: el recorte
+                # por relevancia ocurre al armar el prompt, no acá.
                 document_id = str(getattr(chunk, "document_id", "") or "")
                 ref = document_id or source_id or f"chunk-{i}"
                 if ref not in seen_refs:
                     seen_refs.add(ref)
-                    retrieval = str(metadata.get("retrieval") or "")
                     section_path = metadata.get("section_path")
                     if isinstance(section_path, str):
                         section_path = [section_path]
@@ -400,11 +505,15 @@ class SearchKnowledgeTool(Tool):
                         "status": "USED",
                         "knowledge_type": knowledge_type or None,
                         "content": str(getattr(chunk, "content", "") or "")[
-                            :_EVIDENCE_CONTENT_CHARS
+                            : (
+                                _EVIDENCE_SECTION_CHARS
+                                if es_pineado
+                                else _EVIDENCE_CONTENT_CHARS
+                            )
                         ],
                         "doc_index": i + 1,
                         "retrieval": retrieval or None,
-                        "entity_pin": retrieval.startswith("entity"),
+                        "entity_pin": es_pineado,
                         "page": metadata.get("page_start")
                         if isinstance(metadata.get("page_start"), int)
                         else None,
@@ -426,8 +535,12 @@ class SearchKnowledgeTool(Tool):
                         else _TABULAR_TAIL_CHARS
                     )
                     full_tabular_left -= 1
+                    texto = str(chunk.content or "")[:budget]
                 else:
-                    budget = _TEXT_CHARS
+                    # El pin y las secciones traen más contexto que un fragmento
+                    # suelto; el resto se queda en el presupuesto corto.
+                    budget = _EVIDENCE_CONTENT_CHARS if es_pineado else _TEXT_CHARS
+                    texto = relevance_window(chunk.content or "", needles, budget=budget)
                 tag = f"[Doc {i + 1}"
                 if source_id:
                     tag += f" | source:{source_id}"
@@ -444,7 +557,7 @@ class SearchKnowledgeTool(Tool):
                             else f" | row:{row_start}"
                         )
                 tag += "]"
-                lines.append(f"{tag} {chunk.content[:budget]}")
+                lines.append(f"{tag} {texto}")
             snippet = "\n\n".join(lines)
             top_score = max(
                 (float(getattr(chunk, "score", 0.0) or 0.0) for chunk in chunks),

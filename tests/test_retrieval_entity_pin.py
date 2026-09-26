@@ -31,12 +31,21 @@ def _chunk(texto: str, score: float, doc: UUID | None = None) -> RetrievalChunk:
 class _StoreFalso:
     """Store mínimo: la densa devuelve ruido y la léxica conoce el chunk real."""
 
-    def __init__(self, *, dense: list[RetrievalChunk], lexical: list[RetrievalChunk], scan: list[RetrievalChunk] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        dense: list[RetrievalChunk],
+        lexical: list[RetrievalChunk],
+        scan: list[RetrievalChunk] | None = None,
+        parents: list[RetrievalChunk] | None = None,
+    ) -> None:
         self._dense = dense
         self._lexical = lexical
         self._scan = scan or []
+        self._parents = parents or []
         self.lexical_queries: list[str] = []
         self.scan_needles: list[list[str]] = []
+        self.parent_requests: list[list[str]] = []
 
     @property
     def supports_sparse(self) -> bool:
@@ -55,6 +64,18 @@ class _StoreFalso:
     async def scan_text(self, *, needles, **kwargs) -> RetrievalContext:
         self.scan_needles.append(list(needles))
         return RetrievalContext(chunks=list(self._scan), retrieval_latency_ms=2.0)
+
+    async def get_documents_by_chunk_ids(self, organization_id, chunk_ids, **kwargs):
+        self.parent_requests.append([str(chunk_id) for chunk_id in chunk_ids])
+        pedidos = set(self.parent_requests[-1])
+        return RetrievalContext(
+            chunks=[
+                parent
+                for parent in self._parents
+                if str((parent.metadata or {}).get("chunk_id") or "") in pedidos
+            ],
+            retrieval_latency_ms=1.0,
+        )
 
 
 @dataclass
@@ -185,3 +206,74 @@ class TestPinDeEntidades:
 
         docs = [c.document_id for c in contexto.chunks]
         assert docs.count(real.document_id) == 1, "el chunk pineado no se duplica"
+
+
+class TestExpansionDeSeccion:
+    """Regresión «byte 105»: el fragmento pineado se cambia por su sección."""
+
+    @pytest.mark.asyncio
+    async def test_el_fragmento_pineado_se_cambia_por_la_seccion_completa(self) -> None:
+        hijo = RetrievalChunk(
+            document_id=uuid4(),
+            content="4.6.2 Fee Application (byte 105)\nValidating Carrier",
+            score=0.4,
+            metadata={
+                "chunk_id": "c-hijo",
+                "parent_id": "c-padre",
+                "retrieval": "entity_scan",
+            },
+        )
+        padre = RetrievalChunk(
+            document_id=uuid4(),
+            content="4.6.2 Fee Application (byte 105)\nValores 1-5 y jerarquía completos.",
+            score=0.0,
+            metadata={
+                "chunk_id": "c-padre",
+                "v2_parent": "true",
+                "section_path": ["4", "6", "2"],
+            },
+        )
+        store = _StoreFalso(
+            dense=[_chunk("ruido semántico", 0.7)], lexical=[hijo], parents=[padre]
+        )
+
+        contexto = await _retriever(store).retrieve(
+            _query("¿qué dice el byte 105 de la categoría 31?")
+        )
+
+        textos = [c.content for c in contexto.chunks]
+        assert any("jerarquía completos" in texto for texto in textos)
+        assert not any(
+            "Validating Carrier" in texto for texto in textos
+        ), "el fragmento queda subsumido por su sección"
+        assert store.parent_requests == [["c-padre"]]
+        seccion = next(c for c in contexto.chunks if "jerarquía completos" in c.content)
+        assert seccion.metadata["retrieval"] == "entity_section"
+
+    @pytest.mark.asyncio
+    async def test_sin_padre_indexado_se_conserva_el_fragmento(self) -> None:
+        hijo = RetrievalChunk(
+            document_id=uuid4(),
+            content="byte 105 sin seccion padre",
+            score=0.4,
+            metadata={"parent_id": "c-inexistente", "retrieval": "entity_scan"},
+        )
+        store = _StoreFalso(dense=[], lexical=[hijo], parents=[])
+
+        contexto = await _retriever(store).retrieve(_query("¿qué dice el byte 105?"))
+
+        assert any("sin seccion padre" in c.content for c in contexto.chunks)
+
+    @pytest.mark.asyncio
+    async def test_sin_lookup_por_chunk_id_no_hay_expansion(self) -> None:
+        hijo = RetrievalChunk(
+            document_id=uuid4(),
+            content="byte 105 fragmento",
+            score=0.4,
+            metadata={"parent_id": "c-padre", "retrieval": "entity_scan"},
+        )
+        store = _VectorStoreFalso(chunks=[hijo])
+
+        contexto = await _retriever(store).retrieve(_query("¿qué dice el byte 105?"))
+
+        assert [c.content for c in contexto.chunks] == ["byte 105 fragmento"]

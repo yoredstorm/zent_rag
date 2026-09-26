@@ -94,6 +94,7 @@ class HybridRetriever(Retriever):
         # record 4, tabla 961) tiene que estar. Va después del umbral para que
         # el umbral no lo descarte y antes del rerank para que el reranker lo vea.
         chunks = await self._pin_asked_entities(query, chunks)
+        chunks = await self._expand_pinned_parents(query, chunks)
 
         if self._reranker is not None and chunks:
             try:
@@ -379,6 +380,84 @@ class HybridRetriever(Retriever):
         ]
         self._observe_entity_pin(query, etapas, cubiertas=bool(destacados))
         return destacados + chunks
+
+    async def _expand_pinned_parents(
+        self,
+        query: RetrievalQuery,
+        chunks: list[Any],
+    ) -> list[Any]:
+        """Cambia un fragmento pineado por la sección completa que lo contiene.
+
+        Los hijos del chunker son piezas de ~600 chars que repiten el título; el
+        texto que explica el campo vive en el padre de sección. Sin este paso la
+        entidad queda «cubierta» por una tabla partida y el generador rellena de
+        memoria. Best-effort: si el store no sabe buscar por `metadata.chunk_id`
+        o la fuente no tiene padre indexado, se conservan los hijos.
+        """
+        if not chunks:
+            return chunks
+        fetch = getattr(self._store, "get_documents_by_chunk_ids", None)
+        if not callable(fetch):
+            return chunks
+        objetivos: dict[str, list[Any]] = {}
+        for chunk in chunks:
+            metadata = getattr(chunk, "metadata", None) or {}
+            parent_id = str(metadata.get("parent_id") or "")
+            retrieval = str(metadata.get("retrieval") or "")
+            if parent_id and retrieval.startswith("entity"):
+                objetivos.setdefault(parent_id, []).append(chunk)
+        if not objetivos:
+            return chunks
+        try:
+            contexto = await fetch(
+                query.organization_id,
+                list(objetivos)[:8],
+                role=query.role,
+                user_id=query.user_id,
+                groups=query.groups,
+            )
+        except Exception as exc:  # noqa: BLE001 — la expansión nunca rompe el retrieval
+            logger.warning("Pinned parent expansion failed", error=str(exc)[:150])
+            return chunks
+
+        padres: dict[str, Any] = {}
+        for parent in contexto.chunks:
+            metadata = getattr(parent, "metadata", None) or {}
+            chunk_id = str(metadata.get("chunk_id") or "")
+            if chunk_id not in objetivos:
+                continue
+            score = max(
+                [float(getattr(hijo, "score", 0.0) or 0.0) for hijo in objetivos[chunk_id]]
+                + [float(getattr(parent, "score", 0.0) or 0.0)]
+            )
+            padres[chunk_id] = dataclasses.replace(
+                parent,
+                score=score,
+                metadata={
+                    **metadata,
+                    "retrieval": "entity_section",
+                    "v2_parent": "true",
+                },
+            )
+        if not padres:
+            return chunks
+
+        expansion = [padres[chunk_id] for chunk_id in objetivos if chunk_id in padres]
+        expansion_ids = {padre.document_id for padre in expansion}
+        restantes = [
+            chunk
+            for chunk in chunks
+            if str((getattr(chunk, "metadata", None) or {}).get("parent_id") or "")
+            not in padres
+            and getattr(chunk, "document_id", None) not in expansion_ids
+        ]
+        logger.info(
+            "Pinned fragments expanded to their section",
+            fragments=sum(len(hijos) for hijos in objetivos.values()),
+            sections=len(expansion),
+            organization_id=str(query.organization_id),
+        )
+        return expansion + restantes
 
     @staticmethod
     def _observe_entity_pin(query: RetrievalQuery, etapas: dict[str, int], *, cubiertas: bool) -> None:

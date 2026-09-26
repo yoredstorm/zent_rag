@@ -81,6 +81,101 @@ def _asked_entities(question: str) -> list[Any]:
         return []
 
 
+#: Retrievals que marcan la sección completa que contiene al fragmento.
+SECTION_RETRIEVALS = ("entity_section", "section_parent")
+
+
+def question_needles(question: str) -> list[str]:
+    """Frases con las que se busca el tramo relevante dentro de un texto largo."""
+    needles: list[str] = []
+    for entity in _asked_entities(question):
+        for variant in entity.variants:
+            if variant and variant not in needles:
+                needles.append(variant)
+    if not needles:
+        for token in sorted(_content_tokens(question)):
+            if len(token) >= 4:
+                needles.append(token)
+            if len(needles) >= 8:
+                break
+    return needles[:12]
+
+
+def relevance_window(
+    text: str,
+    needles: Sequence[str],
+    *,
+    budget: int,
+    head_chars: int = 800,
+    window_chars: int = 900,
+    max_windows: int = 6,
+) -> str:
+    """Recorta un texto largo conservando el arranque y los tramos que importan.
+
+    `texto[:N]` tira justo lo que la respuesta necesita cuando el dato está al
+    final del fragmento (el caso real: «Table 988» en el offset 5.470 de un
+    chunk de 157 KB). Acá se toman ventanas alrededor de lo que la pregunta
+    nombra, en orden de aparición, y siempre pasa primero el encabezado.
+    """
+    content = text or ""
+    limit = max(0, int(budget))
+    if limit <= 0:
+        return ""
+    if len(content) <= limit:
+        return content
+    haystack = content.lower()
+    hits: list[tuple[int, int]] = []
+    for needle in needles:
+        aguja = str(needle or "").strip().lower()
+        if not aguja:
+            continue
+        start = 0
+        while len(hits) < max_windows * 4:
+            index = haystack.find(aguja, start)
+            if index < 0:
+                break
+            hits.append((max(0, index - 120), min(len(content), index + window_chars)))
+            start = index + len(aguja)
+    if not hits:
+        return content[:limit]
+
+    hits.sort()
+    merged: list[tuple[int, int]] = [hits[0]]
+    for ini, fin in hits[1:]:
+        if ini <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], fin))
+        else:
+            merged.append((ini, fin))
+
+    partes: list[str] = []
+    used = 0
+
+    def _add(fragment: str, *, trim: bool = False) -> bool:
+        nonlocal used
+        limpio = fragment.strip()
+        if not limpio:
+            return True
+        disponible = limit - used - 1
+        if disponible < 1:
+            return False
+        if len(limpio) > disponible:
+            if not trim:
+                return False
+            limpio = limpio[:disponible]
+        partes.append(limpio)
+        used += len(limpio) + 1
+        return True
+
+    _add(content[:head_chars])
+    for ini, fin in merged[:max_windows]:
+        if used >= limit:
+            break
+        # La ventana arranca antes del match: si no cabe entera, se conserva el
+        # tramo desde su inicio y el match queda adentro.
+        _add(content[ini:fin], trim=True)
+    return "\n…\n".join(partes)
+
+
 def _coverage_text(item: EvidenceItem) -> str:
     """Texto para medir cobertura de entidades: fragmento + nombre de la fuente.
 
@@ -384,6 +479,11 @@ def rank_evidence(
     return [(item, match, _MATCH_PRIORITY.get(match, 9)) for item, match, _ in ranked]
 
 
+def _is_section_item(item: EvidenceItem) -> bool:
+    """¿El fragmento es la sección completa que el retrieval expandió?"""
+    return str(item.retrieval_method or "").startswith(SECTION_RETRIEVALS)
+
+
 def select_evidence(
     items: Sequence[EvidenceItem],
     question: str,
@@ -398,27 +498,32 @@ def select_evidence(
     Cada fragmento entra completo hasta `max_item_chars`; el presupuesto sobrante
     pasa al siguiente por prioridad. Un fragmento que no cabe con al menos
     `min_item_chars` se salta (se registra en `dropped`), no se corta a medias.
+    Una sección expandida (padre del fragmento pineado) entra completa si cabe:
+    es la unidad que explica el campo, no una pieza de 600 chars.
     """
     budget = max(0, int(budget_chars))
     selected: list[EvidenceItem] = []
     matches: list[EvidenceMatch] = []
     dropped: list[str] = []
+    needles = question_needles(question)
     used = 0
     for item, match, priority in rank_evidence(items, question):
         if len(selected) >= max(1, int(max_items)):
             dropped.append(item.evidence_id or item.label)
             continue
         content = (item.content or "").strip()
-        cost = min(len(content), max(0, int(max_item_chars)))
         remaining = budget - used
         if remaining < int(min_item_chars):
             dropped.append(item.evidence_id or item.label)
             continue
-        if cost > remaining:
-            if remaining < int(min_item_chars):
-                dropped.append(item.evidence_id or item.label)
-                continue
-            cost = remaining
+        tope = min(len(content), max(0, int(max_item_chars)))
+        if _is_section_item(item) and len(content) <= remaining:
+            tope = len(content)
+        cost = min(tope, remaining)
+        texto = content[:cost]
+        if cost < len(content):
+            texto = relevance_window(content, needles, budget=cost)
+            cost = len(texto)
         selected.append(item)
         matches.append(
             EvidenceMatch(
@@ -427,7 +532,7 @@ def select_evidence(
                 priority=priority,
                 score=float(item.score or 0.0),
                 chars=cost,
-                content=content[:cost],
+                content=texto,
                 complete=cost >= len(content),
             )
         )
@@ -711,6 +816,7 @@ __all__ = [
     "DEFAULT_BUDGET_CHARS",
     "MAX_ITEM_CHARS",
     "MIN_ITEM_CHARS",
+    "SECTION_RETRIEVALS",
     "EvidenceMatch",
     "EvidenceRegistry",
     "EvidenceSelection",
@@ -722,7 +828,9 @@ __all__ = [
     "evidence_state_text",
     "observe_selection",
     "observe_sufficiency",
+    "question_needles",
     "rank_evidence",
+    "relevance_window",
     "render_evidence",
     "run_evidence_text",
     "select_evidence",

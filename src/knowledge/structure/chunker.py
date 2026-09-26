@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 from dataclasses import dataclass
 from uuid import UUID, uuid4
 
@@ -83,20 +84,39 @@ def _section_label(section: DocumentSection | None) -> str:
     return " ".join(partes).strip()
 
 
+#: Debajo de este tamaño una pieza suelta de tabla es un encabezado huérfano
+#: («Validating Carrier»), no contenido: se fusiona con la vecina o se descarta
+#: (el padre de sección conserva el texto completo).
+_TINY_TABLE_CHARS = 240
+
+
+def _normalized_line(text: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^\w]+", " ", text or "")).strip().lower()
+
+
 def _table_pieces(titulo: str, table_text: str, config: ChunkingConfig) -> list[str]:
     """Grupos de filas que caben en el presupuesto, repitiendo título y encabezado.
 
     Una fila nunca se corta: un chunk de tabla sin encabezado ni título se vuelve
-    ilegible para el modelo y para el lector.
+    ilegible para el modelo y para el lector. Las piezas diminutas (encabezados
+    partidos por el parser del PDF) se fusionan entre sí: antes entraban al
+    índice como chunks propios y el pin de entidades las elegía por título,
+    dejando afuera la sección que sí explica el campo.
     """
     lineas = [linea for linea in (table_text or "").splitlines() if linea.strip()]
     if not lineas:
         return []
+    # El parser a veces repite la ruta de la sección como primera línea; no es
+    # el encabezado de la tabla y duplicarla no aporta contexto.
+    if titulo and _normalized_line(lineas[0]) == _normalized_line(titulo):
+        lineas = lineas[1:]
+        if not lineas:
+            return []
     encabezado = lineas[0]
     filas = lineas[1:]
     prefijo = f"{titulo}\n{encabezado}".strip() if titulo else encabezado
     if not filas:
-        return [prefijo]
+        return [prefijo] if _piece_has_data(prefijo, titulo) else []
     presupuesto = max(config.child_max_chars - len(prefijo) - 1, 80)
     piezas: list[str] = []
     actual: list[str] = []
@@ -108,7 +128,51 @@ def _table_pieces(titulo: str, table_text: str, config: ChunkingConfig) -> list[
             actual.append(fila)
     if actual:
         piezas.append(f"{prefijo}\n" + "\n".join(actual))
-    return piezas
+    return _consolidate_pieces(piezas, prefijo, config)
+
+
+def _piece_has_data(piece: str, prefijo: str) -> bool:
+    """¿La pieza trae una fila con datos, o sólo el encabezado repetido?"""
+    cuerpo = piece[len(prefijo) :] if prefijo and piece.startswith(prefijo) else piece
+    return re.search(r"\d", cuerpo) is not None
+
+
+def _consolidate_pieces(
+    piezas: list[str], prefijo: str, config: ChunkingConfig
+) -> list[str]:
+    """Fusiona piezas diminutas y descarta encabezados huérfanos sin datos."""
+    fusionadas: list[str] = []
+    for pieza in piezas:
+        if (
+            fusionadas
+            and len(fusionadas[-1]) < _TINY_TABLE_CHARS
+            and len(fusionadas[-1]) + 1 + len(pieza) <= config.child_max_chars
+        ):
+            fusionadas[-1] = f"{fusionadas[-1]}\n{pieza}"
+            continue
+        fusionadas.append(pieza)
+    return [
+        pieza
+        for pieza in fusionadas
+        if len(pieza) >= _TINY_TABLE_CHARS or _piece_has_data(pieza, prefijo)
+    ]
+
+
+def _align_word_start(text: str, start: int) -> int:
+    """Corre el inicio de una pieza solapada a un límite de palabra.
+
+    El overlap puede caer dentro de una palabra («ghest Fee Application…»), y ese
+    fragmento entra al índice como si fuera el comienzo de la sección.
+    """
+    if start <= 0 or start >= len(text):
+        return max(0, start)
+    antes, despues = text[start - 1], text[start]
+    if not (antes.isalnum() and despues.isalnum()):
+        return start
+    espacio = text.find(" ", start)
+    if espacio == -1:
+        return start
+    return espacio + 1
 
 
 def _split_text(text: str, config: ChunkingConfig) -> list[str]:
@@ -133,7 +197,7 @@ def _split_text(text: str, config: ChunkingConfig) -> list[str]:
         if end >= text_len:
             break
         # progreso garantizado: el overlap nunca retrocede el start (<= -1)
-        start = max(end - overlap, start + 1)
+        start = max(_align_word_start(text, end - overlap), start + 1)
     return pieces
 
 

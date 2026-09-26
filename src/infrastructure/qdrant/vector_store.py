@@ -788,6 +788,10 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         encontrados: list = []
         escaneados = 0
         offset = None
+        # Con `heading_only` se juntan más candidatos que el cupo: la sección
+        # completa (v2_parent=true) debe ganarle a las piezas sueltas que repiten
+        # su título, aunque el scroll las devuelva primero.
+        cupo = max(limit * 3, limit) if heading_only else limit
         while escaneados < max_points:
             pagina, offset = await _retry_on_transient_error(
                 client.scroll,
@@ -816,12 +820,27 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
                     cuerpo = " ".join(tokenize(primera))
                 if any(aguja in cuerpo for aguja in buscados):
                     encontrados.append(point)
-                    if len(encontrados) >= limit:
+                    if len(encontrados) >= cupo:
                         break
-            if offset is None or len(encontrados) >= limit:
+            if offset is None or len(encontrados) >= cupo:
                 break
             if (time.perf_counter() - start) * 1000 >= max_ms:
                 break
+
+        if heading_only and len(encontrados) > limit:
+            encontrados.sort(
+                key=lambda point: (
+                    0
+                    if str(
+                        ((point.payload or {}).get("metadata") or {}).get("v2_parent")
+                        or ""
+                    ).lower()
+                    == "true"
+                    else 1,
+                    -len(str((point.payload or {}).get("content") or "")),
+                )
+            )
+            encontrados = encontrados[:limit]
 
         latency_ms = (time.perf_counter() - start) * 1000
         chunks = [
@@ -1041,6 +1060,89 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
             chunks=chunks,
             retrieval_latency_ms=latency_ms,
         )
+
+    async def get_documents_by_chunk_ids(
+        self,
+        organization_id: UUID,
+        chunk_ids: list[str],
+        role: str = "admin",
+        user_id: UUID | None = None,
+        groups: list[str] | None = None,
+    ) -> RetrievalContext:
+        """Fetch por `metadata.chunk_id` con verificación post-hoc de tenant.
+
+        `get_documents` busca por id de punto, pero el `parent_id` que guarda un
+        chunk hijo es el `chunk_id` (UUID lógico) de su padre, no el id del punto
+        en Qdrant. Sin este lookup la expansión de sección nunca encuentra nada y
+        el generador sólo ve fragmentos rotos.
+        """
+        if organization_id is None:
+            raise ValueError(
+                "get_documents_by_chunk_ids() requires organization_id (tenant isolation)"
+            )
+        organization_id = bind_organization_id(organization_id)
+        ids = [str(chunk_id) for chunk_id in chunk_ids if str(chunk_id or "").strip()]
+        if not ids:
+            return RetrievalContext(chunks=[], retrieval_latency_ms=0.0)
+        client = await _get_client()
+        await self._ensure_collection()
+
+        start = time.perf_counter()
+        points, _ = await _retry_on_transient_error(
+            client.scroll,
+            reset_client=True,
+            collection_name=RAG_DOCUMENTS_COLLECTION,
+            scroll_filter=qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(
+                        key="organization_id",
+                        match=qdrant_models.MatchValue(value=str(organization_id)),
+                    ),
+                    qdrant_models.FieldCondition(
+                        key="metadata.chunk_id",
+                        match=qdrant_models.MatchAny(any=ids),
+                    ),
+                ]
+            ),
+            limit=max(len(ids) * 2, 8),
+            with_payload=True,
+            with_vectors=False,
+        )
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        chunks: list[RetrievalChunk] = []
+        for point in points:
+            payload = point.payload or {}
+            if payload.get("organization_id") != str(organization_id):
+                logger.warning(
+                    "Cross-tenant chunk fetch blocked",
+                    chunk_id=str(point.id),
+                    requested_by=str(organization_id),
+                )
+                continue
+            if not payload_visible(payload, role=role, user_id=user_id, groups=groups):
+                continue
+            try:
+                document_id = UUID(str(point.id))
+            except (ValueError, TypeError, AttributeError):
+                continue
+            chunks.append(
+                RetrievalChunk(
+                    document_id=document_id,
+                    content=payload.get("content", ""),
+                    score=0.0,
+                    metadata=payload.get("metadata", {}),
+                )
+            )
+
+        logger.info(
+            "Documents fetched by chunk id",
+            organization_id=str(organization_id),
+            requested=len(ids),
+            returned=len(chunks),
+            latency_ms=round(latency_ms, 2),
+        )
+        return RetrievalContext(chunks=chunks, retrieval_latency_ms=latency_ms)
 
     async def _delete_with_filter(
         self, *, must: list, log_message: str, must_not: list | None = None

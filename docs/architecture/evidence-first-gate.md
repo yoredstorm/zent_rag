@@ -202,3 +202,34 @@ camino legacy sigue disponible cuando no hay evidencia estructurada
   cierre por termination, varias fuentes, evidencia tras mucho texto irrelevante.
 
 `tests/test_config_env_contract.py`: contrato de nombres de variables.
+
+## 12. Expansión de sección y ventana por relevancia (segunda vuelta)
+
+La regresión volvió a aparecer con otra forma: el retrieval sí traía el título
+correcto, pero en **piezas de tabla de 100-600 chars partidas por el parser**
+(«4 6 2 Fee Application (byte 105) Validating Carrier»), y el padre de sección
+que las contiene —9.378 chars con los valores 1-5, la definición de fare
+component/pricing unit cambiada, la jerarquía `3, 2, 5, 4, 1` y los ejemplos—
+nunca entraba. El generador veía ~1.260 chars de fragmentos y rellenaba de
+memoria.
+
+Cuatro cambios, todos deterministas:
+
+- **Chunker** (`src/knowledge/structure/chunker.py`): las piezas diminutas de
+  tabla se fusionan (o se descartan si son sólo encabezado, el padre conserva el
+  texto) y el overlap de `_split_text` ya no arranca a mitad de palabra.
+- **Expansión de sección** (`HybridRetriever._expand_pinned_parents`): un
+  fragmento pineado se cambia por su padre de sección cuando el store lo tiene.
+  El lookup es por `metadata.chunk_id` (`get_documents_by_chunk_ids`), no por id
+  de punto: el `parent_id` del hijo es el `chunk_id` lógico del padre. El
+  `StructuredRetriever` usa el mismo lookup.
+- **Ventana por relevancia** (`src/runtime/evidence.py::relevance_window`): un
+  fragmento más grande que el presupuesto entra como encabezado + tramos
+  alrededor de lo que la pregunta nombra, no como `texto[:N]` (el overview de
+  157 KB dejaba «Table 988» —offset 5.470— y «Record 2» —offset 6.896— afuera
+  del corte de 4.000). Una sección expandida entra completa si cabe.
+- **Filtro por categoría nombrada** (`search_knowledge`): si la pregunta dice
+  «categoría 31», los chunks de fuentes cuyo nombre declara otra categoría
+  (`Rec2_Cat10_dapp_C.pdf`) no ocupan el top; el filtro nunca deja la búsqueda
+  vacía.
+

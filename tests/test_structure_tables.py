@@ -138,3 +138,69 @@ def test_ninguna_fila_queda_cortada_ni_duplicada() -> None:
 
     padres = [c for c in chunks if c.chunk_type is ChunkType.DOCUMENT_STRUCTURE]
     assert any("highest change fee" in c.content for c in padres)
+
+
+# ---------------------------------------------------------------------------
+# Regresión «byte 105»: el parser parte la tabla en encabezados sueltos y el
+# chunker los indexaba como chunks propios de ~50 chars. El pin de entidades los
+# elegía por título y la sección completa (el padre) quedaba afuera.
+# ---------------------------------------------------------------------------
+
+
+def test_las_piezas_diminutas_de_tabla_no_entran_sueltas() -> None:
+    from src.knowledge.structure.chunker import _table_pieces
+
+    tabla = (
+        "Validating Carrier\nChanged Fare Component(s)\nApplication\n"
+        "Resulting Change Fee"
+    )
+    piezas = _table_pieces("4.6.2 Fee Application (byte 105)", tabla, ChunkingConfig())
+
+    assert len(piezas) <= 1, "encabezados sueltos no son chunks independientes"
+    if piezas:
+        assert "Validating Carrier" in piezas[0]
+
+
+def test_encabezado_huerfano_sin_datos_se_descarta() -> None:
+    from src.knowledge.structure.chunker import _table_pieces
+
+    piezas = _table_pieces(
+        "4.6.2 Fee Application (byte 105)", "Validating Carrier", ChunkingConfig()
+    )
+    assert piezas == []
+
+
+def test_una_tabla_con_datos_sigue_indexada() -> None:
+    from src.knowledge.structure.chunker import _table_pieces
+
+    tabla = "Value | Definition\n1 | highest fee\n2 | highest fee of all"
+    piezas = _table_pieces("4.6.2 Fee Application (byte 105)", tabla, ChunkingConfig())
+
+    assert piezas, "una tabla con filas no se descarta"
+    assert "1 | highest fee" in piezas[0]
+    assert "byte 105" in piezas[0]
+
+
+def test_el_overlap_no_arranca_a_mitad_de_palabra() -> None:
+    from src.knowledge.structure.chunker import _align_word_start, _split_text
+
+    assert _align_word_start("hola ghest Fee Application", 5) == 5
+    assert _align_word_start("hola ghest Fee Application", 7) == len("hola ghest") + 1
+    assert _align_word_start("hola", 0) == 0
+    assert _align_word_start("hola", 4) == 4
+
+    relleno_a = " ".join(f"alfa{indice:03d} beta{indice:03d}" for indice in range(40))
+    relleno_b = " ".join(f"delta{indice:03d} epsilon{indice:03d}" for indice in range(40))
+    texto = f"{relleno_a} ghest Fee Application byte 105 {relleno_b}"
+    piezas = _split_text(texto, ChunkingConfig(child_max_chars=600, child_overlap=50))
+    assert len(piezas) > 1
+
+    offset = 0
+    for pieza in piezas:
+        index = texto.find(pieza, max(0, offset - 60))
+        assert index >= 0, "la pieza debe existir tal cual en el texto"
+        if index > 0:
+            assert not (
+                texto[index - 1].isalnum() and texto[index].isalnum()
+            ), f"la pieza arranca a mitad de palabra: {pieza[:40]!r}"
+        offset = index + len(pieza)

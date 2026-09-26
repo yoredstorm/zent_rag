@@ -146,3 +146,58 @@ async def test_search_knowledge_prefers_exact_and_keeps_full_tabular_chunk() -> 
     assert "MARKER_AFTER_1200" in result.output  # presupuesto tabular 6000
     assert result.meta["exact"] is True
     assert tabular.calls and tabular.calls[0]["source_ids"]
+
+
+# ---------------------------------------------------------------------------
+# Filtro por categoría nombrada: «categoría 31» no debe llenar el top con
+# Rec2_Cat10 (comparte «Category», «Record 2» y «bytes»).
+# ---------------------------------------------------------------------------
+
+
+def _chunk_fuente(source_id: str, content: str) -> RetrievalChunk:
+    return RetrievalChunk(
+        document_id=uuid4(),
+        content=content,
+        score=0.5,
+        metadata={"source_id": source_id},
+    )
+
+
+def test_el_filtro_de_categoria_deja_afuera_la_fuente_de_otra_categoria() -> None:
+    chunks = [
+        _chunk_fuente("s31", "byte 105"),
+        _chunk_fuente("s10", "category 10"),
+        _chunk_fuente("sx", "glosario"),
+    ]
+    nombres = {
+        "s31": "Cat31_dapp_C.pdf",
+        "s10": "Rec2_Cat10_dapp_C.pdf",
+        "sx": "Glossary of Terms_C.pdf",
+    }
+
+    filtrados = SearchKnowledgeTool._drop_off_category_sources(
+        chunks, "cuéntame de la categoría 31 y el byte 105", nombres
+    )
+
+    assert [chunk.metadata["source_id"] for chunk in filtrados] == ["s31", "sx"]
+
+
+def test_el_filtro_no_deja_la_busqueda_vacia() -> None:
+    chunk = _chunk_fuente("s10", "categoria 10")
+
+    filtrados = SearchKnowledgeTool._drop_off_category_sources(
+        [chunk], "categoría 31", {"s10": "Rec2_Cat10_dapp_C.pdf"}
+    )
+
+    assert filtrados == [chunk], "sin resultados no hay respuesta: se conserva"
+
+
+def test_los_nombres_de_fuente_declaran_su_categoria() -> None:
+    from src.agents.tools.tools_builtin import _declared_category_numbers
+
+    assert _declared_category_numbers("Rec2_Cat10_dapp_C.pdf") == {"10"}
+    assert _declared_category_numbers("Cat31_dapp_C.pdf") == {"31"}
+    assert _declared_category_numbers(
+        "Cat 31_33 Sys Assumption implementation guide.pdf"
+    ) == {"31"}
+    assert _declared_category_numbers("Glossary of Terms_C.pdf") == set()
