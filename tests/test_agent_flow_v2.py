@@ -386,6 +386,39 @@ def test_flow_sin_steps_sigue_siendo_v2() -> None:
     assert flow["events"]
 
 
+def test_el_flow_del_agente_publica_el_embedding_aplicado() -> None:
+    """El proveedor de embeddings del run (primario o respaldo) no se esconde."""
+    steps = [dict(step) for step in CAPTURE_STEPS]
+    steps.insert(
+        0,
+        {
+            "type": "tool_call",
+            "tool": "search_knowledge",
+            "latency_ms": 500.0,
+            "output": "registros",
+            "embedding_route": {
+                "route": "fallback",
+                "fallback": True,
+                "model": "openai/BAAI/bge-m3",
+                "provider": "deepinfra",
+                "provider_label": "DeepInfra (hosted)",
+                "served_model": "BAAI/bge-m3",
+                "base_url_host": "api.deepinfra.com",
+            },
+        },
+    )
+    flow = _flow(steps)
+
+    assert flow["embedding"]["fallback"] is True
+    assert flow["embedding"]["provider_label"] == "DeepInfra (hosted)"
+    assert flow["steps"][0]["type"] == "embedding"
+    event = next(item for item in flow["events"] if item["kind"] == "embedding")
+    assert event["phase"] == "context"
+    assert event["status"] == "warn"
+    assert event["metrics"]["provider_label"] == "DeepInfra (hosted)"
+    assert "unmapped" not in event.get("technical", {})
+
+
 # ---------------------------------------------------------------------------
 # §26-§29 — memoria por run (endpoint existente, probado acá)
 # ---------------------------------------------------------------------------

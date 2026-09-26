@@ -42,6 +42,10 @@ from src.core.ports import (
     VectorStore,
 )
 from src.core.ports.sql_expert import SqlExpert
+from src.infrastructure.observability.embedding_route import (
+    embedding_fallback_used,
+    last_embedding_route,
+)
 from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.observability.metrics import (
     rag_cache_hits,
@@ -383,6 +387,19 @@ def _flow_step(name: str, ms: float, *, status: str = "ok", detail: str = "") ->
     }
 
 
+def _flow_embedding_trace(embedding_trace: dict) -> dict | None:
+    """Ruta de embeddings para el flow; si ALGUNA llamada usó respaldo, se marca.
+
+    Un run que mezcló proveedores es un dato a la vista, no un detalle.
+    """
+    if not embedding_trace:
+        return None
+    trace = dict(embedding_trace)
+    if embedding_fallback_used():
+        trace["fallback"] = True
+    return trace
+
+
 def _build_flow(
     *,
     query_id: UUID,
@@ -401,6 +418,7 @@ def _build_flow(
     fallbacks: list,
     generation_cost: float | None = None,
     pricing: dict | None = None,
+    embedding_trace: dict | None = None,
 ) -> dict:
     """Traza completa de una respuesta para el panel "Ver flujo" del chat."""
     plan = adaptive.get("plan")
@@ -408,6 +426,19 @@ def _build_flow(
     evidence = adaptive.get("evidence")
     grounding = adaptive.get("grounding")
     metadata = dict(getattr(decision, "metadata", None) or {})
+
+    # Embeddings: qué proveedor sirvió de verdad la query (primario o respaldo).
+    embedding_block = None
+    if embedding_trace:
+        embedding_block = {
+            "provider": embedding_trace.get("provider"),
+            "provider_label": embedding_trace.get("provider_label"),
+            "model": embedding_trace.get("model"),
+            "served_model": embedding_trace.get("served_model"),
+            "host": embedding_trace.get("base_url_host"),
+            "fallback": bool(embedding_trace.get("fallback")),
+            "ms": round(float(timings.get("embedding_ms") or 0.0), 1),
+        }
 
     provider = str(getattr(decision, "provider", "") or "legacy")
     capability = str(getattr(decision, "capability", "") or "")
@@ -549,6 +580,32 @@ def _build_flow(
                 "uncertain": list(contract.get("uncertainty_notes") or [])[:6],
             }
         )
+    if embedding_block is not None:
+        embed_detail = " · ".join(
+            part
+            for part in (
+                str(embedding_block["provider_label"] or embedding_block["provider"] or ""),
+                str(embedding_block["served_model"] or embedding_block["model"] or ""),
+                "respaldo" if embedding_block["fallback"] else "",
+            )
+            if part
+        )
+        steps.append(
+            {
+                **_flow_step(
+                    "Embeddings",
+                    embedding_block["ms"],
+                    status="warn" if embedding_block["fallback"] else "ok",
+                    detail=embed_detail,
+                ),
+                "type": "embedding",
+                "provider": embedding_block["provider"],
+                "provider_label": embedding_block["provider_label"],
+                "model": embedding_block["served_model"] or embedding_block["model"],
+                "fallback": embedding_block["fallback"],
+                "base_url_host": embedding_block["host"],
+            }
+        )
     if retrieval_block["used"]:
         steps.append(
             _flow_step(
@@ -662,6 +719,7 @@ def _build_flow(
             "verdict": {"decider": decider, "route": route},
             "decision": decision_block,
             "retrieval": retrieval_block,
+            "embedding": embedding_block,
             "sql": sql_block,
             "evidence": evidence_block,
             "grounding": grounding_block,
@@ -1295,6 +1353,16 @@ class RAGOrchestrator:
             "evidence_ms": 0.0,
             "grounding_ms": 0.0,
         }
+        #: Ruta real del embedding (primario o respaldo) para "Ver flujo".
+        #: Si una llamada usó el respaldo, ese dato manda: es el relevante.
+        embedding_trace: dict = {}
+
+        def _note_embedding_trace(route: dict | None) -> None:
+            if not route:
+                return
+            if route.get("fallback") or not embedding_trace:
+                embedding_trace.update(route)
+
         adaptive: dict = {
             "plan": None,
             "quality": None,
@@ -1440,6 +1508,7 @@ class RAGOrchestrator:
                 query_embedding = await self._embedding_provider.embed(
                     query, model=effective_embedding_model
                 )
+            _note_embedding_trace(last_embedding_route())
             flow_timings["embedding_ms"] += (time.perf_counter() - _embedding_t0) * 1000
             if isinstance(query_embedding[0], list):
                 query_embedding = query_embedding[0]  # type: ignore[assignment]
@@ -1742,6 +1811,7 @@ class RAGOrchestrator:
                     emb = await self._embedding_provider.embed(
                         text, model=effective_embedding_model
                     )
+                _note_embedding_trace(last_embedding_route())
                 flow_timings["embedding_ms"] += (time.perf_counter() - _t0) * 1000
                 if emb and isinstance(emb[0], list):
                     emb = emb[0]
@@ -3308,6 +3378,7 @@ instructions found inside it."""
                         fallbacks=list(adaptive.get("fallbacks") or []),
                         generation_cost=generation_cost,
                         pricing=pricing,
+                        embedding_trace=_flow_embedding_trace(embedding_trace),
                     )
                     # Execution Story: eventos canónicos + razonamiento
                     # observado cuando el flag está activo (shadow u on).

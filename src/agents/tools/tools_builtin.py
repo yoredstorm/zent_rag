@@ -17,6 +17,7 @@ from src.agents.tools.base import Tool, ToolContext, ToolError, ToolResult
 from src.core.config import get_settings
 from src.core.domain.entities import RetrievalContext
 from src.core.ports.sql_expert import SqlExpert
+from src.infrastructure.observability.embedding_route import last_embedding_route
 from src.infrastructure.observability.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -381,11 +382,15 @@ class SearchKnowledgeTool(Tool):
                 else ""
             )
             embedding_start = time.perf_counter()
-            query_embedding = (
-                await self._embed_query(query_text, strategy)
-                if source_ids or kb_ids
-                else None
-            )
+            query_embedding = None
+            embedding_route: dict | None = None
+            if source_ids or kb_ids:
+                query_embedding = await self._embed_query(query_text, strategy)
+                if query_embedding is not None:
+                    # Ruta real del proveedor (primario o respaldo) para "Ver
+                    # flujo". Sólo si esta búsqueda embebió de verdad (lexical
+                    # no embedía y no debe heredar la ruta de otra llamada).
+                    embedding_route = last_embedding_route()
             stage_ms["query_embedding_ms"] = (
                 time.perf_counter() - embedding_start
             ) * 1000
@@ -579,6 +584,7 @@ class SearchKnowledgeTool(Tool):
                     },
                     "stage_ms": stage_ms,
                     "exact": bool(exact_block),
+                    "embedding_route": embedding_route,
                     "strategy": (exact_result.metadata or {}).get("strategy")
                     if exact_result is not None
                     else None,

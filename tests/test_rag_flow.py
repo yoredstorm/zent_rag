@@ -197,6 +197,53 @@ def test_build_flow_extractive_fast_path_marks_skipped() -> None:
     assert "Respuesta" not in [step["name"] for step in flow["steps"]]
 
 
+def test_build_flow_incluye_proveedor_de_embeddings() -> None:
+    """El flow dice qué proveedor sirvió el embedding y si fue el respaldo."""
+    from src.rag.flow_story import build_flow_events
+
+    flow = _build_flow(
+        query_id=uuid4(),
+        organization_id=uuid4(),
+        conversation_id=None,
+        method="rag",
+        status="completed",
+        decision=None,
+        decision_evaluated=False,
+        adaptive=_adaptive(),
+        retrieval_context=RetrievalContext(chunks=[_chunk(0.7)], retrieval_latency_ms=40.0),
+        sql_result=None,
+        llm_response=LLMResponse(content="respuesta", model="gpt-4o-mini"),
+        timings=_timings(embedding_ms=25.0, retrieval_ms=40.0),
+        total_ms=500.0,
+        fallbacks=[],
+        embedding_trace={
+            "route": "fallback",
+            "fallback": True,
+            "model": "openai/BAAI/bge-m3",
+            "provider": "deepinfra",
+            "provider_label": "DeepInfra (hosted)",
+            "served_model": "BAAI/bge-m3",
+            "base_url_host": "api.deepinfra.com",
+        },
+    )
+
+    assert flow["embedding"]["fallback"] is True
+    assert flow["embedding"]["provider_label"] == "DeepInfra (hosted)"
+    assert flow["embedding"]["ms"] == 25.0
+    step = next(item for item in flow["steps"] if item["name"] == "Embeddings")
+    assert step["type"] == "embedding"
+    assert step["status"] == "warn"
+    assert "DeepInfra" in step["detail"]
+    assert "BAAI/bge-m3" in step["detail"]
+
+    event = next(
+        item for item in build_flow_events(flow) if item["kind"] == "embedding"
+    )
+    assert event["phase"] == "context"
+    assert event["status"] == "warn"
+    assert event["metrics"]["fallback"] is True
+
+
 # ---------------------------------------------------------------------------
 # Store + endpoint tenant-scoped
 # ---------------------------------------------------------------------------

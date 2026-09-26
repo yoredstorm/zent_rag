@@ -54,6 +54,7 @@ STEP_KIND_PHASES: dict[str, str] = {
     "conversation_intent": PHASE_UNDERSTANDING,
     "context": PHASE_CONTEXT,
     "company_context": PHASE_CONTEXT,
+    "embedding": PHASE_CONTEXT,
     "reasoning_plan": PHASE_PLANNING,
     "response_planning": PHASE_PLANNING,
     "decision": PHASE_DECISION,

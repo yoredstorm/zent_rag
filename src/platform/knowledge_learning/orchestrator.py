@@ -793,6 +793,40 @@ class KnowledgeLearningEngine:
             },
         )
 
+        # Knowledge OS (FASE 34): el run produce artefactos persistentes.
+        try:
+            from src.core.config import get_settings as _get_settings
+            from src.platform.knowledge_model.materializer import (
+                KnowledgeModelMaterializer,
+            )
+            from src.platform.knowledge_model.repository import (
+                PostgresKnowledgeModelRepository,
+            )
+
+            _summary = await KnowledgeModelMaterializer(
+                PostgresKnowledgeModelRepository(),
+                max_columns=_get_settings().KNOWLEDGE_MODEL_MAX_COLUMNS,
+            ).materialize(org, source_id=source_id, run_id=run_id)
+            await self._emit(
+                org,
+                "model.materialized",
+                run_id=run_id,
+                source_id=source_id,
+                stage=LearningStage.READY.value,
+                message=(
+                    "Modelo de conocimiento actualizado: "
+                    f"{_summary['objects_created']} nuevos, "
+                    f"{_summary['objects_updated']} actualizados, "
+                    f"{_summary['assertions']} afirmaciones."
+                ),
+                severity="success",
+                payload=_summary,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Knowledge model materialization failed", error=str(exc)[:240]
+            )
+
         if final_status == "awaiting_validation" and blocking_questions > 0:
             try:
                 from src.platform.notifyv2.notifications import notify

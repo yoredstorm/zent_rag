@@ -31,6 +31,10 @@ type Settings = {
   embedding_dimension: number;
   embedding_hosted: boolean;
   embedding_base_url_host: string | null;
+  embedding_fallback_enabled?: boolean;
+  embedding_fallback_provider_label?: string | null;
+  embedding_fallback_model?: string | null;
+  embedding_fallback_base_url_host?: string | null;
   default_model: string;
   llm_provider_label: string;
   portal_session_ttl_hours: number;
@@ -142,6 +146,26 @@ export default function Settings() {
                 <dt className="text-[13px] text-muted">Endpoint</dt>
                 <dd className="mono text-xs text-text">
                   {settings.embedding_base_url_host ?? "—"}
+                </dd>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5">
+                <dt className="text-[13px] text-muted">Respaldo</dt>
+                <dd className="flex flex-wrap items-center gap-2 text-xs">
+                  {settings.embedding_fallback_enabled ? (
+                    <>
+                      <Badge tone="ok">
+                        {settings.embedding_fallback_provider_label ?? "respaldo"}
+                      </Badge>
+                      <span className="mono text-text">
+                        {settings.embedding_fallback_model ?? ""}
+                      </span>
+                      <span className="text-muted">
+                        {settings.embedding_fallback_base_url_host ?? ""}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-muted">sin respaldo</span>
+                  )}
                 </dd>
               </div>
             </dl>

@@ -500,6 +500,11 @@ const UNDERSTANDING_KIND_TITLES: Record<string, string> = {
   reasoning_classification: "Entendió qué tipo de análisis necesitaba",
 };
 
+/** Fase de contexto: lo que se preparó antes de buscar (embedding de la query). */
+const CONTEXT_KIND_TITLES: Record<string, string> = {
+  embedding: "Convirtió la consulta en vector",
+};
+
 const VERIFICATION_KIND_TITLES: Record<string, string> = {
   inference_verification: "Verificó que la conclusión se desprenda de los hechos",
   analysis_completion: "Verificó que el análisis estuviera completo",
@@ -509,6 +514,7 @@ export function kindTitle(kind: string): string {
   return (
     REASONING_KIND_TITLES[kind] ??
     UNDERSTANDING_KIND_TITLES[kind] ??
+    CONTEXT_KIND_TITLES[kind] ??
     VERIFICATION_KIND_TITLES[kind] ??
     DECISION_KIND_TITLES[kind] ??
     EVIDENCE_KIND_TITLES[kind] ??
@@ -1299,6 +1305,7 @@ const PHASE_BY_KIND: Record<string, StoryPhaseId> = {
   reasoning_classification: "understanding",
   context: "context",
   company_context: "context",
+  embedding: "context",
   reasoning_plan: "planning",
   response_planning: "planning",
   agent_step: "decision",

@@ -15,90 +15,70 @@ function renderAt(path: string) {
 }
 
 describe("KnowledgeLayout", () => {
-  it("muestra ≤6 pestañas visibles sin abrir Avanzado", () => {
+  it("muestra 5 pilares + Avanzado sin abrir el disclosure", () => {
     renderAt("/knowledge");
     const nav = screen.getByRole("navigation", { name: "Secciones de conocimiento" });
     const links = within(nav).getAllByRole("link");
     const buttons = within(nav).getAllByRole("button");
     expect(links.length + buttons.length).toBeLessThanOrEqual(6);
-    expect(links.map((el) => el.textContent)).toEqual(["Resumen", "Fuentes", "Aprendizaje"]);
+    expect(links.map((el) => el.textContent)).toEqual([
+      "Resumen",
+      "Fuentes",
+      "Modelo",
+      "Calidad",
+      "Evaluación",
+    ]);
     expect(within(nav).getByRole("button", { name: "Avanzado" })).toHaveAttribute(
       "aria-expanded",
       "false"
     );
-    expect(within(nav).queryByRole("link", { name: "Semántica" })).not.toBeInTheDocument();
-    expect(within(nav).queryByRole("link", { name: "Términos" })).not.toBeInTheDocument();
-    expect(within(nav).queryByRole("link", { name: "Búsqueda" })).not.toBeInTheDocument();
+    expect(within(nav).queryByRole("link", { name: "Aprendizaje" })).not.toBeInTheDocument();
+    expect(within(nav).queryByRole("link", { name: "Mapa" })).not.toBeInTheDocument();
   });
 
-  it("no muestra sub-nav en Fuentes", () => {
-    renderAt("/knowledge/sources");
-    expect(screen.queryByRole("navigation", { name: /Subsecciones/ })).not.toBeInTheDocument();
-    const primary = screen.getByRole("navigation", { name: "Secciones de conocimiento" });
-    expect(within(primary).getByRole("link", { name: "Fuentes" })).toHaveAttribute(
+  it("marca el pilar activo por ruta", () => {
+    renderAt("/knowledge/model");
+    const nav = screen.getByRole("navigation", { name: "Secciones de conocimiento" });
+    expect(within(nav).getByRole("link", { name: "Modelo" })).toHaveAttribute(
       "aria-current",
       "page"
     );
+    expect(within(nav).getByRole("link", { name: "Fuentes" })).not.toHaveAttribute(
+      "aria-current"
+    );
   });
 
-  it("muestra sub-nav de Aprendizaje con mapa", () => {
-    renderAt("/knowledge/learning");
-    const primary = screen.getByRole("navigation", { name: "Secciones de conocimiento" });
-    expect(within(primary).getByRole("link", { name: "Aprendizaje" })).toHaveAttribute(
-      "aria-current",
-      "page"
-    );
-    const sub = screen.getByRole("navigation", { name: "Subsecciones de Aprendizaje" });
-    expect(within(sub).getByRole("link", { name: "Aprendizaje" })).toHaveAttribute(
-      "aria-current",
-      "page"
-    );
-    expect(within(sub).getByRole("link", { name: "Mapa" })).toHaveAttribute("href", "/knowledge/map");
-  });
-
-  it("expone Avanzado al desplegar", async () => {
+  it("expone Avanzado al desplegar con las herramientas reales", async () => {
     const user = userEvent.setup();
     renderAt("/knowledge");
     const nav = screen.getByRole("navigation", { name: "Secciones de conocimiento" });
     await user.click(within(nav).getByRole("button", { name: "Avanzado" }));
-    expect(within(nav).getByRole("link", { name: "Términos" })).toHaveAttribute(
+    expect(within(nav).getByRole("link", { name: "Estudio semántico" })).toHaveAttribute(
       "href",
-      "/knowledge/glossary"
+      "/knowledge/understanding"
     );
-    expect(within(nav).getByRole("link", { name: "Catálogo" })).toHaveAttribute(
+    expect(within(nav).getByRole("link", { name: "Playground" })).toHaveAttribute(
       "href",
-      "/knowledge/catalog"
+      "/knowledge/playground"
     );
-    expect(within(nav).getByRole("link", { name: "Conectores" })).toHaveAttribute("href", "/connectors");
     expect(within(nav).getByRole("link", { name: "Trabajos" })).toHaveAttribute(
       "href",
       "/knowledge/jobs"
     );
-    expect(within(nav).queryByRole("link", { name: "Workspaces" })).not.toBeInTheDocument();
-    expect(within(nav).queryByRole("link", { name: "Knowledge Hub" })).not.toBeInTheDocument();
+    expect(within(nav).getByRole("link", { name: "Conectores" })).toHaveAttribute(
+      "href",
+      "/connectors"
+    );
   });
 
-  it("abre Avanzado automáticamente en Términos", () => {
-    renderAt("/knowledge/glossary");
+  it("abre Avanzado automáticamente en rutas avanzadas", () => {
+    renderAt("/knowledge/understanding");
     const nav = screen.getByRole("navigation", { name: "Secciones de conocimiento" });
     expect(within(nav).getByRole("button", { name: "Avanzado" })).toHaveAttribute(
       "aria-expanded",
       "true"
     );
-    expect(within(nav).getByRole("link", { name: "Términos" })).toHaveAttribute(
-      "aria-current",
-      "page"
-    );
-  });
-
-  it("abre Avanzado automáticamente en jobs", () => {
-    renderAt("/knowledge/jobs");
-    const nav = screen.getByRole("navigation", { name: "Secciones de conocimiento" });
-    expect(within(nav).getByRole("button", { name: "Avanzado" })).toHaveAttribute(
-      "aria-expanded",
-      "true"
-    );
-    expect(within(nav).getByRole("link", { name: "Trabajos" })).toHaveAttribute(
+    expect(within(nav).getByRole("link", { name: "Estudio semántico" })).toHaveAttribute(
       "aria-current",
       "page"
     );

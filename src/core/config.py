@@ -208,6 +208,13 @@ class Settings(BaseSettings):
     # RAG / Embeddings
     # -------------------------------------------------------------------------
     EMBEDDING_MODEL: str = "openai/baai/bge-m3"
+    #: Respaldo de embeddings cuando el primario falla (p. ej. Novita 429
+    #: «server overload»). Debe servir el MISMO modelo y dimensión: los vectores
+    #: del respaldo conviven en el mismo índice (Qdrant). Activo sólo si la key
+    #: está definida; vacío = sin respaldo.
+    EMBEDDING_FALLBACK_MODEL: str = "openai/BAAI/bge-m3"
+    EMBEDDING_FALLBACK_API_BASE: str | None = "https://api.deepinfra.com/v1/openai"
+    EMBEDDING_FALLBACK_API_KEY: SecretStr | None = None
     VECTOR_DIMENSION: int = Field(default=1024, ge=1)
     RAG_TOP_K: int = Field(default=200, ge=1, le=500)
     RAG_SCORE_THRESHOLD: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -483,6 +490,30 @@ class Settings(BaseSettings):
     RAG_KNOWLEDGE_GRAPH_ENABLED: bool = Field(
         default=True,
         description="FASE 33F: Knowledge Map (entidades/relaciones) habilitado.",
+    )
+    # -------------------------------------------------------------------------
+    # Knowledge Operating System (FASE 34)
+    # -------------------------------------------------------------------------
+    # Env names (env_prefix=RAG_): RAG_KNOWLEDGE_MODEL_ENABLED, etc.
+    KNOWLEDGE_MODEL_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Activa el Knowledge OS: objetos de conocimiento, assertions, "
+            "evidencia, health y quality center."
+        ),
+    )
+    KNOWLEDGE_MODEL_AUTO_MATERIALIZE: bool = Field(
+        default=True,
+        description=(
+            "Materializa el modelo de conocimiento desde catalog_* la primera "
+            "vez que se abre el Command Center y aún no hay objetos."
+        ),
+    )
+    KNOWLEDGE_MODEL_MAX_COLUMNS: int = Field(
+        default=5000,
+        ge=1,
+        le=50000,
+        description="Tope de columnas materializadas por corrida.",
     )
     RAG_KNOWLEDGE_LIVE_EVENTS_ENABLED: bool = Field(
         default=True,

@@ -27,25 +27,6 @@ export type KnowledgeGate =
   | "READY"
   | "DEGRADED";
 
-export type ScoreDimension = {
-  key: string;
-  label: string;
-  score: number;
-  weight: number;
-  detail: string;
-  measured: boolean;
-};
-
-export type KnowledgeScore = {
-  overall: number;
-  gate: KnowledgeGate;
-  dimensions: ScoreDimension[];
-  reasons: string[];
-  weights: Record<string, number>;
-  computed_at: string | null;
-  source_id?: string | null;
-};
-
 export type LearningStatusCounts = {
   sources_connected: number;
   tables_total: number;
@@ -169,37 +150,6 @@ export type KnowledgeQuestion = {
   answered_at: string | null;
 };
 
-export type LearnedEntity = {
-  entity_id: string;
-  name: string;
-  display_name: string;
-  description: string | null;
-  confidence: number;
-  confidence_label: string;
-  provenance: string;
-  status: string;
-  table: string | null;
-  source_id: string | null;
-  fields_total: number;
-  fields_understood: number;
-  columns_total: number;
-  coverage_pct: number | null;
-  relationships_total: number;
-  relationships_confirmed: number;
-  business_rules_total: number;
-  business_rules_approved: number;
-  open_questions: number;
-  last_learned_at: string | null;
-};
-
-export const GATE_LABELS: Record<KnowledgeGate, string> = {
-  NOT_READY: "Aún no listo",
-  LEARNING: "Aprendiendo",
-  NEEDS_INPUT: "Necesita tu ayuda",
-  READY: "Listo",
-  DEGRADED: "Degradado",
-};
-
 export const STAGE_LABELS: Record<string, string> = {
   connecting: "Conectando a la fuente",
   discovering_schema: "Descubriendo schema",
@@ -238,15 +188,6 @@ export function priorityTone(priority: string): string {
   return "badge-muted";
 }
 
-export function gateTone(gate: KnowledgeGate | null | undefined): string {
-  if (!gate) return "badge-muted";
-  if (gate === "READY") return "badge-ok";
-  if (gate === "NEEDS_INPUT") return "badge-pending";
-  if (gate === "DEGRADED") return "badge-danger";
-  if (gate === "LEARNING") return "badge-pending";
-  return "badge-muted";
-}
-
 // ---------------------------------------------------------------------------
 // Fetchers
 // ---------------------------------------------------------------------------
@@ -255,12 +196,20 @@ export function fetchLearningStatus(): Promise<LearningStatus> {
   return withSession<LearningStatus>("/api/v1/knowledge/learning/status");
 }
 
-export function fetchLearningSources(): Promise<SourceLearning[]> {
-  return withSession<SourceLearning[]>("/api/v1/knowledge/learning/sources");
-}
-
 export function fetchLearningRun(runId: string): Promise<LearningRun> {
   return withSession<LearningRun>(`/api/v1/knowledge/learning/runs/${runId}`);
+}
+
+export function fetchLearningRuns(
+  params: { status?: string; catalog_source_id?: string; limit?: number } = {}
+): Promise<{ runs: LearningRun[]; count: number }> {
+  const query = new URLSearchParams();
+  if (params.status) query.set("status", params.status);
+  if (params.catalog_source_id) query.set("catalog_source_id", params.catalog_source_id);
+  query.set("limit", String(params.limit ?? 30));
+  return withSession<{ runs: LearningRun[]; count: number }>(
+    `/api/v1/knowledge/learning/runs?${query.toString()}`
+  );
 }
 
 export function fetchRunEvents(
@@ -299,33 +248,6 @@ export function fetchQuestions(
   query.set("status", params.status ?? "pending");
   query.set("limit", String(params.limit ?? 100));
   return withSession(`/api/v1/knowledge/learning/questions?${query.toString()}`);
-}
-
-export function fetchLearnedEntities(
-  sourceId?: string,
-  limit = 24
-): Promise<{ entities: LearnedEntity[]; count: number }> {
-  const query = new URLSearchParams();
-  if (sourceId) query.set("source_id", sourceId);
-  query.set("limit", String(limit));
-  return withSession<{ entities: LearnedEntity[]; count: number }>(
-    `/api/v1/knowledge/learning/entities?${query.toString()}`
-  );
-}
-
-export function fetchKnowledgeScore(sourceId?: string): Promise<KnowledgeScore> {
-  const query = sourceId ? `?source_id=${sourceId}` : "";
-  return withSession<KnowledgeScore>(`/api/v1/knowledge/learning/score${query}`);
-}
-
-export function startLearning(catalogSourceId: string): Promise<{
-  run: LearningRun;
-  job_id: string;
-}> {
-  return withSession("/api/v1/knowledge/learning/start", {
-    method: "POST",
-    body: JSON.stringify({ catalog_source_id: catalogSourceId }),
-  });
 }
 
 export function cancelLearning(runId: string): Promise<{ cancelled: string }> {

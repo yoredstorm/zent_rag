@@ -12,6 +12,7 @@ _LOCAL_PROVIDERS = {"ollama", "local"}
 
 _PROVIDER_LABELS = {
     "novita": "Novita AI (hosted)",
+    "deepinfra": "DeepInfra (hosted)",
     "openai": "OpenAI (hosted)",
     "openai_compatible": "Endpoint compatible OpenAI (hosted)",
     "azure": "Azure OpenAI (hosted)",
@@ -40,12 +41,15 @@ def describe_model_runtime(model: str, base_url: str | None) -> dict:
 
     if provider == "openai" and host and "novita" in host.lower():
         provider = "novita"
+    elif provider == "openai" and host and "deepinfra" in host.lower():
+        provider = "deepinfra"
     elif provider == "openai" and not host:
         provider = "openai_compatible"
 
     # Modelo realmente servido: en LiteLLM el prefijo es el proveedor
     # (openai/baai/bge-m3 → baai/bge-m3 en el endpoint OpenAI-compatible).
-    served = model.split("/", 1)[1] if provider in ("novita", "openai_compatible") and "/" in model else model
+    strip_prefix = provider in ("novita", "deepinfra", "openai_compatible")
+    served = model.split("/", 1)[1] if strip_prefix and "/" in model else model
     return {
         "provider": provider,
         "provider_label": _PROVIDER_LABELS.get(provider, f"{provider} (hosted)"),
@@ -64,6 +68,22 @@ def embedding_runtime(settings) -> dict:
     )
     info["dimension"] = int(getattr(settings, "VECTOR_DIMENSION", 0) or 0)
     info["base_url_host"] = info.pop("host")
+
+    # Respaldo: sólo informa si está configurado y con key. Nunca expone la key.
+    fallback_model = str(getattr(settings, "EMBEDDING_FALLBACK_MODEL", "") or "").strip()
+    fallback_key = getattr(settings, "EMBEDDING_FALLBACK_API_KEY", None)
+    key_defined = fallback_key is not None and bool(fallback_key.get_secret_value())
+    fallback = describe_model_runtime(
+        fallback_model,
+        getattr(settings, "EMBEDDING_FALLBACK_API_BASE", None),
+    )
+    fallback["enabled"] = bool(fallback_model) and key_defined
+    fallback["base_url_host"] = fallback.pop("host")
+    if not fallback_model:
+        fallback["provider"] = None
+        fallback["provider_label"] = None
+        fallback["served_model"] = None
+    info["fallback"] = fallback
     return info
 
 

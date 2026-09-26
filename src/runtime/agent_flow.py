@@ -75,6 +75,14 @@ _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
         "latency_ms",
     ),
     "tool_filter": ("omitted",),
+    "embedding": (
+        "provider",
+        "provider_label",
+        "model",
+        "fallback",
+        "base_url_host",
+        "latency_ms",
+    ),
     "answer_gate": (
         "verdict",
         "score",
@@ -211,6 +219,7 @@ STEP_LABEL: dict[str, str] = {
     "turn_guard": "Herramienta innecesaria",
     "agent_step": "JEV juzga el paso",
     "jev_retrieval": "JEV pidió otra búsqueda",
+    "embedding": "Embeddings",
     "evidence_sufficiency": "Evidencia suficiente",
     "response_presentation": "Ritmo de la respuesta",
     "final": "Respuesta final",
@@ -842,6 +851,48 @@ def build_agent_flow(
 
     steps = [step for step in (getattr(result, "steps", None) or []) if isinstance(step, dict)]
     timeline = [step_to_flow(step) for step in steps]
+    # Embeddings: la búsqueda deja la ruta aplicada (primario o respaldo) en su
+    # paso; se publica como un paso más del run. Si varias buscaron, manda el
+    # respaldo: mezclar proveedores se muestra, no se esconde.
+    route_traces = [
+        step["embedding_route"]
+        for step in steps
+        if isinstance(step.get("embedding_route"), Mapping)
+    ]
+    embedding_route = next(
+        (route for route in route_traces if route.get("fallback")), None
+    ) or (route_traces[0] if route_traces else None)
+    emb_fallback = bool(embedding_route and embedding_route.get("fallback"))
+    if embedding_route:
+        emb_label = str(
+            embedding_route.get("provider_label") or embedding_route.get("provider") or ""
+        )
+        emb_model = str(
+            embedding_route.get("served_model") or embedding_route.get("model") or ""
+        )
+        timeline.insert(
+            0,
+            step_to_flow(
+                {
+                    "type": "embedding",
+                    "status": "warn" if emb_fallback else "ok",
+                    "detail": " · ".join(
+                        part
+                        for part in (
+                            emb_label,
+                            emb_model,
+                            "respaldo" if emb_fallback else "",
+                        )
+                        if part
+                    ),
+                    "provider": embedding_route.get("provider"),
+                    "provider_label": embedding_route.get("provider_label"),
+                    "model": emb_model,
+                    "base_url_host": embedding_route.get("base_url_host"),
+                    "fallback": emb_fallback,
+                }
+            ),
+        )
     jev = jev_summary(steps)
     sources = collect_sources(steps)
     generation = generation_summary(result, steps)
@@ -928,4 +979,13 @@ def build_agent_flow(
         flow["injection_detected"] = True
     if getattr(result, "trace_id", None):
         flow["trace_id"] = str(result.trace_id)
+    if embedding_route:
+        flow["embedding"] = {
+            "provider": embedding_route.get("provider"),
+            "provider_label": embedding_route.get("provider_label"),
+            "model": embedding_route.get("model"),
+            "served_model": embedding_route.get("served_model"),
+            "host": embedding_route.get("base_url_host"),
+            "fallback": emb_fallback,
+        }
     return with_story({key: value for key, value in flow.items() if value is not None})

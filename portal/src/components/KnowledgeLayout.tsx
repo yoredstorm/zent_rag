@@ -1,11 +1,10 @@
 import {
   BookOpen,
   Database,
-  PencilLine,
-  Binoculars,
-  CaretDown,
-  Sparkle,
   Graph,
+  ShieldCheck,
+  Flask,
+  CaretDown,
   type Icon,
 } from "@phosphor-icons/react";
 import { NavLink, useLocation } from "react-router-dom";
@@ -13,30 +12,20 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   KNOWLEDGE_ADVANCED_TABS,
   KNOWLEDGE_PILLARS,
-  KNOWLEDGE_SUBNAVS,
   knowledgePillarForPath,
   knowledgeTabIsActive,
   type KnowledgeTab,
 } from "../lib/knowledgeNav";
 
-const PILLAR_ICONS: Record<(typeof KNOWLEDGE_PILLARS)[number]["id"], Icon> = {
+const PILLAR_ICONS: Record<string, Icon> = {
   resumen: BookOpen,
   fuentes: Database,
-  mejora: Sparkle,
-};
-
-const TAB_ICONS: Record<string, Icon> = {
-  "/knowledge/sources": Database,
-  "/knowledge/glossary": PencilLine,
-  "/knowledge/catalog": Binoculars,
-  "/knowledge/learning": Sparkle,
-  "/knowledge/map": Graph,
-  "/knowledge/jobs": Database,
-  "/connectors": Database,
+  modelo: Graph,
+  calidad: ShieldCheck,
+  evaluacion: Flask,
 };
 
 function TabLink({ tab, pathname }: { tab: KnowledgeTab; pathname: string }) {
-  const IconCmp = TAB_ICONS[tab.to];
   const active = knowledgeTabIsActive(pathname, tab);
   return (
     <NavLink
@@ -45,13 +34,12 @@ function TabLink({ tab, pathname }: { tab: KnowledgeTab; pathname: string }) {
       aria-current={active ? "page" : undefined}
       className={`tab ${active ? "" : "opacity-70 hover:opacity-100"}`}
     >
-      {IconCmp && <IconCmp size={15} aria-hidden />}
       {tab.label}
     </NavLink>
   );
 }
 
-/** Hub de Conocimiento: Resumen, Fuentes, Aprendizaje + Avanzado. */
+/** Knowledge OS: Resumen, Fuentes, Modelo, Calidad, Evaluación + Avanzado. */
 export function KnowledgeLayout({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const pillar = knowledgePillarForPath(pathname);
@@ -60,8 +48,6 @@ export function KnowledgeLayout({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (pillar === "avanzado") setAdvanced(true);
   }, [pillar]);
-
-  const subnav = pillar === "mejora" ? KNOWLEDGE_SUBNAVS.mejora : null;
 
   return (
     <div>
@@ -96,13 +82,6 @@ export function KnowledgeLayout({ children }: { children: ReactNode }) {
             <TabLink key={tab.to} tab={tab} pathname={pathname} />
           ))}
       </nav>
-      {subnav && (
-        <nav className="tabs mt-1" aria-label="Subsecciones de Aprendizaje">
-          {subnav.map((tab) => (
-            <TabLink key={tab.to} tab={tab} pathname={pathname} />
-          ))}
-        </nav>
-      )}
       <div className="mt-4">{children}</div>
     </div>
   );

@@ -104,6 +104,7 @@ _knowledge_score_service = None
 _knowledge_graph_service = None
 _knowledge_validation_engine = None
 _knowledge_evaluation_service = None
+_knowledge_model_service = None
 
 
 def get_organization_repo() -> OrganizationRepository:
@@ -854,8 +855,28 @@ def get_knowledge_validation_engine():
     return _knowledge_validation_engine
 
 
+def get_knowledge_model_service():
+    """Knowledge OS: objetos, assertions, evidencia, health y quality (FASE 34)."""
+    global _knowledge_model_service
+    if _knowledge_model_service is None:
+        from src.platform.knowledge_model.materializer import (
+            KnowledgeModelMaterializer,
+        )
+        from src.platform.knowledge_model.repository import (
+            PostgresKnowledgeModelRepository,
+        )
+        from src.platform.knowledge_model.service import KnowledgeModelService
+
+        repository = PostgresKnowledgeModelRepository()
+        materializer = KnowledgeModelMaterializer(
+            repository,
+            max_columns=get_settings().KNOWLEDGE_MODEL_MAX_COLUMNS,
+        )
+        _knowledge_model_service = KnowledgeModelService(repository, materializer)
+    return _knowledge_model_service
+
+
 def get_knowledge_learning_engine():
-    """Motor de aprendizaje (jobs durables 'knowledge_learning:*')."""
     global _knowledge_learning_engine
     if _knowledge_learning_engine is None:
         from src.infrastructure.secrets.secret_store_resolver import get_secret_store

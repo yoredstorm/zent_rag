@@ -1,254 +1,418 @@
 import {
-  CheckCircle,
+  ArrowRight,
+  Brain,
   Database,
-  Files,
-  Lightning,
+  MagnifyingGlass,
   Plus,
   WarningCircle,
 } from "@phosphor-icons/react";
-import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
-import { api } from "../../api";
-import { useAuth } from "../../auth";
-import { AttentionList } from "../../components/AttentionList";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
+  Badge,
+  Button,
   ButtonLink,
   cn,
   EmptyState,
   ErrorInline,
-  Metric,
-  MetricGrid,
-  PageHeader,
   Panel,
+  PanelHeader,
+  PageHeader,
   Skeleton,
-  WarningInline,
 } from "../../components/ui";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
 import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
-import { fmtNum, formatErrorSummary } from "../../lib/format";
-import { COPY } from "./knowledgeCopy";
+import {
+  fetchKnowledgeOverview,
+  objectTypeLabel,
+  statusTone,
+  type KnowledgeHealth,
+  type KnowledgeOverview,
+} from "../../lib/knowledgeModel";
+import { fmtDateTime } from "../../lib/format";
 
-type Source = {
-  id: string;
-  name: string;
-  type: string;
-  status: string;
-  last_sync: string | null;
-  last_error: string | null;
-  document_count: number;
-  error_count: number;
-};
+function healthTone(overall: number | null): string {
+  if (overall == null) return "text-muted";
+  if (overall >= 75) return "text-ok";
+  if (overall >= 50) return "text-warn";
+  return "text-danger";
+}
 
-type Job = {
-  id: string;
-  job_type: string;
-  status: string;
-  error_summary: string | { error?: unknown; message?: unknown } | null;
-};
-
-const BROKEN = new Set(["error", "failed"]);
+function DimensionRow({ dimension }: { dimension: KnowledgeHealth["dimensions"][number] }) {
+  const measured = dimension.measured && dimension.score != null;
+  return (
+    <details className="group border-b border-border last:border-0">
+      <summary className="flex cursor-pointer list-none items-center gap-3 py-2.5">
+        <span className="min-w-0 flex-1 truncate text-sm text-text">{dimension.label}</span>
+        {measured ? (
+          <span className="mono text-sm tabular-nums text-text">{Math.round(dimension.score!)}</span>
+        ) : (
+          <Badge tone="neutral">No medido</Badge>
+        )}
+        <ArrowRight
+          size={13}
+          className="shrink-0 text-muted transition-transform group-open:rotate-90"
+          aria-hidden
+        />
+      </summary>
+      <div className="pb-3 pl-0 text-xs leading-relaxed text-muted">
+        <p>
+          <span className="font-medium text-text">Por qué:</span> {dimension.reason || "Sin detalle."}
+        </p>
+        {dimension.formula && (
+          <p className="mt-1">
+            <span className="font-medium text-text">Fórmula:</span>{" "}
+            <span className="mono">{dimension.formula}</span>
+          </p>
+        )}
+        {dimension.issues.length > 0 && (
+          <ul className="mt-1 list-disc pl-4">
+            {dimension.issues.map((issue) => (
+              <li key={issue}>{issue}</li>
+            ))}
+          </ul>
+        )}
+        {!measured && dimension.missing.length > 0 && (
+          <p className="mt-1">Falta medir: {dimension.missing.join(", ")}.</p>
+        )}
+      </div>
+    </details>
+  );
+}
 
 export default function KnowledgeOverviewPage() {
-  const { session } = useAuth();
-  const [sources, setSources] = useState<Source[]>([]);
-  const [jobs, setJobs] = useState<Job[]>([]);
-  const [vectorPoints, setVectorPoints] = useState<number | null>(null);
+  const navigate = useNavigate();
+  const [overview, setOverview] = useState<KnowledgeOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [resumeId, setResumeId] = useState<string | null>(null);
-  const [attention, setAttention] = useState<{ id: string; warning?: string | null } | null>(null);
+  const [query, setQuery] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await fetchKnowledgeOverview();
+      setOverview(data);
+    } catch (err) {
+      setOverview(null);
+      setError(
+        err instanceof Error
+          ? err.message
+          : "No pudimos obtener el conocimiento de tu organización."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    if (!session) return;
-    (async () => {
-      setLoading(true);
-      setError("");
-      try {
-        const [s, j, st, gate, attentionData] = await Promise.all([
-          api<{ sources: Source[] }>("/api/v1/sources", {
-            token: session.token,
-            organizationId: session.organizationId,
-          }),
-          api<{ jobs: Job[] }>("/api/v1/jobs?limit=20", {
-            token: session.token,
-            organizationId: session.organizationId,
-          }).catch(() => ({ jobs: [] as Job[] })),
-          api<{ vector_points: number }>("/api/v1/billing/usage/storage", {
-            token: session.token,
-            organizationId: session.organizationId,
-          }).catch(() => null),
-          api<{ has_real_data: boolean; resume_session_id: string | null }>(
-            "/api/v1/data-onboarding/gate",
-            { token: session.token, organizationId: session.organizationId },
-          ).catch(() => ({ has_real_data: false, resume_session_id: null })),
-          api<{ sessions: Array<{ id: string; warning?: string | null }> }>(
-            "/api/v1/data-onboarding/sessions?status=NEEDS_ATTENTION",
-            { token: session.token, organizationId: session.organizationId },
-          ).catch(() => ({ sessions: [] })),
-        ]);
-        setSources(s.sources || []);
-        setJobs(j.jobs || []);
-        setVectorPoints(st?.vector_points ?? null);
-        setResumeId(gate.resume_session_id);
-        setAttention(attentionData.sessions?.[0] || null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Error cargando conocimiento");
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [session]);
+    void load();
+  }, [load]);
 
-  const broken = sources.filter((s) => BROKEN.has(s.status));
-  const documents = sources.reduce((acc, s) => acc + (s.document_count || 0), 0);
-  const failedJobs = jobs.filter((j) => j.status === "failed" || j.status === "dead");
-  const hasSources = sources.length > 0;
-  const hasIssues = broken.length > 0;
+  const domains = useMemo(
+    () => (overview?.domains ?? []).filter((d) => d.objects > 0),
+    [overview]
+  );
 
-  const issues: { id: string; label: string; to: string }[] = [
-    ...broken.slice(0, 5).map((s) => ({
-      id: `src-${s.id}`,
-      label: `La fuente «${s.name}» no se sincronizó correctamente.`,
-      to: "/knowledge/sources",
-    })),
-    ...failedJobs.slice(0, 5).map((j) => ({
-      id: `job-${j.id}`,
-      label: `El job de ${j.job_type} falló.${j.error_summary ? ` ${formatErrorSummary(j.error_summary).slice(0, 120)}` : ""}`,
-      to: "/knowledge/jobs",
-    })),
-  ];
+  const submitSearch = (event: React.FormEvent) => {
+    event.preventDefault();
+    const value = query.trim();
+    if (!value) return;
+    navigate(`/knowledge/model?q=${encodeURIComponent(value)}`);
+  };
 
   return (
     <KnowledgeLayout>
       <PageHeader
         title={KNOWLEDGE_HEADINGS.overview}
-        subtitle={COPY.subtitle}
+        subtitle={
+          overview?.headline ||
+          "Explora qué sabe Zent de tu negocio, qué falta y qué necesita tu atención."
+        }
         actions={
           <>
-            {resumeId && (
-              <ButtonLink to={`/knowledge/add/${resumeId}`} variant="secondary">
-                {COPY.continue}
-              </ButtonLink>
-            )}
             <ButtonLink to="/knowledge/add" variant="primary" leadingIcon={Plus}>
-              {COPY.addSource}
+              Añadir fuente
+            </ButtonLink>
+            <ButtonLink to="/knowledge/model" variant="secondary" leadingIcon={Brain}>
+              Explorar modelo
             </ButtonLink>
           </>
         }
       />
 
-      <div className="flex flex-col gap-4">
-        <ErrorInline message={error} className="mb-0" />
+      {loading && (
+        <div className="flex flex-col gap-4" aria-busy="true">
+          <Skeleton className="h-[168px] rounded-lg" />
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <Skeleton className="h-[220px] rounded-lg" />
+            <Skeleton className="h-[220px] rounded-lg" />
+          </div>
+        </div>
+      )}
 
-        {attention && (
-          <WarningInline
+      {!loading && error && (
+        <div data-testid="knowledge-overview-error">
+          <ErrorInline
             className="mb-0"
-            message={
-              <>
-                {attention.warning || "Zent tiene datos sin revisar de tu última fuente."}{" "}
-                <Link
-                  to={`/knowledge/add/${attention.id}`}
-                  className="font-medium underline underline-offset-2"
-                >
-                  Revisar ahora
-                </Link>
-              </>
+            message={`No pudimos obtener el conocimiento de tu organización. ${error}`}
+          />
+          <div className="mt-3">
+            <Button variant="secondary" onClick={() => void load()}>
+              Reintentar
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {!loading && !error && overview && overview.state === "empty" && (
+        <Panel>
+          <EmptyState
+            icon={Database}
+            title="Zent todavía no tiene conocimiento de tu negocio"
+            body="Conecta una fuente (base de datos, PDF, Excel o API) y Zent construirá entidades, relaciones, reglas y métricas verificables."
+            action={
+              <ButtonLink to="/knowledge/add" variant="primary" leadingIcon={Plus}>
+                Añadir fuente
+              </ButtonLink>
+            }
+            secondaryAction={
+              <ButtonLink to="/knowledge/sources" variant="secondary">
+                Ver fuentes
+              </ButtonLink>
             }
           />
-        )}
+        </Panel>
+      )}
 
-        {loading && (
-          <div className="flex flex-col gap-4" aria-busy="true">
-            <Skeleton className="h-[124px] rounded-lg" />
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              {Array.from({ length: 3 }).map((_, i) => (
-                <Skeleton key={i} className="h-[86px] rounded-lg" />
-              ))}
+      {!loading && !error && overview && overview.state !== "empty" && (
+        <div className="flex flex-col gap-4">
+          <Panel>
+            <div className="flex flex-col gap-5 p-5 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0">
+                <p className="eyebrow">Knowledge Health</p>
+                <div className="mt-1 flex items-end gap-3">
+                  <span className={cn("stat-value", healthTone(overview.health.overall))}>
+                    {overview.health.overall != null
+                      ? Math.round(overview.health.overall)
+                      : "—"}
+                  </span>
+                  <span className="pb-1 text-xs text-muted">
+                    {overview.health.measured_dimensions} de{" "}
+                    {overview.health.total_dimensions} dimensiones medidas
+                  </span>
+                </div>
+                <p className="prose-measure mt-2 text-sm text-muted">
+                  {overview.counts.objects} objetos de negocio ·{" "}
+                  {overview.counts.assertions} afirmaciones · {overview.counts.evidence}{" "}
+                  evidencias · {overview.counts.edges} relaciones
+                </p>
+                <form className="mt-4 flex max-w-xl gap-2" onSubmit={submitSearch}>
+                  <label className="sr-only" htmlFor="knowledge-search">
+                    Buscar en el conocimiento
+                  </label>
+                  <input
+                    id="knowledge-search"
+                    className="input"
+                    placeholder="Buscar en el conocimiento (cliente, ventas, margen...)"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                  />
+                  <Button
+                    type="submit"
+                    variant="secondary"
+                    leadingIcon={MagnifyingGlass}
+                    disabled={!query.trim()}
+                  >
+                    Buscar
+                  </Button>
+                </form>
+              </div>
+              <div className="w-full max-w-md shrink-0 lg:w-[360px]">
+                <p className="eyebrow mb-1">Dimensiones</p>
+                {overview.health.dimensions.map((dimension) => (
+                  <DimensionRow key={dimension.key} dimension={dimension} />
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          </Panel>
 
-        {!loading && !hasSources && (
-          <div data-testid="knowledge-empty">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <Panel>
-              <EmptyState
-                icon={Database}
-                title="Todavía no hay fuentes"
-                body={COPY.empty}
-                action={
-                  <ButtonLink to="/knowledge/add" variant="primary" leadingIcon={Plus}>
-                    {COPY.addSource}
-                  </ButtonLink>
-                }
-                secondaryAction={
-                  <ButtonLink to="/knowledge/sources" variant="secondary">
-                    {COPY.viewSources}
-                  </ButtonLink>
+              <PanelHeader
+                title="Dominios"
+                description="Áreas del negocio detectadas o definidas."
+                actions={
+                  <Link to="/knowledge/model?type=domain" className="text-xs underline underline-offset-2">
+                    Ver todos
+                  </Link>
                 }
               />
+              <div className="panel-body">
+                {domains.length === 0 ? (
+                  <p className="text-sm text-muted">
+                    Todavía no hay dominios con objetos. Ejecuta aprendizaje sobre una
+                    fuente para detectarlos.
+                  </p>
+                ) : (
+                  <ul className="flex flex-col gap-3">
+                    {domains.slice(0, 6).map((domain) => (
+                      <li key={domain.name}>
+                        <Link
+                          to={`/knowledge/model?domain=${encodeURIComponent(domain.name)}`}
+                          className="flex items-center justify-between gap-3"
+                        >
+                          <span className="truncate text-sm text-text">{domain.name}</span>
+                          <span className="flex items-center gap-2 text-xs text-muted">
+                            <span>{domain.objects} objetos</span>
+                            {domain.verified > 0 && (
+                              <Badge tone="ok">{domain.verified} verificados</Badge>
+                            )}
+                            {domain.avg_confidence != null && (
+                              <span className="mono">
+                                {Math.round(domain.avg_confidence * 100)}%
+                              </span>
+                            )}
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </Panel>
+
+            <Panel>
+              <PanelHeader
+                title="Necesita tu atención"
+                description="Problemas reales del conocimiento, no decoración."
+                actions={
+                  <Link to="/knowledge/quality" className="text-xs underline underline-offset-2">
+                    Ir a Calidad
+                  </Link>
+                }
+              />
+              <div className="panel-body">
+                {overview.attention.length === 0 ? (
+                  <p className="text-sm text-muted">
+                    Sin conflictos, gaps críticos ni fuentes degradadas.
+                  </p>
+                ) : (
+                  <ul className="flex flex-col gap-2.5">
+                    {overview.attention.map((item) => (
+                      <li key={`${item.kind}-${item.title}`}>
+                        <Link
+                          to={item.href}
+                          className="flex items-center gap-2 text-sm text-text hover:underline"
+                        >
+                          <WarningCircle
+                            size={15}
+                            className={cn(
+                              "shrink-0",
+                              item.severity === "high" ? "text-danger" : "text-warn"
+                            )}
+                            aria-hidden
+                          />
+                          <span className="min-w-0 flex-1">{item.title}</span>
+                          <ArrowRight size={13} className="text-muted" aria-hidden />
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             </Panel>
           </div>
-        )}
 
-        {!loading && hasSources && (
-          <>
-            <div data-testid="knowledge-ready">
-              <Panel>
-                <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="flex min-w-0 gap-3">
-                    <span
-                      className={cn(
-                        "flex h-10 w-10 shrink-0 items-center justify-center rounded-md border",
-                        hasIssues
-                          ? "border-warn/25 bg-warn-soft text-warn"
-                          : "border-ok/25 bg-ok-soft text-ok",
-                      )}
-                      aria-hidden
-                    >
-                      {hasIssues ? <WarningCircle size={20} /> : <CheckCircle size={20} />}
-                    </span>
-                    <div className="min-w-0">
-                      <h2 className="text-h2">{COPY.readyTitle}</h2>
-                      <p className="prose-measure mt-1.5 text-sm leading-relaxed text-muted">
-                        {COPY.readyBody(sources.length, broken.length)}
-                      </p>
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+            <Panel>
+              <PanelHeader
+                title="Último aprendizaje"
+                description="Artefactos persistentes del run más reciente."
+                actions={
+                  <Link to="/knowledge/activity" className="text-xs underline underline-offset-2">
+                    Ver actividad
+                  </Link>
+                }
+              />
+              <div className="panel-body">
+                {overview.last_learning ? (
+                  <div className="flex flex-col gap-2 text-sm">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge
+                        tone={
+                          overview.last_learning.status === "completed"
+                            ? "ok"
+                            : overview.last_learning.status === "failed"
+                              ? "danger"
+                              : "info"
+                        }
+                      >
+                        {overview.last_learning.status}
+                      </Badge>
+                      <span className="text-muted">
+                        {fmtDateTime(overview.last_learning.finished_at || overview.last_learning.created_at)}
+                      </span>
                     </div>
+                    <p className="text-muted">
+                      {overview.last_learning.entities_detected} entidades ·{" "}
+                      {overview.last_learning.fields_detected} campos ·{" "}
+                      {overview.last_learning.relationships_detected} relaciones
+                      {overview.last_learning.duration_ms != null &&
+                        ` · ${Math.round(overview.last_learning.duration_ms / 1000)}s`}
+                    </p>
+                    {overview.last_learning.status === "failed" && (
+                      <p className="text-danger">
+                        El último aprendizaje falló. Revisa la actividad para ver el
+                        diagnóstico.
+                      </p>
+                    )}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-                    <ButtonLink to="/chat?target=knowledge" variant="primary">
-                      {COPY.playground}
-                    </ButtonLink>
-                    <ButtonLink to="/agents/new" variant="secondary">
-                      {COPY.createAgent}
-                    </ButtonLink>
-                    <ButtonLink to="/knowledge/sources" variant="secondary">
-                      {COPY.viewSources}
-                    </ButtonLink>
-                  </div>
-                </div>
-              </Panel>
-            </div>
+                ) : (
+                  <p className="text-sm text-muted">
+                    No hay ningún aprendizaje ejecutado todavía. El modelo actual proviene
+                    del discovery de schema.
+                  </p>
+                )}
+              </div>
+            </Panel>
 
-            <MetricGrid cols={3}>
-              <Metric
-                label="Fuentes"
-                value={fmtNum(sources.length)}
-                icon={Database}
-                hint={hasIssues ? `${fmtNum(broken.length)} con incidencias` : "sin incidencias"}
+            <Panel>
+              <PanelHeader
+                title="Cambios recientes"
+                description="Objetos, afirmaciones y eventos del conocimiento."
               />
-              <Metric label="Documentos" value={fmtNum(documents)} icon={Files} />
-              <Metric
-                label="Chunks indexados"
-                value={vectorPoints != null ? fmtNum(vectorPoints) : "—"}
-                icon={Lightning}
-                hint={vectorPoints == null ? "sin dato de uso" : undefined}
-              />
-            </MetricGrid>
-
-            <AttentionList items={issues} emptyBody={COPY.attentionEmpty} />
-          </>
-        )}
-      </div>
+              <div className="panel-body">
+                {overview.recent.length === 0 ? (
+                  <p className="text-sm text-muted">Sin cambios registrados.</p>
+                ) : (
+                  <ul className="flex flex-col gap-2.5">
+                    {overview.recent.slice(0, 8).map((item) => (
+                      <li key={`${item.kind}-${item.id}`} className="flex items-start gap-2">
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-hidden />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm text-text">{item.title}</p>
+                          <p className="text-xs text-muted">
+                            {item.kind === "event"
+                              ? item.type
+                              : objectTypeLabel(item.type)}
+                            {item.at ? ` · ${fmtDateTime(item.at)}` : ""}
+                          </p>
+                        </div>
+                        {item.status && (
+                          <span className={cn("badge", statusTone(item.status))}>
+                            {item.status}
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </Panel>
+          </div>
+        </div>
+      )}
     </KnowledgeLayout>
   );
 }

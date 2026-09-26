@@ -30,6 +30,8 @@ export function StoryCard({ event, detailed }: { event: StoryEvent; detailed: bo
   switch (event.kind) {
     case "retrieval":
       return <RetrievalCard event={event} />;
+    case "embedding":
+      return <EmbeddingCard event={event} />;
     case "sources":
       return <SourcesCard event={event} detailed={detailed} />;
     case "sql":
@@ -113,6 +115,23 @@ function RetrievalCard({ event }: { event: StoryEvent }) {
       {event.metrics.top_score !== undefined ? (
         <span className="mono">mejor score {Number(event.metrics.top_score).toFixed(2)}</span>
       ) : null}
+    </div>
+  );
+}
+
+/** Qué proveedor sirvió el embedding (primario o respaldo), sin secretos. */
+function EmbeddingCard({ event }: { event: StoryEvent }) {
+  const label = String(event.metrics.provider_label ?? "");
+  const model = String(event.technical?.model ?? event.metrics.model ?? "");
+  const host = String(event.technical?.base_url_host ?? event.metrics.base_url_host ?? "");
+  const fallback = event.metrics.fallback === true;
+  if (!label && !model && !fallback) return null;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11.5px] text-muted">
+      {label ? <span className="text-text">{label}</span> : null}
+      {model ? <span className="mono">{model}</span> : null}
+      {host ? <span className="text-faint">{host}</span> : null}
+      {fallback ? <Badge tone="warn">respondió el respaldo</Badge> : null}
     </div>
   );
 }

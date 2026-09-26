@@ -4,58 +4,52 @@ import {
   KNOWLEDGE_HEADINGS,
   KNOWLEDGE_PILLARS,
   KNOWLEDGE_ROUTE_TITLES,
-  KNOWLEDGE_SUBNAVS,
   knowledgePillarForPath,
 } from "./knowledgeNav";
 
 describe("knowledge IA", () => {
-  it("expone 3 pilares y no más de 6 pestañas primarias (pilares + Avanzado)", () => {
+  it("expone 5 pilares + Avanzado y no más de 6 pestañas primarias", () => {
     expect(KNOWLEDGE_PILLARS.map((tab) => tab.label)).toEqual([
       "Resumen",
       "Fuentes",
-      "Aprendizaje",
+      "Modelo",
+      "Calidad",
+      "Evaluación",
     ]);
-    const visibleWithoutAdvanced = KNOWLEDGE_PILLARS.length + 1;
-    expect(visibleWithoutAdvanced).toBeLessThanOrEqual(6);
+    expect(KNOWLEDGE_PILLARS.length + 1).toBeLessThanOrEqual(6);
   });
 
-  it("no pone Semántica ni Términos en el rail primario", () => {
-    const primaryLabels = KNOWLEDGE_PILLARS.map((tab) => tab.label);
-    expect(primaryLabels).not.toContain("Semántica");
-    expect(primaryLabels).not.toContain("Términos");
-    expect(primaryLabels).not.toContain("Mejora");
-    expect(KNOWLEDGE_SUBNAVS.mejora.map((tab) => tab.label)).toEqual(["Aprendizaje", "Mapa"]);
-    expect(KNOWLEDGE_SUBNAVS).not.toHaveProperty("fuentes");
-    expect(KNOWLEDGE_SUBNAVS).not.toHaveProperty("semantica");
+  it("no deja Aprendizaje ni Mapa como pilares", () => {
+    const labels = KNOWLEDGE_PILLARS.map((tab) => tab.label);
+    expect(labels).not.toContain("Aprendizaje");
+    expect(labels).not.toContain("Mapa");
+    expect(labels).not.toContain("Semántica");
+    expect(labels).not.toContain("Términos");
   });
 
   it("mantiene herramientas avanzadas fuera del rail visible", () => {
-    expect(KNOWLEDGE_ADVANCED_TABS.map((tab) => tab.to)).toEqual([
-      "/knowledge/glossary",
-      "/knowledge/catalog",
-      "/connectors",
-      "/knowledge/jobs",
-    ]);
-    expect(KNOWLEDGE_ADVANCED_TABS.map((tab) => tab.label)).toEqual([
-      "Términos",
-      "Catálogo",
-      "Conectores",
-      "Trabajos",
-    ]);
+    const advanced = KNOWLEDGE_ADVANCED_TABS.map((tab) => tab.to);
+    expect(advanced).toContain("/knowledge/understanding");
+    expect(advanced).toContain("/knowledge/jobs");
+    expect(advanced).toContain("/knowledge/glossary");
+    expect(advanced).toContain("/connectors");
   });
 
-  it("resuelve el pilar activo por ruta", () => {
+  it("resuelve el pilar activo por ruta (incluidas rutas legadas)", () => {
     expect(knowledgePillarForPath("/knowledge")).toBe("resumen");
     expect(knowledgePillarForPath("/knowledge/")).toBe("resumen");
-    expect(knowledgePillarForPath("/knowledge/workspaces")).toBe("avanzado");
     expect(knowledgePillarForPath("/knowledge/sources")).toBe("fuentes");
     expect(knowledgePillarForPath("/knowledge/sources/abc")).toBe("fuentes");
     expect(knowledgePillarForPath("/knowledge/add")).toBe("fuentes");
+    expect(knowledgePillarForPath("/knowledge/model")).toBe("modelo");
+    expect(knowledgePillarForPath("/knowledge/map")).toBe("modelo");
+    expect(knowledgePillarForPath("/knowledge/quality")).toBe("calidad");
+    expect(knowledgePillarForPath("/knowledge/review")).toBe("calidad");
+    expect(knowledgePillarForPath("/knowledge/improvements")).toBe("calidad");
+    expect(knowledgePillarForPath("/knowledge/evaluation")).toBe("evaluacion");
+    expect(knowledgePillarForPath("/knowledge/activity")).toBe("avanzado");
+    expect(knowledgePillarForPath("/knowledge/learning")).toBe("avanzado");
     expect(knowledgePillarForPath("/knowledge/glossary")).toBe("avanzado");
-    expect(knowledgePillarForPath("/knowledge/catalog")).toBe("avanzado");
-    expect(knowledgePillarForPath("/knowledge/understanding")).toBe("avanzado");
-    expect(knowledgePillarForPath("/knowledge/learning")).toBe("mejora");
-    expect(knowledgePillarForPath("/knowledge/map")).toBe("mejora");
     expect(knowledgePillarForPath("/knowledge/jobs")).toBe("avanzado");
     expect(knowledgePillarForPath("/connectors")).toBe("avanzado");
   });
@@ -64,9 +58,13 @@ describe("knowledge IA", () => {
     const titles = Object.values(KNOWLEDGE_HEADINGS);
     expect(new Set(titles).size).toBe(titles.length);
     expect(KNOWLEDGE_HEADINGS.overview).toBe("Resumen");
-    expect(KNOWLEDGE_HEADINGS.sources).toBe("Fuentes");
-    expect(KNOWLEDGE_HEADINGS.learning).toBe("Aprendizaje");
+    expect(KNOWLEDGE_HEADINGS.model).toBe("Modelo del negocio");
+    expect(KNOWLEDGE_HEADINGS.quality).toBe("Calidad");
+    expect(KNOWLEDGE_HEADINGS.evaluation).toBe("Evaluación");
     expect(KNOWLEDGE_ROUTE_TITLES["/knowledge"]).toBe(KNOWLEDGE_HEADINGS.overview);
-    expect(KNOWLEDGE_ROUTE_TITLES["/knowledge/sources"]).toBe(KNOWLEDGE_HEADINGS.sources);
+    expect(KNOWLEDGE_ROUTE_TITLES["/knowledge/model"]).toBe(KNOWLEDGE_HEADINGS.model);
+    expect(KNOWLEDGE_ROUTE_TITLES["/knowledge/learning"]).toBe(
+      KNOWLEDGE_HEADINGS.activity
+    );
   });
 });

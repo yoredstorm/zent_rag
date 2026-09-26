@@ -2947,6 +2947,11 @@ class AgentRuntime:
                 "tool": tool_name,
                 "latency_ms": round(tool_latency, 2),
             }
+            # Ruta de embeddings de la búsqueda (primario o respaldo): dato del
+            # tool, acotado y sin secretos. Viaja al flow del run.
+            tool_meta = tool_result.meta if isinstance(tool_result.meta, dict) else {}
+            if isinstance(tool_meta.get("embedding_route"), dict):
+                step_record["embedding_route"] = tool_meta["embedding_route"]
             if tool_result.error:
                 step_record["error"] = tool_result.error[:500]
                 history.append(f"OBSERVATION (untrusted): error: {tool_result.error}")

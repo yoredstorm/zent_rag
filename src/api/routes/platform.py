@@ -1200,6 +1200,12 @@ async def get_platform_settings(request: Request):
         "embedding_dimension": embedding["dimension"],
         "embedding_hosted": embedding["hosted"],
         "embedding_base_url_host": embedding["base_url_host"],
+        "embedding_fallback_enabled": embedding["fallback"]["enabled"],
+        "embedding_fallback_provider_label": embedding["fallback"]["provider_label"],
+        "embedding_fallback_model": (
+            embedding["fallback"]["served_model"] or embedding["fallback"]["model"]
+        ),
+        "embedding_fallback_base_url_host": embedding["fallback"]["base_url_host"],
         "default_model": s.LITELLM_DEFAULT_MODEL,
         "llm_provider_label": llm["provider_label"],
         "portal_session_ttl_hours": s.PORTAL_SESSION_TTL_HOURS,

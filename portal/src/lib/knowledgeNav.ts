@@ -1,11 +1,16 @@
 export const KNOWLEDGE_HEADINGS = {
   overview: "Resumen",
   sources: "Fuentes",
+  model: "Modelo del negocio",
+  quality: "Calidad",
+  evaluation: "Evaluación",
+  activity: "Actividad de aprendizaje",
+  // Rutas legadas (redirects o Avanzado).
   learning: "Aprendizaje",
   map: "Mapa",
   glossary: "Glosario de negocio",
   catalog: "Catálogo",
-  understanding: "Entendimiento",
+  understanding: "Estudio semántico",
   review: "Cola de revisión",
   improvements: "Mejoras de inteligencia",
   jobs: "Trabajos de sync",
@@ -20,7 +25,13 @@ export const KNOWLEDGE_HEADINGS = {
   workspaces: "Workspaces",
 } as const;
 
-export type KnowledgePillarId = "resumen" | "fuentes" | "semantica" | "mejora" | "avanzado";
+export type KnowledgePillarId =
+  | "resumen"
+  | "fuentes"
+  | "modelo"
+  | "calidad"
+  | "evaluacion"
+  | "avanzado";
 
 export type KnowledgeTab = {
   to: string;
@@ -28,24 +39,39 @@ export type KnowledgeTab = {
   end?: boolean;
 };
 
-export const KNOWLEDGE_PILLARS: (KnowledgeTab & { id: Exclude<KnowledgePillarId, "avanzado" | "semantica"> })[] = [
+export type KnowledgePillar = KnowledgeTab & {
+  id: Exclude<KnowledgePillarId, "avanzado">;
+};
+
+export const KNOWLEDGE_PILLARS: KnowledgePillar[] = [
   { id: "resumen", to: "/knowledge", label: "Resumen", end: true },
   { id: "fuentes", to: "/knowledge/sources", label: "Fuentes" },
-  { id: "mejora", to: "/knowledge/learning", label: "Aprendizaje" },
+  { id: "modelo", to: "/knowledge/model", label: "Modelo" },
+  { id: "calidad", to: "/knowledge/quality", label: "Calidad" },
+  { id: "evaluacion", to: "/knowledge/evaluation", label: "Evaluación" },
 ];
 
-export const KNOWLEDGE_SUBNAVS: Record<"mejora", KnowledgeTab[]> = {
-  mejora: [
-    { to: "/knowledge/learning", label: "Aprendizaje" },
-    { to: "/knowledge/map", label: "Mapa" },
-  ],
-};
+export const KNOWLEDGE_ADVANCED_TABS: KnowledgeTab[] = [
+  { to: "/knowledge/understanding", label: "Estudio semántico" },
+  { to: "/knowledge/playground", label: "Playground" },
+  { to: "/knowledge/jobs", label: "Trabajos" },
+  { to: "/knowledge/documents", label: "Documentos" },
+  { to: "/knowledge/collections", label: "Colecciones" },
+  { to: "/knowledge/workspaces", label: "Workspaces" },
+  { to: "/knowledge/glossary", label: "Glosario" },
+  { to: "/knowledge/catalog", label: "Catálogo" },
+  { to: "/connectors", label: "Conectores" },
+];
 
 export const KNOWLEDGE_ROUTE_TITLES: Record<string, string> = {
   "/knowledge": KNOWLEDGE_HEADINGS.overview,
   "/knowledge/sources": KNOWLEDGE_HEADINGS.sources,
-  "/knowledge/learning": KNOWLEDGE_HEADINGS.learning,
-  "/knowledge/map": KNOWLEDGE_HEADINGS.map,
+  "/knowledge/model": KNOWLEDGE_HEADINGS.model,
+  "/knowledge/quality": KNOWLEDGE_HEADINGS.quality,
+  "/knowledge/evaluation": KNOWLEDGE_HEADINGS.evaluation,
+  "/knowledge/activity": KNOWLEDGE_HEADINGS.activity,
+  "/knowledge/learning": KNOWLEDGE_HEADINGS.activity,
+  "/knowledge/map": KNOWLEDGE_HEADINGS.model,
   "/knowledge/glossary": KNOWLEDGE_HEADINGS.glossary,
   "/knowledge/catalog": KNOWLEDGE_HEADINGS.catalog,
   "/knowledge/understanding": KNOWLEDGE_HEADINGS.understanding,
@@ -62,26 +88,28 @@ export const KNOWLEDGE_ROUTE_TITLES: Record<string, string> = {
   "/knowledge/workspaces": KNOWLEDGE_HEADINGS.workspaces,
 };
 
-export const KNOWLEDGE_ADVANCED_TABS: KnowledgeTab[] = [
-  { to: "/knowledge/glossary", label: "Términos" },
-  { to: "/knowledge/catalog", label: "Catálogo" },
-  { to: "/connectors", label: "Conectores" },
-  { to: "/knowledge/jobs", label: "Trabajos" },
-];
-
 const PREFIX_GROUPS: { id: KnowledgePillarId; prefixes: string[] }[] = [
   {
     id: "fuentes",
     prefixes: ["/knowledge/sources", "/knowledge/add"],
   },
   {
-    id: "mejora",
+    id: "modelo",
+    prefixes: ["/knowledge/model", "/knowledge/map"],
+  },
+  {
+    id: "calidad",
     prefixes: [
-      "/knowledge/learning",
-      "/knowledge/improvements",
-      "/knowledge/map",
+      "/knowledge/quality",
       "/knowledge/review",
+      "/knowledge/improvements",
+      "/knowledge/gaps",
+      "/knowledge/conflicts",
     ],
+  },
+  {
+    id: "evaluacion",
+    prefixes: ["/knowledge/evaluation"],
   },
   {
     id: "avanzado",
@@ -96,6 +124,8 @@ const PREFIX_GROUPS: { id: KnowledgePillarId; prefixes: string[] }[] = [
       "/knowledge/collections",
       "/knowledge/documents",
       "/knowledge/playground",
+      "/knowledge/activity",
+      "/knowledge/learning",
       "/knowledge-hub",
       "/connectors",
     ],

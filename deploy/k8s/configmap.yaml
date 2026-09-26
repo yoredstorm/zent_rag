@@ -18,6 +18,9 @@ data:
   RAG_LITELLM_API_BASE: "https://api.example.com/v1"
   RAG_LITELLM_DEFAULT_MODEL: "gpt-4o-mini"
   RAG_EMBEDDING_MODEL: "openai/baai/bge-m3"
+  # Respaldo de embeddings (mismo modelo/dimensión). La key va en el Secret.
+  RAG_EMBEDDING_FALLBACK_MODEL: "openai/BAAI/bge-m3"
+  RAG_EMBEDDING_FALLBACK_API_BASE: "https://api.deepinfra.com/v1/openai"
   RAG_CORS_ALLOWED_ORIGINS: "https://app.example.com"
   RAG_UPLOAD_DIR: "/app/uploads"
   # Knowledge V2 (StructuredDocument) — OFF por ADR hasta calibrar shadow.
@@ -45,6 +48,11 @@ data:
   RAG_KNOWLEDGE_TABULAR_LAZY_MAX_ROWS: "5000"
   RAG_KNOWLEDGE_TABULAR_LAZY_TIMEOUT_SECONDS: "15"
   RAG_KNOWLEDGE_TABULAR_LAZY_MAX_SOURCES: "3"
+  # Knowledge OS (FASE 34): modelo de conocimiento durable (objetos, assertions,
+  # evidencia, health, quality).
+  RAG_KNOWLEDGE_MODEL_ENABLED: "true"
+  RAG_KNOWLEDGE_MODEL_AUTO_MATERIALIZE: "true"
+  RAG_KNOWLEDGE_MODEL_MAX_COLUMNS: "5000"
   RAG_RAG_SEARCH_KNOWLEDGE_TIMEOUT_SECONDS: "20"
   # Decision Engine batching + Judgment Fabric (ADRs decision-engine-batching.md,
   # judgment-fabric.md). Defaults seguros: sin batching y target explícito.

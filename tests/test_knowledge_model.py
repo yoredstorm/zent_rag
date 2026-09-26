@@ -1,0 +1,505 @@
+# =============================================================================
+# Knowledge Operating System — tests (FASE 34)
+# =============================================================================
+# Cubre: dominio puro (confianza explicable, health sin medir != 0, prioridad
+# de gaps, aliases), materialización real desde catalog_*, provenance/evidencia,
+# aislamiento multi-tenant, error tipado (ERROR != ZERO) y verificación humana.
+# =============================================================================
+from __future__ import annotations
+
+from uuid import UUID, uuid4
+
+from sqlalchemy import text
+
+from src.core.domain.knowledge_model import (
+    ConfidenceSignals,
+    GapImpact,
+    HealthDimension,
+    KnowledgeObjectStatus,
+    aggregate_health,
+    compute_confidence,
+    compute_gap_priority,
+    normalize_object_status,
+    normalize_object_type,
+)
+from src.infrastructure.postgres.session import get_async_session
+from src.platform.knowledge_model.materializer import KnowledgeModelMaterializer
+from src.platform.knowledge_model.repository import PostgresKnowledgeModelRepository
+from src.platform.knowledge_model.service import KnowledgeModelUnavailable
+
+# ---------------------------------------------------------------------------
+# Dominio puro
+# ---------------------------------------------------------------------------
+
+
+def test_confidence_caps_without_evidence() -> None:
+    score, detail = compute_confidence(
+        ConfidenceSignals(
+            source_reliability=1.0,
+            evidence_strength=1.0,
+            evidence_count=0,
+            semantic_certainty=1.0,
+            freshness=1.0,
+        )
+    )
+    assert score <= 0.6
+    assert detail["components"]["corroboration"] == 0.0
+    assert "sin evidencia" in " ".join(detail["caps"])
+
+
+def test_confidence_rejected_is_zero_and_verified_has_floor() -> None:
+    rejected, _ = compute_confidence(
+        ConfidenceSignals(validation=0.0, evidence_count=3, evidence_strength=0.9)
+    )
+    assert rejected == 0.0
+    verified, _ = compute_confidence(
+        ConfidenceSignals(
+            validation=1.0,
+            evidence_count=3,
+            evidence_strength=1.0,
+            source_reliability=1.0,
+            semantic_certainty=1.0,
+            freshness=1.0,
+        )
+    )
+    assert verified >= 0.9
+
+
+def test_confidence_evidence_beats_source_reliability() -> None:
+    weak_evidence, _ = compute_confidence(
+        ConfidenceSignals(
+            source_reliability=1.0,
+            evidence_strength=0.5,
+            evidence_count=1,
+            semantic_certainty=0.55,
+        )
+    )
+    strong_evidence, _ = compute_confidence(
+        ConfidenceSignals(
+            source_reliability=0.5,
+            evidence_strength=0.95,
+            evidence_count=3,
+            semantic_certainty=0.9,
+        )
+    )
+    assert strong_evidence > weak_evidence
+
+
+def test_health_excludes_unmeasured_dimensions() -> None:
+    dimensions = [
+        HealthDimension(
+            key="coverage", label="Cobertura", score=80.0, weight=0.5, measured=True
+        ),
+        HealthDimension(
+            key="retrieval",
+            label="Retrieval",
+            score=None,
+            weight=0.5,
+            measured=False,
+            reason="sin evaluación",
+        ),
+    ]
+    overall, measured = aggregate_health(dimensions)
+    assert measured == 1
+    assert overall == 80.0  # la dimensión no medida NO cuenta como 0
+
+
+def test_health_all_unmeasured_is_none_not_zero() -> None:
+    overall, measured = aggregate_health(
+        [
+            HealthDimension(
+                key="retrieval",
+                label="Retrieval",
+                score=None,
+                weight=1.0,
+                measured=False,
+            )
+        ]
+    )
+    assert overall is None
+    assert measured == 0
+
+
+def test_gap_priority_prefers_business_impact() -> None:
+    low, low_score = compute_gap_priority(
+        impact=GapImpact(affected_objects=1, business_impact=0.1, retrieval_impact=0.1),
+        confidence=0.9,
+        ambiguity=0.2,
+        dependents=0.0,
+    )
+    high, high_score = compute_gap_priority(
+        impact=GapImpact(
+            affected_objects=14, business_impact=1.0, retrieval_impact=1.0
+        ),
+        confidence=0.2,
+        ambiguity=0.9,
+        dependents=1.0,
+    )
+    assert high_score > low_score
+    assert high == "critical"
+    assert low == "low"
+
+
+def test_status_and_kind_aliases_are_normalized() -> None:
+    assert normalize_object_status("observed") == KnowledgeObjectStatus.DISCOVERED.value
+    assert normalize_object_status("approved") == KnowledgeObjectStatus.VERIFIED.value
+    assert normalize_object_status("archived") == KnowledgeObjectStatus.DEPRECATED.value
+    assert normalize_object_type("rule") == "business_rule"
+    assert normalize_object_type("glossary_term") == "term"
+    assert normalize_object_type("entity") == "entity"
+
+
+# ---------------------------------------------------------------------------
+# Materialización real + API (requiere Postgres local)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_catalog(org: UUID) -> dict:
+    ids = {
+        "connector": uuid4(),
+        "source": uuid4(),
+        "orders": uuid4(),
+        "customers": uuid4(),
+        "order_customer_col": uuid4(),
+        "customer_pk_col": uuid4(),
+        "customer_entity": uuid4(),
+        "order_entity": uuid4(),
+        "order_field": uuid4(),
+        "relationship": uuid4(),
+    }
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                """
+                INSERT INTO connectors (id, organization_id, name, type, config_json, status)
+                VALUES (:connector, :org, 'ERP Test', 'sql', '{}'::jsonb, 'active')
+                """
+            ),
+            {"connector": ids["connector"], "org": org},
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO catalog_sources (
+                    id, organization_id, connector_id, engine, phase, last_scan_at
+                ) VALUES (:source, :org, :connector, 'postgres', 'COMPLETED', now())
+                """
+            ),
+            {**ids, "org": org},
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO catalog_tables (
+                    id, organization_id, source_id, schema_name, table_name,
+                    row_count_approx, table_comment
+                ) VALUES
+                    (:orders, :org, :source, 'erp', 'orders', 100, 'Pedidos de venta'),
+                    (:customers, :org, :source, 'erp', 'customers', 50, 'Clientes')
+                """
+            ),
+            {**ids, "org": org},
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO catalog_columns (
+                    id, organization_id, table_id, column_name, data_type,
+                    is_primary_key, column_comment
+                ) VALUES
+                    (:order_customer_col, :org, :orders, 'customer_id', 'uuid', false,
+                     'Cliente del pedido'),
+                    (:customer_pk_col, :org, :customers, 'id', 'uuid', true, 'PK cliente')
+                """
+            ),
+            {**ids, "org": org},
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO catalog_entities (
+                    id, organization_id, name, display_name, description,
+                    provenance, confidence, status, mapped_table_id
+                ) VALUES
+                    (:customer_entity, :org, 'Customer', 'Cliente',
+                     'Persona que compra', 'OBSERVED', 'high', 'approved', :customers),
+                    (:order_entity, :org, 'Order', 'Pedido',
+                     'Pedido de venta', 'OBSERVED', 'high', 'approved', :orders)
+                """
+            ),
+            {**ids, "org": org},
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO catalog_fields (
+                    id, organization_id, entity_id, name, description, provenance,
+                    confidence, status, mapped_column_id
+                ) VALUES (
+                    :order_field, :org, :order_entity, 'customer_id',
+                    'Cliente que realizó el pedido', 'OBSERVED', 'high', 'approved',
+                    :order_customer_col
+                )
+                """
+            ),
+            {**ids, "org": org},
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO catalog_relationships (
+                    id, organization_id, source_id, from_table_id, from_column,
+                    to_table_id, to_column, relation_type, confidence, status,
+                    evidence, confidence_score, cardinality
+                ) VALUES (
+                    :relationship, :org, :source, :orders, 'customer_id',
+                    :customers, 'id', 'foreign_key', 'high', 'confirmed',
+                    '[]'::jsonb, 0.99, 'n:1'
+                )
+                """
+            ),
+            {**ids, "org": org},
+        )
+        await session.commit()
+    finally:
+        await session.close()
+    return ids
+
+
+async def _count_objects(org: UUID) -> int:
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                text(
+                    "SELECT COUNT(*) AS total FROM knowledge_canonical_objects "
+                    "WHERE organization_id = :org"
+                ),
+                {"org": org},
+            )
+        ).first()
+        return int(row.total or 0)
+    finally:
+        await session.close()
+
+
+async def test_materialize_produces_objects_edges_assertions_and_evidence() -> None:
+    org = uuid4()
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "INSERT INTO organizations (id, name) VALUES (:org, 'Knowledge Test') "
+                "ON CONFLICT (id) DO NOTHING"
+            ),
+            {"org": org},
+        )
+        await session.commit()
+    finally:
+        await session.close()
+
+    await _seed_catalog(org)
+
+    repository = PostgresKnowledgeModelRepository()
+    await repository.ensure_tables()
+    materializer = KnowledgeModelMaterializer(repository, max_columns=100)
+
+    first = await materializer.materialize(org)
+    assert first["objects_created"] > 0
+    assert first["edges"] > 0
+    assert first["assertions"] > 0
+    assert first["evidence"] > 0
+
+    stats = await repository.stats(org)
+    # objects.total excluye artefactos físicos (source/table/column/...).
+    assert stats["objects"]["total"] >= 5
+    assert stats["by_kind"]["entity"]["total"] == 2
+    assert stats["by_kind"]["attribute"]["total"] == 1
+    assert stats["by_kind"]["table"]["total"] == 2
+    assert stats["by_kind"]["column"]["total"] == 2
+    assert stats["by_kind"]["relationship"]["total"] == 1
+    assert stats["edges"]["total"] >= 8
+    assert stats["assertions"]["total"] >= 4
+    assert stats["evidence"]["total"] >= 3
+
+    # La evidencia estructurada tiene locator real.
+    entities = await repository.list_objects(org, kinds=["entity"], limit=10)
+    customer = next(e for e in entities if e["name"] == "Customer")
+    evidence = await repository.object_evidence(org, UUID(customer["id"]))
+    assert evidence, "la entidad debe tener evidencia"
+    assert all(e["locator"] for e in evidence)
+
+    detail = await repository.object_edges(org, UUID(customer["id"]))
+    predicates = {e["predicate"] for e in detail["edges"]}
+    assert any(p in ("references", "has_many", "has_one") for p in predicates)
+
+    order = next(e for e in entities if e["name"] == "Order")
+    order_edges = await repository.object_edges(org, UUID(order["id"]))
+    order_predicates = {e["predicate"] for e in order_edges["edges"]}
+    assert "has_attribute" in order_predicates
+    assert "references" in order_predicates
+
+    # Verificación humana: promueve el objeto y respeta la approval law.
+    verified = await repository.verify_object(org, UUID(customer["id"]), user_id=None)
+    assert verified is not None
+    assert verified["status"] == "verified"
+    assert verified["provenance"] == "APPROVED"
+
+    # Idempotencia: segunda materialización no crea objetos nuevos.
+    second = await materializer.materialize(org)
+    assert second["objects_created"] == 0
+    assert second["objects_updated"] > 0
+    total_all = sum(v["total"] for v in stats["by_kind"].values())
+    assert await _count_objects(org) == total_all
+
+
+async def test_materialize_is_tenant_scoped() -> None:
+    org_a, org_b = uuid4(), uuid4()
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "INSERT INTO organizations (id, name) VALUES "
+                "(:a, 'Org A'), (:b, 'Org B') ON CONFLICT (id) DO NOTHING"
+            ),
+            {"a": org_a, "b": org_b},
+        )
+        await session.commit()
+    finally:
+        await session.close()
+    await _seed_catalog(org_a)
+
+    repository = PostgresKnowledgeModelRepository()
+    await repository.ensure_tables()
+    await KnowledgeModelMaterializer(repository, max_columns=100).materialize(org_a)
+
+    assert await _count_objects(org_a) > 0
+    assert await _count_objects(org_b) == 0
+    stats_b = await repository.stats(org_b)
+    assert stats_b["objects"]["total"] == 0
+    assert stats_b["sources"]["total"] == 0
+
+
+async def test_overview_error_is_not_zero(async_client) -> None:
+    """Un fallo del backend debe ser 503 tipado, nunca counts=0."""
+    from src.api.deps import get_knowledge_model_service
+    from src.api.main import app
+
+    class _BrokenService:
+        async def overview(self, organization_id):
+            raise KnowledgeModelUnavailable("db down")
+
+    app.dependency_overrides[get_knowledge_model_service] = lambda: _BrokenService()
+    try:
+        auth = await _trial_auth(async_client)
+        response = await async_client.get("/api/v1/knowledge/overview", headers=auth)
+        assert response.status_code == 503
+        body = response.json()
+        detail = body.get("detail", body)
+        assert detail["error_code"] == "knowledge_model_unavailable"
+        assert "NO significa que no exista" in detail["message"]
+    finally:
+        app.dependency_overrides.pop(get_knowledge_model_service, None)
+
+
+async def test_api_materialize_explore_and_verify(async_client) -> None:
+    auth = await _trial_auth(async_client)
+    org = UUID(auth["X-Organization-Id"])
+    await _seed_catalog(org)
+
+    # El Command Center materializa el modelo on-demand la primera vez.
+    overview = await async_client.get("/api/v1/knowledge/overview", headers=auth)
+    assert overview.status_code == 200, overview.text
+    payload = overview.json()
+    assert payload["state"] in ("partial", "ready")
+    assert payload["counts"]["objects"] > 0
+    assert payload["health"]["overall"] is not None
+    measured = [d for d in payload["health"]["dimensions"] if d["measured"]]
+    assert measured, "debe haber dimensiones medidas"
+    unmeasured = [d for d in payload["health"]["dimensions"] if not d["measured"]]
+    assert all(d["score"] is None for d in unmeasured)
+
+    objects = await async_client.get(
+        "/api/v1/knowledge/objects?type=entity", headers=auth
+    )
+    assert objects.status_code == 200
+    items = objects.json()["items"]
+    assert len(items) == 2
+    customer = next(i for i in items if i["name"] == "Customer")
+
+    detail = await async_client.get(
+        f"/api/v1/knowledge/objects/{customer['id']}", headers=auth
+    )
+    assert detail.status_code == 200
+    body = detail.json()
+    assert body["object"]["name"] == "Customer"
+    assert body["evidence"], "el detalle debe exponer evidencia"
+    assert body["edges"], "el detalle debe exponer relaciones"
+    assert body["impact"]["count"] >= 1
+
+    search = await async_client.get(
+        "/api/v1/knowledge/search?q=Customer", headers=auth
+    )
+    assert search.status_code == 200
+    assert search.json()["items"], "la búsqueda global debe encontrar el objeto"
+
+    quality = await async_client.get("/api/v1/knowledge/quality", headers=auth)
+    assert quality.status_code == 200
+    assert "issues" in quality.json()
+
+    graph = await async_client.get("/api/v1/knowledge/graph", headers=auth)
+    assert graph.status_code == 200
+    assert graph.json()["nodes"], "el grafo se deriva del modelo, no de un dataset paralelo"
+
+
+async def test_rebuild_and_verify_require_privileged_permission(async_client) -> None:
+    """Gobernanza: un API token estándar no reconstruye ni verifica conocimiento."""
+    auth = await _trial_auth(async_client)
+    rebuild = await async_client.post(
+        "/api/v1/knowledge/model/rebuild", json={}, headers=auth
+    )
+    assert rebuild.status_code == 403
+    verify = await async_client.post(
+        f"/api/v1/knowledge/objects/{uuid4()}/verify", headers=auth
+    )
+    assert verify.status_code == 403
+
+
+async def test_cross_tenant_object_is_404(async_client) -> None:
+    auth_a = await _trial_auth(async_client)
+    auth_b = await _trial_auth(async_client)
+    org_a = UUID(auth_a["X-Organization-Id"])
+    await _seed_catalog(org_a)
+    overview = await async_client.get("/api/v1/knowledge/overview", headers=auth_a)
+    assert overview.status_code == 200, overview.text
+    objects = await async_client.get(
+        "/api/v1/knowledge/objects?type=entity", headers=auth_a
+    )
+    object_id = objects.json()["items"][0]["id"]
+
+    cross = await async_client.get(
+        f"/api/v1/knowledge/objects/{object_id}", headers=auth_b
+    )
+    assert cross.status_code == 404
+
+    overview_b = await async_client.get("/api/v1/knowledge/overview", headers=auth_b)
+    assert overview_b.status_code == 200
+    assert overview_b.json()["counts"]["objects"] == 0
+    assert overview_b.json()["state"] == "empty"
+
+
+async def _trial_auth(client) -> dict[str, str]:
+    response = await client.post(
+        "/api/v1/billing/subscription/create-trial",
+        json={
+            "company_name": f"Knowledge Co {uuid4().hex[:8]}",
+            "email": f"knowledge-{uuid4().hex[:8]}@example.com",
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    return {
+        "Authorization": f"Bearer {data['api_token']}",
+        "X-Organization-Id": data["organization_id"],
+    }

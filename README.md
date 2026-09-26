@@ -233,7 +233,7 @@ Versiones tomadas de `docker-compose.yml`, `pyproject.toml` y `portal/package.js
 | **BD relacional** | PostgreSQL + pgvector | `pgvector/pgvector:pg16` | Orgs, users, billing, jobs, RBAC |
 | **Vector DB** | Qdrant | `v1.13.4` | Embeddings HNSW + sparse BM25 (hybrid) |
 | **Caché / colas** | Redis | `7-alpine` | Rate limit, sessions, conversation TTL, job wakeup |
-| **LLM / embeddings** | LiteLLM → OpenAI/Anthropic/Novita/Ollama | deps `litellm>=1.40` | Proxy unificado |
+| **LLM / embeddings** | LiteLLM → OpenAI/Anthropic/Novita/Ollama | deps `litellm>=1.40` | Proxy unificado; embeddings con respaldo DeepInfra |
 | **Embeddings locales** | Ollama + bge-m3 | `ollama/ollama:0.6.5` · 1024-d | Offline / CPU (más lento) |
 | **Migrations** | Alembic | `>=1.14` | Schema versionado |
 | **MCP** | Model Context Protocol | `mcp>=2.0` | Streamable HTTP en `/mcp` |
@@ -331,7 +331,7 @@ flowchart TB
 ```
 1. POST /api/v1/rag/query  (+ Bearer zent_sk_live_… / rag_sess_)
 2. Resolver organización + scopes + rate limit / cuota
-3. Embedding de la pregunta (LiteLLM → Novita/Ollama bge-m3)
+3. Embedding de la pregunta (LiteLLM → Novita/Ollama bge-m3; respaldo DeepInfra)
 4. Retrieval en Qdrant (vector | lexical | hybrid + filtro organization_id)
 5. SQL Expert opcional (NL → SQL read-only validado)
 6. Ensamblar prompt: system + schema/chunks + historial Redis + query
@@ -762,6 +762,7 @@ Todas las settings de app usan prefijo **`RAG_`** (`pydantic-settings` en [`src/
 | `RAG_LITELLM_API_BASE` / `KEY` | — | Proxy LLM |
 | `RAG_LITELLM_DEFAULT_MODEL` | `gpt-4o-mini` | Modelo chat por defecto |
 | `RAG_EMBEDDING_MODEL` | `openai/baai/bge-m3` | Cloud; `ollama/bge-m3` local |
+| `RAG_EMBEDDING_FALLBACK_MODEL` / `_API_BASE` / `_API_KEY` | `openai/BAAI/bge-m3` ·  `https://api.deepinfra.com/v1/openai` · — | Respaldo si el primario falla; requiere key |
 | `RAG_VECTOR_DIMENSION` | `1024` | Debe coincidir con el modelo |
 | `RAG_PORTAL_SESSION_KEY` | (dev hex) | AES-256-GCM 32 bytes — **rotar en prod** |
 | `RAG_CONNECTOR_SECRETS_KEY` | (dev) | Cifrado local de secrets de connectors |

@@ -42,6 +42,10 @@ const BillingPage = lazy(() => import("./pages/Billing"));
 const SettingsPage = lazy(() => import("./pages/Settings"));
 const KnowledgeSourcesPage = lazy(() => import("./pages/knowledge/Sources"));
 const KnowledgeOverviewPage = lazy(() => import("./pages/knowledge/Overview"));
+const KnowledgeModelPage = lazy(() => import("./pages/knowledge/Model"));
+const KnowledgeQualityPage = lazy(() => import("./pages/knowledge/Quality"));
+const KnowledgeEvaluationPage = lazy(() => import("./pages/knowledge/Evaluation"));
+const KnowledgeActivityPage = lazy(() => import("./pages/knowledge/Activity"));
 const KnowledgeOnboardingPage = lazy(() => import("./pages/onboarding/data/OnboardingWizard"));
 const KnowledgeUnderstandingPage = lazy(() => import("./pages/knowledge/Understanding"));
 const KnowledgeCollectionsPage = lazy(() => import("./pages/knowledge/Collections"));
@@ -51,13 +55,9 @@ const KnowledgeJobsPage = lazy(() => import("./pages/knowledge/Jobs"));
 const KnowledgePlaygroundPage = lazy(() => import("./pages/knowledge/Playground"));
 const KnowledgeCatalogPage = lazy(() => import("./pages/knowledge/Catalog"));
 const KnowledgeGlossaryPage = lazy(() => import("./pages/knowledge/Glossary"));
-const KnowledgeReviewPage = lazy(() => import("./pages/knowledge/Review"));
-const KnowledgeImprovementsPage = lazy(() => import("./pages/knowledge/Improvements"));
 const KnowledgeDatabasePage = lazy(() => import("./pages/knowledge/DatabaseBuilder"));
 const KnowledgeManagedImportPage = lazy(() => import("./pages/knowledge/ManagedImport"));
 const KnowledgeSourceDetailPage = lazy(() => import("./pages/knowledge/SourceDetail"));
-const KnowledgeLearningPage = lazy(() => import("./pages/knowledge/Learning"));
-const KnowledgeMapPage = lazy(() => import("./pages/knowledge/Map"));
 const KnowledgeWorkspacesPage = lazy(() => import("./pages/knowledge/KnowledgeWorkspaces"));
 const KnowledgeWorkspacePage = lazy(() => import("./pages/knowledge/KnowledgeWorkspace"));
 const TransitionWizardPage = lazy(() => import("./pages/onboarding/TransitionWizard"));
@@ -540,8 +540,15 @@ export default function App() {
         <Route path="/company-intelligence/people" element={<Suspense fallback={<PageFallback />}><CompanyInstitutionalPage /></Suspense>} />
         <Route path="/company-intelligence/ask" element={<Suspense fallback={<PageFallback />}><CompanyAskPage /></Suspense>} />
         <Route path="/company-intelligence/entity/:entityId" element={<Suspense fallback={<PageFallback />}><CompanyEntityDetailPage /></Suspense>} />
-        <Route path="/knowledge/learning" element={<Suspense fallback={<PageFallback />}><KnowledgeLearningPage /></Suspense>} />
-        <Route path="/knowledge/map" element={<Suspense fallback={<PageFallback />}><KnowledgeMapPage /></Suspense>} />
+        <Route path="/knowledge/model" element={<Suspense fallback={<PageFallback />}><KnowledgeModelPage /></Suspense>} />
+        <Route path="/knowledge/quality" element={<Suspense fallback={<PageFallback />}><KnowledgeQualityPage /></Suspense>} />
+        <Route path="/knowledge/evaluation" element={<Suspense fallback={<PageFallback />}><KnowledgeEvaluationPage /></Suspense>} />
+        <Route path="/knowledge/activity" element={<Suspense fallback={<PageFallback />}><KnowledgeActivityPage /></Suspense>} />
+        {/* Rutas legadas: redirects para no romper bookmarks. */}
+        <Route path="/knowledge/learning" element={<Navigate to="/knowledge/activity" replace />} />
+        <Route path="/knowledge/map" element={<Navigate to="/knowledge/model?view=graph" replace />} />
+        <Route path="/knowledge/review" element={<Navigate to="/knowledge/quality?tab=reviews" replace />} />
+        <Route path="/knowledge/improvements" element={<Navigate to="/knowledge/quality?tab=improvements" replace />} />
         <Route path="/knowledge/understanding" element={<Suspense fallback={<PageFallback />}><KnowledgeUnderstandingPage /></Suspense>} />
         <Route path="/knowledge/add/:sessionId" element={<Suspense fallback={<PageFallback />}><KnowledgeOnboardingPage /></Suspense>} />
         <Route path="/knowledge/add" element={<Suspense fallback={<PageFallback />}><KnowledgeOnboardingPage /></Suspense>} />
@@ -559,8 +566,6 @@ export default function App() {
         <Route path="/knowledge/workspaces" element={<Suspense fallback={<PageFallback />}><KnowledgeWorkspacesPage /></Suspense>} />
         <Route path="/knowledge/catalog" element={<Suspense fallback={<PageFallback />}><KnowledgeCatalogPage /></Suspense>} />
         <Route path="/knowledge/glossary" element={<Suspense fallback={<PageFallback />}><KnowledgeGlossaryPage /></Suspense>} />
-<Route path="/knowledge/review" element={<Suspense fallback={<PageFallback />}><KnowledgeReviewPage /></Suspense>} />
-        <Route path="/knowledge/improvements" element={<Suspense fallback={<PageFallback />}><KnowledgeImprovementsPage /></Suspense>} />
         <Route path="/prompts" element={<Suspense fallback={<PageFallback />}><PromptsPage /></Suspense>} />
         <Route path="/chat" element={<Suspense fallback={<PageFallback />}><ChatPage /></Suspense>} />
         <Route path="/team" element={<Suspense fallback={<PageFallback />}><TeamAccessPage /></Suspense>} />

@@ -63,6 +63,12 @@ rag_embeddings_latency = Histogram(
     buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
 )
 
+rag_embeddings_fallback_total = Counter(
+    "rag_embeddings_fallback_total",
+    "Embeddings servidos por el proveedor de respaldo tras fallo del primario",
+    labelnames=["from_model", "to_model", "outcome"],  # outcome: ok | error
+)
+
 rag_vector_search_latency = Histogram(
     "rag_vector_search_latency_seconds",
     "Latencia de búsqueda vectorial en Qdrant",
@@ -485,6 +491,34 @@ knowledge_evaluation_composite = Gauge(
     "knowledge_evaluation_composite",
     "Score compuesto de la última auto-evaluación (0-1)",
     labelnames=["organization_id"],
+)
+
+# Knowledge OS — materialización del modelo (FASE 34). Labels acotados:
+# kind/method/status son vocabularios cerrados; sin organization_id para no
+# explotar cardinalidad (el tenant ya es visible en logs estructurados).
+knowledge_model_materializations_total = Counter(
+    "knowledge_model_materializations_total",
+    "Materializaciones del modelo de conocimiento",
+    labelnames=["status"],
+)
+knowledge_model_objects_total = Counter(
+    "knowledge_model_objects_total",
+    "Objetos de conocimiento creados/actualizados por el materializador",
+    labelnames=["operation", "kind"],
+)
+knowledge_model_assertions_total = Counter(
+    "knowledge_model_assertions_total",
+    "Assertions materializadas",
+    labelnames=["method", "status"],
+)
+knowledge_model_conflicts_total = Counter(
+    "knowledge_model_conflicts_total",
+    "Conflictos de conocimiento detectados",
+)
+knowledge_model_gaps_total = Counter(
+    "knowledge_model_gaps_total",
+    "Gaps de conocimiento persistidos",
+    labelnames=["type"],
 )
 
 

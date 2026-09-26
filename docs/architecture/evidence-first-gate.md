@@ -242,6 +242,13 @@ en las fuentes consultadas… cargá más información» sin que **una sola bús
 llegara a ejecutarse**. La frase era falsa: no faltaba información, faltaba la
 búsqueda. El usuario iba a subir documentos que ya tenía.
 
+Con el respaldo configurado (`RAG_EMBEDDING_FALLBACK_*`, DeepInfra con el mismo
+`BAAI/bge-m3`), un fallo de proveedor ya no deja la búsqueda sin vectores: el
+primer fallo transitorio o de credenciales pasa al respaldo. La ruta aplicada
+(primario o respaldo) viaja en el flow del agente (`embedding`) y en
+`/api/v1/platform/settings`, y una dimensión distinta a `VECTOR_DIMENSION` se
+rechaza en vez de indexarse.
+
 Tres causas, las tres corregidas:
 
 1. **Sin reintento real** (`src/infrastructure/llm/provider.py`). `embed()` hacía

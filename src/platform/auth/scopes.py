@@ -46,10 +46,24 @@ _SCOPE_TO_PERMISSIONS: dict[str, frozenset[str]] = {
     "rag:read": frozenset({"rag:read", "rag:query"}),
     "rag:query": frozenset({"rag:read", "rag:query"}),
     "rag:write": frozenset(
-        {"rag:write", "rag:ingest", "kbs:write", "sources:write", "knowledge:write"}
+        {
+            "rag:write",
+            "rag:ingest",
+            "kbs:write",
+            "sources:write",
+            "knowledge:write",
+            "knowledge:run_learning",
+        }
     ),
     "rag:ingest": frozenset(
-        {"rag:write", "rag:ingest", "kbs:write", "sources:write", "knowledge:write"}
+        {
+            "rag:write",
+            "rag:ingest",
+            "kbs:write",
+            "sources:write",
+            "knowledge:write",
+            "knowledge:run_learning",
+        }
     ),
     "agents:execute": frozenset({"agents:execute"}),
     "agents:read": frozenset({"agents:read"}),
@@ -64,6 +78,7 @@ _SCOPE_TO_PERMISSIONS: dict[str, frozenset[str]] = {
             "sources:write",
             "catalog:write",
             "knowledge:write",
+            "knowledge:run_learning",
         }
     ),
     "connectors:read": frozenset({"connectors:read"}),

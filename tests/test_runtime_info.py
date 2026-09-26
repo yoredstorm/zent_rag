@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from pydantic import SecretStr
+
 from src.core.runtime_info import (
     describe_model_runtime,
     embedding_runtime,
@@ -18,6 +20,9 @@ class _FakeSettings:
     LITELLM_API_BASE: str = "https://api.novita.ai/openai"
     LITELLM_DEFAULT_MODEL: str = "openai/deepseek/deepseek-v3.2"
     VECTOR_DIMENSION: int = 1024
+    EMBEDDING_FALLBACK_MODEL: str = "openai/BAAI/bge-m3"
+    EMBEDDING_FALLBACK_API_BASE: str = "https://api.deepinfra.com/v1/openai"
+    EMBEDDING_FALLBACK_API_KEY: SecretStr | None = None
 
 
 def test_embedding_runtime_detects_novita_hosted() -> None:
@@ -47,6 +52,24 @@ def test_describe_model_runtime_openai_without_base() -> None:
     assert info["provider"] == "openai_compatible"
     assert info["host"] is None
     assert info["hosted"] is True
+
+
+def test_embedding_runtime_detecta_respaldo_deepinfra() -> None:
+    settings = _FakeSettings(EMBEDDING_FALLBACK_API_KEY=SecretStr("no-debe-salir"))
+    info = embedding_runtime(settings)
+    fallback = info["fallback"]
+    assert fallback["enabled"] is True
+    assert fallback["provider"] == "deepinfra"
+    assert fallback["provider_label"] == "DeepInfra (hosted)"
+    assert fallback["served_model"] == "BAAI/bge-m3"
+    assert fallback["base_url_host"] == "api.deepinfra.com"
+    assert "no-debe-salir" not in str(info)
+
+
+def test_embedding_runtime_respaldo_apagado_sin_key() -> None:
+    info = embedding_runtime(_FakeSettings())
+    assert info["fallback"]["enabled"] is False
+    assert info["fallback"]["provider"] == "deepinfra"
 
 
 def test_llm_runtime_reports_provider_label() -> None:

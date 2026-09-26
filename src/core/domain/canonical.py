@@ -49,6 +49,20 @@ class CanonicalKind(StrEnum):
     CLAIM = "claim"
     EVIDENCE = "evidence"
     ARTIFACT = "artifact"
+    # Knowledge OS (FASE 34): vocabulario semántico de orden superior.
+    DOMAIN = "domain"
+    CONCEPT = "concept"
+    ATTRIBUTE = "attribute"
+    BUSINESS_RULE = "business_rule"
+    KPI = "kpi"
+    PROCESS = "process"
+    TERM = "term"
+    SYNONYM = "synonym"
+    EVENT = "event"
+    CONSTRAINT = "constraint"
+    TABLE = "table"
+    COLUMN = "column"
+    VERIFIED_QUERY = "verified_query"
 
 
 class CanonicalSystem(StrEnum):

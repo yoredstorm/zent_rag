@@ -171,7 +171,17 @@ async def _ensure_developer_scopes() -> None:
                     ('40000000-0000-0000-0000-000000000051', 'catalog:read',
                      'Ver catálogo semántico y descubrimiento'),
                     ('40000000-0000-0000-0000-000000000052', 'catalog:write',
-                     'Gestionar catálogo, glosario, métricas y revisar sugerencias')
+                     'Gestionar catálogo, glosario, métricas y revisar sugerencias'),
+                    ('40000000-0000-0000-0000-000000000053', 'knowledge:read',
+                     'Ver el conocimiento de la organización'),
+                    ('40000000-0000-0000-0000-000000000054', 'knowledge:write',
+                     'Gestionar aprendizaje y conocimiento'),
+                    ('40000000-0000-0000-0000-000000000055', 'knowledge:validate',
+                     'Aprobar assertions y objetos de conocimiento'),
+                    ('40000000-0000-0000-0000-000000000056', 'knowledge:admin',
+                     'Reconstruir el modelo y resolver conflictos'),
+                    ('40000000-0000-0000-0000-000000000057', 'knowledge:run_learning',
+                     'Ejecutar aprendizaje sobre fuentes')
                 ON CONFLICT (code) DO NOTHING
                 """
             )

@@ -73,8 +73,16 @@ def hermetic(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _install_settings(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> None:
     base = get_settings()
+    # El respaldo de embeddings se apaga explícito: estos tests miden la
+    # política de reintentos del PRIMARIO. Si el `.env` local define la key de
+    # DeepInfra, sin esto el fallo primario terminaría en el respaldo.
+    defaults: dict[str, Any] = {
+        "EMBEDDING_FALLBACK_MODEL": "",
+        "EMBEDDING_FALLBACK_API_KEY": None,
+    }
+    defaults.update(overrides)
     monkeypatch.setattr(
-        provider_module, "get_settings", lambda: base.model_copy(update=overrides)
+        provider_module, "get_settings", lambda: base.model_copy(update=defaults)
     )
 
 

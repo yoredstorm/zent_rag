@@ -262,6 +262,7 @@ class KnowledgeEventType(StrEnum):
     LEARNING_COMPLETED = "learning.completed"
     LEARNING_FAILED = "learning.failed"
     LEARNING_CANCELLED = "learning.cancelled"
+    MODEL_MATERIALIZED = "model.materialized"
 
 
 class EventCategory(StrEnum):
@@ -279,6 +280,7 @@ _CATEGORY_BY_EVENT: dict[str, EventCategory] = {
     KnowledgeEventType.LEARNING_COMPLETED.value: EventCategory.SYSTEM,
     KnowledgeEventType.LEARNING_FAILED.value: EventCategory.SYSTEM,
     KnowledgeEventType.LEARNING_CANCELLED.value: EventCategory.SYSTEM,
+    KnowledgeEventType.MODEL_MATERIALIZED.value: EventCategory.SYSTEM,
     KnowledgeEventType.STAGE_STARTED.value: EventCategory.SYSTEM,
     KnowledgeEventType.STAGE_COMPLETED.value: EventCategory.SYSTEM,
     KnowledgeEventType.STAGE_FAILED.value: EventCategory.SYSTEM,

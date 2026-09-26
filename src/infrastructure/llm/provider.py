@@ -18,8 +18,13 @@ from litellm.types.utils import ModelResponse
 from src.core.config import get_settings
 from src.core.domain.entities import LLMResponse
 from src.core.ports import EmbeddingProvider, LLMProvider
+from src.core.runtime_info import describe_model_runtime
+from src.infrastructure.observability.embedding_route import set_embedding_route
 from src.infrastructure.observability.logging_config import get_logger
-from src.infrastructure.observability.metrics import rag_embeddings_latency
+from src.infrastructure.observability.metrics import (
+    rag_embeddings_fallback_total,
+    rag_embeddings_latency,
+)
 from src.infrastructure.resilience.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerOpenError,
@@ -92,6 +97,61 @@ def _embed_backoff_seconds(attempt: int, base: float) -> float:
     """Backoff exponencial con jitter completo (evita reintentos sincronizados)."""
     ceiling = base * (2 ** max(0, attempt - 1))
     return random.uniform(base * 0.5, ceiling)  # noqa: S311 - jitter, no crypto
+
+
+#: Marcadores de un fallo del PROVEEDOR (no del payload): credenciales, cuota o
+#: cuenta. Un respaldo con otra cuenta sí puede resolverlo, igual que un 429/5xx.
+_CREDENTIAL_EMBED_MARKERS = (
+    "unauthorized",
+    "authentication",
+    "invalid api key",
+    "api key",
+    "forbidden",
+    "not allowed",
+    "permission",
+    "quota",
+    "insufficient",
+    "billing",
+    "balance",
+    "credit",
+    "401",
+    "402",
+    "403",
+)
+
+
+def _is_provider_embed_error(exc: BaseException) -> bool:
+    """True si el fallo es del proveedor: el respaldo vale la pena.
+
+    Un 400 por payload inválido fallaría igual en el respaldo, así que no se
+    intenta (sería un reintento disfrazado).
+    """
+    if _is_transient_embed_error(exc):
+        return True
+    text = str(exc).lower()
+    return any(marker in text for marker in _CREDENTIAL_EMBED_MARKERS)
+
+
+def _get_embed_fallback_kwargs(settings) -> dict | None:
+    """Kwargs del proveedor de respaldo. None = respaldo apagado.
+
+    Se apaga si no hay modelo o key: mejor fallar con el primario que intentar
+    un endpoint sin credenciales y cambiar el error original.
+    """
+    model = str(getattr(settings, "EMBEDDING_FALLBACK_MODEL", "") or "").strip()
+    key = getattr(settings, "EMBEDDING_FALLBACK_API_KEY", None)
+    if not model or key is None or not key.get_secret_value():
+        return None
+    kwargs: dict = {"model": model}
+    base = getattr(settings, "EMBEDDING_FALLBACK_API_BASE", None)
+    if base:
+        kwargs["api_base"] = base
+    kwargs["api_key"] = key.get_secret_value()
+    return kwargs
+
+
+class EmbeddingDimensionMismatchError(RuntimeError):
+    """El vector del respaldo no coincide con VECTOR_DIMENSION: no se indexa."""
 
 
 async def _call_generate(
@@ -302,62 +362,113 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
     async def embed(
         self, text: str | list[str], model: str | None = None
     ) -> list[float] | list[list[float]]:
+        """Embeddings con failover a un proveedor de respaldo.
+
+        Fallo del PRIMARIO (429/5xx/timeout/credenciales): el respaldo toma la
+        posta y ahí aplican los reintentos con backoff. Un error de payload no
+        dispara respaldo (fallaría igual). La ruta aplicada queda disponible en
+        `last_embedding_route()` para la traza del agente.
+        """
         settings = get_settings()
-        model_name = model or settings.EMBEDDING_MODEL
+        requested_model = model or settings.EMBEDDING_MODEL
 
         is_single = isinstance(text, str)
         texts = [text] if is_single else text
 
-        llm_kwargs = _get_llm_kwargs()
-        if model_name.startswith("ollama/"):
-            llm_kwargs.pop("api_base", None)
-            llm_kwargs.pop("api_key", None)
+        primary_kwargs = _get_llm_kwargs()
+        if requested_model.startswith("ollama/"):
+            primary_kwargs.pop("api_base", None)
+            primary_kwargs.pop("api_key", None)
 
+        # Un modelo local no tiene respaldo cloud (otra dimensión, otro índice).
+        # Si el pedido ya ES el del respaldo, tampoco hay failover consigo mismo.
+        fallback = _get_embed_fallback_kwargs(settings)
+        if fallback is not None and (
+            requested_model.startswith("ollama/") or requested_model == fallback["model"]
+        ):
+            fallback = None
+
+        route = "primary"
+        call_model = requested_model
+        call_kwargs = dict(primary_kwargs)
         start = time.perf_counter()
-        attempt = 0
+        route_start = start
+        route_attempt = 0
+
         while True:
-            attempt += 1
+            route_attempt += 1
             try:
                 response = await aembedding(
-                    model=model_name,
+                    model=call_model,
                     input=texts,
                     timeout=settings.LITELLM_TIMEOUT_SECONDS,
                     # Nuestro retry es el único: se apaga el de LiteLLM para no
                     # multiplicar intentos (2×2) y para que el backoff quede
                     # bajo control y sea observable.
                     num_retries=0,
-                    **llm_kwargs,
+                    **call_kwargs,
                 )
                 break
             except Exception as exc:
                 retriable = _is_transient_embed_error(exc)
-                elapsed = time.perf_counter() - start
+                if (
+                    route == "primary"
+                    and fallback is not None
+                    and _is_provider_embed_error(exc)
+                ):
+                    # Failover inmediato: un primario caído no se reintenta; el
+                    # presupuesto y el backoff pasan al respaldo.
+                    route = "fallback"
+                    route_attempt = 0
+                    route_start = time.perf_counter()
+                    call_model = fallback["model"]
+                    call_kwargs = {k: v for k, v in fallback.items() if k != "model"}
+                    logger.warning(
+                        "Embedding primary failed; switching to fallback provider",
+                        model=requested_model,
+                        fallback_model=call_model,
+                        error=str(exc)[:180],
+                    )
+                    continue
+
+                elapsed = time.perf_counter() - route_start
                 budget_left = settings.LITELLM_EMBED_TOTAL_BUDGET_SECONDS - elapsed
                 if (
                     not retriable
-                    or attempt > settings.LITELLM_EMBED_MAX_RETRIES
+                    or route_attempt > settings.LITELLM_EMBED_MAX_RETRIES
                     or budget_left <= 0
                 ):
-                    latency_ms = elapsed * 1000
+                    latency_ms = (time.perf_counter() - start) * 1000
+                    if route == "fallback":
+                        rag_embeddings_fallback_total.labels(
+                            from_model=requested_model,
+                            to_model=call_model,
+                            outcome="error",
+                        ).inc()
                     logger.error(
                         "Embedding generation failed",
-                        model=model_name,
+                        model=call_model,
+                        route=route,
+                        fallback_used=route == "fallback",
                         embedding_latency_ms=round(latency_ms, 2),
                         batch_size=len(texts),
-                        attempts=attempt,
+                        attempts=route_attempt,
                         transient=retriable,
                         error=str(exc),
                         exc_info=True,
                     )
                     raise
                 delay = min(
-                    _embed_backoff_seconds(attempt, settings.LITELLM_EMBED_BACKOFF_SECONDS),
+                    _embed_backoff_seconds(
+                        route_attempt, settings.LITELLM_EMBED_BACKOFF_SECONDS
+                    ),
                     max(0.0, budget_left),
                 )
                 logger.warning(
                     "Embedding generation retrying after transient provider failure",
-                    model=model_name,
-                    attempt=attempt,
+                    model=call_model,
+                    route=route,
+                    attempt=route_attempt,
                     max_attempts=settings.LITELLM_EMBED_MAX_RETRIES + 1,
                     delay_seconds=round(delay, 3),
                     error=str(exc)[:180],
@@ -366,14 +477,47 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
 
         latency_ms = (time.perf_counter() - start) * 1000
         rag_embeddings_latency.labels(
-            organization_id="unknown", model=model_name
+            organization_id="unknown", model=call_model
         ).observe(latency_ms / 1000)
 
         embeddings = [d["embedding"] for d in response.data]  # type: ignore[union-attr]
 
+        if route == "fallback":
+            expected = int(getattr(settings, "VECTOR_DIMENSION", 0) or 0)
+            if expected and embeddings and len(embeddings[0]) != expected:
+                rag_embeddings_fallback_total.labels(
+                    from_model=requested_model,
+                    to_model=call_model,
+                    outcome="error",
+                ).inc()
+                raise EmbeddingDimensionMismatchError(
+                    f"Embedding fallback devolvió dimensión {len(embeddings[0])}; "
+                    f"se esperaba {expected} (VECTOR_DIMENSION). No se indexa."
+                )
+            rag_embeddings_fallback_total.labels(
+                from_model=requested_model,
+                to_model=call_model,
+                outcome="ok",
+            ).inc()
+
+        runtime = describe_model_runtime(call_model, call_kwargs.get("api_base"))
+        set_embedding_route(
+            {
+                "route": route,
+                "fallback": route == "fallback",
+                "model": call_model,
+                "provider": runtime["provider"],
+                "provider_label": runtime["provider_label"],
+                "served_model": runtime["served_model"],
+                "base_url_host": runtime["host"],
+            }
+        )
+
         logger.info(
             "Embeddings generated",
-            model=model_name,
+            model=call_model,
+            route=route,
+            fallback_used=route == "fallback",
             batch_size=len(texts),
             embedding_latency_ms=round(latency_ms, 2),
         )
