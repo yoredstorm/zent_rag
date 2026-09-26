@@ -280,6 +280,31 @@ async def test_saludo_obvio_ni_siquiera_gasta_jev(
 
 
 @pytest.mark.asyncio
+async def test_un_tool_call_en_turno_directo_nunca_se_ejecuta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Aunque el modelo insista dos veces, el turno conversacional no ejecuta tools."""
+    llm = _FakeLLM(
+        [
+            '{"tool": "search_knowledge", "arguments": {"query": "x"}}',
+            '{"tool": "search_knowledge", "arguments": {"query": "x"}}',
+            '{"answer": "¡Hola! ¿En qué te ayudo?"}',
+        ]
+    )
+    judge = _TurnJudge(intent="greeting", confidence=0.9, needs=0.05)
+
+    result, search, judge = await _run(
+        monkeypatch, llm=llm, judge=judge, message="hola como estas"
+    )
+
+    assert search.queries == [], "la tool no se ejecuta en un turno directo"
+    assert result.answer == "¡Hola! ¿En qué te ayudo?"
+    assert not [s for s in result.steps if s["type"] == "tool_call"]
+    guards = [s for s in result.steps if s["type"] == "turn_guard"]
+    assert len(guards) == 2
+
+
+@pytest.mark.asyncio
 async def test_saludo_con_pregunta_de_conocimiento_busca_fuentes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

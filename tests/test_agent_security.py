@@ -297,7 +297,7 @@ class TestAbuse:
         )
         agent = _agent(tools=["recorder"], config_json={"max_steps": 3, "max_tool_calls": 2})
         runtime = AgentRuntime(llm_provider=llm)
-        result = await runtime.run(_request(agent, "loop forever"))
+        result = await runtime.run(_request(agent, "cuentame sobre el record 4"))
         assert result.status == "limit_reached"
         tool_steps = [s for s in result.steps if s["type"] == "tool_call"]
         assert len(tool_steps) <= 2
@@ -315,7 +315,7 @@ class TestAbuse:
         )
         agent = _agent(tools=["recorder"], config_json={"max_tool_calls": 2})
         runtime = AgentRuntime(llm_provider=llm)
-        result = await runtime.run(_request(agent, "muchas llamadas"))
+        result = await runtime.run(_request(agent, "cuentame sobre el record 4"))
         tool_steps = [s for s in result.steps if s["type"] == "tool_call"]
         assert len(tool_steps) == 2
         assert result.status == "limit_reached"
@@ -350,7 +350,7 @@ class TestAbuse:
         llm = _FakeLLM(['{"tool": "hang", "arguments": {}}'])
         agent = _agent(tools=["hang"], config_json={"max_execution_seconds": 1})
         runtime = AgentRuntime(llm_provider=llm)
-        result = await runtime.run(_request(agent, "cuelga"))
+        result = await runtime.run(_request(agent, "cuentame sobre el record 4"))
         assert result.status == "limit_reached"
         assert any(
             "max_execution_seconds" in s.get("detail", "") for s in result.steps

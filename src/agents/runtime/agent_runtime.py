@@ -2477,26 +2477,6 @@ class AgentRuntime:
             )
 
             action = _parse_action(resp.content)
-            if (
-                turn_direct
-                and str(action.get("tool") or "").strip()
-                and turn_direct_tool_retries < 1
-            ):
-                # El turno no necesita herramientas (no se ofrecieron): si el
-                # modelo igual intenta una, se corrige sin ejecutarla.
-                turn_direct_tool_retries += 1
-                history.append(
-                    "OBSERVATION: este turno es conversacional. No hace falta "
-                    "ninguna herramienta ni buscar fuentes: respondé directo."
-                )
-                result.steps.append(
-                    {
-                        "type": "turn_guard",
-                        "detail": "tool call ignorado: turno conversacional",
-                        "attempted_tool": str(action.get("tool"))[:80],
-                    }
-                )
-                continue
             result.steps.append(
                 {
                     "type": "llm",
@@ -2536,6 +2516,28 @@ class AgentRuntime:
                 return
 
             direct = _direct_answer(action)
+            if (
+                turn_direct
+                and direct is None
+                and str(action.get("tool") or "").strip()
+            ):
+                # El turno no necesita herramientas (no se ofrecieron): un tool
+                # call nunca se ejecuta en un turno conversacional, por más que el
+                # modelo insista. Se corrige y se sigue; max_steps acota el ciclo.
+                turn_direct_tool_retries += 1
+                history.append(
+                    "OBSERVATION: este turno es conversacional. No hace falta "
+                    "ninguna herramienta ni buscar fuentes: respondé directo."
+                )
+                result.steps.append(
+                    {
+                        "type": "turn_guard",
+                        "detail": "tool call ignorado: turno conversacional",
+                        "attempted_tool": str(action.get("tool"))[:80],
+                        "attempt": turn_direct_tool_retries,
+                    }
+                )
+                continue
             if direct is not None:
                 # Higiene de presentación con los títulos del run: markdown sin
                 # escapes y bloque de fuentes legible (no cambia contenido).

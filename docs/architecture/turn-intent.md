@@ -94,7 +94,8 @@ Con `direct` + `needs_external_evidence = false`:
 - no se emite `evidence_sufficiency` en fallo: la fase **no aplica**;
 - el Answer Gate documental se registra como `verdict: not_applicable`;
 - el agente no ve herramientas en el prompt (no las necesita) y se responde con
-  el mismo generador (tier `fast` si hay `RUNTIME_TURN_FAST_MODEL`);
+  el mismo generador (tier `fast` si hay `RUNTIME_TURN_FAST_MODEL`); si el modelo
+  igual emite un tool call, se ignora y se corrige: **nunca se ejecuta**;
 - `action_request` y `knowledge_question` siguen el camino normal.
 
 Capacidad: la respuesta usa la **configuración real** del agente (nombre,
