@@ -114,7 +114,7 @@ export default function CompanyKnowledgeGapsPage() {
             <Panel>
               <EmptyState
                 title="Sin huecos con ese filtro"
-                body="Probá con otro tipo o ejecutá descubrimiento para actualizar la foto."
+                body="Prueba con otro tipo o ejecutá descubrimiento para actualizar la foto."
               />
             </Panel>
           ) : (

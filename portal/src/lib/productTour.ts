@@ -127,7 +127,7 @@ export const TOUR_STEPS: TourStep[] = [
     id: "govern",
     target: "nav-group-gobernar",
     title: "Gobernar",
-    body: "Seguridad, auditoría, riesgo, cumplimiento y continuidad. Este bloque no construye agentes: deja registro de quién cambió qué y qué controles protegen al tenant. Entra cuando tenés que responder a una revisión interna o de un cliente.",
+    body: "Seguridad, auditoría, riesgo, cumplimiento y continuidad. Este bloque no construye agentes: deja registro de quién cambió qué y qué controles protegen al tenant. Entra cuando tienes que responder a una revisión interna o de un cliente.",
   },
   {
     id: "team",
@@ -161,7 +161,7 @@ export const TOUR_STEPS: TourStep[] = [
     id: "manage",
     target: "nav-group-gestionar",
     title: "Gestionar",
-    body: "Personas, plan, workspaces, releases y pruebas. Está colapsado a propósito: abrilo cuando tengas que cambiar quién entra, qué se paga o qué versión corre.",
+    body: "Personas, plan, workspaces, releases y pruebas. Está colapsado a propósito: ábrelo cuando tengas que cambiar quién entra, qué se paga o qué versión corre.",
   },
   {
     id: "workspace",

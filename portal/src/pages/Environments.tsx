@@ -224,7 +224,7 @@ function EnvironmentDetail({ env }: { env: Environment }) {
   if (!dep) {
     return (
       <p className="text-[13px] text-muted">
-        Sin despliegue en este entorno. Publicá una versión desde el builder de un agente.
+        Sin despliegue en este entorno. Publica una versión desde el builder de un agente.
       </p>
     );
   }

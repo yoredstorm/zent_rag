@@ -200,7 +200,7 @@ export default function PlaygroundPage() {
               label="API key"
               hint="La clave completa no se vuelve a mostrar: el portal firma con tu sesión."
             >
-              <Select value={keyId} onChange={(e) => setKeyId(e.target.value)} placeholder="Elegí una API key…">
+              <Select value={keyId} onChange={(e) => setKeyId(e.target.value)} placeholder="Elige una API key…">
                 {keys.map((k) => (
                   <option key={k.id} value={k.id}>
                     {k.name} · {k.prefix}
@@ -211,7 +211,7 @@ export default function PlaygroundPage() {
 
             {endpoint.needsSlug && (
               <Field label="Deployment">
-                <Select value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="Elegí un deployment…">
+                <Select value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="Elige un deployment…">
                   {healthyDeployments.map((d) => (
                     <option key={d.id} value={d.slug}>
                       {d.slug}

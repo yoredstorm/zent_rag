@@ -230,7 +230,7 @@ export default function Workspaces() {
             <EmptyState
               icon={SquaresFour}
               title="Sin workspaces"
-              body="Creá tu primer workspace para separar agentes, conocimiento y conectores."
+              body="Crea tu primer workspace para separar agentes, conocimiento y conectores."
               action={
                 <Button variant="primary" leadingIcon={Plus} onClick={() => setShowCreate(true)}>
                   Nuevo workspace

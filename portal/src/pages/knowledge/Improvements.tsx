@@ -206,7 +206,7 @@ export default function KnowledgeImprovementsPage() {
                   <EmptyState
                     compact
                     title="Nada en este estado"
-                    body="Probá con otro filtro para ver el resto del backlog."
+                    body="Prueba con otro filtro para ver el resto del backlog."
                     action={
                       <Button variant="ghost" size="sm" onClick={() => setFilter("all")}>
                         Ver todas

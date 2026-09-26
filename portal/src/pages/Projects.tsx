@@ -198,7 +198,7 @@ export default function ProjectsPage() {
             <EmptyState
               icon={Folders}
               title="Sin proyectos"
-              body="Creá tu primer proyecto para organizar tus recursos."
+              body="Crea tu primer proyecto para organizar tus recursos."
               action={
                 <Button variant="primary" leadingIcon={FolderPlus} onClick={() => setShowCreate(true)}>
                   Nuevo proyecto

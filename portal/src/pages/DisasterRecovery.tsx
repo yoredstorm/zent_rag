@@ -485,7 +485,7 @@ export default function DisasterRecoveryPage() {
                     icon={ShieldCheck}
                     title="Sin políticas de continuidad"
                     body="No hay políticas RPO/RTO definidas para esta organización."
-                    hint="Creá una a la derecha para habilitar backups y drills."
+                    hint="Crea una a la derecha para habilitar backups y drills."
                   />
                 }
                 footer={sortedPolicies.length > 0 ? <ResultCount shown={sortedPolicies.length} total={policies.length} noun="políticas" /> : undefined}
@@ -601,7 +601,7 @@ export default function DisasterRecoveryPage() {
                     icon={Database}
                     title="Sin backups todavía"
                     body="Los backups se crean desde una política de continuidad."
-                    hint="Usá «Backup» en la tabla de políticas."
+                    hint="Usa «Backup» en la tabla de políticas."
                   />
                 }
                 footer={sortedBackups.length > 0 ? <ResultCount shown={sortedBackups.length} total={backups.length} noun="backups" /> : undefined}

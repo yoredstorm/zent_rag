@@ -433,7 +433,7 @@ export const REASON_LABELS: Record<string, string> = {
   cheaper_tier_sufficient: "el modelo pequeño bastaba",
   more_analysis_requested: "hacía falta más análisis",
   observed_only: "sólo se observó (modo shadow)",
-  budget_prefers_small: "el presupuesto pedía el modelo pequeño",
+  budget_prefers_small: "el presupuesto pidea el modelo pequeño",
   judge_unavailable: "JEV no estaba disponible",
   jev_unavailable: "JEV no estaba disponible",
   mode_off: "el juicio previo estaba apagado",

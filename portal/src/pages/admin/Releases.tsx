@@ -115,7 +115,7 @@ export default function AdminReleasesPage() {
                 </p>
                 <p className="mt-2 max-w-[68ch] text-[13px] leading-relaxed text-muted">
                   {paused.length > 0
-                    ? `${paused.length} release(s) pausadas: el health-gate frenó la promoción. Revisá el health antes de retomar.`
+                    ? `${paused.length} release(s) pausadas: el health-gate frenó la promoción. Revisa el health antes de retomar.`
                     : canaryActive.length > 0
                       ? `${canaryActive.length} release(s) en canary con tráfico parcial. El health-gate decide la promoción a stable.`
                       : "Sin releases en canary: todos los agentes están sobre su versión stable."}

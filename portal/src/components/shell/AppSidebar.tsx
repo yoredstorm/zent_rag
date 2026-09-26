@@ -337,7 +337,7 @@ export function AppSidebar({
         open={confirming}
         onOpenChange={setConfirming}
         title="¿Cerrar sesión?"
-        body="Vas a salir de este workspace. Podés volver a entrar con tu email y contraseña."
+        body="Vas a salir de este workspace. Puedes volver a entrar con tu email y contraseña."
         confirmLabel="Cerrar sesión"
         tone="danger"
         onConfirm={() => {

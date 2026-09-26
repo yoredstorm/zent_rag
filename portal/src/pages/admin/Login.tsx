@@ -102,11 +102,11 @@ export default function AdminLoginPage() {
         eyebrow="Verificación en dos pasos"
         title={
           <>
-            Confirmá tu{" "}
+            Confirma tu{" "}
             <span className="auth-display__accent">identidad.</span>
           </>
         }
-        subtitle="Ingresá el código de 6 dígitos de tu autenticador para entrar al Control Center."
+        subtitle="Ingresa el código de 6 dígitos de tu autenticador para entrar al Control Center."
         footer={
           <button
             type="button"
@@ -170,7 +170,7 @@ export default function AdminLoginPage() {
           <span className="auth-display__accent">plataforma.</span>
         </>
       }
-      subtitle="Si sos dueño de una organización, entrá por el portal de clientes."
+      subtitle="Si eres dueño de una organización, entra por el portal de clientes."
       footer={
         <div className="text-[13px]">
           <Link className="auth-link" to="/login">

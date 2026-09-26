@@ -25,12 +25,12 @@ const SUCCESS_HOLD_MS = 620;
  * vienen redactados.
  */
 const MENSAJES: Record<string, string> = {
-  invalid_credentials: "Email o contraseña incorrectos. Revisá los datos e intentá de nuevo.",
-  unauthorized: "Email o contraseña incorrectos. Revisá los datos e intentá de nuevo.",
-  invalid_email: "Ese email no parece válido. Corregilo y probá otra vez.",
-  too_many_requests: "Demasiados intentos seguidos. Esperá un momento y volvé a probar.",
-  rate_limited: "Demasiados intentos seguidos. Esperá un momento y volvé a probar.",
-  organization_inactive: "La organización está inactiva. Contactá al administrador de tu cuenta.",
+  invalid_credentials: "Email o contraseña incorrectos. Revisa los datos e intenta de nuevo.",
+  unauthorized: "Email o contraseña incorrectos. Revisa los datos e intenta de nuevo.",
+  invalid_email: "Ese email no parece válido. Corrígelo y prueba otra vez.",
+  too_many_requests: "Demasiados intentos seguidos. Espera un momento y vuelve a probar.",
+  rate_limited: "Demasiados intentos seguidos. Espera un momento y vuelve a probar.",
+  organization_inactive: "La organización está inactiva. Contacta al administrador de tu cuenta.",
 };
 
 function mensajeDeError(raw: string): string {
@@ -82,7 +82,7 @@ export default function LoginPage() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (!email.trim() || !password) {
-      fail("Completá tu email y contraseña para entrar.", email.trim() ? "password" : "email");
+      fail("Completa tu email y contraseña para entrar.", email.trim() ? "password" : "email");
       return;
     }
     setError("");
@@ -105,7 +105,7 @@ export default function LoginPage() {
           fail(
             platformErr instanceof Error
               ? platformErr.message
-              : "Esta cuenta es de plataforma. Entrá por el Control Center."
+              : "Esta cuenta es de plataforma. Entra por el Control Center."
           );
           return;
         }
@@ -113,7 +113,7 @@ export default function LoginPage() {
       fail(
         msg
           ? mensajeDeError(msg)
-          : "No pudimos iniciar sesión. Revisá tus credenciales e intentá de nuevo."
+          : "No pudimos iniciar sesión. Revisa tus credenciales e intenta de nuevo."
       );
     } finally {
       setLoading(false);
@@ -124,7 +124,7 @@ export default function LoginPage() {
     setForgotMsg("");
     setError("");
     if (!email.trim()) {
-      fail("Escribí tu email y te enviamos el enlace.", "email");
+      fail("Escribe tu email y te enviamos el enlace.", "email");
       return;
     }
     setForgotLoading(true);
@@ -168,11 +168,11 @@ export default function LoginPage() {
       eyebrow="Entrar a Zent"
       title={
         <>
-          Conectá.
+          Conecta.
           <br />
-          Comprendé.
+          Comprende.
           <br />
-          <span className="auth-display__accent">Decidí.</span>
+          <span className="auth-display__accent">Decide.</span>
         </>
       }
       subtitle="Tu conocimiento empresarial, conectado y listo para responder."

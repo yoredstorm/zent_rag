@@ -52,6 +52,9 @@ test.describe("Customer portal — flujo smoke", () => {
     expect(agentId).toBeTruthy();
     await expect(page.getByRole("heading", { name: "Probar" })).toBeVisible();
     await page.getByLabel("Propósito", { exact: true }).fill("Responder dudas internas");
+    // El conocimiento se resume en el panel y el selector vive detrás de
+    // "Administrar conocimiento" (progressive disclosure).
+    await page.getByRole("button", { name: "Administrar conocimiento" }).click();
     const sourceBox = page.getByRole("checkbox", { name: /docs/i }).first();
     if (await sourceBox.count()) {
       await sourceBox.check();
@@ -104,7 +107,7 @@ test.describe("Customer portal — flujo smoke", () => {
     // Publicar: versión → lista → producción
     await page.goto(`/agents/${agentId}/builder?tab=versions`);
     await page.getByRole("button", { name: "Crear versión" }).click();
-    await expect(page.getByText(/Snapshot creado/)).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText(/Versión creada/)).toBeVisible({ timeout: 20000 });
     await page.getByRole("button", { name: "Marcar como lista" }).first().click();
     await expect(page.getByText(/Versión promovida/)).toBeVisible({ timeout: 20000 });
     await page.goto(`/agents/${agentId}/builder?tab=deployments`);
@@ -115,7 +118,7 @@ test.describe("Customer portal — flujo smoke", () => {
       timeout: 20000,
     });
     await page.getByRole("button", { name: "Publicar en producción" }).click();
-    await expect(page.getByText(/desplegada en production/)).toBeVisible({ timeout: 20000 });
+    await expect(page.getByText(/publicada en production/)).toBeVisible({ timeout: 20000 });
     await page.goto("/deployments");
     await expect(page.getByRole("heading", { name: "Despliegues" })).toBeVisible();
 

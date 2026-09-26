@@ -251,7 +251,7 @@ export function OfflineState({ onRetry }: { onRetry?: () => void }) {
     <EmptyState
       icon={WarningCircle}
       title="Sin conexión con el servidor"
-      body="No pudimos contactar la API. Revisá tu red o el estado del servicio."
+      body="No pudimos contactar la API. Revisa tu red o el estado del servicio."
       action={
         onRetry && (
           <button type="button" className="btn btn-secondary btn-sm" onClick={onRetry}>

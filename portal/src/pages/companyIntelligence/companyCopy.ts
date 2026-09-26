@@ -10,9 +10,9 @@ export const COPY = {
   subtitle:
     "Cómo funciona la empresa: qué depende de qué, qué fuentes son confiables y qué conocimiento falta.",
   empty:
-    "Todavía no hay entidades en el Company Graph. Ejecutá descubrimiento o confirmá candidatos.",
+    "Todavía no hay entidades en el Company Graph. Ejecutá descubrimiento o confirma candidatos.",
   emptyMap:
-    "Elegí una entidad para explorar su vecindad. No se renderiza el grafo completo.",
+    "Elige una entidad para explorar su vecindad. No se renderiza el grafo completo.",
   emptySearch: "Sin resultados para el filtro aplicado.",
   loadMore: "Expandir más",
   askPlaceholder: "¿Qué procesos dependen de este sistema?",

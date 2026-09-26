@@ -379,7 +379,7 @@ function WorkspaceResetPanel() {
             label="Confirmación"
             hint={
               <>
-                Escribí <span className="mono text-text">RESET</span> para habilitar la acción.
+                Escribe <span className="mono text-text">RESET</span> para habilitar la acción.
               </>
             }
           >

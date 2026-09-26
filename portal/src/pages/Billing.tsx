@@ -487,7 +487,7 @@ export default function BillingPage() {
                 <div className="mt-4 flex flex-wrap items-center gap-2">
                   {canCheckout ? (
                     <p className="text-[13px] text-muted">
-                      Elegí un plan de pago para continuar en Stripe.
+                      Elige un plan de pago para continuar en Stripe.
                     </p>
                   ) : (
                     <p className="text-[13px] text-muted">
@@ -603,7 +603,7 @@ export default function BillingPage() {
                 <EmptyState
                   icon={FileArrowDown}
                   title="Sin facturas"
-                  body="Generá la factura del mes anterior o esperá la emisión automática."
+                  body="Generá la factura del mes anterior o espera la emisión automática."
                 />
               }
             />
@@ -728,7 +728,7 @@ export default function BillingPage() {
           label="Confirmación"
           hint={
             <>
-              Escribí <span className="mono text-text">CANCEL</span> para habilitar la acción.
+              Escribe <span className="mono text-text">CANCEL</span> para habilitar la acción.
             </>
           }
         >

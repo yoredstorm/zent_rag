@@ -195,7 +195,7 @@ export default function EvaluationRunsPage() {
         <Panel>
           <PanelHeader
             title="Lanzar evaluación"
-            description="Elegí un dataset y ejecutá el pipeline completo. Podés activar el juez LLM para métricas semánticas."
+            description="Elige un dataset y ejecutá el pipeline completo. Puedes activar el juez LLM para métricas semánticas."
           />
           <form
             className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end"

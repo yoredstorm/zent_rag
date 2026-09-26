@@ -191,7 +191,7 @@ export default function CopilotPage() {
             icon={WarningCircle}
             title="No pudimos cargar el copilot"
             body={loadError}
-            hint="Revisá la conexión y volvé a intentar."
+            hint="Revisa la conexión y vuelve a intentar."
             action={
               <Button variant="secondary" leadingIcon={ArrowClockwise} onClick={() => void load()}>
                 Reintentar
@@ -237,7 +237,7 @@ export default function CopilotPage() {
                     compact
                     icon={ChatCircleDots}
                     title="Empezá una conversación"
-                    body="Preguntá por tu conocimiento, creá agentes o consultá el plan."
+                    body="Preguntá por tu conocimiento, crea agentes o consultá el plan."
                     action={
                       <div className="flex max-w-md flex-wrap justify-center gap-1.5">
                         {STARTERS.map((prompt) => (

@@ -458,7 +458,7 @@ export default function AdminTrustSafetyPage() {
               <div>
                 <h2 className="text-h2">Incidentes de contenido</h2>
                 <p className="mt-1 text-[13px] leading-relaxed text-muted">
-                  Seleccioná una fila para ver el snippet completo y la resolución registrada.
+                  Selecciona una fila para ver el snippet completo y la resolución registrada.
                 </p>
               </div>
               <Select

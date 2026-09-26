@@ -67,7 +67,7 @@ describe("login", () => {
     await user.click(screen.getByRole("button", { name: "Continuar" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Completá tu email y contraseña para entrar."
+      "Completa tu email y contraseña para entrar."
     );
     expect(LOGIN).not.toHaveBeenCalled();
     expect(screen.getByLabelText("Email")).toHaveFocus();
@@ -183,7 +183,7 @@ describe("login", () => {
     await user.click(screen.getByRole("button", { name: "Enviar enlace" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Escribí tu email y te enviamos el enlace."
+      "Escribe tu email y te enviamos el enlace."
     );
     expect(API).not.toHaveBeenCalled();
   });

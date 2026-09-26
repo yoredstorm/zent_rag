@@ -121,7 +121,7 @@ export default function Operations() {
           <section>
             <SectionHeader
               title="Jobs de ingestión"
-              description="Seleccioná una fila para ver el detalle y el error completo."
+              description="Selecciona una fila para ver el detalle y el error completo."
               className="mb-3"
             />
             <Panel className="overflow-x-auto">

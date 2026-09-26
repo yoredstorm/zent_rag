@@ -121,7 +121,7 @@ export default function AdminMigrationsPage() {
                 </p>
                 <p className="mt-2 max-w-[68ch] text-[13px] leading-relaxed text-muted">
                   {failedRows > 0
-                    ? `${failedRows.toLocaleString()} fila(s) fallaron. Abrí el detalle de cada migración para ver el impacto antes de reintentar.`
+                    ? `${failedRows.toLocaleString()} fila(s) fallaron. Abre el detalle de cada migración para ver el impacto antes de reintentar.`
                     : "Ninguna fila falló en las migraciones registradas."}
                 </p>
                 {byStatus.length > 0 && (

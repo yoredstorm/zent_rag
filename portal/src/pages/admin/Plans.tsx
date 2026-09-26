@@ -171,7 +171,7 @@ export default function AdminPlansPage() {
       {plans.length > 0 && (
         <div className="grid gap-3 lg:grid-cols-[minmax(0,280px)_1fr]">
           <Panel className="self-start overflow-hidden">
-            <PanelHeader title="Planes" description="Elegí un plan para editar sus entitlements." />
+            <PanelHeader title="Planes" description="Elige un plan para editar sus entitlements." />
             <nav aria-label="Planes" className="flex flex-col gap-0.5 p-2">
               {plans.map((p) => {
                 const active = p.id === selectedId;

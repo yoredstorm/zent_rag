@@ -455,7 +455,7 @@ export default function AdminModelGatewayPage() {
                     <ArrowsLeftRight size={15} aria-hidden /> Rutas
                   </span>
                 }
-                description="Usá el alias zent-routed en el agente para que apliquen estas condiciones."
+                description="Usa el alias zent-routed en el agente para que apliquen estas condiciones."
                 actions={
                   <Button variant="primary" size="sm" leadingIcon={Plus} onClick={() => setShowRoute((s) => !s)}>
                     Nueva ruta
@@ -537,7 +537,7 @@ export default function AdminModelGatewayPage() {
                   <EmptyState
                     icon={ArrowsLeftRight}
                     title="Sin rutas"
-                    body="Creá rutas para A/B entre modelos por tenant."
+                    body="Crea rutas para A/B entre modelos por tenant."
                     hint="Sin rutas, el gateway usa el modelo por defecto del agente."
                   />
                 }

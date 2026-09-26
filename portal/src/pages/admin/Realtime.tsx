@@ -243,7 +243,7 @@ export default function AdminRealtimePage() {
                   description={
                     errorEvents > 0
                       ? `${fmtNum(events.length)} recibidos · ${errorEvents} con error`
-                      : "Seleccioná un evento para inspeccionar su payload."
+                      : "Selecciona un evento para inspeccionar su payload."
                   }
                 />
                 <div className="max-h-[420px] overflow-y-auto">

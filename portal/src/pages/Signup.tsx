@@ -79,7 +79,7 @@ export default function SignupPage() {
     } catch (err) {
       setHoldExit(false);
       emitNeuralEvent({ type: "error" });
-      setError(err instanceof Error ? err.message : "No pudimos crear el trial. Intentá de nuevo.");
+      setError(err instanceof Error ? err.message : "No pudimos crear el trial. Intenta de nuevo.");
     } finally {
       setLoading(false);
     }
@@ -91,14 +91,14 @@ export default function SignupPage() {
       eyebrow="Alta de cuenta"
       title={
         <>
-          Creá tu{" "}
+          Crea tu{" "}
           <span className="auth-display__accent">workspace.</span>
         </>
       }
-      subtitle="Trial de Zent: conectá tus primeras fuentes y tené un agente respondiendo con tus datos."
+      subtitle="Trial de Zent: conecta tus primeras fuentes y ten un agente respondiendo con tus datos."
       footer={
         <div className="text-[13px]">
-          ¿Ya tenés cuenta?{" "}
+          ¿Ya tienes cuenta?{" "}
           <Link className="auth-link" to="/login">
             Iniciar sesión
           </Link>
@@ -203,7 +203,7 @@ export default function SignupPage() {
             {succeeded ? "Workspace listo" : loading ? "Creando tu workspace…" : "Empezar trial"}
           </AuthButton>
           <p className="text-xs leading-relaxed text-white/40">
-            Al crear la cuenta aceptás los términos del servicio y la política de privacidad de
+            Al crear la cuenta aceptas los términos del servicio y la política de privacidad de
             Zent.
           </p>
         </motion.div>

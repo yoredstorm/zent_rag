@@ -315,19 +315,20 @@ export function isAdvancedGroup(value: string | null): value is AdvancedGroup {
 }
 
 /**
- * Pestañas que existieron en URLs guardadas. Las de publicación ya no son
- * grupos avanzados: ahora viven en la etapa Publicar.
+ * Pestañas que existieron en URLs guardadas. Las claves van entre comillas a
+ * propósito: son el contrato externo de `?tab=`, no identificadores del código.
+ * Las de publicación ya no son grupos avanzados: viven en la etapa Publicar.
  */
 const LEGACY_ADVANCED_TABS: Record<string, AdvancedGroup> = {
-  behavior: "model",
-  model: "model",
-  output: "integration",
-  capabilities: "tools",
-  tools: "tools",
-  security: "tools",
-  retrieval: "retrieval",
-  jev: "intelligence",
-  limits: "limits",
+  "behavior": "model",
+  "model": "model",
+  "output": "integration",
+  "capabilities": "tools",
+  "tools": "tools",
+  "security": "tools",
+  "retrieval": "retrieval",
+  "jev": "intelligence",
+  "limits": "limits",
 };
 
 const LEGACY_PUBLISH_TABS = new Set([

@@ -469,7 +469,7 @@ export default function AdminInferenceProxyPage() {
                     <EmptyState
                       icon={ListMagnifyingGlass}
                       title="Catálogo vacío"
-                      body="Agregá el primer modelo para que el proxy pueda enrutar."
+                      body="Agrega el primer modelo para que el proxy pueda enrutar."
                     />
                   }
                 />

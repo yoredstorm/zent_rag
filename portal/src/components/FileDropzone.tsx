@@ -5,7 +5,7 @@ import { cn } from "./ui";
 
 /** Copy único de carga de documentos (Fuentes y asistente de Agregar datos). */
 export const FILE_DROPZONE_HINT =
-  "o elegí desde tu equipo. PDF, CSV, Excel, TXT, MD o DOCX. Se suben de a uno; máximo 25 MB por archivo.";
+  "o elige desde tu equipo. PDF, CSV, Excel, TXT, MD o DOCX. Se suben de a uno; máximo 25 MB por archivo.";
 
 /**
  * Dropzone compartido: mismo look, copy y comportamiento en Fuentes y en el

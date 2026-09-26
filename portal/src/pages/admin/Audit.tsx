@@ -140,13 +140,13 @@ export default function Audit() {
                 icon={Scroll}
                 title="Sin eventos"
                 body={filter ? "Ningún evento coincide con el filtro de acción." : "No hay eventos de auditoría."}
-                hint={filter ? "Probá con otra acción o limpiá el filtro." : undefined}
+                hint={filter ? "Prueba con otra acción o limpiá el filtro." : undefined}
               />
             }
             footer={entries.length > 0 ? <ResultCount shown={entries.length} total={entries.length} noun="eventos" /> : undefined}
           />
           {entries.length > 0 && (
-            <p className="text-xs text-faint">Seleccioná una fila para inspeccionar su metadata.</p>
+            <p className="text-xs text-faint">Selecciona una fila para inspeccionar su metadata.</p>
           )}
         </>
       )}

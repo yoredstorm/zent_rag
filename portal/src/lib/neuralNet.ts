@@ -602,6 +602,47 @@ export function stepNeuralNet(net: NeuralNet, dt: number): void {
   net.rate = net.firings.length;
 }
 
+/**
+ * Estado curado para `prefers-reduced-motion`.
+ *
+ * No alcanza con congelar el frame del warmup: queda actividad agrupada por
+ * azar. Acá se reparte a mano: impulsos detenidos a mitad de recorrido, energía
+ * en hubs y cinta cortical, y ritmo de lectura coherente. Determinista por seed.
+ */
+export function composeStillFrame(net: NeuralNet): void {
+  net.pulses = [];
+  const eligible: number[] = [];
+  net.edges.forEach((edge, index) => {
+    if (edge.cycle === 0) eligible.push(index);
+  });
+  const wanted = Math.min(16, Math.max(9, Math.round(net.nodes.length * 0.14)));
+  for (let i = 0; i < wanted && eligible.length; i += 1) {
+    const edgeIndex = eligible[Math.floor(net.random() * eligible.length)];
+    const edge = net.edges[edgeIndex];
+    net.pulses.push({
+      edge: edgeIndex,
+      t: 0.14 + net.random() * 0.72,
+      speed: 84,
+      dir: net.random() < 0.5 ? 1 : -1,
+      strength: 0.55 + net.random() * 0.5,
+      tone: edge.plane === 2 ? "deep" : "signal",
+    });
+  }
+  for (const node of net.nodes) {
+    const base = node.role === "hub" ? 0.5 : node.role === "relay" ? 0.22 : 0.09;
+    node.energy = base * (0.6 + net.random() * 0.8);
+    if (node.zone && net.focusZone === node.zone) node.energy += 0.32;
+  }
+  // Tres puntos focales: el ojo necesita dónde posarse.
+  const hubCount = Math.min(3, net.hubs.length);
+  for (let i = 0; i < hubCount; i += 1) {
+    const hub = net.hubs[Math.floor(net.random() * net.hubs.length)];
+    if (hub !== undefined) net.nodes[hub].energy = 1.15;
+  }
+  net.nextSpontaneousIn = 2.5;
+  net.nextBurstIn = 6;
+}
+
 /** Cuántos enlaces están conduciendo ahora. */
 export function activePulses(net: NeuralNet): number {
   return net.pulses.length;

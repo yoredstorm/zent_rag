@@ -269,7 +269,7 @@ export function CommandPaletteRoot({ mode }: { mode: PaletteMode }) {
         >
           <DialogPrimitive.Title className="sr-only">Búsqueda de comandos</DialogPrimitive.Title>
           <DialogPrimitive.Description className="sr-only">
-            Buscá páginas, agentes, fuentes y despliegues. Usá las flechas para navegar y Enter para abrir.
+            Buscá páginas, agentes, fuentes y despliegues. Usa las flechas para navegar y Enter para abrir.
           </DialogPrimitive.Description>
 
           <div className="flex items-center gap-2.5 border-b border-border px-4 py-3">
@@ -336,7 +336,7 @@ export function CommandPaletteRoot({ mode }: { mode: PaletteMode }) {
               <div className="px-3 py-6 text-center">
                 <p className="text-sm text-text">Sin coincidencias</p>
                 <p className="mt-1 text-xs text-muted">
-                  Probá con el nombre de una página, un agente o una fuente.
+                  Prueba con el nombre de una página, un agente o una fuente.
                 </p>
               </div>
             )}

@@ -325,7 +325,7 @@ export default function AdminAuditIntelligencePage() {
               <div>
                 <h2 className="text-h2">Anomalías</h2>
                 <p className="mt-1 text-[13px] leading-relaxed text-muted">
-                  Hallazgos detectados sobre logins, errores y actividad. Seleccioná una fila para ver la evidencia.
+                  Hallazgos detectados sobre logins, errores y actividad. Selecciona una fila para ver la evidencia.
                 </p>
               </div>
             </div>

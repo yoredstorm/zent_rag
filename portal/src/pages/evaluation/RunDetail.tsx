@@ -598,7 +598,7 @@ export default function EvaluationRunDetailPage() {
             {dimensionMetrics.length === 0 && performanceMetrics.length === 0 && (
               <InfoInline
                 className="mb-0"
-                message="El engine no calculó métricas para este run. Revisá los casos y sus fallos."
+                message="El engine no calculó métricas para este run. Revisa los casos y sus fallos."
               />
             )}
 

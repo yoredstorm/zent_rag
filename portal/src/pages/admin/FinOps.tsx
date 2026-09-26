@@ -346,7 +346,7 @@ export default function AdminFinOpsPage() {
                     {summary.gross_margin_pct == null
                       ? "Todavía no hay revenue ni costos suficientes para calcular el margen."
                       : summary.gross_margin_pct < 0
-                        ? "Los costos de AI superan los ingresos del período. Revisá el desglose antes de ampliar cuota."
+                        ? "Los costos de AI superan los ingresos del período. Revisa el desglose antes de ampliar cuota."
                         : `Revenue ${usdCents(summary.revenue_cents)} contra AI cost ${usd(aiCostValue ?? 0, 2)}.`}
                   </p>
                 </div>

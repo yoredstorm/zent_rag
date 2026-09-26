@@ -166,7 +166,7 @@ export default function TeamAccessPage() {
         body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
       });
       setInviteToken(created.token);
-      setMsg("Invitación creada. Copiá el enlace/token ahora; no se volverá a mostrar.");
+      setMsg("Invitación creada. Copia el enlace/token ahora; no se volverá a mostrar.");
       setInviteEmail("");
       void loadInvites();
     } catch (err) {
@@ -458,7 +458,7 @@ export default function TeamAccessPage() {
         title="Remover miembro"
         body={
           removing
-            ? `Se quita el acceso de ${removing.email || removing.external_id} a esta organización. Podés volver a invitarlo cuando quieras.`
+            ? `Se quita el acceso de ${removing.email || removing.external_id} a esta organización. Puedes volver a invitarlo cuando quieras.`
             : undefined
         }
         confirmLabel="Remover"

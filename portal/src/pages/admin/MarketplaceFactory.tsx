@@ -426,7 +426,7 @@ export default function MarketplaceFactoryPage() {
               <EmptyState
                 icon={Package}
                 title="Sin productos todavía"
-                body="Crea el primero con el Product Studio: elegís tipo, assets y pricing."
+                body="Crea el primero con el Product Studio: eliges tipo, assets y pricing."
                 hint="Los productos nacen en DRAFT y pasan por revisión antes de publicarse."
               />
             }

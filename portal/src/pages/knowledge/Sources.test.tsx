@@ -225,7 +225,7 @@ describe("KnowledgeSourcesPage", () => {
     ]);
     await user.click(screen.getByRole("button", { name: "Subir 2 archivos" }));
     expect(
-      await screen.findByText("Supera el máximo por archivo (25 MB). Probá con uno más chico."),
+      await screen.findByText("Supera el máximo por archivo (25 MB). Prueba con uno más chico."),
     ).toBeInTheDocument();
     expect(uploaded).toEqual(["grande.pdf", "chico.pdf"]);
     expect(await screen.findByText("1 archivo en cola de indexado.")).toBeInTheDocument();

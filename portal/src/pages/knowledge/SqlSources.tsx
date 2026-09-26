@@ -408,7 +408,7 @@ export default function IngestionPage() {
           <EmptyState
             icon={Database}
             title="No hay fuentes descubiertas aún"
-            body="Usá «Sincronizar todos mis datos» para descubrir tablas e indexarlas."
+            body="Usa «Sincronizar todos mis datos» para descubrir tablas e indexarlas."
             hint="De paso quedan registradas en Conocimiento para poder preguntarles."
           />
         }

@@ -535,7 +535,7 @@ export default function AdminEvalsLabPage() {
                     <EmptyState
                       icon={Flask}
                       title="Sin datasets"
-                      body="Creá el primero para versionar preguntas y respuestas esperadas."
+                      body="Crea el primero para versionar preguntas y respuestas esperadas."
                     />
                   }
                 />
@@ -649,7 +649,7 @@ export default function AdminEvalsLabPage() {
                     <EmptyState
                       icon={Flask}
                       title="Sin runs"
-                      body="Creá un dataset con items y ejecutá una evaluación."
+                      body="Crea un dataset con items y ejecutá una evaluación."
                     />
                   }
                   footer={

@@ -609,7 +609,7 @@ export default function ChatPage() {
           <div className="min-w-0">
             <h1 className="text-h1">Playground</h1>
             <p className="mt-0.5 text-[12.5px] text-muted">
-              Probá respuestas antes de publicarlas. Nada de lo que pase acá llega a tus usuarios.
+              Prueba respuestas antes de publicarlas. Nada de lo que pase acá llega a tus usuarios.
             </p>
           </div>
           <PlaygroundTargetBar
@@ -1368,7 +1368,7 @@ function ConversationList({
         compact
         icon={ChatCircleDots}
         title="Sin conversaciones todavía"
-        body="Escribí una pregunta para empezar. Las conversaciones se guardan en este navegador."
+        body="Escribe una pregunta para empezar. Las conversaciones se guardan en este navegador."
       />
     );
   }

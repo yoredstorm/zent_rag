@@ -348,7 +348,7 @@ export default function EvaluationComparePage() {
             <EmptyState
               icon={ArrowCounterClockwise}
               title="Sin comparación todavía"
-              body="Elegí el run actual y su baseline para ver el delta por dimensión, los umbrales y qué dimensión bloquea la promoción."
+              body="Elige el run actual y su baseline para ver el delta por dimensión, los umbrales y qué dimensión bloquea la promoción."
               hint="El veredicto sale del engine de regresión: nada se recalcula en el portal."
             />
           </Panel>

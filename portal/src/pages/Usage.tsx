@@ -217,7 +217,7 @@ export default function UsagePage() {
                 label="Errores"
                 value={fmtNum(usage.totals.errors ?? 0)}
                 tone={(usage.totals.errors ?? 0) > 0 ? "danger" : "default"}
-                hint={(usage.totals.errors ?? 0) > 0 ? "revisá las consultas recientes" : "sin errores"}
+                hint={(usage.totals.errors ?? 0) > 0 ? "revisa las consultas recientes" : "sin errores"}
                 icon={Warning}
               />
               <Metric

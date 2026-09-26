@@ -262,7 +262,7 @@ export default function AdminPartnersPage() {
           <section>
             <SectionHeader
               title="Partners"
-              description="Abrí el detalle para ver uso, comisiones y subtenants reales."
+              description="Abre el detalle para ver uso, comisiones y subtenants reales."
               className="mb-3"
             />
             <DataTable
@@ -299,7 +299,7 @@ export default function AdminPartnersPage() {
                 <EmptyState
                   icon={Handshake}
                   title="Sin partners"
-                  body="Creá un partner para emitir su token dedicado."
+                  body="Crea un partner para emitir su token dedicado."
                 />
               }
             />

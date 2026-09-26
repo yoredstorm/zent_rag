@@ -226,7 +226,7 @@ export default function Training() {
           </div>
           {kbs.length === 0 && (
             <p className="mt-3 text-xs text-muted">
-              Necesitás al menos una colección con documentos para iniciar un run.
+              Necesitas al menos una colección con documentos para iniciar un run.
             </p>
           )}
         </form>

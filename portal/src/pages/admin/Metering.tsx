@@ -377,7 +377,7 @@ export default function AdminMeteringPage() {
                             compact
                             title="Sin reglas de rate limit"
                             body="Las requests no se están limitando por plan ni por prefijo."
-                            hint="Creá la primera regla con el formulario de arriba."
+                            hint="Crea la primera regla con el formulario de arriba."
                           />
                         </td>
                       </tr>

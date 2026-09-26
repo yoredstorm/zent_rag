@@ -621,7 +621,7 @@ export default function WatchersPage() {
                 </div>
                 <p className="mt-1.5 text-[13px] text-muted">
                   {pulse.attention > 0
-                    ? `${pulse.listening} siguen escuchando. Revisá los errores antes de confiar en el aviso.`
+                    ? `${pulse.listening} siguen escuchando. Revisa los errores antes de confiar en el aviso.`
                     : pulse.listening > 0
                       ? "Zent consulta cada tabla según su intervalo; no se ejecutan agentes hasta que algo cambia."
                       : "Todas las vigilancias están en pausa: no se está consultando ninguna tabla."}

@@ -64,7 +64,7 @@ const PAGE_SIZE = 25;
 
 function uploadErrorMessage(err: unknown): string {
   if (isApiError(err) && err.status === 413) {
-    return `Supera el máximo por archivo (${MAX_UPLOAD_MB} MB). Probá con uno más chico.`;
+    return `Supera el máximo por archivo (${MAX_UPLOAD_MB} MB). Prueba con uno más chico.`;
   }
   return err instanceof Error ? err.message : "Error al subir";
 }
@@ -400,8 +400,8 @@ export default function KnowledgeSourcesPage() {
       if (failed > 0) {
         setError(
           failed === 1
-            ? "1 archivo no se pudo subir. Revisá el detalle."
-            : `${failed} archivos no se pudieron subir. Revisá el detalle.`,
+            ? "1 archivo no se pudo subir. Revisa el detalle."
+            : `${failed} archivos no se pudieron subir. Revisa el detalle.`,
         );
       }
       load();
@@ -653,7 +653,7 @@ export default function KnowledgeSourcesPage() {
                 {kbs.length > 0
                   ? `Se indexa en la colección ${kbs[0].name}.`
                   : "Se crea la colección Principal y se indexa ahí."}{" "}
-                Después podés marcarla en Agent Studio.
+                Después puedes marcarla en Agent Studio.
               </p>
 
               {uploadItems.length > 0 && (

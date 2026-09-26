@@ -296,7 +296,7 @@ export default function KnowledgeGlossaryPage() {
             <EmptyState
               icon={BookOpen}
               title="Sin términos aún"
-              body="Creá el primer término arriba para fijar el vocabulario con el que Zent interpreta tus datos."
+              body="Crea el primer término arriba para fijar el vocabulario con el que Zent interpreta tus datos."
               hint="Los términos en borrador se pueden aprobar después; nada se publica solo."
             />
           }

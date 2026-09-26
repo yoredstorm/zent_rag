@@ -196,7 +196,7 @@ export default function EvaluationOverview() {
               icon={WarningCircle}
               title="No pudimos cargar los runs"
               body={error}
-              hint="Revisá la conexión e intentá de nuevo."
+              hint="Revisa la conexión e intentá de nuevo."
               action={
                 <Button
                   variant="primary"
@@ -260,7 +260,7 @@ export default function EvaluationOverview() {
                     </div>
                     {avgScore == null && (
                       <p className="mt-2 text-xs text-faint">
-                        Ningún run completado calculó score compuesto todavía. Revisá los casos en el
+                        Ningún run completado calculó score compuesto todavía. Revisa los casos en el
                         detalle o lanzá una evaluación con juez LLM.
                       </p>
                     )}

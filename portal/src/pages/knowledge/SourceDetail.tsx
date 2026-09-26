@@ -559,7 +559,7 @@ export default function SourceDetailPage() {
                         <span className="text-xs text-faint">
                           {canRunSql
                             ? "SQL read-only sobre la tabla materializada de esta fuente."
-                            : "Pedí a un owner/admin para consultar por SQL."}
+                            : "Pide a un owner/admin para consultar por SQL."}
                         </span>
                       </div>
                       <ErrorInline message={previewError} className="mb-0" />

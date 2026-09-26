@@ -419,7 +419,7 @@ export default function AdminCapacityPage() {
                 <CodeBlock className="mt-4" code={simResult} language="json" filename="Resultado de la simulación" maxHeight={320} />
               ) : (
                 <p className="mt-3 text-xs text-faint">
-                  Elegí una organización y corré la simulación para ver el escenario que devuelve el backend.
+                  Elige una organización y corré la simulación para ver el escenario que devuelve el backend.
                 </p>
               )}
             </Panel>
@@ -431,7 +431,7 @@ export default function AdminCapacityPage() {
         open={confirmScale}
         onOpenChange={setConfirmScale}
         title="Activar auto-scaling"
-        body="El orquestador podrá crear y liberar workers según la carga real. Revisá las colas y los límites antes de activarlo."
+        body="El orquestador podrá crear y liberar workers según la carga real. Revisa las colas y los límites antes de activarlo."
         confirmLabel="Activar"
         tone="primary"
         onConfirm={() => void toggleAutoScale(true)}

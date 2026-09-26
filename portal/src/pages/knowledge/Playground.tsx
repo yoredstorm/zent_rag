@@ -69,7 +69,7 @@ export default function KnowledgePlaygroundPage() {
           <Field
             label="Consulta"
             id="playground-q"
-            hint="Se envía tal cual al retrieval: probá con la misma redacción que usaría una persona."
+            hint="Se envía tal cual al retrieval: prueba con la misma redacción que usaría una persona."
           >
             <Textarea
               rows={3}
@@ -137,7 +137,7 @@ export default function KnowledgePlaygroundPage() {
                   compact
                   icon={Quotes}
                   title="Sin citas"
-                  body="La respuesta no trajo fuentes para esta consulta. Revisá la cobertura de la fuente."
+                  body="La respuesta no trajo fuentes para esta consulta. Revisa la cobertura de la fuente."
                 />
               ) : (
                 <ul className="divide-y divide-border-soft">
@@ -165,7 +165,7 @@ export default function KnowledgePlaygroundPage() {
             compact
             icon={MagnifyingGlass}
             title="Todavía no hay una consulta"
-            body="Escribí una pregunta para ver la respuesta y de dónde sale cada dato."
+            body="Escribe una pregunta para ver la respuesta y de dónde sale cada dato."
             hint="Cada consulta es independiente: no hay hilo de conversación."
           />
         </div>

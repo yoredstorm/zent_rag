@@ -3,6 +3,7 @@ import {
   MAX_PULSE_RATIO,
   activePulses,
   assignZones,
+  composeStillFrame,
   createNeuralNet,
   excitePointer,
   fire,
@@ -137,6 +138,21 @@ describe("red neuronal espacial", () => {
     expect(net.success).toBeGreaterThan(0.9);
     expect(net.recoil).toBe(0);
     expect(net.pulses.length).toBeGreaterThan(0);
+  });
+
+  it("compone un frame curado para reduced motion", () => {
+    const net = createNeuralNet({ width: 1440, height: 900, seed: 61 });
+    composeStillFrame(net);
+    expect(net.pulses.length).toBeGreaterThanOrEqual(9);
+    expect(net.pulses.every((pulse) => pulse.t > 0 && pulse.t < 1)).toBe(true);
+    expect(net.nodes.some((node) => node.energy > 1)).toBe(true);
+    expect(net.nodes.some((node) => node.plane === 2 && node.energy > 0)).toBe(true);
+
+    const twin = createNeuralNet({ width: 1440, height: 900, seed: 61 });
+    composeStillFrame(twin);
+    expect(twin.pulses.map((pulse) => [pulse.edge, pulse.t])).toEqual(
+      net.pulses.map((pulse) => [pulse.edge, pulse.t])
+    );
   });
 
   it("decae la energía cuando no hay señal", () => {

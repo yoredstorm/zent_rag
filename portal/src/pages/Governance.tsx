@@ -379,7 +379,7 @@ export default function GovernancePage() {
       if (out.intact) {
         setNotice(`Auditoría íntegra: ${out.verified} entradas verificadas contra su hash anterior.`);
       } else {
-        setError(`Cadena rota: ${out.tampered.length} entradas no coinciden con su hash. Revisá los hashes antes de exportar.`);
+        setError(`Cadena rota: ${out.tampered.length} entradas no coinciden con su hash. Revisa los hashes antes de exportar.`);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
@@ -470,7 +470,7 @@ export default function GovernancePage() {
                     icon={Anchor}
                     title="Sin decisiones registradas"
                     body="Todavía no se abrieron decisiones de gobierno en esta organización."
-                    hint="Creá una decisión y va a pedir las firmas indicadas."
+                    hint="Crea una decisión y va a pedir las firmas indicadas."
                   />
                 }
                 footer={sortedDecisions.length > 0 ? <ResultCount shown={sortedDecisions.length} total={decisions.length} noun="decisiones" /> : undefined}
@@ -526,7 +526,7 @@ export default function GovernancePage() {
                 toolbar={
                   <>
                     <p className="text-xs text-muted">
-                      {audit.length} entradas encadenadas por hash. Seleccioná una para ver el detalle.
+                      {audit.length} entradas encadenadas por hash. Selecciona una para ver el detalle.
                     </p>
                   </>
                 }
@@ -614,7 +614,7 @@ export default function GovernancePage() {
             <SectionHeader
               eyebrow="Políticas"
               title={`Políticas versionadas (${policies.length})`}
-              description="Cada política conserva su versión y estado. Seleccioná una para leer el contenido completo."
+              description="Cada política conserva su versión y estado. Selecciona una para leer el contenido completo."
             />
             <DataTable
               columns={POLICY_COLUMNS}

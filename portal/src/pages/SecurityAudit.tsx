@@ -341,7 +341,7 @@ export default function SecurityAuditPage() {
           <SectionHeader
             eyebrow="Auditoría"
             title="Eventos auditados"
-            description="Cada acción sensible queda registrada con actor, recurso e IP de origen. Seleccioná una fila para inspeccionar la evidencia."
+            description="Cada acción sensible queda registrada con actor, recurso e IP de origen. Selecciona una fila para inspeccionar la evidencia."
             actions={<Badge tone="neutral">{auditRows.length} registros</Badge>}
           />
           <DataTable
@@ -426,7 +426,7 @@ export default function SecurityAuditPage() {
           <SectionHeader
             eyebrow="Detección"
             title="Eventos de seguridad"
-            description="Hallazgos del motor de detección, con severidad, score y estado. Seleccioná una fila para ver la evidencia cruda."
+            description="Hallazgos del motor de detección, con severidad, score y estado. Selecciona una fila para ver la evidencia cruda."
             actions={<Badge tone="neutral">{events.length} eventos</Badge>}
           />
           <DataTable
@@ -783,7 +783,7 @@ function AuthConfigPanel({ session }: { session: ReturnType<typeof useAuth>["ses
             </Field>
             <Field
               label="Client Secret"
-              hint={cfg?.client_secret_set ? "Ya hay un secreto guardado: dejalo vacío para conservarlo." : undefined}
+              hint={cfg?.client_secret_set ? "Ya hay un secreto guardado: déjalo vacío para conservarlo." : undefined}
             >
               <PasswordInput
                 value={form.client_secret}
@@ -839,7 +839,7 @@ function AuthConfigPanel({ session }: { session: ReturnType<typeof useAuth>["ses
               />
             ) : (
               <p className="text-[13px] leading-relaxed text-muted">
-                El token se muestra una sola vez al generarlo. Si ya hay uno activo, dejá de funcionar al reemplazarlo.
+                El token se muestra una sola vez al generarlo. Si ya hay uno activo, deja de funcionar al reemplazarlo.
               </p>
             )}
             <div className="flex flex-wrap gap-2">

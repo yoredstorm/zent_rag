@@ -484,7 +484,7 @@ export default function AdminModelHealthPage() {
                   icon={Pulse}
                   title="Sin tráfico en la ventana"
                   body="No hay requests registrados para esta selección."
-                  hint="Ampliá la ventana o elegí otra organización."
+                  hint="Ampliá la ventana o elige otra organización."
                 />
               }
             />
@@ -577,7 +577,7 @@ export default function AdminModelHealthPage() {
               </Panel>
               {guardrails.length === 0 ? (
                 <Panel>
-                  <EmptyState compact icon={ShieldCheck} title="Sin guardrails" body="Creá el primero para filtrar salidas de esta organización." />
+                  <EmptyState compact icon={ShieldCheck} title="Sin guardrails" body="Crea el primero para filtrar salidas de esta organización." />
                 </Panel>
               ) : (
                 <ul className="panel divide-y divide-border-soft">

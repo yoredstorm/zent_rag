@@ -160,7 +160,7 @@ export default function CompanyMapPage() {
           onChange={(event) => setParams({ entity: event.target.value })}
           aria-label="Entidad seleccionada"
         >
-          <option value="">Elegí una entidad</option>
+          <option value="">Elige una entidad</option>
           {options.map((option) => (
             <option key={option.id} value={option.id}>
               {option.display_name} ({entityTypeLabel(option.entity_type)})

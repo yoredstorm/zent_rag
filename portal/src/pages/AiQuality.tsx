@@ -178,7 +178,7 @@ export default function AiQualityPage() {
                           {fmtNum(thumbsDown)} negativas
                         </Badge>
                         <span>
-                          Revisá el detalle en «Requieren atención» para entender qué falló.
+                          Revisa el detalle en «Requieren atención» para entender qué falló.
                         </span>
                       </>
                     ) : (

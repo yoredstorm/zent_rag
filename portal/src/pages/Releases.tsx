@@ -256,7 +256,7 @@ export default function ReleasesPage() {
             <Panel>
               <PanelHeader
                 title="Nuevo release"
-                description="Elegí agente, versión y canal; el tráfico define el porcentaje expuesto."
+                description="Elige agente, versión y canal; el tráfico define el porcentaje expuesto."
               />
               <div className="panel-body flex flex-col gap-4">
                 <Field label="Agente">
@@ -267,7 +267,7 @@ export default function ReleasesPage() {
                       setStartForm((f) => ({ ...f, version_id: "" }));
                       void loadVersions(e.target.value);
                     }}
-                    placeholder="Elegí un agente"
+                    placeholder="Elige un agente"
                   >
                     {agents.map((a) => (
                       <option key={a.id} value={a.id}>
@@ -280,7 +280,7 @@ export default function ReleasesPage() {
                   <Select
                     value={startForm.version_id}
                     onChange={(e) => setStartForm((f) => ({ ...f, version_id: e.target.value }))}
-                    placeholder="Elegí una versión"
+                    placeholder="Elige una versión"
                   >
                     {versions.map((v) => (
                       <option key={v.id} value={v.id}>

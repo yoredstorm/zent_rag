@@ -331,7 +331,7 @@ export default function KnowledgeHubPage() {
                       compact
                       icon={BookOpen}
                       title="Sin fuentes"
-                      body="Creá una fuente para empezar a medir cobertura."
+                      body="Crea una fuente para empezar a medir cobertura."
                     />
                   )}
                 </div>
@@ -366,7 +366,7 @@ export default function KnowledgeHubPage() {
                   />
                   <div className="panel-body">
                     {(coverage?.sources ?? []).length === 0 ? (
-                      <p className="text-xs text-muted">Creá una fuente y refrescala para ver cobertura.</p>
+                      <p className="text-xs text-muted">Crea una fuente y refrescala para ver cobertura.</p>
                     ) : (
                       <div className="space-y-3">
                         {(coverage?.sources ?? []).map((s) => (

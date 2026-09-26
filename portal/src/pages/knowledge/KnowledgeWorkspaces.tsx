@@ -81,9 +81,9 @@ export default function KnowledgeWorkspacesPage() {
           <EmptyState
             icon={SquaresFour}
             tone="accent"
-            title="Creá tu primer workspace de conocimiento"
-            body="Un workspace agrupa las fuentes de un mismo tema o cliente. Dentro podés cargar PDF, Word, texto, base de datos o API, y preguntar con citas verificables."
-            hint="Paso 1: creá el workspace. Paso 2: sumá fuentes. Paso 3: preguntá en el Playground."
+            title="Crea tu primer workspace de conocimiento"
+            body="Un workspace agrupa las fuentes de un mismo tema o cliente. Dentro puedes cargar PDF, Word, texto, base de datos o API, y preguntar con citas verificables."
+            hint="Paso 1: crea el workspace. Paso 2: sumá fuentes. Paso 3: preguntá en el Playground."
             action={<NewWorkspaceModal session={session} onCreated={load} />}
             secondaryAction={
               <Link
@@ -213,7 +213,7 @@ function NewWorkspaceModal({
       >
         <Field
           label="Nombre"
-          hint="Usá un nombre que reconozcas, por ejemplo el cliente o el área."
+          hint="Usa un nombre que reconozcas, por ejemplo el cliente o el área."
           error={error || undefined}
         >
           <Input

@@ -232,13 +232,13 @@ export default function AdminSystemStatusPage() {
                 </p>
                 <p className="mt-2 max-w-[68ch] text-[13px] leading-relaxed text-muted">
                   {health == null
-                    ? "El endpoint de health no respondió en la última consulta. Volvé a ejecutar los checks."
+                    ? "El endpoint de health no respondió en la última consulta. Vuelve a ejecutar los checks."
                     : failedChecks.length > 0
                       ? `${failedChecks.length} servicio(s) no responden: ${failedChecks
                           .map((c) => c.name)
                           .join(", ")}.`
                       : degraded.length > 0
-                        ? `${degraded.length} servicio(s) en estado degradado. Revisá la latencia por servicio antes de dar por sano el sistema.`
+                        ? `${degraded.length} servicio(s) en estado degradado. Revisa la latencia por servicio antes de dar por sano el sistema.`
                         : `Los ${checks.length} servicios responden. Chequeo ${formatDateTime(health.checked_at)}.`}
                 </p>
                 {health && checks.length > 0 && (
@@ -421,7 +421,7 @@ export default function AdminSystemStatusPage() {
               description={
                 orgId
                   ? `${sloWindows.length} ventana(s) evaluadas · ${offTargetWindows.length} fuera de objetivo.`
-                  : "Elegí una organización para cargar sus ventanas de SLO."
+                  : "Elige una organización para cargar sus ventanas de SLO."
               }
               className="mb-3"
               actions={

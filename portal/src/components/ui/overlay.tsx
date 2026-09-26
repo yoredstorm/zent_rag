@@ -394,7 +394,7 @@ export function ConfirmDialog({
     >
       {requireText && (
         <Field
-          label={requireTextLabel ?? `Escribí «${requireText}» para confirmar`}
+          label={requireTextLabel ?? `Escribe «${requireText}» para confirmar`}
           hint="Esta acción no se puede deshacer."
         >
           <Input

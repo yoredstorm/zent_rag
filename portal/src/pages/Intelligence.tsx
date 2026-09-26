@@ -203,7 +203,7 @@ export default function IntelligencePage() {
             </div>
             <p className="mt-1.5 max-w-[52ch] text-[13px] leading-relaxed text-muted">
               {attention > 0
-                ? "Revisá los resultados y marcalos como resueltos: Zent vuelve a avisar solo si la señal continúa."
+                ? "Revisa los resultados y marcalos como resueltos: Zent vuelve a avisar solo si la señal continúa."
                 : "Zent no encontró señales que requieran tu intervención en este momento."}
             </p>
           </Panel>
@@ -253,7 +253,7 @@ export default function IntelligencePage() {
             icon={WarningCircle}
             title="No pudimos cargar Intelligence"
             body={error}
-            hint="Revisá la conexión y volvé a intentar."
+            hint="Revisa la conexión y vuelve a intentar."
             action={
               <Button
                 variant="secondary"
@@ -277,7 +277,7 @@ export default function IntelligencePage() {
         />
         <div className="flex flex-col gap-3 p-4">
           <Field
-            label="¿Qué querés automatizar?"
+            label="¿Qué quieres automatizar?"
             hint="Mencioná cuándo corre y qué datos debe revisar. Mínimo 8 caracteres."
           >
             <Textarea
@@ -299,7 +299,7 @@ export default function IntelligencePage() {
             </Button>
             {prompt.trim().length > 0 && prompt.trim().length < 8 && (
               <span className="text-xs text-faint">
-                Escribí un poco más para que el borrador tenga contexto.
+                Escribe un poco más para que el borrador tenga contexto.
               </span>
             )}
           </div>
@@ -333,7 +333,7 @@ export default function IntelligencePage() {
                 </ul>
               )}
               <p className="mt-2 text-xs text-info">
-                Borrador — revisá costos y permisos antes de activar.
+                Borrador — revisa costos y permisos antes de activar.
               </p>
 
               {(draft.marketplace?.missing?.length ?? 0) > 0 && (
@@ -378,7 +378,7 @@ export default function IntelligencePage() {
       <section>
         <SectionHeader
           title="Zent Insights"
-          description="Resultados verificados por sección. Abrí uno para ver métricas, evidencia y recomendación."
+          description="Resultados verificados por sección. Abre uno para ver métricas, evidencia y recomendación."
           className="mb-3"
         />
         <div className="mb-4 flex flex-wrap gap-1.5">

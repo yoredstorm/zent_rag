@@ -211,7 +211,7 @@ export default function EvaluationDatasetsPage() {
               icon={Stack}
               title="Sin datasets"
               body="Importá un golden set schema v2 (question, expected_answer opcional, expected_sources) para lanzar un run."
-              hint="También podés partir de un JSON exportado desde otra evaluación."
+              hint="También puedes partir de un JSON exportado desde otra evaluación."
               action={
                 <Button
                   variant="primary"

@@ -58,7 +58,7 @@ export function WorkspaceSelector({ compact = false }: { compact?: boolean }) {
         setError(
           err instanceof Error
             ? err.message
-            : "No pudimos cargar tus workspaces. Revisá la conexión e intentá de nuevo."
+            : "No pudimos cargar tus workspaces. Revisa la conexión e intentá de nuevo."
         );
       })
       .finally(() => setLoading(false));

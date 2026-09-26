@@ -14,7 +14,7 @@ export default function SsoCallbackPage() {
     const token = params.get("token");
     const org = params.get("org");
     if (!token || !org) {
-      setError("El proveedor no devolvió una sesión válida. Probá iniciar sesión de nuevo.");
+      setError("El proveedor no devolvió una sesión válida. Prueba iniciar sesión de nuevo.");
       return;
     }
     try {

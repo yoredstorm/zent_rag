@@ -45,30 +45,91 @@ def test_portal_agent_builder_has_tabs_and_playground() -> None:
     builder = (PORTAL / "pages" / "AgentBuilder.tsx").read_text(encoding="utf-8")
     assert 'export { default } from "./AgentStudio"' in builder
     studio = (PORTAL / "pages" / "AgentStudio.tsx").read_text(encoding="utf-8")
-    for panel in ("Configurar", "Probar"):
-        assert panel in studio, f"missing panel {panel}"
-    for piece in ("AgentPurposeForm", "AgentSourcePicker", "AgentTestChat", "AgentAdvancedPanel"):
+    # AgentStudio sólo ensambla: las etapas viven en AgentStageNav y el estado en
+    # useAgentStudio. La vista se compone de decisiones de alto nivel.
+    for piece in (
+        "AgentStageNav",
+        "AgentPurposeForm",
+        "AgentKnowledgeSection",
+        "AgentBehaviorPresetSection",
+        "AgentIntelligenceSection",
+        "AgentTestChat",
+        "AgentAdvancedPanel",
+        "AgentPublishSection",
+        "useAgentStudio",
+    ):
         assert piece in studio, f"missing piece {piece}"
-    assert "/api/v1/agents/${id}/run/stream" in studio
-    assert "/api/v1/gateway/routes" in studio
-    assert "zent-default" in studio
     assert "Cambios sin guardar" in studio
 
+    stages = (PORTAL / "components" / "agentStudio" / "AgentStageNav.tsx").read_text(encoding="utf-8")
+    # Las tres etapas se navegan como tabs reales, no como botones sueltos.
+    assert 'role="tablist"' in stages
+    assert "aria-selected" in stages
+    assert "AGENT_STAGES" in stages
+
     types = (PORTAL / "components" / "agentStudio" / "types.ts").read_text(encoding="utf-8")
+    for stage in ("develop", "test", "publish"):
+        assert f'"{stage}"' in types, f"missing stage {stage}"
+    for label in ("Desarrollar", "Probar", "Publicar"):
+        assert label in types, f"missing stage label {label}"
+    # Las llamadas al runtime se mudaron al hook, junto al payload que serializan.
+    hook = (PORTAL / "components" / "agentStudio" / "useAgentStudio.ts").read_text(encoding="utf-8")
+    assert "/api/v1/agents/${id}/run/stream" in hook
+    assert "/api/v1/gateway/routes" in hook
+    assert "buildAgentPayload" in hook
+
+    modes = (PORTAL / "components" / "agentStudio" / "agentModes.ts").read_text(encoding="utf-8")
+    assert "zent-default" in modes
+    assert "RECOMMENDED_LIMITS" in modes
+
     assert "search_knowledge" in types
     assert "query_database" in types
-    # La IA nueva agrupa los paneles legacy (readiness/versiones/despliegues/embed)
-    # en tres pestañas: cómo responde, qué puede hacer y publicar.
-    assert "ADVANCED_TABS" in types
+    # Los grupos avanzados son el nuevo contrato, y las 11 pestañas viejas siguen
+    # resolviendo a una pantalla con sentido (nada de enlaces guardados roto).
+    assert "ADVANCED_GROUPS" in types
     assert "legacyTabToGroup" in types
-    for tab in ("behavior", "capabilities", "publish"):
-        assert f'"{tab}"' in types, f"missing tab {tab}"
+    for group in ("model", "response", "tools", "retrieval", "intelligence", "limits", "integration"):
+        assert f'"{group}"' in types, f"missing advanced group {group}"
+    for legacy_tab in (
+        "behavior",
+        "model",
+        "output",
+        "capabilities",
+        "tools",
+        "security",
+        "retrieval",
+        "limits",
+        "publish",
+        "readiness",
+        "evaluation",
+        "versions",
+        "deployments",
+        "embed",
+    ):
+        assert f'"{legacy_tab}"' in types, f"missing legacy tab {legacy_tab}"
 
     advanced = (PORTAL / "components" / "agentStudio" / "AgentAdvancedPanel.tsx").read_text(
         encoding="utf-8"
     )
-    for section in ("AgentBehaviorSection", "AgentCapabilitiesSection", "AgentPublishSection"):
+    for section in (
+        "AgentModelGroup",
+        "AgentResponseProfileSection",
+        "AgentToolsGroup",
+        "AgentRetrievalGroup",
+        "AgentIntelligenceGroup",
+        "AgentLimitsGroup",
+        "AgentIntegrationGroup",
+    ):
         assert section in advanced, f"missing section {section}"
+
+    groups = (PORTAL / "components" / "agentStudio" / "AgentSettingGroups.tsx").read_text(
+        encoding="utf-8"
+    )
+    # Los overrides exactos de JEV siguen configurables, ahora por campo, y el
+    # editor de salida estructurada sobrevive detrás de "Personalizar".
+    for override in ("tool_routing", "termination_gate", "answer_gate"):
+        assert override in groups, f"missing jev override {override}"
+    assert "agent-output-schema" in groups
 
     publish = (PORTAL / "components" / "agentStudio" / "AgentPublishSection.tsx").read_text(
         encoding="utf-8"

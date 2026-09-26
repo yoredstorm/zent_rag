@@ -243,7 +243,7 @@ export default function EcosystemMarketplacePage() {
             icon={WarningCircle}
             title="No pudimos cargar el marketplace"
             body={loadError}
-            hint="Revisá la conexión y volvé a intentar."
+            hint="Revisa la conexión y vuelve a intentar."
             action={
               <Button variant="secondary" leadingIcon={ArrowClockwise} onClick={() => void load()}>
                 Reintentar
@@ -308,7 +308,7 @@ export default function EcosystemMarketplacePage() {
                     icon={Storefront}
                     title="Sin listings publicados"
                     body="Todavía no hay agentes publicados en el marketplace."
-                    hint="Si publicás un agente, aparece acá en cuanto esté publicado."
+                    hint="Si publicas un agente, aparece acá en cuanto esté publicado."
                     action={
                       <Button variant="primary" leadingIcon={Plus} onClick={() => setShowPublish(true)}>
                         Publicar agente
@@ -383,7 +383,7 @@ export default function EcosystemMarketplacePage() {
             <Panel>
               <PanelHeader
                 title="Vender en el marketplace"
-                description="Publicá agentes propios, recibí reviews verificadas y cobrá payouts."
+                description="Publica agentes propios, recibí reviews verificadas y cobrá payouts."
                 actions={
                   <Button size="sm" variant="primary" leadingIcon={Plus} onClick={() => setShowPublish(true)}>
                     Publicar
@@ -401,7 +401,7 @@ export default function EcosystemMarketplacePage() {
                 ) : (
                   <>
                     <span className="text-xs text-muted">
-                      Todavía no tenés badge de partner.
+                      Todavía no tienes badge de partner.
                     </span>
                     <Button
                       size="sm"

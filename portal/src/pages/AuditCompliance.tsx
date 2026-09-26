@@ -236,7 +236,7 @@ export default function AuditCompliancePage() {
       setNotice(
         v.verified && v.chain_ok
           ? { tone: "ok", text: `Integridad verificada: hash propio y cadena coinciden (${v.current_hash.slice(0, 12)}…).` }
-          : { tone: "warn", text: "El reporte no coincide con su hash o con la cadena. Revisá la evidencia antes de usarlo." },
+          : { tone: "warn", text: "El reporte no coincide con su hash o con la cadena. Revisa la evidencia antes de usarlo." },
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
@@ -340,7 +340,7 @@ export default function AuditCompliancePage() {
             <SectionHeader
               eyebrow="Reportes"
               title={`Reportes generados (${reports.length})`}
-              description="Descargá o verificá la integridad de cada archivo. La verificación compara el hash actual contra el encadenado."
+              description="Descarga o verificá la integridad de cada archivo. La verificación compara el hash actual contra el encadenado."
             />
             <DataTable
               columns={REPORT_COLUMNS}
@@ -375,7 +375,7 @@ export default function AuditCompliancePage() {
                   icon={FileText}
                   title="Sin reportes generados"
                   body="Todavía no se generó ningún reporte para esta organización."
-                  hint="Elegí tipo y formato arriba, y se emite en el momento."
+                  hint="Elige tipo y formato arriba, y se emite en el momento."
                 />
               }
               footer={sortedReports.length > 0 ? <ResultCount shown={sortedReports.length} total={reports.length} noun="reportes" /> : undefined}
@@ -386,7 +386,7 @@ export default function AuditCompliancePage() {
             <SectionHeader
               eyebrow="Cumplimiento"
               title={`Controles · ${frameworkLabel}`}
-              description="Cada control declara su evidencia requerida y su veredicto. Seleccioná una fila para inspeccionar y cambiar el estado."
+              description="Cada control declara su evidencia requerida y su veredicto. Selecciona una fila para inspeccionar y cambiar el estado."
               actions={
                 <Select
                   className="w-full sm:w-48"
@@ -522,7 +522,7 @@ export default function AuditCompliancePage() {
         open={Boolean(confirmFail)}
         onOpenChange={(open) => !open && setConfirmFail(null)}
         title="Marcar control como no conforme"
-        body="El control baja el score de conformidad del framework y queda registrado en la auditoría. Podés revertirlo cambiando el estado de nuevo."
+        body="El control baja el score de conformidad del framework y queda registrado en la auditoría. Puedes revertirlo cambiando el estado de nuevo."
         confirmLabel="Marcar como falla"
         onConfirm={() => {
           if (confirmFail) void updateControl(confirmFail, "fail");

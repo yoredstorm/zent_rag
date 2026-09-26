@@ -201,7 +201,7 @@ export default function DemoCenterPage() {
         </div>
       )}
       <p className="text-xs text-faint">
-        ¿Necesitás algo más? Mirá las{" "}
+        ¿Necesitas algo más? Mirá las{" "}
         <Link to="/workflows" className="text-accent underline underline-offset-2">
           automatizaciones
         </Link>{" "}

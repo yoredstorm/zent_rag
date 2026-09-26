@@ -43,6 +43,78 @@ export function AuthShell({
   const shellRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<HTMLSpanElement>(null);
   const parallaxRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  // El dock se ancla a los campos reales de cada tarjeta: mide y escribe
+  // variables CSS (sin renders). Si un canal no existe en esa pantalla, no se
+  // dibuja. Así funciona igual en login, alta y verificación en dos pasos.
+  useEffect(() => {
+    const dock = dockRef.current;
+    const shell = shellRef.current;
+    const body = bodyRef.current;
+    if (!dock || !shell || !body) return;
+
+    const offsetWithin = (el: HTMLElement): number => {
+      let y = 0;
+      let node: HTMLElement | null = el;
+      while (node && node !== shell) {
+        y += node.offsetTop;
+        const parent = node.offsetParent as HTMLElement | null;
+        if (!parent || !shell.contains(parent)) break;
+        node = parent;
+      }
+      return y;
+    };
+    const centerOf = (el: HTMLElement): number => offsetWithin(el) + el.offsetHeight / 2;
+
+    const align = () => {
+      const inputs = Array.from(body.querySelectorAll<HTMLInputElement>("input"));
+      const email = inputs.find((input) => /email/i.test(input.id)) ?? inputs[0] ?? null;
+      const password =
+        inputs.find((input) => /(password|confirm|mfa|code)/i.test(input.id) && input !== email) ??
+        inputs.find((input) => input !== email) ??
+        null;
+      const submit =
+        body.querySelector<HTMLElement>(".auth-cta") ??
+        body.querySelector<HTMLElement>("button[type='submit']");
+
+      const set = (name: string, el: HTMLElement | null): boolean => {
+        if (!el) return false;
+        dock.style.setProperty(`--dock-${name}`, `${Math.round(centerOf(el))}px`);
+        return true;
+      };
+      const channels = [
+        set("email", email) ? "email" : "",
+        set("password", password) ? "password" : "",
+        set("submit", submit) ? "submit" : "",
+      ].filter(Boolean);
+      dock.dataset.channels = channels.join(" ");
+    };
+
+    let pending = 0;
+    const schedule = () => {
+      if (pending) return;
+      pending = window.requestAnimationFrame(() => {
+        pending = 0;
+        align();
+      });
+    };
+
+    align();
+    schedule();
+    void document.fonts?.ready.then(align).catch(() => undefined);
+    const observer =
+      typeof MutationObserver === "undefined"
+        ? null
+        : new MutationObserver(schedule);
+    observer?.observe(body, { childList: true, subtree: true });
+    window.addEventListener("resize", schedule);
+    return () => {
+      if (pending) window.cancelAnimationFrame(pending);
+      observer?.disconnect();
+      window.removeEventListener("resize", schedule);
+    };
+  }, []);
 
   // Parallax de la tarjeta: pocos píxeles, lerp por rAF, sin renders.
   useEffect(() => {
@@ -202,7 +274,7 @@ export function AuthShell({
                         <span className="auth-card-state__label" />
                       </span>
                     </div>
-                    <div className="auth-card-body">{children}</div>
+                    <div className="auth-card-body" ref={bodyRef}>{children}</div>
                     {footer && <div className="auth-card-footer">{footer}</div>}
                   </div>
                 </div>

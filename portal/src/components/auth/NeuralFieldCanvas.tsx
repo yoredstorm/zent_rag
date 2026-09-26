@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { cn } from "../ui/cn";
 import {
   assignZones,
+  composeStillFrame,
   createNeuralNet,
   excitePointer,
   netStats,
@@ -91,9 +92,11 @@ function quadPoint(
  * empuja y enciende la zona que toca; el envío del formulario lanza una onda
  * que entra al sistema.
  *
- * - Sólo dibuja por frame con composición aditiva: sin filtros, sin layout.
- * - Se detiene cuando la pestaña no está visible y se congela en un único frame
- *   con `prefers-reduced-motion`.
+ * - El plano lejano se dibuja en un lienzo aparte a media resolución: al
+ *   subirlo, el suavizado bilineal produce profundidad de campo real sin
+ *   filtros GPU.
+ * - Se detiene cuando la pestaña no está visible; con `prefers-reduced-motion`
+ *   compone un único frame curado (actividad repartida, inmóvil).
  * - Decorativo: `aria-hidden`, fuera del árbol accesible.
  */
 export function NeuralFieldCanvas({
@@ -128,6 +131,10 @@ export function NeuralFieldCanvas({
       alert: createGlow(TONES.alert),
     };
 
+    // Lienzo del plano lejano (profundidad de campo por submuestreo).
+    const far = document.createElement("canvas");
+    const farCtx = far.getContext("2d");
+
     let width = 1;
     let height = 1;
     let flash: CanvasGradient | null = null;
@@ -145,6 +152,7 @@ export function NeuralFieldCanvas({
       assignZones(net, { compact });
       // Arranque con actividad: la red no aparece apagada los primeros segundos.
       for (let i = 0; i < 240; i += 1) stepNeuralNet(net, 1 / 60);
+      if (reduce) composeStillFrame(net);
       return net;
     };
 
@@ -161,6 +169,11 @@ export function NeuralFieldCanvas({
       canvas.width = Math.round(width * dpr);
       canvas.height = Math.round(height * dpr);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // El fondo pierde detalle a propósito: poco más de media resolución.
+      const farScale = dpr * (width < 768 ? 0.62 : 0.5);
+      far.width = Math.max(1, Math.round(width * farScale));
+      far.height = Math.max(1, Math.round(height * farScale));
+      farCtx?.setTransform(farScale, 0, 0, farScale, 0, 0);
       const gradient = ctx.createRadialGradient(
         width * 0.52,
         height * 0.42,
@@ -182,7 +195,8 @@ export function NeuralFieldCanvas({
       return net.nodes[edge.a].zone === zone && net.nodes[edge.b].zone === zone ? net.focus[zone] : 0;
     };
 
-    const drawEdge = (
+    const paintEdge = (
+      g: CanvasRenderingContext2D,
       edge: NetEdge,
       layer: (typeof LAYERS)[number],
       ox: number,
@@ -192,7 +206,7 @@ export function NeuralFieldCanvas({
       const b = net.nodes[edge.b];
       const cycle =
         edge.cycle > 0
-          ? 0.4 + 0.6 * (0.5 + 0.5 * Math.sin((net.time * 1000) / edge.cycle * TAU + edge.phase))
+          ? 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(((net.time * 1000) / edge.cycle) * TAU + edge.phase))
           : 1;
       const focus = focusWeight(edge);
       const alpha =
@@ -200,15 +214,16 @@ export function NeuralFieldCanvas({
         focus * 0.26 +
         net.success * 0.1;
       if (alpha < 0.012) return;
-      ctx.beginPath();
-      ctx.moveTo(a.x + a.vx + ox, a.y + a.vy + oy);
-      ctx.quadraticCurveTo(edge.cx + ox, edge.cy + oy, b.x + b.vx + ox, b.y + b.vy + oy);
-      ctx.strokeStyle = rgba(edge.plane === 2 ? TONES.deep : TONES.signal, alpha);
-      ctx.lineWidth = (0.5 + edge.weight * 0.5) * layer.width;
-      ctx.stroke();
+      g.beginPath();
+      g.moveTo(a.x + a.vx + ox, a.y + a.vy + oy);
+      g.quadraticCurveTo(edge.cx + ox, edge.cy + oy, b.x + b.vx + ox, b.y + b.vy + oy);
+      g.strokeStyle = rgba(edge.plane === 2 ? TONES.deep : TONES.signal, alpha);
+      g.lineWidth = (0.5 + edge.weight * 0.5) * layer.width;
+      g.stroke();
     };
 
-    const drawPulse = (
+    const paintPulse = (
+      g: CanvasRenderingContext2D,
       pulse: NetPulse,
       edge: NetEdge,
       layer: (typeof LAYERS)[number],
@@ -224,75 +239,95 @@ export function NeuralFieldCanvas({
       const cx = edge.cx + ox;
       const cy = edge.cy + oy;
       const base = (0.32 + pulse.strength * 0.46) * layer.alpha * (1 - net.recoil * 0.45);
-      const color = TONES[pulse.tone === "flash" ? "flash" : pulse.tone];
+      const color = TONES[pulse.tone];
       const head = pulse.t;
       const span = Math.min(0.36, 130 / Math.max(1, edge.length));
       let prev = quadPoint(ax, ay, cx, cy, bx, by, Math.max(0, head - span));
       for (let i = 1; i <= 4; i += 1) {
         const t = Math.max(0, head - span + (span * i) / 4);
         const point = quadPoint(ax, ay, cx, cy, bx, by, t);
-        ctx.beginPath();
-        ctx.moveTo(prev.x, prev.y);
-        ctx.lineTo(point.x, point.y);
-        ctx.strokeStyle = rgba(color, base * Math.pow(i / 4, 1.7));
-        ctx.lineWidth = (0.9 + pulse.strength * 1.5) * layer.width;
-        ctx.stroke();
+        g.beginPath();
+        g.moveTo(prev.x, prev.y);
+        g.lineTo(point.x, point.y);
+        g.strokeStyle = rgba(color, base * Math.pow(i / 4, 1.7));
+        g.lineWidth = (0.9 + pulse.strength * 1.5) * layer.width;
+        g.stroke();
         prev = point;
       }
       const headPoint = quadPoint(ax, ay, cx, cy, bx, by, head);
       const size = (18 + pulse.strength * 30) * layer.radius;
-      ctx.globalAlpha = Math.min(1, base * 1.5);
-      ctx.drawImage(glow[pulse.tone], headPoint.x - size / 2, headPoint.y - size / 2, size, size);
-      ctx.globalAlpha = 1;
+      g.globalAlpha = Math.min(1, base * 1.5);
+      g.drawImage(glow[pulse.tone], headPoint.x - size / 2, headPoint.y - size / 2, size, size);
+      g.globalAlpha = 1;
+    };
+
+    const paintPlane = (
+      g: CanvasRenderingContext2D,
+      layer: (typeof LAYERS)[number],
+      ox: number,
+      oy: number
+    ) => {
+      for (const edge of net.edges) {
+        if (edge.plane !== layer.plane) continue;
+        paintEdge(g, edge, layer, ox, oy);
+      }
+
+      for (const pulse of net.pulses) {
+        const edge = net.edges[pulse.edge];
+        if (!edge || edge.plane !== layer.plane) continue;
+        paintPulse(g, pulse, edge, layer, ox, oy);
+      }
+
+      for (const node of net.nodes) {
+        if (node.plane !== layer.plane) continue;
+        const wobbleX = Math.sin(net.time * 0.55 + node.phase) * (1.5 + node.z * 3);
+        const wobbleY = Math.cos(net.time * 0.45 + node.phase * 1.3) * (1.2 + node.z * 2.4);
+        const x = node.x + node.vx + ox + wobbleX;
+        const y = node.y + node.vy + oy + wobbleY;
+        const energy = Math.min(1, node.energy);
+        const tone: NetTone = node.energy > 1.02 || net.success > 0.4 ? "flash" : "signal";
+        const radius = node.radius * layer.radius * (1 + energy * 0.85);
+        const size = radius * (7 + energy * 13);
+        g.globalAlpha = (0.055 + energy * 0.4) * layer.alpha * (1 - net.recoil * 0.5);
+        g.drawImage(glow[tone], x - size / 2, y - size / 2, size, size);
+        g.globalAlpha = 1;
+        g.beginPath();
+        g.arc(x, y, Math.max(0.4, radius), 0, TAU);
+        g.fillStyle = rgba(TONES[tone], Math.min(1, 0.2 + energy * 0.72) * layer.alpha);
+        g.fill();
+        if (node.role === "hub") {
+          g.beginPath();
+          g.arc(x, y, radius + 3.5, 0, TAU);
+          g.strokeStyle = rgba(TONES[tone], (0.07 + energy * 0.22) * layer.alpha);
+          g.lineWidth = 0.8;
+          g.stroke();
+        }
+      }
     };
 
     const draw = () => {
       ctx.clearRect(0, 0, width, height);
+      const [farLayer, ...frontLayers] = LAYERS;
+
+      // Plano lejano: lienzo aparte a media resolución. Al subirlo, el
+      // suavizado bilineal da desenfoque real (profundidad de campo) barato.
+      if (farCtx) {
+        farCtx.clearRect(0, 0, width, height);
+        farCtx.save();
+        farCtx.globalCompositeOperation = "lighter";
+        const factor = PARALLAX[farLayer.plane];
+        paintPlane(farCtx, farLayer, parallax.x * AMPLITUDE_X * factor, parallax.y * AMPLITUDE_Y * factor);
+        farCtx.restore();
+      }
+
       ctx.save();
       ctx.globalCompositeOperation = "lighter";
+      ctx.globalAlpha = 1;
+      if (farCtx) ctx.drawImage(far, 0, 0, width, height);
 
-      for (const layer of LAYERS) {
+      for (const layer of frontLayers) {
         const factor = PARALLAX[layer.plane];
-        const ox = parallax.x * AMPLITUDE_X * factor;
-        const oy = parallax.y * AMPLITUDE_Y * factor;
-
-        for (const edge of net.edges) {
-          if (edge.plane !== layer.plane) continue;
-          drawEdge(edge, layer, ox, oy);
-        }
-
-        for (const pulse of net.pulses) {
-          const edge = net.edges[pulse.edge];
-          if (!edge || edge.plane !== layer.plane) continue;
-          drawPulse(pulse, edge, layer, ox, oy);
-        }
-
-        for (const node of net.nodes) {
-          if (node.plane !== layer.plane) continue;
-          const wobbleX = Math.sin(net.time * 0.55 + node.phase) * (1.5 + node.z * 3);
-          const wobbleY = Math.cos(net.time * 0.45 + node.phase * 1.3) * (1.2 + node.z * 2.4);
-          const x = node.x + node.vx + ox + wobbleX;
-          const y = node.y + node.vy + oy + wobbleY;
-          const energy = Math.min(1, node.energy);
-          const lit = node.zone && net.focus[node.zone] > 0.04;
-          const tone: NetTone = node.energy > 1.02 || net.success > 0.4 ? "flash" : lit ? "signal" : "signal";
-          const radius = node.radius * layer.radius * (1 + energy * 0.85);
-          const size = radius * (7 + energy * 13);
-          ctx.globalAlpha = (0.055 + energy * 0.4) * layer.alpha * (1 - net.recoil * 0.5);
-          ctx.drawImage(glow[tone], x - size / 2, y - size / 2, size, size);
-          ctx.globalAlpha = 1;
-          ctx.beginPath();
-          ctx.arc(x, y, Math.max(0.4, radius), 0, TAU);
-          ctx.fillStyle = rgba(TONES[tone], Math.min(1, 0.2 + energy * 0.72) * layer.alpha);
-          ctx.fill();
-          if (node.role === "hub") {
-            ctx.beginPath();
-            ctx.arc(x, y, radius + 3.5, 0, TAU);
-            ctx.strokeStyle = rgba(TONES[tone], (0.07 + energy * 0.22) * layer.alpha);
-            ctx.lineWidth = 0.8;
-            ctx.stroke();
-          }
-        }
+        paintPlane(ctx, layer, parallax.x * AMPLITUDE_X * factor, parallax.y * AMPLITUDE_Y * factor);
       }
 
       // Onda de envío: cruza la red y la enciende a su paso.

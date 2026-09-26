@@ -276,7 +276,7 @@ export default function AdminCostGovernancePage() {
                             compact
                             title="Sin costos etiquetados"
                             body="Ningún evento de costo tiene un tag asignado en la ventana."
-                            hint="Creá un tag abajo y aplicálo desde el cliente para ver el desglose."
+                            hint="Crea un tag abajo y aplicálo desde el cliente para ver el desglose."
                           />
                         </td>
                       </tr>

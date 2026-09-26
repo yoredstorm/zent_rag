@@ -255,7 +255,7 @@ export default function MigrationsPage() {
                   ))}
                 </Select>
               </Field>
-              <Field label="Contenido CSV / JSON" hint="Pegá el contenido o usá el ejemplo como referencia.">
+              <Field label="Contenido CSV / JSON" hint="Pegá el contenido o usa el ejemplo como referencia.">
                 <Textarea
                   className="min-h-40 font-mono text-xs"
                   placeholder={CSV_SAMPLE}

@@ -109,7 +109,7 @@ function LoadErrorPanel({
         icon={WarningCircle}
         title={title}
         body={message}
-        hint="Revisá la conexión y volvé a intentar."
+        hint="Revisa la conexión y vuelve a intentar."
         action={
           <Button variant="secondary" leadingIcon={ArrowClockwise} onClick={onRetry}>
             Reintentar

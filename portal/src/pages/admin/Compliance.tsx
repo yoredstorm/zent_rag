@@ -211,7 +211,7 @@ export default function AdminCompliancePage() {
               <div>
                 <h2 className="text-h2">Reportes de auditoría</h2>
                 <p className="mt-1 text-[13px] leading-relaxed text-muted">
-                  Cada reporte está encadenado por hash con el anterior. Seleccioná una fila para inspeccionar la integridad.
+                  Cada reporte está encadenado por hash con el anterior. Selecciona una fila para inspeccionar la integridad.
                 </p>
               </div>
             </div>

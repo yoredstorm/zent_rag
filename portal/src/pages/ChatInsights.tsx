@@ -116,7 +116,7 @@ export default function ChatInsightsPage() {
             icon={WarningCircle}
             title="No pudimos cargar la analítica de chat"
             body={error}
-            hint="Revisá la conexión y volvé a intentar."
+            hint="Revisa la conexión y vuelve a intentar."
             action={
               <Button variant="secondary" leadingIcon={ArrowClockwise} onClick={() => void load()}>
                 Reintentar
