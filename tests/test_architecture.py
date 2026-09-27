@@ -21,10 +21,13 @@ SRC = ROOT / "src"
 
 # Excepciones puntuales y documentadas:
 # - logging/métricas son concerns ambientales permitidos en cualquier capa.
+# - embedding_route es un ContextVar de observabilidad (sin I/O ni adaptadores):
+#   el proveedor publica qué ruta sirvió el último embedding y "Ver flujo" la lee.
 _AMBIENT_MODULES = {
     "src.infrastructure.observability.logging_config",
     "src.infrastructure.observability.metrics",
     "src.infrastructure.observability.tracing",
+    "src.infrastructure.observability.embedding_route",
 }
 # - Fábrica de sesión de datos: las capas superiores acceden SOLO a la
 #   fábrica (session.py); los repositorios concretos viven en relational_db.
