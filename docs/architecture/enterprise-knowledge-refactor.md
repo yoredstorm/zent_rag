@@ -244,14 +244,14 @@ Observation → Inference → Suggestion → Human Review → Approval → Versi
 
 **Do not confuse** with KLE (`/knowledge/learning`). FASE 25 is the post-production improvement loop; FASE 33 is source onboarding/learning.
 
-### 1.9 Knowledge Hub (legacy parallel product)
+### 1.9 Knowledge Hub (legacy, RETIRADO)
 
-**Paths:** `src/platform/knowledgehub/hub.py`, `src/api/routes/knowledge_hub.py`  
-**Tables:** `knowledge_sources`, `documents` (migration `065`)  
-**Portal:** `/knowledge-hub`  
-**Refresh loop:** `src/api/main.py` `_knowledge_refresh_loop`
+**Paths (eliminados):** `src/platform/knowledgehub/`, `src/api/routes/knowledge_hub.py`  
+**Tablas (archivadas):** `legacy_knowledge_sources`, `legacy_knowledge_refreshes`, `legacy_knowledge_gaps` (creadas en `065`, archivadas en `134`)  
+**Portal:** `/knowledge-hub` redirige a `/knowledge`  
+**Refresh loop:** eliminado de `src/api/main.py`
 
-Comment in code: “AI Knowledge Hub v2 — Auto-Discovery & Curation”. This is **not** Enterprise Knowledge V2. It is an older hub with its own source types (`url`, `rss`, `repo`, `s3`, `manual`), signatures, and categories. Permissions today are `billing:read/write` (not `knowledge:*`). Treat as coexistence debt.
+Era un hub paralelo (“AI Knowledge Hub v2 — Auto-Discovery & Curation”) con source types propios (`url`, `rss`, `repo`, `s3`, `manual`), dedupe por firma y permisos equivocados (`billing:*`). Retirado en la migración `134`: página portal, API, scheduler y dashboard admin. Sus gaps reales (solo Copilot los escribía) se migraron a `context_gaps` con `gap_type='UNRESOLVED_QUERY'`. La tabla `documents` queda como histórica sin writers.
 
 ### 1.10 Portal Knowledge UI (current IA)
 
@@ -467,7 +467,7 @@ Reuse as-is (call them; do not reimplement):
 | `SourceDetail.tsx` | G | Coverage + **Open** / **Relearn**; extras stay Advanced |
 | KLE events + `LearningActivityFeed` | G | Real events visible **inside** the workspace (not only `/knowledge/learning`) |
 | Studio pages / `studio/panels.tsx` | G | Studio MVP: Summary, FAQ, Timeline, Comparison, Key Facts, Risks, Map |
-| Knowledge Hub routes | H | Proxy or redirect onto `kb_sources` + corpus |
+| Knowledge Hub routes | H | **Hecho (134)**: portal redirige `/knowledge-hub`; API, scheduler y dashboard eliminados |
 | Settings | A (stub only) | `KNOWLEDGE_V2_ENABLED` |
 
 ---
@@ -476,8 +476,8 @@ Reuse as-is (call them; do not reimplement):
 
 | Component | Why | Sunset rule |
 |---|---|---|
-| `src/platform/knowledgehub/` + `/api/v1/knowledge-hub` | Parallel source/document model | After Hub sources migrate to `kb_sources` + corpus; keep route as shim |
-| Portal `/knowledge-hub` and `/knowledge/documents` if they only wrap Hub | Duplicate of Fuentes | Redirect |
+| `src/platform/knowledgehub/` + `/api/v1/knowledge-hub` | Parallel source/document model | **Hecho (134)**: eliminado; gaps migrados a `context_gaps`; tablas `legacy_*` |
+| Portal `/knowledge-hub` and `/knowledge/documents` if they only wrap Hub | Duplicate of Fuentes | **Hecho**: redirect a `/knowledge`; `/knowledge/documents` usa `source_documents`, no el Hub |
 | Catalog-only readiness as the **user-facing** % | Conflicts with Knowledge Score | Keep API; UI shows Score + reasons |
 | Markdown as the **canonical** document | Lossy | Keep as derived view (`StructuredDocument.as_markdown()`) |
 | Prompt-only `[Doc: N]` as the only citation | Fragile | Compat layer in eval; Phase G UI uses `[1]` + highlight |
@@ -685,7 +685,7 @@ Later (not this PR):
 | B | ~~`structured_documents`, `structured_blocks`~~ → **shipped in `098_structured_documents.py`** (node_type: block/page/section/table/figure; org+workspace+source scoped) |
 | D/G | ~~`knowledge_corpora`; `kb_sources.corpus_id`; `knowledge_bases.corpus_id`~~ → **shipped in `099_knowledge_corpora.py`** (workspace-scoped, org FK; overlay `corpus_id` nullable). **Versioning → `100_structured_document_versions.py`** (version/change_kind/hash/previous) |
 | E | Qdrant payload backfill (script, like `migrate_qdrant_hybrid.py`) — not a new collection |
-| H | Drop or archive `knowledge_sources` / Hub `documents` after migrate |
+| H | **Parcial (134)**: `knowledge_sources`/`knowledge_refreshes`/`knowledge_gaps` archivadas como `legacy_*`; `documents` queda sin writers, retiro físico pendiente de migrar export/workflows/governance (`docs_conf`) |
 
 ### 8.6 COMPATIBILITY RISKS (Phase A)
 
@@ -728,7 +728,7 @@ Aligned to SOURCE→…→CONTINUOUS LEARNING. Each phase is a PR train, not a r
 | **E** | Multi-level index | ORG KNOWLEDGE → INDEX | Additive Qdrant payload; section/entity points; same collection + ACL | Second vector DB |
 | **F** | Retrieval + reasoning | INDEX → RETRIEVAL → REASONING | **Shipped**: Query Intelligence + shadow retrieval V2 en el orchestrator (`RAG_KNOWLEDGE_V2_SHADOW`, overlap/latencia, respuesta=100% V1) + **Grounding backend** (`GroundedAnswer`/`Citation`/`ClaimStatus`, verifier determinista, instrumentación `[N]`). Siguientes: override productivo del retriever (flag promote) | Change default answers |
 | **G** | Grounded workspace UX | REASONING → ANSWER → CITATIONS | **Slice 1–3 shipped (backend + portal slice 1)**: grounding (`GroundedAnswer`/`Citation`/verifier) + promote (`RAG_KNOWLEDGE_V2_PROMOTE`) + versioning (`DocumentVersion`, `100`) + enterprise eval (`v2_*`) + Workspaces UI (`/knowledge/workspaces*`: source-first 3 panes, citas `[1]` → viewer, chat grounded flag-gated). Pendientes: colaboración `[1]` → PDF highlight real, Studio MVP funcional, suggested questions | Auto-APPROVED artifacts |
-| **H** | Continuous learning + cutover | CITATIONS → LEARNING | **Parcial**: judge LLM opcional (eval) + readiness/cutover (`assess_v2_readiness` + status script) + `101` cost registry. Pendientes: unificar Score + FASE 25 + KLE events, Hub shim, flag default on para orgs nuevas, deprecaciones §6 | Neo4j; drop V1 overnight |
+| **H** | Continuous learning + cutover | CITATIONS → LEARNING | **Parcial**: judge LLM opcional (eval) + readiness/cutover (`assess_v2_readiness` + status script) + `101` cost registry. Pendientes: unificar Score + FASE 25 + KLE events, Hub retirado (134), flag default on para orgs nuevas, deprecaciones §6 | Neo4j; drop V1 overnight |
 
 **Phase A exit criteria (this PR) — Tester cares about these:**
 
@@ -750,7 +750,7 @@ Aligned to SOURCE→…→CONTINUOUS LEARNING. Each phase is a PR train, not a r
 5. **ACL stays pre-retrieval** (Qdrant filter before chunks exist for Chat, Viewer, Studio, or suggested questions). V2 points inherit the same payload contract.
 6. **HITL stays.** Any V2 semantic object — including Studio MVP artifacts — starts `OBSERVED`/`INFERRED`.
 7. **KLE and FASE 25 both stay**; Phase H unifies UX/score, not a deletion of either in A–G.
-8. **Knowledge Hub is legacy**, not “V2”.
+8. **Knowledge Hub is legacy** (retirado en la migración `134`), not “V2”.
 9. **Phase A code is inert** unless someone imports types in new tests or later phases.
 10. **4-pillar IA is a temporary bridge (PR #4/#5).** Phase G replaces it with the workspace chrome in §2.2. Phase A does not change e2e ACs.
 11. **Zent visual identity** over any NotebookLM pixel clone. The product constraint is the **layout pattern** (Sources / Chat+Viewer / Studio), not the look.

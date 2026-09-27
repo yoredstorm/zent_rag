@@ -20,7 +20,6 @@ export const KNOWLEDGE_HEADINGS = {
   documents: "Documentos",
   sql: "Fuentes SQL",
   importCsv: "Import CSV / Excel",
-  hub: "Knowledge Hub",
   add: "Añade conocimiento a Zent",
   workspaces: "Workspaces",
 } as const;
@@ -83,7 +82,6 @@ export const KNOWLEDGE_ROUTE_TITLES: Record<string, string> = {
   "/knowledge/sql": KNOWLEDGE_HEADINGS.sql,
   "/knowledge/jobs": KNOWLEDGE_HEADINGS.jobs,
   "/knowledge/playground": KNOWLEDGE_HEADINGS.playground,
-  "/knowledge-hub": KNOWLEDGE_HEADINGS.hub,
   "/knowledge/add": KNOWLEDGE_HEADINGS.add,
   "/knowledge/workspaces": KNOWLEDGE_HEADINGS.workspaces,
 };
@@ -126,7 +124,6 @@ const PREFIX_GROUPS: { id: KnowledgePillarId; prefixes: string[] }[] = [
       "/knowledge/playground",
       "/knowledge/activity",
       "/knowledge/learning",
-      "/knowledge-hub",
       "/connectors",
     ],
   },

@@ -1,7 +1,6 @@
 import {
   ArrowsLeftRight,
   BellSimple,
-  BookOpen,
   Broadcast,
   Buildings,
   Cards,
@@ -58,7 +57,6 @@ export const PLATFORM_NAV: PlatformNavGroup[] = [
       { to: `${BASE}/decision-engine`, label: "Decision Engine", icon: FlowArrow },
       { to: `${BASE}/ai-runtime`, label: "AI Runtime", icon: Cpu },
       { to: `${BASE}/inference-proxy`, label: "Inference", icon: Cpu },
-      { to: `${BASE}/knowledge-hub`, label: "Knowledge", icon: BookOpen },
       { to: `${BASE}/evals`, label: "Evals", icon: Flask },
       { to: `${BASE}/feedback`, label: "Feedback", icon: Smiley },
       { to: `${BASE}/workflows`, label: "Workflows", icon: FlowArrow },

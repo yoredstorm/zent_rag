@@ -67,7 +67,6 @@ from src.api.routes.health import router as health_router
 from src.api.routes.ingestion import router as ingestion_router
 from src.api.routes.jobs import router as jobs_router
 from src.api.routes.knowledge_bases import router as kbs_router
-from src.api.routes.knowledge_hub import router as knowledge_hub_router
 from src.api.routes.managed_db import router as managed_db_router
 from src.api.routes.mcp_admin import router as mcp_admin_router
 from src.api.routes.migrations import router as migrations_router
@@ -160,7 +159,6 @@ async def lifespan(app: FastAPI):
             _escalation_task = asyncio.create_task(_escalation_loop())
             _retention_task = asyncio.create_task(_retention_loop())
             _webhook_deliveries_task = asyncio.create_task(_webhook_deliveries_loop())
-            _knowledge_refresh_task = asyncio.create_task(_knowledge_refresh_loop())
             _catalog_discovery_task = asyncio.create_task(_catalog_discovery_loop())
             _spider_task = asyncio.create_task(_spider_loop())
             _wf_sched_task = asyncio.create_task(_workflow_v2_scheduler_loop())
@@ -175,7 +173,6 @@ async def lifespan(app: FastAPI):
             _escalation_task.cancel()
             _retention_task.cancel()
             _webhook_deliveries_task.cancel()
-            _knowledge_refresh_task.cancel()
             _catalog_discovery_task.cancel()
             _spider_task.cancel()
             _wf_sched_task.cancel()
@@ -229,22 +226,6 @@ async def _workflow_watchers_loop() -> None:
         await watcher_scheduler_loop()
     except asyncio.CancelledError:
         pass
-
-
-async def _knowledge_refresh_loop() -> None:
-    """Scheduler del Knowledge Hub: refresca fuentes vencidas cada 300s."""
-    import asyncio as _asyncio
-
-    while True:
-        try:
-            from src.platform.knowledgehub.hub import run_refresh_loop
-
-            result = await run_refresh_loop()
-            if result["refreshed"]:
-                logger.info("knowledge refresh loop", refreshed=result["refreshed"])
-        except Exception:  # noqa: BLE001
-            logger.exception("knowledge refresh loop failed")
-        await _asyncio.sleep(300)
 
 
 async def _catalog_discovery_loop() -> None:
@@ -644,7 +625,6 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(soc_router)
     new_app.include_router(ecosystem_router)
     new_app.include_router(risk_center_router)
-    new_app.include_router(knowledge_hub_router)
     new_app.include_router(chat_insights_router)
     new_app.include_router(workflows_router)
     new_app.include_router(workflows_public_router)
@@ -680,7 +660,6 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(soc_router)
     new_app.include_router(ecosystem_router)
     new_app.include_router(risk_center_router)
-    new_app.include_router(knowledge_hub_router)
     new_app.include_router(chat_insights_router)
     new_app.include_router(workflows_router)
     new_app.include_router(devportal_router)

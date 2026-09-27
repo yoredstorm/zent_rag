@@ -4725,16 +4725,6 @@ async def platform_chat_insights_dashboard(request: Request):
 
     return await insights_dashboard()
 
-# ------------------------------------------------------------------ PROMPT 46
-# AI Knowledge Hub v2
-
-@router.get("/knowledge-hub/dashboard", summary="Dashboard del Knowledge Hub")
-async def platform_knowledge_hub_dashboard(request: Request):
-    ctx = require_platform_permission(request, "operations.read")
-    from src.platform.knowledgehub.hub import knowledge_hub_dashboard
-
-    return await knowledge_hub_dashboard()
-
 # ------------------------------------------------------------------ PROMPT 47
 # AI Risk & Compliance Center v2
 

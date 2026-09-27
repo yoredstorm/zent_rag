@@ -1,6 +1,5 @@
 import {
   Bell,
-  Books,
   Buildings,
   ChartBar,
   ChartLineUp,
@@ -81,7 +80,6 @@ export const NAV_GROUPS: NavGroup[] = [
         label: "Company Intelligence",
         icon: Graph,
       },
-      { to: "/knowledge-hub", label: "Knowledge Hub", icon: Books },
       { to: "/data-sources", label: "Fuentes de datos", icon: StackSimple },
       { to: "/integrations", label: "Integraciones API", icon: Plugs },
       { to: "/connectors", label: "Conectores", icon: Plugs, key: "connectors" },

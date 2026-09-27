@@ -564,7 +564,7 @@ async def executive_report(organization_id: UUID) -> dict:
         open_gaps = (
             await session.execute(
                 text(
-                    "SELECT COUNT(*) FROM knowledge_gaps "
+                    "SELECT COUNT(*) FROM context_gaps "
                     "WHERE organization_id = :oid AND status = 'open'"
                 ),
                 {"oid": organization_id},

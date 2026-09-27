@@ -95,8 +95,6 @@ const SharedAgentPage = lazy(() => import("./pages/SharedAgent"));
 const AdminWorkflowsPage = lazy(() => import("./pages/admin/Workflows"));
 const ChatInsightsPage = lazy(() => import("./pages/ChatInsights"));
 const AdminChatInsightsPage = lazy(() => import("./pages/admin/ChatInsights"));
-const KnowledgeHubPage = lazy(() => import("./pages/KnowledgeHub"));
-const AdminKnowledgeHubPage = lazy(() => import("./pages/admin/KnowledgeHub"));
 const RiskCenterPage = lazy(() => import("./pages/RiskCenter"));
 const AdminRiskCenterPage = lazy(() => import("./pages/admin/RiskCenter"));
 const EcosystemMarketplacePage = lazy(() => import("./pages/EcosystemMarketplace"));
@@ -473,7 +471,6 @@ export default function App() {
         <Route path="marketplace-factory" element={<Suspense fallback={<PageFallback />}><AdminMarketplaceFactoryPage /></Suspense>} />
         <Route path="workflows" element={<Suspense fallback={<PageFallback />}><AdminWorkflowsPage /></Suspense>} />
         <Route path="chat-insights" element={<Suspense fallback={<PageFallback />}><AdminChatInsightsPage /></Suspense>} />
-        <Route path="knowledge-hub" element={<Suspense fallback={<PageFallback />}><AdminKnowledgeHubPage /></Suspense>} />
         <Route path="risk-center" element={<Suspense fallback={<PageFallback />}><AdminRiskCenterPage /></Suspense>} />
         <Route path="ecosystem" element={<Suspense fallback={<PageFallback />}><AdminEcosystemPage /></Suspense>} />
         <Route path="soc" element={<Suspense fallback={<PageFallback />}><AdminSecurityCenterPage /></Suspense>} />
@@ -605,7 +602,8 @@ export default function App() {
         <Route path="/workflows/new/manual" element={<Suspense fallback={<PageFallback />}><WorkflowStudioPage /></Suspense>} />
         <Route path="/workflows/:id" element={<Suspense fallback={<PageFallback />}><WorkflowStudioPage /></Suspense>} />
         <Route path="/chat-insights" element={<Suspense fallback={<PageFallback />}><ChatInsightsPage /></Suspense>} />
-        <Route path="/knowledge-hub" element={<Suspense fallback={<PageFallback />}><KnowledgeHubPage /></Suspense>} />
+        {/* Knowledge Hub legacy retirado: la página se absorbió en /knowledge. */}
+        <Route path="/knowledge-hub" element={<Navigate to="/knowledge" replace />} />
         <Route path="/risk-center" element={<Suspense fallback={<PageFallback />}><RiskCenterPage /></Suspense>} />
         <Route path="/marketplace" element={<Suspense fallback={<PageFallback />}><EcosystemMarketplacePage /></Suspense>} />
 <Route path="/products" element={<Suspense fallback={<PageFallback />}><MarketplaceProductsPage /></Suspense>} />

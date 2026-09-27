@@ -346,12 +346,17 @@ async def chat(
     except Exception:  # noqa: BLE001 - telemetría nunca debe romper el chat
         logger.exception("chat insights tracking failed")
 
-    # Huecos de conocimiento: consultas sin intención → gap.
+    # Huecos de conocimiento: consultas sin intención → context_gap canónico.
     if intent is None:
         try:
-            from src.platform.knowledgehub.hub import record_gap
+            from src.intelligence.store import PostgresIntelligenceStore
 
-            await record_gap(organization_id, message)
+            await PostgresIntelligenceStore().record_gap(
+                organization_id=organization_id,
+                gap_type="UNRESOLVED_QUERY",
+                concept=message[:160],
+                question=message[:2000],
+            )
         except Exception:  # noqa: BLE001
             logger.exception("knowledge gap tracking failed")
 

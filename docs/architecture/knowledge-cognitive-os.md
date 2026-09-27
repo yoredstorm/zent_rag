@@ -79,7 +79,7 @@ Nine overlapping knowledge subsystems exist today. They share org isolation and,
 - KLE FASE 33 (`src/platform/knowledge_learning/`): runs/steps/events/scores + LLM analyses (095) + business rules (096) + questions/feedback (097). Postgres-only knowledge graph. Knowledge Score with gate.
 - FASE 25 (`src/learning/`): improvements, approvals, replay, spider, revocation. A **second** learning/approval loop.
 - Data onboarding (`src/platform/data_onboarding/`): `document_insights` (093) + deterministic/LLM facts with HITL statuses.
-- Knowledge Hub (`src/platform/knowledgehub/`, `knowledge_sources`/`documents`, migration `065`): legacy parallel source registry with wrong permissions (`billing:*`).
+- Knowledge Hub: **retirado** (migración `134`). Era un registro de fuentes paralelo (`src/platform/knowledgehub/`, `knowledge_sources`/`documents`, migración `065`) con permisos `billing:*`. Gaps migrados a `context_gaps` (`UNRESOLVED_QUERY`); tablas archivadas `legacy_*`.
 
 ### 1.6 Governance + platform
 
@@ -236,7 +236,7 @@ Later only; nothing is deleted in Phase 0/1.
 
 | Component | Why | Sunset |
 |---|---|---|
-| `src/platform/knowledgehub/**` + `/api/v1/knowledge-hub` | Parallel source registry, wrong permissions | After Hub sources → `kb_sources` + corpus; keep route as shim |
+| `src/platform/knowledgehub/**` + `/api/v1/knowledge-hub` | Parallel source registry, wrong permissions | **Hecho (134)**: eliminado; gaps a `context_gaps`; tablas `legacy_*` |
 | Markdown as canonical document | Lossy | Keep as derived view |
 | Prompt-only `[Doc: N]` as the only citation | Fragile | After evidence ledger + locators ship |
 | `catalog/readiness.py` as user-facing % | Conflicts with Knowledge Score | Keep API, UI shows Score + reasons |

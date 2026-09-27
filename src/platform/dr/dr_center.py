@@ -194,7 +194,8 @@ async def _artifact_for(scope: str, organization_id: UUID, source_id: UUID | Non
             docs = (
                 await session.execute(
                     text(
-                        "SELECT COUNT(*) FROM documents WHERE organization_id = :oid"
+                        "SELECT COUNT(*) FROM source_documents "
+                        "WHERE organization_id = :oid AND status = 'active'"
                     ),
                     {"oid": organization_id},
                 )

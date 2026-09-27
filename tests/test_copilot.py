@@ -203,9 +203,20 @@ async def test_chat_routing_and_sessions(async_client: AsyncClient) -> None:
                 {"oid": UUID(org["organization_id"])},
             )
         ).scalar()
+        gap_type = (
+            await session.execute(
+                text(
+                    "SELECT gap_type FROM context_gaps "
+                    "WHERE organization_id = :oid AND concept = :concept"
+                ),
+                {"oid": UUID(org["organization_id"]), "concept": "hola, buenos días"},
+            )
+        ).scalar()
     finally:
         await session.close()
     assert int(usage) == 1
+    # Consulta sin intención → gap canónico (UNRESOLVED_QUERY), ya no al Hub.
+    assert gap_type == "UNRESOLVED_QUERY"
 
 
 @pytest.mark.asyncio
