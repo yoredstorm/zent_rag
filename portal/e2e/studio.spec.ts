@@ -29,6 +29,7 @@ test.describe("Semantic Mapping Studio", () => {
     await expect(page).toHaveURL(/\/knowledge\/add/);
     await page.getByTestId("source-kind-spreadsheets").click();
     await page.getByTestId("onboarding-file").setInputFiles(CSV);
+    await page.getByTestId("onboarding-upload").click();
     await expect(page.getByText("Zent está entendiendo tus datos")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("analyze-continue")).toBeEnabled({ timeout: 45_000 });
 

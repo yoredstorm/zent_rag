@@ -35,6 +35,7 @@ test.describe("Data onboarding wizard — org nueva CSV", () => {
     await page.getByTestId("source-kind-spreadsheets").click();
     await expect(page.getByText("Sube tus archivos")).toBeVisible();
     await page.getByTestId("onboarding-file").setInputFiles(CSV);
+    await page.getByTestId("onboarding-upload").click();
 
     await expect(page.getByRole("heading", { name: "Analizar", exact: true })).toBeVisible({
       timeout: 30_000,
