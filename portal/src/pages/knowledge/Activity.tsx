@@ -25,15 +25,17 @@ import {
   cancelLearning,
   fetchLearningRun,
   fetchLearningRuns,
+  fetchLearningSources,
   stageLabel,
   streamRunEvents,
   type LearningEvent,
   type LearningRun,
+  type SourceLearning,
 } from "../../lib/knowledgeLearning";
 import { learnSource } from "../../lib/knowledgeModel";
 import { fmtDateTime } from "../../lib/format";
 
-type SourceRow = { id: string; name: string; type: string };
+type ConnectorRow = { id: string; name: string };
 
 const ACTIVE_STATUSES = new Set(["queued", "running", "awaiting_validation"]);
 
@@ -51,7 +53,8 @@ export default function KnowledgeActivityPage() {
   const runId = params.get("run");
 
   const [runs, setRuns] = useState<LearningRun[]>([]);
-  const [sources, setSources] = useState<SourceRow[]>([]);
+  const [sources, setSources] = useState<SourceLearning[]>([]);
+  const [connectorNames, setConnectorNames] = useState<Record<string, string>>({});
   const [selectedSource, setSelectedSource] = useState("");
   const [run, setRun] = useState<LearningRun | null>(null);
   const [liveEvents, setLiveEvents] = useState<LearningEvent[]>([]);
@@ -65,18 +68,27 @@ export default function KnowledgeActivityPage() {
     setLoading(true);
     setError("");
     try {
-      const [runsData, sourcesData] = await Promise.all([
-        fetchLearningRuns({ limit: 30 }),
-        api<{ sources: SourceRow[] }>("/api/v1/sources", {
-          token: session.token,
-          organizationId: session.organizationId,
-        }),
-      ]);
-      setRuns(runsData.runs);
-      setSources(sourcesData.sources ?? []);
-      if (!selectedSource && sourcesData.sources?.length) {
-        setSelectedSource(sourcesData.sources[0].id);
+      // Catálogo (catalog_sources): es lo que el endpoint /learn espera.
+      const sourcesData = await fetchLearningSources();
+      setSources(sourcesData);
+      if (!selectedSource && sourcesData.length) {
+        setSelectedSource(sourcesData[0].source_id);
       }
+      try {
+        const connectorsData = await api<{ connectors: ConnectorRow[] }>(
+          "/api/v1/connectors",
+          { token: session.token, organizationId: session.organizationId }
+        );
+        setConnectorNames(
+          Object.fromEntries(
+            (connectorsData.connectors ?? []).map((row) => [row.id, row.name])
+          )
+        );
+      } catch {
+        // Sin permiso de conectores: la etiqueta cae al engine/id. No es fatal.
+      }
+      const runsData = await fetchLearningRuns({ limit: 30 });
+      setRuns(runsData.runs);
     } catch (err) {
       setRuns([]);
       setError(
@@ -88,6 +100,14 @@ export default function KnowledgeActivityPage() {
       setLoading(false);
     }
   }, [session, selectedSource]);
+
+  const sourceLabel = useCallback(
+    (source: SourceLearning) =>
+      connectorNames[source.connector_id] ||
+      source.engine ||
+      `Fuente ${source.source_id.slice(0, 8)}`,
+    [connectorNames]
+  );
 
   useEffect(() => {
     void load();
@@ -173,7 +193,9 @@ export default function KnowledgeActivityPage() {
     }
   };
 
-  const selectedRunSource = sources.find((source) => source.id === run?.catalog_source_id);
+  const selectedRunSource = sources.find(
+    (source) => source.source_id === run?.catalog_source_id
+  );
 
   return (
     <KnowledgeLayout>
@@ -203,8 +225,9 @@ export default function KnowledgeActivityPage() {
             >
               <option value="">Selecciona una fuente…</option>
               {sources.map((source) => (
-                <option key={source.id} value={source.id}>
-                  {source.name}
+                <option key={source.source_id} value={source.source_id}>
+                  {sourceLabel(source)}
+                  {source.active_run ? " · aprendizaje en curso" : ""}
                 </option>
               ))}
             </Select>
@@ -217,7 +240,9 @@ export default function KnowledgeActivityPage() {
               Aprender / actualizar
             </Button>
             <span className="text-xs text-muted">
-              El aprendizaje corre en background y produce artefactos persistentes.
+              {sources.length === 0
+                ? "No hay fuentes SQL con discovery. Conecta una base de datos para aprender schema; los archivos se indexan en Fuentes."
+                : "El aprendizaje corre en background y produce artefactos persistentes."}
             </span>
           </div>
         </Panel>
@@ -292,7 +317,7 @@ export default function KnowledgeActivityPage() {
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div>
                           <p className="text-sm text-text">
-                            {selectedRunSource?.name || "Fuente"} ·{" "}
+                            {selectedRunSource ? sourceLabel(selectedRunSource) : "Fuente"} ·{" "}
                             <span className="text-muted">{run.id.slice(0, 8)}</span>
                           </p>
                           <p className="text-xs text-muted">

@@ -300,14 +300,15 @@ async def run_worker(poll_timeout: int = 5) -> None:
 
 
 async def _requeue_due_knowledge_jobs() -> None:
-    """Jobs failed con retry_at vencido vuelven a encolarse (retry)."""
-    from datetime import datetime, timezone
+    """Jobs failed con retry_at vencido y 'running' colgados vuelven a encolarse."""
+    from datetime import datetime, timedelta, timezone
 
     from src.api.deps import get_job_repo
     from src.core.domain.entities import IngestionJobStatus
     from src.knowledge.queue import enqueue_knowledge_job
 
-    due = await get_job_repo().list_due_jobs(datetime.now(timezone.utc), limit=20)
+    now = datetime.now(timezone.utc)
+    due = await get_job_repo().list_due_jobs(now, limit=20)
     requeued = 0
     for job in due:
         if job.status == IngestionJobStatus.FAILED:
@@ -317,6 +318,32 @@ async def _requeue_due_knowledge_jobs() -> None:
             requeued += 1
         except Exception as exc:
             logger.warning("Failed to requeue job", job_id=str(job.id), error=str(exc))
+    # Zombies: un worker murió a mitad de un learning run y el job quedó
+    # 'running' para siempre (bloquea el run y el unique index activo).
+    try:
+        stale = await get_job_repo().list_stale_running_jobs(
+            now - timedelta(hours=2),
+            limit=10,
+            job_prefix="knowledge_learning:",
+        )
+        for job in stale:
+            await get_job_repo().update_job(
+                job.id,
+                status=IngestionJobStatus.FAILED.value,
+                retry_at=now,
+                error_summary={
+                    "reason": "stale_running_job_requeued",
+                    "at": now.isoformat(),
+                    "detail": "Job 'running' colgado más de 2h; se reintenta.",
+                },
+            )
+            try:
+                await enqueue_knowledge_job(str(job.id))
+                requeued += 1
+            except Exception as exc:
+                logger.warning("Failed to requeue stale job", job_id=str(job.id), error=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Stale running scan failed", error=str(exc)[:200])
     if requeued:
         logger.info("Requeued due knowledge jobs", count=requeued)
 

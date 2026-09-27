@@ -186,6 +186,53 @@ class KnowledgeLearningEngine:
         if source is None:
             raise ValueError("catalog_source_not_found")
 
+        # Reconciliación: runs activos huérfanos (sin etapas o sin job vivo) se
+        # marcan fallidos para no bloquear el reintento (unique index activo).
+        active = await self._repo.find_active_run(organization_id, catalog_source_id)
+        if active is not None:
+            active_id = UUID(str(active["id"]))
+            steps = await self._repo.count_steps(organization_id, active_id)
+            live_job = await self._repo.has_live_job(organization_id, active_id)
+            # Solo huérfano inequívoco: sin etapas (setup incompleto) o run
+            # viejo sin job vivo. Un run recién creado con etapas se respeta
+            # (el unique index activo decide) para no romper reintentos legítimos.
+            created_raw = active.get("created_at")
+            stale = False
+            if created_raw:
+                try:
+                    created_at = datetime.fromisoformat(str(created_raw))
+                    if created_at.tzinfo is None:
+                        created_at = created_at.replace(tzinfo=timezone.utc)
+                    stale = (
+                        datetime.now(timezone.utc) - created_at
+                    ) > timedelta(minutes=30)
+                except ValueError:
+                    stale = False
+            if steps == 0 or (stale and not live_job):
+                await self._repo.update_run(
+                    organization_id,
+                    active_id,
+                    status="failed",
+                    error_summary={
+                        "reason": "orphan_run_reconciled",
+                        "at": datetime.now(timezone.utc).isoformat(),
+                        "detail": (
+                            "Run sin etapas o sin job durable vivo; se marca "
+                            "fallido para permitir el reintento."
+                        ),
+                        "steps": steps,
+                        "live_job": live_job,
+                    },
+                    finished_at=datetime.now(timezone.utc),
+                )
+                logger.info(
+                    "Reconciled orphan learning run",
+                    run_id=str(active_id),
+                    source_id=str(catalog_source_id),
+                    steps=steps,
+                    live_job=live_job,
+                )
+
         run = await self._repo.create_run(
             organization_id,
             catalog_source_id=catalog_source_id,
@@ -195,27 +242,43 @@ class KnowledgeLearningEngine:
             trigger=trigger,
             created_by=created_by,
         )
-        await self._repo.create_steps(
-            organization_id,
-            UUID(run["id"]),
-            [stage.value for stage in self._active_stages()],
-        )
+        run_id = UUID(run["id"])
+        try:
+            await self._repo.create_steps(
+                organization_id,
+                run_id,
+                [stage.value for stage in self._active_stages()],
+            )
 
-        job = await self._jobs.create_job(
-            organization_id,
-            job_type=f"{LEARNING_JOB_PREFIX}:run",
-            source_id=None,
-            knowledge_base_id=kb_source_id,
-        )
-        await self._jobs.update_job(
-            job.id,
-            cursor_snapshot={
-                "run_id": run["id"],
-                "catalog_source_id": str(catalog_source_id),
-                "workspace_id": str(workspace_id) if workspace_id else None,
-                "trigger": trigger,
-            },
-        )
+            job = await self._jobs.create_job(
+                organization_id,
+                job_type=f"{LEARNING_JOB_PREFIX}:run",
+                source_id=None,
+                knowledge_base_id=kb_source_id,
+            )
+            await self._jobs.update_job(
+                job.id,
+                cursor_snapshot={
+                    "run_id": run["id"],
+                    "catalog_source_id": str(catalog_source_id),
+                    "workspace_id": str(workspace_id) if workspace_id else None,
+                    "trigger": trigger,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Nunca dejar un run 'queued' sin job: se marca fallido y se propaga.
+            await self._repo.update_run(
+                organization_id,
+                run_id,
+                status="failed",
+                error_summary={
+                    "reason": "run_setup_failed",
+                    "at": datetime.now(timezone.utc).isoformat(),
+                    "error": str(exc)[:300],
+                },
+                finished_at=datetime.now(timezone.utc),
+            )
+            raise
         try:
             from src.knowledge.queue import enqueue_knowledge_job
 
@@ -809,7 +872,7 @@ class KnowledgeLearningEngine:
             ).materialize(org, source_id=source_id, run_id=run_id)
             await self._emit(
                 org,
-                "model.materialized",
+                KnowledgeEventType.MODEL_MATERIALIZED,
                 run_id=run_id,
                 source_id=source_id,
                 stage=LearningStage.READY.value,
@@ -824,7 +887,9 @@ class KnowledgeLearningEngine:
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "Knowledge model materialization failed", error=str(exc)[:240]
+                "Knowledge model materialization failed",
+                error=str(exc)[:240],
+                exc_info=True,
             )
 
         if final_status == "awaiting_validation" and blocking_questions > 0:

@@ -200,6 +200,10 @@ export function fetchLearningRun(runId: string): Promise<LearningRun> {
   return withSession<LearningRun>(`/api/v1/knowledge/learning/runs/${runId}`);
 }
 
+export function fetchLearningSources(): Promise<SourceLearning[]> {
+  return withSession<SourceLearning[]>("/api/v1/knowledge/learning/sources");
+}
+
 export function fetchLearningRuns(
   params: { status?: string; catalog_source_id?: string; limit?: number } = {}
 ): Promise<{ runs: LearningRun[]; count: number }> {

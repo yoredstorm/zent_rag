@@ -466,6 +466,47 @@ async def test_rebuild_and_verify_require_privileged_permission(async_client) ->
     assert verify.status_code == 403
 
 
+async def test_start_learning_reconciles_orphan_run(async_client) -> None:
+    """Un run activo sin etapas ni job vivo no bloquea el reintento."""
+    from src.platform.knowledge_learning.repository import (
+        PostgresKnowledgeLearningRepository,
+    )
+
+    auth = await _trial_auth(async_client)
+    org = UUID(auth["X-Organization-Id"])
+    ids = await _seed_catalog(org)
+
+    repo = PostgresKnowledgeLearningRepository()
+    await repo.ensure_tables()
+    orphan = await repo.create_run(org, catalog_source_id=ids["source"])
+    orphan_id = UUID(orphan["id"])
+    assert await repo.count_steps(org, orphan_id) == 0
+    assert await repo.has_live_job(org, orphan_id) is False
+
+    response = await async_client.post(
+        f"/api/v1/knowledge/sources/{ids['source']}/learn",
+        json={},
+        headers=auth,
+    )
+    assert response.status_code == 201, response.text
+
+    reconciled = await repo.get_run(org, orphan_id)
+    assert reconciled is not None
+    assert reconciled["status"] == "failed"
+    assert "orphan_run_reconciled" in str(reconciled["error_summary"])
+
+    new_run_id = UUID(response.json()["run"]["id"])
+    assert await repo.count_steps(org, new_run_id) > 0
+    assert await repo.has_live_job(org, new_run_id) is True
+
+    # Limpieza: el run nuevo queda cancelado para no dejar estado activo.
+    from datetime import datetime, timezone
+
+    await repo.update_run(
+        org, new_run_id, status="cancelled", finished_at=datetime.now(timezone.utc)
+    )
+
+
 async def test_cross_tenant_object_is_404(async_client) -> None:
     auth_a = await _trial_auth(async_client)
     auth_b = await _trial_auth(async_client)

@@ -444,6 +444,41 @@ class PostgresKnowledgeLearningRepository:
         finally:
             await session.close()
 
+    async def count_steps(self, organization_id: UUID, run_id: UUID) -> int:
+        session: AsyncSession = await get_async_session()
+        try:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) AS total FROM knowledge_learning_steps "
+                        "WHERE organization_id = :oid AND run_id = :rid"
+                    ),
+                    {"oid": organization_id, "rid": run_id},
+                )
+            ).first()
+            return int(row.total or 0)
+        finally:
+            await session.close()
+
+    async def has_live_job(self, organization_id: UUID, run_id: UUID) -> bool:
+        """True si el run tiene un job durable pendiente o corriendo."""
+        session: AsyncSession = await get_async_session()
+        try:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT 1 FROM ingestion_jobs "
+                        "WHERE organization_id = :oid "
+                        "AND cursor_snapshot->>'run_id' = :rid "
+                        "AND status IN ('pending','running') LIMIT 1"
+                    ),
+                    {"oid": organization_id, "rid": str(run_id)},
+                )
+            ).first()
+            return row is not None
+        finally:
+            await session.close()
+
     async def update_run(self, organization_id: UUID, run_id: UUID, **fields) -> bool:
         allowed = {
             "status",

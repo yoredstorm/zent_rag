@@ -373,6 +373,26 @@ class PostgresIngestionJobRepository(IngestionJobRepository):
         finally:
             await session.close()
 
+    async def list_stale_running_jobs(
+        self, older_than, limit: int = 10, job_prefix: str | None = None
+    ) -> list[IngestionJob]:
+        """Jobs 'running' colgados (worker murió a mitad): candidatos a reintento."""
+        session = await get_async_session()
+        try:
+            query = (
+                f"SELECT {self._COLS} FROM ingestion_jobs "
+                "WHERE status = 'running' AND updated_at <= :older_than "
+            )
+            params: dict = {"older_than": older_than, "limit": limit}
+            if job_prefix:
+                query += "AND job_type LIKE :prefix "
+                params["prefix"] = f"{job_prefix}%"
+            query += "ORDER BY updated_at ASC LIMIT :limit"
+            result = await session.execute(text(query), params)
+            return [self._row_to_job(row) for row in result.fetchall()]
+        finally:
+            await session.close()
+
 
 # -----------------------------------------------------------------------------
 # Sync state
