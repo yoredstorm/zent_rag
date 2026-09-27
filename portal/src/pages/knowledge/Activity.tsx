@@ -35,7 +35,12 @@ import {
 import { learnSource } from "../../lib/knowledgeModel";
 import { fmtDateTime } from "../../lib/format";
 
-type ConnectorRow = { id: string; name: string };
+type ConnectorRow = {
+  id: string;
+  name: string;
+  type: string;
+  config?: Record<string, unknown> | null;
+};
 
 const ACTIVE_STATUSES = new Set(["queued", "running", "awaiting_validation"]);
 
@@ -55,6 +60,9 @@ export default function KnowledgeActivityPage() {
   const [runs, setRuns] = useState<LearningRun[]>([]);
   const [sources, setSources] = useState<SourceLearning[]>([]);
   const [connectorNames, setConnectorNames] = useState<Record<string, string>>({});
+  const [connectorConfigs, setConnectorConfigs] = useState<
+    Record<string, Record<string, unknown>>
+  >({});
   const [selectedSource, setSelectedSource] = useState("");
   const [run, setRun] = useState<LearningRun | null>(null);
   const [liveEvents, setLiveEvents] = useState<LearningEvent[]>([]);
@@ -71,9 +79,6 @@ export default function KnowledgeActivityPage() {
       // Catálogo (catalog_sources): es lo que el endpoint /learn espera.
       const sourcesData = await fetchLearningSources();
       setSources(sourcesData);
-      if (!selectedSource && sourcesData.length) {
-        setSelectedSource(sourcesData[0].source_id);
-      }
       try {
         const connectorsData = await api<{ connectors: ConnectorRow[] }>(
           "/api/v1/connectors",
@@ -82,6 +87,13 @@ export default function KnowledgeActivityPage() {
         setConnectorNames(
           Object.fromEntries(
             (connectorsData.connectors ?? []).map((row) => [row.id, row.name])
+          )
+        );
+        setConnectorConfigs(
+          Object.fromEntries(
+            (connectorsData.connectors ?? [])
+              .filter((row) => row.config && typeof row.config === "object")
+              .map((row) => [row.id, row.config as Record<string, unknown>])
           )
         );
       } catch {
@@ -99,7 +111,7 @@ export default function KnowledgeActivityPage() {
     } finally {
       setLoading(false);
     }
-  }, [session, selectedSource]);
+  }, [session]);
 
   const sourceLabel = useCallback(
     (source: SourceLearning) =>
@@ -108,6 +120,28 @@ export default function KnowledgeActivityPage() {
       `Fuente ${source.source_id.slice(0, 8)}`,
     [connectorNames]
   );
+
+  const isLearnable = useCallback(
+    (source: SourceLearning) => {
+      const config = connectorConfigs[source.connector_id];
+      if (!config) return true; // sin info: el backend valida y responde tipado
+      const host = String(config.host ?? "");
+      return !config.session_id && host !== "file-virtual";
+    },
+    [connectorConfigs]
+  );
+
+  const learnableSources = useMemo(
+    () => sources.filter(isLearnable),
+    [sources, isLearnable]
+  );
+
+  useEffect(() => {
+    if (selectedSource && learnableSources.some((s) => s.source_id === selectedSource)) {
+      return;
+    }
+    setSelectedSource(learnableSources[0]?.source_id ?? "");
+  }, [learnableSources, selectedSource]);
 
   useEffect(() => {
     void load();
@@ -224,7 +258,7 @@ export default function KnowledgeActivityPage() {
               className="sm:max-w-[320px]"
             >
               <option value="">Selecciona una fuente…</option>
-              {sources.map((source) => (
+              {learnableSources.map((source) => (
                 <option key={source.source_id} value={source.source_id}>
                   {sourceLabel(source)}
                   {source.active_run ? " · aprendizaje en curso" : ""}
@@ -240,8 +274,8 @@ export default function KnowledgeActivityPage() {
               Aprender / actualizar
             </Button>
             <span className="text-xs text-muted">
-              {sources.length === 0
-                ? "No hay fuentes SQL con discovery. Conecta una base de datos para aprender schema; los archivos se indexan en Fuentes."
+              {learnableSources.length === 0
+                ? "No hay fuentes SQL reales con discovery. Los archivos indexados se consultan en Fuentes; el aprendizaje aplica a bases de datos."
                 : "El aprendizaje corre en background y produce artefactos persistentes."}
             </span>
           </div>

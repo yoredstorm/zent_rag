@@ -7,6 +7,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import json
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
@@ -154,7 +155,11 @@ def test_status_and_kind_aliases_are_normalized() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _seed_catalog(org: UUID) -> dict:
+async def _seed_catalog(
+    org: UUID,
+    kb_source_id: UUID | None = None,
+    connector_config: dict | None = None,
+) -> dict:
     ids = {
         "connector": uuid4(),
         "source": uuid4(),
@@ -173,20 +178,26 @@ async def _seed_catalog(org: UUID) -> dict:
             text(
                 """
                 INSERT INTO connectors (id, organization_id, name, type, config_json, status)
-                VALUES (:connector, :org, 'ERP Test', 'sql', '{}'::jsonb, 'active')
+                VALUES (:connector, :org, 'ERP Test', 'sql', CAST(:config AS jsonb), 'active')
                 """
             ),
-            {"connector": ids["connector"], "org": org},
+            {
+                "connector": ids["connector"],
+                "org": org,
+                "config": json.dumps(connector_config or {}),
+            },
         )
         await session.execute(
             text(
                 """
                 INSERT INTO catalog_sources (
-                    id, organization_id, connector_id, engine, phase, last_scan_at
-                ) VALUES (:source, :org, :connector, 'postgres', 'COMPLETED', now())
+                    id, organization_id, connector_id, engine, phase, last_scan_at,
+                    kb_source_id
+                ) VALUES (:source, :org, :connector, 'postgres', 'COMPLETED', now(),
+                          :kb_source_id)
                 """
             ),
-            {**ids, "org": org},
+            {**ids, "org": org, "kb_source_id": kb_source_id},
         )
         await session.execute(
             text(
@@ -505,6 +516,59 @@ async def test_start_learning_reconciles_orphan_run(async_client) -> None:
     await repo.update_run(
         org, new_run_id, status="cancelled", finished_at=datetime.now(timezone.utc)
     )
+
+
+async def test_start_learning_does_not_use_kb_source_as_knowledge_base(async_client) -> None:
+    """catalog_sources.kb_source_id es kb_sources, no knowledge_bases.
+
+    Pasarlo como knowledge_base_id del job rompía el FK
+    ingestion_jobs_knowledge_base_id_fkey (learning_start_failed).
+    """
+    from src.api.deps import get_job_repo
+
+    auth = await _trial_auth(async_client)
+    org = UUID(auth["X-Organization-Id"])
+    ids = await _seed_catalog(org, kb_source_id=uuid4())
+
+    response = await async_client.post(
+        f"/api/v1/knowledge/sources/{ids['source']}/learn",
+        json={},
+        headers=auth,
+    )
+    assert response.status_code == 201, response.text
+    job_id = UUID(response.json()["job_id"])
+    job = await get_job_repo().get_job(org, job_id)
+    assert job is not None
+    assert job.knowledge_base_id is None
+    assert (job.cursor_snapshot or {}).get("kb_source_id")
+
+
+async def test_file_virtual_source_is_not_learnable(async_client) -> None:
+    """Un upload (connector postgres host file-virtual) no es una fuente SQL."""
+    from src.platform.knowledge_learning.repository import (
+        PostgresKnowledgeLearningRepository,
+    )
+
+    auth = await _trial_auth(async_client)
+    org = UUID(auth["X-Organization-Id"])
+    ids = await _seed_catalog(
+        org,
+        connector_config={"host": "file-virtual", "session_id": str(uuid4())},
+    )
+
+    response = await async_client.post(
+        f"/api/v1/knowledge/sources/{ids['source']}/learn",
+        json={},
+        headers=auth,
+    )
+    assert response.status_code == 400, response.text
+    body = response.json()
+    detail = body.get("detail", body)
+    assert detail["error_code"] == "source_not_learnable"
+
+    repo = PostgresKnowledgeLearningRepository()
+    await repo.ensure_tables()
+    assert await repo.list_runs(org, catalog_source_id=ids["source"]) == []
 
 
 async def test_cross_tenant_object_is_404(async_client) -> None:

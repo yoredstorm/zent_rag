@@ -328,6 +328,8 @@ services:
       <<: *common-env
       # SDK in-container (docker compose exec api …). Desde el host usa localhost.
       ZENT_BASE_URL: http://127.0.0.1:8000/api/v1
+      # Borrado total self-service en Ajustes (CSV de emails; vacío = off).
+      RAG_SELF_PURGE_EMAILS: ${RAG_SELF_PURGE_EMAILS:-}
     depends_on:
       postgres:
         condition: service_healthy

@@ -508,6 +508,18 @@ async def learn_source(
         message = str(exc)
         if "catalog_source_not_found" in message:
             raise HTTPException(404, {"error_code": "knowledge_source_not_found"}) from exc
+        if message.startswith("source_not_learnable"):
+            raise HTTPException(
+                400,
+                {
+                    "error_code": "source_not_learnable",
+                    "message": (
+                        "Esta fuente es un archivo indexado, no una base SQL. "
+                        "El aprendizaje aplica a fuentes SQL; los archivos se "
+                        "consultan en Fuentes."
+                    ),
+                },
+            ) from exc
         from src.platform.knowledge_learning.repository import ActiveRunExistsError
 
         if isinstance(exc, ActiveRunExistsError):

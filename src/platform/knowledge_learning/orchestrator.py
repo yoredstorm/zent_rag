@@ -151,6 +151,32 @@ class KnowledgeLearningEngine:
         self._max_attempts = max_attempts_default
 
     # ------------------------------------------------------------------ start
+    async def _ensure_learnable(self, organization_id: UUID, source: dict) -> None:
+        """Rechaza fuentes que no son bases SQL reales (archivos virtuales).
+
+        Los uploads de archivos se representan como connectors 'postgres' con
+        host file-virtual/session_id: el pipeline no puede conectarse. Mejor
+        un 400 tipado que un run condenado a fallar en 'connecting'.
+        """
+        connector_id = source.get("connector_id")
+        if not connector_id:
+            return
+        try:
+            connector = await self._connectors.get_connector(
+                organization_id, UUID(str(connector_id))
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Learnable check skipped", error=str(exc)[:200])
+            return
+        if connector is None:
+            return
+        config = getattr(connector, "config_json", None) or {}
+        if not isinstance(config, dict):
+            return
+        host = str(config.get("host") or "")
+        if config.get("session_id") or host == "file-virtual":
+            raise ValueError("source_not_learnable:file_virtual")
+
     def _active_stages(self) -> tuple[LearningStage, ...]:
         """Etapas reales según feature flags (nunca etapas simuladas)."""
         settings = get_settings()
@@ -185,6 +211,7 @@ class KnowledgeLearningEngine:
         source = await self._store.get_source(organization_id, catalog_source_id)
         if source is None:
             raise ValueError("catalog_source_not_found")
+        await self._ensure_learnable(organization_id, source)
 
         # Reconciliación: runs activos huérfanos (sin etapas o sin job vivo) se
         # marcan fallidos para no bloquear el reintento (unique index activo).
@@ -254,13 +281,18 @@ class KnowledgeLearningEngine:
                 organization_id,
                 job_type=f"{LEARNING_JOB_PREFIX}:run",
                 source_id=None,
-                knowledge_base_id=kb_source_id,
+                # OJO: catalog_sources.kb_source_id referencia kb_sources, no
+                # knowledge_bases. Pasarlo como knowledge_base_id rompía el FK
+                # ingestion_jobs_knowledge_base_id_fkey. El job de aprendizaje
+                # no necesita la KB: el run viaja en cursor_snapshot.
+                knowledge_base_id=None,
             )
             await self._jobs.update_job(
                 job.id,
                 cursor_snapshot={
                     "run_id": run["id"],
                     "catalog_source_id": str(catalog_source_id),
+                    "kb_source_id": str(kb_source_id) if kb_source_id else None,
                     "workspace_id": str(workspace_id) if workspace_id else None,
                     "trigger": trigger,
                 },

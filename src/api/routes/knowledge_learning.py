@@ -887,6 +887,18 @@ async def start_learning(
     except ValueError as exc:
         if "catalog_source_not_found" in str(exc):
             raise HTTPException(404, "Catalog source not found") from exc
+        if str(exc).startswith("source_not_learnable"):
+            raise HTTPException(
+                400,
+                {
+                    "error_code": "source_not_learnable",
+                    "message": (
+                        "Esta fuente es un archivo indexado, no una base SQL. "
+                        "El aprendizaje aplica a fuentes SQL; los archivos se "
+                        "consultan en Fuentes."
+                    ),
+                },
+            ) from exc
         raise HTTPException(400, str(exc)) from exc
     except ActiveRunExistsError:
         active = await repo.find_active_run(org, body.catalog_source_id)
