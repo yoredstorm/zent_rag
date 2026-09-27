@@ -33,9 +33,9 @@ test.describe("Customer portal — flujo smoke", () => {
       "href",
       "/knowledge/sources"
     );
-    await expect(dashboardKnowledge.getByRole("link", { name: "Aprendizaje" })).toHaveAttribute(
+    await expect(dashboardKnowledge.getByRole("link", { name: "Modelo" })).toHaveAttribute(
       "href",
-      "/knowledge/learning"
+      "/knowledge/model"
     );
     await expectNoA11yViolations(page);
 
@@ -80,9 +80,10 @@ test.describe("Customer portal — flujo smoke", () => {
     const knowledgeNav = page.getByRole("navigation", { name: "Secciones de conocimiento" });
     await expect(knowledgeNav.getByRole("link", { name: "Resumen" })).toBeVisible();
     await expect(knowledgeNav.getByRole("link", { name: "Fuentes" })).toBeVisible();
-    await expect(knowledgeNav.getByRole("link", { name: "Aprendizaje" })).toBeVisible();
+    await expect(knowledgeNav.getByRole("link", { name: "Modelo" })).toBeVisible();
+    await expect(knowledgeNav.getByRole("link", { name: "Calidad" })).toBeVisible();
     await expect(knowledgeNav.getByRole("button", { name: "Avanzado" })).toBeVisible();
-    await expect(knowledgeNav.getByRole("link")).toHaveCount(3);
+    await expect(knowledgeNav.getByRole("link")).toHaveCount(5);
     await page.goto("/knowledge/sources");
     await expect(page.getByRole("heading", { name: "Fuentes", exact: true })).toBeVisible();
     await expect(knowledgeNav.getByRole("link", { name: "Fuentes" })).toBeVisible();
