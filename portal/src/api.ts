@@ -142,34 +142,48 @@ function traceIdFrom(res: Response): string | null {
 }
 
 async function toApiError(res: Response): Promise<ApiError> {
-  const traceId = traceIdFrom(res);
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    body = null;
+  }
+  return parseApiErrorBody(res.status, res.statusText, body, traceIdFrom(res));
+}
+
+/** Reglas de error del API sobre un cuerpo ya parseado (fetch y XHR comparten). */
+function parseApiErrorBody(
+  status: number,
+  statusText: string,
+  data: unknown,
+  traceId: string | null,
+): ApiError {
   let code = "";
   let message = "";
   let details: Record<string, string> | null = null;
-  try {
-    const data = await res.json();
-    if (typeof data.message === "string") message = data.message;
-    else if (typeof data.detail === "string") message = data.detail;
-    else if (data.detail && typeof data.detail === "object") {
-      code = typeof data.detail.error_code === "string" ? data.detail.error_code : "";
-      message = typeof data.detail.message === "string" ? data.detail.message : "";
+  if (data && typeof data === "object") {
+    const payload = data as Record<string, unknown>;
+    if (typeof payload.message === "string") message = payload.message;
+    else if (typeof payload.detail === "string") message = payload.detail;
+    else if (payload.detail && typeof payload.detail === "object") {
+      const detail = payload.detail as Record<string, unknown>;
+      code = typeof detail.error_code === "string" ? detail.error_code : "";
+      message = typeof detail.message === "string" ? detail.message : "";
     }
-    if (!code && typeof data.error_code === "string") code = data.error_code;
-    if (data.details && typeof data.details === "object") {
+    if (!code && typeof payload.error_code === "string") code = payload.error_code;
+    if (payload.details && typeof payload.details === "object") {
       details = Object.fromEntries(
-        Object.entries(data.details as Record<string, unknown>).map(([key, value]) => [
+        Object.entries(payload.details as Record<string, unknown>).map(([key, value]) => [
           key,
           String(value),
         ]),
       );
     }
-    if (!message) message = res.statusText;
-    if (code && message && message !== res.statusText) message = `${code} ${message}`;
-    if (!message && code) message = code;
-  } catch {
-    message = res.statusText;
   }
-  return new ApiError(message || res.statusText, res.status, code, traceId, details);
+  if (!message) message = statusText;
+  if (code && message && message !== statusText) message = `${code} ${message}`;
+  if (!message && code) message = code;
+  return new ApiError(message || statusText, status, code, traceId, details);
 }
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -256,6 +270,81 @@ export async function platformApi<T>(
   options: RequestInit & { token?: string } = {}
 ): Promise<T> {
   return request<T>(path, options, { safeRetry: true, platform: true });
+}
+
+export type UploadProgressEvent = { loaded: number; total: number };
+
+/**
+ * Subida multipart con progreso real: `fetch` no expone el avance del upload,
+ * `XMLHttpRequest` sí (`upload.onprogress`). Misma sesión, CSRF e idempotencia
+ * que `request()`.
+ */
+export function uploadFileWithProgress<T>(
+  path: string,
+  form: FormData,
+  options: {
+    token?: string;
+    organizationId?: string;
+    onProgress?: (event: UploadProgressEvent) => void;
+    signal?: AbortSignal;
+  } = {},
+): Promise<T> {
+  const { token, organizationId, onProgress, signal } = options;
+  return new Promise<T>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", path, true);
+    xhr.withCredentials = true;
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    if (organizationId) xhr.setRequestHeader("X-Organization-Id", organizationId);
+    const workspaceId = loadSession()?.workspaceId;
+    if (workspaceId) xhr.setRequestHeader("X-Workspace-Id", workspaceId);
+    xhr.setRequestHeader("Idempotency-Key", crypto.randomUUID());
+    const csrf = getCsrfToken();
+    if (csrf) xhr.setRequestHeader("X-Zent-Csrf", csrf);
+
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) {
+        onProgress({ loaded: event.loaded, total: event.total });
+      }
+    };
+
+    xhr.onload = () => {
+      const body = xhr.responseText ? safeJson(xhr.responseText) : null;
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(body as T);
+        return;
+      }
+      const err = parseApiErrorBody(
+        xhr.status,
+        xhr.statusText || `HTTP ${xhr.status}`,
+        body,
+        xhr.getResponseHeader("X-Trace-Id"),
+      );
+      if (err.status === 401) emitAuthExpiredOnce(false, token);
+      reject(err);
+    };
+    xhr.onerror = () =>
+      reject(new ApiError("Error de red al subir el archivo", 0, "network_error", null));
+    xhr.onabort = () =>
+      reject(new ApiError("Subida cancelada", 0, "aborted", null));
+
+    if (signal) {
+      if (signal.aborted) {
+        xhr.abort();
+        return;
+      }
+      signal.addEventListener("abort", () => xhr.abort(), { once: true });
+    }
+    xhr.send(form);
+  });
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 export const SIGNUP_API_KEY_STORAGE = "zent_signup_api_key";

@@ -3,7 +3,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
-import { mergeSelectedFiles, type UploadItem } from "../../../lib/uploadQueue";
+import { fileRowId, newUploadRow, type UploadQueueRow } from "../../../lib/uploadQueue";
 import { AnalysisProgressStep } from "./AnalysisProgressStep";
 import { FileUploadStep } from "./FileUploadStep";
 import { QuestionValidationStep } from "./QuestionValidationStep";
@@ -397,7 +397,7 @@ describe("wizard UI steps 3–6", () => {
     );
   });
 
-  it("Analizar lista el estado de cada archivo del lote", () => {
+  it("Analizar lista el estado de cada archivo del lote con su barra", () => {
     render(
       <AnalysisProgressStep
         headline="Zent está entendiendo tus datos"
@@ -415,10 +415,12 @@ describe("wizard UI steps 3–6", () => {
     );
     const list = screen.getByTestId("analyze-files");
     expect(list).toHaveTextContent("contrato-a.pdf");
-    expect(list).toHaveTextContent("Listo");
+    expect(list).toHaveTextContent("Indexado");
     expect(list).toHaveTextContent("contrato-b.csv");
-    expect(list).toHaveTextContent("40%");
-    expect(list).toHaveTextContent("En cola");
+    expect(list).toHaveTextContent("Indexando 40%");
+    expect(list).toHaveTextContent("En cola de indexado");
+    const bars = within(list).getAllByRole("progressbar");
+    expect(bars.map((bar) => bar.getAttribute("aria-valuenow"))).toContain("40");
   });
 
   it("Revisar atribuye cada dato al archivo que lo aportó", () => {
@@ -450,25 +452,27 @@ describe("wizard UI steps 3–6", () => {
     expect(screen.getByTestId("digest-file-s1")).toHaveTextContent("contrato-a.txt");
   });
 
-  it("Conectar acepta varios archivos, los lista y los sube de una vez", async () => {
+  it("Conectar acepta varios archivos, los encola y los sube de una vez", async () => {
     const user = userEvent.setup();
 
     function Harness() {
-      const [files, setFiles] = useState<File[]>([]);
-      const [items, setItems] = useState<UploadItem[]>([]);
+      const [rows, setRows] = useState<UploadQueueRow[]>([]);
       return (
         <FileUploadStep
-          onFiles={(incoming) => setFiles((prev) => mergeSelectedFiles(prev, incoming))}
-          files={files}
-          items={items}
-          onRemove={(file) => setFiles((prev) => prev.filter((f) => f !== file))}
+          rows={rows}
+          onFiles={(incoming) =>
+            setRows((prev) => [
+              ...prev,
+              ...incoming
+                .filter((file) => !prev.some((row) => row.id === fileRowId(file)))
+                .map((file) => newUploadRow(file)),
+            ])
+          }
+          onRemove={(row) => setRows((prev) => prev.filter((item) => item.id !== row.id))}
           onRetry={() => {}}
-          onClear={() => {
-            setFiles([]);
-            setItems([]);
-          }}
+          onClear={() => setRows([])}
           onSubmit={() =>
-            setItems(files.map((file) => ({ filename: file.name, status: "created" })))
+            setRows((prev) => prev.map((row) => ({ ...row, status: "created" })))
           }
           busy={false}
         />
@@ -484,30 +488,90 @@ describe("wizard UI steps 3–6", () => {
 
     expect(screen.getByText("contrato-a.pdf")).toBeInTheDocument();
     expect(screen.getByText("contrato-b.txt")).toBeInTheDocument();
-    const submit = screen.getByRole("button", { name: "Subir 2 archivos" });
-    await user.click(submit);
+    expect(screen.getByTestId("upload-progress")).toHaveTextContent(
+      "Listo para subir: 2 archivos",
+    );
 
-    const results = screen.getByTestId("onboarding-upload-results");
-    expect(within(results).getAllByText("En cola de indexado")).toHaveLength(2);
+    await user.click(screen.getByRole("button", { name: "Quitar contrato-b.txt" }));
+    expect(screen.queryByText("contrato-b.txt")).not.toBeInTheDocument();
+    expect(screen.getByTestId("upload-progress")).toHaveTextContent(
+      "Listo para subir: 1 archivo",
+    );
+    await user.upload(input, [new File(["b"], "contrato-b.txt", { type: "text/plain" })]);
 
-    await user.click(screen.getByRole("button", { name: `Quitar contrato-a.pdf` }));
-    expect(screen.getByRole("button", { name: "Subir e indexar" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Subir 2 archivos" }));
+
+    const queue = screen.getByTestId("upload-queue");
+    expect(within(queue).getAllByText("En cola de indexado")).toHaveLength(2);
+    expect(screen.getByTestId("upload-progress")).toHaveTextContent("2 en cola de indexado");
+  });
+
+  it("Conectar muestra progreso por bytes y estado vivo por archivo", () => {
+    const first = new File(["a".repeat(1000)], "contrato-a.pdf");
+    const second = new File(["b".repeat(1000)], "contrato-b.pdf");
+    render(
+      <FileUploadStep
+        rows={[
+          { ...newUploadRow(first, "uploading"), progress: 50 },
+          newUploadRow(second),
+        ]}
+        onFiles={() => {}}
+        onRemove={() => {}}
+        onRetry={() => {}}
+        onClear={() => {}}
+        onSubmit={() => {}}
+        busy
+      />
+    );
+    expect(screen.getByTestId("upload-progress")).toHaveTextContent(
+      "Subiendo 1 de 2 · contrato-a.pdf",
+    );
+    const global = within(screen.getByTestId("upload-progress")).getByRole("progressbar");
+    expect(global).toHaveAttribute("aria-valuenow", "25");
+    expect(screen.getByTestId(`upload-row-status-${fileRowId(first)}`)).toHaveTextContent(
+      "Subiendo 50%",
+    );
+    expect(screen.getByTestId(`upload-row-status-${fileRowId(second)}`)).toHaveTextContent(
+      "En espera",
+    );
+    expect(
+      screen.getByRole("button", { name: `Quitar ${second.name}` }),
+    ).toBeInTheDocument();
+  });
+
+  it("Conectar avisa archivos sobre 25 MB sin subirlos", () => {
+    const big = { name: "enorme.pdf", size: 26 * 1024 * 1024 } as File;
+    render(
+      <FileUploadStep
+        rows={[
+          {
+            ...newUploadRow(big, "rejected"),
+            error: "Supera el máximo por archivo (25 MB). Prueba con uno más chico.",
+          },
+        ]}
+        onFiles={() => {}}
+        onRemove={() => {}}
+        onRetry={() => {}}
+        onClear={() => {}}
+        onSubmit={() => {}}
+        busy={false}
+      />
+    );
+    const queue = screen.getByTestId("upload-queue");
+    expect(within(queue).getByText("Rechazado")).toBeInTheDocument();
+    expect(within(queue).getByText(/Supera el máximo por archivo/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Subir e indexar" })).toBeDisabled();
   });
 
   it("Conectar muestra duplicados con salida al archivo existente", () => {
+    const file = new File(["a"], "informe.txt", { type: "text/plain" });
     render(
       <MemoryRouter>
         <FileUploadStep
-          onFiles={() => {}}
-          files={[new File(["a"], "informe.txt", { type: "text/plain" })]}
-          items={[
-            {
-              filename: "informe.txt",
-              status: "duplicate",
-              existing_source_id: "src-9",
-              existing_name: "informe.txt",
-            },
+          rows={[
+            { ...newUploadRow(file, "duplicate"), progress: 100, existingSourceId: "src-9" },
           ]}
+          onFiles={() => {}}
           onRemove={() => {}}
           onRetry={() => {}}
           onClear={() => {}}
@@ -516,12 +580,12 @@ describe("wizard UI steps 3–6", () => {
         />
       </MemoryRouter>
     );
-    const results = screen.getByTestId("onboarding-upload-results");
-    expect(within(results).getByText("Ya existe")).toBeInTheDocument();
-    expect(within(results).getByRole("link", { name: "Abrir existente" })).toHaveAttribute(
+    const queue = screen.getByTestId("upload-queue");
+    expect(within(queue).getByText("Ya existe")).toBeInTheDocument();
+    expect(within(queue).getByRole("link", { name: "Abrir existente" })).toHaveAttribute(
       "href",
       "/knowledge/sources/src-9"
     );
-    expect(within(results).getByRole("button", { name: "Subir igual" })).toBeInTheDocument();
+    expect(within(queue).getByRole("button", { name: "Subir igual" })).toBeInTheDocument();
   });
 });

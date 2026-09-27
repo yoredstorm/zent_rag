@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { api } from "../../../api";
+import { api, uploadFileWithProgress } from "../../../api";
 import { useAuth } from "../../../auth";
 import { ErrorInline, PageHeader } from "../../../components/ui";
 import { WarningInline } from "../../../components/ui/states";
@@ -9,10 +9,14 @@ import { KNOWLEDGE_HEADINGS } from "../../../lib/knowledgeNav";
 import { Stepper } from "../../../components/Stepper";
 import {
   MAX_UPLOAD_MB,
+  fileRowId,
   isOversized,
-  mergeSelectedFiles,
+  jobRowStatus,
+  newUploadRow,
+  rowSettled,
   uploadErrorMessage,
   type UploadItem,
+  type UploadQueueRow,
 } from "../../../lib/uploadQueue";
 import { AnalysisProgressStep } from "./AnalysisProgressStep";
 import { ApiStep } from "./ApiStep";
@@ -62,10 +66,21 @@ export default function OnboardingWizardPage() {
   const [dbResult, setDbResult] = useState<OnboardingSession["connection"]>();
   const [apiResult, setApiResult] = useState<OnboardingSession["connection"]>();
   const [uiStep, setUiStep] = useState<WizardStep>("choose");
-  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
-  const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
+  const [queue, setQueue] = useState<UploadQueueRow[]>([]);
   const [uploading, setUploading] = useState(false);
   const [retrying, setRetrying] = useState("");
+  const fileById = useRef<Map<string, File>>(new Map());
+  const queueRef = useRef<UploadQueueRow[]>([]);
+  const pollMarker = useRef<{ cancelled: boolean }>({ cancelled: false });
+  const polling = useRef(false);
+
+  useEffect(() => {
+    queueRef.current = queue;
+  }, [queue]);
+
+  useEffect(() => () => {
+    pollMarker.current.cancelled = true;
+  }, []);
 
   const load = useCallback(
     async (id: string) => {
@@ -127,6 +142,20 @@ export default function OnboardingWizardPage() {
       load(sessionId).catch((e) => setError(String(e)));
     }
   }, [sessionId, session, load]);
+
+  // Indexado en vivo mientras el usuario mira Analizar (aunque no haya subido en esta pantalla).
+  useEffect(() => {
+    if (uiStep !== "analyze") return;
+    const files = progress?.technical_details?.files ?? [];
+    const pending = files.some(
+      (file) =>
+        file.job_id &&
+        !["completed", "failed", "dead"].includes(String(file.job_status ?? "")),
+    );
+    if (!pending) return;
+    void pollIndexing();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uiStep, progress]);
 
   useEffect(() => {
     if (uiStep !== "analyze" || !current) return;
@@ -194,97 +223,196 @@ export default function OnboardingWizardPage() {
   function addUploadFiles(list: FileList | File[]) {
     const incoming = Array.from(list);
     if (incoming.length === 0) return;
-    const oversized = incoming.filter(isOversized);
-    if (oversized.length > 0) {
-      setError(
-        oversized.length === 1
-          ? `${oversized[0].name} supera el máximo por archivo (${MAX_UPLOAD_MB} MB).`
-          : `${oversized.length} archivos superan el máximo por archivo (${MAX_UPLOAD_MB} MB).`,
-      );
-    } else {
-      setError("");
-    }
-    const valid = incoming.filter((file) => !isOversized(file));
-    if (valid.length === 0) return;
-    setUploadItems([]);
-    setUploadFiles((prev) => mergeSelectedFiles(prev, valid));
+    setError("");
+    setQueue((prev) => {
+      const seen = new Set(prev.map((row) => row.id));
+      const added: UploadQueueRow[] = [];
+      for (const file of incoming) {
+        const id = fileRowId(file);
+        if (seen.has(id)) continue;
+        seen.add(id);
+        fileById.current.set(id, file);
+        added.push(
+          isOversized(file)
+            ? {
+                ...newUploadRow(file, "rejected"),
+                error: `Supera el máximo por archivo (${MAX_UPLOAD_MB} MB). Prueba con uno más chico.`,
+              }
+            : newUploadRow(file),
+        );
+      }
+      return [...prev, ...added];
+    });
   }
 
-  async function uploadSingle(file: File, force: boolean): Promise<UploadItem> {
-    if (!session || !current) {
-      return { filename: file.name, status: "error", error: "Sesión no disponible" };
+  function removeRow(row: UploadQueueRow) {
+    fileById.current.delete(row.id);
+    setQueue((prev) => prev.filter((item) => item.id !== row.id));
+  }
+
+  function clearQueue() {
+    pollMarker.current.cancelled = true;
+    fileById.current.clear();
+    setQueue([]);
+  }
+
+  function patchRow(id: string, patch: Partial<UploadQueueRow>) {
+    setQueue((prev) =>
+      prev.map((row) => (row.id === id ? { ...row, ...patch } : row)),
+    );
+  }
+
+  async function uploadRow(row: UploadQueueRow, force: boolean): Promise<boolean> {
+    const file = fileById.current.get(row.id);
+    if (!session || !current || !file) {
+      patchRow(row.id, { status: "error", error: "Sesión no disponible" });
+      return false;
     }
+    patchRow(row.id, { status: "uploading", progress: 0, error: null });
     const form = new FormData();
     form.append("file", file);
     const query = force ? "?force=true" : "";
-    const data = await api<OnboardingSession & { upload?: UploadItem }>(
-      `${API}/sessions/${current.id}/connect/upload${query}`,
-      {
-        method: "POST",
+    try {
+      const data = await uploadFileWithProgress<
+        OnboardingSession & { upload?: UploadItem }
+      >(`${API}/sessions/${current.id}/connect/upload${query}`, form, {
         token: session.token,
         organizationId: session.organizationId,
-        body: form,
-      },
-    );
-    setCurrent(data);
-    return (
-      data.upload ?? {
-        filename: file.name,
+        onProgress: ({ loaded, total }) => {
+          if (total > 0) {
+            patchRow(row.id, { progress: Math.round((loaded / total) * 100) });
+          }
+        },
+      });
+      setCurrent(data);
+      const upload = data.upload;
+      if (!upload || upload.status === "error") {
+        patchRow(row.id, {
+          status: "error",
+          progress: 100,
+          error: upload?.error || "El servidor no devolvió resultado para el archivo.",
+        });
+        return false;
+      }
+      if (upload.status === "duplicate") {
+        patchRow(row.id, {
+          status: "duplicate",
+          progress: 100,
+          existingSourceId: upload.existing_source_id ?? null,
+          error: upload.error ?? null,
+        });
+        return false;
+      }
+      patchRow(row.id, {
+        status: "created",
+        progress: 0,
+        name: upload.name ?? null,
+        sourceId: upload.source_id ?? null,
+        jobId: upload.job_id ?? null,
+      });
+      return true;
+    } catch (e) {
+      patchRow(row.id, {
         status: "error",
-        error: "El servidor no devolvió resultado para el archivo.",
-      }
-    );
-  }
-
-  async function uploadAll() {
-    if (!session || !current || uploadFiles.length === 0) return;
-    setUploading(true);
-    setError("");
-    const results: UploadItem[] = [];
-    let created = 0;
-    try {
-      for (const file of uploadFiles) {
-        try {
-          const item = await uploadSingle(file, false);
-          results.push(item);
-          if (item.status === "created") created += 1;
-        } catch (e) {
-          results.push({
-            filename: file.name,
-            status: "error",
-            error: uploadErrorMessage(e),
-          });
-        }
-        setUploadItems([...results]);
-      }
-      const failed = new Set(
-        results.filter((item) => item.status !== "created").map((item) => item.filename),
-      );
-      setUploadFiles((prev) => prev.filter((file) => failed.has(file.name)));
-      if (created > 0) await runAnalyze();
-    } finally {
-      setUploading(false);
+        progress: 100,
+        error: uploadErrorMessage(e),
+      });
+      return false;
     }
   }
 
-  async function retryUpload(item: UploadItem) {
-    const file = uploadFiles.find((f) => f.name === item.filename);
-    if (!file) return;
-    setRetrying(item.filename);
+  async function uploadAll() {
+    if (!session || !current) return;
+    const pending = queueRef.current.filter((row) => row.status === "pending");
+    if (pending.length === 0) return;
+    setUploading(true);
+    setError("");
+    let created = 0;
+    try {
+      for (const row of pending) {
+        const ok = await uploadRow(row, false);
+        if (ok) created += 1;
+      }
+    } finally {
+      setUploading(false);
+    }
+    if (created > 0) {
+      void pollIndexing();
+      await runAnalyze();
+    }
+  }
+
+  async function retryRow(row: UploadQueueRow) {
+    setRetrying(row.id);
     setError("");
     try {
-      const result = await uploadSingle(file, true);
-      setUploadItems((prev) =>
-        prev.map((i) => (i.filename === item.filename ? result : i)),
-      );
-      if (result.status === "created") {
-        setUploadFiles((prev) => prev.filter((f) => f !== file));
+      const ok = await uploadRow(row, true);
+      if (ok) {
+        void pollIndexing();
         await runAnalyze();
       }
-    } catch (e) {
-      setError(uploadErrorMessage(e));
     } finally {
       setRetrying("");
+    }
+  }
+
+  /** Refresca el indexado en background: En cola → Indexando x% → Indexado. */
+  async function pollIndexing() {
+    if (!session || !current || polling.current) return;
+    polling.current = true;
+    try {
+      const token = session.token;
+      const organizationId = session.organizationId;
+      const id = current.id;
+      const marker = { cancelled: false };
+      pollMarker.current.cancelled = true;
+      pollMarker.current = marker;
+      for (let i = 0; i < 150; i++) {
+        if (marker.cancelled) return;
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        if (marker.cancelled) return;
+        let prog: ProgressPayload;
+        try {
+          prog = await api<ProgressPayload>(`${API}/sessions/${id}/progress`, {
+            token,
+            organizationId,
+          });
+        } catch {
+          continue;
+        }
+        setProgress(prog);
+        setCurrent(prog.session);
+        const rows = queueRef.current;
+        const byJob = new Map(
+          (prog.technical_details?.files ?? [])
+            .filter((file) => file.job_id)
+            .map((file) => [String(file.job_id), file] as const),
+        );
+        const next = rows.map((row) => {
+          if (!row.jobId || rowSettled(row)) return row;
+          const file = byJob.get(String(row.jobId));
+          if (!file) return row;
+          return {
+            ...row,
+            status: jobRowStatus(file.job_status, file.job_progress),
+            progress:
+              typeof file.job_progress === "number" ? file.job_progress : row.progress,
+          };
+        });
+        if (next.some((row, index) => row !== rows[index])) {
+          queueRef.current = next;
+          setQueue(next);
+        }
+        const rowsPending = next.some((row) => row.jobId && !rowSettled(row));
+        const filesPending = (prog.technical_details?.files ?? []).some(
+          (file) =>
+            file.job_id &&
+            !["completed", "failed", "dead"].includes(String(file.job_status ?? "")),
+        );
+        if (!rowsPending && !filesPending) return;
+      }
+    } finally {
+      polling.current = false;
     }
   }
 
@@ -550,17 +678,11 @@ export default function OnboardingWizardPage() {
       {current && uiStep === "connect" && (kind === "documents" || kind === "spreadsheets") && (
         <>
           <FileUploadStep
+            rows={queue}
             onFiles={addUploadFiles}
-            files={uploadFiles}
-            items={uploadItems}
-            onRemove={(file) =>
-              setUploadFiles((prev) => prev.filter((f) => f !== file))
-            }
-            onRetry={(item) => void retryUpload(item)}
-            onClear={() => {
-              setUploadFiles([]);
-              setUploadItems([]);
-            }}
+            onRemove={removeRow}
+            onRetry={(row) => void retryRow(row)}
+            onClear={clearQueue}
             onSubmit={() => void uploadAll()}
             busy={uploading}
             retrying={retrying}

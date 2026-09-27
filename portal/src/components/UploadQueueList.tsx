@@ -1,6 +1,143 @@
 import { X } from "@phosphor-icons/react";
-import { Button, ButtonLink, IconButton, cn } from "./ui";
-import { UPLOAD_STATUS_LABEL, type UploadItem } from "../lib/uploadQueue";
+import type { ReactNode } from "react";
+import { Button, ButtonLink, IconButton, StatusRow, cn } from "./ui";
+import {
+  UPLOAD_STATUS_LABEL,
+  rowLabel,
+  type UploadItem,
+  type UploadQueueRow,
+  type UploadRowStatus,
+} from "../lib/uploadQueue";
+
+const ROW_STATE: Record<
+  UploadRowStatus,
+  "queued" | "running" | "ready" | "warning" | "failed" | "processing" | "indexing"
+> = {
+  pending: "queued",
+  uploading: "running",
+  created: "queued",
+  indexing: "indexing",
+  indexed: "ready",
+  duplicate: "warning",
+  rejected: "failed",
+  error: "failed",
+  failed: "failed",
+};
+
+const ROW_TONE: Record<UploadRowStatus, string> = {
+  pending: "text-faint",
+  uploading: "text-accent",
+  created: "text-muted",
+  indexing: "text-accent",
+  indexed: "text-ok",
+  duplicate: "text-warn",
+  rejected: "text-danger",
+  error: "text-danger",
+  failed: "text-danger",
+};
+
+const RETRYABLE: UploadRowStatus[] = ["rejected", "error", "failed", "duplicate"];
+const REMOVABLE: UploadRowStatus[] = ["pending", "rejected", "error", "failed", "duplicate"];
+
+function formatKb(size: number): string {
+  return `${Math.max(1, Math.round(size / 1024))} KB`;
+}
+
+/** Cola viva de subida/indexado: una fila por archivo, con barra real. */
+export function UploadQueueList({
+  rows,
+  onRemove,
+  onRetry,
+  retrying,
+  testId = "upload-queue",
+  className,
+}: {
+  rows: UploadQueueRow[];
+  onRemove?: (row: UploadQueueRow) => void;
+  onRetry?: (row: UploadQueueRow) => void;
+  retrying?: string;
+  testId?: string;
+  className?: string;
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <div className={cn("flex flex-col", className)} data-testid={testId}>
+      {rows.map((row) => {
+        const state = ROW_STATE[row.status];
+        const showBar = row.status === "uploading" || row.status === "indexing";
+        let actions: ReactNode = null;
+        if (onRetry && RETRYABLE.includes(row.status)) {
+          actions = (
+            <>
+              {row.status === "duplicate" && row.existingSourceId && (
+                <ButtonLink
+                  to={`/knowledge/sources/${row.existingSourceId}`}
+                  variant="secondary"
+                  size="sm"
+                >
+                  Abrir existente
+                </ButtonLink>
+              )}
+              <Button
+                variant="secondary"
+                size="sm"
+                loading={retrying === row.id}
+                onClick={() => onRetry(row)}
+              >
+                {row.status === "duplicate" ? "Subir igual" : "Reintentar"}
+              </Button>
+            </>
+          );
+        }
+        if (onRemove && REMOVABLE.includes(row.status)) {
+          actions = (
+            <>
+              {actions}
+              <IconButton
+                label={`Quitar ${row.filename}`}
+                icon={X}
+                onClick={() => onRemove(row)}
+              />
+            </>
+          );
+        }
+        return (
+          <StatusRow
+            key={row.id}
+            state={state}
+            className="border-b border-border-soft last:border-b-0"
+            title={
+              <>
+                <span
+                  className="min-w-0 max-w-[22rem] truncate text-[13px] font-medium text-text"
+                  title={row.filename}
+                >
+                  {row.name || row.filename}
+                </span>
+                <span className="mono text-[11px] text-faint">
+                  {row.size > 0 ? formatKb(row.size) : null}
+                </span>
+                <span
+                  className={cn("text-[11px]", ROW_TONE[row.status])}
+                  data-testid={`upload-row-status-${row.id}`}
+                >
+                  {rowLabel(row)}
+                </span>
+                {row.error && (
+                  <span className="w-full text-[11px] leading-relaxed text-danger">
+                    {row.error}
+                  </span>
+                )}
+              </>
+            }
+            progress={showBar ? row.progress : undefined}
+            actions={actions}
+          />
+        );
+      })}
+    </div>
+  );
+}
 
 export function SelectedFilesList({
   files,
