@@ -13,18 +13,18 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from src.api.main import app
-from src.api.routes.sources import _normalize_filename
 from src.core.config import get_settings
+from src.knowledge.uploads import normalize_filename
 from tests import tabular_fixtures as fx
 
 
 def test_normalize_filename_handles_browser_copy_suffix() -> None:
-    assert _normalize_filename("ATPCO (1).xlsx") == "atpco.xlsx"
-    assert _normalize_filename("atpco.xlsx") == "atpco.xlsx"
-    assert _normalize_filename("  ATPCO   (12).XLSX ") == "atpco.xlsx"
-    assert _normalize_filename("Informe final (1).pdf") == "informe final.pdf"
-    assert _normalize_filename("sin_extension") == "sin_extension"
-    assert _normalize_filename("Guía (2).docx") == "guía.docx"
+    assert normalize_filename("ATPCO (1).xlsx") == "atpco.xlsx"
+    assert normalize_filename("atpco.xlsx") == "atpco.xlsx"
+    assert normalize_filename("  ATPCO   (12).XLSX ") == "atpco.xlsx"
+    assert normalize_filename("Informe final (1).pdf") == "informe final.pdf"
+    assert normalize_filename("sin_extension") == "sin_extension"
+    assert normalize_filename("Guía (2).docx") == "guía.docx"
 
 
 async def _create_org(client: AsyncClient, name: str) -> dict:

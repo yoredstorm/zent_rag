@@ -20,6 +20,7 @@ from src.core.domain.catalog import (
     SuggestionStatus,
     SuggestionType,
 )
+from src.core.domain.entities import TenantContext
 from src.infrastructure.observability.logging_config import get_logger
 from src.platform.data_onboarding.ask_evidence import format_ask_evidence
 from src.platform.data_onboarding.constants import SQL_ENGINES
@@ -37,10 +38,87 @@ from src.platform.data_onboarding.store import DataOnboardingStore, merge_state
 
 logger = get_logger(__name__)
 
+_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+_MAX_SESSION_FILES = 100
+
 
 def _workspace_uuid(row: dict) -> UUID | None:
     raw = row.get("workspace_id")
     return UUID(str(raw)) if raw else None
+
+
+def _state_source_ids(row: dict) -> list[str]:
+    """Fuentes de la sesión: `state.source_ids` con fallback a la columna única."""
+    raw = (row.get("state") or {}).get("source_ids")
+    if isinstance(raw, list) and raw:
+        return [str(value) for value in raw]
+    if row.get("kb_source_id"):
+        return [str(row["kb_source_id"])]
+    return []
+
+
+def _job_status(job) -> str | None:
+    if job is None:
+        return None
+    return getattr(job.status, "value", str(job.status))
+
+
+def _scope_source_ids(row: dict) -> list[str]:
+    """Ids de catálogo/fuente que cuelgan de la sesión (multi-archivo incluido)."""
+    return list(
+        dict.fromkeys(
+            ([str(row["catalog_source_id"])] if row.get("catalog_source_id") else [])
+            + _state_source_ids(row)
+        )
+    )
+
+
+def _merge_understandings(per_source: dict, source_ids: list[str]) -> dict:
+    """Understanding agregada del lote: hechos y conteos de todos los archivos."""
+    entries = [
+        per_source[source_id]
+        for source_id in source_ids
+        if isinstance(per_source.get(source_id), dict)
+    ]
+    if not entries:
+        return {}
+    if len(entries) == 1:
+        return dict(entries[0])
+    facts: list[dict] = []
+    pages = 0
+    for entry in entries:
+        for fact in entry.get("facts") or []:
+            facts.append(
+                {
+                    **fact,
+                    "source_id": entry.get("source_id"),
+                    "filename": entry.get("filename"),
+                }
+            )
+        if isinstance(entry.get("pages"), int):
+            pages += int(entry["pages"])
+    merged = {
+        **entries[0],
+        "filename": f"{len(entries)} archivos",
+        "pages": pages or entries[0].get("pages"),
+        "text_ok": all(bool(entry.get("text_ok")) for entry in entries),
+        "facts": facts,
+        "sources": [
+            {
+                "source_id": entry.get("source_id"),
+                "filename": entry.get("filename"),
+                "kind": entry.get("kind"),
+                "pages": entry.get("pages"),
+                "text_ok": entry.get("text_ok"),
+                "facts_count": len(entry.get("facts") or []),
+                "title": entry.get("title"),
+                "document_type": entry.get("document_type"),
+                "row_count": entry.get("row_count"),
+            }
+            for entry in entries
+        ],
+    }
+    return merged
 
 
 class DataOnboardingError(Exception):
@@ -280,47 +358,110 @@ class DataOnboardingService:
 
     async def connect_upload(
         self,
-        organization_id: UUID,
+        ctx: TenantContext,
         session_id: UUID,
         *,
         filename: str,
         data: bytes,
-        created_by: UUID | None,
+        force: bool = False,
     ) -> dict:
-        from src.api.deps import get_source_repo
+        from src.api.deps import get_job_repo, get_source_repo
         from src.knowledge.storage import store_upload
+        from src.knowledge.uploads import (
+            enqueue_source_sync,
+            find_duplicate_source,
+            next_copy_name,
+        )
 
+        organization_id = ctx.organization_id
         row = await self._require(organization_id, session_id)
-        if len(data) > 25 * 1024 * 1024:
+        source_ids = _state_source_ids(row)
+        if len(source_ids) >= _MAX_SESSION_FILES:
+            raise DataOnboardingError(
+                f"Too many files in this session (max {_MAX_SESSION_FILES})", 422
+            )
+        if len(data) > _MAX_UPLOAD_BYTES:
             raise DataOnboardingError("File too large (max 25 MB)", 413)
         try:
             source_type = detect_source_type(filename, data)
         except MimeRejected as exc:
             raise DataOnboardingError(str(exc), 415) from exc
+
+        repo = get_source_repo()
+        duplicate = await find_duplicate_source(repo, organization_id, filename)
+        if duplicate is not None and not force:
+            public = self.public(row)
+            public["upload"] = {
+                "filename": filename,
+                "status": "duplicate",
+                "error": f"Ya existe una fuente con el mismo nombre: {duplicate.name}",
+                "existing_source_id": str(duplicate.id),
+                "existing_name": duplicate.name,
+            }
+            return public
+
+        source_name = filename
+        if force and duplicate is not None:
+            source_name = await next_copy_name(repo, organization_id, source_name)
         object_key = store_upload(organization_id, filename, data)
         config: dict[str, Any] = {"object_key": object_key, "filename": filename}
         if source_type == "csv":
             config["delimiter"] = ","
-        source = await get_source_repo().create_source(
+        source = await repo.create_source(
             organization_id,
-            filename,
+            source_name,
             source_type,
             config_json=config,
             workspace_id=_workspace_uuid(row),
         )
+        job = None
+        try:
+            job = await enqueue_source_sync(ctx, get_job_repo(), source)
+        except Exception as exc:  # noqa: BLE001 — el archivo ya quedó guardado
+            logger.warning("onboarding enqueue upload failed", error=str(exc)[:200])
+        job_id = str(job.id) if job is not None else None
+        state = dict(row.get("state") or {})
         state = merge_state(
-            row.get("state") or {},
-            {"filename": filename, "source_type": source_type, "object_key": object_key},
+            state,
+            {
+                "filename": filename,
+                "source_type": source_type,
+                "object_key": object_key,
+                "source_ids": [*source_ids, str(source.id)],
+                "sources": [
+                    *(state.get("sources") or []),
+                    {
+                        "source_id": str(source.id),
+                        "filename": filename,
+                        "name": source.name,
+                        "source_type": source_type,
+                        "status": "created",
+                        "job_id": job_id,
+                    },
+                ],
+                "job_ids": [
+                    *(state.get("job_ids") or []),
+                    *([job_id] if job_id else []),
+                ],
+            },
         )
         updated = await self._store.update(
             organization_id,
             session_id,
             status="CONNECTED",
             step="analyze",
-            kb_source_id=source.id,
+            kb_source_id=row.get("kb_source_id") or source.id,
             state_json=state,
         )
-        return self.public(updated or row)
+        public = self.public(updated or row)
+        public["upload"] = {
+            "filename": filename,
+            "status": "created",
+            "source_id": str(source.id),
+            "name": source.name,
+            "job_id": job_id,
+        }
+        return public
 
     async def connect_web(
         self,
@@ -569,14 +710,15 @@ class DataOnboardingService:
         public["preview"] = preview
         return public
 
-    async def analyze(self, organization_id: UUID, session_id: UUID) -> dict:
+    async def analyze(self, ctx: TenantContext, session_id: UUID) -> dict:
+        organization_id = ctx.organization_id
         row = await self._require(organization_id, session_id)
         await self._store.update(
             organization_id, session_id, status="ANALYZING", step="analyze"
         )
         if row["kind"] == "database":
             return await self._analyze_database(organization_id, session_id, row)
-        return await self._analyze_files(organization_id, session_id, row)
+        return await self._analyze_files(ctx, session_id, row)
 
     async def progress(self, organization_id: UUID, session_id: UUID) -> dict:
         row = await self._require(organization_id, session_id)
@@ -640,23 +782,55 @@ class DataOnboardingService:
             "connector_id": row.get("connector_id"),
             "catalog_source_id": row.get("catalog_source_id"),
             "kb_source_id": row.get("kb_source_id"),
-            "job_id": (row.get("state") or {}).get("job_id"),
             "pages": (row.get("state") or {}).get("understanding", {}).get("pages"),
         }
-        job_id = (row.get("state") or {}).get("job_id")
-        if job_id:
+        session_state = row.get("state") or {}
+        job_ids = [str(value) for value in (session_state.get("job_ids") or [])]
+        if not job_ids and session_state.get("job_id"):
+            job_ids = [str(session_state["job_id"])]
+        technical["job_ids"] = job_ids
+        technical["job_id"] = job_ids[0] if job_ids else None
+        jobs_by_id: dict[str, Any] = {}
+        if job_ids:
             from src.api.deps import get_job_repo
 
             try:
-                job = await get_job_repo().get_job(
-                    organization_id, UUID(str(job_id))
-                )
-                if job is not None:
-                    technical["job_status"] = getattr(job.status, "value", str(job.status))
-                    technical["job_progress"] = job.progress
-                    technical["records_processed"] = job.records_processed
+                recent = await get_job_repo().list_jobs(organization_id, limit=200)
+                wanted = set(job_ids)
+                jobs_by_id = {
+                    str(job.id): job for job in recent if str(job.id) in wanted
+                }
             except Exception as exc:  # noqa: BLE001
-                logger.warning("onboarding job lookup failed", error=str(exc)[:200])
+                logger.warning("onboarding jobs lookup failed", error=str(exc)[:200])
+        first_job = jobs_by_id.get(job_ids[0]) if job_ids else None
+        if first_job is not None:
+            technical["job_status"] = _job_status(first_job)
+            technical["records_processed"] = first_job.records_processed
+        progresses = [
+            float(job.progress)
+            for job in jobs_by_id.values()
+            if isinstance(getattr(job, "progress", None), (int, float))
+        ]
+        if progresses:
+            technical["job_progress"] = round(
+                sum(progresses) / len(progresses), 2
+            )
+        files = [
+            {
+                "filename": entry.get("filename") or entry.get("name"),
+                "job_id": entry.get("job_id"),
+                "job_status": _job_status(
+                    jobs_by_id.get(str(entry.get("job_id")))
+                ),
+                "job_progress": getattr(
+                    jobs_by_id.get(str(entry.get("job_id"))), "progress", None
+                ),
+            }
+            for entry in (session_state.get("sources") or [])
+            if isinstance(entry, dict)
+        ]
+        if files:
+            technical["files"] = files
         if row.get("catalog_source_id"):
             source = await self._catalog.get_source(
                 organization_id, UUID(row["catalog_source_id"])
@@ -683,26 +857,39 @@ class DataOnboardingService:
         summary = dict(state.get("understanding") or {})
         summary["flow"] = row["kind"]
         suggestions = []
-        source_id = row.get("catalog_source_id") or row.get("kb_source_id")
-        if source_id:
+        scope_ids = _scope_source_ids(row)
+        filename_by_source = {
+            str(entry.get("source_id")): entry.get("filename") or entry.get("name")
+            for entry in (state.get("sources") or [])
+            if isinstance(entry, dict) and entry.get("source_id")
+        }
+        seen_suggestions: set[str] = set()
+        for scope_id in scope_ids:
             raw = await self._catalog.list_suggestions(
                 organization_id,
                 status="pending",
-                source_id=UUID(str(source_id)),
+                source_id=UUID(scope_id),
                 limit=100,
             )
-            suggestions = [
-                {
-                    "id": s["id"],
-                    "type": s["type"],
-                    "title": s["title"],
-                    "description": s.get("description"),
-                    "confidence": s.get("confidence"),
-                    "evidence": s.get("evidence") or [],
-                    "payload": s.get("payload") or {},
-                }
-                for s in raw
-            ]
+            for s in raw or []:
+                if str(s["id"]) in seen_suggestions:
+                    continue
+                seen_suggestions.add(str(s["id"]))
+                affected = s.get("affected_sources") or []
+                suggestion_source = str(affected[0]) if affected else None
+                suggestions.append(
+                    {
+                        "id": s["id"],
+                        "type": s["type"],
+                        "title": s["title"],
+                        "description": s.get("description"),
+                        "confidence": s.get("confidence"),
+                        "evidence": s.get("evidence") or [],
+                        "payload": s.get("payload") or {},
+                        "source_id": suggestion_source,
+                        "filename": filename_by_source.get(suggestion_source or ""),
+                    }
+                )
         if row["kind"] == "database" and row.get("catalog_source_id"):
             cid = UUID(row["catalog_source_id"])
             entities = await self._catalog.list_entities(organization_id, limit=50)
@@ -770,15 +957,20 @@ class DataOnboardingService:
         reviewed_by: UUID | None,
     ) -> dict:
         row = await self._require(organization_id, session_id)
-        source_id = row.get("catalog_source_id") or row.get("kb_source_id")
         pending: list[dict] = []
-        if source_id:
-            pending = await self._catalog.list_suggestions(
+        seen: set[str] = set()
+        for scope_id in _scope_source_ids(row):
+            items = await self._catalog.list_suggestions(
                 organization_id,
                 status="pending",
-                source_id=UUID(str(source_id)),
+                source_id=UUID(scope_id),
                 limit=100,
             )
+            for item in items or []:
+                if str(item["id"]) in seen:
+                    continue
+                seen.add(str(item["id"]))
+                pending.append(item)
         queue = ReviewQueueService(self._catalog)
         approved = 0
         errors: list[dict] = []
@@ -814,7 +1006,7 @@ class DataOnboardingService:
             confidence="medium",
             payload={"free_text": text_value, "session_id": str(session_id)},
             status=SuggestionStatus.PENDING,
-            affected_sources=[row.get("catalog_source_id") or row.get("kb_source_id") or ""],
+            affected_sources=_scope_source_ids(row),
         )
         await self._catalog.create_suggestion(suggestion)
         created = await self._catalog.get_suggestion(organization_id, suggestion.id)
@@ -920,7 +1112,7 @@ class DataOnboardingService:
                 "session_id": str(session_id),
             },
             status=SuggestionStatus.PENDING,
-            affected_sources=[row.get("catalog_source_id") or row.get("kb_source_id") or ""],
+            affected_sources=_scope_source_ids(row),
         )
         await self._catalog.create_suggestion(suggestion)
         created = await self._catalog.get_suggestion(organization_id, suggestion.id)
@@ -1175,9 +1367,35 @@ class DataOnboardingService:
         state = row.get("state") or {}
         understanding = state.get("understanding") or {}
         facts = understanding.get("facts") or []
-        text_ok = bool(understanding.get("text_ok")) or bool(
-            (understanding.get("excerpt") or "").strip()
-        )
+        per_source = state.get("understanding_by_source") or {}
+        files: list[dict] = []
+        for entry in state.get("sources") or []:
+            if not isinstance(entry, dict) or not entry.get("source_id"):
+                continue
+            source_understanding = per_source.get(str(entry["source_id"])) or {}
+            files.append(
+                {
+                    "source_id": str(entry["source_id"]),
+                    "filename": entry.get("filename") or entry.get("name"),
+                    "text_ok": source_understanding.get("text_ok"),
+                    "facts_count": len(source_understanding.get("facts") or []),
+                    "indexing": await self._indexing_score(
+                        organization_id, entry.get("job_id")
+                    ),
+                }
+            )
+        if files:
+            text_ok = all(bool(item["text_ok"]) for item in files)
+            indexing = round(
+                sum(float(item["indexing"]) for item in files) / len(files), 2
+            )
+        else:
+            text_ok = bool(understanding.get("text_ok")) or bool(
+                (understanding.get("excerpt") or "").strip()
+            )
+            indexing = await self._indexing_score(
+                organization_id, state.get("job_id")
+            )
         insights = await DocumentInsightsStore().list_by_session(organization_id, session_id)
         approved = sum(1 for i in insights if i["status"] in ("approved", "edited"))
         detected = max(len(insights), len(facts))
@@ -1187,7 +1405,7 @@ class DataOnboardingService:
             "key_facts": (
                 round(approved / max(detected, 1) * 100, 2) if detected else 100.0
             ),
-            "indexing": await self._indexing_score(organization_id, state.get("job_id")),
+            "indexing": indexing,
             "test_questions": (
                 90.0 if state.get("question_pack") and not row.get("skipped_test") else 0.0
             ),
@@ -1199,7 +1417,11 @@ class DataOnboardingService:
         if pending > 0:
             improvements.append(f"{pending} datos clave sin confirmar")
         if not text_ok:
-            improvements.append("El documento no tiene texto extraíble")
+            improvements.append(
+                "Hay documentos sin texto extraíble"
+                if len(files) > 1
+                else "El documento no tiene texto extraíble"
+            )
         if scores["indexing"] < 100:
             improvements.append("Indexación pendiente")
         return {
@@ -1214,6 +1436,7 @@ class DataOnboardingService:
                 {"label": action.label, "to": action.to} for action in flow.ready_actions
             ],
             "flow": "documents",
+            **({"files": files} if files else {})
         }
 
     @staticmethod
@@ -1293,93 +1516,150 @@ class DataOnboardingService:
         return updated or await self._require(organization_id, session_id)
 
     async def _analyze_files(
-        self, organization_id: UUID, session_id: UUID, row: dict
+        self, ctx: TenantContext, session_id: UUID, row: dict
     ) -> dict:
         from src.api.deps import get_job_repo, get_source_repo
-        from src.knowledge.queue import enqueue_knowledge_job
+        from src.knowledge.uploads import enqueue_source_sync
 
-        if not row.get("kb_source_id"):
+        organization_id = ctx.organization_id
+        source_ids = _state_source_ids(row)
+        if not source_ids:
             raise DataOnboardingError("Upload a file first", 400)
-        source = await get_source_repo().get_source(
-            organization_id, UUID(row["kb_source_id"])
-        )
-        if source is None:
-            raise DataOnboardingError("Source not found", 404)
-        cfg = source.config_json or {}
-        understanding = profile_upload(
-            organization_id,
-            str(cfg.get("object_key") or ""),
-            source.type,
-            str(cfg.get("filename") or source.name),
-        )
-        extracted: dict[str, Any] | None = None
-        if understanding.get("kind") == "document":
-            raw = b""
-            try:
-                from src.knowledge.storage import resolve_path
 
-                path = resolve_path(organization_id, str(cfg.get("object_key") or ""))
-                if path.exists():
-                    raw = path.read_bytes()
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("onboarding read document failed", error=str(exc)[:200])
-            extracted = extract_document_facts_rules(
-                raw, str(cfg.get("filename") or source.name)
+        state = dict(row.get("state") or {})
+        analyzed = [str(value) for value in (state.get("analyzed_source_ids") or [])]
+        per_source = dict(state.get("understanding_by_source") or {})
+        tracked = {
+            str(item.get("source_id")): dict(item)
+            for item in (state.get("sources") or [])
+            if isinstance(item, dict) and item.get("source_id")
+        }
+        catalog_source_id = row.get("catalog_source_id")
+        repo = get_source_repo()
+        jobs = get_job_repo()
+
+        for raw_id in source_ids:
+            source_id = str(raw_id)
+            source = await repo.get_source(organization_id, UUID(source_id))
+            if source is None:
+                raise DataOnboardingError("Source not found", 404)
+            cfg = source.config_json or {}
+            filename = str(cfg.get("filename") or source.name)
+            entry = tracked.get(source_id) or {
+                "source_id": source_id,
+                "filename": filename,
+                "name": source.name,
+                "source_type": source.type,
+                "status": "created",
+                "job_id": None,
+            }
+            if source_id not in analyzed:
+                understanding = profile_upload(
+                    organization_id,
+                    str(cfg.get("object_key") or ""),
+                    source.type,
+                    filename,
+                )
+                extracted: dict[str, Any] | None = None
+                if understanding.get("kind") == "document":
+                    raw = b""
+                    try:
+                        from src.knowledge.storage import resolve_path
+
+                        path = resolve_path(
+                            organization_id, str(cfg.get("object_key") or "")
+                        )
+                        if path.exists():
+                            raw = path.read_bytes()
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "onboarding read document failed", error=str(exc)[:200]
+                        )
+                    extracted = extract_document_facts_rules(raw, filename)
+                    understanding["pages"] = extracted.get("pages")
+                    understanding["text_ok"] = extracted.get("text_ok")
+                    if not understanding.get("headings"):
+                        understanding["headings"] = extracted.get("headings") or []
+                    understanding["facts"] = list(extracted.get("facts") or [])
+                understanding["source_id"] = source_id
+                understanding["filename"] = filename
+                per_source[source_id] = understanding
+                analyzed.append(source_id)
+                await self._checkpoint_understanding(
+                    organization_id,
+                    session_id,
+                    row,
+                    _merge_understandings(per_source, source_ids),
+                )
+                if understanding.get("kind") == "document" and extracted is not None:
+                    completed = await complete_document_facts(extracted)
+                    understanding["facts"] = completed.get("facts") or []
+                    per_source[source_id] = understanding
+                    await self._persist_document_facts(
+                        organization_id, session_id, understanding, source_id=source_id
+                    )
+                elif understanding.get("kind") == "spreadsheet":
+                    catalog_source_id = await self._suggestions_from_profile(
+                        organization_id,
+                        session_id,
+                        understanding,
+                        row,
+                        source_id=source_id,
+                        catalog_source_id=catalog_source_id,
+                    )
+            if not entry.get("job_id"):
+                try:
+                    job = await enqueue_source_sync(ctx, jobs, source)
+                    entry["job_id"] = str(job.id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "onboarding sync enqueue failed", error=str(exc)[:200]
+                    )
+            tracked[source_id] = entry
+
+        understanding = _merge_understandings(per_source, source_ids)
+        job_ids = [
+            str(entry["job_id"])
+            for entry in tracked.values()
+            if entry.get("job_id")
+        ]
+        scope_ids = list(
+            dict.fromkeys(
+                ([str(catalog_source_id)] if catalog_source_id else []) + source_ids
             )
-            understanding["pages"] = extracted.get("pages")
-            understanding["text_ok"] = extracted.get("text_ok")
-            if not understanding.get("headings"):
-                understanding["headings"] = extracted.get("headings") or []
-            understanding["facts"] = list(extracted.get("facts") or [])
-        row = await self._checkpoint_understanding(
-            organization_id, session_id, row, understanding
         )
-        if understanding.get("kind") == "document" and extracted is not None:
-            completed = await complete_document_facts(extracted)
-            understanding["facts"] = completed.get("facts") or []
-            await self._persist_document_facts(
-                organization_id, session_id, row, understanding
-            )
-        elif understanding.get("kind") == "spreadsheet":
-            await self._suggestions_from_profile(
-                organization_id, session_id, understanding, row
-            )
-        # _suggestions_from_profile pudo setear catalog_source_id; refresh.
-        row = await self._require(organization_id, session_id)
-        scope_source_id = row.get("catalog_source_id") or row.get("kb_source_id")
-        pending = []
-        if scope_source_id:
-            pending = await self._catalog.list_suggestions(
+        pending_ids: set[str] = set()
+        for scope_id in scope_ids:
+            items = await self._catalog.list_suggestions(
                 organization_id,
                 status="pending",
-                source_id=UUID(str(scope_source_id)),
-                limit=50,
+                source_id=UUID(scope_id),
+                limit=100,
             )
+            for item in items or []:
+                pending_ids.add(str(item.get("id")))
         state = merge_state(
             row.get("state") or {},
             {
                 "understanding": understanding,
-                "pending_review_count": len(pending),
+                "understanding_by_source": per_source,
+                "analyzed_source_ids": analyzed,
+                "sources": [
+                    tracked[source_id]
+                    for source_id in source_ids
+                    if source_id in tracked
+                ],
+                "job_ids": job_ids,
+                "job_id": job_ids[0] if job_ids else None,
+                "pending_review_count": len(pending_ids),
             },
         )
-        job_id = None
-        try:
-            job = await get_job_repo().create_job(
-                organization_id,
-                job_type=f"sync_source:{source.type}",
-                source_id=source.id,
-                knowledge_base_id=source.knowledge_base_id,
-            )
-            await enqueue_knowledge_job(str(job.id))
-            job_id = str(job.id)
-            state["job_id"] = job_id
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("onboarding sync enqueue failed", error=str(exc)[:200])
         updated = await self._store.update(
             organization_id,
             session_id,
             status="REVIEW_REQUIRED",
             step="review",
+            catalog_source_id=catalog_source_id,
             state_json=state,
         )
         public = self.public(updated or row)
@@ -1390,12 +1670,14 @@ class DataOnboardingService:
         self,
         organization_id: UUID,
         session_id: UUID,
-        row: dict,
         understanding: dict,
+        *,
+        source_id: str | None = None,
     ) -> None:
         await self._catalog.ensure_tables()
         facts = understanding.get("facts") or []
-        source_id = row.get("kb_source_id")
+        if source_id is None:
+            source_id = understanding.get("source_id")
         if not facts or not source_id:
             return
         store = DocumentInsightsStore()
@@ -1438,14 +1720,15 @@ class DataOnboardingService:
         session_id: UUID,
         understanding: dict,
         row: dict,
-    ) -> None:
+        *,
+        source_id: str | None = None,
+        catalog_source_id: UUID | None = None,
+    ) -> UUID | None:
         await self._catalog.ensure_tables()
         columns = understanding.get("columns") or []
         entity_name = str(understanding.get("likely_entity") or "Dataset")
-        source_id = None
-        if row.get("catalog_source_id"):
-            source_id = UUID(str(row["catalog_source_id"]))
-        else:
+        scope_source_id = catalog_source_id
+        if scope_source_id is None:
             from src.infrastructure.postgres.relational_db import (
                 PostgresConnectorRepository,
             )
@@ -1457,21 +1740,22 @@ class DataOnboardingService:
                 workspace_id=_workspace_uuid(row),
                 config_json={"host": "file-virtual", "session_id": str(session_id)},
             )
+            kb_source_id = source_id or row.get("kb_source_id")
             src = await self._catalog.upsert_source(
                 organization_id=organization_id,
                 connector_id=connector.id,
-                kb_source_id=UUID(row["kb_source_id"]) if row.get("kb_source_id") else None,
+                kb_source_id=UUID(str(kb_source_id)) if kb_source_id else None,
                 engine="file",
                 workspace_id=_workspace_uuid(row),
             )
-            source_id = UUID(str(src["id"]))
+            scope_source_id = UUID(str(src["id"]))
             await self._store.update(
-                organization_id, session_id, catalog_source_id=source_id
+                organization_id, session_id, catalog_source_id=scope_source_id
             )
         table_name = str(understanding.get("filename") or "upload").split(".")[0][:80] or "upload"
         table_id, _ = await self._catalog.upsert_table(
             organization_id=organization_id,
-            source_id=source_id,
+            source_id=scope_source_id,
             schema_name="upload",
             table_name=table_name,
         )
@@ -1544,9 +1828,10 @@ class DataOnboardingService:
                     "session_id": str(session_id),
                 },
                 status=SuggestionStatus.PENDING,
-                affected_sources=[str(source_id)],
+                affected_sources=[str(scope_source_id)],
             )
             await self._catalog.create_suggestion(suggestion)
+        return scope_source_id
 
     async def _cheap_web_preview(self, url: str, host: str) -> dict:
         import httpx

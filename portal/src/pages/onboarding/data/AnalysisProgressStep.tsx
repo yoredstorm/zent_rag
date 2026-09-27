@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { WIZARD_STEP_HEADINGS } from "./types";
+import { WIZARD_STEP_HEADINGS, type ProgressFile } from "./types";
 import { analyzePercent, type AnalyzeGlimpse } from "./wizardUx";
 
 const IDLE_PHRASES = [
@@ -7,6 +7,15 @@ const IDLE_PHRASES = [
   "Buscando nombres y fechas…",
   "Separando lo importante…",
 ];
+
+function fileStatusLabel(file: ProgressFile): string {
+  const status = file.job_status;
+  if (status === "completed") return "Listo";
+  if (status === "failed" || status === "dead") return "Error";
+  if (typeof file.job_progress === "number") return `${file.job_progress}%`;
+  if (status === "running") return "Indexando…";
+  return "En cola";
+}
 
 export function AnalysisProgressStep({
   headline,
@@ -18,6 +27,7 @@ export function AnalysisProgressStep({
   ready,
   percent,
   glimpses = [],
+  files = [],
   status,
 }: {
   headline: string;
@@ -29,6 +39,7 @@ export function AnalysisProgressStep({
   ready: boolean;
   percent?: number;
   glimpses?: AnalyzeGlimpse[];
+  files?: ProgressFile[];
   status?: string | null;
 }) {
   const jobProgress =
@@ -92,6 +103,19 @@ export function AnalysisProgressStep({
             </span>
           ))}
         </div>
+      )}
+      {files.length > 0 && (
+        <ul className="mt-5 flex max-h-40 flex-col gap-1 overflow-y-auto text-xs" data-testid="analyze-files">
+          {files.map((file) => (
+            <li
+              key={`${file.filename}-${file.job_id ?? ""}`}
+              className="flex items-center justify-between gap-3"
+            >
+              <span className="min-w-0 truncate text-muted">{file.filename}</span>
+              <span className="mono shrink-0 text-faint">{fileStatusLabel(file)}</span>
+            </li>
+          ))}
+        </ul>
       )}
       <ul className="mt-6 space-y-1.5 text-xs text-faint">
         {phases.map((phase) => {

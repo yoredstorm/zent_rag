@@ -60,6 +60,35 @@ export type Suggestion = {
   confidence: string;
   evidence: string[];
   payload: Record<string, unknown>;
+  source_id?: string | null;
+  filename?: string | null;
+};
+
+/** Archivo del lote de la sesión (state.sources). */
+export type SessionFile = {
+  source_id: string;
+  filename?: string | null;
+  name?: string | null;
+  source_type?: string | null;
+  status?: string | null;
+  job_id?: string | null;
+};
+
+/** Estado de indexado por archivo (progress.technical_details.files). */
+export type ProgressFile = {
+  filename?: string | null;
+  job_id?: string | null;
+  job_status?: string | null;
+  job_progress?: number | null;
+};
+
+/** Resumen por archivo del lote (readiness.files). */
+export type ReadinessFile = {
+  source_id?: string | null;
+  filename?: string | null;
+  text_ok?: boolean | null;
+  facts_count?: number | null;
+  indexing?: number | null;
 };
 
 /** Hecho extraído de un documento (partes, fechas, montos, cláusulas). */
@@ -111,11 +140,22 @@ export type Understanding = {
 
 export type AnalyzeGlimpse = { id: string; text: string };
 
+export type ProgressDetails = {
+  status?: string;
+  step?: string;
+  job_id?: string | null;
+  job_ids?: string[];
+  job_status?: string | null;
+  job_progress?: number | null;
+  files?: ProgressFile[];
+  [key: string]: unknown;
+};
+
 export type ProgressPayload = {
   session: OnboardingSession;
   phases: Array<{ id: string; label: string; state: string }>;
   headline: string;
-  technical_details: Record<string, unknown>;
+  technical_details: ProgressDetails;
   percent?: number;
   glimpses?: AnalyzeGlimpse[];
 };
@@ -143,6 +183,7 @@ export type ReadinessPayload = {
   ready_actions?: ReadyAction[];
   flow?: OnboardingKind;
   tabular?: TabularReadiness;
+  files?: ReadinessFile[];
 };
 
 export const WIZARD_STEPS: { id: WizardStep; label: string }[] = [

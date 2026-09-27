@@ -195,24 +195,31 @@ async def connect_upload(
     session_id: UUID,
     request: Request,
     file: UploadFile = File(...),
+    force: bool = Query(
+        default=False,
+        description="Crear copia aunque exista otra fuente con el mismo nombre.",
+    ),
 ):
     ctx = require_permission(request, "sources:write")
     data = await file.read()
     try:
         result = await _svc.connect_upload(
-            ctx.organization_id,
+            ctx,
             session_id,
             filename=file.filename or "upload.bin",
             data=data,
-            created_by=ctx.user_id,
+            force=force,
         )
     except DataOnboardingError as exc:
         _handle(exc)
-    await _audit().write(
-        ctx, "data_onboarding.uploaded", "source",
-        UUID(result["kb_source_id"]) if result.get("kb_source_id") else session_id,
-        metadata={"filename": file.filename},
-    )
+    upload = result.get("upload") or {}
+    source_id = upload.get("source_id") or result.get("kb_source_id")
+    if upload.get("status") == "created":
+        await _audit().write(
+            ctx, "data_onboarding.uploaded", "source",
+            UUID(str(source_id)) if source_id else session_id,
+            metadata={"filename": file.filename, "job_id": upload.get("job_id")},
+        )
     return result
 
 
@@ -298,7 +305,7 @@ async def connect_drive_folder(session_id: UUID, body: DriveFolderBody, request:
 async def analyze(session_id: UUID, request: Request):
     ctx = _require_any(request, WRITE_PERMS)
     try:
-        result = await _svc.analyze(ctx.organization_id, session_id)
+        result = await _svc.analyze(ctx, session_id)
     except DataOnboardingError as exc:
         _handle(exc)
     return result

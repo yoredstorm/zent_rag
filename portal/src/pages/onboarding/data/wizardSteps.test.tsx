@@ -1,8 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { useState } from "react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
+import { mergeSelectedFiles, type UploadItem } from "../../../lib/uploadQueue";
 import { AnalysisProgressStep } from "./AnalysisProgressStep";
+import { FileUploadStep } from "./FileUploadStep";
 import { QuestionValidationStep } from "./QuestionValidationStep";
 import { ReadinessStep } from "./ReadinessStep";
 import { UnderstandingReviewStep } from "./UnderstandingReviewStep";
@@ -392,5 +395,133 @@ describe("wizard UI steps 3–6", () => {
       "href",
       "/knowledge/learning"
     );
+  });
+
+  it("Analizar lista el estado de cada archivo del lote", () => {
+    render(
+      <AnalysisProgressStep
+        headline="Zent está entendiendo tus datos"
+        phases={[{ id: "content", label: "Texto extraído", state: "active" }]}
+        showTech={false}
+        onToggleTech={() => {}}
+        onContinue={() => {}}
+        ready={false}
+        files={[
+          { filename: "contrato-a.pdf", job_id: "j1", job_status: "completed", job_progress: 100 },
+          { filename: "contrato-b.csv", job_id: "j2", job_status: "running", job_progress: 40 },
+          { filename: "contrato-c.txt", job_id: "j3", job_status: "queued" },
+        ]}
+      />
+    );
+    const list = screen.getByTestId("analyze-files");
+    expect(list).toHaveTextContent("contrato-a.pdf");
+    expect(list).toHaveTextContent("Listo");
+    expect(list).toHaveTextContent("contrato-b.csv");
+    expect(list).toHaveTextContent("40%");
+    expect(list).toHaveTextContent("En cola");
+  });
+
+  it("Revisar atribuye cada dato al archivo que lo aportó", () => {
+    render(
+      <MemoryRouter>
+        <UnderstandingReviewStep
+          understanding={{ flow: "documents", kind: "document" }}
+          suggestions={[
+            {
+              id: "s1",
+              type: "document_fact",
+              title: "Parte",
+              description: "Acme SpA",
+              confidence: "high",
+              evidence: ["Acme SpA"],
+              payload: { fact_type: "party", key: "party", value: "Acme SpA" },
+              source_id: "src-a",
+              filename: "contrato-a.txt",
+            },
+          ]}
+          onReview={() => {}}
+          onFreeText={() => {}}
+          onSkip={() => {}}
+          onAcceptAll={() => {}}
+          busy=""
+        />
+      </MemoryRouter>
+    );
+    expect(screen.getByTestId("digest-file-s1")).toHaveTextContent("contrato-a.txt");
+  });
+
+  it("Conectar acepta varios archivos, los lista y los sube de una vez", async () => {
+    const user = userEvent.setup();
+
+    function Harness() {
+      const [files, setFiles] = useState<File[]>([]);
+      const [items, setItems] = useState<UploadItem[]>([]);
+      return (
+        <FileUploadStep
+          onFiles={(incoming) => setFiles((prev) => mergeSelectedFiles(prev, incoming))}
+          files={files}
+          items={items}
+          onRemove={(file) => setFiles((prev) => prev.filter((f) => f !== file))}
+          onRetry={() => {}}
+          onClear={() => {
+            setFiles([]);
+            setItems([]);
+          }}
+          onSubmit={() =>
+            setItems(files.map((file) => ({ filename: file.name, status: "created" })))
+          }
+          busy={false}
+        />
+      );
+    }
+
+    render(<Harness />);
+    const input = screen.getByTestId("onboarding-file");
+    await user.upload(input, [
+      new File(["a"], "contrato-a.pdf", { type: "application/pdf" }),
+      new File(["b"], "contrato-b.txt", { type: "text/plain" }),
+    ]);
+
+    expect(screen.getByText("contrato-a.pdf")).toBeInTheDocument();
+    expect(screen.getByText("contrato-b.txt")).toBeInTheDocument();
+    const submit = screen.getByRole("button", { name: "Subir 2 archivos" });
+    await user.click(submit);
+
+    const results = screen.getByTestId("onboarding-upload-results");
+    expect(within(results).getAllByText("En cola de indexado")).toHaveLength(2);
+
+    await user.click(screen.getByRole("button", { name: `Quitar contrato-a.pdf` }));
+    expect(screen.getByRole("button", { name: "Subir e indexar" })).toBeInTheDocument();
+  });
+
+  it("Conectar muestra duplicados con salida al archivo existente", () => {
+    render(
+      <MemoryRouter>
+        <FileUploadStep
+          onFiles={() => {}}
+          files={[new File(["a"], "informe.txt", { type: "text/plain" })]}
+          items={[
+            {
+              filename: "informe.txt",
+              status: "duplicate",
+              existing_source_id: "src-9",
+              existing_name: "informe.txt",
+            },
+          ]}
+          onRemove={() => {}}
+          onRetry={() => {}}
+          onClear={() => {}}
+          onSubmit={() => {}}
+          busy={false}
+        />
+      </MemoryRouter>
+    );
+    const results = screen.getByTestId("onboarding-upload-results");
+    expect(within(results).getByText("Ya existe")).toBeInTheDocument();
+    expect(within(results).getByRole("link", { name: "Abrir existente" })).toHaveAttribute(
+      "href",
+      "/knowledge/sources/src-9"
+    );
+    expect(within(results).getByRole("button", { name: "Subir igual" })).toBeInTheDocument();
   });
 });

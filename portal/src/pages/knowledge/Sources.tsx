@@ -2,11 +2,16 @@ import { ArrowsClockwise, Database, MagnifyingGlass, Plus, Trash, X } from "@pho
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
-import { isApiError } from "../../lib/errors";
 import { useAuth } from "../../auth";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { FileDropzone } from "../../components/FileDropzone";
+import { SelectedFilesList, UploadResultsList } from "../../components/UploadQueueList";
 import { SourceUsageWarning, useSourceUsage } from "../../components/SourceUsageWarning";
+import {
+  mergeSelectedFiles,
+  uploadErrorMessage,
+  type UploadItem,
+} from "../../lib/uploadQueue";
 import {
   Badge,
   Button,
@@ -41,33 +46,7 @@ const SOURCE_TYPES = ["sql", "web", "s3", "api", "gdrive"] as const;
 
 type SourceType = (typeof SOURCE_TYPES)[number];
 
-type UploadItem = {
-  filename: string;
-  status: "created" | "duplicate" | "rejected" | "error";
-  source_id?: string | null;
-  job_id?: string | null;
-  name?: string | null;
-  error?: string | null;
-  existing_source_id?: string | null;
-  existing_name?: string | null;
-};
-
-const UPLOAD_STATUS_LABEL: Record<UploadItem["status"], string> = {
-  created: "En cola de indexado",
-  duplicate: "Ya existe",
-  rejected: "Rechazado",
-  error: "Error",
-};
-
-const MAX_UPLOAD_MB = 25;
 const PAGE_SIZE = 25;
-
-function uploadErrorMessage(err: unknown): string {
-  if (isApiError(err) && err.status === 413) {
-    return `Supera el máximo por archivo (${MAX_UPLOAD_MB} MB). Prueba con uno más chico.`;
-  }
-  return err instanceof Error ? err.message : "Error al subir";
-}
 
 /** Sube UN archivo por request: evita el 413 por suma de tamaños del lote. */
 async function uploadSingleFile(
@@ -356,10 +335,7 @@ export default function KnowledgeSourcesPage() {
     const incoming = Array.from(list);
     if (incoming.length === 0) return;
     setUploadItems([]);
-    setUploadFiles((prev) => {
-      const seen = new Set(prev.map((f) => `${f.name}:${f.size}`));
-      return [...prev, ...incoming.filter((f) => !seen.has(`${f.name}:${f.size}`))];
-    });
+    setUploadFiles((prev) => mergeSelectedFiles(prev, incoming));
   }
 
   async function uploadAll(force: boolean) {
@@ -601,28 +577,12 @@ export default function KnowledgeSourcesPage() {
                 dropzoneTestId="source-dropzone"
               />
 
-              {uploadFiles.length > 0 && (
-                <ul className="flex max-h-48 flex-col gap-1 overflow-y-auto">
-                  {uploadFiles.map((item) => (
-                    <li
-                      key={`${item.name}-${item.size}`}
-                      className="flex flex-wrap items-center gap-2 rounded-sm bg-soft px-2.5 py-1.5 text-[12.5px] text-text"
-                    >
-                      <span className="min-w-0 flex-1 truncate">{item.name}</span>
-                      <span className="text-[11px] text-faint">
-                        {Math.max(1, Math.round(item.size / 1024))} KB
-                      </span>
-                      <IconButton
-                        label={`Quitar ${item.name}`}
-                        icon={X}
-                        onClick={() =>
-                          setUploadFiles((prev) => prev.filter((f) => f !== item))
-                        }
-                      />
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <SelectedFilesList
+                files={uploadFiles}
+                onRemove={(file) =>
+                  setUploadFiles((prev) => prev.filter((f) => f !== file))
+                }
+              />
 
               <div className="flex flex-wrap items-center gap-2">
                 <Button
@@ -656,53 +616,11 @@ export default function KnowledgeSourcesPage() {
                 Después puedes marcarla en Agent Studio.
               </p>
 
-              {uploadItems.length > 0 && (
-                <ul className="flex max-h-48 flex-col gap-1.5 overflow-y-auto" data-testid="upload-results">
-                  {uploadItems.map((item) => (
-                    <li
-                      key={item.filename}
-                      className="flex flex-wrap items-center gap-2 rounded-sm border border-border-soft px-2.5 py-2 text-[12.5px]"
-                    >
-                      <span className="min-w-0 flex-1 truncate text-text">
-                        {item.name || item.filename}
-                      </span>
-                      <span
-                        className={
-                          item.status === "created"
-                            ? "text-ok"
-                            : item.status === "duplicate"
-                              ? "text-warn"
-                              : "text-danger"
-                        }
-                      >
-                        {UPLOAD_STATUS_LABEL[item.status]}
-                      </span>
-                      {item.status === "duplicate" && item.existing_source_id && (
-                        <>
-                          <ButtonLink
-                            to={`/knowledge/sources/${item.existing_source_id}`}
-                            variant="secondary"
-                          >
-                            Abrir existente
-                          </ButtonLink>
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            loading={retrying === item.filename}
-                            onClick={() => void retryUpload(item)}
-                          >
-                            Subir igual
-                          </Button>
-                        </>
-                      )}
-                      {(item.status === "rejected" || item.status === "error") &&
-                        item.error && (
-                          <span className="text-[11px] text-danger">{item.error}</span>
-                        )}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <UploadResultsList
+                items={uploadItems}
+                retrying={retrying}
+                onRetry={(item) => void retryUpload(item)}
+              />
 
               <div>
                 <Button variant="ghost" size="sm" onClick={() => setAdvanced((v) => !v)}>

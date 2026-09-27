@@ -7,6 +7,13 @@ import { WarningInline } from "../../../components/ui/states";
 import { KnowledgeLayout } from "../../../components/KnowledgeLayout";
 import { KNOWLEDGE_HEADINGS } from "../../../lib/knowledgeNav";
 import { Stepper } from "../../../components/Stepper";
+import {
+  MAX_UPLOAD_MB,
+  isOversized,
+  mergeSelectedFiles,
+  uploadErrorMessage,
+  type UploadItem,
+} from "../../../lib/uploadQueue";
 import { AnalysisProgressStep } from "./AnalysisProgressStep";
 import { ApiStep } from "./ApiStep";
 import { DatabaseConnectionStep } from "./DatabaseConnectionStep";
@@ -55,6 +62,10 @@ export default function OnboardingWizardPage() {
   const [dbResult, setDbResult] = useState<OnboardingSession["connection"]>();
   const [apiResult, setApiResult] = useState<OnboardingSession["connection"]>();
   const [uiStep, setUiStep] = useState<WizardStep>("choose");
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const [uploadItems, setUploadItems] = useState<UploadItem[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [retrying, setRetrying] = useState("");
 
   const load = useCallback(
     async (id: string) => {
@@ -180,25 +191,100 @@ export default function OnboardingWizardPage() {
     }
   }
 
-  async function uploadFile(file: File) {
-    if (!session || !current) return;
-    setBusy(true);
-    setError("");
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const data = await api<OnboardingSession>(`${API}/sessions/${current.id}/connect/upload`, {
+  function addUploadFiles(list: FileList | File[]) {
+    const incoming = Array.from(list);
+    if (incoming.length === 0) return;
+    const oversized = incoming.filter(isOversized);
+    if (oversized.length > 0) {
+      setError(
+        oversized.length === 1
+          ? `${oversized[0].name} supera el máximo por archivo (${MAX_UPLOAD_MB} MB).`
+          : `${oversized.length} archivos superan el máximo por archivo (${MAX_UPLOAD_MB} MB).`,
+      );
+    } else {
+      setError("");
+    }
+    const valid = incoming.filter((file) => !isOversized(file));
+    if (valid.length === 0) return;
+    setUploadItems([]);
+    setUploadFiles((prev) => mergeSelectedFiles(prev, valid));
+  }
+
+  async function uploadSingle(file: File, force: boolean): Promise<UploadItem> {
+    if (!session || !current) {
+      return { filename: file.name, status: "error", error: "Sesión no disponible" };
+    }
+    const form = new FormData();
+    form.append("file", file);
+    const query = force ? "?force=true" : "";
+    const data = await api<OnboardingSession & { upload?: UploadItem }>(
+      `${API}/sessions/${current.id}/connect/upload${query}`,
+      {
         method: "POST",
         token: session.token,
         organizationId: session.organizationId,
         body: form,
-      });
-      setCurrent(data);
-      setUiStep("analyze");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Error");
+      },
+    );
+    setCurrent(data);
+    return (
+      data.upload ?? {
+        filename: file.name,
+        status: "error",
+        error: "El servidor no devolvió resultado para el archivo.",
+      }
+    );
+  }
+
+  async function uploadAll() {
+    if (!session || !current || uploadFiles.length === 0) return;
+    setUploading(true);
+    setError("");
+    const results: UploadItem[] = [];
+    let created = 0;
+    try {
+      for (const file of uploadFiles) {
+        try {
+          const item = await uploadSingle(file, false);
+          results.push(item);
+          if (item.status === "created") created += 1;
+        } catch (e) {
+          results.push({
+            filename: file.name,
+            status: "error",
+            error: uploadErrorMessage(e),
+          });
+        }
+        setUploadItems([...results]);
+      }
+      const failed = new Set(
+        results.filter((item) => item.status !== "created").map((item) => item.filename),
+      );
+      setUploadFiles((prev) => prev.filter((file) => failed.has(file.name)));
+      if (created > 0) await runAnalyze();
     } finally {
-      setBusy(false);
+      setUploading(false);
+    }
+  }
+
+  async function retryUpload(item: UploadItem) {
+    const file = uploadFiles.find((f) => f.name === item.filename);
+    if (!file) return;
+    setRetrying(item.filename);
+    setError("");
+    try {
+      const result = await uploadSingle(file, true);
+      setUploadItems((prev) =>
+        prev.map((i) => (i.filename === item.filename ? result : i)),
+      );
+      if (result.status === "created") {
+        setUploadFiles((prev) => prev.filter((f) => f !== file));
+        await runAnalyze();
+      }
+    } catch (e) {
+      setError(uploadErrorMessage(e));
+    } finally {
+      setRetrying("");
     }
   }
 
@@ -464,11 +550,22 @@ export default function OnboardingWizardPage() {
       {current && uiStep === "connect" && (kind === "documents" || kind === "spreadsheets") && (
         <>
           <FileUploadStep
-            onFile={uploadFile}
-            busy={busy}
-            filename={typeof current.state.filename === "string" ? current.state.filename : undefined}
+            onFiles={addUploadFiles}
+            files={uploadFiles}
+            items={uploadItems}
+            onRemove={(file) =>
+              setUploadFiles((prev) => prev.filter((f) => f !== file))
+            }
+            onRetry={(item) => void retryUpload(item)}
+            onClear={() => {
+              setUploadFiles([]);
+              setUploadItems([]);
+            }}
+            onSubmit={() => void uploadAll()}
+            busy={uploading}
+            retrying={retrying}
           />
-          {current.kb_source_id && (
+          {current.kb_source_id && !uploading && (
             <button type="button" className="btn btn-primary mt-4" onClick={runAnalyze}>
               Continuar
             </button>
@@ -559,6 +656,7 @@ export default function OnboardingWizardPage() {
           ready={analyzeReady}
           percent={progress?.percent}
           glimpses={progress?.glimpses}
+          files={progress?.technical_details?.files ?? []}
           status={current?.status}
         />
       )}

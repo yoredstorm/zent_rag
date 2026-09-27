@@ -46,7 +46,17 @@ function DigestRow({
         onClick={onToggle}
         aria-expanded={expanded}
       >
-        <span className="text-sm text-muted">{item.title}</span>
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm text-muted">{item.title}</span>
+          {item.filename && (
+            <span
+              className="mono shrink-0 rounded-sm bg-soft px-1.5 py-0.5 text-[10px] text-faint"
+              data-testid={`digest-file-${item.id}`}
+            >
+              {item.filename}
+            </span>
+          )}
+        </span>
         <span className="text-sm font-medium text-text">{value || "—"}</span>
       </button>
       {expanded && (

@@ -812,3 +812,211 @@ async def test_gate_empty_for_new_org(async_client: AsyncClient) -> None:
     body = gate.json()
     assert body["has_real_data"] is False
     assert body["resume_session_id"] is None
+
+
+async def _upload_file(
+    client: AsyncClient,
+    headers: dict,
+    session_id: str,
+    filename: str,
+    data: bytes,
+    *,
+    force: bool = False,
+    content_type: str = "text/plain",
+):
+    query = "?force=true" if force else ""
+    return await client.post(
+        f"{PREFIX}/sessions/{session_id}/connect/upload{query}",
+        headers={k: v for k, v in headers.items() if k != "Content-Type"},
+        files={"file": (filename, BytesIO(data), content_type)},
+    )
+
+
+@pytest.mark.asyncio
+async def test_batch_upload_accumulates_sources_and_jobs(
+    async_client: AsyncClient,
+) -> None:
+    org = await _create_org(async_client, "Batch Co")
+    headers = await _owner_headers(org)
+    created = await async_client.post(
+        f"{PREFIX}/sessions", headers=headers, json={"kind": "documents"}
+    )
+    sid = created.json()["id"]
+
+    first = await _upload_file(
+        async_client, headers, sid, "contrato-a.txt", _CONTRACT_TXT.encode("utf-8")
+    )
+    assert first.status_code == 200, first.text
+    first_body = first.json()
+    assert first_body["upload"]["status"] == "created"
+    assert first_body["upload"]["source_id"]
+    assert first_body["upload"]["job_id"]
+    assert first_body["state"]["source_ids"] == [first_body["upload"]["source_id"]]
+
+    second = await _upload_file(
+        async_client, headers, sid, "contrato-b.txt", _CONTRACT_TXT.encode("utf-8")
+    )
+    assert second.status_code == 200, second.text
+    body = second.json()
+    state = body["state"]
+    assert len(state["source_ids"]) == 2
+    assert state["source_ids"][0] == first_body["upload"]["source_id"]
+    assert body["kb_source_id"] == first_body["kb_source_id"]
+    assert len(state["job_ids"]) == 2
+    assert [item["filename"] for item in state["sources"]] == [
+        "contrato-a.txt",
+        "contrato-b.txt",
+    ]
+    assert state["sources"][0]["job_id"] == first_body["upload"]["job_id"]
+
+
+@pytest.mark.asyncio
+async def test_batch_upload_duplicate_then_force_creates_copy(
+    async_client: AsyncClient,
+) -> None:
+    org = await _create_org(async_client, "Dup Batch Co")
+    headers = await _owner_headers(org)
+    created = await async_client.post(
+        f"{PREFIX}/sessions", headers=headers, json={"kind": "documents"}
+    )
+    sid = created.json()["id"]
+
+    first = await _upload_file(
+        async_client, headers, sid, "informe.txt", _CONTRACT_TXT.encode("utf-8")
+    )
+    assert first.status_code == 200, first.text
+    first_body = first.json()
+
+    duplicate = await _upload_file(
+        async_client, headers, sid, "informe.txt", _CONTRACT_TXT.encode("utf-8")
+    )
+    assert duplicate.status_code == 200, duplicate.text
+    dup_body = duplicate.json()
+    assert dup_body["upload"]["status"] == "duplicate"
+    assert dup_body["upload"]["existing_source_id"] == first_body["kb_source_id"]
+    assert len(dup_body["state"]["source_ids"]) == 1
+
+    forced = await _upload_file(
+        async_client,
+        headers,
+        sid,
+        "informe.txt",
+        _CONTRACT_TXT.encode("utf-8"),
+        force=True,
+    )
+    assert forced.status_code == 200, forced.text
+    forced_body = forced.json()
+    assert forced_body["upload"]["status"] == "created"
+    assert forced_body["upload"]["name"] != first_body["upload"]["name"]
+    assert len(forced_body["state"]["source_ids"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_batch_analyze_covers_every_file(async_client: AsyncClient) -> None:
+    org = await _create_org(async_client, "Batch Analyze Co")
+    headers = await _owner_headers(org)
+    created = await async_client.post(
+        f"{PREFIX}/sessions", headers=headers, json={"kind": "documents"}
+    )
+    sid = created.json()["id"]
+    for name in ("contrato-a.txt", "contrato-b.txt"):
+        uploaded = await _upload_file(
+            async_client, headers, sid, name, _CONTRACT_TXT.encode("utf-8")
+        )
+        assert uploaded.status_code == 200, uploaded.text
+
+    analyzed = await async_client.post(
+        f"{PREFIX}/sessions/{sid}/analyze", headers=headers
+    )
+    assert analyzed.status_code == 200, analyzed.text
+    understanding = analyzed.json()["understanding"]
+    assert understanding["filename"] == "2 archivos"
+    assert len(understanding["sources"]) == 2
+    assert {fact["filename"] for fact in understanding["facts"]} == {
+        "contrato-a.txt",
+        "contrato-b.txt",
+    }
+
+    got = await async_client.get(
+        f"{PREFIX}/sessions/{sid}/understanding", headers=headers
+    )
+    assert got.status_code == 200, got.text
+    suggestions = got.json().get("suggestions") or []
+    assert suggestions, "ambos documentos deben producir datos revisables"
+    assert {item["filename"] for item in suggestions} == {
+        "contrato-a.txt",
+        "contrato-b.txt",
+    }
+
+    progress = await async_client.get(
+        f"{PREFIX}/sessions/{sid}/progress", headers=headers
+    )
+    assert progress.status_code == 200, progress.text
+    files = progress.json()["technical_details"]["files"]
+    assert [item["filename"] for item in files] == ["contrato-a.txt", "contrato-b.txt"]
+    assert all(item["job_id"] for item in files)
+
+    readiness = await async_client.get(
+        f"{PREFIX}/sessions/{sid}/readiness", headers=headers
+    )
+    assert readiness.status_code == 200, readiness.text
+    rbody = readiness.json()
+    assert [item["filename"] for item in rbody["files"]] == [
+        "contrato-a.txt",
+        "contrato-b.txt",
+    ]
+    assert rbody["pending_review_count"] == len(suggestions)
+
+    accepted = await async_client.post(
+        f"{PREFIX}/sessions/{sid}/accept-review", headers=headers
+    )
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["approved"] == len(suggestions)
+
+    leftover = await async_client.get(
+        f"{PREFIX}/sessions/{sid}/understanding", headers=headers
+    )
+    assert leftover.json().get("suggestions") == []
+
+
+@pytest.mark.asyncio
+async def test_batch_upload_caps_files_per_session(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "src.platform.data_onboarding.service._MAX_SESSION_FILES", 2
+    )
+    org = await _create_org(async_client, "Cap Co")
+    headers = await _owner_headers(org)
+    created = await async_client.post(
+        f"{PREFIX}/sessions", headers=headers, json={"kind": "documents"}
+    )
+    sid = created.json()["id"]
+
+    for name in ("cap-a.txt", "cap-b.txt"):
+        uploaded = await _upload_file(
+            async_client, headers, sid, name, b"contenido\n"
+        )
+        assert uploaded.status_code == 200, uploaded.text
+    overflow = await _upload_file(
+        async_client, headers, sid, "cap-c.txt", b"contenido\n"
+    )
+    assert overflow.status_code == 422, overflow.text
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_file_over_25mb(async_client: AsyncClient) -> None:
+    org = await _create_org(async_client, "Too Big Co")
+    headers = await _owner_headers(org)
+    created = await async_client.post(
+        f"{PREFIX}/sessions", headers=headers, json={"kind": "documents"}
+    )
+    sid = created.json()["id"]
+    oversized = await _upload_file(
+        async_client,
+        headers,
+        sid,
+        "enorme.txt",
+        b"a" * (25 * 1024 * 1024 + 1),
+    )
+    assert oversized.status_code == 413, oversized.text
