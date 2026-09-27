@@ -66,7 +66,7 @@ class SelfPurgeService:
     # -------------------------------------------------------------------------
 
     def allowed_emails(self) -> frozenset[str]:
-        raw = get_settings().RAG_SELF_PURGE_EMAILS or ""
+        raw = get_settings().SELF_PURGE_EMAILS or ""
         return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
 
     def allowed(self, email: str | None) -> bool:

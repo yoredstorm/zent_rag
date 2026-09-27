@@ -92,7 +92,7 @@ async def test_status_hidden_and_blocked_without_allowlist(
     async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     org = await _create_org(async_client, "Self Purge Off")
-    monkeypatch.setattr(get_settings(), "RAG_SELF_PURGE_EMAILS", "")
+    monkeypatch.setattr(get_settings(), "SELF_PURGE_EMAILS", "")
     token = _session_for(org["organization_id"], org["owner_id"], fresh=True)
 
     status = await async_client.get(
@@ -121,7 +121,7 @@ async def test_step_up_required_and_confirmation_mismatch(
 ) -> None:
     org = await _create_org(async_client, "Self Purge Guard")
     monkeypatch.setattr(
-        get_settings(), "RAG_SELF_PURGE_EMAILS", org["owner_email"]
+        get_settings(), "SELF_PURGE_EMAILS", org["owner_email"]
     )
 
     stale = _session_for(org["organization_id"], org["owner_id"], fresh=False)
@@ -154,7 +154,7 @@ async def test_self_purge_wipes_org_and_keeps_identity(
     await seed_fare_audit_demo(UUID(org["organization_id"]), with_learning=False)
     await seed_fare_audit_demo(UUID(other["organization_id"]), with_learning=False)
     monkeypatch.setattr(
-        get_settings(), "RAG_SELF_PURGE_EMAILS", org["owner_email"]
+        get_settings(), "SELF_PURGE_EMAILS", org["owner_email"]
     )
 
     assert await _count("company_entities", org["organization_id"]) > 0
