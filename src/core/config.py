@@ -388,17 +388,6 @@ class Settings(BaseSettings):
         le=86400,
         description="Intervalo del worker de descubrimiento cuando no hay jobs.",
     )
-    # -------------------------------------------------------------------------
-    # Self Purge (borrado total self-service)
-    # -------------------------------------------------------------------------
-    RAG_SELF_PURGE_EMAILS: str = Field(
-        default="",
-        description=(
-            "CSV de emails autorizados para el borrado total self-service de su "
-            "organización (conserva usuario, membresía, organización y suscripción). "
-            "Vacío = funcionalidad deshabilitada."
-        ),
-    )
     RAG_CATALOG_MAX_QUERY_SECONDS: float = Field(default=10.0, ge=1.0, le=120.0)
     RAG_CATALOG_MAX_SCAN_COST: int = Field(
         default=500,

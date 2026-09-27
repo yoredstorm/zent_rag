@@ -687,9 +687,6 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     new_app.include_router(deployments_router)
     new_app.include_router(workspaces_router)
     new_app.include_router(demo_transition_router)
-    from src.api.routes.self_purge import router as self_purge_router
-
-    new_app.include_router(self_purge_router)
     new_app.include_router(managed_db_router)
     new_app.include_router(training_router)
     new_app.include_router(eval_router)
