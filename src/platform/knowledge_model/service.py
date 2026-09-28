@@ -185,6 +185,7 @@ class KnowledgeModelService:
             )
 
         domains_with_objects = [d for d in domains if d["objects"] > 0]
+        indexed = stats["indexed"]
         state = KnowledgeState.EMPTY.value
         if objects["total"] > 0:
             overall = health.overall
@@ -193,11 +194,15 @@ class KnowledgeModelService:
                 if overall is not None and overall >= 75 and stats["conflicts"]["open"] == 0
                 else KnowledgeState.PARTIAL.value
             )
-        headline = (
-            "Zent todavía no tiene conocimiento de tu negocio."
-            if state == KnowledgeState.EMPTY.value
-            else f"Zent entiende {len(domains_with_objects)} área(s) de tu negocio"
-        )
+        if state != KnowledgeState.EMPTY.value:
+            headline = f"Zent entiende {len(domains_with_objects)} área(s) de tu negocio"
+        elif indexed["documents"] > 0:
+            headline = (
+                f"Zent indexó {indexed['documents']} documento(s) de "
+                f"{indexed['sources']} fuente(s); todavía no tiene modelo de negocio."
+            )
+        else:
+            headline = "Zent todavía no tiene conocimiento de tu negocio."
         return {
             "state": state,
             "headline": headline,
@@ -214,6 +219,8 @@ class KnowledgeModelService:
                 "evidence": stats["evidence"]["total"],
                 "edges": stats["edges"]["total"],
                 "sources": stats["sources"]["total"],
+                "indexed_sources": indexed["sources"],
+                "indexed_documents": indexed["documents"],
                 "by_type": stats["by_kind"],
             },
             "recent": activity,

@@ -464,6 +464,46 @@ async def test_api_materialize_explore_and_verify(async_client) -> None:
     assert graph.json()["nodes"], "el grafo se deriva del modelo, no de un dataset paralelo"
 
 
+async def test_overview_reports_indexed_documents_without_model(async_client) -> None:
+    """Archivos indexados sin objetos: el estado sigue vacío, pero con conteos reales."""
+    auth = await _trial_auth(async_client)
+    org = UUID(auth["X-Organization-Id"])
+    source_id = uuid4()
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                """
+                INSERT INTO kb_sources (id, organization_id, name, type, status)
+                VALUES (:sid, :org, 'Tbl978_dapp_C.pdf', 'file', 'indexed')
+                """
+            ),
+            {"sid": source_id, "org": org},
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO source_documents (
+                    organization_id, source_id, external_id, document_id, content_hash
+                ) VALUES (:org, :sid, 'doc-1', :doc, 'hash-1')
+                """
+            ),
+            {"org": org, "sid": source_id, "doc": uuid4()},
+        )
+        await session.commit()
+    finally:
+        await session.close()
+
+    overview = await async_client.get("/api/v1/knowledge/overview", headers=auth)
+    assert overview.status_code == 200, overview.text
+    payload = overview.json()
+    assert payload["state"] == "empty"
+    assert payload["counts"]["objects"] == 0
+    assert payload["counts"]["indexed_sources"] == 1
+    assert payload["counts"]["indexed_documents"] == 1
+    assert "todavía no tiene modelo de negocio" in payload["headline"]
+
+
 async def test_rebuild_and_verify_require_privileged_permission(async_client) -> None:
     """Gobernanza: un API token estándar no reconstruye ni verifica conocimiento."""
     auth = await _trial_auth(async_client)

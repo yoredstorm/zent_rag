@@ -1640,6 +1640,21 @@ class PostgresKnowledgeModelRepository:
                     {"org": organization_id, "days": _STALE_DAYS_DEFAULT},
                 )
             ).first()
+            indexed = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT
+                            (SELECT COUNT(*) FROM kb_sources
+                             WHERE organization_id = :org) AS sources,
+                            (SELECT COUNT(*) FROM source_documents
+                             WHERE organization_id = :org
+                               AND status = 'active') AS documents
+                        """
+                    ),
+                    {"org": organization_id},
+                )
+            ).first()
             kinds = {
                 normalize_object_type(r.kind): {
                     "total": int(r.total or 0),
@@ -1687,6 +1702,10 @@ class PostgresKnowledgeModelRepository:
                     "total": int(sources.total or 0),
                     "degraded": int(sources.degraded or 0),
                     "stale": int(sources.stale or 0),
+                },
+                "indexed": {
+                    "sources": int(indexed.sources or 0),
+                    "documents": int(indexed.documents or 0),
                 },
             }
         finally:

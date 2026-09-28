@@ -95,6 +95,8 @@ function overviewFixture(patch: Partial<KnowledgeOverview> = {}): KnowledgeOverv
       evidence: 30,
       edges: 18,
       sources: 2,
+      indexed_sources: 0,
+      indexed_documents: 0,
       by_type: {},
     },
     recent: [],
@@ -167,6 +169,8 @@ describe("KnowledgeOverviewPage", () => {
           evidence: 0,
           edges: 0,
           sources: 0,
+          indexed_sources: 0,
+          indexed_documents: 0,
           by_type: {},
         },
         domains: [],
@@ -182,5 +186,50 @@ describe("KnowledgeOverviewPage", () => {
     expect(
       screen.getAllByRole("link", { name: "Añadir fuente" }).length
     ).toBeGreaterThanOrEqual(1);
+  });
+
+  it("con documentos indexados y sin modelo no dice que no hay conocimiento", async () => {
+    fetchKnowledgeOverview.mockResolvedValue(
+      overviewFixture({
+        state: "empty",
+        headline:
+          "Zent indexó 10916 documento(s) de 70 fuente(s); todavía no tiene modelo de negocio.",
+        counts: {
+          objects: 0,
+          verified: 0,
+          inferred: 0,
+          discovered: 0,
+          assertions: 0,
+          evidence: 0,
+          edges: 0,
+          sources: 0,
+          indexed_sources: 70,
+          indexed_documents: 10916,
+          by_type: {},
+        },
+        domains: [],
+        attention: [],
+      })
+    );
+    renderPage();
+    await waitFor(() =>
+      expect(
+        screen.getByText("Tus archivos están indexados; falta el modelo de negocio")
+      ).toBeInTheDocument()
+    );
+    expect(
+      screen.getAllByText(/10916 documento\(s\) de 70 fuente\(s\)/).length
+    ).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.queryByText("Zent todavía no tiene conocimiento de tu negocio")
+    ).toBeNull();
+    expect(screen.getByRole("link", { name: "Ver fuentes" })).toHaveAttribute(
+      "href",
+      "/knowledge/sources"
+    );
+    expect(screen.getByRole("link", { name: "Ver documentos" })).toHaveAttribute(
+      "href",
+      "/knowledge/documents"
+    );
   });
 });

@@ -167,21 +167,39 @@ export default function KnowledgeOverviewPage() {
 
       {!loading && !error && overview && overview.state === "empty" && (
         <Panel>
-          <EmptyState
-            icon={Database}
-            title="Zent todavía no tiene conocimiento de tu negocio"
-            body="Conecta una fuente (base de datos, PDF, Excel o API) y Zent construirá entidades, relaciones, reglas y métricas verificables."
-            action={
-              <ButtonLink to="/knowledge/add" variant="primary" leadingIcon={Plus}>
-                Añadir fuente
-              </ButtonLink>
-            }
-            secondaryAction={
-              <ButtonLink to="/knowledge/sources" variant="secondary">
-                Ver fuentes
-              </ButtonLink>
-            }
-          />
+          {overview.counts.indexed_documents > 0 ? (
+            <EmptyState
+              icon={Database}
+              title="Tus archivos están indexados; falta el modelo de negocio"
+              body={`Zent indexó ${overview.counts.indexed_documents} documento(s) de ${overview.counts.indexed_sources} fuente(s) y los usa para buscar y responder. El modelo de negocio (entidades, relaciones, reglas y métricas) se construye desde fuentes estructuradas: una base de datos SQL o el catálogo de Excel/CSV.`}
+              action={
+                <ButtonLink to="/knowledge/sources" variant="primary">
+                  Ver fuentes
+                </ButtonLink>
+              }
+              secondaryAction={
+                <ButtonLink to="/knowledge/documents" variant="secondary">
+                  Ver documentos
+                </ButtonLink>
+              }
+            />
+          ) : (
+            <EmptyState
+              icon={Database}
+              title="Zent todavía no tiene conocimiento de tu negocio"
+              body="Conecta una base de datos SQL y Zent construirá entidades, relaciones, reglas y métricas verificables. Los archivos (PDF, Excel) se indexan para búsqueda."
+              action={
+                <ButtonLink to="/knowledge/add" variant="primary" leadingIcon={Plus}>
+                  Añadir fuente
+                </ButtonLink>
+              }
+              secondaryAction={
+                <ButtonLink to="/knowledge/sources" variant="secondary">
+                  Ver fuentes
+                </ButtonLink>
+              }
+            />
+          )}
         </Panel>
       )}
 
