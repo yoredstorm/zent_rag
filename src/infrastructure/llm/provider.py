@@ -39,10 +39,24 @@ litellm.drop_params = True  # Ignora params no soportados por el modelo destino
 litellm.num_retries = _settings.LITELLM_MAX_RETRIES
 
 
-def _get_llm_kwargs() -> dict:
-    """Construye kwargs para LiteLLM desde Settings."""
+def _get_llm_kwargs(model_name: str | None = None) -> dict:
+    """Construye kwargs para LiteLLM desde Settings.
+
+    El modelo de fallback puede vivir en otro proveedor: si coincide con
+    `GATEWAY_FALLBACK_MODEL` y tiene key propia, usa su base y su key.
+    """
     settings = get_settings()
-    kwargs: dict = {}
+    if (
+        model_name
+        and model_name == settings.GATEWAY_FALLBACK_MODEL
+        and settings.GATEWAY_FALLBACK_API_KEY is not None
+        and settings.GATEWAY_FALLBACK_API_KEY.get_secret_value()
+    ):
+        kwargs: dict = {"api_key": settings.GATEWAY_FALLBACK_API_KEY.get_secret_value()}
+        if settings.GATEWAY_FALLBACK_API_BASE:
+            kwargs["api_base"] = settings.GATEWAY_FALLBACK_API_BASE
+        return kwargs
+    kwargs = {}
     if settings.LITELLM_API_BASE:
         kwargs["api_base"] = settings.LITELLM_API_BASE
     if settings.LITELLM_API_KEY:
@@ -208,7 +222,7 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
     ) -> LLMResponse:
         settings = get_settings()
         model_name = model or settings.LITELLM_DEFAULT_MODEL
-        llm_kwargs = _get_llm_kwargs()
+        llm_kwargs = _get_llm_kwargs(model_name)
 
         messages: list[dict[str, str]] = []
         if system_prompt:
@@ -282,8 +296,7 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
         from src.infrastructure.llm.router import resolve_route
 
         settings = get_settings()
-        model_name = resolve_route(requested=model).primary
-        llm_kwargs = _get_llm_kwargs()
+        candidates = resolve_route(requested=model).candidates()
 
         messages: list[dict[str, str]] = []
         if system_prompt:
@@ -291,73 +304,80 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
         messages.append({"role": "user", "content": prompt})
 
         start = time.perf_counter()
-        try:
-            response = await _circuit_breaker.call(
-                "generate",
-                acompletion,
-                model=model_name,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                timeout=settings.LITELLM_TIMEOUT_SECONDS,
-                stream=True,
-                stream_options={"include_usage": True},
-                **llm_kwargs,
-            )
-        except CircuitBreakerOpenError:
-            logger.warning(
-                "LLM streaming generation rejected by circuit breaker (circuit is OPEN)",
-                model=model_name,
-            )
-            raise
-        except Exception as exc:
-            logger.error(
-                "LLM streaming generation failed to start",
-                model=model_name,
-                error=str(exc),
-                exc_info=True,
-            )
-            raise
+        for attempt, model_name in enumerate(candidates):
+            llm_kwargs = _get_llm_kwargs(model_name)
+            content_parts: list[str] = []
+            usage = litellm.Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
+            finish_reason = "stop"
+            emitted = False
+            try:
+                response = await _circuit_breaker.call(
+                    "generate",
+                    acompletion,
+                    model=model_name,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    timeout=settings.LITELLM_TIMEOUT_SECONDS,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                    **llm_kwargs,
+                )
+                async for chunk in response:
+                    choices = chunk.choices or []
+                    if choices:
+                        delta = choices[0].delta
+                        piece = getattr(delta, "content", None) or ""
+                        if piece:
+                            content_parts.append(piece)
+                            emitted = True
+                            yield {"type": "delta", "text": piece}
+                        if choices[0].finish_reason:
+                            finish_reason = str(choices[0].finish_reason)
+                    chunk_usage = getattr(chunk, "usage", None)
+                    if chunk_usage is not None:
+                        usage = chunk_usage
+            except CircuitBreakerOpenError:
+                logger.warning(
+                    "LLM streaming generation rejected by circuit breaker (circuit is OPEN)",
+                    model=model_name,
+                )
+                raise
+            except Exception as exc:
+                # Con tokens ya emitidos no hay failover posible: el cliente vio
+                # texto y cambiar de modelo duplicaría la respuesta.
+                has_fallback = attempt + 1 < len(candidates)
+                if emitted or not has_fallback:
+                    logger.error(
+                        "LLM streaming generation failed",
+                        model=model_name,
+                        emitted=emitted,
+                        error=str(exc),
+                        exc_info=True,
+                    )
+                    raise
+                logger.warning(
+                    "LLM streaming failed before first token; trying fallback model",
+                    model=model_name,
+                    fallback=candidates[attempt + 1],
+                    error=str(exc)[:200],
+                )
+                continue
 
-        content_parts: list[str] = []
-        usage = litellm.Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
-        finish_reason = "stop"
-        try:
-            async for chunk in response:
-                choices = chunk.choices or []
-                if choices:
-                    delta = choices[0].delta
-                    piece = getattr(delta, "content", None) or ""
-                    if piece:
-                        content_parts.append(piece)
-                        yield {"type": "delta", "text": piece}
-                    if choices[0].finish_reason:
-                        finish_reason = str(choices[0].finish_reason)
-                chunk_usage = getattr(chunk, "usage", None)
-                if chunk_usage is not None:
-                    usage = chunk_usage
-        except Exception as exc:
-            logger.error(
-                "LLM streaming generation failed mid-stream",
-                model=model_name,
-                error=str(exc),
-                exc_info=True,
-            )
-            raise
-
-        latency_ms = (time.perf_counter() - start) * 1000
-        yield {
-            "type": "done",
-            "content": "".join(content_parts),
-            "model": model_name,
-            "usage": {
-                "prompt_tokens": usage.prompt_tokens or 0,
-                "completion_tokens": usage.completion_tokens or 0,
-                "total_tokens": usage.total_tokens or 0,
-            },
-            "finish_reason": finish_reason,
-            "latency_ms": round(latency_ms, 2),
-        }
+            latency_ms = (time.perf_counter() - start) * 1000
+            yield {
+                "type": "done",
+                "content": "".join(content_parts),
+                "model": model_name,
+                "usage": {
+                    "prompt_tokens": usage.prompt_tokens or 0,
+                    "completion_tokens": usage.completion_tokens or 0,
+                    "total_tokens": usage.total_tokens or 0,
+                },
+                "finish_reason": finish_reason,
+                "latency_ms": round(latency_ms, 2),
+            }
+            return
 
     async def embed(
         self, text: str | list[str], model: str | None = None

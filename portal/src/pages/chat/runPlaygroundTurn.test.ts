@@ -180,6 +180,36 @@ describe("runAgentTurn", () => {
     expect(result.latencyMs).toBe(14380);
   });
 
+  it("emite deltas en vivo y el done no borra lo ya streameado", async () => {
+    const body =
+      "event: status\ndata: {\"phase\":\"running\"}\n\n" +
+      "event: delta\ndata: {\"text\":\"Hola \"}\n\n" +
+      "event: delta\ndata: {\"text\":\"mundo\"}\n\n" +
+      `event: done\ndata: ${JSON.stringify({
+        run_id: "run-3",
+        status: "completed",
+        answer: "Hola mundo",
+        steps: [{ type: "final" }],
+        flow: null,
+      })}\n\n`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => sseResponse(body)),
+    );
+    const seen: string[] = [];
+
+    const result = await runAgentTurn({
+      agentId: "a-1",
+      message: "hola",
+      conversationId: null,
+      auth: { token: "t", organizationId: "o" },
+      hooks: { onDelta: (text) => seen.push(text) },
+    });
+
+    expect(seen).toEqual(["Hola ", "Hola mundo", "Hola mundo"]);
+    expect(result.text).toBe("Hola mundo");
+  });
+
   it("sin flow del backend cae al fallback legacy y lo marca", async () => {
     const body = `event: done\ndata: ${JSON.stringify({
       run_id: "run-2",

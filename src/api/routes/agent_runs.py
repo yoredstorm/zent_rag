@@ -191,6 +191,9 @@ async def run_agent_stream(
 
     queue: asyncio.Queue[tuple[str, dict]] = asyncio.Queue()
 
+    async def on_delta(text: str) -> None:
+        await queue.put(("delta", {"text": text}))
+
     async def run_pipeline() -> None:
         result = await runtime.run(
             AgentRunRequest(
@@ -201,6 +204,7 @@ async def run_agent_stream(
                 conversation_id=body.conversation_id,
                 permissions=ctx.permissions,
                 org_config=org_config,
+                on_delta=on_delta,
             )
         )
         # El flow canónico se construye SERVER-SIDE y viaja en el `done`:
@@ -228,7 +232,15 @@ async def run_agent_stream(
             if not task.done():
                 task.cancel()
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/runs/{run_id}", summary="Trace de un run (admin org)")

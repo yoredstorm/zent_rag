@@ -12,6 +12,7 @@ import asyncio
 import json
 import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
@@ -21,7 +22,7 @@ from src.agents.tools.base import ToolContext
 from src.agents.tools.guards import ToolRateLimiter, execute_tool_guarded
 from src.agents.tools.registry import get_tool, resolve_allowed_tools, tool_allowed
 from src.core.config import get_settings
-from src.core.domain.entities import Agent
+from src.core.domain.entities import Agent, LLMResponse
 from src.core.domain.intelligence import ToolFingerprint
 from src.core.ports import CacheProvider, LLMProvider
 from src.infrastructure.observability.logging_config import get_logger
@@ -38,6 +39,8 @@ from src.runtime.answer_gate import INSUFFICIENT_ANSWER, retrieval_unavailable_a
 logger = get_logger(__name__)
 
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+_ANSWER_KEY_RE = re.compile(r'"answer"\s*:\s*"')
+_TOOL_KEY_RE = re.compile(r'"tool"\s*:')
 
 _SYSTEM_TEMPLATE = """You are an agent. You answer user questions by using tools.
 
@@ -399,6 +402,7 @@ class AgentRunRequest:
     permissions: frozenset[str] = frozenset()
     org_config: dict = field(default_factory=dict)
     on_step: object | None = None  # callback opcional (streaming)
+    on_delta: Callable[[str], Awaitable[None]] | None = None  # texto visible en vivo
     trace_id: str | None = None  # correlación con observabilidad
     routing: dict | None = None  # FASE 03: decisión canary/routing trazable
     context: dict | None = None  # Workflow Semantic Core: contexto compartido del run
@@ -534,6 +538,90 @@ def _direct_answer(action: dict) -> str | None:
     if _tool_shaped(answer):
         return None
     return _clean_answer(answer)
+
+
+class _AnswerStreamExtractor:
+    """Extrae en vivo el valor de `{"answer": "…"}` de un stream JSON.
+
+    El loop ReAct exige JSON puro: emitirlo tal cual mostraría el envoltorio.
+    Mientras no se decide el prefijo se retiene; si aparece `"tool"` antes que
+    `"answer"` el stream se marca muerto (es una llamada a herramienta, nunca
+    texto para el usuario).
+    """
+
+    #: Tope del prefijo JSON antes de darse por vencido (evita retener un
+    #: stream que nunca va a ser `{"answer": …}`).
+    _MAX_PREFIX = 160
+
+    def __init__(self) -> None:
+        self._prefix = ""
+        self._prefix_open = True
+        self._dead = False
+        self._in_value = False
+        self._escaped = False
+        self._pending_hex = 0
+        self._hex = ""
+
+    def feed(self, chunk: str) -> str:
+        if self._dead:
+            return ""
+        out: list[str] = []
+        for char in chunk:
+            if self._prefix_open:
+                self._prefix += char
+                match = _ANSWER_KEY_RE.search(self._prefix)
+                if match is not None:
+                    self._prefix_open = False
+                    self._in_value = True
+                    tail = self._prefix[match.end() :]
+                    self._prefix = ""
+                    for item in tail:
+                        if not self._in_value:
+                            break
+                        out.append(self._decode(item))
+                elif (
+                    _TOOL_KEY_RE.search(self._prefix)
+                    or len(self._prefix) > self._MAX_PREFIX
+                ):
+                    self._dead = True
+                continue
+            if self._in_value:
+                out.append(self._decode(char))
+        return "".join(out)
+
+    def _decode(self, char: str) -> str:
+        if self._pending_hex:
+            self._hex += char
+            self._pending_hex -= 1
+            if self._pending_hex:
+                return ""
+            try:
+                return chr(int(self._hex, 16))
+            except ValueError:
+                return ""
+        if self._escaped:
+            self._escaped = False
+            if char == "u":
+                self._pending_hex = 4
+                self._hex = ""
+                return ""
+            return {
+                '"': '"',
+                "\\": "\\",
+                "/": "/",
+                "b": "\b",
+                "f": "\f",
+                "n": "\n",
+                "r": "\r",
+                "t": "\t",
+            }.get(char, char)
+        if char == "\\":
+            self._escaped = True
+            return ""
+        if char == '"':
+            self._in_value = False
+            return ""
+        return char
 
 
 def _canary_allows(settings, run_id: Any) -> bool:
@@ -1065,6 +1153,94 @@ class AgentRuntime:
             or settings.LITELLM_DEFAULT_MODEL,
         }
 
+    async def _stream_response(
+        self,
+        *,
+        prompt: str,
+        model: str,
+        max_tokens: int,
+        temperature: float,
+        on_delta: Callable[[str], Awaitable[None]],
+    ) -> LLMResponse:
+        """Genera con streaming y emite el texto visible al cliente.
+
+        El modelo puede devolver prosa (cierre) o el JSON del loop ReAct: si el
+        stream empieza con `{`, sólo se emite el valor de `{"answer": "…"}`; un
+        tool call no se filtra. Fallo antes del primer token: se reintenta sin
+        stream (esa ruta ya enruta primario→fallback). Fallo a mitad: se
+        conserva lo emitido.
+        """
+        start = time.perf_counter()
+        content = ""
+        usage: dict[str, int] = {}
+        mode: str | None = None
+        extractor = _AnswerStreamExtractor()
+
+        async def _emit(text: str) -> None:
+            if text:
+                await on_delta(text)
+
+        try:
+            async for event in self._llm.generate_stream(
+                prompt=prompt,
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            ):
+                kind = str(event.get("type") or "")
+                if kind == "delta":
+                    text = str(event.get("text") or "")
+                    if not text:
+                        continue
+                    content += text
+                    if mode is None:
+                        stripped = content.lstrip()
+                        if not stripped:
+                            continue
+                        mode = "json" if stripped.startswith("{") else "text"
+                        if mode == "text":
+                            await _emit(content)
+                            continue
+                        await _emit(extractor.feed(content))
+                        continue
+                    if mode == "text":
+                        await _emit(text)
+                    else:
+                        await _emit(extractor.feed(text))
+                elif kind == "done":
+                    raw_usage = event.get("usage")
+                    if isinstance(raw_usage, dict):
+                        usage = raw_usage
+        except Exception as exc:  # noqa: BLE001
+            if content:
+                logger.warning(
+                    "Streaming generation interrupted; keeping partial text",
+                    model=model,
+                    error=str(exc)[:200],
+                )
+            else:
+                logger.warning(
+                    "Streaming generation failed before first token; retrying without stream",
+                    model=model,
+                    error=str(exc)[:200],
+                )
+                return await self._llm.generate(
+                    prompt=prompt,
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+
+        latency_ms = (time.perf_counter() - start) * 1000
+        return LLMResponse(
+            content=content,
+            model=model,
+            prompt_tokens=int(usage.get("prompt_tokens") or 0),
+            completion_tokens=int(usage.get("completion_tokens") or 0),
+            total_tokens=int(usage.get("total_tokens") or 0),
+            latency_ms=latency_ms,
+        )
+
     async def _try_finalize_answer(
         self,
         request: AgentRunRequest,
@@ -1106,14 +1282,25 @@ class AgentRuntime:
             response_shape=_response_shape_block(run_plan),
         )
         try:
-            resp = await self._llm.generate(
-                prompt=prompt,
-                model=config["model"],
-                # Presupuesto propio de la respuesta final: 512 tokens cortaba
-                # respuestas técnicas largas y el envoltorio JSON quedaba abierto.
-                max_tokens=finalize_max_tokens,
-                temperature=min(float(config["temperature"]), 0.3),
-            )
+            if request.on_delta is not None:
+                resp = await self._stream_response(
+                    prompt=prompt,
+                    model=config["model"],
+                    # Presupuesto propio de la respuesta final: 512 tokens cortaba
+                    # respuestas técnicas largas y el envoltorio JSON quedaba abierto.
+                    max_tokens=finalize_max_tokens,
+                    temperature=min(float(config["temperature"]), 0.3),
+                    on_delta=request.on_delta,
+                )
+            else:
+                resp = await self._llm.generate(
+                    prompt=prompt,
+                    model=config["model"],
+                    # Presupuesto propio de la respuesta final: 512 tokens cortaba
+                    # respuestas técnicas largas y el envoltorio JSON quedaba abierto.
+                    max_tokens=finalize_max_tokens,
+                    temperature=min(float(config["temperature"]), 0.3),
+                )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Finalize answer failed", error=str(exc)[:200])
             return False
@@ -2454,12 +2641,24 @@ class AgentRuntime:
             for candidate in candidates:
                 router_attempts.append(str(candidate))
                 try:
-                    resp = await self._llm.generate(
-                        prompt=prompt,
-                        model=candidate,
-                        max_tokens=1024,
-                        temperature=config["temperature"],
-                    )
+                    # En vivo sólo con evidencia ya observada: sin tool calls el
+                    # grounding gate puede descartar la respuesta (sería memoria
+                    # del modelo) y el usuario vería texto que no se entrega.
+                    if request.on_delta is not None and tool_calls > 0:
+                        resp = await self._stream_response(
+                            prompt=prompt,
+                            model=candidate,
+                            max_tokens=1024,
+                            temperature=config["temperature"],
+                            on_delta=request.on_delta,
+                        )
+                    else:
+                        resp = await self._llm.generate(
+                            prompt=prompt,
+                            model=candidate,
+                            max_tokens=1024,
+                            temperature=config["temperature"],
+                        )
                     used_model = candidate
                     break
                 except Exception as exc:  # noqa: BLE001

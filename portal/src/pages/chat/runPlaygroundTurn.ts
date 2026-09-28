@@ -347,6 +347,7 @@ export async function runAgentTurn(input: {
     (event, data) => {
       const payload = JSON.parse(data) as {
         phase?: string;
+        text?: string;
         answer?: string;
         status?: string;
         message?: string;
@@ -358,10 +359,13 @@ export async function runAgentTurn(input: {
         cost?: number;
         model?: string | null;
       };
-      if (event === "status") {
+      if (event === "delta") {
+        answer += payload.text || "";
+        input.hooks?.onDelta?.(answer);
+      } else if (event === "status") {
         input.hooks?.onPhase?.(payload.phase === "running" ? "Ejecutando agente…" : "En curso…");
       } else if (event === "done") {
-        answer = payload.answer || "";
+        answer = payload.answer || answer;
         used = sourceIdsFromSteps(payload.steps);
         errors = toolErrorsFromSteps(payload.steps);
         steps = payload.steps;

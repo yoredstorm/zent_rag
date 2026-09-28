@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import SecretStr
 
 from src.core.domain.entities import LLMResponse
 from src.platform.gateway.router import generate_routed, resolve_route
@@ -89,3 +90,37 @@ async def test_generate_routed_does_not_fallback_when_primary_ok() -> None:
     response = await generate_routed(fake.generate, prompt="hola", route=route)
     assert response.model == "ok-model"
     assert fake.calls == ["ok-model"]
+
+
+def test_fallback_model_uses_own_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """El modelo de fallback usa su base/key propias; el resto, las primarias."""
+    from src.core.config import get_settings
+    from src.infrastructure.llm import provider as provider_module
+
+    settings = get_settings().model_copy(
+        update={
+            "LITELLM_API_BASE": "https://api.novita.ai/openai",
+            "LITELLM_API_KEY": SecretStr("novita-key"),
+            "GATEWAY_FALLBACK_MODEL": "openai/deepseek-ai/DeepSeek-V4-Flash",
+            "GATEWAY_FALLBACK_API_BASE": "https://api.deepinfra.com/v1/openai",
+            "GATEWAY_FALLBACK_API_KEY": SecretStr("deepinfra-key"),
+        }
+    )
+    monkeypatch.setattr(provider_module, "get_settings", lambda: settings)
+
+    assert provider_module._get_llm_kwargs(settings.GATEWAY_FALLBACK_MODEL) == {
+        "api_key": "deepinfra-key",
+        "api_base": "https://api.deepinfra.com/v1/openai",
+    }
+    assert provider_module._get_llm_kwargs(settings.LITELLM_DEFAULT_MODEL) == {
+        "api_key": "novita-key",
+        "api_base": "https://api.novita.ai/openai",
+    }
+
+    # Sin key propia, el fallback cae a las credenciales primarias.
+    without_key = settings.model_copy(update={"GATEWAY_FALLBACK_API_KEY": None})
+    monkeypatch.setattr(provider_module, "get_settings", lambda: without_key)
+    assert provider_module._get_llm_kwargs(without_key.GATEWAY_FALLBACK_MODEL) == {
+        "api_key": "novita-key",
+        "api_base": "https://api.novita.ai/openai",
+    }

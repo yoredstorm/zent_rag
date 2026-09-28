@@ -193,6 +193,14 @@ class Settings(BaseSettings):
         default="",
         description="Modelo real si el primary falla. Vacío = sin fallback.",
     )
+    GATEWAY_FALLBACK_API_BASE: str | None = Field(
+        default=None,
+        description="Base OpenAI-compatible del proveedor del fallback. Vacío = la primaria.",
+    )
+    GATEWAY_FALLBACK_API_KEY: SecretStr | None = Field(
+        default=None,
+        description="Key del proveedor del fallback. Vacío = la primaria.",
+    )
     GATEWAY_CHEAP_MODEL: str = Field(
         default="",
     )
