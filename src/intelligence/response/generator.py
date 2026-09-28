@@ -144,6 +144,53 @@ def validate_purpose(text: str, context: AgentConfigContext) -> tuple[str, list[
     return clean, warnings
 
 
+#: Último recurso del borrador por reglas: no nombra ninguna capacidad concreta.
+_GENERIC_PURPOSE = (
+    "Ayudar con las consultas del agente usando la información disponible y "
+    "señalar qué falta cuando la evidencia no alcance."
+)
+
+
+def suggest_purpose(context: AgentConfigContext) -> str:
+    """Propósito por reglas (sin LLM): sólo hechos reales del agente.
+
+    El texto pasa por el mismo filtro que la salida del modelo: un borrador
+    determinista jamás puede nombrar una capacidad no configurada.
+    """
+    closing = "Responde con la evidencia disponible y declara qué información falta."
+    sources = ""
+    if context.source_titles:
+        sources = f" con las fuentes configuradas ({', '.join(list(context.source_titles)[:3])})"
+    subject = " ".join(str(context.description or "").split())[:160]
+    if subject:
+        candidate = f"{subject}{sources}. {closing}"
+        if not _forbidden_mentions(candidate, context.capabilities):
+            return candidate
+    name = " ".join(str(context.name or "").split())[:80]
+    if name:
+        named = f"Atender las consultas sobre {name}. {closing}"
+        if not _forbidden_mentions(named, context.capabilities):
+            return named
+    return _GENERIC_PURPOSE
+
+
+def draft_purpose(text: str, context: AgentConfigContext) -> tuple[str, list[str], str]:
+    """Borrador final: el del modelo si sobrevive el filtro; si no, uno por reglas.
+
+    Devuelve (borrador, avisos, origen) con origen "model" o "rules". Una salida
+    vacía del modelo y un recorte total del filtro son causas distintas y se
+    avisan distinto: antes ambas terminaban en el mismo 502.
+    """
+    clean, warnings = validate_purpose(text, context)
+    if clean:
+        return clean, warnings, "model"
+    warnings = list(warnings)
+    warnings.append(
+        "empty_model_output" if not str(text or "").strip() else "purpose_replaced_by_rules"
+    )
+    return suggest_purpose(context), warnings, "rules"
+
+
 _PRESET_HINTS: tuple[tuple[str, str], ...] = (
     ("pdf", "technical_detailed"),
     ("manual", "technical_detailed"),
@@ -287,7 +334,9 @@ __all__ = [
     "build_profile_prompt",
     "build_purpose_prompt",
     "context_from_agent",
+    "draft_purpose",
     "parse_profile_response",
     "suggest_profile",
+    "suggest_purpose",
     "validate_purpose",
 ]

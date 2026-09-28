@@ -513,7 +513,7 @@ async def _generate_text(prompt: str, *, max_tokens: int = 400) -> str:
 async def generate_agent_purpose(agent_id: str, body: GeneratePurposeRequest, request: Request):
     from src.intelligence.response.generator import (
         build_purpose_prompt,
-        validate_purpose,
+        draft_purpose,
     )
     from src.platform.rbac.policy import require_permission
 
@@ -524,15 +524,33 @@ async def generate_agent_purpose(agent_id: str, body: GeneratePurposeRequest, re
         context = replace(context, purpose=str(body.instructions)[:500])
     prompt = build_purpose_prompt(context)
     try:
-        raw = await _generate_text(prompt, max_tokens=300)
+        raw = await _generate_text(prompt, max_tokens=512)
     except Exception as exc:  # noqa: BLE001 — el usuario puede escribirlo a mano
         raise HTTPException(503, f"No se pudo generar el propósito: {exc}") from exc
-    purpose, warnings = validate_purpose(raw, context)
-    if not purpose:
-        raise HTTPException(502, "El borrador no pasó la validación (mencionaba capacidades no configuradas).")
+    purpose, warnings, source = draft_purpose(raw, context)
+    if not purpose:  # defensivo: el borrador por reglas siempre devuelve texto
+        raise HTTPException(
+            502,
+            {
+                "error_code": "purpose_unavailable",
+                "message": (
+                    "No se pudo armar el borrador del propósito: faltan datos del "
+                    "agente para proponer algo. Escribilo a mano."
+                ),
+            },
+        )
+    if source == "rules":
+        logger.warning(
+            "agent purpose draft replaced by rules",
+            agent_id=agent_id,
+            organization_id=str(ctx.organization_id),
+            raw_excerpt=str(raw or "")[:300],
+            warnings=warnings,
+        )
     return {
         "draft": purpose,
         "warnings": warnings,
+        "source": source,
         "grounded_in": {
             "sources": list(context.source_titles)[:6],
             "source_kinds": list(context.source_kinds)[:6],

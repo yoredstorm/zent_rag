@@ -3,6 +3,7 @@ import { useState } from "react";
 import { api } from "../../api";
 import { IconButton, Input, Textarea } from "../ui";
 import { AgentCollapsible, AgentField, AgentSection } from "./AgentField";
+import { describeWarnings } from "./purposeWarnings";
 
 /** Resumen de una línea para el disclosure de instrucciones libres. */
 function instructionsSummary(value: string): string {
@@ -37,26 +38,40 @@ export function AgentPurposeForm({
   organizationId?: string;
 }) {
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<{ text: string; tone: "ok" | "warn" } | null>(null);
   const [error, setError] = useState("");
   const [instructionsOpen, setInstructionsOpen] = useState(false);
 
   async function generatePurpose() {
     if (!agentId) {
-      setNotice("");
+      setNotice(null);
       setError("Guardá el agente primero: el generador sólo usa datos reales del agente.");
       return;
     }
     setBusy(true);
     setError("");
-    setNotice("");
+    setNotice(null);
     try {
-      const data = await api<{ draft: string; warnings: string[] }>(
-        `/api/v1/agents/${agentId}/config/purpose`,
-        { method: "POST", token, organizationId, body: JSON.stringify({}) },
-      );
+      const data = await api<{
+        draft: string;
+        warnings: string[];
+        source?: "model" | "rules";
+      }>(`/api/v1/agents/${agentId}/config/purpose`, {
+        method: "POST",
+        token,
+        organizationId,
+        body: JSON.stringify({}),
+      });
       onPurpose(data.draft);
-      setNotice("Borrador generado. Revisalo y guardá cuando estés conforme.");
+      const warningsText = describeWarnings(data.warnings ?? []);
+      const fromRules = data.source === "rules";
+      const closing = "Revisalo y guardá cuando estés conforme.";
+      setNotice({
+        text: fromRules
+          ? `${warningsText || "Se propuso un borrador por reglas."} ${closing}`
+          : `Borrador generado.${warningsText ? ` ${warningsText}` : ""} ${closing}`,
+        tone: fromRules ? "warn" : "ok",
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo generar el propósito");
     } finally {
@@ -107,8 +122,11 @@ export function AgentPurposeForm({
         </AgentField>
 
         {notice ? (
-          <p className="text-xs text-ok" role="status">
-            {notice}
+          <p
+            className={notice.tone === "warn" ? "text-xs text-warn" : "text-xs text-ok"}
+            role="status"
+          >
+            {notice.text}
           </p>
         ) : null}
         {error ? (

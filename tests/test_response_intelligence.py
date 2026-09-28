@@ -315,6 +315,54 @@ def test_purpose_generator_no_inventa_capacidades() -> None:
     assert "sql" not in suggestion["custom_instructions"].lower()
 
 
+def test_purpose_draft_cae_a_reglas_cuando_el_filtro_vacia_el_texto() -> None:
+    from src.intelligence.response.generator import context_from_agent, draft_purpose
+
+    context = context_from_agent(agent=_Agent())
+    draft, warnings, source = draft_purpose(
+        "Ayuda al equipo consultando la base de datos SQL y la API del ERP.", context
+    )
+    assert source == "rules"
+    assert draft and "SQL" not in draft.upper()
+    assert any("mentions_unconfigured_capability" in warning for warning in warnings)
+    assert "purpose_replaced_by_rules" in warnings
+
+
+def test_purpose_draft_avisa_cuando_el_modelo_no_devuelve_texto() -> None:
+    from src.intelligence.response.generator import (
+        context_from_agent,
+        draft_purpose,
+        suggest_purpose,
+    )
+
+    context = context_from_agent(agent=_Agent())
+    draft, warnings, source = draft_purpose("   ", context)
+    assert source == "rules"
+    assert draft == suggest_purpose(context)
+    assert "empty_model_output" in warnings
+
+
+def test_suggest_purpose_nunca_menciona_capacidades_no_configuradas() -> None:
+    from src.intelligence.response.generator import (
+        AgentConfigContext,
+        suggest_purpose,
+        validate_purpose,
+    )
+
+    contexts = (
+        AgentConfigContext(name="Soporte", description="Responde dudas de RRHH"),
+        AgentConfigContext(
+            name="Datos", description="Consulta la API de facturación", tools=("query_database",)
+        ),
+        AgentConfigContext(),
+    )
+    for context in contexts:
+        draft = suggest_purpose(context)
+        clean, warnings = validate_purpose(draft, context)
+        assert clean == draft
+        assert warnings == []
+
+
 def test_profile_no_contiene_hechos_de_dominio() -> None:
     profile = RESPONSE_PROFILE_PRESETS["technical_detailed"]
     block = profile_prompt_block(profile)

@@ -131,6 +131,12 @@ Campos: `language`, `tone`, `technical_level`, `default_detail`, `audience`,
 actual, fuentes, herramientas y dominio; si el borrador menciona una capacidad no
 configurada (SQL/API/email/...) esa frase se descarta y se devuelve un aviso.
 
+**Fail-soft:** si el filtro deja el texto vacío (o el modelo no devolvió nada), la
+respuesta sigue siendo 200 con un borrador determinista por reglas, `source: "rules"`
+y los avisos (`mentions_unconfigured_capability:*`, `purpose_replaced_by_rules`,
+`empty_model_output`). Nunca se responde 502 por el filtro: el usuario ve qué se
+recortó y edita.
+
 ### Overrides del turno (§36)
 
 «respóndeme corto», «explícamelo como experto», «resumen ejecutivo» ajustan el

@@ -546,3 +546,76 @@ async def test_fuente_de_otra_organizacion_sigue_siendo_404(async_client: AsyncC
     )
     assert intento.status_code == 404, intento.text
     assert "Source not found in this organization" in intento.text
+
+
+# ---------------------------------------------------------------------------
+# Borrador de propósito: nunca 502 por el filtro de capacidades (fail-soft)
+# ---------------------------------------------------------------------------
+
+
+def _patch_purpose_route(monkeypatch, raw: str | Exception) -> None:
+    """Deja la ruta de propósito sin DB ni LLM: sólo el borrador bajo prueba."""
+    import src.api.routes.agents as agents
+    import src.platform.rbac.policy as policy
+    from src.intelligence.response.generator import AgentConfigContext
+
+    class FakeCtx:
+        organization_id = uuid4()
+
+    async def fake_owned_agent(ctx, agent_id):  # noqa: ANN001
+        return object()
+
+    async def fake_context(request, ctx, agent):  # noqa: ANN001
+        return AgentConfigContext(name="ATPCO Specialist", description="Analiza tarifas")
+
+    async def fake_generate(prompt: str, *, max_tokens: int = 400) -> str:
+        if isinstance(raw, Exception):
+            raise raw
+        return raw
+
+    monkeypatch.setattr(policy, "require_permission", lambda *a, **k: FakeCtx())
+    monkeypatch.setattr(agents, "_get_owned_agent", fake_owned_agent)
+    monkeypatch.setattr(agents, "_agent_config_context", fake_context)
+    monkeypatch.setattr(agents, "_generate_text", fake_generate)
+
+
+async def test_purpose_draft_reemplazado_por_reglas_devuelve_200(monkeypatch) -> None:
+    """El filtro vacía el texto del modelo: se responde con borrador por reglas."""
+    import src.api.routes.agents as agents
+
+    _patch_purpose_route(
+        monkeypatch, "Ayuda al equipo llamando a la API del ERP y enviando correos."
+    )
+    payload = await agents.generate_agent_purpose(
+        str(uuid4()), agents.GeneratePurposeRequest(), None  # type: ignore[arg-type]
+    )
+    assert payload["source"] == "rules"
+    assert payload["draft"]
+    assert "API" not in payload["draft"]
+    assert "mentions_unconfigured_capability" in " ".join(payload["warnings"])
+    assert payload["saved"] is False
+
+
+async def test_purpose_draft_sin_texto_del_modelo_devuelve_200(monkeypatch) -> None:
+    import src.api.routes.agents as agents
+
+    _patch_purpose_route(monkeypatch, "   ")
+    payload = await agents.generate_agent_purpose(
+        str(uuid4()), agents.GeneratePurposeRequest(), None  # type: ignore[arg-type]
+    )
+    assert payload["source"] == "rules"
+    assert payload["draft"]
+    assert "empty_model_output" in payload["warnings"]
+
+
+async def test_purpose_draft_mantiene_503_si_el_proveedor_falla(monkeypatch) -> None:
+    from fastapi import HTTPException
+
+    import src.api.routes.agents as agents
+
+    _patch_purpose_route(monkeypatch, RuntimeError("gateway down"))
+    with pytest.raises(HTTPException) as exc:
+        await agents.generate_agent_purpose(
+            str(uuid4()), agents.GeneratePurposeRequest(), None  # type: ignore[arg-type]
+        )
+    assert exc.value.status_code == 503
