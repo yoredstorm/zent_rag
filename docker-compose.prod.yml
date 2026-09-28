@@ -182,6 +182,8 @@ x-prod-env: &prod-env
   RAG_KNOWLEDGE_MODEL_AUTO_MATERIALIZE: ${RAG_KNOWLEDGE_MODEL_AUTO_MATERIALIZE:-true}
   RAG_KNOWLEDGE_MODEL_MAX_COLUMNS: ${RAG_KNOWLEDGE_MODEL_MAX_COLUMNS:-5000}
   RAG_RAG_SEARCH_KNOWLEDGE_TIMEOUT_SECONDS: ${RAG_RAG_SEARCH_KNOWLEDGE_TIMEOUT_SECONDS:-20}
+  # Presupuesto total del run del agente (loop ReAct completo).
+  RAG_RAG_AGENT_MAX_EXECUTION_SECONDS: ${RAG_RAG_AGENT_MAX_EXECUTION_SECONDS:-60}
   # Universal API Connector: el API necesita egress HTTPS hacia las APIs que
   # importen los tenants (demos: pokeapi.co, open-meteo.com,
   # jsonplaceholder.typicode.com). SSRF check, allowlist y rate limits en runtime.

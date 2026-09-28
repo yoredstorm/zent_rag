@@ -53,6 +53,7 @@ export default function AgentStudioPage() {
       turns={studio.turns}
       input={studio.playInput}
       status={studio.playStatus}
+      streamText={studio.playStream}
       playing={studio.playing}
       inactive={!studio.isNew && !studio.isActive}
       sources={studio.sources}

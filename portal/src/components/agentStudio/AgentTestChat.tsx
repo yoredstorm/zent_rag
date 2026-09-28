@@ -35,6 +35,7 @@ export function AgentTestChat({
   turns,
   input,
   status,
+  streamText,
   playing,
   inactive,
   disabledReason,
@@ -52,6 +53,8 @@ export function AgentTestChat({
   turns: ChatTurn[];
   input: string;
   status: string;
+  /** Texto parcial del run en curso (SSE delta): se pinta mientras llega. */
+  streamText?: string;
   playing: boolean;
   inactive: boolean;
   disabledReason?: string;
@@ -235,6 +238,14 @@ export function AgentTestChat({
             )}
           </article>
         ))}
+        {playing && streamText ? (
+          <article className="bubble bubble-assistant" data-testid="agent-answer-stream">
+            <div
+              className="chat-markdown"
+              dangerouslySetInnerHTML={renderMarkdownHtml(streamText)}
+            />
+          </article>
+        ) : null}
         {playing && (
           <div className="flex items-center gap-2 text-xs text-muted" role="status">
             <LoadingDots label="El agente está respondiendo" />

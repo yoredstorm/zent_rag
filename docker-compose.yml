@@ -189,6 +189,8 @@ x-common-env: &common-env
   RAG_KNOWLEDGE_MODEL_AUTO_MATERIALIZE: ${RAG_KNOWLEDGE_MODEL_AUTO_MATERIALIZE:-true}
   RAG_KNOWLEDGE_MODEL_MAX_COLUMNS: ${RAG_KNOWLEDGE_MODEL_MAX_COLUMNS:-5000}
   RAG_RAG_SEARCH_KNOWLEDGE_TIMEOUT_SECONDS: ${RAG_RAG_SEARCH_KNOWLEDGE_TIMEOUT_SECONDS:-20}
+  # Presupuesto total del run del agente (loop ReAct completo).
+  RAG_RAG_AGENT_MAX_EXECUTION_SECONDS: ${RAG_RAG_AGENT_MAX_EXECUTION_SECONDS:-60}
   # Cognitive OS (fases 1-10): off | shadow | limited | active.
   # off bloquea /api/v1/cognitive/* (503). Requiere las migraciones 102-108
   # (el API las aplica al arrancar: alembic upgrade head).

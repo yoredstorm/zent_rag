@@ -90,6 +90,8 @@ export function useAgentStudio() {
   const [playInput, setPlayInput] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [playStatus, setPlayStatus] = useState("");
+  /** Texto parcial del run en curso: los deltas SSE se pintan en vivo. */
+  const [playStream, setPlayStream] = useState("");
   const [playing, setPlaying] = useState(false);
   const [embedOrigins, setEmbedOrigins] = useState("https://");
   const [embedScript, setEmbedScript] = useState("");
@@ -618,6 +620,7 @@ export function useAgentStudio() {
     setError("");
     setTurns((prev) => [...prev, { role: "user", text: message }]);
     setPlayInput("");
+    setPlayStream("");
     try {
       const res = await fetch(`/api/v1/agents/${id}/run/stream`, {
         method: "POST",
@@ -643,6 +646,7 @@ export function useAgentStudio() {
       const decoder = new TextDecoder();
       let buffer = "";
       let answer = "";
+      let liveAnswer = "";
       let used: string[] = [];
       let errors: string[] = [];
       let steps: unknown = [];
@@ -669,6 +673,7 @@ export function useAgentStudio() {
           if (!data) continue;
           const payloadJson = JSON.parse(data) as {
             phase?: string;
+            text?: string;
             answer?: string;
             status?: string;
             message?: string;
@@ -682,8 +687,11 @@ export function useAgentStudio() {
           };
           if (eventName === "status") {
             setPlayStatus(payloadJson.phase === "running" ? "Ejecutando agente…" : "En curso…");
+          } else if (eventName === "delta") {
+            liveAnswer += payloadJson.text || "";
+            setPlayStream(liveAnswer);
           } else if (eventName === "done") {
-            answer = payloadJson.answer || "";
+            answer = payloadJson.answer || liveAnswer || "";
             used = sourceIdsFromSteps(payloadJson.steps);
             errors = toolErrorsFromSteps(payloadJson.steps);
             steps = payloadJson.steps;
@@ -719,6 +727,7 @@ export function useAgentStudio() {
       setPlayStatus("");
     } finally {
       setPlaying(false);
+      setPlayStream("");
     }
   }
 
@@ -985,11 +994,13 @@ export function useAgentStudio() {
     setPlayInput,
     playStatus,
     playing,
+    playStream,
     runPlayground,
     runPlaygroundMessage,
     clearPlayground: () => {
       setTurns([]);
       setPlayStatus("");
+      setPlayStream("");
     },
     // publicación
     versions,

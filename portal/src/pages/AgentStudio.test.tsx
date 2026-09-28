@@ -69,7 +69,35 @@ function json(body: unknown, status = 200) {
   });
 }
 
-function fetchRouter(agent: Record<string, unknown> = AGENT) {
+type StreamOptions = { delta?: string; gate?: Promise<void> };
+
+/** SSE con `ReadableStream`: `gate` retrasa el `done` para probar el vivo. */
+function sseResponse(frames: { event: string; data: unknown }[], gate?: Promise<void>) {
+  if (!gate) {
+    const body = frames
+      .map((frame) => `event: ${frame.event}\ndata: ${JSON.stringify(frame.data)}\n\n`)
+      .join("");
+    return new Response(body, { status: 200 });
+  }
+  const encoder = new TextEncoder();
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      for (const frame of frames) {
+        if (frame.event === "done") await gate;
+        controller.enqueue(
+          encoder.encode(`event: ${frame.event}\ndata: ${JSON.stringify(frame.data)}\n\n`),
+        );
+      }
+      controller.close();
+    },
+  });
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream" },
+  });
+}
+
+function fetchRouter(agent: Record<string, unknown> = AGENT, stream?: StreamOptions) {
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = (init?.method || "GET").toUpperCase();
@@ -101,13 +129,21 @@ function fetchRouter(agent: Record<string, unknown> = AGENT) {
     if (url.includes("/config/response-profile"))
       return Promise.resolve(json({ draft: { preset: "analytical", default_detail: "deep" } }));
     if (url.includes("/run/stream")) {
-      const frame = [
-        "event: done",
-        'data: {"answer":"Listo.","status":"completed","steps":[],"total_latency_ms":12,"model":"zent-default"}',
-        "",
-        "",
-      ].join("\n");
-      return Promise.resolve(new Response(frame, { status: 200 }));
+      const frames = [
+        { event: "status", data: { phase: "running" } },
+        ...(stream?.delta ? [{ event: "delta", data: { text: stream.delta } }] : []),
+        {
+          event: "done",
+          data: {
+            answer: "Listo.",
+            status: "completed",
+            steps: [],
+            total_latency_ms: 12,
+            model: "zent-default",
+          },
+        },
+      ];
+      return Promise.resolve(sseResponse(frames, stream?.gate));
     }
     if (url.includes(`/agents/${agent.id}`) && (method === "PUT" || method === "POST")) {
       const body = JSON.parse(String(init?.body || "{}"));
@@ -130,8 +166,12 @@ function authShell(ui: ReactNode) {
   return <AuthProvider>{ui}</AuthProvider>;
 }
 
-async function renderStudio(path = "/agents/a1", agent: Record<string, unknown> = AGENT) {
-  const fetchMock = fetchRouter(agent);
+async function renderStudio(
+  path = "/agents/a1",
+  agent: Record<string, unknown> = AGENT,
+  stream?: StreamOptions,
+) {
+  const fetchMock = fetchRouter(agent, stream);
   vi.stubGlobal("fetch", fetchMock);
   const user = userEvent.setup();
   render(
@@ -586,6 +626,23 @@ describe("AgentStudio · configuración avanzada", () => {
 });
 
 describe("AgentStudio · playground", () => {
+  it("pinta los deltas en vivo antes del done", async () => {
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { user } = await renderStudio("/agents/a1", AGENT, {
+      delta: "Texto en vivo",
+      gate,
+    });
+    await screen.findByDisplayValue("Soporte");
+    await user.click(screen.getByRole("button", { name: /Resumí lo más importante en 3 puntos/ }));
+    expect(await screen.findByText("Texto en vivo")).toBeInTheDocument();
+    release();
+    await waitFor(() => expect(screen.getByText("Listo.")).toBeInTheDocument());
+    await waitFor(() => expect(screen.queryByText("Texto en vivo")).toBeNull());
+  });
+
   it("sugiere preguntas y las ejecuta al clic", async () => {
     const { user, fetchMock } = await renderStudio();
     await screen.findByDisplayValue("Soporte");
