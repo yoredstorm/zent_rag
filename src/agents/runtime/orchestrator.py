@@ -900,6 +900,35 @@ def _preflight_classification(plan: object | None) -> dict:
     }
 
 
+async def _company_context_for_preflight(
+    organization_id: UUID, query: str
+) -> dict | None:
+    """Hechos de Company Intelligence para el juicio previo.
+
+    Grafo vacío o backend caído devuelven None: el preflight queda igual que
+    antes. Nunca lanza.
+    """
+    try:
+        from src.company.wiring import company_context_compiler
+
+        compiled = await company_context_compiler().compile(organization_id, query)
+        state = compiled.to_jev_state()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Company context unavailable for preflight", error=str(exc)[:150]
+        )
+        return None
+    if not any(state.values()):
+        return None
+    try:
+        from src.company.discovery.metrics import record_context_used
+
+        record_context_used(organization_id)
+    except Exception:  # noqa: BLE001 - observabilidad nunca rompe el request
+        pass
+    return state
+
+
 def _preflight_budget_left(adaptive: dict) -> int:
     """Rondas de retrieval que quedan según la configuración vigente."""
     try:
@@ -1647,12 +1676,18 @@ class RAGOrchestrator:
                     preflight_trace = self._preflight_hook.new_trace(  # type: ignore[union-attr]
                         request_id=query_id
                     )
+                    company_context = None
+                    if organization_id is not None:
+                        company_context = await _company_context_for_preflight(
+                            organization_id, query
+                        )
                     preflight_reasoning = await self._preflight_hook.judge_pre_reasoning(  # type: ignore[union-attr]
                         trace=preflight_trace,
                         query=query,
                         organization_id=organization_id,
                         request_id=query_id,
-                        company_context=(
+                        company_context=company_context
+                        or (
                             intelligence_understanding.to_dict()
                             if hasattr(intelligence_understanding, "to_dict")
                             else None

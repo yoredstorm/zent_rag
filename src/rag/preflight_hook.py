@@ -120,6 +120,26 @@ def settings_from_app() -> PreflightSettings:
 # -----------------------------------------------------------------------------
 
 
+#: Claves del contexto empresarial que el juez puede ver (listas acotadas).
+_COMPANY_FACT_KEYS = (
+    "company_concepts",
+    "company_mappings",
+    "company_processes",
+    "company_systems",
+    "company_authority",
+)
+
+
+def _company_context_facts(context: Mapping[str, Any]) -> dict[str, Any]:
+    """Hechos empresariales compactos: ids/nombres/valores, sin prosa."""
+    facts: dict[str, Any] = {}
+    for key in _COMPANY_FACT_KEYS:
+        values = context.get(key)
+        if isinstance(values, (list, tuple)) and values:
+            facts[key] = list(values)[:4]
+    return facts
+
+
 def pre_reasoning_state(
     *,
     query: str,
@@ -138,6 +158,7 @@ def pre_reasoning_state(
             for key, value in list(context.items())[:8]
             if isinstance(value, (int, float))
         },
+        "company_context_facts": _company_context_facts(context),
         "memory_patterns": preview(memory_patterns, 5),
         "available_sources": list(available_sources)[:12],
         "sql_enabled": bool(sql_enabled),

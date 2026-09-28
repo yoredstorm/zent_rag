@@ -958,7 +958,8 @@ async def test_engine_discovers_and_accumulates_evidence(org, store, graph_servi
         if item.kind is CandidateKind.ENTITY
         and item.payload.get("canonical_name") == "PXSAUDIT.A1672"
     )
-    assert table.stage in (DiscoveryStage.VALIDATED, DiscoveryStage.SUGGESTED)
+    # Estructural y verificable: el motor ya lo materializó sin humano.
+    assert table.stage is DiscoveryStage.CONFIRMED
     assert table.support.observations >= 2
 
     mapping = next(
@@ -998,30 +999,41 @@ async def test_engine_never_confirms_interpretative_candidate_without_actor(
 
 
 @pytest.mark.asyncio
-async def test_engine_promotes_structural_entity_as_auto_confirmed(
+async def test_engine_auto_promotes_structural_candidates(
     org, store, graph_service
 ) -> None:
+    """A1: la estructura física no espera revisión humana."""
     from src.company.discovery.engine import CompanyDiscoveryEngine
 
     engine = CompanyDiscoveryEngine(store, graph_service, sources=[_schema_source()])
-    await engine.run(org.id)
-    table = next(
-        item
-        for item in await store.find_candidates(org.id, kinds=(CandidateKind.ENTITY,))
-        if item.payload.get("canonical_name") == "PXSAUDIT.A1672"
-    )
-    result = await engine.promote(org.id, table.id)
-    assert result["materialized"]["status"] == EntityStatus.AUTO_CONFIRMED.value
+    result = await engine.run(org.id)
 
-    relationship = next(
+    table_candidate = next(
         item
-        for item in await store.find_candidates(
-            org.id, kinds=(CandidateKind.RELATIONSHIP,)
-        )
-        if item.payload["relationship_type"] == "CONTAINS"
+        for item in result.candidates
+        if item.kind is CandidateKind.ENTITY
+        and item.payload.get("canonical_name") == "PXSAUDIT.A1672"
     )
-    promoted = await engine.promote(org.id, relationship.id)
-    assert promoted["materialized"]["status"] == EntityStatus.AUTO_CONFIRMED.value
+    assert table_candidate.stage is DiscoveryStage.CONFIRMED
+
+    contains_candidate = next(
+        item
+        for item in result.candidates
+        if item.kind is CandidateKind.RELATIONSHIP
+        and item.payload.get("relationship_type") == "CONTAINS"
+    )
+    assert contains_candidate.stage is DiscoveryStage.CONFIRMED
+
+    tables = await graph_service.find_entities(org.id, entity_type="table")
+    stored = next(item for item in tables if item.canonical_name == "PXSAUDIT.A1672")
+    assert stored.status is EntityStatus.AUTO_CONFIRMED
+    relationships = await graph_service.find_relationships(
+        org.id, relationship_types=("CONTAINS",)
+    )
+    assert relationships
+    assert any(
+        item.status is EntityStatus.AUTO_CONFIRMED for item in relationships
+    )
 
 
 @pytest.mark.asyncio

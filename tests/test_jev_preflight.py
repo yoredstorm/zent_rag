@@ -1044,3 +1044,36 @@ async def test_judge_que_falla_no_rompe_el_pack() -> None:
     )
     assert pack.ok is False
     assert pack.error is True
+
+
+def test_estado_pre_reasoning_incluye_hechos_de_company_context() -> None:
+    """A2: los hechos del Company Graph llegan al juicio, acotados y sin ruido."""
+    from src.rag.preflight_hook import pre_reasoning_state
+
+    state = pre_reasoning_state(
+        query="¿qué se ve afectado si PXSAUDIT no está disponible?",
+        company_context={
+            "company_concepts": [
+                {"name": "Pending Transaction", "entity_type": "concept"}
+            ],
+            "company_mappings": [
+                {
+                    "concept": "Pending Transaction",
+                    "field": "PXSAUDIT.A1672.A1672STO0",
+                    "values": ["0", ""],
+                }
+            ],
+            "ruido": ["no debe pasar"],
+        },
+    )
+    facts = state["company_context_facts"]
+    assert facts["company_mappings"][0]["field"] == "PXSAUDIT.A1672.A1672STO0"
+    assert "ruido" not in facts
+
+
+def test_estado_pre_reasoning_sin_company_context_queda_vacio() -> None:
+    from src.rag.preflight_hook import pre_reasoning_state
+
+    state = pre_reasoning_state(query="solo una pregunta")
+    assert state["company_context_facts"] == {}
+    assert state["company_context_counts"] == {}

@@ -30,7 +30,11 @@ from src.company.discovery.source_base import (
     DiscoverySource,
     DiscoverySourceRegistry,
 )
-from src.company.service import AuthorityRule, CompanyGraphService
+from src.company.service import (
+    AuthorityRule,
+    CompanyGraphService,
+    is_structurally_verifiable,
+)
 from src.core.domain.company_discovery import (
     AuthorityCandidatePayload,
     CandidateKind,
@@ -179,6 +183,10 @@ class CompanyDiscoveryEngine:
             if merged.kind is CandidateKind.KNOWLEDGE_GAP:
                 gap_payload = KnowledgeGapPayload.from_dict(merged.payload)
                 record_knowledge_gap(organization_id, gap_payload.gap_kind.value)
+
+        # Lo estructuralmente verificable no espera revisión humana: se
+        # materializa acá para que el grafo tenga hechos sin intervención.
+        persisted = await self._auto_promote_structural(organization_id, persisted)
 
         conflicts = sum(1 for item in persisted if self._is_conflict(item))
         elapsed = time.monotonic() - started
@@ -431,6 +439,62 @@ class CompanyDiscoveryEngine:
         )
         record_candidate(organization_id, saved.kind.value, saved.stage.value)
         return {"candidate": saved.to_dict(), "materialized": materialized}
+
+    async def _auto_promote_structural(
+        self, organization_id: UUID, candidates: list[DiscoveryCandidate]
+    ) -> list[DiscoveryCandidate]:
+        """Materializa sin humano sólo lo que la estructura física verifica.
+
+        Entidades de tipo estructural (database/table/field/...) y relaciones
+        en `AUTO_CONFIRMABLE_PAIRS`. Lo interpretativo (documentos, uso, LLM,
+        mappings) sigue exigiendo revisión.
+        """
+        promoted: dict[UUID, DiscoveryCandidate] = {}
+        for candidate in candidates:
+            if candidate.stage in (
+                DiscoveryStage.CONFIRMED,
+                DiscoveryStage.REJECTED,
+            ):
+                continue
+            if not self._is_auto_promotable(candidate):
+                continue
+            try:
+                await self.promote(organization_id, candidate.id)
+            except Exception as exc:  # noqa: BLE001 - un candidato no rompe la corrida
+                logger.warning(
+                    "company discovery auto-promote failed",
+                    candidate=str(candidate.id),
+                    error=str(exc)[:200],
+                )
+                continue
+            fresh = await self._store.get_candidate(organization_id, candidate.id)
+            if fresh is not None:
+                promoted[candidate.id] = fresh
+        if not promoted:
+            return candidates
+        logger.info(
+            "company discovery auto-promoted structural candidates",
+            organization_id=str(organization_id),
+            count=len(promoted),
+        )
+        return [promoted.get(candidate.id, candidate) for candidate in candidates]
+
+    @staticmethod
+    def _is_auto_promotable(candidate: DiscoveryCandidate) -> bool:
+        """Estructural y materializable como verdad verificable."""
+        if not candidate.structural or candidate.resolution.get("ambiguous"):
+            return False
+        if candidate.kind is CandidateKind.ENTITY:
+            payload = EntityCandidatePayload.from_dict(candidate.payload)
+            return payload.entity_type in _STRUCTURAL_ENTITY_TYPES
+        if candidate.kind is CandidateKind.RELATIONSHIP:
+            payload = RelationshipCandidatePayload.from_dict(candidate.payload)
+            return is_structurally_verifiable(
+                payload.from_ref.entity_type,
+                payload.relationship_type,
+                payload.to_ref.entity_type,
+            )
+        return False
 
     async def _materialize(
         self,

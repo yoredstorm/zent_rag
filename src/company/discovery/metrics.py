@@ -75,6 +75,11 @@ try:  # pragma: no cover - dependencia opcional
         "Estimación de tokens del contexto compilado",
         labelnames=["organization_id"],
     )
+    context_used_total = Counter(
+        "company_context_used_total",
+        "Contexto empresarial inyectado en el juicio previo",
+        labelnames=["organization_id"],
+    )
 except Exception:  # noqa: BLE001 - métricas nunca rompen el runtime
     entities_discovered_total = None  # type: ignore[assignment]
     entities_confirmed_total = None  # type: ignore[assignment]
@@ -88,6 +93,7 @@ except Exception:  # noqa: BLE001 - métricas nunca rompen el runtime
     context_entities_used = None  # type: ignore[assignment]
     context_relationships_used = None  # type: ignore[assignment]
     context_tokens_estimate = None  # type: ignore[assignment]
+    context_used_total = None  # type: ignore[assignment]
 
 
 def _label(value: object) -> str:
@@ -160,3 +166,13 @@ def record_context_compile(
             context_tokens_estimate.labels(organization_id=label).set(tokens)
     except Exception:  # noqa: BLE001
         logger.debug("company discovery metric failed", metric="context_compile")
+
+
+def record_context_used(organization_id: object) -> None:
+    """Un request que llegó al juicio con hechos empresariales reales."""
+    if context_used_total is None:
+        return
+    try:
+        context_used_total.labels(organization_id=_label(organization_id)).inc()
+    except Exception:  # noqa: BLE001
+        logger.debug("company discovery metric failed", metric="context_used")
