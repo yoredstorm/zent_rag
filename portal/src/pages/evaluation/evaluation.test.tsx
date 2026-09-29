@@ -3,10 +3,20 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { Session } from "../../api";
 import { AuthProvider } from "../../auth";
+import { EvalCaseDialog } from "../../components/evaluation/EvalCaseDialog";
 import DatasetsPage from "./Datasets";
 import RunDetailPage from "./RunDetail";
 import RunsPage from "./Runs";
+
+const SESSION = {
+  token: "rag_sess_t",
+  organizationId: "org-1",
+  companyName: "Acme",
+  roles: ["owner"],
+  permissions: [],
+} as Session;
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -35,11 +45,12 @@ function meResponse() {
 function findPost(
   fetchMock: ReturnType<typeof vi.fn>,
   urlPart: string,
+  method = "POST",
 ): { body: Record<string, unknown> } | null {
   const call = fetchMock.mock.calls.find(
     ([url, init]) =>
       String(url).includes(urlPart) &&
-      String((init as RequestInit | undefined)?.method || "GET").toUpperCase() === "POST",
+      String((init as RequestInit | undefined)?.method || "GET").toUpperCase() === method,
   );
   if (!call) return null;
   const init = call[1] as RequestInit | undefined;
@@ -147,6 +158,40 @@ describe("Evaluación · runs", () => {
 });
 
 describe("Evaluación · dataset sin JSON", () => {
+  it("crea el dataset en el momento si no existe", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method || "GET").toUpperCase();
+      if (url.includes("/api/v1/eval/datasets") && method === "POST")
+        return Promise.resolve(json({ dataset_id: "d9", name: "Nuevo" }, 201));
+      if (url.includes("/api/v1/eval/datasets/d9/examples") && method === "POST")
+        return Promise.resolve(json({ inserted: [], count: 1 }, 201));
+      if (url.includes("/api/v1/eval/datasets"))
+        return Promise.resolve(json({ datasets: [] }));
+      return Promise.resolve(json({ detail: "not mocked: " + url }, 500));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(
+      <EvalCaseDialog open onOpenChange={() => {}} session={SESSION} />,
+    );
+
+    await screen.findByRole("option", { name: "＋ Nuevo dataset" });
+    await user.type(screen.getByLabelText("Nombre del nuevo dataset"), "Recién creado");
+    await user.type(screen.getByLabelText("Pregunta"), "¿Qué es la categoría 31?");
+    await user.click(screen.getByRole("button", { name: "Agregar caso" }));
+
+    await waitFor(() => {
+      const datasetPost = findPost(fetchMock, "/api/v1/eval/datasets");
+      expect(datasetPost?.body.name).toBe("Recién creado");
+      const casePost = findPost(fetchMock, "/api/v1/eval/datasets/d9/examples");
+      expect(casePost).not.toBeNull();
+      const examples = casePost?.body.examples as { question: string }[];
+      expect(examples[0].question).toBe("¿Qué es la categoría 31?");
+    });
+  });
+
   it("agrega un caso con el formulario y su comportamiento", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -189,6 +234,76 @@ describe("Evaluación · dataset sin JSON", () => {
       const examples = post?.body.examples as { question: string; expected_behavior: string }[];
       expect(examples[0].question).toBe("¿Qué es la categoría 31?");
       expect(examples[0].expected_behavior).toBe("abstain");
+    });
+  });
+
+  it("gestiona el dataset: renombra y elimina casos", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method || "GET").toUpperCase();
+      if (url.includes("/auth/me")) return Promise.resolve(meResponse());
+      if (url.includes("/api/v1/eval/datasets/d1/examples/e1") && method === "DELETE")
+        return Promise.resolve(json({ status: "deleted" }));
+      if (url.includes("/api/v1/eval/datasets/d1/examples"))
+        return Promise.resolve(
+          json({
+            examples: [
+              {
+                id: "e1",
+                question: "pregunta vieja",
+                expected_answer: null,
+                expected_behavior: "abstain",
+                expected_sources: ["Cat31.pdf"],
+              },
+            ],
+            count: 1,
+          }),
+        );
+      if (url.includes("/api/v1/eval/datasets/d1") && method === "PATCH")
+        return Promise.resolve(json({ status: "renamed" }));
+      if (url.includes("/api/v1/eval/datasets"))
+        return Promise.resolve(
+          json({ datasets: [{ id: "d1", name: "cat31", case_count: 1 }] }),
+        );
+      return Promise.resolve(json({ detail: "not mocked: " + url }, 500));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(
+      <MemoryRouter initialEntries={["/evaluation/datasets"]}>
+        {authShell(
+          <Routes>
+            <Route path="/evaluation/datasets" element={<DatasetsPage />} />
+          </Routes>,
+        )}
+      </MemoryRouter>,
+    );
+
+    await screen.findByText("cat31");
+    await user.click(screen.getByRole("button", { name: "Gestionar" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("pregunta vieja")).toBeInTheDocument();
+
+    const nameInput = within(dialog).getByLabelText("Nombre del dataset");
+    await user.clear(nameInput);
+    await user.type(nameInput, "cat31 v2");
+    await user.click(within(dialog).getByRole("button", { name: "Guardar nombre" }));
+    await waitFor(() => {
+      const patch = findPost(fetchMock, "/api/v1/eval/datasets/d1", "PATCH");
+      expect(patch?.body.name).toBe("cat31 v2");
+    });
+
+    await user.click(within(dialog).getByRole("button", { name: "Eliminar" }));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(
+          ([url, init]) =>
+            String(url).includes("/examples/e1") &&
+            String((init as RequestInit | undefined)?.method || "").toUpperCase() ===
+              "DELETE",
+        ),
+      ).toBe(true);
     });
   });
 });

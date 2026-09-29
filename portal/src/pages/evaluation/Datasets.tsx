@@ -27,6 +27,7 @@ import {
   type SortState,
 } from "../../components/ui";
 import { EvalCaseDialog } from "../../components/evaluation/EvalCaseDialog";
+import { ManageDatasetDialog } from "../../components/evaluation/ManageDatasetDialog";
 import { QualityLayout } from "../../components/QualityLayout";
 import { fmtDateTime, fmtNum } from "../../lib/format";
 
@@ -66,6 +67,7 @@ export default function EvaluationDatasetsPage() {
   const [jsonText, setJsonText] = useState("");
   const [busy, setBusy] = useState(false);
   const [caseFor, setCaseFor] = useState<Dataset | null>(null);
+  const [manageFor, setManageFor] = useState<Dataset | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [createBusy, setCreateBusy] = useState(false);
@@ -229,6 +231,9 @@ export default function EvaluationDatasetsPage() {
           }}
           rowActions={(ds) => (
             <span className="inline-flex items-center gap-1">
+              <Button size="sm" variant="ghost" onClick={() => setManageFor(ds)}>
+                Gestionar
+              </Button>
               <Button size="sm" variant="ghost" onClick={() => setCaseFor(ds)}>
                 Agregar caso
               </Button>
@@ -410,6 +415,19 @@ export default function EvaluationDatasetsPage() {
         dataset={caseFor}
         onSaved={(ds) => {
           setMsg(`Caso agregado a ${ds.name}.`);
+          void reload();
+        }}
+      />
+
+      <ManageDatasetDialog
+        open={manageFor !== null}
+        onOpenChange={(open) => {
+          if (!open) setManageFor(null);
+        }}
+        session={session}
+        dataset={manageFor}
+        onChanged={() => {
+          setMsg("Dataset actualizado.");
           void reload();
         }}
       />
