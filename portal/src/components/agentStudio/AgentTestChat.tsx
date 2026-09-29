@@ -1,4 +1,5 @@
 import {
+  BookmarkSimple,
   Broom,
   ChatCircle,
   PaperPlaneRight,
@@ -15,6 +16,7 @@ import {
 import type { Session } from "../../api";
 import { renderMarkdownHtml } from "../../lib/markdown";
 import FlowDrawer from "../../pages/chat/FlowDrawer";
+import { EvalCaseDialog } from "../evaluation/EvalCaseDialog";
 import { Badge, Button, IconButton, LoadingDots, Panel, PanelHeader, Textarea } from "../ui";
 import { SUGGESTED_QUESTIONS, type KnowledgeSource } from "./types";
 
@@ -72,6 +74,7 @@ export function AgentTestChat({
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [flowFor, setFlowFor] = useState<ChatTurn | null>(null);
+  const [caseFor, setCaseFor] = useState<{ question: string; answer: string } | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; turn: ChatTurn } | null>(
     null,
   );
@@ -101,6 +104,14 @@ export function AgentTestChat({
     if (!turn.flow) return;
     event.preventDefault();
     setCtxMenu({ x: event.clientX, y: event.clientY, turn });
+  }
+
+  /** Pregunta que originó el turno: la explícita o el mensaje anterior del usuario. */
+  function turnQuestion(index: number): string {
+    const turn = turns[index];
+    if (turn?.question) return turn.question;
+    const previous = turns[index - 1];
+    return previous && previous.role === "user" ? previous.text : "";
   }
 
   const facts = [
@@ -224,16 +235,33 @@ export function AgentTestChat({
               </p>
             )}
             {turn.error && <p className="mt-2 text-xs text-danger">{turn.error}</p>}
-            {turn.role === "assistant" && turn.flow && (
-              <div className="mt-2 flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  leadingIcon={TreeStructure}
-                  onClick={() => setFlowFor(turn)}
-                >
-                  Ver flujo
-                </Button>
+            {turn.role === "assistant" && (turn.flow || turn.text) && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {turn.flow && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    leadingIcon={TreeStructure}
+                    onClick={() => setFlowFor(turn)}
+                  >
+                    Ver flujo
+                  </Button>
+                )}
+                {turn.text && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    leadingIcon={BookmarkSimple}
+                    onClick={() =>
+                      setCaseFor({
+                        question: turnQuestion(index),
+                        answer: turn.text,
+                      })
+                    }
+                  >
+                    Guardar caso
+                  </Button>
+                )}
               </div>
             )}
           </article>
@@ -348,6 +376,16 @@ export function AgentTestChat({
           session={session}
         />
       ) : null}
+
+      <EvalCaseDialog
+        open={caseFor !== null}
+        onOpenChange={(open) => {
+          if (!open) setCaseFor(null);
+        }}
+        session={session}
+        presetQuestion={caseFor?.question || ""}
+        presetAnswer={caseFor?.answer || ""}
+      />
     </Panel>
   );
 }

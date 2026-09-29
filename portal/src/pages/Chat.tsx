@@ -47,6 +47,7 @@ import {
 import { fmtLatency, timeAgo } from "../lib/format";
 import { renderMarkdownHtml } from "../lib/markdown";
 import SqlRunnerModal from "../components/SqlRunnerModal";
+import { EvalCaseDialog } from "../components/evaluation/EvalCaseDialog";
 import {
   deleteConversation,
   groupByDay,
@@ -126,6 +127,7 @@ export default function ChatPage() {
   const [renameValue, setRenameValue] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [flowFor, setFlowFor] = useState<Message | null>(null);
+  const [evalCase, setEvalCase] = useState<{ question: string; answer: string } | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; message: Message } | null>(
     null,
   );
@@ -907,6 +909,23 @@ export default function ChatPage() {
             >
               Copiar respuesta
             </button>
+            {ctxMenu.message.role === "assistant" ? (
+              <button
+                type="button"
+                role="menuitem"
+                className="w-full cursor-pointer rounded-sm px-2.5 py-1.5 text-left text-[12.5px] text-text transition-colors hover:bg-soft"
+                onClick={() => {
+                  const message = ctxMenu.message;
+                  setCtxMenu(null);
+                  setEvalCase({
+                    question: flowQuestion(messages, message),
+                    answer: message.content,
+                  });
+                }}
+              >
+                Guardar caso de prueba
+              </button>
+            ) : null}
           </div>
         </div>
       )}
@@ -933,6 +952,16 @@ export default function ChatPage() {
           }}
         />
       ) : null}
+
+      <EvalCaseDialog
+        open={evalCase !== null}
+        onOpenChange={(open) => {
+          if (!open) setEvalCase(null);
+        }}
+        session={session}
+        presetQuestion={evalCase?.question || ""}
+        presetAnswer={evalCase?.answer || ""}
+      />
     </div>
   );
 }
