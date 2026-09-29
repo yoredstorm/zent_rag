@@ -6,13 +6,11 @@ import { useAuth } from "../auth";
 import { afterLoginPath } from "../api";
 import { AuthShell } from "../components/auth/AuthShell";
 import { AuthButton } from "../components/auth/AuthButton";
+import { DIVE_MS, DIVE_REDUCED_MS, armEntry, disarmEntry } from "../components/auth/entryTransit";
 import { emitNeuralEvent } from "../components/auth/neuralSignal";
 import { useReveal } from "../components/auth/reveal";
 import { Field, Input, PasswordInput } from "../components/ui/form";
 import { Progress } from "../components/ui/states";
-
-/** Cuánto se sostiene la confirmación antes de entrar al workspace. */
-const SUCCESS_HOLD_MS = 620;
 
 function passwordStrength(pw: string): { label: string; pct: number; tone: "danger" | "warn" | "ok" } {
   if (pw.length === 0) return { label: "", pct: 0, tone: "danger" };
@@ -42,15 +40,17 @@ export default function SignupPage() {
 
   const succeeded = holdExit && Boolean(session);
   const busy = loading || succeeded;
+  // La travesía neuronal manda el tiempo: se entra cuando el zoom termina.
+  const holdMs = reduce ? DIVE_REDUCED_MS : DIVE_MS;
 
   useEffect(() => {
     if (!holdExit || !session) return;
     const timer = window.setTimeout(
       () => navigate(afterLoginPath(session), { replace: true }),
-      SUCCESS_HOLD_MS
+      holdMs
     );
     return () => window.clearTimeout(timer);
-  }, [holdExit, session, navigate]);
+  }, [holdExit, session, navigate, holdMs]);
 
   if (ready && session && !holdExit) return <Navigate to={afterLoginPath(session)} replace />;
 
@@ -76,8 +76,11 @@ export default function SignupPage() {
     try {
       await signup(company.trim(), email.trim(), password);
       emitNeuralEvent({ type: "success" });
+      armEntry({ reduced: Boolean(reduce) });
+      emitNeuralEvent({ type: "dive" });
     } catch (err) {
       setHoldExit(false);
+      disarmEntry();
       emitNeuralEvent({ type: "error" });
       setError(err instanceof Error ? err.message : "No pudimos crear el trial. Intenta de nuevo.");
     } finally {

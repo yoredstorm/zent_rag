@@ -101,6 +101,8 @@ export type NeuralNet = {
   recoil: number;
   /** 0..1: acceso concedido (destello). */
   success: number;
+  /** 0..1: travesía de entrada (la red entera se acelera). */
+  dive: number;
   random: () => number;
 };
 
@@ -336,6 +338,7 @@ export function createNeuralNet(options: {
     submit: 0,
     recoil: 0,
     success: 0,
+    dive: 0,
     random: createRandom(seed ^ 0x9e3779b9),
   };
 }
@@ -496,6 +499,49 @@ export function triggerSuccess(net: NeuralNet): void {
 }
 
 /**
+ * Travesía de entrada: elige la neurona que va a ocupar el centro del cuadro y
+ * enciende su vecindad para que el paso se lea.
+ *
+ * El objetivo es un hub de primer o segundo plano cercano a la tarjeta — la
+ * cámara se mete donde el ojo ya estaba mirando, no en un rincón. La red entera
+ * se acelera mientras `dive` decae (ver `stepNeuralNet`).
+ */
+export function triggerDive(net: NeuralNet): { x: number; y: number; node: number } {
+  const anchor = net.compact
+    ? { x: net.width * 0.5, y: net.height * 0.28 }
+    : { x: net.width * 0.62, y: net.height * 0.44 };
+  const distance = (index: number): number =>
+    Math.hypot(net.nodes[index].x - anchor.x, net.nodes[index].y - anchor.y);
+  const front = net.hubs.filter((index) => net.nodes[index].plane !== 2);
+  const pool = front.length ? front : net.nodes.map((_, index) => index);
+  let node = pool[0] ?? 0;
+  for (const index of pool) {
+    if (distance(index) < distance(node)) node = index;
+  }
+
+  net.dive = 1;
+  net.success = 1;
+  net.recoil = 0;
+  net.wave = { x: net.nodes[node].x, y: net.nodes[node].y, r: 0, alpha: 0.9, tone: "flash" };
+
+  net.nodes[node].refractory = 0;
+  fire(net, node, 1.5, "flash");
+
+  // Cascada: la vecindad se enciende para que la travesía no cruce una red fría.
+  const radius = Math.min(net.width, net.height) * 0.3;
+  let lit = 0;
+  for (let index = 0; index < net.nodes.length && lit < 16; index += 1) {
+    if (index === node) continue;
+    const candidate = net.nodes[index];
+    if (Math.hypot(candidate.x - net.nodes[node].x, candidate.y - net.nodes[node].y) > radius) continue;
+    candidate.refractory = 0;
+    if (fire(net, index, 1.15, "flash")) lit += 1;
+  }
+
+  return { x: net.nodes[node].x, y: net.nodes[node].y, node };
+}
+
+/**
  * El puntero empuja los nodos cercanos (resorte, vuelven solos) y excita la
  * zona: la red reacciona a la persona sin perseguirla.
  */
@@ -535,6 +581,7 @@ export function stepNeuralNet(net: NeuralNet, dt: number): void {
   net.submit = Math.max(0, net.submit - step * 0.55);
   net.recoil = Math.max(0, net.recoil - step * 0.9);
   net.success = Math.max(0, net.success - step * 0.55);
+  net.dive = Math.max(0, net.dive - step * 0.7);
   for (const zone of ["email", "password"] as const) {
     if (net.focusZone !== zone) net.focus[zone] = Math.max(0, net.focus[zone] - step * 0.5);
   }
@@ -568,7 +615,8 @@ export function stepNeuralNet(net: NeuralNet, dt: number): void {
   for (const pulse of net.pulses) {
     const edge = net.edges[pulse.edge];
     if (!edge) continue;
-    pulse.t += (step * pulse.speed) / Math.max(1, edge.length);
+    // En la travesía los impulsos corren: la red pasa a toda velocidad.
+    pulse.t += (step * pulse.speed * (1 + net.dive * 1.6)) / Math.max(1, edge.length);
     if (pulse.t >= 1) {
       const target = pulse.dir === 1 ? edge.b : edge.a;
       fire(
@@ -586,7 +634,7 @@ export function stepNeuralNet(net: NeuralNet, dt: number): void {
   // Actividad espontánea: el sistema nunca se apaga; con el envío se acelera.
   net.nextSpontaneousIn -= step;
   if (net.nextSpontaneousIn <= 0) {
-    net.nextSpontaneousIn = (0.14 + net.random() * 0.42) / (1 + net.submit * 1.8);
+    net.nextSpontaneousIn = (0.14 + net.random() * 0.42) / (1 + net.submit * 1.8 + net.dive * 5);
     fire(net, Math.floor(net.random() * net.nodes.length), 0.85 + net.submit * 0.4);
   }
 

@@ -7,6 +7,7 @@ import { useAuth } from "../auth";
 import { usePlatformAuth } from "../platformAuth";
 import { AuthShell } from "../components/auth/AuthShell";
 import { AuthButton } from "../components/auth/AuthButton";
+import { DIVE_MS, DIVE_REDUCED_MS, armEntry, disarmEntry } from "../components/auth/entryTransit";
 import { emitNeuralEvent } from "../components/auth/neuralSignal";
 import { Button } from "../components/ui/Button";
 import { ErrorInline, SuccessInline } from "../components/ui/states";
@@ -14,9 +15,6 @@ import { Field, Input, PasswordInput } from "../components/ui/form";
 
 /** Ritmo de entrada: encabezado → campos → CTA → enlaces. */
 const STAGGER = 0.06;
-
-/** Cuánto se sostiene la confirmación antes de entrar al workspace. */
-const SUCCESS_HOLD_MS = 620;
 
 /**
  * Mensajes del backend traducidos a algo que una persona pueda leer. El código
@@ -50,6 +48,7 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [holdExit, setHoldExit] = useState(false);
+  const [platformExit, setPlatformExit] = useState(false);
   const [forgotOpen, setForgotOpen] = useState(false);
   const [forgotMsg, setForgotMsg] = useState("");
   const [forgotLoading, setForgotLoading] = useState(false);
@@ -57,22 +56,35 @@ export default function LoginPage() {
   const emailReady = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
   const succeeded = holdExit && Boolean(session);
   const busy = loading || succeeded;
+  // La travesía neuronal manda el tiempo: se entra cuando el zoom termina.
+  const holdMs = reduce ? DIVE_REDUCED_MS : DIVE_MS;
 
-  // Transición de éxito: el sistema confirma (destello en la red) y recién
-  // después se entra. No cambia la lógica de auth: sólo se demora el redirect.
+  // Transición de éxito: el sistema confirma (destello en la red), la cámara
+  // entra en la red y recién después se entra. No cambia la lógica de auth:
+  // sólo se demora el redirect hasta que termina la travesía.
   useEffect(() => {
     if (!holdExit || !session) return;
     const timer = window.setTimeout(
       () => navigate(afterLoginPath(session), { replace: true }),
-      SUCCESS_HOLD_MS
+      holdMs
     );
     return () => window.clearTimeout(timer);
-  }, [holdExit, session, navigate]);
+  }, [holdExit, session, navigate, holdMs]);
+
+  // Cuenta de plataforma: la sesión la abre el Control Center, así que su
+  // redirect también espera a que la travesía termine.
+  useEffect(() => {
+    if (!platformExit) return;
+    const timer = window.setTimeout(() => navigate("/admin", { replace: true }), holdMs);
+    return () => window.clearTimeout(timer);
+  }, [platformExit, navigate, holdMs]);
 
   if (ready && session && !holdExit) return <Navigate to={afterLoginPath(session)} replace />;
 
   /** Avisa sin castigar: el error entra con un resorte y el formulario se mueve. */
   function fail(message: string, focusId?: string) {
+    // Sin travesía: no queda cortina preparada esperando a nadie.
+    disarmEntry();
     emitNeuralEvent({ type: "error" });
     setError(message);
     if (focusId) formRef.current?.querySelector<HTMLInputElement>(`#${focusId}`)?.focus();
@@ -92,6 +104,8 @@ export default function LoginPage() {
     try {
       await login(email.trim(), password);
       emitNeuralEvent({ type: "success" });
+      armEntry({ reduced: Boolean(reduce) });
+      emitNeuralEvent({ type: "dive" });
     } catch (err) {
       setHoldExit(false);
       const msg = err instanceof Error ? err.message : "";
@@ -99,7 +113,9 @@ export default function LoginPage() {
         try {
           await platformLogin(email.trim(), password);
           emitNeuralEvent({ type: "success" });
-          navigate("/admin", { replace: true });
+          armEntry({ reduced: Boolean(reduce) });
+          emitNeuralEvent({ type: "dive" });
+          setPlatformExit(true);
           return;
         } catch (platformErr) {
           fail(

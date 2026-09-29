@@ -39,6 +39,7 @@ export function AuthShell({
 }) {
   const reveal = useReveal();
   const platform = variant === "platform";
+  const sceneRef = useRef<HTMLDivElement>(null);
   const dockRef = useRef<HTMLDivElement>(null);
   const shellRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef<HTMLSpanElement>(null);
@@ -188,6 +189,12 @@ export function AuthShell({
         if (shell) shell.dataset.state = "success";
         if (state) state.dataset.state = "success";
         window.clearTimeout(resetTimer);
+      } else if (event.type === "dive") {
+        // La escena cede el cuadro a la red: el CSS apaga la UI y abre la
+        // máscara del canvas mientras la cámara entra. Con movimiento reducido
+        // no hay travesía, así que la escena se queda como está.
+        const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+        if (!reduce && sceneRef.current) sceneRef.current.dataset.dive = "true";
       }
     });
     return () => {
@@ -197,7 +204,7 @@ export function AuthShell({
   }, []);
 
   return (
-    <div className="auth-scene">
+    <div className="auth-scene" ref={sceneRef}>
       <div className="auth-mesh" aria-hidden />
       <div className="auth-net" aria-hidden>
         <NeuralFieldCanvas />

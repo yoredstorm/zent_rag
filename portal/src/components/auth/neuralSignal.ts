@@ -13,6 +13,8 @@ export type NeuralEvent =
   | { type: "submit" }
   | { type: "error" }
   | { type: "success" }
+  /** Acceso concedido: la cámara se mete en la red y la travesía empieza. */
+  | { type: "dive" }
   | { type: "stats"; stats: NetStats };
 
 type Listener = (event: NeuralEvent) => void;

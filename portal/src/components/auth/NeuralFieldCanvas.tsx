@@ -8,6 +8,7 @@ import {
   netStats,
   setFocus,
   stepNeuralNet,
+  triggerDive,
   triggerError,
   triggerSubmit,
   triggerSuccess,
@@ -18,6 +19,7 @@ import {
   type NeuralNet,
   type NetStats,
 } from "../../lib/neuralNet";
+import { DIVE_BLOOM, DIVE_MS, DIVE_ZOOM } from "./entryTransit";
 import { emitNeuralEvent, onNeuralEvent } from "./neuralSignal";
 
 export type NeuralStats = NetStats;
@@ -44,6 +46,13 @@ const PARALLAX = [1, 0.55, 0.22] as const;
 
 const AMPLITUDE_X = 26;
 const AMPLITUDE_Y = 18;
+
+/** Anticipación de la travesía: la cámara retrocede antes de entrar. */
+const DIVE_ANTICIPATION = 0.18;
+
+function smoothstep(t: number): number {
+  return t * t * (3 - 2 * t);
+}
 
 function rgba(color: readonly [number, number, number], alpha: number): string {
   return `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${Math.max(0, Math.min(1, alpha))})`;
@@ -138,12 +147,26 @@ export function NeuralFieldCanvas({
     let width = 1;
     let height = 1;
     let flash: CanvasGradient | null = null;
+    let bloom: CanvasGradient | null = null;
     let raf = 0;
     let last = 0;
     let statsAt = 0;
     const parallax = { x: 0, y: 0 };
     const target = { x: 0.5, y: 0.5, active: false };
     let lastExcite = 0;
+
+    // Cámara de la travesía: nace con el evento `dive` y ya no vuelve atrás.
+    // `p` es el avance de la línea de tiempo; `q`, la parte de entrada, que es
+    // la que mueve y amplía cada plano.
+    const dive = {
+      active: false,
+      started: 0,
+      p: 0,
+      q: 0,
+      k: 1,
+      rot: 0,
+      target: { x: 0, y: 0 },
+    };
 
     const build = (): NeuralNet => {
       const compact = width < 1024;
@@ -186,8 +209,42 @@ export function NeuralFieldCanvas({
       gradient.addColorStop(0.42, "rgba(82, 224, 182, 0.14)");
       gradient.addColorStop(1, "rgba(82, 224, 182, 0)");
       flash = gradient;
+
+      // Luz de la travesía: misma composición y mismos paradas que la cortina
+      // que toma el relevo al cambiar de ruta (`.auth-entry-curtain`).
+      const light = ctx.createRadialGradient(
+        width / 2,
+        height / 2,
+        0,
+        width / 2,
+        height / 2,
+        Math.hypot(width / 2, height / 2)
+      );
+      light.addColorStop(0, "rgba(255, 255, 255, 0.98)");
+      light.addColorStop(0.3, `rgba(${DIVE_BLOOM}, 0.94)`);
+      light.addColorStop(0.58, "rgba(126, 244, 209, 0.7)");
+      light.addColorStop(1, "rgba(9, 26, 30, 0.92)");
+      bloom = light;
     };
     applySize();
+
+    /**
+     * Cámara por plano: cada profundidad se amplía y converge a su ritmo, así
+     * la travesía se lee como un avance real y no como un zoom plano. El plano
+     * cercano se traga el cuadro; el lejano apenas se mueve y se desvanece.
+     */
+    const camera = (g: CanvasRenderingContext2D, plane: NetPlane) => {
+      const factor = PARALLAX[plane];
+      const zoom = 1 + (dive.k - 1) * factor;
+      const pull = dive.q * factor;
+      g.translate(width / 2, height / 2);
+      g.rotate(dive.rot * factor);
+      g.scale(zoom, zoom);
+      g.translate(
+        -(width / 2 + (dive.target.x - width / 2) * pull),
+        -(height / 2 + (dive.target.y - height / 2) * pull)
+      );
+    };
 
     const focusWeight = (edge: NetEdge): number => {
       const zone = net.focusZone;
@@ -212,7 +269,8 @@ export function NeuralFieldCanvas({
       const alpha =
         (0.045 + edge.weight * 0.14) * layer.alpha * cycle * (1 - net.recoil * 0.45) +
         focus * 0.26 +
-        net.success * 0.1;
+        net.success * 0.1 +
+        net.dive * 0.05;
       if (alpha < 0.012) return;
       g.beginPath();
       g.moveTo(a.x + a.vx + ox, a.y + a.vy + oy);
@@ -308,14 +366,20 @@ export function NeuralFieldCanvas({
     const draw = () => {
       ctx.clearRect(0, 0, width, height);
       const [farLayer, ...frontLayers] = LAYERS;
+      // Durante la travesía el fondo y luego los planos quedan atrás: cuando el
+      // cuadro ya es luz, seguir pintándolos sería trabajo perdido.
+      const farVisible = !dive.active || dive.q < 0.55;
+      const planesVisible = !dive.active || dive.q < 0.9;
 
       // Plano lejano: lienzo aparte a media resolución. Al subirlo, el
       // suavizado bilineal da desenfoque real (profundidad de campo) barato.
-      if (farCtx) {
+      if (farCtx && farVisible) {
         farCtx.clearRect(0, 0, width, height);
         farCtx.save();
         farCtx.globalCompositeOperation = "lighter";
+        farCtx.globalAlpha = dive.active ? 1 - 0.95 * smoothstep(dive.q) : 1;
         const factor = PARALLAX[farLayer.plane];
+        if (dive.active) camera(farCtx, farLayer.plane);
         paintPlane(farCtx, farLayer, parallax.x * AMPLITUDE_X * factor, parallax.y * AMPLITUDE_Y * factor);
         farCtx.restore();
       }
@@ -323,16 +387,23 @@ export function NeuralFieldCanvas({
       ctx.save();
       ctx.globalCompositeOperation = "lighter";
       ctx.globalAlpha = 1;
-      if (farCtx) ctx.drawImage(far, 0, 0, width, height);
+      if (farCtx && farVisible) ctx.drawImage(far, 0, 0, width, height);
 
-      for (const layer of frontLayers) {
-        const factor = PARALLAX[layer.plane];
-        paintPlane(ctx, layer, parallax.x * AMPLITUDE_X * factor, parallax.y * AMPLITUDE_Y * factor);
+      if (planesVisible) {
+        for (const layer of frontLayers) {
+          const factor = PARALLAX[layer.plane];
+          ctx.save();
+          if (dive.active) camera(ctx, layer.plane);
+          paintPlane(ctx, layer, parallax.x * AMPLITUDE_X * factor, parallax.y * AMPLITUDE_Y * factor);
+          ctx.restore();
+        }
       }
 
       // Onda de envío: cruza la red y la enciende a su paso.
       if (net.wave) {
         const wave = net.wave;
+        ctx.save();
+        if (dive.active) camera(ctx, 0);
         ctx.beginPath();
         ctx.arc(wave.x, wave.y, wave.r, 0, TAU);
         ctx.strokeStyle = rgba(TONES[wave.tone], wave.alpha * 0.35);
@@ -343,6 +414,7 @@ export function NeuralFieldCanvas({
         ctx.strokeStyle = rgba(TONES[wave.tone], wave.alpha * 0.1);
         ctx.lineWidth = 14;
         ctx.stroke();
+        ctx.restore();
       }
 
       // Destello de acceso concedido.
@@ -354,14 +426,45 @@ export function NeuralFieldCanvas({
       }
 
       ctx.restore();
+
+      // Luz de la travesía: crece hasta cubrir el cuadro y empalma sin costura
+      // con la cortina, que sigue desde aquí cuando cambia la ruta.
+      if (bloom && dive.active && dive.p > 0.8) {
+        ctx.globalAlpha = Math.pow(Math.min(1, (dive.p - 0.8) / 0.2), 1.25);
+        ctx.fillStyle = bloom;
+        ctx.fillRect(0, 0, width, height);
+        ctx.globalAlpha = 1;
+      }
     };
 
     const publish = (at: number) => {
-      if (at - statsAt < 420) return;
+      if (dive.active || at - statsAt < 420) return;
       statsAt = at;
       const stats = netStats(net);
       statsRef.current?.(stats);
       emitNeuralEvent({ type: "stats", stats });
+    };
+
+    /**
+     * Línea de tiempo de la travesía: anticipación, entrada con aceleración
+     * exponencial y freno en el destino, que ya queda en el centro del cuadro.
+     */
+    const advanceDive = (now: number) => {
+      if (!dive.active) return;
+      if (!dive.started) dive.started = now;
+      const p = Math.min(1, (now - dive.started) / DIVE_MS);
+      dive.p = p;
+      if (p < DIVE_ANTICIPATION) {
+        const t = p / DIVE_ANTICIPATION;
+        dive.q = 0;
+        dive.k = 1 - 0.02 * (1 - Math.pow(1 - t, 3));
+        dive.rot = 0;
+        return;
+      }
+      const q = (p - DIVE_ANTICIPATION) / (1 - DIVE_ANTICIPATION);
+      dive.q = q;
+      dive.k = 0.98 + (DIVE_ZOOM - 0.98) * Math.pow(q, 2.35);
+      dive.rot = 0.012 * q * q;
     };
 
     const frame = (now: number) => {
@@ -375,7 +478,9 @@ export function NeuralFieldCanvas({
       parallax.x += (tx - parallax.x) * 0.05;
       parallax.y += (ty - parallax.y) * 0.05;
 
-      stepNeuralNet(net, dt);
+      advanceDive(now);
+      // Con la cámara dentro de la neurona la simulación ya no se ve: se frena.
+      if (dive.q < 0.9) stepNeuralNet(net, dt);
       draw();
       publish(now);
 
@@ -383,6 +488,8 @@ export function NeuralFieldCanvas({
     };
 
     const onPointerMove = (event: PointerEvent) => {
+      // Durante la travesía la cámara manda: el puntero no empuja ni enciende.
+      if (dive.active) return;
       target.x = event.clientX / Math.max(1, window.innerWidth);
       target.y = event.clientY / Math.max(1, window.innerHeight);
       target.active = true;
@@ -395,6 +502,7 @@ export function NeuralFieldCanvas({
       target.active = false;
     };
     const onPointerDown = (event: PointerEvent) => {
+      if (dive.active) return;
       const rect = canvas.getBoundingClientRect();
       excitePointer(net, event.clientX - rect.left, event.clientY - rect.top, 1.6);
     };
@@ -419,8 +527,16 @@ export function NeuralFieldCanvas({
         if (!changed) return;
         const rebuild =
           Math.abs(nextWidth - net.width) > 48 || Math.abs(nextHeight - net.height) > 140;
+        const ratioX = nextWidth / Math.max(1, width);
+        const ratioY = nextHeight / Math.max(1, height);
         width = nextWidth;
         height = nextHeight;
+        // El destino de la travesía vive en píxeles: si el cuadro cambia de
+        // tamaño, se reescala para no perder el centro.
+        if (dive.active) {
+          dive.target.x *= ratioX;
+          dive.target.y *= ratioY;
+        }
         applySize();
         if (rebuild) net = build();
         if (reduce) draw();
@@ -432,7 +548,30 @@ export function NeuralFieldCanvas({
       else if (event.type === "submit") triggerSubmit(net);
       else if (event.type === "error") triggerError(net);
       else if (event.type === "success") triggerSuccess(net);
-      else return;
+      else if (event.type === "dive") {
+        // Sin movimiento reducido no hay travesía: la escena se queda en su
+        // frame curado y el relevo lo hace la cortina, que es sólo opacidad.
+        if (reduce) {
+          triggerSuccess(net);
+          draw();
+          return;
+        }
+        const destination = triggerDive(net);
+        dive.target.x = destination.x;
+        dive.target.y = destination.y;
+        dive.p = 0;
+        dive.q = 0;
+        dive.k = 1;
+        dive.rot = 0;
+        dive.started = 0;
+        dive.active = true;
+        target.active = false;
+        if (!raf && !document.hidden) {
+          last = 0;
+          raf = window.requestAnimationFrame(frame);
+        }
+        return;
+      } else return;
       if (reduce) draw();
     });
 

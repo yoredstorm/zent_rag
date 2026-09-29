@@ -338,6 +338,8 @@
   --z-palette: 60;
   --z-tour: 70;
   --z-toast: 80;
+  /* Relevo del acceso al panel: por encima de todo, sólo durante la entrada. */
+  --z-entry: 90;
 
   color-scheme: dark;
 }
@@ -1128,6 +1130,55 @@
   mix-blend-mode: soft-light;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
   background-size: 160px 160px;
+}
+
+/* --- Entrada al panel --------------------------------------------- */
+/* La escena cede el cuadro: la UI se apaga, la máscara de la red se abre y el
+   canvas se traga la pantalla mientras la cámara entra en una neurona. */
+.auth-header,
+.auth-rail,
+.auth-stage,
+.auth-net,
+.auth-vignette {
+  transition:
+    opacity 620ms cubic-bezier(0.32, 0.72, 0, 1),
+    transform 650ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.auth-scene[data-dive="true"] .auth-header,
+.auth-scene[data-dive="true"] .auth-rail,
+.auth-scene[data-dive="true"] .auth-stage {
+  opacity: 0;
+  transform: scale(1.06);
+  pointer-events: none;
+}
+
+.auth-scene[data-dive="true"] .auth-net {
+  opacity: 1;
+  -webkit-mask-image: none;
+  mask-image: none;
+}
+
+.auth-scene[data-dive="true"] .auth-vignette {
+  opacity: 0;
+}
+
+/* Cortina de relevo. Vive en la raíz de la app porque el canvas desaparece al
+   cambiar de ruta: mismo gradiente y mismas paradas que su bloom, así el
+   empalme no se nota y la luz sostiene el cambio hasta que el panel está. */
+.auth-entry-curtain {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-entry);
+  pointer-events: none;
+  will-change: opacity, transform;
+  background: radial-gradient(
+    circle farthest-corner at 50% 50%,
+    rgb(255 255 255 / 0.98) 0%,
+    rgb(236 255 249 / 0.94) 30%,
+    rgb(126 244 209 / 0.7) 58%,
+    rgb(9 26 30 / 0.92) 100%
+  );
 }
 
 /* --- Cabecera y riel de señal ------------------------------------- */
@@ -1926,6 +1977,15 @@
   .auth-cta__badge,
   .auth-cta,
   .auth-card-state__dot {
+    transition: none;
+  }
+  /* Sin travesía no hay zoom: la escena no se mueve, el relevo lo hace la
+     cortina con un cross-fade corto. */
+  .auth-header,
+  .auth-rail,
+  .auth-stage,
+  .auth-net,
+  .auth-vignette {
     transition: none;
   }
   .auth-card-state[data-state="submit"] .auth-card-state__dot {

@@ -1,17 +1,15 @@
 import { ArrowLeft, Key, ShieldCheck } from "@phosphor-icons/react";
 import { FormEvent, useEffect, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
-import { motion } from "motion/react";
+import { motion, useReducedMotion } from "motion/react";
 import { usePlatformAuth } from "../../platformAuth";
 import { AuthShell } from "../../components/auth/AuthShell";
 import { AuthButton } from "../../components/auth/AuthButton";
+import { DIVE_MS, DIVE_REDUCED_MS, armEntry, disarmEntry } from "../../components/auth/entryTransit";
 import { emitNeuralEvent } from "../../components/auth/neuralSignal";
 import { useReveal } from "../../components/auth/reveal";
 import { ErrorInline } from "../../components/ui/states";
 import { Field, Input, PasswordInput } from "../../components/ui/form";
-
-/** Cuánto se sostiene la confirmación antes de entrar al Control Center. */
-const SUCCESS_HOLD_MS = 620;
 
 function redirectAfterLogin(state: unknown): string {
   const from =
@@ -26,6 +24,7 @@ export default function AdminLoginPage() {
   const { session, login, loginMfa } = usePlatformAuth();
   const location = useLocation();
   const navigate = useNavigate();
+  const reduce = useReducedMotion();
   const reveal = useReveal({ step: 0.06 });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -36,16 +35,18 @@ export default function AdminLoginPage() {
   const [holdExit, setHoldExit] = useState(false);
 
   const succeeded = holdExit && Boolean(session);
+  // La travesía neuronal manda el tiempo: se entra cuando el zoom termina.
+  const holdMs = reduce ? DIVE_REDUCED_MS : DIVE_MS;
 
   // Transición de éxito: la red confirma y recién después se entra.
   useEffect(() => {
     if (!holdExit || !session) return;
     const timer = window.setTimeout(
       () => navigate(redirectAfterLogin(location.state), { replace: true }),
-      SUCCESS_HOLD_MS
+      holdMs
     );
     return () => window.clearTimeout(timer);
-  }, [holdExit, session, navigate, location.state]);
+  }, [holdExit, session, navigate, location.state, holdMs]);
 
   if (session && !holdExit) return <Navigate to={redirectAfterLogin(location.state)} replace />;
 
@@ -65,9 +66,12 @@ export default function AdminLoginPage() {
         emitNeuralEvent({ type: "focus", zone: null });
       } else {
         emitNeuralEvent({ type: "success" });
+        armEntry({ reduced: Boolean(reduce) });
+        emitNeuralEvent({ type: "dive" });
       }
     } catch (err) {
       setHoldExit(false);
+      disarmEntry();
       emitNeuralEvent({ type: "error" });
       setError(err instanceof Error ? err.message : "No pudimos iniciar sesión.");
     } finally {
@@ -85,8 +89,11 @@ export default function AdminLoginPage() {
     try {
       await loginMfa(mfaSession, mfaCode.trim());
       emitNeuralEvent({ type: "success" });
+      armEntry({ reduced: Boolean(reduce) });
+      emitNeuralEvent({ type: "dive" });
     } catch (err) {
       setHoldExit(false);
+      disarmEntry();
       emitNeuralEvent({ type: "error" });
       setError(err instanceof Error ? err.message : "El código no es válido o ya expiró.");
     } finally {

@@ -10,6 +10,7 @@ import {
   netStats,
   setFocus,
   stepNeuralNet,
+  triggerDive,
   triggerError,
   triggerSubmit,
   triggerSuccess,
@@ -138,6 +139,33 @@ describe("red neuronal espacial", () => {
     expect(net.success).toBeGreaterThan(0.9);
     expect(net.recoil).toBe(0);
     expect(net.pulses.length).toBeGreaterThan(0);
+  });
+
+  it("la travesía entra por una neurona de primer plano y acelera la red", () => {
+    const diving = createNeuralNet({ width: 1440, height: 900, seed: 47 });
+    expect(diving.dive).toBe(0);
+
+    const destination = triggerDive(diving);
+    const node = diving.nodes[destination.node];
+    expect(node).toBeDefined();
+    expect(node.plane).not.toBe(2);
+    expect(destination.x).toBe(node.x);
+    expect(destination.y).toBe(node.y);
+    expect(diving.dive).toBe(1);
+    expect(diving.wave?.tone).toBe("flash");
+    expect(diving.pulses.length).toBeGreaterThan(0);
+
+    // Contra una red en calma, la travesía dispara mucho más.
+    const calm = createNeuralNet({ width: 1440, height: 900, seed: 47 });
+    for (let i = 0; i < 60; i += 1) {
+      stepNeuralNet(diving, 1 / 60);
+      stepNeuralNet(calm, 1 / 60);
+    }
+    expect(diving.firings.length).toBeGreaterThan(calm.firings.length);
+
+    // Y se apaga sola: `dive` decae hasta cero.
+    for (let i = 0; i < 180; i += 1) stepNeuralNet(diving, 1 / 60);
+    expect(diving.dive).toBe(0);
   });
 
   it("compone un frame curado para reduced motion", () => {

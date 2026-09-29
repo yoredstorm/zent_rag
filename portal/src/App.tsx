@@ -19,6 +19,8 @@ import { EntitlementsProvider } from "./lib/entitlements";
 import { AppSidebar } from "./components/shell/AppSidebar";
 import { MobileNav } from "./components/shell/MobileNav";
 import { Brand } from "./components/Brand";
+import { EntryCurtain } from "./components/auth/EntryCurtain";
+import { entryArmed } from "./components/auth/entryTransit";
 import { PageSkeleton } from "./components/ui/states";
 
 const IDLE_SESSION_MINUTES = 30;
@@ -216,7 +218,12 @@ function ProtectedLayout() {
   const [nowTs, setNowTs] = useState(0);
   const pageControls = useAnimation();
   const reduceMotion = useReducedMotion();
-  const lastPath = useRef<string | null>(null);
+  // Llegada desde el acceso: la cortina se está disolviendo y el panel entra
+  // empujado por el mismo movimiento. Arrancar `lastPath` con la ruta actual
+  // evita que la entrada normal de página pise esa animación.
+  const [arriving] = useState(entryArmed);
+  const lastPath = useRef<string | null>(arriving ? pathname : null);
+  const arrivalPending = useRef(arriving);
 
   // Entrada de página sin remount: anima el wrapper al cambiar de ruta.
   useEffect(() => {
@@ -229,6 +236,22 @@ function ProtectedLayout() {
       transition: { duration: 0.32, ease: [0.16, 1, 0.3, 1] },
     });
   }, [pathname, pageControls, reduceMotion]);
+
+  // Travesía de entrada: el panel aparece bajo la luz que se retira. Sólo
+  // transform y opacidad: el contenido del panel no se vuelve a filtrar.
+  useEffect(() => {
+    if (!arrivalPending.current || reduceMotion) return;
+    arrivalPending.current = false;
+    void pageControls.start({
+      opacity: [0, 1],
+      scale: [1.045, 1],
+      transition: {
+        duration: 0.95,
+        ease: [0.16, 1, 0.3, 1],
+        opacity: { duration: 0.42 },
+      },
+    });
+  }, [pageControls, reduceMotion]);
   const impersonating =
     typeof sessionStorage !== "undefined" ? sessionStorage.getItem(IMPERSONATING_KEY) : null;
 
@@ -432,7 +455,8 @@ function ProtectedLayout() {
 
 export default function App() {
   return (
-    <Routes>
+    <>
+      <Routes>
       <Route path="/login" element={<Suspense fallback={<PageFallback />}><LoginPage /></Suspense>} />
       <Route path="/signup" element={<Suspense fallback={<PageFallback />}><SignupPage /></Suspense>} />
       <Route path="/onboarding/start" element={<Suspense fallback={<PageFallback />}><StartModePage /></Suspense>} />
@@ -621,6 +645,9 @@ export default function App() {
         <Route path="/evaluation/playground-compare" element={<Navigate to="/evaluation/compare" replace />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+      </Routes>
+      {/* Relevo del acceso al panel: vive en la raíz porque sobrevive al cambio de ruta. */}
+      <EntryCurtain />
+    </>
   );
 }
