@@ -143,3 +143,65 @@ class TestCoverage:
 
         assert "14-22" in needles
         assert "R007D03E000" in needles
+
+
+class TestAnchorsV2:
+    """Siglas y máscaras: el caso FCLAS &&&F no tenía ninguna aguja."""
+
+    def test_sigla_en_mayusculas_es_un_anchor(self) -> None:
+        anchors = extract_anchors("qué significa FCLAS en el Record 2")
+
+        assert any(a.kind == "sigla" and a.value == "FCLAS" for a in anchors)
+
+    def test_siglas_tecnicas_no_son_anchors(self) -> None:
+        anchors = extract_anchors("genera un PDF desde la API con JSON")
+
+        assert not [a for a in anchors if a.kind == "sigla"]
+
+    def test_mascara_con_comodines_es_un_anchor(self) -> None:
+        anchors = extract_anchors("FCLAS &&&F exige que el fare basis cumpla")
+
+        mascaras = [a for a in anchors if a.kind == "mascara"]
+        assert mascaras and mascaras[0].value == "&&&F"
+
+    def test_html_escapado_se_desescapa(self) -> None:
+        anchors = extract_anchors("FCLAS &amp;&amp;&amp;F")
+
+        assert any(a.kind == "mascara" and a.value == "&&&F" for a in anchors)
+
+    def test_la_mascara_sale_del_denso_y_la_sigla_queda(self) -> None:
+        limpio = dense_query_rewrite("FCLAS &&&F")
+
+        assert "&&&F" not in limpio
+        assert "FCLAS" in limpio
+
+    def test_mascara_cubierta_por_la_evidencia(self) -> None:
+        anchor = next(a for a in extract_anchors("FCLAS &&&F") if a.kind == "mascara")
+
+        assert anchor_covered(anchor, "Fare Class &&&F matches the fourth character")
+        assert not anchor_covered(anchor, "Fare Class *** matches")
+
+    def test_pregunta_en_prosa_con_interrogacion_no_es_mascara(self) -> None:
+        anchors = extract_anchors("¿qué significa esto?")
+
+        assert not [a for a in anchors if a.kind == "mascara"]
+
+
+class TestCoverageNoteConAnchors:
+    def test_coverage_note_lista_anchors_faltantes(self) -> None:
+        from src.intelligence.response.entities import coverage_note
+
+        note = coverage_note("qué significa FCLAS &&&F", "texto sin nada relevante")
+
+        assert "FCLAS" in note
+        assert "&&&F" in note
+
+    def test_coverage_note_vacia_si_la_evidencia_cubre(self) -> None:
+        from src.intelligence.response.entities import coverage_note
+
+        note = coverage_note(
+            "qué significa FCLAS &&&F",
+            "FCLAS es el campo de fare class. &&&F es un patrón posicional.",
+        )
+
+        assert note == ""

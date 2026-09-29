@@ -877,11 +877,18 @@ async def _circuit_check(config: dict, organization_id: UUID) -> None:
 
 
 def _uncovered_labels(question: str, evidence_text: str) -> list[str]:
-    """Entidades de la pregunta que la evidencia consultada no menciona."""
+    """Entidades y anchors de la pregunta que la evidencia consultada no menciona."""
     try:
+        from src.intelligence.response.anchors import anchor_covered, extract_anchors
         from src.intelligence.response.entities import uncovered_entities
 
-        return [entity.label for entity in uncovered_entities(question, evidence_text)][:4]
+        labels = [entity.label for entity in uncovered_entities(question, evidence_text)]
+        labels.extend(
+            anchor.label
+            for anchor in extract_anchors(question)
+            if not anchor_covered(anchor, evidence_text)
+        )
+        return labels[:4]
     except Exception:  # noqa: BLE001 — la cobertura nunca rompe el run
         return []
 
@@ -902,6 +909,7 @@ def _refined_retrieval_query(question: str, entities: list[str]) -> str:
     Las entidades se escriben con su forma compacta (`cat31`) porque los nombres
     de fuente del dominio suelen venir así (`Cat31_dapp_C.pdf`).
     """
+    from src.intelligence.response.anchors import anchor_needles, extract_anchors
     from src.intelligence.response.entities import asked_entities
 
     tokens: list[str] = []
@@ -920,6 +928,14 @@ def _refined_retrieval_query(question: str, entities: list[str]) -> str:
             continue
         for variant in entity.variants[:2]:
             add(variant)
+
+    # Anchors: la máscara (&&&F) no es una palabra para el regex de abajo, así
+    # que sin esto la query refinada no la lleva.
+    for anchor in extract_anchors(question):
+        if wanted and anchor.label.lower() not in wanted:
+            continue
+        for needle in anchor_needles([anchor])[:3]:
+            add(needle)
 
     for word in re.findall(r"[\wÁÉÍÓÚÑáéíóúñ]{3,}", question, flags=re.UNICODE):
         if len(tokens) >= 10:
@@ -3288,7 +3304,12 @@ class AgentRuntime:
                         # avisos internos del loop.
                         active = selection if selection is not None else _refresh_selection()
                         observation_text = render_evidence(active)
-                        gap_labels = list(sufficiency.missing_entities) if sufficiency else []
+                        gap_labels = (
+                            list(sufficiency.missing_entities)
+                            + list(sufficiency.missing_anchors)
+                            if sufficiency
+                            else []
+                        )
                     else:
                         observation_text = "\n".join(
                             line for line in _evidence_window(history, limit=8)

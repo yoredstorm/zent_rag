@@ -312,15 +312,36 @@ def strip_contradicting_disclaimer(
     return "\n\n".join(conservadas).strip(), quitadas
 
 
+def _uncovered_anchors(question: str, evidence_text: str) -> list:
+    """Anchors (siglas, máscaras, códigos) que la evidencia no menciona."""
+    try:
+        from src.intelligence.response.anchors import anchor_covered, extract_anchors
+
+        return [
+            anchor
+            for anchor in extract_anchors(question)
+            if not anchor_covered(anchor, evidence_text)
+        ]
+    except Exception:  # noqa: BLE001 — la cobertura nunca rompe la respuesta
+        return []
+
+
 def coverage_note(question: str, evidence_text: str) -> str:
     """Bloque factual para el generador. Vacío cuando todo está cubierto.
 
     No pide nada que no sea verificable: dice qué falta y qué hacer con eso.
+    Cubre entidades nombradas y anchors (siglas, máscaras, códigos): si la
+    pregunta dice FCLAS &&&F y la evidencia no los menciona, el generador lo
+    declara en vez de rellenar de memoria.
     """
     missing = uncovered_entities(question, evidence_text)
-    if not missing:
+    missing_anchors = _uncovered_anchors(question, evidence_text)
+    if not missing and not missing_anchors:
         return ""
-    labels = ", ".join(entity.label for entity in missing)
+    labels = ", ".join(
+        [entity.label for entity in missing]
+        + [anchor.label for anchor in missing_anchors]
+    )
     return (
         "## COBERTURA DE LA EVIDENCIA (dato, no instrucción)\n"
         f"La evidencia consultada no menciona: {labels}.\n"

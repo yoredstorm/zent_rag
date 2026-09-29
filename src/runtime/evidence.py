@@ -44,13 +44,16 @@ ACTION_APPROVE = "approve"
 ACTION_REVISE = "revise"
 
 #: Razón de selección → orden de prioridad (menor = primero).
+#: El anchor exacto (FCLAS, &&&F) es más específico que la entidad genérica
+#: («record 2»): el fragmento que explica el campo va antes.
 _MATCH_PRIORITY: dict[str, int] = {
-    "exact_entity_match": 0,
-    "source_name_match": 1,
-    "entity_pin": 2,
-    "section_match": 3,
-    "lexical_match": 4,
-    "semantic_match": 5,
+    "exact_anchor_match": 0,
+    "exact_entity_match": 1,
+    "source_name_match": 2,
+    "entity_pin": 3,
+    "section_match": 4,
+    "lexical_match": 5,
+    "semantic_match": 6,
 }
 
 _TOKEN_RE = re.compile(r"[\wÁÉÍÓÚÑáéíóúñ]{3,}", re.UNICODE)
@@ -81,6 +84,16 @@ def _asked_entities(question: str) -> list[Any]:
         return []
 
 
+def _asked_anchors(question: str) -> list[Any]:
+    """Anchors de la pregunta (siglas, máscaras, códigos). Fail-soft."""
+    try:
+        from src.intelligence.response.anchors import extract_anchors
+
+        return extract_anchors(question)
+    except Exception:  # noqa: BLE001 — la selección nunca rompe por un import
+        return []
+
+
 #: Retrievals que marcan la sección completa que contiene al fragmento.
 SECTION_RETRIEVALS = ("entity_section", "section_parent")
 
@@ -92,6 +105,10 @@ def question_needles(question: str) -> list[str]:
         for variant in entity.variants:
             if variant and variant not in needles:
                 needles.append(variant)
+    for anchor in _asked_anchors(question):
+        for needle in anchor.needles:
+            if needle and needle not in needles:
+                needles.append(needle)
     if not needles:
         for token in sorted(_content_tokens(question)):
             if len(token) >= 4:
@@ -445,11 +462,25 @@ def _source_needles(entity: Any) -> list[str]:
     return needles
 
 
-def classify_item(item: EvidenceItem, question: str, entities: Sequence[Any]) -> str:
-    """Clasifica un fragmento por la señal MÁS fuerte que lo trae, sin LLM."""
+def classify_item(
+    item: EvidenceItem,
+    question: str,
+    entities: Sequence[Any],
+    *,
+    anchors: Sequence[Any] | None = None,
+) -> str:
+    """Clasifica un fragmento por la señal MÁS fuerte que lo trae, sin LLM.
+
+    El anchor exacto gana: cubrir `FCLAS` y `&&&F` es más específico que cubrir
+    «record 2», que aparece en medio corpus.
+    """
+    from src.intelligence.response.anchors import anchor_covered
     from src.intelligence.response.entities import entity_covered
 
     content = _coverage_text(item)
+    anchor_list = list(anchors) if anchors is not None else _asked_anchors(question)
+    if anchor_list and all(anchor_covered(anchor, content) for anchor in anchor_list):
+        return "exact_anchor_match"
     if entities and all(entity_covered(entity, content) for entity in entities):
         return "exact_entity_match"
     nombre = f"{item.title or ''} {item.source_id or ''}".lower()
@@ -478,9 +509,10 @@ def rank_evidence(
 ) -> list[tuple[EvidenceItem, str, int]]:
     """Orden de prioridad determinista: señal fuerte primero, score dentro del grupo."""
     entities = _asked_entities(question)
+    anchors = _asked_anchors(question)
     ranked: list[tuple[EvidenceItem, str, int]] = []
     for order, item in enumerate(items):
-        match = classify_item(item, question, entities)
+        match = classify_item(item, question, entities, anchors=anchors)
         priority = _MATCH_PRIORITY.get(match, 9)
         ranked.append((item, match, priority * 1000 + order))
     ranked.sort(key=lambda entry: (entry[2], -float(entry[0].score or 0.0)))
@@ -631,6 +663,10 @@ class EvidenceSufficiency:
     entities_asked: tuple[str, ...] = ()
     entities_covered: tuple[str, ...] = ()
     missing_entities: tuple[str, ...] = ()
+    #: Anchors nombrados (siglas, máscaras, códigos): lo que el embedding no ve.
+    anchors_asked: tuple[str, ...] = ()
+    anchors_covered: tuple[str, ...] = ()
+    missing_anchors: tuple[str, ...] = ()
     top_score: float = 0.0
     conflicting_chunks: int | None = None
 
@@ -654,6 +690,11 @@ class EvidenceSufficiency:
                 payload["missing_entities"] = list(self.missing_entities)[:6]
         if self.exact_entity_match is not None:
             payload["exact_entity_match"] = self.exact_entity_match
+        if self.anchors_asked:
+            payload["anchors_asked"] = list(self.anchors_asked)[:6]
+            payload["anchors_covered"] = list(self.anchors_covered)[:6]
+            if self.missing_anchors:
+                payload["missing_anchors"] = list(self.missing_anchors)[:6]
         if self.conflicting_chunks is not None:
             payload["conflicting_chunks"] = self.conflicting_chunks
         return payload
@@ -667,9 +708,13 @@ def assess_sufficiency(
 ) -> EvidenceSufficiency:
     """¿Alcanza la evidencia para responder lo que se preguntó?
 
-    Determinista: entidades de la pregunta (regex + contención) contra el texto
-    recuperado. No opina sobre la redacción ni usa LLM.
+    Determinista: entidades y anchors de la pregunta (regex + contención) contra
+    el texto recuperado. No opina sobre la redacción ni usa LLM.
+
+    Un anchor nombrado que no aparece (FCLAS, &&&F) es un hueco real: si quedan
+    rondas, se pide otra búsqueda; si no, se responde con límites declarados.
     """
+    from src.intelligence.response.anchors import anchor_covered
     from src.intelligence.response.entities import entity_covered
 
     top_score = max((float(item.score or 0.0) for item in items), default=0.0)
@@ -683,7 +728,8 @@ def assess_sufficiency(
             top_score=0.0,
         )
     entities = _asked_entities(question)
-    if not entities:
+    anchors = _asked_anchors(question)
+    if not entities and not anchors:
         return EvidenceSufficiency(
             has_evidence=True,
             supporting_chunks=len(items),
@@ -697,15 +743,36 @@ def assess_sufficiency(
     missing = tuple(label for label in asked if label not in covered)
     coverage = len(covered) / len(asked) if asked else None
     exact = not missing
-    if exact:
-        action, reason = ACTION_GENERATE, "exact_entity_match"
-    elif covered:
-        action = ACTION_GENERATE
-        reason = "partial_entity_coverage"
-    elif retrieval_rounds_left > 0:
-        action, reason = ACTION_RETRIEVE_MORE, "entity_not_in_evidence"
+    anchors_asked = tuple(anchor.label for anchor in anchors)
+    anchors_covered = tuple(
+        anchor.label for anchor in anchors if anchor_covered(anchor, joined)
+    )
+    missing_anchors = tuple(
+        label for label in anchors_asked if label not in anchors_covered
+    )
+
+    if missing_anchors and not missing:
+        # Lo nombrado que falta es el anchor: el pin puede ir a buscarlo.
+        action = (
+            ACTION_RETRIEVE_MORE
+            if retrieval_rounds_left > 0
+            else ACTION_ANSWER_WITH_LIMITS
+        )
+        reason = "anchor_not_in_evidence"
+    elif missing_anchors and missing and not covered and not anchors_covered:
+        action = ACTION_RETRIEVE_MORE if retrieval_rounds_left > 0 else ACTION_ABSTAIN
+        reason = "entity_not_in_evidence"
+    elif missing:
+        if covered:
+            action, reason = ACTION_GENERATE, "partial_entity_coverage"
+        elif retrieval_rounds_left > 0:
+            action, reason = ACTION_RETRIEVE_MORE, "entity_not_in_evidence"
+        else:
+            action, reason = ACTION_ABSTAIN, "entity_not_in_evidence"
+    elif not asked:
+        action, reason = ACTION_GENERATE, "exact_anchor_match"
     else:
-        action, reason = ACTION_ABSTAIN, "entity_not_in_evidence"
+        action, reason = ACTION_GENERATE, "exact_entity_match"
     return EvidenceSufficiency(
         has_evidence=True,
         supporting_chunks=len(items),
@@ -716,6 +783,9 @@ def assess_sufficiency(
         entities_asked=asked,
         entities_covered=covered,
         missing_entities=missing,
+        anchors_asked=anchors_asked,
+        anchors_covered=anchors_covered,
+        missing_anchors=missing_anchors,
         top_score=top_score,
     )
 

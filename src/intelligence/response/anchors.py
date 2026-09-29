@@ -11,6 +11,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import html
 import importlib
 import re
 from dataclasses import dataclass, field
@@ -29,6 +30,24 @@ _DIGIT_RUN_RE = re.compile(rf"\b\d{{{_MIN_DIGITS},}}\b")
 _CODE_RE = re.compile(r"\b(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{8,}\b")
 #: Rango numérico: 14-22, 64–67.
 _RANGE_RE = re.compile(r"\b(\d{1,4})\s*[-–]\s*(\d{1,4})\b")
+#: Sigla: MAYÚSCULAS de 3-8 letras (FCLAS, RBD, TSI). Los acrónimos técnicos
+#: genéricos no son señal: están en la stoplist.
+_SIGLA_RE = re.compile(r"\b[A-Z]{3,8}\b")
+_SIGLA_STOPWORDS = frozenset(
+    {
+        "PDF", "API", "URL", "URI", "HTTP", "HTTPS", "JSON", "SQL", "LLM",
+        "RAG", "ID", "UUID", "CSV", "XML", "HTML", "MCP", "SDK", "CLI",
+        "UI", "UX", "OK", "TODO", "NOTA",
+    }
+)
+#: Máscara con comodines: &&&F, *F*, F%. Un `?` de prosa («¿qué?») no cuenta.
+_MASK_CHARS = "&*?%#"
+_MASK_RUN_RE = re.compile(r"[A-Za-z0-9&*?%#]{2,16}")
+
+
+def _clean(question: str) -> str:
+    """Pregunta sin entidades HTML: el portal puede guardar `&amp;&amp;&amp;F`."""
+    return html.unescape(question or "")
 
 
 @dataclass(frozen=True)
@@ -155,14 +174,68 @@ def _rango(first: str, second: str) -> Anchor:
     )
 
 
+def _sigla(value: str) -> Anchor:
+    variants = tuple(dict.fromkeys([value, value.lower()]))
+    return Anchor(
+        kind="sigla",
+        value=value,
+        label=f"sigla {value}",
+        variants=variants,
+        needles=variants,
+    )
+
+
+def _mascara(value: str) -> Anchor:
+    variants = tuple(dict.fromkeys([value, value.lower()]))
+    return Anchor(
+        kind="mascara",
+        value=value,
+        label=f"mascara {value}",
+        variants=variants,
+        needles=variants,
+    )
+
+
+def _es_mascara(token: str) -> bool:
+    """Comodines de verdad: 2+ comodines, o 1 con una MAYÚSCULA en el token.
+
+    «&&&F» y «*F*» son máscaras. «2?» de «Record 2?» es prosa: un comodín con
+    dígito y sin letra no es un patrón.
+    """
+    comodines = sum(1 for char in token if char in _MASK_CHARS)
+    if not comodines or not any(char.isalnum() for char in token):
+        return False
+    if comodines < 2 and not any(char.isupper() for char in token):
+        return False
+    return True
+
+
+def _siglas(text: str) -> list[Anchor]:
+    return [
+        _sigla(match.group(0))
+        for match in _SIGLA_RE.finditer(text)
+        if match.group(0) not in _SIGLA_STOPWORDS
+    ]
+
+
+def _mascaras(text: str) -> list[Anchor]:
+    return [
+        _mascara(match.group(0))
+        for match in _MASK_RUN_RE.finditer(text)
+        if _es_mascara(match.group(0))
+    ]
+
+
 def _opaque_anchors(question: str) -> list[Anchor]:
-    """Anchors por forma: dígitos largos, códigos mixtos y rangos."""
-    text = question or ""
+    """Anchors por forma: dígitos, códigos, siglas, máscaras y rangos."""
+    text = _clean(question)
     found: list[Anchor] = []
     for match in _DIGIT_RUN_RE.finditer(text):
         found.append(_codigo(match.group(0)))
     for match in _CODE_RE.finditer(text):
         found.append(_codigo(match.group(0)))
+    found.extend(_siglas(text))
+    found.extend(_mascaras(text))
     for match in _RANGE_RE.finditer(text):
         found.append(_rango(match.group(1), match.group(2)))
     return found
@@ -171,13 +244,14 @@ def _opaque_anchors(question: str) -> list[Anchor]:
 def extract_anchors(question: str, *, max_items: int = MAX_ANCHORS) -> list[Anchor]:
     """Anchors de la pregunta: providers de dominio primero, genéricos después."""
     _ensure_modules_loaded()
+    text = _clean(question)
     found: list[Anchor] = []
     for provider in _providers:
         try:
-            found.extend(provider.extract(question or ""))
+            found.extend(provider.extract(text))
         except Exception as exc:  # noqa: BLE001 — un provider roto no rompe la búsqueda
             logger.warning("Anchor provider failed", error=str(exc)[:150])
-    found.extend(_opaque_anchors(question or ""))
+    found.extend(_opaque_anchors(text))
     return _dedupe(found)[:max_items]
 
 
@@ -191,6 +265,10 @@ def anchor_needles(anchors: list[Anchor] | tuple[Anchor, ...]) -> list[str]:
     return needles
 
 
+def _mask_repl(match: re.Match[str]) -> str:
+    return " " if _es_mascara(match.group(0)) else match.group(0)
+
+
 def dense_query_rewrite(
     question: str,
     anchors: list[Anchor] | tuple[Anchor, ...] | None = None,
@@ -198,14 +276,16 @@ def dense_query_rewrite(
     """Pregunta sin tokens opacos, para el embedding.
 
     Los tokens estructurados no tienen señal semántica y contaminan el vector;
-    viajan por la pata léxica. Si al limpiar no queda texto, se conserva la
-    pregunta original: una búsqueda sin query no es una búsqueda.
+    viajan por la pata léxica. Las siglas QUEDAN: son palabra. Si al limpiar no
+    queda texto, se conserva la pregunta original: una búsqueda sin query no es
+    una búsqueda.
     """
-    text = question or ""
+    text = _clean(question)
     if not text.strip():
         return text
     cleaned = _DIGIT_RUN_RE.sub(" ", text)
     cleaned = _CODE_RE.sub(" ", cleaned)
+    cleaned = _MASK_RUN_RE.sub(_mask_repl, cleaned)
     cleaned = _RANGE_RE.sub(" ", cleaned)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     if len(cleaned) < 3:
