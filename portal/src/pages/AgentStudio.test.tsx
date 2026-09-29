@@ -97,7 +97,11 @@ function sseResponse(frames: { event: string; data: unknown }[], gate?: Promise<
   });
 }
 
-function fetchRouter(agent: Record<string, unknown> = AGENT, stream?: StreamOptions) {
+function fetchRouter(
+  agent: Record<string, unknown> = AGENT,
+  stream?: StreamOptions,
+  getReadiness: () => unknown = () => READINESS,
+) {
   return vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     const method = (init?.method || "GET").toUpperCase();
@@ -113,7 +117,7 @@ function fetchRouter(agent: Record<string, unknown> = AGENT, stream?: StreamOpti
       );
     if (url.includes("/api/v1/sources")) return Promise.resolve(json({ sources: [SOURCE, SQL_SOURCE] }));
     if (url.includes("/api/v1/jobs")) return Promise.resolve(json({ jobs: [] }));
-    if (url.includes("/readiness")) return Promise.resolve(json(READINESS));
+    if (url.includes("/readiness")) return Promise.resolve(json(getReadiness()));
     if (url.includes("/versions") && method === "POST") return Promise.resolve(json({ id: "v1" }));
     if (url.includes("/versions")) return Promise.resolve(json({ versions: [] }));
     if (url.includes("/embed/token")) return Promise.resolve(json({ token: "tok-1", public_id: "pub-1" }));
@@ -170,8 +174,9 @@ async function renderStudio(
   path = "/agents/a1",
   agent: Record<string, unknown> = AGENT,
   stream?: StreamOptions,
+  getReadiness?: () => unknown,
 ) {
-  const fetchMock = fetchRouter(agent, stream);
+  const fetchMock = fetchRouter(agent, stream, getReadiness);
   vi.stubGlobal("fetch", fetchMock);
   const user = userEvent.setup();
   render(
@@ -408,6 +413,31 @@ describe("AgentStudio · etapas y URLs", () => {
     await waitForStudio();
     const group = await screen.findByTestId("agent-group-retrieval");
     expect(within(group).getByLabelText("Fragmentos a usar")).toHaveValue(8);
+  });
+});
+
+describe("AgentStudio · checklist de readiness", () => {
+  it("refresca el checklist al guardar", async () => {
+    const pendiente = {
+      score: 65,
+      items: [
+        { key: "prompt", label: "Prompt configurado", met: false, weight: 15, detail: "Prompt en blanco" },
+      ],
+    };
+    const listo = {
+      score: 80,
+      items: [
+        { key: "prompt", label: "Prompt configurado", met: true, weight: 15, detail: "Prompt listo" },
+      ],
+    };
+    const readiness = { current: pendiente };
+    const { user } = await renderStudio("/agents/a1", AGENT, undefined, () => readiness.current);
+    const checklist = await screen.findByTestId("agent-readiness-checklist");
+    await waitFor(() => expect(checklist).toHaveTextContent("pendiente"));
+
+    readiness.current = listo;
+    await user.click(screen.getByRole("button", { name: "Guardar" }));
+    await waitFor(() => expect(checklist).toHaveTextContent("cumplido"));
   });
 });
 

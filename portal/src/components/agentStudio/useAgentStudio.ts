@@ -166,6 +166,23 @@ export function useAgentStudio() {
   sourcesRef.current = sources;
   jobsRef.current = jobs;
 
+  /**
+   * Relee el checklist real del backend. Fail-silent: si falla, se conserva el
+   * anterior. Se usa al cargar el agente, al guardar y al terminar una ingesta.
+   */
+  const refreshReadiness = useCallback(async () => {
+    if (!session || isNew || !id) return;
+    try {
+      const out = await api<Readiness>(`/api/v1/agents/${id}/readiness`, {
+        token: session.token,
+        organizationId: session.organizationId,
+      });
+      setReadiness(out);
+    } catch {
+      /* se conserva el checklist anterior */
+    }
+  }, [session, id, isNew]);
+
   useEffect(() => {
     if (!session) return;
     let cancelled = false;
@@ -194,18 +211,23 @@ export function useAgentStudio() {
     }
 
     void refresh(true);
+    let wasPending = false;
     const timer = window.setInterval(() => {
       const waitingSources = sourcesRef.current.some((source) => !source.document_count);
       const activeJobs = jobsRef.current.some(
         (job) => job.status === "pending" || job.status === "running",
       );
-      if (waitingSources || activeJobs) void refresh(false);
+      const pending = waitingSources || activeJobs;
+      if (pending) void refresh(false);
+      // Ingesta terminada: el checklist puede cambiar (fuente indexada).
+      if (wasPending && !pending) void refreshReadiness();
+      wasPending = pending;
     }, 3000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [session]);
+  }, [session, refreshReadiness]);
 
   function applyAgent(data: Agent) {
     const next = {
@@ -263,16 +285,11 @@ export function useAgentStudio() {
     })
       .then((data) => {
         applyAgent(data);
-        api<Readiness>(`/api/v1/agents/${id}/readiness`, {
-          token: session.token,
-          organizationId: session.organizationId,
-        })
-          .then(setReadiness)
-          .catch(() => setReadiness(null));
+        void refreshReadiness();
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Error"))
       .finally(() => setLoading(false));
-  }, [session, id, isNew]);
+  }, [session, id, isNew, refreshReadiness]);
 
   useEffect(() => {
     if (!session) return;
@@ -578,6 +595,8 @@ export function useAgentStudio() {
         body: JSON.stringify(payload),
       });
       applyAgent(updated);
+      // El checklist depende de lo guardado (prompt, herramientas): refrescalo.
+      await refreshReadiness();
       const warnings = (updated as { warnings?: string[] }).warnings;
       setMsg(warnings?.length ? `Cambios guardados. ${warnings.join(" ")}` : "Cambios guardados.");
       return updated;
