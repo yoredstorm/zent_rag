@@ -439,6 +439,29 @@ describe("AgentStudio · checklist de readiness", () => {
     await user.click(screen.getByRole("button", { name: "Guardar" }));
     await waitFor(() => expect(checklist).toHaveTextContent("cumplido"));
   });
+
+  it("refresca el checklist al crear una versión", async () => {
+    const pendiente = {
+      score: 45,
+      items: [
+        { key: "version", label: "Versión lista", met: false, weight: 10, detail: "Sin versión" },
+      ],
+    };
+    const listo = {
+      score: 55,
+      items: [
+        { key: "version", label: "Versión lista", met: true, weight: 10, detail: "Versión lista" },
+      ],
+    };
+    const readiness = { current: pendiente };
+    const { user } = await renderStudio("/agents/a1?panel=publish", AGENT, undefined, () => readiness.current);
+    const checklist = await screen.findByTestId("agent-readiness-checklist");
+    await waitFor(() => expect(checklist).toHaveTextContent("pendiente"));
+
+    readiness.current = listo;
+    await user.click(screen.getByRole("button", { name: "Crear versión" }));
+    await waitFor(() => expect(checklist).toHaveTextContent("cumplido"));
+  });
 });
 
 describe("AgentStudio · comportamiento", () => {

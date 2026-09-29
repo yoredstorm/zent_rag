@@ -768,6 +768,7 @@ export function useAgentStudio() {
       });
       setDeployMsg("Versión creada (draft). Promovéla a lista para desplegar.");
       await refreshVersions();
+      void refreshReadiness();
     } catch (err) {
       setDeployError(err instanceof Error ? err.message : "Error al crear la versión");
     } finally {
@@ -789,6 +790,7 @@ export function useAgentStudio() {
       });
       setDeployMsg("Versión promovida.");
       await refreshVersions();
+      void refreshReadiness();
     } catch (err) {
       setDeployError(err instanceof Error ? err.message : "Error al promover");
     } finally {
@@ -810,6 +812,7 @@ export function useAgentStudio() {
       });
       setDeployMsg("Publicación creada (healthy).");
       await refreshDeployments();
+      void refreshReadiness();
     } catch (err) {
       setDeployError(err instanceof Error ? err.message : "Error al publicar");
     } finally {
@@ -839,6 +842,7 @@ export function useAgentStudio() {
       });
       setDeployMsg(`v${candidate.version_number} publicada en production.`);
       await refreshDeployments();
+      void refreshReadiness();
     } catch (err) {
       setDeployError(err instanceof Error ? err.message : "Error al publicar");
     } finally {
@@ -859,6 +863,7 @@ export function useAgentStudio() {
       });
       setDeployMsg("Rollback ejecutado.");
       await refreshDeployments();
+      void refreshReadiness();
     } catch (err) {
       setDeployError(err instanceof Error ? err.message : "Error en rollback");
     } finally {
