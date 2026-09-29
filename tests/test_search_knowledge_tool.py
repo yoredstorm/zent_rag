@@ -201,3 +201,123 @@ def test_los_nombres_de_fuente_declaran_su_categoria() -> None:
         "Cat 31_33 Sys Assumption implementation guide.pdf"
     ) == {"31"}
     assert _declared_category_numbers("Glossary of Terms_C.pdf") == set()
+
+
+# ---------------------------------------------------------------------------
+# Anchors: tokens opacos fuera del embedding, prioridad por nombre en modo KB
+# ---------------------------------------------------------------------------
+
+
+class RecordingEmbedder:
+    def __init__(self) -> None:
+        self.texts: list[str] = []
+
+    async def embed(self, text, model=None):
+        self.texts.append(str(text))
+        return [0.1] * 8
+
+
+@pytest.mark.asyncio
+async def test_el_embedding_no_lleva_tokens_opacos() -> None:
+    retriever = FakeRetriever()
+    embedder = RecordingEmbedder()
+    tool = SearchKnowledgeTool(retriever, embedder=embedder)
+
+    result = await tool.execute(
+        make_context(uuid4()),
+        {"query": "interpreta 3200501059649 R007D03E000 de categoría 5"},
+    )
+
+    assert result.error is None
+    assert embedder.texts, "debe embeber la consulta"
+    assert "3200501059649" not in embedder.texts[0]
+    assert "categoría 5" in embedder.texts[0]
+    assert retriever.queries[0].query == "interpreta 3200501059649 R007D03E000 de categoría 5"
+
+
+@pytest.mark.asyncio
+async def test_los_terminos_de_expansion_del_provider_entran_al_embedding() -> None:
+    from src.intelligence.response.anchors import (
+        Anchor,
+        clear_anchor_providers,
+        register_anchor_provider,
+    )
+
+    class _Provider:
+        def extract(self, question: str):
+            if "3200501059649" not in question:
+                return []
+            return [
+                Anchor(
+                    kind="trama",
+                    value="3200501059649",
+                    label="trama 3200501059649",
+                    variants=("3200501059649",),
+                    needles=("3200501059649",),
+                    expansion_terms=("record layout bytes",),
+                )
+            ]
+
+    register_anchor_provider(_Provider())
+    try:
+        embedder = RecordingEmbedder()
+        tool = SearchKnowledgeTool(FakeRetriever(), embedder=embedder)
+        await tool.execute(make_context(uuid4()), {"query": "interpreta 3200501059649"})
+    finally:
+        clear_anchor_providers()
+
+    assert "record layout bytes" in embedder.texts[0]
+
+
+@pytest.mark.asyncio
+async def test_priority_sources_usa_los_nombres_del_kb_sin_source_ids() -> None:
+    s5, sx = uuid4(), uuid4()
+    nombres = {str(s5): "Cat5_dapp_C.pdf", str(sx): "Glossary.pdf"}
+    ctx = ToolContext(tenant_id=uuid4(), role="admin", org_config={})
+
+    prioridad = await SearchKnowledgeTool._priority_sources(
+        ctx, "¿qué dice la categoría 5?", [], nombres=nombres
+    )
+
+    assert [str(item) for item in prioridad] == [str(s5)]
+
+
+@pytest.mark.asyncio
+async def test_priority_sources_no_matchea_el_numero_suelto() -> None:
+    s15, s5 = uuid4(), uuid4()
+    nombres = {
+        str(s15): "Rec2_Cat15_dapp_C.pdf",
+        str(s5): "Cat5_dapp_C.pdf",
+    }
+    ctx = ToolContext(tenant_id=uuid4(), role="admin", org_config={})
+
+    prioridad = await SearchKnowledgeTool._priority_sources(
+        ctx, "¿qué dice la categoría 5?", [], nombres=nombres
+    )
+
+    assert [str(item) for item in prioridad] == [str(s5)]
+
+
+@pytest.mark.asyncio
+async def test_en_modo_kb_la_prioridad_por_nombre_tambien_se_aplica(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    s5 = uuid4()
+
+    async def fake_names(ctx, source_ids, kb_ids):
+        return {str(s5): "Cat5_dapp_C.pdf"}
+
+    monkeypatch.setattr(SearchKnowledgeTool, "_source_names", staticmethod(fake_names))
+    retriever = FakeRetriever()
+    tool = SearchKnowledgeTool(retriever, embedder=FakeEmbedder())
+    ctx = ToolContext(
+        tenant_id=uuid4(),
+        role="admin",
+        org_config={"knowledge_base_ids": [str(uuid4())]},
+    )
+
+    result = await tool.execute(ctx, {"query": "¿qué dice la categoría 5?"})
+
+    assert result.error is None
+    assert retriever.queries, "debe buscar en el KB"
+    assert [str(item) for item in retriever.queries[0].source_priority] == [str(s5)]

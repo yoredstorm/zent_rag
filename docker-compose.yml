@@ -89,6 +89,7 @@ x-common-env: &common-env
   RAG_RAG_AGENT_MODEL: ${RAG_RAG_AGENT_MODEL:-}
   RAG_RAG_AGENT_MAX_STEPS: ${RAG_RAG_AGENT_MAX_STEPS:-5}
   RAG_RAG_AGENT_TOOL_MODULES: ${RAG_RAG_AGENT_TOOL_MODULES:-src.verticals.demo_farmacia.tools}
+  RAG_ANCHOR_MODULES: ${RAG_ANCHOR_MODULES:-}
   # MCP Server (Model Context Protocol) — Streamable HTTP en /mcp
   RAG_RAG_MCP_ENABLED: ${RAG_RAG_MCP_ENABLED:-true}
   # Host header allowlist (DNS-rebinding guard). Por defecto cubre acceso

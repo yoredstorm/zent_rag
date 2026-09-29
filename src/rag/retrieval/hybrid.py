@@ -180,6 +180,11 @@ class HybridRetriever(Retriever):
         if not activo:
             return chunks
 
+        from src.intelligence.response.anchors import (
+            Anchor,
+            anchor_covered,
+            extract_anchors,
+        )
         from src.intelligence.response.entities import (
             AskedEntity,
             asked_entities,
@@ -187,7 +192,8 @@ class HybridRetriever(Retriever):
         )
 
         entidades = asked_entities(query.query)
-        if not entidades:
+        anchors = extract_anchors(query.query)
+        if not entidades and not anchors:
             return chunks
 
         def _texto(items: list[Any]) -> str:
@@ -224,6 +230,37 @@ class HybridRetriever(Retriever):
 
         etapas: dict[str, int] = {}
         pinned: list[Any] = []
+
+        def _needles_de_entidad(entidad: AskedEntity) -> list[str]:
+            """Label, normalizado y variantes: la forma EN cubre docs en inglés."""
+            needles = [entidad.label]
+            normalizado = normalize(entidad.label)
+            if normalizado and normalizado != entidad.label:
+                needles.append(normalizado)
+            for variant in entidad.variants:
+                if variant and variant not in needles:
+                    needles.append(variant)
+            return needles
+
+        def _anchor_presente(anchor: Anchor, texto: str) -> bool:
+            return anchor_covered(anchor, texto)
+
+        def _anchor_presente_en_titulo(anchor: Anchor, items: list[Any]) -> bool:
+            for item in items:
+                contenido = str(getattr(item, "content", "") or "")
+                primera = contenido.splitlines()[0] if contenido.strip() else ""
+                if not primera or "|" in primera:
+                    continue
+                linea = normalize(primera)
+                if any(variante and variante in linea for variante in anchor.variants):
+                    return True
+            return False
+
+        def _todo_presente(items: list[Any]) -> bool:
+            texto = _texto(items)
+            return all(_presente(e, texto) for e in entidades) and all(
+                _anchor_presente(a, texto) for a in anchors
+            )
 
         def _fuentes_relevantes() -> list[Any]:
             """Fuentes que ya aparecieron en la búsqueda: las del tema."""
@@ -311,16 +348,22 @@ class HybridRetriever(Retriever):
                 # Sin atajos: la sección cuyo título ES el campo pedido es la que
                 # lo explica, y cuesta milisegundos traerla. Los atajos por
                 # «mención presente» dejaban afuera justamente esa sección.
-                needles_titulo = [entidad.label]
-                normalizado = normalize(entidad.label)
-                if normalizado and normalizado != entidad.label:
-                    needles_titulo.append(normalizado)
-                etapas["heading"] += await _barrer(needles_titulo, heading_only=True)
+                # Las needles incluyen las variantes («category 5»): la pregunta
+                # puede venir en español y el documento estar en inglés.
+                etapas["heading"] += await _barrer(
+                    _needles_de_entidad(entidad), heading_only=True
+                )
                 # Sólo se corta cuando TODAS las entidades nombradas aparecieron:
                 # cortar con la primera dejaba sin buscar la segunda («categoría
                 # 31» encontrada, «byte 105» nunca buscado).
-                if all(_presente(e, _texto(pinned)) for e in entidades):
+                if _todo_presente(pinned):
                     break
+            for anchor in anchors:
+                if _todo_presente(pinned):
+                    break
+                etapas["heading"] += await _barrer(
+                    list(anchor.needles), heading_only=True
+                )
 
         # Etapa 1: léxico por entidad (una consulta por entidad, sin el resto).
         if self._lexical is not None:
@@ -344,6 +387,28 @@ class HybridRetriever(Retriever):
                     dataclasses.replace(chunk, metadata={**chunk.metadata, "retrieval": "entity_lexical"})
                     for chunk in parte.chunks[:pin_chunks]
                 )
+            for anchor in anchors[:2]:
+                if not anchor.needles:
+                    continue
+                if _anchor_presente_en_titulo(anchor, chunks + pinned):
+                    continue
+                try:
+                    parte = await self._lexical.retrieve(
+                        dataclasses.replace(
+                            query,
+                            query=anchor.needles[0],
+                            top_k=pin_chunks,
+                            effective_top_k=pin_chunks,
+                            score_threshold=0.0,
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Anchor lexical pin failed", error=str(exc)[:150])
+                    continue
+                pinned.extend(
+                    dataclasses.replace(chunk, metadata={**chunk.metadata, "retrieval": "entity_lexical"})
+                    for chunk in parte.chunks[:pin_chunks]
+                )
             etapas["lexical"] = len(pinned)
 
         # Etapa 2: barrido por frase cuando la entidad no aparece ni siquiera
@@ -353,14 +418,22 @@ class HybridRetriever(Retriever):
             for entidad in entidades
             if not _presente(entidad, _texto(chunks + pinned))
         ]
+        faltantes_anchors = [
+            anchor
+            for anchor in anchors
+            if not _anchor_presente(anchor, _texto(chunks + pinned))
+        ]
         escaneados = 0
-        if faltantes and max_points > 0:
+        if (faltantes or faltantes_anchors) and max_points > 0:
             needle_variants: list[str] = []
             for entidad in faltantes:
-                needle_variants.append(entidad.label)
-                normalizado = normalize(entidad.label)
-                if normalizado and normalizado not in needle_variants:
-                    needle_variants.append(normalizado)
+                for needle in _needles_de_entidad(entidad):
+                    if needle not in needle_variants:
+                        needle_variants.append(needle)
+            for anchor in faltantes_anchors:
+                for needle in anchor.needles:
+                    if needle and needle not in needle_variants:
+                        needle_variants.append(needle)
             # Primero las fuentes que ya aparecieron en la búsqueda (son las
             # relevantes al tema); si no alcanza, el resto. Sin este orden, con
             # 60+ fuentes el barrido puede no llegar nunca a la que tiene el dato.

@@ -36,6 +36,36 @@ _NS = UUID("8a3c1d50-3e2b-4f9a-9c8d-2b5a7e1f4c60")
 _BOLD_RE = re.compile(r"bold|black|semibold|heavy", re.IGNORECASE)
 _NUMBERED_HEADING_RE = re.compile(r"^\s*((?:\d+\.)+\d+|\d+)\s*[.)]?\s*(.*)$")
 _CID_RE = re.compile(r"\(cid:(\d+)\)")
+#: Fila de layout fixed-width: abre con un rango de posiciones («14-22 Campo»,
+#: «Bytes 64-67 Exception Time»). Es forma, no dominio.
+_LAYOUT_ROW_RE = re.compile(
+    r"^\s*(?:bytes?\s+)?(\d{1,3})\s*[-–]\s*(\d{1,3})\b", re.IGNORECASE
+)
+
+
+def _is_layout_row(text: str) -> bool:
+    return bool(_LAYOUT_ROW_RE.match(text or ""))
+
+
+def _layout_row_groups(lines: list[dict]) -> list[tuple[int, int]]:
+    """Runs de 2+ líneas consecutivas de layout (índices inclusivos).
+
+    Una fila suelta es prosa o un rango casual; dos o más consecutivas son una
+    tabla de posiciones y deben viajar juntas.
+    """
+    groups: list[tuple[int, int]] = []
+    start: int | None = None
+    for index, line in enumerate(lines):
+        if _is_layout_row(str(line.get("text") or "")):
+            if start is None:
+                start = index
+            continue
+        if start is not None and index - start >= 2:
+            groups.append((start, index - 1))
+        start = None
+    if start is not None and len(lines) - start >= 2:
+        groups.append((start, len(lines) - 1))
+    return groups
 
 
 def _decode_cid_text(text: str) -> str:
@@ -121,7 +151,11 @@ class PdfParser(StructuredParser):
                     page, tables, page_no, organization_id, workspace_id, source_id, order
                 )
                 order += len(page_tables)
-                table_bboxes = [t.bbox for t in page.find_tables()]
+                table_bboxes = [
+                    (t.bbox.x0, t.bbox.y0, t.bbox.x1, t.bbox.y1)
+                    for t in page_tables
+                    if t.bbox is not None
+                ]
                 # Las tablas también son bloques: sin esto su contenido se perdía
                 # (las líneas dentro del bbox se saltean y `document.tables` no
                 # entra en los chunks). Se insertan en orden de lectura.
@@ -129,7 +163,42 @@ class PdfParser(StructuredParser):
                     _table_to_block(table, page_no) for table in page_tables
                 ]
 
-                for line in lines:
+                # Filas de layout fixed-width que pdfplumber no ve como grilla:
+                # se agrupan en un bloque TABLE para que el chunker no las parta.
+                libres = [
+                    (index, line)
+                    for index, line in enumerate(lines)
+                    if not _inside_any_table(line, table_bboxes)
+                ]
+                grupos = _layout_row_groups([line for _, line in libres])
+                layout_starts: dict[int, tuple[int, int]] = {}
+                layout_covered: set[int] = set()
+                for start, end in grupos:
+                    layout_starts[libres[start][0]] = (start, end)
+                    for offset in range(start, end + 1):
+                        layout_covered.add(libres[offset][0])
+
+                for index, line in enumerate(lines):
+                    if index in layout_covered:
+                        grupo = layout_starts.get(index)
+                        if grupo is None:
+                            continue
+                        start, end = grupo
+                        grupo_lines = [
+                            libres[offset][1] for offset in range(start, end + 1)
+                        ]
+                        order = _flush_tables_before(
+                            pending_tables,
+                            grupo_lines[0].get("top"),
+                            order,
+                            page_blocks,
+                            blocks,
+                        )
+                        block = _layout_block(grupo_lines, order, page_no)
+                        page_blocks.append(block)
+                        blocks.append(block)
+                        order += 1
+                        continue
                     if _inside_any_table(line, table_bboxes):
                         continue
                     order = _flush_tables_before(
@@ -251,6 +320,27 @@ def _table_to_block(table: DocumentTable, page_no: int) -> dict:
         "text": text,
         "page": page_no,
     }
+
+
+def _layout_block(lines: list[dict], order: int, page_no: int) -> StructuredBlock:
+    """Bloque TABLE sintético para filas de layout fixed-width sin bordes."""
+    text = "\n".join(line["text"] for line in lines)
+    return StructuredBlock(
+        kind=StructuredBlockKind.TABLE,
+        text=text,
+        order=order,
+        page=page_no,
+        bbox=BoundingBox(
+            page=page_no,
+            x0=min(line["x0"] for line in lines),
+            y0=min(line["top"] for line in lines),
+            x1=max(line["x1"] for line in lines),
+            y1=max(line["bottom"] for line in lines),
+        ),
+        token_count=token_count(text),
+        content_hash=content_hash(text),
+        metadata={"layout": True, "row_count": len(lines)},
+    )
 
 
 def _flush_tables_before(
@@ -381,6 +471,15 @@ def _extract_tables(
     """Extrae tablas con find_tables y las anexa (orden estable)."""
     try:
         found = page.find_tables()
+        if not found:
+            # Tablas sin bordes (layouts fixed-width): la estrategia de texto
+            # arma columnas por alineación de palabras.
+            found = page.find_tables(
+                table_settings={
+                    "vertical_strategy": "text",
+                    "horizontal_strategy": "text",
+                }
+            )
     except Exception:
         return []
     extracted: list[DocumentTable] = []

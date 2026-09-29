@@ -197,32 +197,60 @@ class SearchKnowledgeTool(Tool):
         source_ids: list[UUID],
         *,
         nombres: dict[str, str] | None = None,
+        anchors: list | None = None,
     ) -> list[UUID]:
         """Fuentes cuyo NOMBRE coincide con lo que la pregunta nombra, en orden.
 
         «categoría 31 byte 105» → `Cat31_dapp_C.pdf` primero: la sección que
         explica el campo vive ahí, aunque la búsqueda densa haya traído otro
         documento. Determinista y barato (una consulta por búsqueda).
+
+        Funciona también en modo KB (`source_ids` vacío): los candidatos salen
+        de los nombres declarados. Las agujas de categoría son prefijadas
+        («cat5»), nunca el número suelto: «5» matchearía «Cat15».
         """
         try:
+            from src.intelligence.response.anchors import anchor_needles
             from src.intelligence.response.entities import asked_entities
 
             entidades = asked_entities(query_text)
-            if not entidades or not source_ids:
+            anchor_list = list(anchors or [])
+            if not entidades and not anchor_list:
                 return []
+
+            if nombres is None:
+                nombres = await SearchKnowledgeTool._source_names(ctx, source_ids, [])
+            candidatos: list[UUID] = list(source_ids)
+            if not candidatos:
+                for raw_id in nombres or {}:
+                    try:
+                        candidatos.append(UUID(raw_id))
+                    except ValueError:
+                        continue
+            if not candidatos:
+                return []
+
             agujas: list[str] = []
             for entidad in entidades:
                 valor = entidad.value.strip().lower()
                 if not valor:
                     continue
-                agujas.append(valor)
                 if entidad.kind == "categoría":
-                    agujas.extend([f"cat{valor}", f"cat {valor}", f"cat_{valor}"])
+                    agujas.extend(
+                        [
+                            f"cat{valor}",
+                            f"cat {valor}",
+                            f"cat_{valor}",
+                            f"category {valor}",
+                            f"categoria {valor}",
+                        ]
+                    )
+                elif len(valor) >= 2:
+                    agujas.append(valor)
+            agujas.extend(anchor_needles(anchor_list))
             if not agujas:
                 return []
 
-            if nombres is None:
-                nombres = await SearchKnowledgeTool._source_names(ctx, source_ids, [])
             prioridad: list[UUID] = []
             for source_id, nombre in nombres.items():
                 nombre_normalizado = str(nombre or "").lower().replace("-", " ")
@@ -369,6 +397,20 @@ class SearchKnowledgeTool(Tool):
             source_ids = self._uuids(ctx, "source_ids")
             kb_ids = self._uuids(ctx, "knowledge_base_ids")
             query_text = str(arguments["query"])
+            from src.intelligence.response.anchors import (
+                dense_query_rewrite,
+                extract_anchors,
+            )
+
+            anchors = extract_anchors(query_text)
+            expansion_terms = [
+                term for anchor in anchors for term in anchor.expansion_terms if term
+            ]
+            dense_text = dense_query_rewrite(query_text, anchors)
+            if expansion_terms:
+                dense_text = (
+                    f"{dense_text} {' '.join(dict.fromkeys(expansion_terms))}"
+                ).strip()
             exact_start = time.perf_counter()
             exact_result = await self._try_tabular_exact(
                 ctx, query_text, source_ids, kb_ids
@@ -385,7 +427,7 @@ class SearchKnowledgeTool(Tool):
             query_embedding = None
             embedding_route: dict | None = None
             if source_ids or kb_ids:
-                query_embedding = await self._embed_query(query_text, strategy)
+                query_embedding = await self._embed_query(dense_text, strategy)
                 if query_embedding is not None:
                     # Ruta real del proveedor (primario o respaldo) para "Ver
                     # flujo". Sólo si esta búsqueda embebió de verdad (lexical
@@ -398,7 +440,7 @@ class SearchKnowledgeTool(Tool):
             chunks = []
             nombres = await self._source_names(ctx, source_ids, kb_ids)
             prioridad = await self._priority_sources(
-                ctx, query_text, source_ids, nombres=nombres
+                ctx, query_text, source_ids, nombres=nombres, anchors=anchors
             )
             if source_ids:
                 rquery = RetrievalQuery(
@@ -422,6 +464,7 @@ class SearchKnowledgeTool(Tool):
                         organization_id=ctx.tenant_id,
                         role=ctx.role,
                         knowledge_base_id=kb_id,
+                        source_priority=prioridad,
                         top_k=top_k,
                         effective_top_k=top_k,
                         score_threshold=score_threshold,

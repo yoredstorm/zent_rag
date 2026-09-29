@@ -208,6 +208,71 @@ class TestPinDeEntidades:
         assert docs.count(real.document_id) == 1, "el chunk pineado no se duplica"
 
 
+class _StorePorNeedles(_StoreFalso):
+    """Store que sólo devuelve chunks cuyo contenido contiene el needle.
+
+    Modela el caso real: la pregunta en español nombra «categoría 5» y el
+    documento está en inglés («Category 5»). Si las needles no incluyen las
+    variantes, la sección no aparece.
+    """
+
+    async def search_sparse(self, *, query_text: str, **kwargs) -> RetrievalContext:
+        self.lexical_queries.append(query_text)
+        needle = str(query_text or "").strip().lower()
+        encontrados = [
+            chunk for chunk in self._lexical if needle and needle in chunk.content.lower()
+        ]
+        return RetrievalContext(chunks=encontrados, retrieval_latency_ms=1.0)
+
+    async def scan_text(self, *, needles, **kwargs) -> RetrievalContext:
+        self.scan_needles.append(list(needles))
+        agujas = [str(needle).strip().lower() for needle in needles if str(needle).strip()]
+        encontrados = [
+            chunk
+            for chunk in self._scan
+            if any(aguja in chunk.content.lower() for aguja in agujas)
+        ]
+        return RetrievalContext(chunks=encontrados, retrieval_latency_ms=2.0)
+
+
+class TestPinDeAnchors:
+    @pytest.mark.asyncio
+    async def test_las_variantes_en_ingles_encuentran_el_heading(self) -> None:
+        real = _chunk(
+            "Category 5 — Advance Reservations and Ticketing\nOverview", 0.2
+        )
+        store = _StorePorNeedles(dense=[_chunk("ruido semántico", 0.7)], lexical=[real], scan=[real])
+
+        contexto = await _retriever(store).retrieve(_query("¿qué dice la categoría 5?"))
+
+        assert any("Category 5" in chunk.content for chunk in contexto.chunks)
+        needles = [needle.lower() for grupo in store.scan_needles for needle in grupo]
+        assert "category 5" in needles
+
+    @pytest.mark.asyncio
+    async def test_un_token_opaco_entra_a_las_needles_del_pin(self) -> None:
+        real = _chunk("Data table 3200501059649 layout\nByte Range | Field", 0.3)
+        store = _StorePorNeedles(dense=[_chunk("ruido semántico", 0.7)], lexical=[real], scan=[real])
+
+        contexto = await _retriever(store).retrieve(
+            _query("interpreta 3200501059649 y R007D03E000")
+        )
+
+        assert any("3200501059649" in chunk.content for chunk in contexto.chunks)
+        needles = [needle for grupo in store.scan_needles for needle in grupo]
+        assert any("3200501059649" in needle for needle in needles)
+
+    @pytest.mark.asyncio
+    async def test_sin_entidades_ni_anchors_no_hay_pin(self) -> None:
+        store = _StorePorNeedles(dense=[_chunk("texto general", 0.5)], lexical=[])
+
+        contexto = await _retriever(store).retrieve(_query("¿cómo funciona la reemisión?"))
+
+        assert store.lexical_queries == []
+        assert store.scan_needles == []
+        assert len(contexto.chunks) == 1
+
+
 class TestExpansionDeSeccion:
     """Regresión «byte 105»: el fragmento pineado se cambia por su sección."""
 

@@ -1370,6 +1370,14 @@ class Settings(BaseSettings):
             "(patrón SQL_HEURISTICS_MODULES)."
         ),
     )
+    ANCHOR_MODULES: str = Field(
+        default="",
+        description=(
+            "Comma-separated module paths que registran providers de anchors "
+            "de dominio (tokens estructurados por vertical, patrón "
+            "RAG_AGENT_TOOL_MODULES). El core no conoce ningún dominio."
+        ),
+    )
     # -------------------------------------------------------------------------
     # MCP Server (Model Context Protocol)
     # -------------------------------------------------------------------------
