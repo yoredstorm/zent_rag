@@ -1,4 +1,4 @@
-import { Sparkle } from "@phosphor-icons/react";
+import { Sparkle, User } from "@phosphor-icons/react";
 import { useState } from "react";
 import { api } from "../../api";
 import { IconButton, Input, Textarea } from "../ui";
@@ -81,7 +81,7 @@ export function AgentPurposeForm({
 
   return (
     <div className="grid gap-6">
-      <AgentSection title="Identidad" hint="Cómo se llama y qué debe lograr.">
+      <AgentSection title="Identidad" icon={User} hint="Cómo se llama y qué debe lograr.">
         <AgentField
           id="agent-studio-name"
           label="Nombre"

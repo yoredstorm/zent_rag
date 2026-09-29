@@ -74,12 +74,15 @@ export function AgentField({
  */
 export function AgentSection({
   title,
+  icon: IconEl,
   hint,
   actions,
   children,
   className,
 }: {
   title: string;
+  /** Icono de sección (mismo patrón que Conocimiento): 14px accent. */
+  icon?: Icon;
   hint?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
@@ -89,7 +92,10 @@ export function AgentSection({
     <section className={cn("grid gap-3", className)}>
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
         <div className="min-w-0">
-          <h3 className="text-[13px] font-semibold tracking-[-0.01em] text-text">{title}</h3>
+          <h3 className="flex flex-wrap items-center gap-2 text-[13px] font-semibold tracking-[-0.01em] text-text">
+            {IconEl && <IconEl size={14} className="text-accent" aria-hidden />}
+            {title}
+          </h3>
           {hint && <p className="mt-0.5 text-xs leading-relaxed text-muted">{hint}</p>}
         </div>
         {actions && <div className="flex shrink-0 items-center gap-1.5">{actions}</div>}

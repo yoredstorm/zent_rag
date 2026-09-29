@@ -5,7 +5,7 @@
 // preset escribe el perfil completo. Un perfil guardado que no coincide con
 // ningún preset se muestra como "Personalizado" y NO se pisa.
 // =============================================================================
-import { Sparkle } from "@phosphor-icons/react";
+import { ChatCircle, Sparkle } from "@phosphor-icons/react";
 import { Badge, Button } from "../ui";
 import { AgentOptionCard } from "./AgentField";
 import { CUSTOM_PROFILE } from "./agentModes";
@@ -35,6 +35,7 @@ export function AgentBehaviorPresetSection({
       <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
         <div className="min-w-0">
           <h3 className="flex flex-wrap items-center gap-2 text-[13px] font-semibold tracking-[-0.01em] text-text">
+            <ChatCircle size={14} className="text-accent" aria-hidden />
             Comportamiento
             {isCustom && <Badge tone="neutral">Personalizado</Badge>}
           </h3>
