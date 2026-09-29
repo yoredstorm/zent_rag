@@ -373,6 +373,14 @@ class EvidenceRegistry:
             "items": public,
         }
 
+    def to_eval_dict(self, *, limit: int = 48) -> list[dict[str, Any]]:
+        """Ítems con contenido completo, sólo para evaluación offline (juez).
+
+        No se persiste ni se serializa en la API/flow: los bloques públicos
+        siguen usando `to_public_dict` (excerpt 400).
+        """
+        return [item.to_eval_dict() for item in self.items[:limit]]
+
 
 @dataclass
 class EvidenceMatch:

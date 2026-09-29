@@ -214,6 +214,17 @@ class EvidenceItem:
             payload["excerpt"] = " ".join(self.content.split())[:400]
         return payload
 
+    def to_eval_dict(self) -> dict[str, Any]:
+        """Igual que `to_public_dict` pero con el contenido COMPLETO.
+
+        Sólo para evaluación offline (el juez necesita el mismo texto que vio el
+        generador). Nunca se persiste ni se envía al portal: los bloques
+        públicos siguen usando `excerpt`.
+        """
+        payload = self.to_public_dict()
+        payload["content"] = self.content
+        return payload
+
 
 @dataclass(kw_only=True)
 class EvidenceSet:

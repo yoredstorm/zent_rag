@@ -235,12 +235,36 @@ class _FakeRunResult:
         answer: str = "respuesta",
         status: str = "completed",
         evidence: dict | None = None,
+        evidence_full: list[dict] | None = None,
     ) -> None:
         self.steps = steps or []
         self.jev_decisions = jev_decisions or []
         self.answer = answer
         self.status = status
         self.evidence = evidence
+        self.evidence_full = evidence_full or []
+
+
+class TestEvidenceFull:
+    def test_to_eval_dict_incluye_contenido_completo(self) -> None:
+        """Para el juez: contenido completo; el bloque público sigue en 400."""
+        from src.core.domain.adaptive import EvidenceItem
+        from src.runtime.evidence import EvidenceRegistry
+
+        item = EvidenceItem(
+            source_type="qdrant",
+            content="x" * 900,
+            score=0.7,
+            document_id="d1",
+            title="Cat31.pdf",
+        )
+        registry = EvidenceRegistry()
+        registry.add([item])
+
+        full = registry.to_eval_dict()
+        assert full[0]["content"] == "x" * 900
+        assert full[0]["title"] == "Cat31.pdf"
+        assert len(registry.to_public_dict()["items"][0]["excerpt"]) == 400
 
 
 @pytest.mark.asyncio
@@ -346,6 +370,30 @@ class TestAgentRetrievedEvidence:
         from src.rag.evaluation.targets import _retrieved_from_evidence
 
         assert _retrieved_from_evidence(_FakeRunResult()) == []
+
+    def test_prefiere_contenido_completo(self) -> None:
+        from src.rag.evaluation.targets import _retrieved_from_evidence
+
+        result = _FakeRunResult(
+            steps=[{"type": "tool_call", "evidence": {"evidence_ids": ["E1"]}}],
+            evidence={
+                "items": [
+                    {"evidence_id": "E1", "excerpt": "recortado", "score": 0.1},
+                ]
+            },
+            evidence_full=[
+                {
+                    "evidence_id": "E1",
+                    "content": "texto completo de la seccion",
+                    "excerpt": "recortado",
+                    "score": 0.9,
+                    "document_id": "d1",
+                }
+            ],
+        )
+        chunks = _retrieved_from_evidence(result)
+        assert chunks[0]["content"] == "texto completo de la seccion"
+        assert chunks[0]["score"] == 0.9
 
 
 class TestAgentAnswerabilityStatus:

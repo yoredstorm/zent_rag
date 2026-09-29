@@ -454,6 +454,10 @@ class AgentRunResult:
     jev_mode: str = ""
     #: Evidencia del run (evidence_id estable) y citas ligadas a esos ids.
     evidence: dict | None = None
+    #: Evidencia COMPLETA (con contenido) sólo para evaluación offline: el juez
+    #: del eval necesita el mismo texto que vio el generador. No se persiste ni
+    #: viaja en la respuesta del API.
+    evidence_full: list[dict] = field(default_factory=list)
     citations: list[dict] = field(default_factory=list)
     evidence_sufficiency: dict | None = None
     #: Turn intent (capa conversacional): intención, distribución JEV, route y
@@ -1062,6 +1066,7 @@ async def _execute_jev_retrieval(
             tool_result.meta if isinstance(tool_result.meta, dict) else None
         )
         result.evidence = registry.to_public_dict()
+        result.evidence_full = registry.to_eval_dict()
     if registrados:
         from src.runtime.evidence import render_evidence, select_evidence
 
@@ -2183,6 +2188,7 @@ class AgentRuntime:
                 selected_ids=selection.ids if selection is not None else (),
                 cited_ids=cited_ids or (),
             )
+            result.evidence_full = registry.to_eval_dict()
 
         def _refresh_presentation() -> None:
             """Enriquece el contrato con el ritmo medido de la evidencia real.

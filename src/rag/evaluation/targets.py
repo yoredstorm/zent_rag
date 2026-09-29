@@ -82,13 +82,18 @@ def _agent_answerability_status(result) -> str | None:
 def _retrieved_from_evidence(result) -> list[dict]:
     """Chunks reales del registry de evidencia del run.
 
-    Usa `result.evidence` (fragmentos con excerpt, documento y score) ordenados
-    por la última selección de evidencia: así el índice corresponde al `[Doc N]`
-    que vio el generador. Antes se usaba el output de la tool (cortado a 500
-    chars), lo que dejaba al juez sin contexto y marcaba alucinaciones falsas.
+    Prefiere `result.evidence_full` (contenido completo, el mismo que vio el
+    generador) y cae a `result.evidence` (excerpt 400) si no está. Sin el
+    contenido completo el juez marca como alucinación lo que sí está en la
+    evidencia, sólo que truncada. El orden sale de la última selección de
+    evidencia: así el índice corresponde al `[Doc N]` que vio el generador.
     """
-    evidence = getattr(result, "evidence", None)
-    items = evidence.get("items") if isinstance(evidence, dict) else None
+    full = getattr(result, "evidence_full", None)
+    if isinstance(full, list) and full:
+        items: list | None = [item for item in full if isinstance(item, dict)]
+    else:
+        evidence = getattr(result, "evidence", None)
+        items = evidence.get("items") if isinstance(evidence, dict) else None
     if not isinstance(items, list) or not items:
         return []
     by_id = {
@@ -109,7 +114,7 @@ def _retrieved_from_evidence(result) -> list[dict]:
         ordered = [item for item in items if isinstance(item, dict)]
     chunks: list[dict] = []
     for item in ordered:
-        content = str(item.get("excerpt") or "").strip()
+        content = str(item.get("content") or item.get("excerpt") or "").strip()
         if not content:
             continue
         metadata = {
