@@ -4,6 +4,7 @@ import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import {
+  Badge,
   Button,
   ButtonLink,
   Checkbox,
@@ -27,10 +28,12 @@ import { QualityLayout } from "../../components/QualityLayout";
 import { fmtDateTime } from "../../lib/format";
 
 type Dataset = { id: string; name: string };
+type Agent = { id: string; name: string; status?: string };
 type Run = {
   id: string;
   dataset_name?: string;
   target_type?: string;
+  target_name?: string;
   status?: string;
   created_at?: string;
   composite_score?: number | null;
@@ -38,6 +41,13 @@ type Run = {
 };
 
 const PAGE_SIZE = 10;
+
+const RAG_TARGET = "pipeline-rag";
+
+function runTarget(run: Run): string {
+  if (run.target_type === "agent") return run.target_name || "Agente";
+  return "Pipeline RAG";
+}
 
 function runScore(run: Run): number | null {
   const value = run.composite_score ?? run.quality?.composite_score;
@@ -62,8 +72,10 @@ export default function EvaluationRunsPage() {
   const { session } = useAuth();
   const [params] = useSearchParams();
   const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
   const [runs, setRuns] = useState<Run[]>([]);
   const [datasetId, setDatasetId] = useState(params.get("dataset") || "");
+  const [target, setTarget] = useState(RAG_TARGET);
   const [judge, setJudge] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -77,7 +89,7 @@ export default function EvaluationRunsPage() {
     if (!session) return;
     setLoading(true);
     try {
-      const [ds, rs] = await Promise.all([
+      const [ds, rs, ag] = await Promise.all([
         api<{ datasets: Dataset[] }>("/api/v1/eval/datasets", {
           token: session.token,
           organizationId: session.organizationId,
@@ -86,9 +98,14 @@ export default function EvaluationRunsPage() {
           token: session.token,
           organizationId: session.organizationId,
         }),
+        api<{ agents: Agent[] }>("/api/v1/agents", {
+          token: session.token,
+          organizationId: session.organizationId,
+        }).catch(() => ({ agents: [] as Agent[] })),
       ]);
       setDatasets(ds.datasets || []);
       setRuns(rs.runs || []);
+      setAgents((ag.agents || []).filter((agent) => agent.status !== "archived"));
       setLoadError("");
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Error cargando runs");
@@ -114,7 +131,8 @@ export default function EvaluationRunsPage() {
         organizationId: session.organizationId,
         body: JSON.stringify({
           dataset_id: datasetId,
-          target_type: "rag",
+          target_type: target === RAG_TARGET ? "rag" : "agent",
+          target_id: target === RAG_TARGET ? undefined : target,
           judge_enabled: judge,
         }),
       });
@@ -150,6 +168,16 @@ export default function EvaluationRunsPage() {
           </Link>
           <p className="mono mt-0.5 text-xs text-faint">{run.id.slice(0, 8)}</p>
         </div>
+      ),
+    },
+    {
+      key: "target_type",
+      header: "Objetivo",
+      hideBelow: "md",
+      render: (run) => (
+        <Badge tone={run.target_type === "agent" ? "info" : "neutral"}>
+          {runTarget(run)}
+        </Badge>
       ),
     },
     {
@@ -195,7 +223,7 @@ export default function EvaluationRunsPage() {
         <Panel>
           <PanelHeader
             title="Lanzar evaluación"
-            description="Elige un dataset y ejecutá el pipeline completo. Puedes activar el juez LLM para métricas semánticas."
+            description="Elige dataset y objetivo: tu agente real o el pipeline RAG. Puedes activar el juez LLM para métricas semánticas."
           />
           <form
             className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end"
@@ -212,6 +240,20 @@ export default function EvaluationRunsPage() {
                 {datasets.map((ds) => (
                   <option key={ds.id} value={ds.id}>
                     {ds.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Objetivo" className="w-64">
+              <Select
+                id="run-target"
+                value={target}
+                onChange={(ev) => setTarget(ev.target.value)}
+              >
+                <option value={RAG_TARGET}>Pipeline RAG (sin agente)</option>
+                {agents.map((agent) => (
+                  <option key={agent.id} value={agent.id}>
+                    Agente · {agent.name}
                   </option>
                 ))}
               </Select>

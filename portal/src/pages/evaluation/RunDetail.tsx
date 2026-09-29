@@ -56,7 +56,7 @@ type CaseRow = {
   status?: string;
   target?: Record<string, unknown>;
   scores?: Record<string, number | null>;
-  metrics?: Record<string, number | null>;
+  metrics?: Record<string, number | string | null>;
   latency_ms?: number | null;
   cost?: number | null;
   error?: string | null;
@@ -65,6 +65,8 @@ type CaseRow = {
 type RunDetail = {
   run_id: string;
   dataset_name?: string;
+  target_type?: string;
+  target_name?: string | null;
   created_at?: string;
   total_cases?: number;
   failed_cases?: number;
@@ -106,6 +108,34 @@ const QUALITY_METRICS: { key: string; label: string }[] = [
   { key: "answerability_accuracy", label: "Answerability" },
   { key: "sql_accuracy", label: "Precisión SQL" },
 ];
+
+/** Estado del gate de answerability en lenguaje de producto. */
+const ANSWERABILITY_LABELS: Record<string, string> = {
+  ANSWERABLE: "Respondió",
+  HUMAN_REVIEW_REQUIRED: "Pidió revisión humana",
+  DATA_MISSING: "Faltan datos",
+  CONTEXT_MISSING: "Falta contexto",
+  DATA_QUALITY_LOW: "Datos de baja calidad",
+  SOURCE_CONFLICT: "Fuentes en conflicto",
+  CLARIFICATION_REQUIRED: "Pidió aclaración",
+  AMBIGUOUS: "Pregunta ambigua",
+  ACCESS_BLOCKED: "Acceso bloqueado",
+  EXECUTION_FAILED: "Falló la ejecución",
+};
+
+function answerabilityLabel(status: string): string {
+  return ANSWERABILITY_LABELS[status.toUpperCase()] ?? status;
+}
+
+function answerabilityTone(status: string): "ok" | "warn" | "danger" | "neutral" {
+  const norm = status.toUpperCase();
+  if (norm === "ANSWERABLE") return "ok";
+  if (norm === "SOURCE_CONFLICT" || norm === "ACCESS_BLOCKED" || norm === "EXECUTION_FAILED") {
+    return "danger";
+  }
+  if (norm in ANSWERABILITY_LABELS) return "warn";
+  return "neutral";
+}
 
 function asNumber(value: unknown): number | null {
   return typeof value === "number" && !Number.isNaN(value) ? value : null;
@@ -210,6 +240,8 @@ function EvidenceBody({ evidence }: { evidence: Evidence }) {
   const cost = caseCost(row);
   const metrics = row.metrics || {};
   const retrieved = row.retrieved || [];
+  const answerability = String(metrics.answerability_status || "").trim();
+  const expectedAnswerability = String(metrics.expected_answerability || "").trim();
 
   const metricItems = [
     latency != null ? { key: "Latencia", value: fmtLatency(latency), mono: true } : null,
@@ -246,6 +278,16 @@ function EvidenceBody({ evidence }: { evidence: Evidence }) {
         {caseScore(row) != null && <Badge tone="neutral">score {fmtScore(row.scores?.composite)}</Badge>}
         {asNumber(row.scores?.faithfulness) != null && (
           <Badge tone="neutral">fidelidad {fmtScore(row.scores?.faithfulness)}</Badge>
+        )}
+        {answerability && (
+          <Badge tone={answerabilityTone(answerability)}>
+            {answerabilityLabel(answerability)}
+          </Badge>
+        )}
+        {expectedAnswerability && expectedAnswerability !== answerability && (
+          <Badge tone="neutral">
+            esperado: {answerabilityLabel(expectedAnswerability)}
+          </Badge>
         )}
         {row.error && (
           <Badge tone="danger" icon={XCircle}>
@@ -568,6 +610,11 @@ export default function EvaluationRunDetailPage() {
                     {judgeEnabled
                       ? `Juez LLM${judgeModel ? ` · ${judgeModel}` : ""}`
                       : "Sin juez LLM"}
+                  </Badge>
+                  <Badge tone={data.target_type === "agent" ? "info" : "neutral"}>
+                    {data.target_type === "agent"
+                      ? `Objetivo · ${data.target_name || "Agente"}`
+                      : "Objetivo · Pipeline RAG"}
                   </Badge>
                 </div>
               </div>

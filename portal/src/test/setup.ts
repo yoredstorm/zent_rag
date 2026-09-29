@@ -22,6 +22,19 @@ Object.defineProperty(window, "matchMedia", {
 
 Object.defineProperty(window, "scrollTo", { writable: true, value: vi.fn() });
 
+// jsdom no implementa ResizeObserver: Radix (Checkbox/Select) lo necesita.
+if (typeof window.ResizeObserver === "undefined") {
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  Object.defineProperty(window, "ResizeObserver", {
+    writable: true,
+    value: ResizeObserverStub,
+  });
+}
+
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = vi.fn();
 }

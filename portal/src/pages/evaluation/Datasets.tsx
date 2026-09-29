@@ -1,6 +1,7 @@
 import {
   ArrowsClockwise,
   FloppyDisk,
+  Plus,
   Stack,
   UploadSimple,
 } from "@phosphor-icons/react";
@@ -25,6 +26,7 @@ import {
   type Column,
   type SortState,
 } from "../../components/ui";
+import { EvalCaseDialog } from "../../components/evaluation/EvalCaseDialog";
 import { QualityLayout } from "../../components/QualityLayout";
 import { fmtDateTime, fmtNum } from "../../lib/format";
 
@@ -63,6 +65,11 @@ export default function EvaluationDatasetsPage() {
   const [name, setName] = useState("");
   const [jsonText, setJsonText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [caseFor, setCaseFor] = useState<Dataset | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [createBusy, setCreateBusy] = useState(false);
+  const [createError, setCreateError] = useState("");
   const [sort, setSort] = useState<SortState>(null);
   const [page, setPage] = useState(1);
 
@@ -134,6 +141,29 @@ export default function EvaluationDatasetsPage() {
     }
   }
 
+  async function onCreateDataset(e: FormEvent) {
+    e.preventDefault();
+    if (!session || !newName.trim()) return;
+    setCreateBusy(true);
+    setCreateError("");
+    try {
+      await api("/api/v1/eval/datasets", {
+        method: "POST",
+        token: session.token,
+        organizationId: session.organizationId,
+        body: JSON.stringify({ name: newName.trim() }),
+      });
+      setMsg("Dataset creado. Agrega casos cuando quieras.");
+      setNewName("");
+      setCreateOpen(false);
+      await reload();
+    } catch (err) {
+      setCreateError(err instanceof Error ? err.message : "No se pudo crear el dataset");
+    } finally {
+      setCreateBusy(false);
+    }
+  }
+
   const sorted = sortDatasets(datasets, sort);
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -198,27 +228,32 @@ export default function EvaluationDatasetsPage() {
             setPage(1);
           }}
           rowActions={(ds) => (
-            <ButtonLink
-              to={`/evaluation/runs?dataset=${ds.id}`}
-              size="sm"
-              variant="secondary"
-            >
-              Lanzar run
-            </ButtonLink>
+            <span className="inline-flex items-center gap-1">
+              <Button size="sm" variant="ghost" onClick={() => setCaseFor(ds)}>
+                Agregar caso
+              </Button>
+              <ButtonLink
+                to={`/evaluation/runs?dataset=${ds.id}`}
+                size="sm"
+                variant="secondary"
+              >
+                Lanzar run
+              </ButtonLink>
+            </span>
           )}
           empty={
             <EmptyState
               icon={Stack}
               title="Sin datasets"
-              body="Importá un golden set schema v2 (question, expected_answer opcional, expected_sources) para lanzar un run."
-              hint="También puedes partir de un JSON exportado desde otra evaluación."
+              body="Crea un dataset y agrega casos con el formulario: pregunta, respuesta esperada y comportamiento. Sin JSON."
+              hint="Si vienes de otra herramienta, también puedes importar un JSON."
               action={
                 <Button
                   variant="primary"
-                  leadingIcon={UploadSimple}
-                  onClick={() => setImportOpen(true)}
+                  leadingIcon={Plus}
+                  onClick={() => setCreateOpen(true)}
                 >
-                  Importar JSON
+                  Crear dataset
                 </Button>
               }
             />
@@ -239,6 +274,14 @@ export default function EvaluationDatasetsPage() {
               <Button
                 size="sm"
                 variant="primary"
+                leadingIcon={Plus}
+                onClick={() => setCreateOpen(true)}
+              >
+                Nuevo dataset
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
                 leadingIcon={UploadSimple}
                 onClick={() => setImportOpen(true)}
               >
@@ -317,6 +360,59 @@ export default function EvaluationDatasetsPage() {
           </Field>
         </form>
       </Modal>
+
+      <Modal
+        open={createOpen}
+        onOpenChange={(open) => {
+          if (!open && createBusy) return;
+          setCreateOpen(open);
+          if (!open) setCreateError("");
+        }}
+        title="Nuevo dataset"
+        description="Un nombre para agrupar los casos de prueba. Después agregas preguntas una por una."
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setCreateOpen(false)} disabled={createBusy}>
+              Cancelar
+            </Button>
+            <Button
+              type="submit"
+              form="dataset-create-form"
+              variant="primary"
+              loading={createBusy}
+              leadingIcon={FloppyDisk}
+            >
+              Crear dataset
+            </Button>
+          </>
+        }
+      >
+        <form id="dataset-create-form" className="flex flex-col gap-4" onSubmit={onCreateDataset}>
+          <ErrorInline message={createError} className="mb-0" />
+          <Field label="Nombre" required>
+            <Input
+              value={newName}
+              onChange={(ev) => setNewName(ev.target.value)}
+              placeholder="Preguntas de soporte ATPCO"
+              required
+              autoComplete="off"
+            />
+          </Field>
+        </form>
+      </Modal>
+
+      <EvalCaseDialog
+        open={caseFor !== null}
+        onOpenChange={(open) => {
+          if (!open) setCaseFor(null);
+        }}
+        session={session}
+        dataset={caseFor}
+        onSaved={(ds) => {
+          setMsg(`Caso agregado a ${ds.name}.`);
+          void reload();
+        }}
+      />
     </QualityLayout>
   );
 }
