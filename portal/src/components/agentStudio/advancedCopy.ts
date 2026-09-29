@@ -95,9 +95,9 @@ export const COPY = {
     stepsLabel: "Tope de pasos",
     stepsHint: "Cuántas veces puede pensar o usar herramientas en un mismo turno (max_steps).",
     tokensLabel: "Tope de texto (tokens)",
-    tokensHint: "Largo máximo entre lo que lee y lo que responde (max_tokens).",
+    tokensHint: "Techo total del run: suma lo que lee (evidencia e historial) y lo que responde, en todas las llamadas (max_tokens).",
     costLabel: "Tope de costo (USD)",
-    costHint: "Gasto máximo de una sola respuesta (max_cost_usd).",
+    costHint: "Gasto máximo del run completo, sumando todas las llamadas del turno (max_cost_usd).",
   },
   publish: {
     versionsTitle: "Versiones",

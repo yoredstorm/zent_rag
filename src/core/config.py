@@ -180,6 +180,11 @@ class Settings(BaseSettings):
     LITELLM_DEFAULT_MODEL: str = "gpt-4o-mini"
     LITELLM_TIMEOUT_SECONDS: int = Field(default=300, ge=1, le=600)
     LITELLM_MAX_RETRIES: int = Field(default=2, ge=0, le=5)
+    #: Modelos de razonamiento (Novita/DeepSeek) emiten `reasoning_content`
+    #: oculto que consume `max_tokens`: con el flag encendido se apaga el
+    #: thinking en el gateway (`chat_template_kwargs.thinking=false`) para que
+    #: el tope sea texto visible y no se corte la respuesta a mitad de frase.
+    LLM_DISABLE_THINKING: bool = Field(default=False)
     #: Reintentos explícitos de embeddings ante un fallo transitorio del
     #: proveedor (429/5xx/timeout). No se delega en `litellm.num_retries`: ese
     #: global se pisa en runtime y quedaba en None, así que un 429 tumbaba la
@@ -1272,8 +1277,20 @@ class Settings(BaseSettings):
         le=32000,
         description=(
             "Presupuesto de tokens de la respuesta final del agente (0 = derivado "
-            "del agente, tope 1200). Un presupuesto corto trunca el JSON y el "
-            "usuario veria el envoltorio crudo."
+            "del agente: min(limits.max_tokens, RUNTIME_ANSWER_MAX_TOKENS)). Un "
+            "presupuesto corto trunca el JSON y el usuario veria el envoltorio crudo."
+        ),
+    )
+    RUNTIME_ANSWER_MAX_TOKENS: int = Field(
+        default=4096,
+        ge=256,
+        le=32000,
+        description=(
+            "Tope de tokens POR LLAMADA de respuesta del agente (loop y finalize). "
+            "No es el techo del run (ese es limits.max_tokens del agente): es lo "
+            "que se le manda al modelo en cada generacion. Con modelos de "
+            "razonamiento el thinking oculto consume este tope y 1024 cortaba "
+            "las explicaciones a mitad de frase."
         ),
     )
     RUNTIME_JEV_STATE_MAX_CHARS: int = Field(

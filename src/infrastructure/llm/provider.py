@@ -64,6 +64,20 @@ def _get_llm_kwargs(model_name: str | None = None) -> dict:
     return kwargs
 
 
+def _thinking_kwargs() -> dict:
+    """Apaga el thinking del modelo cuando el gateway lo soporta.
+
+    Los modelos de razonamiento (p. ej. Novita/DeepSeek) emiten
+    `reasoning_content` oculto que cuenta dentro de `max_tokens`: con presupuestos
+    chicos el tope se consume pensando y la respuesta visible queda cortada a
+    mitad de frase. `chat_template_kwargs.thinking=false` lo desactiva sin tocar
+    el resto de la generacion. Default apagado: no cambia otros despliegues.
+    """
+    if not bool(getattr(get_settings(), "LLM_DISABLE_THINKING", False)):
+        return {}
+    return {"extra_body": {"chat_template_kwargs": {"thinking": False}}}
+
+
 #: Marcadores de un fallo TRANSITORIO del proveedor. Un 429 por saturación o un
 #: 5xx se reintenta; un 400 por payload inválido no.
 _TRANSIENT_EMBED_MARKERS = (
@@ -222,7 +236,7 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
     ) -> LLMResponse:
         settings = get_settings()
         model_name = model or settings.LITELLM_DEFAULT_MODEL
-        llm_kwargs = _get_llm_kwargs(model_name)
+        llm_kwargs = {**_get_llm_kwargs(model_name), **_thinking_kwargs()}
 
         messages: list[dict[str, str]] = []
         if system_prompt:
@@ -305,7 +319,7 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
 
         start = time.perf_counter()
         for attempt, model_name in enumerate(candidates):
-            llm_kwargs = _get_llm_kwargs(model_name)
+            llm_kwargs = {**_get_llm_kwargs(model_name), **_thinking_kwargs()}
             content_parts: list[str] = []
             usage = litellm.Usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
             finish_reason = "stop"

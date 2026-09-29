@@ -35,6 +35,8 @@ x-common-env: &common-env
   RAG_LITELLM_API_KEY: ${RAG_LITELLM_API_KEY:-}
   RAG_LITELLM_DEFAULT_MODEL: ${RAG_LITELLM_DEFAULT_MODEL:-gpt-4o-mini}
   RAG_LITELLM_TIMEOUT_SECONDS: ${RAG_LITELLM_TIMEOUT_SECONDS:-300}
+  # Modelos de razonamiento: apaga el thinking oculto que consume max_tokens.
+  RAG_LLM_DISABLE_THINKING: ${RAG_LLM_DISABLE_THINKING:-false}
   # Fallback del AI Gateway con proveedor propio (p. ej. DeepInfra).
   RAG_GATEWAY_FALLBACK_MODEL: ${RAG_GATEWAY_FALLBACK_MODEL:-}
   RAG_GATEWAY_FALLBACK_API_BASE: ${RAG_GATEWAY_FALLBACK_API_BASE:-}
@@ -295,6 +297,8 @@ x-common-env: &common-env
   RAG_RUNTIME_AGENT_MAX_RETRIEVAL_ROUNDS: ${RAG_RUNTIME_AGENT_MAX_RETRIEVAL_ROUNDS:-2}
   # Presupuesto de evidencia del run (generador y JEV ven el MISMO texto).
   RAG_RUNTIME_EVIDENCE_BUDGET_CHARS: ${RAG_RUNTIME_EVIDENCE_BUDGET_CHARS:-12000}
+  # Tope de tokens POR LLAMADA de respuesta (no el del run completo).
+  RAG_RUNTIME_ANSWER_MAX_TOKENS: ${RAG_RUNTIME_ANSWER_MAX_TOKENS:-4096}
   # =========================================================================
   # Judgment Fabric (ADR judgment-fabric.md): agent/workflow/tool selection.
   # off = target explícito obligatorio (comportamiento previo).

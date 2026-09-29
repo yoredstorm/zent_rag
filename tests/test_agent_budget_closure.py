@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import pytest
+
 from src.agents.runtime.agent_runtime import (
     AgentRunResult,
     _budget_answer,
@@ -94,3 +96,61 @@ class TestRespuestaDeCierre:
 
         assert result.answer.strip()
         assert any(p.get("detail", "").startswith("cierre determinista") for p in result.steps)
+
+
+class TestPresupuestoPorLlamada:
+    """`limits.max_tokens` es el techo del RUN; cada llamada tiene el suyo.
+
+    El razonamiento oculto del modelo consume el tope por llamada: con 1200 el
+    finalize cortaba la respuesta a mitad de frase aunque al run le sobrara
+    presupuesto (caso real ATPCO: respuesta terminando en "el byte 105 no").
+    """
+
+    @pytest.mark.asyncio
+    async def test_finalize_usa_el_tope_por_llamada(self, monkeypatch) -> None:
+        from src.agents.runtime import agent_runtime as module
+        from src.agents.runtime.agent_runtime import AgentRunRequest
+        from src.core.domain.entities import LLMResponse
+
+        settings = module.get_settings().model_copy(
+            update={"RUNTIME_FINALIZE_MAX_TOKENS": 0, "RUNTIME_ANSWER_MAX_TOKENS": 2048}
+        )
+        monkeypatch.setattr(module, "get_settings", lambda: settings)
+
+        seen: dict = {}
+
+        class _FakeLLM:
+            async def generate(self, prompt: str, **kwargs):
+                seen.update(kwargs)
+                return LLMResponse(content='{"answer": "ok"}', model="fake")
+
+        runtime = object.__new__(module.AgentRuntime)
+        runtime._llm = _FakeLLM()
+        result = AgentRunResult(
+            run_id=uuid4(),
+            agent_id=uuid4(),
+            organization_id=None,
+            status="completed",
+            answer="",
+        )
+
+        finalized = await runtime._try_finalize_answer(
+            AgentRunRequest(agent=None, message="¿qué dice el byte 105?"),
+            ["OBSERVATION (untrusted): [Doc 1] Fee Application (byte 105)"],
+            {"max_tokens": 15000, "temperature": 0.2, "model": "fake"},
+            result,
+            reason="test",
+        )
+
+        assert finalized is True
+        assert seen["max_tokens"] == 2048
+
+    def test_tope_por_llamada_respeta_settings(self, monkeypatch) -> None:
+        from src.agents.runtime import agent_runtime as module
+
+        settings = module.get_settings().model_copy(
+            update={"RUNTIME_ANSWER_MAX_TOKENS": 3072}
+        )
+        monkeypatch.setattr(module, "get_settings", lambda: settings)
+
+        assert module._answer_max_tokens() == 3072

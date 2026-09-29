@@ -23,7 +23,7 @@ PRIMARY = "openai/deepseek/deepseek-v4-flash"
 FALLBACK = "openai/deepseek-ai/DeepSeek-V4-Flash"
 
 
-def _install_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+def _install_settings(monkeypatch: pytest.MonkeyPatch, **extra: Any) -> None:
     settings = get_settings().model_copy(
         update={
             "LITELLM_API_BASE": NOVITA_BASE,
@@ -32,6 +32,7 @@ def _install_settings(monkeypatch: pytest.MonkeyPatch) -> None:
             "GATEWAY_FALLBACK_MODEL": FALLBACK,
             "GATEWAY_FALLBACK_API_BASE": DEEPINFRA_BASE,
             "GATEWAY_FALLBACK_API_KEY": SecretStr("deepinfra-key"),
+            **extra,
         }
     )
     monkeypatch.setattr(provider_module, "get_settings", lambda: settings)
@@ -111,6 +112,36 @@ async def test_stream_no_failover_con_tokens_ya_emitidos(monkeypatch: pytest.Mon
     with pytest.raises(RuntimeError):
         await anext(stream)
     assert bases == [NOVITA_BASE]
+
+
+def test_thinking_no_se_pasa_si_esta_apagado(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_settings(monkeypatch, LLM_DISABLE_THINKING=False)
+
+    assert provider_module._thinking_kwargs() == {}
+
+
+def test_thinking_kwargs_con_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_settings(monkeypatch, LLM_DISABLE_THINKING=True)
+
+    assert provider_module._thinking_kwargs() == {
+        "extra_body": {"chat_template_kwargs": {"thinking": False}}
+    }
+
+
+@pytest.mark.asyncio
+async def test_stream_pasa_thinking_apagado_al_proveedor(monkeypatch: pytest.MonkeyPatch) -> None:
+    _install_settings(monkeypatch, LLM_DISABLE_THINKING=True)
+    seen: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs: Any):
+        seen.update(kwargs)
+        return _stream([_delta_chunk("ok"), _usage_chunk()])
+
+    monkeypatch.setattr(provider_module, "acompletion", fake_acompletion)
+
+    _ = [event async for event in provider_module.LiteLLMProvider().generate_stream(prompt="hola")]
+
+    assert seen["extra_body"] == {"chat_template_kwargs": {"thinking": False}}
 
 
 def test_answer_extractor_decodifica_json_por_partes() -> None:

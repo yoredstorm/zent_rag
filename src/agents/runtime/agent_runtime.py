@@ -205,6 +205,19 @@ def _holds_termination(reasoning: object | None, *, reason: str) -> dict | None:
         return None
 
 
+def _answer_max_tokens() -> int:
+    """Tope de tokens POR LLAMADA de respuesta (no el del run completo).
+
+    Algunos modelos de razonamiento consumen este tope con thinking oculto:
+    1024 cortaba las explicaciones a mitad de frase aunque al run le sobrara
+    presupuesto. Configurable con RUNTIME_ANSWER_MAX_TOKENS.
+    """
+    try:
+        return max(256, int(get_settings().RUNTIME_ANSWER_MAX_TOKENS))
+    except Exception:  # noqa: BLE001 — settings siempre disponible
+        return 4096
+
+
 def _history_has_usable_observation(history: list[str]) -> bool:
     for item in history:
         if not item.startswith("OBSERVATION"):
@@ -1272,7 +1285,9 @@ class AgentRuntime:
         configured_max_tokens = int(
             getattr(get_settings(), "RUNTIME_FINALIZE_MAX_TOKENS", 0) or 0
         )
-        finalize_max_tokens = configured_max_tokens or min(int(config["max_tokens"]), 1200)
+        finalize_max_tokens = configured_max_tokens or min(
+            int(config["max_tokens"]), _answer_max_tokens()
+        )
         prompt = _FINALIZE_TEMPLATE.format(
             question=request.message,
             history="\n".join(history[-10:]),
@@ -2648,7 +2663,7 @@ class AgentRuntime:
                         resp = await self._stream_response(
                             prompt=prompt,
                             model=candidate,
-                            max_tokens=1024,
+                            max_tokens=_answer_max_tokens(),
                             temperature=config["temperature"],
                             on_delta=request.on_delta,
                         )
@@ -2656,7 +2671,7 @@ class AgentRuntime:
                         resp = await self._llm.generate(
                             prompt=prompt,
                             model=candidate,
-                            max_tokens=1024,
+                            max_tokens=_answer_max_tokens(),
                             temperature=config["temperature"],
                         )
                     used_model = candidate
