@@ -115,6 +115,12 @@ class TestDeterministicMetrics:
         assert retrieval_precision([], ["x"]) == 0.0
         assert retrieval_recall([], ["x"]) == 0.0
 
+    def test_precision_recall_none_without_expected_sources(self) -> None:
+        """Sin fuentes esperadas la métrica no aplica: None, nunca 0.0."""
+        chunks = self._chunks()
+        assert retrieval_precision(chunks, []) is None
+        assert retrieval_recall(chunks, []) is None
+
     def test_citation_stats(self) -> None:
         chunks = self._chunks()
         stats = citation_stats(
@@ -152,6 +158,31 @@ class TestJudgeParsing:
 
     def test_invalid_returns_none(self) -> None:
         assert _extract_json("no json here") is None
+
+
+class TestJudgeModel:
+    def test_sigue_el_modelo_por_defecto(self, monkeypatch) -> None:
+        """Sin override, el juez usa el mismo modelo del flujo normal."""
+        from src.core.config import get_settings
+        from src.rag.evaluation.judge import LLMJudge
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "EVAL_JUDGE_MODEL", "")
+        monkeypatch.setattr(
+            settings, "LITELLM_DEFAULT_MODEL", "openai/deepseek/deepseek-v4-flash"
+        )
+        judge = LLMJudge(llm_provider=None)  # type: ignore[arg-type]
+        assert judge.model == "openai/deepseek/deepseek-v4-flash"
+
+    def test_override_explicito_gana(self, monkeypatch) -> None:
+        from src.core.config import get_settings
+        from src.rag.evaluation.judge import LLMJudge
+
+        settings = get_settings()
+        monkeypatch.setattr(settings, "EVAL_JUDGE_MODEL", "mi-juez")
+        monkeypatch.setattr(settings, "LITELLM_DEFAULT_MODEL", "otro")
+        judge = LLMJudge(llm_provider=None)  # type: ignore[arg-type]
+        assert judge.model == "mi-juez"
 
 
 # ---------------------------------------------------------------------------

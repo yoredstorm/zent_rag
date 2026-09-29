@@ -173,11 +173,17 @@ class EvalRunner:
         )
 
     def _case_scores(self, metrics: dict) -> dict:
+        # El score de retrieval sólo existe si el caso define fuentes esperadas.
+        precision = metrics["retrieval_precision"]
+        recall = metrics["retrieval_recall"]
+        retrieval_values = [v for v in (precision, recall) if v is not None]
+        retrieval_score = (
+            round(sum(retrieval_values) / len(retrieval_values), 4)
+            if retrieval_values
+            else None
+        )
         scores = {
-            "retrieval": round(
-                (metrics["retrieval_precision"] + metrics["retrieval_recall"]) / 2,
-                4,
-            ),
+            "retrieval": retrieval_score,
             "context_relevance": metrics["context_relevance"],
             "answer_relevance": metrics["answer_relevance"],
             "faithfulness": metrics["faithfulness"],
@@ -237,10 +243,10 @@ class EvalRunner:
 
         quality = {
             "composite_score": round(mean_or([r.scores["composite"] for r in results]), 4),
-            "retrieval_precision": mean_or(
+            "retrieval_precision": _mean_none_ok(
                 [r.metrics["retrieval_precision"] for r in results]
             ),
-            "retrieval_recall": mean_or(
+            "retrieval_recall": _mean_none_ok(
                 [r.metrics["retrieval_recall"] for r in results]
             ),
             "context_relevance": _mean_none_ok(

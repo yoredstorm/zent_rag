@@ -1599,8 +1599,11 @@ class Settings(BaseSettings):
         description="Habilita el LLM-judge para métricas de calidad (faithfulness, etc.).",
     )
     EVAL_JUDGE_MODEL: str = Field(
-        default="gpt-4o-mini",
-        description="Modelo usado por el LLM-judge (LiteLLM).",
+        default="",
+        description=(
+            "Modelo del LLM-judge (LiteLLM). Vacío = RAG_LITELLM_DEFAULT_MODEL "
+            "(el mismo del flujo normal)."
+        ),
     )
     EVAL_JUDGE_MAX_TOKENS: int = Field(default=256, ge=64, le=2048)
     EVAL_DEFAULT_TOP_K: int = Field(

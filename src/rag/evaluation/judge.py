@@ -77,7 +77,12 @@ class LLMJudge:
     ) -> None:
         settings = get_settings()
         self._llm = llm_provider
-        self._model = model or settings.EVAL_JUDGE_MODEL
+        # El juez usa el MISMO modelo del flujo normal por defecto: si mañana
+        # cambia RAG_LITELLM_DEFAULT_MODEL, el juez cambia con él. Un override
+        # explícito (RAG_EVAL_JUDGE_MODEL) sigue ganando.
+        self._model = (
+            model or settings.EVAL_JUDGE_MODEL or settings.LITELLM_DEFAULT_MODEL
+        )
         self._max_tokens = max_tokens or settings.EVAL_JUDGE_MAX_TOKENS
         self.enabled = enabled and bool(settings.EVAL_JUDGE_ENABLED)
 
@@ -115,7 +120,7 @@ class LLMJudge:
             return 0.0
         result = await self._judge_json(
             _CONTEXT_RELEVANCE_PROMPT.format(
-                question=question[:2000], context=context[:8000]
+                question=question[:2000], context=context[:16000]
             )
         )
         return _score_from(result)
@@ -144,7 +149,7 @@ class LLMJudge:
         result = await self._judge_json(
             _FAITHFULNESS_PROMPT.format(
                 question=question[:2000],
-                context=context[:8000],
+                context=context[:16000],
                 answer=answer[:8000],
             )
         )

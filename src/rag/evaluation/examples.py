@@ -171,6 +171,44 @@ async def add_examples(
     return inserted
 
 
+async def update_example(
+    organization_id: UUID, dataset_id: UUID, example_id: UUID, payload: dict
+) -> bool:
+    """Actualiza un ejemplo y re-materializa los casos. False si no existe."""
+    ex = normalize_example(payload)
+    session = await get_async_session()
+    try:
+        result = await session.execute(
+            text(
+                "UPDATE eval_examples SET question = :q, expected_answer = :ea, "
+                "expected_behavior = :eb, expected_sources = CAST(:src AS jsonb), "
+                "must_cite = :must, metadata = CAST(:meta AS jsonb) "
+                "WHERE id = :eid AND organization_id = :oid AND dataset_id = :did"
+            ),
+            {
+                "q": ex["question"],
+                "ea": ex["expected_answer"],
+                "eb": ex["expected_behavior"],
+                "src": json.dumps(ex["expected_sources"]),
+                "must": ex["must_cite"],
+                "meta": json.dumps(ex["metadata"]),
+                "eid": example_id,
+                "oid": organization_id,
+                "did": dataset_id,
+            },
+        )
+        updated = result.rowcount > 0
+        if updated:
+            await materialize_cases(session, organization_id, dataset_id)
+        await session.commit()
+        return updated
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
 async def delete_example(
     organization_id: UUID, dataset_id: UUID, example_id: UUID
 ) -> bool:

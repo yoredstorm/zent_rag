@@ -599,6 +599,23 @@ async def _generate_synthetic_examples(llm, body: SyntheticIn, dataset_id: UUID,
     } for x in data if str(x.get("question", "")).strip()][: body.count]
 
 
+@router.put(
+    "/datasets/{dataset_id}/examples/{example_id}",
+    summary="Actualizar ejemplo",
+)
+async def update_example(dataset_id: str, example_id: str, body: ExampleIn, request: Request):
+    from src.rag.evaluation.examples import update_example as _update
+
+    try:
+        did, eid = UUID(dataset_id), UUID(example_id)
+    except ValueError:
+        raise HTTPException(400, "IDs inválidos")
+    org = await _require_own_dataset(request, did)
+    if not await _update(org, did, eid, body.model_dump()):
+        raise HTTPException(404, "Example not found")
+    return {"status": "updated", "example_id": str(eid)}
+
+
 @router.delete(
     "/datasets/{dataset_id}/examples/{example_id}",
     summary="Eliminar ejemplo",
@@ -614,6 +631,38 @@ async def delete_example(dataset_id: str, example_id: str, request: Request):
     if not await _delete(org, did, eid):
         raise HTTPException(404, "Example not found")
     return {"status": "deleted", "example_id": str(eid)}
+
+
+class DatasetRenameRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+
+
+@router.patch("/datasets/{dataset_id}", summary="Renombrar dataset")
+async def rename_dataset(dataset_id: str, body: DatasetRenameRequest, request: Request):
+    from src.rag.evaluation.store import rename_dataset as _rename
+
+    try:
+        did = UUID(dataset_id)
+    except ValueError:
+        raise HTTPException(400, "dataset_id must be a valid UUID")
+    org = await _require_own_dataset(request, did)
+    if not await _rename(org, did, body.name):
+        raise HTTPException(404, "Dataset not found")
+    return {"status": "renamed", "dataset_id": str(did), "name": body.name}
+
+
+@router.delete("/datasets/{dataset_id}", summary="Eliminar dataset")
+async def delete_dataset(dataset_id: str, request: Request):
+    from src.rag.evaluation.store import delete_dataset as _delete
+
+    try:
+        did = UUID(dataset_id)
+    except ValueError:
+        raise HTTPException(400, "dataset_id must be a valid UUID")
+    org = await _require_own_dataset(request, did)
+    if not await _delete(org, did):
+        raise HTTPException(404, "Dataset not found")
+    return {"status": "deleted", "dataset_id": str(did)}
 
 
 # ---------------------------------------------------------------------------

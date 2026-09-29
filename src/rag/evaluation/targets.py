@@ -79,6 +79,62 @@ def _agent_answerability_status(result) -> str | None:
     return None
 
 
+def _retrieved_from_evidence(result) -> list[dict]:
+    """Chunks reales del registry de evidencia del run.
+
+    Usa `result.evidence` (fragmentos con excerpt, documento y score) ordenados
+    por la última selección de evidencia: así el índice corresponde al `[Doc N]`
+    que vio el generador. Antes se usaba el output de la tool (cortado a 500
+    chars), lo que dejaba al juez sin contexto y marcaba alucinaciones falsas.
+    """
+    evidence = getattr(result, "evidence", None)
+    items = evidence.get("items") if isinstance(evidence, dict) else None
+    if not isinstance(items, list) or not items:
+        return []
+    by_id = {
+        str(item.get("evidence_id")): item
+        for item in items
+        if isinstance(item, dict) and item.get("evidence_id")
+    }
+    order: list[str] = []
+    for step in getattr(result, "steps", []) or []:
+        if not isinstance(step, dict):
+            continue
+        selection = step.get("evidence")
+        ids = selection.get("evidence_ids") if isinstance(selection, dict) else None
+        if isinstance(ids, list) and ids:
+            order = [str(item_id) for item_id in ids]
+    ordered = [by_id[item_id] for item_id in order if item_id in by_id]
+    if not ordered:
+        ordered = [item for item in items if isinstance(item, dict)]
+    chunks: list[dict] = []
+    for item in ordered:
+        content = str(item.get("excerpt") or "").strip()
+        if not content:
+            continue
+        metadata = {
+            key: item[key]
+            for key in (
+                "evidence_id",
+                "title",
+                "page",
+                "section_path",
+                "retrieval",
+                "source_id",
+            )
+            if item.get(key) is not None
+        }
+        chunks.append(
+            {
+                "document_id": item.get("document_id") or item.get("chunk_id"),
+                "content": content,
+                "score": float(item.get("score") or 0.0),
+                "metadata": metadata,
+            }
+        )
+    return chunks
+
+
 class EvalTarget(Protocol):
     """Protocolo de ejecución para el runner de evaluación."""
 
@@ -201,18 +257,20 @@ class AgentTarget:
                 error=str(exc),
             )
 
-        # El contexto del agente vive en observaciones de tools retrieval.
-        retrieved: list[dict] = []
-        for step in result.steps:
-            if step.get("type") == "tool_call" and step.get("output"):
-                retrieved.append(
-                    {
-                        "document_id": None,
-                        "content": str(step["output"])[:2000],
-                        "score": 0.0,
-                        "metadata": {"tool": step.get("tool", "")},
-                    }
-                )
+        # Contexto real del run: fragmentos del registry de evidencia. Fallback
+        # legacy a observaciones de tools si el run no registró evidencia.
+        retrieved = _retrieved_from_evidence(result)
+        if not retrieved:
+            for step in result.steps:
+                if step.get("type") == "tool_call" and step.get("output"):
+                    retrieved.append(
+                        {
+                            "document_id": None,
+                            "content": str(step["output"])[:2000],
+                            "score": 0.0,
+                            "metadata": {"tool": step.get("tool", "")},
+                        }
+                    )
 
         return TargetResult(
             answer=result.answer,

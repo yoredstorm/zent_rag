@@ -32,20 +32,27 @@ def _matches_source(chunk: dict, source: str) -> bool:
     return needle in _chunk_searchable(chunk)
 
 
-def retrieval_precision(chunks: list[dict], expected_sources: list[str]) -> float:
-    """Fracción de chunks recuperados que coincide con alguna fuente esperada."""
-    if not chunks:
-        return 0.0
+def retrieval_precision(chunks: list[dict], expected_sources: list[str]) -> float | None:
+    """Fracción de chunks recuperados que coincide con alguna fuente esperada.
+
+    None si el caso no define expected_sources: la métrica no aplica (UNKNOWN
+    != ZERO). Antes devolvía 0.0 y hundía el score de casos sin fuentes.
+    """
     if not expected_sources:
+        return None
+    if not chunks:
         return 0.0
     hits = sum(1 for c in chunks if any(_matches_source(c, s) for s in expected_sources))
     return round(hits / len(chunks), 4)
 
 
-def retrieval_recall(chunks: list[dict], expected_sources: list[str]) -> float:
-    """Fracción de fuentes esperadas cubiertas por al menos un chunk recuperado."""
+def retrieval_recall(chunks: list[dict], expected_sources: list[str]) -> float | None:
+    """Fracción de fuentes esperadas cubiertas por al menos un chunk recuperado.
+
+    None si el caso no define expected_sources (misma regla que precision).
+    """
     if not expected_sources:
-        return 0.0
+        return None
     if not chunks:
         return 0.0
     covered = sum(

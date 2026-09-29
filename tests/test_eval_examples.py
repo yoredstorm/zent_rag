@@ -234,11 +234,118 @@ class _FakeRunResult:
         jev_decisions: list[dict] | None = None,
         answer: str = "respuesta",
         status: str = "completed",
+        evidence: dict | None = None,
     ) -> None:
         self.steps = steps or []
         self.jev_decisions = jev_decisions or []
         self.answer = answer
         self.status = status
+        self.evidence = evidence
+
+
+@pytest.mark.asyncio
+async def test_editar_y_borrar_casos_y_dataset(async_client: AsyncClient) -> None:
+    """PUT de ejemplo, PATCH de nombre y DELETE de dataset, con materialización."""
+    from sqlalchemy import text as _text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    org = await _create_org(async_client, "Eval Edit")
+    org["session"] = await _owner_session(org["organization_id"])
+    h = _headers(org)
+    did = await _create_dataset(async_client, h, "Editable")
+
+    created = await async_client.post(
+        f"/api/v1/eval/datasets/{did}/examples",
+        headers=h,
+        json={"examples": [{"question": "pregunta vieja"}]},
+    )
+    assert created.status_code == 201, created.text
+    listing = await async_client.get(f"/api/v1/eval/datasets/{did}/examples", headers=h)
+    example = next(
+        e for e in listing.json()["examples"] if e["question"] == "pregunta vieja"
+    )
+
+    updated = await async_client.put(
+        f"/api/v1/eval/datasets/{did}/examples/{example['id']}",
+        headers=h,
+        json={"question": "pregunta nueva", "expected_behavior": "abstain"},
+    )
+    assert updated.status_code == 200, updated.text
+    listing2 = await async_client.get(f"/api/v1/eval/datasets/{did}/examples", headers=h)
+    edited = next(e for e in listing2.json()["examples"] if e["id"] == example["id"])
+    assert edited["question"] == "pregunta nueva"
+    assert edited["expected_behavior"] == "abstain"
+
+    session = await get_async_session()
+    try:
+        cases = (
+            await session.execute(
+                _text(
+                    "SELECT cases FROM eval_datasets "
+                    "WHERE id = :did AND organization_id = :oid"
+                ),
+                {"did": UUID(did), "oid": UUID(org["organization_id"])},
+            )
+        ).scalar()
+    finally:
+        await session.close()
+    edited_case = next(c for c in cases if c["question"] == "pregunta nueva")
+    assert edited_case["expected_answerability"] == "HUMAN_REVIEW_REQUIRED"
+
+    renamed = await async_client.patch(
+        f"/api/v1/eval/datasets/{did}", headers=h, json={"name": "Renombrado"}
+    )
+    assert renamed.status_code == 200, renamed.text
+    datasets = await async_client.get("/api/v1/eval/datasets", headers=h)
+    assert any(d["name"] == "Renombrado" for d in datasets.json()["datasets"])
+
+    deleted_case = await async_client.delete(
+        f"/api/v1/eval/datasets/{did}/examples/{example['id']}", headers=h
+    )
+    assert deleted_case.status_code == 200, deleted_case.text
+    deleted_ds = await async_client.delete(f"/api/v1/eval/datasets/{did}", headers=h)
+    assert deleted_ds.status_code == 200, deleted_ds.text
+    after = await async_client.get(f"/api/v1/eval/datasets/{did}/examples", headers=h)
+    assert after.status_code == 404
+
+
+class TestAgentRetrievedEvidence:
+    def test_chunks_desde_la_evidencia_en_orden_de_seleccion(self) -> None:
+        from src.rag.evaluation.targets import _retrieved_from_evidence
+
+        result = _FakeRunResult(
+            steps=[{"type": "tool_call", "evidence": {"evidence_ids": ["E2", "E1"]}}],
+            evidence={
+                "items": [
+                    {
+                        "evidence_id": "E1",
+                        "excerpt": "uno",
+                        "score": 0.5,
+                        "document_id": "d1",
+                        "title": "Cat31.pdf",
+                        "section_path": ["A"],
+                    },
+                    {
+                        "evidence_id": "E2",
+                        "excerpt": "dos",
+                        "score": 0.9,
+                        "document_id": "d2",
+                        "title": "NDC.pdf",
+                    },
+                    {"evidence_id": "E3", "excerpt": "", "score": 0.1},
+                ]
+            },
+        )
+        chunks = _retrieved_from_evidence(result)
+        assert [c["document_id"] for c in chunks] == ["d2", "d1"]
+        assert chunks[0]["score"] == 0.9
+        assert chunks[0]["metadata"]["title"] == "NDC.pdf"
+
+    def test_sin_evidencia_devuelve_vacio(self) -> None:
+        from src.rag.evaluation.targets import _retrieved_from_evidence
+
+        assert _retrieved_from_evidence(_FakeRunResult()) == []
 
 
 class TestAgentAnswerabilityStatus:

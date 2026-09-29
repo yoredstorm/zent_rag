@@ -416,6 +416,47 @@ async def get_dataset(organization_id: UUID, dataset_id: UUID) -> dict | None:
         await session.close()
 
 
+async def rename_dataset(
+    organization_id: UUID, dataset_id: UUID, name: str
+) -> bool:
+    """Renombra un dataset. False si no existe o no es de la organización."""
+    session: AsyncSession = await get_async_session()
+    try:
+        result = await session.execute(
+            text(
+                "UPDATE eval_datasets SET name = :name "
+                "WHERE id = :did AND organization_id = :oid"
+            ),
+            {"name": name[:200], "did": dataset_id, "oid": organization_id},
+        )
+        await session.commit()
+        return result.rowcount > 0
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
+async def delete_dataset(organization_id: UUID, dataset_id: UUID) -> bool:
+    """Elimina un dataset (eval_examples cae en cascada). False si no existe."""
+    session: AsyncSession = await get_async_session()
+    try:
+        result = await session.execute(
+            text(
+                "DELETE FROM eval_datasets WHERE id = :did AND organization_id = :oid"
+            ),
+            {"did": dataset_id, "oid": organization_id},
+        )
+        await session.commit()
+        return result.rowcount > 0
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
 async def save_eval_run(
     organization_id: UUID,
     summary: dict,
