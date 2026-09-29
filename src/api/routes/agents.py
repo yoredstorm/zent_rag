@@ -706,11 +706,14 @@ async def agent_readiness(
                 {"oid": ctx.organization_id},
             )
         ).scalar()
+        # El ciclo de vida de kb_sources (migración 025) usa
+        # created/connected/discovering/profiled/ready/ingesting/indexed/error;
+        # 'active' quedó obsoleto. Cuenta cualquier fuente que no esté en error.
         source_count = (
             await session.execute(
                 text(
                     "SELECT COUNT(*) FROM kb_sources WHERE organization_id = :oid "
-                    "AND status = 'active'"
+                    "AND status <> 'error'"
                 ),
                 {"oid": ctx.organization_id},
             )

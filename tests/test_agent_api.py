@@ -619,3 +619,49 @@ async def test_purpose_draft_mantiene_503_si_el_proveedor_falla(monkeypatch) -> 
             str(uuid4()), agents.GeneratePurposeRequest(), None  # type: ignore[arg-type]
         )
     assert exc.value.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Readiness: fuentes de datos con el ciclo de vida vigente (migración 025)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_readiness_datasource_usa_ciclo_de_vida_vigente(
+    async_client: AsyncClient,
+) -> None:
+    """'active' quedó obsoleto; una fuente no-error marca el check."""
+    from src.infrastructure.postgres.knowledge_repos import PostgresSourceRepository
+
+    org = await _create_org(async_client, "Agent Readiness Fuente Org")
+    org["session"] = await _owner_session(org["organization_id"])
+    headers = _headers(org)
+
+    creado = await async_client.post(
+        "/api/v1/agents",
+        json={"name": f"readiness-{uuid4().hex[:6]}"},
+        headers=headers,
+    )
+    assert creado.status_code == 201, creado.text
+    agent_id = creado.json()["id"]
+
+    async def datasource_met() -> bool:
+        response = await async_client.get(
+            f"/api/v1/agents/{agent_id}/readiness", headers=headers
+        )
+        assert response.status_code == 200, response.text
+        items = {item["key"]: item for item in response.json()["items"]}
+        return items["datasource"]["met"]
+
+    assert await datasource_met() is False
+
+    repo = PostgresSourceRepository()
+    organization_id = UUID(org["organization_id"])
+    fuente = await repo.create_source(
+        organization_id, f"fuente-{uuid4().hex[:6]}", "file"
+    )
+    assert fuente.status == "created"
+    assert await datasource_met() is True
+
+    await repo.update_source(organization_id, fuente.id, status="error")
+    assert await datasource_met() is False
