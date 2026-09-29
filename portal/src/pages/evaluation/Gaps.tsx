@@ -84,7 +84,10 @@ export default function EvaluationGapsPage() {
   const load = useCallback(() => {
     if (!session) return;
     setLoading(true);
-    api<Gap[]>("/api/v1/learning/gaps?status=open")
+    api<Gap[]>("/api/v1/learning/gaps?status=open", {
+      token: session.token,
+      organizationId: session.organizationId,
+    })
       .then((data) => {
         setGaps(Array.isArray(data) ? data : []);
         setError("");
@@ -96,9 +99,15 @@ export default function EvaluationGapsPage() {
   useEffect(() => load(), [load]);
 
   const resolve = async (id: string) => {
+    if (!session) return;
     setBusy(id);
     try {
-      await api(`/api/v1/learning/gaps/${id}/resolve`, { method: "POST", body: JSON.stringify({}) });
+      await api(`/api/v1/learning/gaps/${id}/resolve`, {
+        method: "POST",
+        body: JSON.stringify({}),
+        token: session.token,
+        organizationId: session.organizationId,
+      });
       setPendingResolve(null);
       load();
     } catch (e) {

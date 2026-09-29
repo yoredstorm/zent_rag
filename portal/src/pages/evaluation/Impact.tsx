@@ -78,7 +78,10 @@ export default function EvaluationImpactPage() {
   const load = useCallback(() => {
     if (!session) return;
     setLoading(true);
-    api<Trends>("/api/v1/learning/analytics?days=30")
+    api<Trends>("/api/v1/learning/analytics?days=30", {
+      token: session.token,
+      organizationId: session.organizationId,
+    })
       .then((data) => {
         setTrends(data);
         setError("");
