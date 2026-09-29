@@ -70,6 +70,15 @@ class TestNormalize:
         with pytest.raises(ValueError):
             normalize_example({"expected_behavior": "x"})
 
+    def test_behavior_to_answerability(self) -> None:
+        from src.rag.evaluation.examples import answerability_for_behavior
+
+        assert answerability_for_behavior("abstenerse") == "HUMAN_REVIEW_REQUIRED"
+        assert answerability_for_behavior("abstain") == "HUMAN_REVIEW_REQUIRED"
+        assert answerability_for_behavior("Responder") == "ANSWERABLE"
+        assert answerability_for_behavior("inventory_query") is None
+        assert answerability_for_behavior(None) is None
+
     def test_parse_csv(self) -> None:
         rows = parse_csv(
             "question,expected_answer,expected_behavior,expected_sources,must_cite\n"
@@ -164,6 +173,177 @@ async def test_csv_import(async_client: AsyncClient) -> None:
         json={"csv": "question,expected_sources\n,\n"},
     )
     assert bad.status_code == 400, bad.text
+
+
+@pytest.mark.asyncio
+async def test_materialize_maps_behavior_to_answerability(async_client: AsyncClient) -> None:
+    """El comportamiento esperado viaja a los casos como expected_answerability."""
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    org = await _create_org(async_client, "Eval Behavior")
+    org["session"] = await _owner_session(org["organization_id"])
+    h = _headers(org)
+    did = await _create_dataset(async_client, h, "Behavior Dataset")
+
+    created = await async_client.post(
+        f"/api/v1/eval/datasets/{did}/examples",
+        headers=h,
+        json={
+            "examples": [
+                {"question": "¿Cuánto stock queda?", "expected_behavior": "answer"},
+                {
+                    "question": "¿Cuál es el precio de un vuelo a Marte?",
+                    "expected_behavior": "abstenerse",
+                },
+            ]
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    session = await get_async_session()
+    try:
+        cases = (
+            await session.execute(
+                text(
+                    "SELECT cases FROM eval_datasets "
+                    "WHERE id = :did AND organization_id = :oid"
+                ),
+                {"did": UUID(did), "oid": UUID(org["organization_id"])},
+            )
+        ).scalar()
+    finally:
+        await session.close()
+
+    by_question = {case["question"]: case for case in cases}
+    assert by_question["¿Cuánto stock queda?"]["expected_answerability"] == "ANSWERABLE"
+    assert (
+        by_question["¿Cuál es el precio de un vuelo a Marte?"]["expected_answerability"]
+        == "HUMAN_REVIEW_REQUIRED"
+    )
+    # El caso semilla sin comportamiento no inventa answerability.
+    assert by_question["seed"]["expected_answerability"] is None
+
+
+class _FakeRunResult:
+    def __init__(
+        self,
+        *,
+        steps: list[dict] | None = None,
+        jev_decisions: list[dict] | None = None,
+        answer: str = "respuesta",
+        status: str = "completed",
+    ) -> None:
+        self.steps = steps or []
+        self.jev_decisions = jev_decisions or []
+        self.answer = answer
+        self.status = status
+
+
+class TestAgentAnswerabilityStatus:
+    def test_completed_is_answerable(self) -> None:
+        from src.rag.evaluation.targets import _agent_answerability_status
+
+        assert _agent_answerability_status(_FakeRunResult()) == "ANSWERABLE"
+
+    def test_abstain_step_is_human_review(self) -> None:
+        from src.rag.evaluation.targets import _agent_answerability_status
+
+        result = _FakeRunResult(steps=[{"type": "answer_gate", "verdict": "abstain"}])
+        assert _agent_answerability_status(result) == "HUMAN_REVIEW_REQUIRED"
+
+    def test_abstain_decision_is_human_review(self) -> None:
+        from src.rag.evaluation.targets import _agent_answerability_status
+
+        result = _FakeRunResult(jev_decisions=[{"phase": "agent_step", "action": "abstain"}])
+        assert _agent_answerability_status(result) == "HUMAN_REVIEW_REQUIRED"
+
+    def test_insufficient_answer_text_is_human_review(self) -> None:
+        from src.rag.evaluation.targets import _agent_answerability_status
+        from src.runtime.answer_gate import INSUFFICIENT_ANSWER
+
+        result = _FakeRunResult(answer=INSUFFICIENT_ANSWER, status="completed")
+        assert _agent_answerability_status(result) == "HUMAN_REVIEW_REQUIRED"
+
+    def test_limit_reached_has_no_status(self) -> None:
+        from src.rag.evaluation.targets import _agent_answerability_status
+
+        assert _agent_answerability_status(_FakeRunResult(status="limit_reached")) is None
+
+
+@pytest.mark.asyncio
+async def test_create_empty_dataset_and_run_agent_abstention(
+    async_client: AsyncClient,
+) -> None:
+    """Dataset vacío + run contra agente: la abstención se reporta y se puntúa."""
+    from src.agents.runtime.agent_runtime import AgentRunResult
+    from src.api.deps import get_agent_runtime
+    from src.api.main import app
+    from src.runtime.answer_gate import INSUFFICIENT_ANSWER
+
+    class _FakeAgentRuntime:
+        async def run(self, request):  # noqa: ANN001
+            return AgentRunResult(
+                run_id=uuid4(),
+                agent_id=request.agent.id,
+                organization_id=request.agent.organization_id,
+                status="completed",
+                answer=INSUFFICIENT_ANSWER,
+                steps=[{"type": "answer_gate", "verdict": "abstain"}],
+            )
+
+    org = await _create_org(async_client, "Eval Agent Target")
+    org["session"] = await _owner_session(org["organization_id"])
+    h = _headers(org)
+
+    created_ds = await async_client.post(
+        "/api/v1/eval/datasets", headers=h, json={"name": "Vacío"}
+    )
+    assert created_ds.status_code == 201, created_ds.text
+    did = created_ds.json()["dataset_id"]
+    listing = await async_client.get("/api/v1/eval/datasets", headers=h)
+    row = next(ds for ds in listing.json()["datasets"] if ds["id"] == did)
+    assert row["case_count"] == 0
+
+    # Un caso que debe abstenerse, cargado por el formulario (examples).
+    await async_client.post(
+        f"/api/v1/eval/datasets/{did}/examples",
+        headers=h,
+        json={"examples": [{"question": "¿Precio a Marte?", "expected_behavior": "abstain"}]},
+    )
+
+    agent = await async_client.post(
+        "/api/v1/agents",
+        headers=h,
+        json={"name": "Agente abstencion", "system_prompt": "t", "model": "gpt-4o-mini", "tools": []},
+    )
+    assert agent.status_code == 201, agent.text
+    aid = agent.json()["id"]
+
+    app.dependency_overrides[get_agent_runtime] = lambda: _FakeAgentRuntime()
+    try:
+        run = await async_client.post(
+            "/api/v1/eval/runs",
+            headers=h,
+            json={
+                "dataset_id": did,
+                "target_type": "agent",
+                "target_id": aid,
+                "judge_enabled": False,
+            },
+        )
+    finally:
+        app.dependency_overrides.pop(get_agent_runtime, None)
+    assert run.status_code == 200, run.text
+    run_id = run.json()["run_id"]
+
+    detail = await async_client.get(f"/api/v1/eval/runs/{run_id}", headers=h)
+    assert detail.status_code == 200, detail.text
+    case = detail.json()["cases"][0]
+    assert case["metrics"]["answerability_status"] == "HUMAN_REVIEW_REQUIRED"
+    assert case["metrics"]["expected_answerability"] == "HUMAN_REVIEW_REQUIRED"
+    assert case["metrics"]["answerability_accuracy"] == 1.0
 
 
 class TestCompareClassification:

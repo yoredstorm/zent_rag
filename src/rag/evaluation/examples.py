@@ -19,6 +19,27 @@ from src.infrastructure.postgres.session import get_async_session
 logger = get_logger(__name__)
 
 
+#: Comportamiento esperado (columna `expected_behavior`) → estado formal de
+#: answerability. Permite que `answerability_accuracy` puntúe abstenciones
+#: correctas en vez de castigarlas como alucinación.
+_BEHAVIOR_TO_ANSWERABILITY = {
+    "answer": "ANSWERABLE",
+    "answerable": "ANSWERABLE",
+    "responder": "ANSWERABLE",
+    "abstain": "HUMAN_REVIEW_REQUIRED",
+    "abstenerse": "HUMAN_REVIEW_REQUIRED",
+    "human_review": "HUMAN_REVIEW_REQUIRED",
+    "human_review_required": "HUMAN_REVIEW_REQUIRED",
+}
+
+
+def answerability_for_behavior(behavior: str | None) -> str | None:
+    """Traduce el comportamiento esperado al estado formal, o None si no aplica."""
+    if not behavior:
+        return None
+    return _BEHAVIOR_TO_ANSWERABILITY.get(behavior.strip().lower())
+
+
 def normalize_example(raw: dict) -> dict:
     """Normaliza un ejemplo al schema v2 (compatible con EvalCase)."""
     question = str(raw.get("question") or "").strip()
@@ -238,6 +259,7 @@ async def materialize_cases(session, organization_id: UUID, dataset_id: UUID) ->
             "question": r.question,
             "expected_answer": r.expected_answer,
             "expected_behavior": r.expected_behavior,
+            "expected_answerability": answerability_for_behavior(r.expected_behavior),
             "expected_sources": list(r.expected_sources or []),
             "must_cite": bool(r.must_cite),
             "metadata": r.metadata if isinstance(r.metadata, dict) else {},

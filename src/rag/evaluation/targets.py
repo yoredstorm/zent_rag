@@ -49,6 +49,36 @@ def _context_to_dicts(context: RetrievalContext | None) -> list[dict]:
     ]
 
 
+def _agent_answerability_status(result) -> str | None:
+    """Estado formal aproximado del gate, para métricas de answerability.
+
+    El runtime del agente no expone un AnswerabilityStatus propio: se deriva
+    del veredicto JEV (abstain) y del estado del run. Sin esto,
+    `answerability_accuracy` nunca se calcula en runs contra agentes.
+    """
+    from src.runtime.answer_gate import INSUFFICIENT_ANSWER, RETRIEVAL_UNAVAILABLE_ANSWER
+
+    verdicts = {
+        str(step.get("verdict") or "").lower()
+        for step in (result.steps or [])
+        if isinstance(step, dict) and str(step.get("type") or "") == "answer_gate"
+    }
+    if "abstain" in verdicts:
+        return "HUMAN_REVIEW_REQUIRED"
+    if any(
+        str(decision.get("action") or "").lower() == "abstain"
+        for decision in (result.jev_decisions or [])
+        if isinstance(decision, dict)
+    ):
+        return "HUMAN_REVIEW_REQUIRED"
+    answer = str(result.answer or "").strip()
+    if answer in (INSUFFICIENT_ANSWER, RETRIEVAL_UNAVAILABLE_ANSWER):
+        return "HUMAN_REVIEW_REQUIRED"
+    if result.status == "completed":
+        return "ANSWERABLE"
+    return None
+
+
 class EvalTarget(Protocol):
     """Protocolo de ejecución para el runner de evaluación."""
 
@@ -194,4 +224,5 @@ class AgentTarget:
             method="agent",
             cost=round(result.cost, 6),
             error=None if result.status == "completed" else "limit_reached_or_error",
+            answerability_status=_agent_answerability_status(result),
         )

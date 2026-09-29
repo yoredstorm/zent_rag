@@ -227,6 +227,30 @@ async def eval_dataset_import(
     }
 
 
+class DatasetCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+
+
+@router.post("/datasets", status_code=201, summary="Crear dataset vacío (admin org)")
+async def eval_dataset_create(body: DatasetCreateRequest, request: Request):
+    """Dataset sin casos: se llena luego con el formulario o un CSV."""
+    from src.api.security import require_organization_admin, resolve_organization
+    from src.rag.evaluation.store import ensure_eval_engine_tables, save_dataset
+
+    require_organization_admin(request)
+    organization_id = resolve_organization(request)
+    await ensure_eval_engine_tables()
+    dataset_id = await save_dataset(
+        organization_id, body.name, [], schema_version=2
+    )
+    return {
+        "status": "created",
+        "dataset_id": str(dataset_id),
+        "name": body.name,
+        "case_count": 0,
+    }
+
+
 @router.get("/datasets", summary="Listar datasets de evaluación (admin org)")
 async def eval_dataset_list(request: Request):
     from src.api.security import require_organization_admin, resolve_organization
