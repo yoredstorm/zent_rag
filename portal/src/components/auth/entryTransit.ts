@@ -1,6 +1,6 @@
 /**
- * Coreografía de la entrada: un último frame de la red (sin escalar), dos
- * aros de membrana que atraviesan la cámara y luz que llena el cuadro.
+ * Coreografía de la entrada: la cámara se mete en la red, la luz llena el
+ * cuadro y la cortina de relevo sostiene esa misma luz mientras cambia la ruta.
  *
  * Vive fuera de React y del DOM a propósito: el canvas, la cortina y las
  * páginas de acceso leen los mismos números, así el zoom, el bloom y la
@@ -9,23 +9,15 @@
 
 /** Duración del zoom de entrada: anticipación, travesía y bloom. */
 export const DIVE_MS = 1180;
-/** Con `prefers-reduced-motion` no hay zoom: sólo una espera corta. */
+/** Con `prefers-reduced-motion` o efecto apagado no hay zoom: espera corta. */
 export const DIVE_REDUCED_MS = 300;
 /** Ventana final del bloom dentro del zoom. */
 export const BLOOM_MS = 320;
 /** Disolución de la cortina sobre el panel, ya montado. */
 export const ENTRY_REVEAL_MS = 680;
-/** Anticipación: la cámara retrocede antes de entrar (fracción de DIVE_MS). */
-export const DIVE_ANTICIPATION = 0.18;
-/** El bitmap congelado no se escala: agrandarlo se lee como un PNG. */
-export const DIVE_SCALE = 1;
-/** Recoil de la anticipación (membranas, no el lienzo). */
-export const DIVE_HOLD = 0.92;
-/** Folleto externo: aro que atraviesa la cámara. */
-export const DIVE_OUTER_SCALE = 2.35;
-/** Folleto interno: aro más pequeño, un poco más tarde. */
-export const DIVE_INNER_SCALE = 2.05;
-/** Canales de la luz final. El mismo color va en `.auth-dive-bloom` y `.auth-entry-curtain`. */
+/** Ampliación final de la cámara en el canvas. */
+export const DIVE_ZOOM = 5.4;
+/** Canales de la luz final: el mismo valor en el canvas y en la cortina. */
 export const DIVE_BLOOM = "236, 255, 249";
 /** Si nadie llega a destino, el tránsito caduca: la cortina nunca queda colgada. */
 export const ENTRY_EXPIRY_MS = 5200;

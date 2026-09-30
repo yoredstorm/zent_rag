@@ -1,11 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BLOOM_MS,
-  DIVE_ANTICIPATION,
-  DIVE_INNER_SCALE,
   DIVE_MS,
-  DIVE_OUTER_SCALE,
-  DIVE_SCALE,
+  DIVE_ZOOM,
   ENTRY_EXPIRY_MS,
   armEntry,
   disarmEntry,
@@ -49,12 +46,8 @@ describe("tránsito de entrada", () => {
 });
 
 describe("tiempos de la travesía", () => {
-  it("el bloom cabe en el dive y el bitmap no se escala", () => {
+  it("el bloom cabe en el zoom de cámara", () => {
     expect(DIVE_MS).toBeGreaterThan(BLOOM_MS);
-    expect(DIVE_ANTICIPATION).toBeGreaterThan(0);
-    expect(DIVE_ANTICIPATION).toBeLessThan(1);
-    expect(DIVE_SCALE).toBe(1);
-    expect(DIVE_INNER_SCALE).toBeGreaterThan(1);
-    expect(DIVE_INNER_SCALE).toBeLessThan(DIVE_OUTER_SCALE);
+    expect(DIVE_ZOOM).toBeGreaterThan(4);
   });
 });

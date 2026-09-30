@@ -1,8 +1,11 @@
-import { motion } from "motion/react";
+import { Sparkle } from "@phosphor-icons/react";
+import { motion, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Brand } from "../Brand";
 import { NeuralFieldCanvas, type NeuralStats } from "./NeuralFieldCanvas";
+import { diveEffectOn } from "./divePref";
 import { onNeuralEvent } from "./neuralSignal";
+import { useDiveEffect } from "./useDiveEffect";
 import { useReveal } from "./reveal";
 
 /**
@@ -38,6 +41,8 @@ export function AuthShell({
   variant?: "tenant" | "platform";
 }) {
   const reveal = useReveal();
+  const reduce = useReducedMotion();
+  const { on: diveOn, toggle: toggleDive } = useDiveEffect();
   const platform = variant === "platform";
   const sceneRef = useRef<HTMLDivElement>(null);
   const dockRef = useRef<HTMLDivElement>(null);
@@ -190,10 +195,8 @@ export function AuthShell({
         if (state) state.dataset.state = "success";
         window.clearTimeout(resetTimer);
       } else if (event.type === "dive") {
-        // La escena cede el cuadro: aros de membrana atraviesan la cámara.
-        // El bitmap no se escala. Con movimiento reducido no hay travesía.
-        const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-        if (!reduce && sceneRef.current) sceneRef.current.dataset.dive = "true";
+        const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+        if (!reduceMotion && diveEffectOn() && sceneRef.current) sceneRef.current.dataset.dive = "true";
       }
     });
     return () => {
@@ -221,15 +224,33 @@ export function AuthShell({
           >
             <Brand />
           </motion.div>
-          <motion.span
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ type: "spring", bounce: 0, duration: 0.8, delay: 0.08 }}
-            className="auth-pill auth-pill--label"
-          >
-            <span className="auth-dot auth-dot--live" aria-hidden />
-            {platform ? "Control Center" : "Red activa"}
-          </motion.span>
+          <div className="auth-header-tools">
+            {!reduce && (
+              <button
+                type="button"
+                className="auth-fx"
+                aria-pressed={diveOn}
+                aria-label={
+                  diveOn
+                    ? "Quitar efecto visual. Úsalo si el equipo no tiene GPU."
+                    : "Activar efecto visual de entrada."
+                }
+                onClick={toggleDive}
+              >
+                <Sparkle size={13} weight={diveOn ? "fill" : "light"} aria-hidden />
+                {diveOn ? "Quitar efecto" : "Activar efecto"}
+              </button>
+            )}
+            <motion.span
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ type: "spring", bounce: 0, duration: 0.8, delay: 0.08 }}
+              className="auth-pill auth-pill--label"
+            >
+              <span className="auth-dot auth-dot--live" aria-hidden />
+              {platform ? "Control Center" : "Red activa"}
+            </motion.span>
+          </div>
         </header>
 
         {/* Riel de señal: el pulso recorre la escena de punta a punta. */}

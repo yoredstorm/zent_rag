@@ -7,6 +7,7 @@ import { afterLoginPath } from "../api";
 import { AuthShell } from "../components/auth/AuthShell";
 import { AuthButton } from "../components/auth/AuthButton";
 import { DIVE_MS, DIVE_REDUCED_MS, armEntry, disarmEntry } from "../components/auth/entryTransit";
+import { useDiveEffect } from "../components/auth/useDiveEffect";
 import { emitNeuralEvent } from "../components/auth/neuralSignal";
 import { useReveal } from "../components/auth/reveal";
 import { Field, Input, PasswordInput } from "../components/ui/form";
@@ -29,6 +30,7 @@ export default function SignupPage() {
   const { session, ready, signup } = useAuth();
   const navigate = useNavigate();
   const reduce = useReducedMotion();
+  const { quiet } = useDiveEffect();
   const reveal = useReveal({ step: 0.06 });
   const [company, setCompany] = useState("");
   const [email, setEmail] = useState("");
@@ -41,7 +43,7 @@ export default function SignupPage() {
   const succeeded = holdExit && Boolean(session);
   const busy = loading || succeeded;
   // La travesía neuronal manda el tiempo: se entra cuando el zoom termina.
-  const holdMs = reduce ? DIVE_REDUCED_MS : DIVE_MS;
+  const holdMs = quiet ? DIVE_REDUCED_MS : DIVE_MS;
 
   useEffect(() => {
     if (!holdExit || !session) return;
@@ -76,7 +78,7 @@ export default function SignupPage() {
     try {
       await signup(company.trim(), email.trim(), password);
       emitNeuralEvent({ type: "success" });
-      armEntry({ reduced: Boolean(reduce) });
+      armEntry({ reduced: quiet });
       emitNeuralEvent({ type: "dive" });
     } catch (err) {
       setHoldExit(false);

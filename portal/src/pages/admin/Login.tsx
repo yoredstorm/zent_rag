@@ -1,11 +1,12 @@
 import { ArrowLeft, Key, ShieldCheck } from "@phosphor-icons/react";
 import { FormEvent, useEffect, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
-import { motion, useReducedMotion } from "motion/react";
+import { motion } from "motion/react";
 import { usePlatformAuth } from "../../platformAuth";
 import { AuthShell } from "../../components/auth/AuthShell";
 import { AuthButton } from "../../components/auth/AuthButton";
 import { DIVE_MS, DIVE_REDUCED_MS, armEntry, disarmEntry } from "../../components/auth/entryTransit";
+import { useDiveEffect } from "../../components/auth/useDiveEffect";
 import { emitNeuralEvent } from "../../components/auth/neuralSignal";
 import { useReveal } from "../../components/auth/reveal";
 import { ErrorInline } from "../../components/ui/states";
@@ -24,7 +25,7 @@ export default function AdminLoginPage() {
   const { session, login, loginMfa } = usePlatformAuth();
   const location = useLocation();
   const navigate = useNavigate();
-  const reduce = useReducedMotion();
+  const { quiet } = useDiveEffect();
   const reveal = useReveal({ step: 0.06 });
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -36,7 +37,7 @@ export default function AdminLoginPage() {
 
   const succeeded = holdExit && Boolean(session);
   // La travesía neuronal manda el tiempo: se entra cuando el zoom termina.
-  const holdMs = reduce ? DIVE_REDUCED_MS : DIVE_MS;
+  const holdMs = quiet ? DIVE_REDUCED_MS : DIVE_MS;
 
   // Transición de éxito: la red confirma y recién después se entra.
   useEffect(() => {
@@ -66,7 +67,7 @@ export default function AdminLoginPage() {
         emitNeuralEvent({ type: "focus", zone: null });
       } else {
         emitNeuralEvent({ type: "success" });
-        armEntry({ reduced: Boolean(reduce) });
+        armEntry({ reduced: quiet });
         emitNeuralEvent({ type: "dive" });
       }
     } catch (err) {
@@ -89,7 +90,7 @@ export default function AdminLoginPage() {
     try {
       await loginMfa(mfaSession, mfaCode.trim());
       emitNeuralEvent({ type: "success" });
-      armEntry({ reduced: Boolean(reduce) });
+      armEntry({ reduced: quiet });
       emitNeuralEvent({ type: "dive" });
     } catch (err) {
       setHoldExit(false);

@@ -1061,15 +1061,6 @@
    superficie de trabajo. Los colores van fijos a propósito.
    Planos: mesh (ambiente) → red viva (canvas) → viñeta → grano → UI. */
 .auth-scene {
-  --auth-dive-ms: 1180ms;
-  --auth-bloom-ms: 320ms;
-  --auth-bloom-delay: 860ms;
-  --auth-dive-scale: 1;
-  --auth-dive-hold: 0.92;
-  --auth-outer-scale: 2.35;
-  --auth-inner-scale: 2.05;
-  --dive-x: 50%;
-  --dive-y: 44%;
   position: relative;
   min-height: 100dvh;
   overflow-x: clip;
@@ -1142,210 +1133,54 @@
 }
 
 /* --- Entrada al panel --------------------------------------------- */
-/* Bitmap congelado atrás; dos folletos de membrana (CSS) pasan a distinta
-   velocidad. Solo transform y opacidad. Duración = `--auth-dive-ms`. */
+/* La escena cede el cuadro: la UI se apaga, la máscara se abre y la cámara
+   entra en una neurona (canvas). Quien apaga el efecto no llega a data-dive. */
 .auth-header,
 .auth-rail,
 .auth-stage,
 .auth-net,
 .auth-vignette {
-  transition: opacity 620ms cubic-bezier(0.32, 0.72, 0, 1);
-}
-
-.auth-scene[data-dive="true"] {
-  overflow: clip;
+  transition:
+    opacity 620ms cubic-bezier(0.32, 0.72, 0, 1),
+    transform 650ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .auth-scene[data-dive="true"] .auth-header,
 .auth-scene[data-dive="true"] .auth-rail,
 .auth-scene[data-dive="true"] .auth-stage {
   opacity: 0;
+  transform: scale(1.06);
   pointer-events: none;
 }
 
-.auth-scene[data-dive="true"] .auth-vignette {
-  opacity: 0;
-}
-
-.auth-scene[data-dive="true"] .auth-header,
-.auth-scene[data-dive="true"] .auth-rail,
-.auth-scene[data-dive="true"] .auth-stage,
-.auth-scene[data-dive="true"] .auth-vignette {
-  will-change: opacity;
-}
-
-.auth-scene[data-dive="true"] .auth-pill,
-.auth-scene[data-dive="true"] .auth-card-core {
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-.auth-scene[data-dive="true"] .auth-card-shell,
-.auth-scene[data-dive="true"] .auth-cta,
-.auth-scene[data-dive="true"] .auth-cta:disabled {
-  transition: none;
-  filter: none;
-}
-.auth-scene[data-dive="true"] .auth-grain {
-  opacity: 0;
-  visibility: hidden;
-}
-.auth-scene[data-dive="true"] .auth-dock__node,
-.auth-scene[data-dive="true"] .auth-rail__pulse {
-  animation: none;
-}
-
-/* 18% = DIVE_ANTICIPATION. El lienzo no se escala: solo cede. Los aros
-   nacen en la neurona y atraviesan la cámara (translateZ). */
-@keyframes auth-dive-net {
-  0%,
-  22% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0.2;
-  }
-}
-
-@keyframes auth-dive-outer {
-  0% {
-    opacity: 0;
-    transform: translateZ(-180px) scale(0.2);
-  }
-  18% {
-    opacity: 0.9;
-    transform: translateZ(-70px) scale(var(--auth-dive-hold, 0.92));
-  }
-  52% {
-    opacity: 0.75;
-    transform: translateZ(90px) scale(1.15);
-  }
-  100% {
-    opacity: 0;
-    transform: translateZ(420px) scale(var(--auth-outer-scale, 2.35));
-  }
-}
-
-@keyframes auth-dive-inner {
-  0%,
-  16% {
-    opacity: 0;
-    transform: translateZ(-140px) scale(0.16);
-  }
-  28% {
-    opacity: 0.88;
-    transform: translateZ(-30px) scale(0.55);
-  }
-  68% {
-    opacity: 0.6;
-    transform: translateZ(160px) scale(1.25);
-  }
-  100% {
-    opacity: 0;
-    transform: translateZ(480px) scale(var(--auth-inner-scale, 2.05));
-  }
+.auth-scene[data-dive="true"] {
+  overflow: clip;
 }
 
 .auth-scene[data-dive="true"] .auth-net {
   opacity: 1;
   -webkit-mask-image: none;
   mask-image: none;
-  isolation: auto;
-  perspective: 960px;
-  perspective-origin: var(--dive-x, 50%) var(--dive-y, 44%);
-  transform-style: preserve-3d;
-  transition: opacity 620ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
-.auth-scene[data-dive="true"] .auth-net > canvas {
-  animation: auth-dive-net var(--auth-dive-ms, 1180ms) cubic-bezier(0.32, 0.72, 0, 1) both;
-  will-change: opacity;
-}
-
-/* Aros reales (pelo + bicapa), anclados a la neurona. No son un bitmap
-   a escala: al pasar por la cámara se leen como membranas, no como un PNG. */
-.auth-membrane {
-  position: absolute;
-  left: var(--dive-x, 50%);
-  top: var(--dive-y, 44%);
-  pointer-events: none;
-  opacity: 0;
-  border-radius: 50%;
-  box-sizing: border-box;
-  backface-visibility: hidden;
-}
-.auth-membrane::before {
-  content: "";
-  position: absolute;
-  inset: 18%;
-  border-radius: 50%;
-  border: 1px solid rgb(236 255 249 / 0.4);
-  pointer-events: none;
-}
-.auth-membrane--outer {
-  width: 46vmin;
-  height: 36vmin;
-  margin-left: -23vmin;
-  margin-top: -18vmin;
-  border: 1.5px solid rgb(214 255 244 / 0.55);
-  box-shadow:
-    inset 0 0 0 7px rgb(82 224 182 / 0.16),
-    0 0 0 11px rgb(82 224 182 / 0.08);
-}
-.auth-membrane--inner {
-  width: 30vmin;
-  height: 24vmin;
-  margin-left: -15vmin;
-  margin-top: -12vmin;
-  border: 1.5px solid rgb(236 255 249 / 0.62);
-  box-shadow:
-    inset 0 0 0 5px rgb(168 245 223 / 0.2),
-    0 0 0 8px rgb(82 224 182 / 0.1);
-}
-
-.auth-scene[data-dive="true"] .auth-membrane--outer {
-  animation: auth-dive-outer var(--auth-dive-ms, 1180ms) cubic-bezier(0.32, 0.72, 0, 1) both;
-  will-change: transform, opacity;
-}
-.auth-scene[data-dive="true"] .auth-membrane--inner {
-  animation: auth-dive-inner var(--auth-dive-ms, 1180ms) cubic-bezier(0.32, 0.72, 0, 1) both;
-  will-change: transform, opacity;
-}
-
-/* Destello y bloom: opacidad en el compositor. Mismo gradiente que la cortina.
-   No heredan el zoom: quedan fijos al cuadro. */
-.auth-dive-flash,
-.auth-dive-bloom {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
+.auth-scene[data-dive="true"] .auth-vignette {
   opacity: 0;
 }
-.auth-dive-flash {
-  background: radial-gradient(
-    circle 72vmax at 52% 42%,
-    rgb(198 255 238 / 0.5) 0%,
-    rgb(82 224 182 / 0.14) 42%,
-    rgb(82 224 182 / 0) 100%
-  );
-}
-.auth-scene[data-dive="true"] .auth-dive-flash {
-  opacity: 0.42;
-  transition: opacity 220ms cubic-bezier(0.32, 0.72, 0, 1);
-  will-change: opacity;
-}
-.auth-scene[data-dive="true"] .auth-dive-bloom {
-  opacity: 1;
-  transition:
-    opacity var(--auth-bloom-ms, 320ms) cubic-bezier(0.32, 0.72, 0, 1)
-    var(--auth-bloom-delay, 860ms);
-  will-change: opacity;
+
+.auth-scene[data-dive="true"] .auth-grain {
+  opacity: 0;
+  visibility: hidden;
 }
 
 /* Cortina de relevo. Vive en la raíz de la app porque el canvas desaparece al
    cambiar de ruta: mismo gradiente y mismas paradas que su bloom, así el
    empalme no se nota y la luz sostiene el cambio hasta que el panel está. */
-.auth-dive-bloom,
 .auth-entry-curtain {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-entry);
+  pointer-events: none;
+  will-change: opacity, transform;
   background: radial-gradient(
     circle farthest-corner at 50% 50%,
     rgb(255 255 255 / 0.98) 0%,
@@ -1355,13 +1190,47 @@
   );
 }
 
-.auth-entry-curtain {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-entry);
-  pointer-events: none;
-  will-change: opacity, transform;
-  backface-visibility: hidden;
+.auth-header-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.auth-fx {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  border-radius: 999px;
+  border: 1px solid rgb(255 255 255 / 0.09);
+  background: rgb(255 255 255 / 0.04);
+  padding: 0.4rem 0.85rem;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgb(255 255 255 / 0.62);
+  cursor: pointer;
+  transition:
+    color 420ms cubic-bezier(0.32, 0.72, 0, 1),
+    background 420ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.auth-fx:hover {
+  color: rgb(255 255 255 / 0.92);
+  background: rgb(255 255 255 / 0.07);
+}
+.auth-fx:active {
+  transform: scale(0.98);
+}
+.auth-fx[aria-pressed="true"] {
+  color: rgb(214 255 244 / 0.88);
+}
+@media (max-width: 420px) {
+  .auth-fx {
+    padding: 0.4rem 0.65rem;
+    letter-spacing: 0.08em;
+  }
 }
 
 /* --- Cabecera y riel de señal ------------------------------------- */
@@ -2170,15 +2039,6 @@
   .auth-net,
   .auth-vignette {
     transition: none;
-  }
-  .auth-scene[data-dive="true"] .auth-net,
-  .auth-scene[data-dive="true"] .auth-net > canvas,
-  .auth-scene[data-dive="true"] .auth-membrane {
-    animation: none;
-  }
-  .auth-scene[data-dive="true"] .auth-dive-flash,
-  .auth-scene[data-dive="true"] .auth-dive-bloom {
-    transition: opacity 200ms ease;
   }
   .auth-card-state[data-state="submit"] .auth-card-state__dot {
     animation: none;

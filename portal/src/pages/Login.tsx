@@ -8,6 +8,7 @@ import { usePlatformAuth } from "../platformAuth";
 import { AuthShell } from "../components/auth/AuthShell";
 import { AuthButton } from "../components/auth/AuthButton";
 import { DIVE_MS, DIVE_REDUCED_MS, armEntry, disarmEntry } from "../components/auth/entryTransit";
+import { useDiveEffect } from "../components/auth/useDiveEffect";
 import { emitNeuralEvent } from "../components/auth/neuralSignal";
 import { Button } from "../components/ui/Button";
 import { ErrorInline, SuccessInline } from "../components/ui/states";
@@ -41,6 +42,7 @@ export default function LoginPage() {
   const { login: platformLogin } = usePlatformAuth();
   const navigate = useNavigate();
   const reduce = useReducedMotion();
+  const { quiet } = useDiveEffect();
   const formRef = useRef<HTMLFormElement>(null);
   const nudge = useAnimation();
   const [email, setEmail] = useState("");
@@ -57,7 +59,7 @@ export default function LoginPage() {
   const succeeded = holdExit && Boolean(session);
   const busy = loading || succeeded;
   // La travesía neuronal manda el tiempo: se entra cuando el zoom termina.
-  const holdMs = reduce ? DIVE_REDUCED_MS : DIVE_MS;
+  const holdMs = quiet ? DIVE_REDUCED_MS : DIVE_MS;
 
   // Transición de éxito: el sistema confirma (destello en la red), la cámara
   // entra en la red y recién después se entra. No cambia la lógica de auth:
@@ -104,7 +106,7 @@ export default function LoginPage() {
     try {
       await login(email.trim(), password);
       emitNeuralEvent({ type: "success" });
-      armEntry({ reduced: Boolean(reduce) });
+      armEntry({ reduced: quiet });
       emitNeuralEvent({ type: "dive" });
     } catch (err) {
       setHoldExit(false);
@@ -113,7 +115,7 @@ export default function LoginPage() {
         try {
           await platformLogin(email.trim(), password);
           emitNeuralEvent({ type: "success" });
-          armEntry({ reduced: Boolean(reduce) });
+          armEntry({ reduced: quiet });
           emitNeuralEvent({ type: "dive" });
           setPlatformExit(true);
           return;
