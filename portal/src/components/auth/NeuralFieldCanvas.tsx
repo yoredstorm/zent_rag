@@ -19,7 +19,7 @@ import {
   type NeuralNet,
   type NetStats,
 } from "../../lib/neuralNet";
-import { DIVE_BLOOM, DIVE_MS, DIVE_ZOOM } from "./entryTransit";
+import { DIVE_MS, DIVE_ZOOM } from "./entryTransit";
 import { emitNeuralEvent, onNeuralEvent } from "./neuralSignal";
 
 export type NeuralStats = NetStats;
@@ -56,6 +56,36 @@ function smoothstep(t: number): number {
 
 function rgba(color: readonly [number, number, number], alpha: number): string {
   return `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${Math.max(0, Math.min(1, alpha))})`;
+}
+
+/** Alfas cuantizados: durante la travesía no se crean strings de color por trazo. */
+const STYLE_STEPS = 64;
+const styleCache: Record<NetTone, string[]> = {
+  signal: [],
+  deep: [],
+  flash: [],
+  alert: [],
+};
+
+function toneColor(tone: NetTone, alpha: number): string {
+  const clamped = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+  const index = (clamped * (STYLE_STEPS - 1) + 0.5) | 0;
+  const bucket = styleCache[tone];
+  const cached = bucket[index];
+  if (cached) return cached;
+  const next = rgba(TONES[tone], index / (STYLE_STEPS - 1));
+  bucket[index] = next;
+  return next;
+}
+
+for (const tone of Object.keys(TONES) as NetTone[]) {
+  for (let step = 0; step < STYLE_STEPS; step += 1) toneColor(tone, step / (STYLE_STEPS - 1));
+}
+
+type PlaneView = { minX: number; minY: number; maxX: number; maxY: number; zoom: number };
+
+function boxHits(view: PlaneView, minX: number, maxX: number, minY: number, maxY: number): boolean {
+  return maxX >= view.minX && minX <= view.maxX && maxY >= view.minY && minY <= view.maxY;
 }
 
 /** Sprite de resplandor pre-renderizado: glow barato, sin shadowBlur por frame. */
@@ -104,6 +134,9 @@ function quadPoint(
  * - El plano lejano se dibuja en un lienzo aparte a media resolución: al
  *   subirlo, el suavizado bilineal produce profundidad de campo real sin
  *   filtros GPU.
+ * - En la travesía la cámara recorta lo que ya no cabe en el cuadro, y el
+ *   destello y el bloom son capas de opacidad (compositor), no un fill del
+ *   viewport. Así el zoom sigue nítido sin repintar de más.
  * - Se detiene cuando la pestaña no está visible; con `prefers-reduced-motion`
  *   compone un único frame curado (actividad repartida, inmóvil).
  * - Decorativo: `aria-hidden`, fuera del árbol accesible.
@@ -116,6 +149,8 @@ export function NeuralFieldCanvas({
   onStats?: (stats: NeuralStats) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const flashRef = useRef<HTMLDivElement>(null);
+  const bloomRef = useRef<HTMLDivElement>(null);
   const statsRef = useRef(onStats);
 
   // El callback se guarda en un ref desde un efecto: el bucle de dibujo lee el
@@ -146,8 +181,6 @@ export function NeuralFieldCanvas({
 
     let width = 1;
     let height = 1;
-    let flash: CanvasGradient | null = null;
-    let bloom: CanvasGradient | null = null;
     let raf = 0;
     let last = 0;
     let statsAt = 0;
@@ -197,34 +230,6 @@ export function NeuralFieldCanvas({
       far.width = Math.max(1, Math.round(width * farScale));
       far.height = Math.max(1, Math.round(height * farScale));
       farCtx?.setTransform(farScale, 0, 0, farScale, 0, 0);
-      const gradient = ctx.createRadialGradient(
-        width * 0.52,
-        height * 0.42,
-        0,
-        width * 0.52,
-        height * 0.42,
-        Math.max(width, height) * 0.72
-      );
-      gradient.addColorStop(0, "rgba(198, 255, 238, 0.5)");
-      gradient.addColorStop(0.42, "rgba(82, 224, 182, 0.14)");
-      gradient.addColorStop(1, "rgba(82, 224, 182, 0)");
-      flash = gradient;
-
-      // Luz de la travesía: misma composición y mismos paradas que la cortina
-      // que toma el relevo al cambiar de ruta (`.auth-entry-curtain`).
-      const light = ctx.createRadialGradient(
-        width / 2,
-        height / 2,
-        0,
-        width / 2,
-        height / 2,
-        Math.hypot(width / 2, height / 2)
-      );
-      light.addColorStop(0, "rgba(255, 255, 255, 0.98)");
-      light.addColorStop(0.3, `rgba(${DIVE_BLOOM}, 0.94)`);
-      light.addColorStop(0.58, "rgba(126, 244, 209, 0.7)");
-      light.addColorStop(1, "rgba(9, 26, 30, 0.92)");
-      bloom = light;
     };
     applySize();
 
@@ -252,15 +257,48 @@ export function NeuralFieldCanvas({
       return net.nodes[edge.a].zone === zone && net.nodes[edge.b].zone === zone ? net.focus[zone] : 0;
     };
 
+    const ink = (tone: NetTone, alpha: number) =>
+      dive.active ? toneColor(tone, alpha) : rgba(TONES[tone], alpha);
+
+    /**
+     * Recorte de la cámara: al acercar, el cuadro visible en el mundo se
+     * encoge. Pintar sólo eso mantiene el trazo nítido y acota el fill-rate.
+     */
+    const viewFor = (plane: NetPlane): PlaneView | null => {
+      if (!dive.active) return null;
+      const factor = PARALLAX[plane];
+      const zoom = Math.max(1, 1 + (dive.k - 1) * factor);
+      const pull = dive.q * factor;
+      const cx = width / 2 + (dive.target.x - width / 2) * pull;
+      const cy = height / 2 + (dive.target.y - height / 2) * pull;
+      const pad = 128;
+      const hx = width / (2 * zoom) + pad;
+      const hy = height / (2 * zoom) + pad;
+      return { minX: cx - hx, maxX: cx + hx, minY: cy - hy, maxY: cy + hy, zoom };
+    };
+
     const paintEdge = (
       g: CanvasRenderingContext2D,
       edge: NetEdge,
       layer: (typeof LAYERS)[number],
       ox: number,
-      oy: number
+      oy: number,
+      view: PlaneView | null
     ) => {
       const a = net.nodes[edge.a];
       const b = net.nodes[edge.b];
+      const ax = a.x + a.vx + ox;
+      const ay = a.y + a.vy + oy;
+      const bx = b.x + b.vx + ox;
+      const by = b.y + b.vy + oy;
+      const cx = edge.cx + ox;
+      const cy = edge.cy + oy;
+      if (
+        view &&
+        !boxHits(view, Math.min(ax, bx, cx), Math.max(ax, bx, cx), Math.min(ay, by, cy), Math.max(ay, by, cy))
+      ) {
+        return;
+      }
       const cycle =
         edge.cycle > 0
           ? 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(((net.time * 1000) / edge.cycle) * TAU + edge.phase))
@@ -273,9 +311,9 @@ export function NeuralFieldCanvas({
         net.dive * 0.05;
       if (alpha < 0.012) return;
       g.beginPath();
-      g.moveTo(a.x + a.vx + ox, a.y + a.vy + oy);
-      g.quadraticCurveTo(edge.cx + ox, edge.cy + oy, b.x + b.vx + ox, b.y + b.vy + oy);
-      g.strokeStyle = rgba(edge.plane === 2 ? TONES.deep : TONES.signal, alpha);
+      g.moveTo(ax, ay);
+      g.quadraticCurveTo(cx, cy, bx, by);
+      g.strokeStyle = ink(edge.plane === 2 ? "deep" : "signal", alpha);
       g.lineWidth = (0.5 + edge.weight * 0.5) * layer.width;
       g.stroke();
     };
@@ -286,7 +324,8 @@ export function NeuralFieldCanvas({
       edge: NetEdge,
       layer: (typeof LAYERS)[number],
       ox: number,
-      oy: number
+      oy: number,
+      view: PlaneView | null
     ) => {
       const a = net.nodes[edge.a];
       const b = net.nodes[edge.b];
@@ -296,18 +335,24 @@ export function NeuralFieldCanvas({
       const by = b.y + b.vy + oy;
       const cx = edge.cx + ox;
       const cy = edge.cy + oy;
+      if (
+        view &&
+        !boxHits(view, Math.min(ax, bx, cx), Math.max(ax, bx, cx), Math.min(ay, by, cy), Math.max(ay, by, cy))
+      ) {
+        return;
+      }
       const base = (0.32 + pulse.strength * 0.46) * layer.alpha * (1 - net.recoil * 0.45);
-      const color = TONES[pulse.tone];
       const head = pulse.t;
       const span = Math.min(0.36, 130 / Math.max(1, edge.length));
+      const steps = view && view.zoom > 2.4 ? 2 : 4;
       let prev = quadPoint(ax, ay, cx, cy, bx, by, Math.max(0, head - span));
-      for (let i = 1; i <= 4; i += 1) {
-        const t = Math.max(0, head - span + (span * i) / 4);
+      for (let i = 1; i <= steps; i += 1) {
+        const t = Math.max(0, head - span + (span * i) / steps);
         const point = quadPoint(ax, ay, cx, cy, bx, by, t);
         g.beginPath();
         g.moveTo(prev.x, prev.y);
         g.lineTo(point.x, point.y);
-        g.strokeStyle = rgba(color, base * Math.pow(i / 4, 1.7));
+        g.strokeStyle = ink(pulse.tone, base * Math.pow(i / steps, 1.7));
         g.lineWidth = (0.9 + pulse.strength * 1.5) * layer.width;
         g.stroke();
         prev = point;
@@ -325,15 +370,16 @@ export function NeuralFieldCanvas({
       ox: number,
       oy: number
     ) => {
+      const view = viewFor(layer.plane);
       for (const edge of net.edges) {
         if (edge.plane !== layer.plane) continue;
-        paintEdge(g, edge, layer, ox, oy);
+        paintEdge(g, edge, layer, ox, oy, view);
       }
 
       for (const pulse of net.pulses) {
         const edge = net.edges[pulse.edge];
         if (!edge || edge.plane !== layer.plane) continue;
-        paintPulse(g, pulse, edge, layer, ox, oy);
+        paintPulse(g, pulse, edge, layer, ox, oy, view);
       }
 
       for (const node of net.nodes) {
@@ -342,25 +388,39 @@ export function NeuralFieldCanvas({
         const wobbleY = Math.cos(net.time * 0.45 + node.phase * 1.3) * (1.2 + node.z * 2.4);
         const x = node.x + node.vx + ox + wobbleX;
         const y = node.y + node.vy + oy + wobbleY;
+        if (view && (x < view.minX || x > view.maxX || y < view.minY || y > view.maxY)) continue;
         const energy = Math.min(1, node.energy);
         const tone: NetTone = node.energy > 1.02 || net.success > 0.4 ? "flash" : "signal";
         const radius = node.radius * layer.radius * (1 + energy * 0.85);
         const size = radius * (7 + energy * 13);
-        g.globalAlpha = (0.055 + energy * 0.4) * layer.alpha * (1 - net.recoil * 0.5);
-        g.drawImage(glow[tone], x - size / 2, y - size / 2, size, size);
-        g.globalAlpha = 1;
+        const halo = (0.055 + energy * 0.4) * layer.alpha * (1 - net.recoil * 0.5);
+        if (!(view && view.zoom > 2.6 && energy < 0.08)) {
+          g.globalAlpha = halo;
+          g.drawImage(glow[tone], x - size / 2, y - size / 2, size, size);
+          g.globalAlpha = 1;
+        }
         g.beginPath();
         g.arc(x, y, Math.max(0.4, radius), 0, TAU);
-        g.fillStyle = rgba(TONES[tone], Math.min(1, 0.2 + energy * 0.72) * layer.alpha);
+        g.fillStyle = ink(tone, Math.min(1, 0.2 + energy * 0.72) * layer.alpha);
         g.fill();
-        if (node.role === "hub") {
+        if (node.role === "hub" && !(view && view.zoom > 2.6)) {
           g.beginPath();
           g.arc(x, y, radius + 3.5, 0, TAU);
-          g.strokeStyle = rgba(TONES[tone], (0.07 + energy * 0.22) * layer.alpha);
+          g.strokeStyle = ink(tone, (0.07 + energy * 0.22) * layer.alpha);
           g.lineWidth = 0.8;
           g.stroke();
         }
       }
+    };
+
+    let flashOpacity = -1;
+    let bloomOpacity = -1;
+    const setLayerOpacity = (el: HTMLDivElement | null, opacity: number, previous: number): number => {
+      if (!el) return previous;
+      const next = opacity < 0.004 ? 0 : Math.round(opacity * 1000) / 1000;
+      if (next === previous) return previous;
+      el.style.opacity = String(next);
+      return next;
     };
 
     const draw = () => {
@@ -400,41 +460,45 @@ export function NeuralFieldCanvas({
       }
 
       // Onda de envío: cruza la red y la enciende a su paso.
-      if (net.wave) {
+      if (net.wave && (!dive.active || dive.q < 0.9)) {
         const wave = net.wave;
-        ctx.save();
-        if (dive.active) camera(ctx, 0);
-        ctx.beginPath();
-        ctx.arc(wave.x, wave.y, wave.r, 0, TAU);
-        ctx.strokeStyle = rgba(TONES[wave.tone], wave.alpha * 0.35);
-        ctx.lineWidth = 1.4;
-        ctx.stroke();
-        ctx.beginPath();
-        ctx.arc(wave.x, wave.y, wave.r, 0, TAU);
-        ctx.strokeStyle = rgba(TONES[wave.tone], wave.alpha * 0.1);
-        ctx.lineWidth = 14;
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      // Destello de acceso concedido.
-      if (flash && net.success > 0.02) {
-        ctx.globalAlpha = net.success * 0.42;
-        ctx.fillStyle = flash;
-        ctx.fillRect(0, 0, width, height);
-        ctx.globalAlpha = 1;
+        const near = viewFor(0);
+        const ring =
+          !near ||
+          wave.r + 24 >=
+            Math.hypot(
+              Math.max(wave.x - near.maxX, near.minX - wave.x, 0),
+              Math.max(wave.y - near.maxY, near.minY - wave.y, 0)
+            );
+        if (ring) {
+          ctx.save();
+          if (dive.active) camera(ctx, 0);
+          // El grosor crece con la cámara hasta un tope: más allá el halo
+          // tapaba el cuadro y el stroke de 14px escalado era puro fill-rate.
+          const cover = Math.max(1, (near?.zoom ?? 1) / 2.2);
+          ctx.beginPath();
+          ctx.arc(wave.x, wave.y, wave.r, 0, TAU);
+          ctx.strokeStyle = ink(wave.tone, wave.alpha * 0.35);
+          ctx.lineWidth = 1.4 / cover;
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(wave.x, wave.y, wave.r, 0, TAU);
+          ctx.strokeStyle = ink(wave.tone, wave.alpha * 0.1);
+          ctx.lineWidth = 14 / cover;
+          ctx.stroke();
+          ctx.restore();
+        }
       }
 
       ctx.restore();
 
-      // Luz de la travesía: crece hasta cubrir el cuadro y empalma sin costura
-      // con la cortina, que sigue desde aquí cuando cambia la ruta.
-      if (bloom && dive.active && dive.p > 0.8) {
-        ctx.globalAlpha = Math.pow(Math.min(1, (dive.p - 0.8) / 0.2), 1.25);
-        ctx.fillStyle = bloom;
-        ctx.fillRect(0, 0, width, height);
-        ctx.globalAlpha = 1;
-      }
+      // Destello y bloom viven en capas CSS: opacidad en el compositor, el mismo
+      // gradiente que la cortina. El canvas ya no rellena el viewport cada frame.
+      const flashAlpha = net.success > 0.02 ? net.success * 0.42 : 0;
+      flashOpacity = setLayerOpacity(flashRef.current, flashAlpha, flashOpacity);
+      const bloomAlpha =
+        dive.active && dive.p > 0.8 ? Math.pow(Math.min(1, (dive.p - 0.8) / 0.2), 1.25) : 0;
+      bloomOpacity = setLayerOpacity(bloomRef.current, bloomAlpha, bloomOpacity);
     };
 
     const publish = (at: number) => {
@@ -608,5 +672,11 @@ export function NeuralFieldCanvas({
     };
   }, []);
 
-  return <canvas ref={canvasRef} className={cn("block h-full w-full", className)} aria-hidden />;
+  return (
+    <>
+      <canvas ref={canvasRef} className={cn("block h-full w-full", className)} aria-hidden />
+      <div ref={flashRef} className="auth-dive-flash" aria-hidden />
+      <div ref={bloomRef} className="auth-dive-bloom" aria-hidden />
+    </>
+  );
 }

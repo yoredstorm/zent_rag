@@ -1157,21 +1157,72 @@
   opacity: 1;
   -webkit-mask-image: none;
   mask-image: none;
+  isolation: isolate;
 }
 
 .auth-scene[data-dive="true"] .auth-vignette {
   opacity: 0;
 }
 
+/* La UI sale por opacidad y escala, en su propia capa. Blur, filtro y
+   sombra animada no viajan con ella: samplear el canvas cada frame era el lag. */
+.auth-scene[data-dive="true"] .auth-header,
+.auth-scene[data-dive="true"] .auth-rail,
+.auth-scene[data-dive="true"] .auth-stage,
+.auth-scene[data-dive="true"] .auth-vignette {
+  will-change: transform, opacity;
+  backface-visibility: hidden;
+}
+.auth-scene[data-dive="true"] .auth-pill,
+.auth-scene[data-dive="true"] .auth-card-core {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+.auth-scene[data-dive="true"] .auth-card-shell,
+.auth-scene[data-dive="true"] .auth-cta,
+.auth-scene[data-dive="true"] .auth-cta:disabled {
+  transition: none;
+  filter: none;
+}
+.auth-scene[data-dive="true"] .auth-grain {
+  opacity: 0;
+  visibility: hidden;
+}
+.auth-scene[data-dive="true"] .auth-dock__node,
+.auth-scene[data-dive="true"] .auth-rail__pulse {
+  animation: none;
+}
+
+/* Destello y bloom: mismo gradiente que la cortina, opacidad en el compositor.
+   `plus-lighter` es el `lighter` que antes se pintaba dentro del canvas. */
+.auth-dive-flash,
+.auth-dive-bloom {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+}
+.auth-dive-flash {
+  background: radial-gradient(
+    circle 72vmax at 52% 42%,
+    rgb(198 255 238 / 0.5) 0%,
+    rgb(82 224 182 / 0.14) 42%,
+    rgb(82 224 182 / 0) 100%
+  );
+}
+.auth-scene[data-dive="true"] .auth-dive-flash,
+.auth-scene[data-dive="true"] .auth-dive-bloom {
+  will-change: opacity;
+}
+.auth-scene[data-dive="true"] .auth-dive-flash {
+  mix-blend-mode: plus-lighter;
+}
+
 /* Cortina de relevo. Vive en la raíz de la app porque el canvas desaparece al
    cambiar de ruta: mismo gradiente y mismas paradas que su bloom, así el
    empalme no se nota y la luz sostiene el cambio hasta que el panel está. */
+.auth-dive-bloom,
 .auth-entry-curtain {
-  position: fixed;
-  inset: 0;
-  z-index: var(--z-entry);
-  pointer-events: none;
-  will-change: opacity, transform;
   background: radial-gradient(
     circle farthest-corner at 50% 50%,
     rgb(255 255 255 / 0.98) 0%,
@@ -1179,6 +1230,15 @@
     rgb(126 244 209 / 0.7) 58%,
     rgb(9 26 30 / 0.92) 100%
   );
+}
+
+.auth-entry-curtain {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-entry);
+  pointer-events: none;
+  will-change: opacity, transform;
+  backface-visibility: hidden;
 }
 
 /* --- Cabecera y riel de señal ------------------------------------- */

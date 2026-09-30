@@ -17,7 +17,7 @@ export const BLOOM_MS = 320;
 export const ENTRY_REVEAL_MS = 680;
 /** Ampliación final de la cámara. */
 export const DIVE_ZOOM = 5.4;
-/** Canales de la luz final: el mismo valor en el canvas y en la cortina. */
+/** Canales de la luz final. El mismo color va en `.auth-dive-bloom` y `.auth-entry-curtain`. */
 export const DIVE_BLOOM = "236, 255, 249";
 /** Si nadie llega a destino, el tránsito caduca: la cortina nunca queda colgada. */
 export const ENTRY_EXPIRY_MS = 5200;
