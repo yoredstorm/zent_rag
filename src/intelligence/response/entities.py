@@ -327,7 +327,13 @@ def strip_contradicting_disclaimer(
             conservadas.append(limpio)
     if not quitadas:
         return answer, 0
-    return "\n\n".join(conservadas).strip(), quitadas
+    limpio_total = "\n\n".join(conservadas).strip()
+    if not limpio_total:
+        # Si todo el texto era la advertencia (p. ej. una abstención del
+        # preflight), vaciar la respuesta es peor que dejarla: nunca se
+        # devuelve contenido vacío al lector.
+        return answer, 0
+    return limpio_total, quitadas
 
 
 def _uncovered_anchors(question: str, evidence_text: str) -> list[str]:
