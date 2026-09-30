@@ -13,7 +13,6 @@ from src.core.domain.entities import RetrievalContext
 from src.core.ports import HybridStore, LexicalStore, VectorStore
 from src.infrastructure.observability.logging_config import get_logger
 from src.rag.longcontext.exact_search import ExactRetriever
-from src.rag.longcontext.exact_tokens import ExactToken, extract_exact_tokens
 from src.rag.longcontext.must_keep import is_must_keep, merge_must_keep
 from src.rag.reranking.base import Reranker
 from src.rag.retrieval.base import Retriever
@@ -78,17 +77,25 @@ class HybridRetriever(Retriever):
         # La pata exacta corre en paralelo: no penaliza latencia del resto.
         exact_task = asyncio.ensure_future(self._retrieve_exact_leg(query))
 
+        # SOURCE ROUTING: PASS A limitado a las fuentes preferidas. El fallback
+        # global ocurre sólo si PASS A no trajo nada (o lo decide el engine
+        # cuando la evidencia sigue incompleta).
+        preferred = [
+            source_id
+            for source_id in (getattr(query, "preferred_source_ids", None) or [])
+            if source_id
+        ]
+        pass_query = (
+            dataclasses.replace(query, source_ids=preferred) if preferred else query
+        )
         context: RetrievalContext
         server_fused = False
+        route_fallback = False
         try:
-            if query.strategy == STRATEGY_HYBRID:
-                context, server_fused = await self._retrieve_hybrid(query, normalized)
-            elif query.strategy == STRATEGY_LEXICAL:
-                context = await self._retrieve_lexical(query, normalized)
-            elif query.strategy == STRATEGY_VECTOR:
-                context = await self._vector.retrieve(query)
-            else:
-                raise ValueError(f"Unknown retrieval strategy: {query.strategy}")
+            context, server_fused = await self._dispatch(pass_query, normalized)
+            if preferred and not context.chunks:
+                context, server_fused = await self._dispatch(query, normalized)
+                route_fallback = True
         except Exception:
             exact_task.cancel()
             raise
@@ -140,6 +147,8 @@ class HybridRetriever(Retriever):
             strategy=query.strategy,
             classification=classification.kind,
             results_count=len(chunks),
+            preferred_sources=len(preferred),
+            global_fallback=route_fallback,
             retrieval_latency_ms=round(elapsed_ms, 2),
             organization_id=str(query.organization_id),
         )
@@ -149,22 +158,41 @@ class HybridRetriever(Retriever):
             retrieval_latency_ms=context.retrieval_latency_ms,
         )
 
+    async def _dispatch(
+        self,
+        query: RetrievalQuery,
+        normalized: str,
+    ) -> tuple[RetrievalContext, bool]:
+        if query.strategy == STRATEGY_HYBRID:
+            return await self._retrieve_hybrid(query, normalized)
+        if query.strategy == STRATEGY_LEXICAL:
+            return await self._retrieve_lexical(query, normalized), False
+        if query.strategy == STRATEGY_VECTOR:
+            return await self._vector.retrieve(query), False
+        raise ValueError(f"Unknown retrieval strategy: {query.strategy}")
+
     async def _retrieve_exact_leg(self, query: RetrievalQuery) -> list[Any]:
-        """Candidatos literales de la consulta cruda (best-effort)."""
+        """Candidatos literales POR ANCHOR de la consulta cruda (best-effort)."""
         try:
-            needles = [
-                str(needle).strip()
-                for needle in (query.exact_needles or [])
-                if str(needle or "").strip()
-            ]
-            tokens: list[ExactToken] = (
-                [ExactToken(value=n, kind="literal", needles=(n,)) for n in needles]
-                if needles
-                else extract_exact_tokens(query.query)
-            )
-            if not tokens:
+            from src.rag.longcontext.exact_search import spec_from_needle
+
+            items: list[Any] = list(getattr(query, "exact_anchors", None) or [])
+            if not items:
+                needles = [
+                    str(needle).strip()
+                    for needle in (query.exact_needles or [])
+                    if str(needle or "").strip()
+                ]
+                if needles:
+                    items = [spec_from_needle(needle) for needle in needles]
+                else:
+                    from src.rag.longcontext.views import build_query_views
+
+                    views = build_query_views(query.query)
+                    items = list(views.anchors) if views.exact_terms else []
+            if not items:
                 return []
-            context = await self._exact.retrieve(query, tokens)
+            context = await self._exact.retrieve(query, items)
             return list(context.chunks)
         except Exception as exc:  # noqa: BLE001 — la pata exacta jamás tumba el retrieval
             logger.warning("Exact leg failed", error=str(exc)[:200])

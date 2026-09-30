@@ -89,6 +89,8 @@ x-common-env: &common-env
   # Canales técnicos: semantic/lexical/exact; el valor de ejemplo del usuario
   # viaja a la búsqueda pero no exige match en fuentes.
   RAG_RAG_TECHNICAL_QUERY_VIEWS: ${RAG_RAG_TECHNICAL_QUERY_VIEWS:-on}
+  # Source routing: fuentes primero cuando la pregunta nombra record 2/byte 105.
+  RAG_RAG_SOURCE_ROUTING: ${RAG_RAG_SOURCE_ROUTING:-on}
   # --- Adaptive Long-Context Engine: off | shadow | active | canary ----------
   RAG_RAG_LONG_CONTEXT_MODE: ${RAG_RAG_LONG_CONTEXT_MODE:-off}
   RAG_RAG_LONG_CONTEXT_CANARY_PERCENTAGE: ${RAG_RAG_LONG_CONTEXT_CANARY_PERCENTAGE:-0}

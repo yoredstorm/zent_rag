@@ -15,6 +15,17 @@ from src.intelligence.response.anchors import Anchor, anchor_covered
 from src.rag.longcontext.requirements import RequirementCoverage, RequirementState
 
 
+@dataclass(frozen=True)
+class _TextItem:
+    """Adapter de texto plano a la interfaz item.content usada por coverage."""
+
+    content: str
+
+    @property
+    def metadata(self) -> dict:
+        return {}
+
+
 @dataclass(frozen=True, kw_only=True)
 class AnchorCoverage:
     requested: int
@@ -182,6 +193,140 @@ def apply_coverage_to_quality(
     return quality
 
 
+@dataclass(frozen=True, kw_only=True)
+class EvidenceState:
+    """Estado ÚNICO de evidencia del run: una sola verdad para el coverage.
+
+    Todas las capas (coverage_note, agent runtime, evaluator, engine) deben
+    consumir esto en lugar de recalcular anchors/entidades por su cuenta.
+    Los EXAMPLE_VALUE no exigen match en fuentes: nunca aparecen en missing.
+    """
+
+    question: str
+    documentable_anchors: tuple[Any, ...] = ()
+    example_values: tuple[Any, ...] = ()
+    entities: tuple[Any, ...] = ()
+    anchor_coverage: AnchorCoverage | None = None
+    requirements: RequirementCoverage | None = None
+    missing_anchors: tuple[str, ...] = ()
+    missing_entities: tuple[str, ...] = ()
+    missing_requirements: tuple[str, ...] = ()
+    conflicts: tuple[str, ...] = ()
+
+    @property
+    def complete(self) -> bool:
+        return not (
+            self.missing_anchors
+            or self.missing_entities
+            or self.missing_requirements
+            or self.conflicts
+        )
+
+    @property
+    def coverage(self) -> float:
+        if self.requirements is not None and self.requirements.requested:
+            return self.requirements.coverage
+        if self.anchor_coverage is not None:
+            return self.anchor_coverage.coverage
+        return 0.0
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "documentable_anchors": [
+                str(getattr(anchor, "value", "")) for anchor in self.documentable_anchors
+            ],
+            "example_values": [
+                str(getattr(anchor, "value", "")) for anchor in self.example_values
+            ],
+            "examples_requires_source_match": False,
+            "missing_anchors": list(self.missing_anchors),
+            "missing_entities": list(self.missing_entities),
+            "missing_requirements": list(self.missing_requirements),
+            "conflicts": list(self.conflicts),
+            "complete": self.complete,
+            "coverage": round(self.coverage, 4),
+        }
+
+
+def build_evidence_state(
+    question: str,
+    items: Any,
+    *,
+    anchors: list[Any] | tuple[Any, ...] | None = None,
+    entities: list[Any] | tuple[Any, ...] | None = None,
+    conflicting: int = 0,
+) -> EvidenceState:
+    """Construye el estado canónico. `items` = chunks o texto plano."""
+    from src.rag.longcontext.requirements import build_requirements, evaluate_requirements
+    from src.rag.longcontext.views import build_query_views
+
+    if isinstance(items, str):
+        evidence_texts: list[str] = [items]
+        evidence_items: list[Any] = [_TextItem(items)]
+    else:
+        evidence_items = list(items or ())
+        if evidence_items and isinstance(evidence_items[0], str):
+            evidence_items = [_TextItem(str(item)) for item in evidence_items]
+        evidence_texts = evidence_items
+
+    views = build_query_views(question) if anchors is None else None
+    resolved_anchors = list(anchors) if anchors is not None else list(views.anchors or ())
+    resolved_entities = (
+        list(entities)
+        if entities is not None
+        else list(getattr(views, "entities", ()) or ())
+    )
+    from src.rag.longcontext.roles import AnchorRole, assign_roles
+
+    resolved_anchors = assign_roles(question, resolved_anchors)
+    documentable = [
+        anchor
+        for anchor in resolved_anchors
+        if str(getattr(anchor, "role", "")) != AnchorRole.EXAMPLE_VALUE.value
+    ]
+    examples = [
+        anchor
+        for anchor in resolved_anchors
+        if str(getattr(anchor, "role", "")) == AnchorRole.EXAMPLE_VALUE.value
+    ]
+
+    anchor_cov = anchor_coverage(resolved_anchors, evidence_items)
+    requirements = build_requirements(
+        question,
+        resolved_anchors,
+        resolved_entities,
+        examples=[str(getattr(anchor, "value", "")) for anchor in examples],
+    )
+    requirement_cov = evaluate_requirements(requirements, evidence_items)
+
+    missing_anchors = tuple(anchor_cov.missing_values)
+    missing_entities = tuple(
+        requirement.needles[0] if requirement.needles else requirement.description
+        for requirement in requirement_cov.unanswered
+        if requirement.kind == "entity"
+    )
+    missing_requirements = tuple(
+        requirement.description for requirement in requirement_cov.unanswered
+    )
+    conflicts: list[str] = []
+    if requirement_cov.conflicting:
+        conflicts.append(f"{requirement_cov.conflicting} requirement(s) en conflicto")
+    if conflicting:
+        conflicts.append(f"{conflicting} fragmento(s) en conflicto")
+    return EvidenceState(
+        question=question,
+        documentable_anchors=tuple(documentable),
+        example_values=tuple(examples),
+        entities=tuple(resolved_entities),
+        anchor_coverage=anchor_cov,
+        requirements=requirement_cov,
+        missing_anchors=missing_anchors,
+        missing_entities=missing_entities,
+        missing_requirements=missing_requirements,
+        conflicts=tuple(conflicts),
+    )
+
+
 def requirements_satisfied(
     coverage: RequirementCoverage | None,
     minimum: float,
@@ -222,8 +367,10 @@ def requirements_satisfied(
 
 __all__ = [
     "AnchorCoverage",
+    "EvidenceState",
     "anchor_coverage",
     "apply_coverage_to_quality",
+    "build_evidence_state",
     "requirement_coverage",
     "requirements_satisfied",
 ]

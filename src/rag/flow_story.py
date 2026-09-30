@@ -80,6 +80,9 @@ STEP_KIND_PHASES: dict[str, str] = {
     "anchor_roles": PHASE_EVIDENCE,
     # Paquete final de generación: faltantes, citas, contradictions.
     "generation_package": PHASE_EVIDENCE,
+    # Source routing + requisitos exactos por anchor.
+    "source_routing": PHASE_EVIDENCE,
+    "exact_requirements": PHASE_EVIDENCE,
     # Ritmo de lectura: las capas y qué evidencia merece aparecer se deciden en
     # la fase de planificación de la respuesta.
     "response_presentation": PHASE_PLANNING,

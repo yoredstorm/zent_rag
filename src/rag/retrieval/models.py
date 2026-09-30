@@ -68,9 +68,17 @@ class RetrievalQuery:
     # puede destruir los anchors exactos).
     exact_search: bool = True
     exact_needles: list[str] = field(default_factory=list)
+    #: Anchors exactos con rol ([{value, role, needles}]): la pata exacta
+    #: busca cada uno por separado con su propio cupo y su nivel.
+    exact_anchors: list[dict] = field(default_factory=list)
     # Términos extra para la pata léxica (campos, valores de ejemplo, conceptos
     # del plugin): la query cruda diluye el token exacto, los términos no.
     lexical_terms: list[str] = field(default_factory=list)
+    #: SOURCE ROUTING: fuentes preferidas (a buscar primero). PASS A se limita
+    #: a ellas; el fallback global sólo ocurre si la evidencia no alcanza.
+    preferred_source_ids: list[UUID] = field(default_factory=list)
+    #: Traza del routing para observabilidad (referencias, scores, reasons).
+    source_routing: dict = field(default_factory=dict)
     # Presupuesto de contexto por request (tokens). None = comportamiento
     # histórico del ContextBuilder inyectado (RAG_MAX_CONTEXT_TOKENS).
     context_token_budget: int | None = None

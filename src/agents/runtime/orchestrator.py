@@ -461,21 +461,50 @@ def _build_flow(
     chunks = list(getattr(retrieval_context, "chunks", None) or [])
     scores = [float(getattr(chunk, "score", 0.0) or 0.0) for chunk in chunks]
     sources: list[dict] = []
-    for chunk in chunks[:8]:
-        chunk_meta = dict(getattr(chunk, "metadata", None) or {})
-        title = str(
-            chunk_meta.get("filename")
-            or chunk_meta.get("source")
-            or chunk_meta.get("title")
-            or ""
-        )
-        sources.append(
-            {
-                "title": title or f"Documento {str(getattr(chunk, 'document_id', ''))[:8]}",
-                "document_id": str(getattr(chunk, "document_id", "")),
-                "score": round(float(getattr(chunk, "score", 0.0) or 0.0), 4),
-            }
-        )
+    # Fuentes = evidencia USADA (selection final), no candidatos del retrieval.
+    selection_block = adaptive.get("selection") if isinstance(adaptive, dict) else None
+    selection_items = (
+        list(getattr(selection_block, "items", ()) or ())
+        if selection_block is not None
+        else []
+    )
+    if selection_items:
+        seen_sources: set[str] = set()
+        for item in selection_items[:10]:
+            document_id = str(getattr(item, "document_id", "") or "")
+            source_id = str(getattr(item, "source_id", "") or "")
+            key = document_id or source_id or str(getattr(item, "evidence_id", "") or "")
+            if not key or key in seen_sources:
+                continue
+            seen_sources.add(key)
+            sources.append(
+                {
+                    "title": str(
+                        getattr(item, "title", "") or f"Documento {key[:8]}"
+                    ),
+                    "document_id": document_id or None,
+                    "source_id": source_id or None,
+                    "score": round(float(getattr(item, "score", 0.0) or 0.0), 4),
+                    "status": "USED",
+                    "evidence_id": str(getattr(item, "evidence_id", "") or "") or None,
+                }
+            )
+    else:
+        for chunk in chunks[:8]:
+            chunk_meta = dict(getattr(chunk, "metadata", None) or {})
+            title = str(
+                chunk_meta.get("filename")
+                or chunk_meta.get("source")
+                or chunk_meta.get("title")
+                or ""
+            )
+            sources.append(
+                {
+                    "title": title or f"Documento {str(getattr(chunk, 'document_id', ''))[:8]}",
+                    "document_id": str(getattr(chunk, "document_id", "")),
+                    "score": round(float(getattr(chunk, "score", 0.0) or 0.0), 4),
+                }
+            )
 
     retrieval_block = {
         "used": bool(chunks) or float(getattr(retrieval_context, "retrieval_latency_ms", 0.0) or 0.0) > 0,
@@ -752,6 +781,81 @@ def _build_flow(
                 ),
             }
         )
+    # SOURCE ROUTING + EXACT REQUIREMENTS: visibles en «Ver flujo» para ver
+    # qué fuentes se prefirieron y si cada anchor documentable apareció.
+    source_routing_block = (
+        adaptive.get("source_routing") if isinstance(adaptive, dict) else None
+    )
+    if isinstance(source_routing_block, dict):
+        preferred = list(source_routing_block.get("preferred") or [])
+        steps.append(
+            {
+                "type": "source_routing",
+                "status": "ok" if preferred else "warn",
+                "detail": (
+                    "preferidas: "
+                    + ", ".join(
+                        str(entry.get("name") or "")[:48] for entry in preferred[:3]
+                    )
+                    if preferred
+                    else "sin referencias estructurales: búsqueda global"
+                ),
+                "references": source_routing_block.get("references") or [],
+                "preferred": preferred,
+                "candidates": source_routing_block.get("candidates") or [],
+                "global_fallback": source_routing_block.get("global_fallback", True),
+            }
+        )
+    query_views_block = (
+        adaptive.get("query_views") if isinstance(adaptive, dict) else None
+    )
+    if isinstance(query_views_block, dict):
+        anchors_block = list(query_views_block.get("anchors") or [])
+        joined = "\n".join(str(chunk.content or "").lower() for chunk in chunks)
+        requirement_rows: list[dict] = []
+        for anchor in anchors_block:
+            if not isinstance(anchor, dict):
+                continue
+            value = str(anchor.get("value") or "")
+            role = str(anchor.get("role") or "")
+            needles = [str(needle).lower() for needle in anchor.get("needles") or ()]
+            if value:
+                needles.append(value.lower())
+            found = bool(joined) and any(needle and needle in joined for needle in needles)
+            requirement_rows.append(
+                {
+                    "value": value,
+                    "role": role,
+                    "found": found,
+                    "requires_source_match": role != "example_value",
+                }
+            )
+        if requirement_rows:
+            pending = [
+                row
+                for row in requirement_rows
+                if row["requires_source_match"] and not row["found"]
+            ]
+            steps.append(
+                {
+                    "type": "exact_requirements",
+                    "status": "ok" if not pending else "warn",
+                    "detail": " · ".join(
+                        f"{(row['role'] or 'anchor').upper()} {row['value']} "
+                        + (
+                            "FOUND"
+                            if row["found"]
+                            else (
+                                "SOURCE MATCH NOT REQUIRED"
+                                if not row["requires_source_match"]
+                                else "MISSING"
+                            )
+                        )
+                        for row in requirement_rows[:6]
+                    ),
+                    "requirements": requirement_rows,
+                }
+            )
     presentation_block = None
     if isinstance(response_plan, dict):
         contract_payload = response_plan.get("contract")
@@ -1643,6 +1747,51 @@ class RAGOrchestrator:
             adaptive["query_views"] = (
                 query_views.to_public_dict() if query_views is not None else None
             )
+            # SOURCE ROUTING (antes del chunk ranking): si la pregunta nombra
+            # referencias estructurales o reglas/campos, se rankean fuentes y se
+            # busca primero en las preferidas. Puramente determinístico.
+            source_route = None
+            preferred_sources: list[UUID] = []
+            try:
+                if (
+                    str(getattr(get_settings(), "RAG_SOURCE_ROUTING", "on")).lower()
+                    not in ("off", "0", "false")
+                    and query_views is not None
+                ):
+                    from src.intelligence.response.references import (
+                        extract_source_references,
+                    )
+                    from src.rag.longcontext.roles import AnchorRole
+
+                    _has_rule_or_field = any(
+                        str(getattr(anchor, "role", ""))
+                        in (
+                            AnchorRole.RULE_ANCHOR.value,
+                            AnchorRole.FIELD_ANCHOR.value,
+                        )
+                        for anchor in query_views.anchors
+                    )
+                    if extract_source_references(query) or _has_rule_or_field:
+                        from src.rag.longcontext.source_router import (
+                            load_source_profiles,
+                            route_sources,
+                        )
+
+                        _scope_sources, _scope_kb = _metadata_scope(metadata_filters)
+                        _profiles = await load_source_profiles(
+                            organization_id,
+                            source_ids=_scope_sources or None,
+                            knowledge_base_id=_scope_kb,
+                            limit=200,
+                        )
+                        if _profiles:
+                            source_route = route_sources(query, _profiles, views=query_views)
+                            preferred_sources = source_route.preferred_ids()
+            except Exception as _route_err:  # noqa: BLE001 — el routing nunca rompe
+                logger.warning("Source routing failed", error=str(_route_err)[:200])
+            adaptive["source_routing"] = (
+                source_route.to_public_dict() if source_route is not None else None
+            )
             _embed_text = query
             if (
                 query_views is not None
@@ -2028,8 +2177,22 @@ class RAGOrchestrator:
                     exact_needles=(
                         list(query_views.exact_terms) if query_views is not None else []
                     ),
+                    exact_anchors=[
+                        {
+                            "value": anchor.value,
+                            "role": str(getattr(anchor, "role", "") or ""),
+                            "needles": [str(needle) for needle in anchor.needles],
+                        }
+                        for anchor in (
+                            query_views.anchors if query_views is not None else ()
+                        )
+                    ],
                     lexical_terms=(
                         list(query_views.lexical_terms) if query_views is not None else []
+                    ),
+                    preferred_source_ids=list(preferred_sources),
+                    source_routing=(
+                        source_route.to_public_dict() if source_route is not None else {}
                     ),
                 )
                 return await self._retriever.retrieve(rquery)  # type: ignore[union-attr]
@@ -2483,6 +2646,11 @@ class RAGOrchestrator:
                                 continue
                         _top_k = max(1, int(spec.get("top_k") or top_k))
                         _spec_filters = spec.get("filters") or metadata_filters or {}
+                        _lc_global = bool(spec.get("global_fallback"))
+                        if _lc_global:
+                            # Fallback global: sin filtro de fuentes y sin
+                            # preferred. Es la última etapa del bucle.
+                            _source_ids = []
                         return await self._retriever.retrieve(  # type: ignore[union-attr]
                             RetrievalQuery(
                                 query=_text,
@@ -2512,6 +2680,26 @@ class RAGOrchestrator:
                                 source_ids=_source_ids,
                                 query_embedding=list(_embedding) if _embedding else None,
                                 exact_needles=_lc_raw_needles,
+                                exact_anchors=[
+                                    {
+                                        "value": anchor.value,
+                                        "role": str(getattr(anchor, "role", "") or ""),
+                                        "needles": [str(needle) for needle in anchor.needles],
+                                    }
+                                    for anchor in (
+                                        query_views.anchors
+                                        if query_views is not None
+                                        else ()
+                                    )
+                                ],
+                                preferred_source_ids=(
+                                    [] if _lc_global else list(preferred_sources)
+                                ),
+                                source_routing=(
+                                    source_route.to_public_dict()
+                                    if source_route is not None
+                                    else {}
+                                ),
                                 lexical_terms=[
                                     *_lc_lexical_terms,
                                     *[

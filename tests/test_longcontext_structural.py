@@ -153,4 +153,5 @@ class TestStructuralExpansion:
             "cross_document",
             "concepts",
             "document_level",
+            "global_sources",
         ]

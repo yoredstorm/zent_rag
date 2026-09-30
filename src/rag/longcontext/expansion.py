@@ -509,6 +509,37 @@ class DocumentLevelExpansion(ExpansionStrategy):
         )
 
 
+class GlobalSourceFallbackExpansion(ExpansionStrategy):
+    name = "global_sources"
+    reason = "la regla/campo no apareció en las fuentes preferidas: barrido global"
+
+    def __init__(self, retrieve: RetrieveFn) -> None:
+        self._retrieve = retrieve
+
+    async def expand(self, context: ExpansionContext) -> Expansion:
+        text = context.query.query
+        spec = {
+            "text": text,
+            "strategy": "hybrid",
+            "top_k": max(context.limit * 4, 20),
+            "global_fallback": True,
+        }
+        try:
+            ctx = await _retrieve_cached(
+                context.cache,
+                ("retrieve", "global", text),
+                self._retrieve,
+                spec,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Global source fallback failed", error=str(exc)[:150])
+            return Expansion(name=self.name, reason=self.reason)
+        chunks = [_mark(chunk, "expansion_global") for chunk in ctx.chunks]
+        return Expansion(
+            name=self.name, reason=self.reason, chunks=chunks, strategy="global"
+        )
+
+
 def _mark(chunk: RetrievalChunk, retrieval: str) -> RetrievalChunk:
     import dataclasses
 
@@ -527,6 +558,7 @@ def default_strategies(store: object, retrieve: RetrieveFn) -> list[ExpansionStr
         CrossDocumentExpansion(retrieve),
         ConceptExpansion(retrieve),
         DocumentLevelExpansion(retrieve),
+        GlobalSourceFallbackExpansion(retrieve),
     ]
 
 
@@ -539,6 +571,7 @@ __all__ = [
     "ExpansionCache",
     "ExpansionContext",
     "ExpansionStrategy",
+    "GlobalSourceFallbackExpansion",
     "ParentSectionExpansion",
     "RetrieveFn",
     "SameDocumentExpansion",

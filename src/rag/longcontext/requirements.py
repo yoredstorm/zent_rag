@@ -113,10 +113,13 @@ class RequirementCoverage:
 
     @property
     def unanswered(self) -> tuple[EvidenceRequirement, ...]:
+        """Requirements duros sin cubrir (soft y estructurales no dirigen)."""
         return tuple(
             requirement
             for requirement in self.requirements
             if requirement.documentable
+            and not requirement.soft
+            and requirement.kind not in ("structural", "example")
             and requirement.state
             in (RequirementState.MISSING.value, RequirementState.CONFLICTING.value)
         )

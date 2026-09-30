@@ -191,6 +191,35 @@ class SearchKnowledgeTool(Tool):
         return raw if isinstance(raw, dict) else {}
 
     @staticmethod
+    async def _route_sources(
+        ctx: ToolContext,
+        query_text: str,
+        source_ids: list[UUID],
+        *,
+        nombres: dict[str, str] | None = None,
+    ):
+        """SourceRouter determinístico sobre los nombres declarados (sin LLM)."""
+        try:
+            from src.rag.longcontext.source_router import (
+                profile_from_source,
+                route_sources,
+            )
+            from src.rag.longcontext.views import build_query_views
+
+            if nombres is None:
+                nombres = await SearchKnowledgeTool._source_names(ctx, source_ids, [])
+            if not nombres:
+                return None
+            profiles = [
+                profile_from_source(str(source_id), str(name or ""))
+                for source_id, name in nombres.items()
+            ]
+            return route_sources(query_text, profiles, views=build_query_views(query_text))
+        except Exception as exc:  # noqa: BLE001 — el routing es opcional
+            logger.warning("Source routing failed", error=str(exc)[:150])
+            return None
+
+    @staticmethod
     async def _priority_sources(
         ctx: ToolContext,
         query_text: str,
@@ -199,70 +228,11 @@ class SearchKnowledgeTool(Tool):
         nombres: dict[str, str] | None = None,
         anchors: list | None = None,
     ) -> list[UUID]:
-        """Fuentes cuyo NOMBRE coincide con lo que la pregunta nombra, en orden.
-
-        «categoría 31 byte 105» → `Cat31_dapp_C.pdf` primero: la sección que
-        explica el campo vive ahí, aunque la búsqueda densa haya traído otro
-        documento. Determinista y barato (una consulta por búsqueda).
-
-        Funciona también en modo KB (`source_ids` vacío): los candidatos salen
-        de los nombres declarados. Las agujas de categoría son prefijadas
-        («cat5»), nunca el número suelto: «5» matchearía «Cat15».
-        """
-        try:
-            from src.intelligence.response.anchors import anchor_needles
-            from src.intelligence.response.entities import asked_entities
-
-            entidades = asked_entities(query_text)
-            anchor_list = list(anchors or [])
-            if not entidades and not anchor_list:
-                return []
-
-            if nombres is None:
-                nombres = await SearchKnowledgeTool._source_names(ctx, source_ids, [])
-            candidatos: list[UUID] = list(source_ids)
-            if not candidatos:
-                for raw_id in nombres or {}:
-                    try:
-                        candidatos.append(UUID(raw_id))
-                    except ValueError:
-                        continue
-            if not candidatos:
-                return []
-
-            agujas: list[str] = []
-            for entidad in entidades:
-                valor = entidad.value.strip().lower()
-                if not valor:
-                    continue
-                if entidad.kind == "categoría":
-                    agujas.extend(
-                        [
-                            f"cat{valor}",
-                            f"cat {valor}",
-                            f"cat_{valor}",
-                            f"category {valor}",
-                            f"categoria {valor}",
-                        ]
-                    )
-                elif len(valor) >= 2:
-                    agujas.append(valor)
-            agujas.extend(anchor_needles(anchor_list))
-            if not agujas:
-                return []
-
-            prioridad: list[UUID] = []
-            for source_id, nombre in nombres.items():
-                nombre_normalizado = str(nombre or "").lower().replace("-", " ")
-                if any(aguja in nombre_normalizado for aguja in agujas):
-                    try:
-                        prioridad.append(UUID(source_id))
-                    except ValueError:
-                        continue
-            return prioridad
-        except Exception as exc:  # noqa: BLE001 — la prioridad es opcional
-            logger.warning("Priority sources lookup failed", error=str(exc)[:150])
-            return []
+        """Compat: ids preferidos del SourceRouter (el pin los sigue usando)."""
+        route = await SearchKnowledgeTool._route_sources(
+            ctx, query_text, source_ids, nombres=nombres
+        )
+        return route.preferred_ids() if route is not None else []
 
     @staticmethod
     async def _source_names(
@@ -375,6 +345,82 @@ class SearchKnowledgeTool(Tool):
         except Exception:  # noqa: BLE001 — nunca romper la tool por un flag
             return "vector"
 
+    @staticmethod
+    def _is_protected(chunk) -> bool:
+        """Evidencia que el top_k no puede tirar: exact/requirement/pin."""
+        try:
+            from src.rag.longcontext.must_keep import (
+                is_must_keep,
+                is_requirement_evidence,
+            )
+
+            metadata = getattr(chunk, "metadata", None) or {}
+            retrieval = str(metadata.get("retrieval") or "")
+            return (
+                is_must_keep(chunk)
+                or is_requirement_evidence(chunk)
+                or retrieval.startswith("entity")
+                or retrieval.startswith("exact")
+            )
+        except Exception:  # noqa: BLE001
+            return False
+
+    @staticmethod
+    def _chunk_covers_views(chunk, views) -> bool:
+        """¿El chunk contiene algún anchor/entidad documentable de la pregunta?"""
+        try:
+            from src.intelligence.response.anchors import anchor_covered
+            from src.intelligence.response.entities import entity_covered
+
+            text = str(getattr(chunk, "content", "") or "")
+            for anchor in getattr(views, "documentable_anchors", ()) or ():
+                if anchor_covered(anchor, text):
+                    return True
+            for entity in getattr(views, "entities", ()) or ():
+                if entity_covered(entity, text):
+                    return True
+        except Exception:  # noqa: BLE001
+            return False
+        return False
+
+    @staticmethod
+    def _documentable_incomplete(query_text: str, chunks: list) -> bool:
+        """¿Falta evidencia DOCUMENTABLE (regla/campo/entidad)? Fallback global."""
+        try:
+            from src.rag.longcontext.coverage import build_evidence_state
+
+            state = build_evidence_state(query_text, chunks)
+            return bool(state.missing_anchors or state.missing_entities)
+        except Exception:  # noqa: BLE001
+            return False
+
+    @staticmethod
+    def _reserve_coverage_chunks(chunks: list, views) -> list:
+        """Protegidos primero: el top_k no recorta la evidencia reservada."""
+        protected: list = []
+        rest: list = []
+        for chunk in chunks:
+            if (
+                SearchKnowledgeTool._is_protected(chunk)
+                or SearchKnowledgeTool._chunk_covers_views(chunk, views)
+            ):
+                protected.append(chunk)
+            else:
+                rest.append(chunk)
+        return protected + rest
+
+    @staticmethod
+    def _merge_chunks(base: list, extra: list) -> list:
+        seen = {getattr(chunk, "document_id", None) for chunk in base}
+        merged = list(base)
+        for chunk in extra:
+            document_id = getattr(chunk, "document_id", None)
+            if document_id in seen:
+                continue
+            seen.add(document_id)
+            merged.append(chunk)
+        return merged
+
     async def execute(self, ctx: ToolContext, arguments: dict) -> ToolResult:
         start = time.perf_counter()
         stage_ms: dict[str, float] = {}
@@ -438,43 +484,84 @@ class SearchKnowledgeTool(Tool):
             ) * 1000
             retrieval_start = time.perf_counter()
             chunks = []
+            import dataclasses
+
+            from src.rag.longcontext.views import build_query_views
+
             nombres = await self._source_names(ctx, source_ids, kb_ids)
-            prioridad = await self._priority_sources(
-                ctx, query_text, source_ids, nombres=nombres, anchors=anchors
+            views = build_query_views(query_text)
+            exact_anchor_specs = [
+                {
+                    "value": anchor.value,
+                    "role": str(getattr(anchor, "role", "") or ""),
+                    "needles": [str(needle) for needle in anchor.needles],
+                }
+                for anchor in views.anchors
+            ]
+            route = await self._route_sources(
+                ctx, query_text, source_ids, nombres=nombres
             )
-            if source_ids:
-                rquery = RetrievalQuery(
+            prioridad = route.preferred_ids() if route is not None else []
+            route_public = route.to_public_dict() if route is not None else {}
+            global_fallback_used = False
+
+            def _build_query(source_filter: list, *, preferred: bool) -> RetrievalQuery:
+                return RetrievalQuery(
                     query=query_text,
                     organization_id=ctx.tenant_id,
                     role=ctx.role,
-                    source_ids=source_ids,
-                    source_priority=prioridad,
+                    source_ids=source_filter,
+                    source_priority=prioridad if preferred else [],
+                    preferred_source_ids=prioridad if preferred else [],
+                    exact_anchors=exact_anchor_specs,
+                    lexical_terms=list(views.lexical_terms),
+                    source_routing=route_public,
                     top_k=top_k,
                     effective_top_k=top_k,
                     score_threshold=score_threshold,
                     strategy=strategy,
                     query_embedding=query_embedding,
                 )
-                part: RetrievalContext = await self._retriever.retrieve(rquery)
+
+            if source_ids:
+                part: RetrievalContext = await self._retriever.retrieve(
+                    _build_query(source_ids, preferred=True)
+                )
                 chunks = list(part.chunks)
             elif kb_ids:
                 for kb_id in kb_ids:
-                    rquery = RetrievalQuery(
-                        query=query_text,
-                        organization_id=ctx.tenant_id,
-                        role=ctx.role,
-                        knowledge_base_id=kb_id,
-                        source_priority=prioridad,
-                        top_k=top_k,
-                        effective_top_k=top_k,
-                        score_threshold=score_threshold,
-                        strategy=strategy,
-                        query_embedding=query_embedding,
+                    part: RetrievalContext = await self._retriever.retrieve(
+                        dataclasses.replace(
+                            _build_query([], preferred=True), knowledge_base_id=kb_id
+                        )
                     )
-                    part: RetrievalContext = await self._retriever.retrieve(rquery)
                     chunks.extend(part.chunks)
             stage_ms["retrieve_ms"] = (time.perf_counter() - retrieval_start) * 1000
+
+            # PASS B — fallback global SOLO si la evidencia de regla/campo no
+            # apareció en las fuentes preferidas. Source routing antes de top_k.
+            if prioridad and self._documentable_incomplete(query_text, chunks):
+                global_fallback_used = True
+                fallback_start = time.perf_counter()
+                if source_ids:
+                    part = await self._retriever.retrieve(
+                        _build_query(source_ids, preferred=False)
+                    )
+                    chunks = self._merge_chunks(chunks, list(part.chunks))
+                elif kb_ids:
+                    for kb_id in kb_ids:
+                        part = await self._retriever.retrieve(
+                            dataclasses.replace(
+                                _build_query([], preferred=False),
+                                knowledge_base_id=kb_id,
+                            )
+                        )
+                        chunks = self._merge_chunks(chunks, list(part.chunks))
+                stage_ms["global_fallback_ms"] = (
+                    time.perf_counter() - fallback_start
+                ) * 1000
             chunks = self._drop_off_category_sources(chunks, query_text, nombres)
+            chunks = self._reserve_coverage_chunks(chunks, views)
             chunks = chunks[:top_k]
             stage_ms["total_ms"] = (time.perf_counter() - start) * 1000
             self._observe_stages(ctx.tenant_id, stage_ms)
@@ -501,6 +588,7 @@ class SearchKnowledgeTool(Tool):
                     meta={"stage_ms": stage_ms},
                 )
             used: list[str] = []
+            used_sources: list[dict] = []
             lines: list[str] = []
             evidence: list[dict] = []
             seen_refs: set[str] = set()
@@ -537,20 +625,35 @@ class SearchKnowledgeTool(Tool):
                     section_path = metadata.get("section_path")
                     if isinstance(section_path, str):
                         section_path = [section_path]
+                    title = str(
+                        metadata.get("filename")
+                        or metadata.get("title")
+                        or metadata.get("source")
+                        or ""
+                    )[:160]
+                    # Sólo la evidencia que resuelve algo (regla/campo/entidad,
+                    # pin o requirement) cuenta como USED. El resto es candidato
+                    # y NO debe aparecer en Fuentes.
+                    covered = self._chunk_covers_views(chunk, views)
+                    protected = self._is_protected(chunk)
+                    status = "USED" if (protected or covered or es_pineado) else "CANDIDATE"
+                    if status == "USED" and source_id and source_id not in used:
+                        used.append(source_id)
+                        used_sources.append(
+                            {
+                                "source_id": source_id,
+                                "title": title or None,
+                                "status": "USED",
+                            }
+                        )
                     item: dict = {
                         "ref": ref,
                         "document_id": document_id or None,
                         "source_id": source_id or None,
                         "chunk_id": str(metadata.get("chunk_id") or document_id or "") or None,
-                        "title": str(
-                            metadata.get("filename")
-                            or metadata.get("title")
-                            or metadata.get("source")
-                            or ""
-                        )[:160]
-                        or None,
+                        "title": title or None,
                         "score": round(float(getattr(chunk, "score", 0.0) or 0.0), 4),
-                        "status": "USED",
+                        "status": status,
                         "knowledge_type": knowledge_type or None,
                         "content": str(getattr(chunk, "content", "") or "")[
                             : (
@@ -617,6 +720,9 @@ class SearchKnowledgeTool(Tool):
                 latency_ms=(time.perf_counter() - start) * 1000,
                 meta={
                     "source_ids": used,
+                    "sources": used_sources,
+                    "source_routing": route_public,
+                    "global_fallback": global_fallback_used,
                     "evidence": evidence[:24],
                     "retrieval": {
                         "chunks": len(chunks),

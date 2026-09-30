@@ -13,8 +13,43 @@ from typing import Any
 
 MUST_KEEP_KEY = "must_keep"
 REQUIREMENT_EVIDENCE_KEY = "requirement_evidence"
+MUST_KEEP_LEVEL_KEY = "must_keep_level"
+SUPPORTING_EXACT_KEY = "supporting_exact"
 _EXACT_ANCHOR_KEY = "exact_anchor"
 _TRUE = {"true", "1", "yes", "on", "si", "sí"}
+
+#: Niveles de exactitud: no todo match vale lo mismo. El packager los usa para
+#: prioridad (0 rule, 1 requirement/reference, 2 field, 4 supporting).
+LEVEL_RULE = "rule"
+LEVEL_FIELD = "field"
+LEVEL_REFERENCE = "reference"
+LEVEL_SUPPORTING = "supporting"
+
+_ROLE_LEVELS = {
+    "rule_anchor": LEVEL_RULE,
+    "mask": LEVEL_RULE,
+    "rule": LEVEL_RULE,
+    "field_anchor": LEVEL_FIELD,
+    "field": LEVEL_FIELD,
+    "sigla": LEVEL_FIELD,
+    "reference": LEVEL_REFERENCE,
+    "entity": LEVEL_REFERENCE,
+    "codigo": LEVEL_REFERENCE,
+    "identifier": LEVEL_REFERENCE,
+    "example_value": LEVEL_SUPPORTING,
+    "example": LEVEL_SUPPORTING,
+    "literal": LEVEL_REFERENCE,
+}
+
+
+def must_keep_level(chunk: Any) -> str:
+    metadata = getattr(chunk, "metadata", None) or {}
+    return str(metadata.get(MUST_KEEP_LEVEL_KEY, "") or "").strip().lower()
+
+
+def is_supporting_exact(chunk: Any) -> bool:
+    metadata = getattr(chunk, "metadata", None) or {}
+    return str(metadata.get(SUPPORTING_EXACT_KEY, "")).strip().lower() in _TRUE
 
 
 def is_must_keep(chunk: Any) -> bool:
@@ -71,6 +106,36 @@ def mark_requirement_evidence(chunk: Any, *, requirement: str = "") -> Any:
     return dataclasses.replace(chunk, metadata=metadata)
 
 
+def mark_exact_hit(
+    chunk: Any,
+    *,
+    needle: str = "",
+    role: str = "",
+    retrieval: str = "exact",
+) -> Any:
+    """Marca un acierto exacto con su NIVEL: no todo match vale lo mismo.
+
+    rule/field/reference → MUST_KEEP (protegido). example/literal sin regla →
+    supporting exact (prioridad baja, no expulsa a nadie).
+    """
+    level = _ROLE_LEVELS.get(str(role or "").strip().lower(), LEVEL_REFERENCE)
+    metadata = {
+        **(getattr(chunk, "metadata", None) or {}),
+        _EXACT_ANCHOR_KEY: "true",
+        MUST_KEEP_LEVEL_KEY: level,
+        "retrieval": retrieval,
+    }
+    if needle:
+        metadata["exact_needle"] = needle
+    if role:
+        metadata["exact_role"] = role
+    if level == LEVEL_SUPPORTING:
+        metadata[SUPPORTING_EXACT_KEY] = "true"
+    else:
+        metadata[MUST_KEEP_KEY] = "true"
+    return dataclasses.replace(chunk, metadata=metadata)
+
+
 def merge_must_keep(
     priority_chunks: list[Any],
     chunks: list[Any],
@@ -92,12 +157,21 @@ def merge_must_keep(
 
 
 __all__ = [
+    "LEVEL_FIELD",
+    "LEVEL_REFERENCE",
+    "LEVEL_RULE",
+    "LEVEL_SUPPORTING",
     "MUST_KEEP_KEY",
+    "MUST_KEEP_LEVEL_KEY",
     "REQUIREMENT_EVIDENCE_KEY",
+    "SUPPORTING_EXACT_KEY",
     "is_exact_anchor",
     "is_must_keep",
     "is_requirement_evidence",
+    "is_supporting_exact",
+    "mark_exact_hit",
     "mark_must_keep",
     "mark_requirement_evidence",
     "merge_must_keep",
+    "must_keep_level",
 ]

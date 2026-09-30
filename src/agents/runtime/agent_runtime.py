@@ -877,16 +877,20 @@ async def _circuit_check(config: dict, organization_id: UUID) -> None:
 
 
 def _uncovered_labels(question: str, evidence_text: str) -> list[str]:
-    """Entidades y anchors de la pregunta que la evidencia consultada no menciona."""
-    try:
-        from src.intelligence.response.anchors import anchor_covered, extract_anchors
-        from src.intelligence.response.entities import uncovered_entities
+    """Entidades y anchors DOCUMENTABLES que la evidencia no menciona.
 
-        labels = [entity.label for entity in uncovered_entities(question, evidence_text)]
+    Fuente única: EvidenceState (roles). EXAMPLE_VALUE no exige match.
+    """
+    try:
+        from src.rag.longcontext.coverage import build_evidence_state
+
+        state = build_evidence_state(question, evidence_text)
+        labels = list(state.missing_entities)
+        missing_values = {str(value) for value in state.missing_anchors}
         labels.extend(
             anchor.label
-            for anchor in extract_anchors(question)
-            if not anchor_covered(anchor, evidence_text)
+            for anchor in state.documentable_anchors
+            if str(getattr(anchor, "value", "")) in missing_values
         )
         return labels[:4]
     except Exception:  # noqa: BLE001 — la cobertura nunca rompe el run

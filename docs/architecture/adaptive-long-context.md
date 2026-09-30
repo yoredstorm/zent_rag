@@ -216,6 +216,37 @@ retrieves idénticos; las patas independientes (vector/léxica/exact) siguen en
 paralelo y las expansiones son secuenciales (primero se analiza, después se
 decide la siguiente).
 
+## 7.c Source routing, per-anchor y estado único (regresión 2026-09)
+
+Correcciones al pipeline técnico detectadas con la pregunta de regresión
+«record 2 / FCLAS &&&F / QNNF0SME»:
+
+1. **Aliases estructurales** (`src/intelligence/response/references.py`):
+   `record 2` produce `record2`, `rec2`, `record_2`, `rec-2`, `registro 2`… y
+   matchea `Rec2_Rules` sin hardcodear nada. Cubre byte/tabla/categoría/
+   sección/capítulo/parte/apéndice/campo/figura/ítem.
+2. **SourceRouter** (`src/rag/longcontext/source_router.py`): puntúa fuentes
+   ANTES del chunk ranking (match de referencia +3, documento de reglas +1.2,
+   ejemplos no pedidos -0.8, qualifier extra -1, mismo tipo otro valor -2,
+   overlap de términos). `preferred_sources` primero; global sólo si la
+   evidencia de regla/campo no aparece.
+3. **Exact per-anchor** (`exact_search.py`): cada anchor documentable tiene su
+   propio barrido y cupo; preferred por fuente en orden de score; un solo OR
+   global ya no puede tapar `&&&F` con 20 hits de `FCLAS`. El valor de ejemplo
+   no se barre cuando hay regla/campo.
+4. **Niveles MUST_KEEP**: rule en prioridad 0, requirement 1, field 2,
+   supporting exact 4. Un hit de FCLAS ya no pesa como uno de &&&F.
+5. **Estado único de evidencia** (`coverage.build_evidence_state`):
+   `coverage_note` y el agent runtime consumen roles; `QNNF0SME` (EXAMPLE_VALUE)
+   jamás aparece como evidencia faltante.
+6. **Fuentes finales**: `_build_flow` usa la selección de evidencia; el agent
+   flow descarta `status=CANDIDATE`. Un candidato que no resolvió nada no se
+   cita.
+
+Tests: `tests/test_source_routing_regression.py` (aliases, router, starvation
+con semántica real del store, example value, PASS A con comportamiento, fuentes
+finales).
+
 ## 8. Ingestión: vecindad estructural
 
 El chunker V2 (`src/knowledge/structure/chunker.py`) guarda por hermano

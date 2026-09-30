@@ -1614,6 +1614,16 @@ class Settings(BaseSettings):
             "fuentes. 'off' = embedding y léxica usan la query cruda."
         ),
     )
+    RAG_SOURCE_ROUTING: str = Field(
+        default="on",
+        description=(
+            "SourceRouter: cuando la pregunta nombra referencias estructurales "
+            "(record 2, byte 105, tabla 961) o anchors de regla/campo, rankea "
+            "fuentes ANTES del chunk ranking y busca primero en las preferidas. "
+            "El fallback global sólo corre si la evidencia de regla/campo no "
+            "aparece. 'off' = comportamiento anterior."
+        ),
+    )
     RAG_EXACT_SEARCH_CHUNKS: int = Field(
         default=4,
         ge=1,

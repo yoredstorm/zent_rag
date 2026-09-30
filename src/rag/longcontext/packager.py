@@ -24,19 +24,23 @@ from src.rag.longcontext.must_keep import (
     is_exact_anchor,
     is_must_keep,
     is_requirement_evidence,
+    is_supporting_exact,
+    must_keep_level,
 )
 
-PRIORITY_MUST_KEEP = 0
-PRIORITY_EXACT = 1
-PRIORITY_REQUIREMENT = 2
+PRIORITY_RULE = 0
+PRIORITY_MUST_KEEP = PRIORITY_RULE  # compat
+PRIORITY_REQUIREMENT = 1
+PRIORITY_FIELD = 2
+PRIORITY_EXACT = PRIORITY_FIELD  # compat
 PRIORITY_PARENT = 3
 PRIORITY_SUPPORT = 4
 PRIORITY_BACKGROUND = 5
 
 _PRIORITY_REASONS = {
-    PRIORITY_MUST_KEEP: "must_keep",
-    PRIORITY_EXACT: "exact_anchor",
+    PRIORITY_RULE: "must_keep_rule",
     PRIORITY_REQUIREMENT: "requirement_evidence",
+    PRIORITY_FIELD: "exact_field",
     PRIORITY_PARENT: "parent_context",
     PRIORITY_SUPPORT: "supporting_context",
     PRIORITY_BACKGROUND: "background",
@@ -209,12 +213,10 @@ class ContextPackager:
         selected_flags = [False] * len(blocks)
         used = 0
 
-        # 1) Protegidos: MUST_KEEP y evidencia de requirement nunca se caen.
+        # 1) Protegidos: MUST_KEEP (regla/campo/referencia) y evidencia de
+        # requirement nunca se caen, sin importar el nivel.
         for index, block in enumerate(blocks):
-            if block.priority == PRIORITY_MUST_KEEP or (
-                block.priority == PRIORITY_REQUIREMENT
-                and is_requirement_evidence(block.chunk)
-            ):
+            if is_must_keep(block.chunk) or is_requirement_evidence(block.chunk):
                 selected_flags[index] = True
                 used += block.tokens
 
@@ -551,11 +553,20 @@ def _classify(
 ) -> tuple[int, str]:
     metadata = chunk.metadata or {}
     if is_must_keep(chunk):
-        return PRIORITY_MUST_KEEP, _PRIORITY_REASONS[PRIORITY_MUST_KEEP]
-    if is_exact_anchor(chunk):
-        return PRIORITY_EXACT, _PRIORITY_REASONS[PRIORITY_EXACT]
+        level = must_keep_level(chunk)
+        if level == "field":
+            return PRIORITY_FIELD, _PRIORITY_REASONS[PRIORITY_FIELD]
+        if level in ("reference", "entity"):
+            return PRIORITY_REQUIREMENT, "exact_reference"
+        return PRIORITY_RULE, (
+            "must_keep_rule" if level == "rule" else _PRIORITY_REASONS[PRIORITY_RULE]
+        )
     if is_requirement_evidence(chunk):
         return PRIORITY_REQUIREMENT, "requirement_evidence"
+    if is_supporting_exact(chunk):
+        return PRIORITY_SUPPORT, "supporting_exact"
+    if is_exact_anchor(chunk):
+        return PRIORITY_FIELD, _PRIORITY_REASONS[PRIORITY_FIELD]
     retrieval = str(metadata.get("retrieval") or "")
     content = (chunk.content or "").lower()
     if requirement_needles and any(needle in content for needle in requirement_needles):

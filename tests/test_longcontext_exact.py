@@ -54,9 +54,21 @@ class _StoreExacto:
     async def search_sparse(self, **kwargs) -> RetrievalContext:
         return RetrievalContext(chunks=[], retrieval_latency_ms=1.0)
 
-    async def scan_text_literal(self, *, needles, **kwargs) -> RetrievalContext:
+    async def scan_text_literal(self, *, needles, limit=5, **kwargs) -> RetrievalContext:
+        """Semántica del store real: ANY needle + limit + orden de scroll."""
         self.literal_needles.append(list(needles))
-        return RetrievalContext(chunks=list(self._exact), retrieval_latency_ms=2.0)
+        agujas = [str(needle).lower() for needle in needles if str(needle or "").strip()]
+        encontrados = [
+            chunk
+            for chunk in self._scan_corpus()
+            if any(aguja in (chunk.content or "").lower() for aguja in agujas)
+        ]
+        return RetrievalContext(
+            chunks=encontrados[: max(1, int(limit))], retrieval_latency_ms=2.0
+        )
+
+    def _scan_corpus(self) -> list[RetrievalChunk]:
+        return list(self._exact)
 
 
 class _RerankerQueOlvida:

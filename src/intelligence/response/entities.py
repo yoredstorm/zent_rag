@@ -312,15 +312,21 @@ def strip_contradicting_disclaimer(
     return "\n\n".join(conservadas).strip(), quitadas
 
 
-def _uncovered_anchors(question: str, evidence_text: str) -> list:
-    """Anchors (siglas, máscaras, códigos) que la evidencia no menciona."""
-    try:
-        from src.intelligence.response.anchors import anchor_covered, extract_anchors
+def _uncovered_anchors(question: str, evidence_text: str) -> list[str]:
+    """LABELS de anchors DOCUMENTABLES que la evidencia no menciona.
 
+    Consume el estado canónico de evidencia: un EXAMPLE_VALUE del usuario
+    («QNNF0SME») jamás entra como evidencia faltante.
+    """
+    try:
+        from src.rag.longcontext.coverage import build_evidence_state
+
+        state = build_evidence_state(question, evidence_text)
+        missing_values = {str(value) for value in state.missing_anchors}
         return [
-            anchor
-            for anchor in extract_anchors(question)
-            if not anchor_covered(anchor, evidence_text)
+            anchor.label
+            for anchor in state.documentable_anchors
+            if str(getattr(anchor, "value", "")) in missing_values
         ]
     except Exception:  # noqa: BLE001 — la cobertura nunca rompe la respuesta
         return []
@@ -329,19 +335,16 @@ def _uncovered_anchors(question: str, evidence_text: str) -> list:
 def coverage_note(question: str, evidence_text: str) -> str:
     """Bloque factual para el generador. Vacío cuando todo está cubierto.
 
-    No pide nada que no sea verificable: dice qué falta y qué hacer con eso.
-    Cubre entidades nombradas y anchors (siglas, máscaras, códigos): si la
-    pregunta dice FCLAS &&&F y la evidencia no los menciona, el generador lo
-    declara en vez de rellenar de memoria.
+    Una sola fuente de verdad (EvidenceState): entidades y anchors
+    documentables faltantes. Los valores de ejemplo del usuario NO se declaran
+    ausentes: son input para aplicar la regla documentada, no un dato que deba
+    estar en el PDF.
     """
     missing = uncovered_entities(question, evidence_text)
     missing_anchors = _uncovered_anchors(question, evidence_text)
     if not missing and not missing_anchors:
         return ""
-    labels = ", ".join(
-        [entity.label for entity in missing]
-        + [anchor.label for anchor in missing_anchors]
-    )
+    labels = ", ".join([entity.label for entity in missing] + missing_anchors)
     return (
         "## COBERTURA DE LA EVIDENCIA (dato, no instrucción)\n"
         f"La evidencia consultada no menciona: {labels}.\n"

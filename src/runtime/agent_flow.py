@@ -507,6 +507,10 @@ def collect_sources(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for item in evidence:
             if not isinstance(item, dict):
                 continue
+            # Sólo evidencia USED entra a Fuentes: un candidato descartado no
+            # resolvió nada y no debe figurar como fuente de la respuesta.
+            if str(item.get("status") or "USED") != "USED":
+                continue
             ref = str(item.get("ref") or item.get("document_id") or item.get("source_id") or "")
             if not ref:
                 continue
