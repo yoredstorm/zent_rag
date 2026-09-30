@@ -1064,10 +1064,10 @@
   --auth-dive-ms: 1180ms;
   --auth-bloom-ms: 320ms;
   --auth-bloom-delay: 860ms;
-  --auth-dive-scale: 1.32;
-  --auth-dive-hold: 0.985;
-  --auth-outer-scale: 3.05;
-  --auth-inner-scale: 2.4;
+  --auth-dive-scale: 1;
+  --auth-dive-hold: 0.92;
+  --auth-outer-scale: 2.35;
+  --auth-inner-scale: 2.05;
   --dive-x: 50%;
   --dive-y: 44%;
   position: relative;
@@ -1194,58 +1194,54 @@
   animation: none;
 }
 
-/* 18% = DIVE_ANTICIPATION. La red se queda atrás; las membranas adelantan. */
+/* 18% = DIVE_ANTICIPATION. El lienzo no se escala: solo cede. Los aros
+   nacen en la neurona y atraviesan la cámara (translateZ). */
 @keyframes auth-dive-net {
-  0% {
-    transform: scale(1);
-  }
-  18% {
-    transform: scale(var(--auth-dive-hold, 0.985));
+  0%,
+  22% {
+    opacity: 1;
   }
   100% {
-    transform: scale(var(--auth-dive-scale, 1.32));
+    opacity: 0.2;
   }
 }
 
 @keyframes auth-dive-outer {
   0% {
     opacity: 0;
-    transform: scale(0.78) rotate(0deg);
+    transform: translateZ(-180px) scale(0.2);
   }
   18% {
-    opacity: 0.72;
-    transform: scale(0.7) rotate(-0.4deg);
+    opacity: 0.9;
+    transform: translateZ(-70px) scale(var(--auth-dive-hold, 0.92));
   }
-  58% {
-    opacity: 0.55;
-    transform: scale(1.85) rotate(1.2deg);
+  52% {
+    opacity: 0.75;
+    transform: translateZ(90px) scale(1.15);
   }
   100% {
     opacity: 0;
-    transform: scale(var(--auth-outer-scale, 3.05)) rotate(2.4deg);
+    transform: translateZ(420px) scale(var(--auth-outer-scale, 2.35));
   }
 }
 
 @keyframes auth-dive-inner {
-  0% {
+  0%,
+  16% {
     opacity: 0;
-    transform: scale(0.62) rotate(0deg);
+    transform: translateZ(-140px) scale(0.16);
   }
-  18% {
-    opacity: 0;
-    transform: scale(0.58) rotate(0.2deg);
+  28% {
+    opacity: 0.88;
+    transform: translateZ(-30px) scale(0.55);
   }
-  32% {
-    opacity: 0.78;
-    transform: scale(0.72) rotate(0.6deg);
-  }
-  72% {
-    opacity: 0.42;
-    transform: scale(1.55) rotate(-0.8deg);
+  68% {
+    opacity: 0.6;
+    transform: translateZ(160px) scale(1.25);
   }
   100% {
     opacity: 0;
-    transform: scale(var(--auth-inner-scale, 2.4)) rotate(-1.4deg);
+    transform: translateZ(480px) scale(var(--auth-inner-scale, 2.05));
   }
 }
 
@@ -1253,46 +1249,57 @@
   opacity: 1;
   -webkit-mask-image: none;
   mask-image: none;
-  isolation: isolate;
+  isolation: auto;
+  perspective: 960px;
+  perspective-origin: var(--dive-x, 50%) var(--dive-y, 44%);
+  transform-style: preserve-3d;
   transition: opacity 620ms cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 .auth-scene[data-dive="true"] .auth-net > canvas {
-  transform-origin: var(--dive-x, 50%) var(--dive-y, 44%);
   animation: auth-dive-net var(--auth-dive-ms, 1180ms) cubic-bezier(0.32, 0.72, 0, 1) both;
-  will-change: transform;
-  backface-visibility: hidden;
+  will-change: opacity;
 }
 
-/* Bicapa: dos elipses de pelo, sin blur ni blend. Se pintan una vez y el
-   compositor las escala. El origen es la neurona de destino. */
+/* Aros reales (pelo + bicapa), anclados a la neurona. No son un bitmap
+   a escala: al pasar por la cámara se leen como membranas, no como un PNG. */
 .auth-membrane {
   position: absolute;
-  inset: 0;
+  left: var(--dive-x, 50%);
+  top: var(--dive-y, 44%);
   pointer-events: none;
   opacity: 0;
-  transform-origin: var(--dive-x, 50%) var(--dive-y, 44%);
+  border-radius: 50%;
+  box-sizing: border-box;
   backface-visibility: hidden;
 }
+.auth-membrane::before {
+  content: "";
+  position: absolute;
+  inset: 18%;
+  border-radius: 50%;
+  border: 1px solid rgb(236 255 249 / 0.4);
+  pointer-events: none;
+}
 .auth-membrane--outer {
-  background: radial-gradient(
-    ellipse 46% 36% at var(--dive-x, 50%) var(--dive-y, 44%),
-    transparent 58%,
-    rgb(214 255 244 / 0.28) 61%,
-    rgb(82 224 182 / 0.14) 66%,
-    rgb(96 156 226 / 0.06) 71%,
-    transparent 76%
-  );
+  width: 46vmin;
+  height: 36vmin;
+  margin-left: -23vmin;
+  margin-top: -18vmin;
+  border: 1.5px solid rgb(214 255 244 / 0.55);
+  box-shadow:
+    inset 0 0 0 7px rgb(82 224 182 / 0.16),
+    0 0 0 11px rgb(82 224 182 / 0.08);
 }
 .auth-membrane--inner {
-  background: radial-gradient(
-    ellipse 28% 22% at var(--dive-x, 50%) var(--dive-y, 44%),
-    transparent 48%,
-    rgb(236 255 249 / 0.42) 52%,
-    rgb(82 224 182 / 0.2) 58%,
-    rgb(214 255 244 / 0.08) 64%,
-    transparent 70%
-  );
+  width: 30vmin;
+  height: 24vmin;
+  margin-left: -15vmin;
+  margin-top: -12vmin;
+  border: 1.5px solid rgb(236 255 249 / 0.62);
+  box-shadow:
+    inset 0 0 0 5px rgb(168 245 223 / 0.2),
+    0 0 0 8px rgb(82 224 182 / 0.1);
 }
 
 .auth-scene[data-dive="true"] .auth-membrane--outer {

@@ -123,9 +123,8 @@ function weakRaster(): boolean {
  * - El plano lejano se dibuja en un lienzo aparte a media resolución: al
  *   subirlo, el suavizado bilineal produce profundidad de campo real sin
  *   filtros GPU.
- * - En la travesía el bucle se corta: un último frame encendido. El zoom lo
- *   hacen capas CSS (red lenta, dos membranas más rápidas). Destello y bloom
- *   son opacidad, no raster.
+ * - En la travesía el bucle se corta: un último frame, sin escalar. Dos aros
+ *   CSS atraviesan la cámara (translateZ). Destello y bloom son opacidad.
  * - Se detiene cuando la pestaña no está visible; con `prefers-reduced-motion`
  *   compone un único frame curado (actividad repartida, inmóvil).
  * - Decorativo: `aria-hidden`, fuera del árbol accesible.

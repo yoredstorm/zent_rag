@@ -49,12 +49,12 @@ describe("tránsito de entrada", () => {
 });
 
 describe("tiempos de la travesía", () => {
-  it("el bloom cabe dentro del zoom y la escala CSS no pixelea el bitmap", () => {
+  it("el bloom cabe en el dive y el bitmap no se escala", () => {
     expect(DIVE_MS).toBeGreaterThan(BLOOM_MS);
     expect(DIVE_ANTICIPATION).toBeGreaterThan(0);
     expect(DIVE_ANTICIPATION).toBeLessThan(1);
-    expect(DIVE_SCALE).toBeGreaterThan(1);
-    expect(DIVE_SCALE).toBeLessThan(DIVE_INNER_SCALE);
+    expect(DIVE_SCALE).toBe(1);
+    expect(DIVE_INNER_SCALE).toBeGreaterThan(1);
     expect(DIVE_INNER_SCALE).toBeLessThan(DIVE_OUTER_SCALE);
   });
 });

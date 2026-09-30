@@ -190,9 +190,8 @@ export function AuthShell({
         if (state) state.dataset.state = "success";
         window.clearTimeout(resetTimer);
       } else if (event.type === "dive") {
-        // La escena cede el cuadro: el CSS apaga la UI, abre la máscara y
-        // las membranas adelantan al bitmap congelado. Con movimiento reducido
-        // no hay travesía.
+        // La escena cede el cuadro: aros de membrana atraviesan la cámara.
+        // El bitmap no se escala. Con movimiento reducido no hay travesía.
         const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
         if (!reduce && sceneRef.current) sceneRef.current.dataset.dive = "true";
       }
