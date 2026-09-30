@@ -5,7 +5,7 @@ import { Button, Checkbox, EmptyState, Input, SkeletonBlock, cn } from "../ui";
 import type { IngestionJob, KnowledgeSource } from "./types";
 
 export const INDEXING_COPY =
-  "Zent está leyendo el PDF, troceándolo y pasándolo a vectores. Hasta que haya documentos, el agente no puede citarlo.";
+  "Zent está leyendo el documento y reconstruyendo su estructura antes de indexar. Hasta que haya documentos, el agente no puede citarlo.";
 
 export const MAX_AGENT_SOURCES = 500;
 export const AGENT_SOURCE_CAP_MSG = "Un agente admite como máximo 500 fuentes.";
@@ -19,7 +19,13 @@ export function latestJobForSource(sourceId: string, jobs: IngestionJob[]): Inge
 function humanStatus(source: KnowledgeSource, job: IngestionJob | undefined): string {
   if (source.document_count > 0) return `${source.document_count} docs`;
   if (job?.status === "pending") return "En cola";
-  if (job?.status === "running") return "Indexando";
+  if (job?.status === "running") {
+    const progress = job.progress ?? 0;
+    if (progress >= 70) return "Indexando · generando índices";
+    if (progress >= 40) return "Indexando · reconstruyendo estructura";
+    if (progress >= 15) return "Indexando · analizando páginas";
+    return "Indexando";
+  }
   if (job?.status === "failed" || job?.status === "dead") return "Falló el indexado";
   return "Sin indexar";
 }

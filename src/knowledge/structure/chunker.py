@@ -74,6 +74,17 @@ def assign_blocks_to_sections(
     return dataclasses.replace(document, sections=new_sections)
 
 
+def _skip_semantic(block: StructuredBlock) -> bool:
+    """Cabecera, pie y tablas ya fusionadas no entran al índice semántico."""
+    if block.metadata.get("chrome") or block.metadata.get("superseded"):
+        return True
+    return block.kind in {
+        StructuredBlockKind.HEADER,
+        StructuredBlockKind.FOOTER,
+        StructuredBlockKind.PAGE_NUMBER,
+    }
+
+
 def _section_label(section: DocumentSection | None) -> str:
     """Ruta legible de la sección: «4.6.2 Fee Application (byte 105)»."""
     if section is None:
@@ -305,26 +316,27 @@ def chunk_structured_document(
         return chunks
 
     # Contenido por bloque con offsets acumulados (orden de lectura).
-    block_texts: list[str] = []
     block_offsets: dict[UUID, int] = {}
     offset = 0
     for block in document.blocks:
         block_offsets[block.id] = offset
-        block_texts.append(block.text)
         offset += len(block.text) + 2  # +separador "\n\n"
 
-    total_text = "\n\n".join(block_texts)
-
     if not document.sections:
-        # documento sin estructura: root implícito → children
+        # documento sin estructura: root implícito → children.
+        # La cabecera y el pie repetidos se quedan en el árbol, no en el índice.
+        indexable = [block for block in document.blocks if not _skip_semantic(block)]
+        if not indexable:
+            return chunks
+        semantic_text = "\n\n".join(block.text for block in indexable)
         parent = make_parent(
-            total_text,
+            semantic_text,
             section_id=None,
-            page_start=_first_page(document.blocks),
-            page_end=_last_page(document.blocks),
-            char_range=CharRange(start=0, end=max(1, len(total_text))),
+            page_start=_first_page(indexable),
+            page_end=_last_page(indexable),
+            char_range=CharRange(start=0, end=max(1, len(semantic_text))),
         )
-        make_children(parent, total_text, 0)
+        make_children(parent, semantic_text, 0)
         return chunks
 
     # map block_id → sección asignada (hoja más profunda que lo contenga)
@@ -350,7 +362,7 @@ def chunk_structured_document(
         piezas_tabla: list[str] = []
         for b in ids:
             block = _find_block(document, b)
-            if block is None:
+            if block is None or _skip_semantic(block):
                 continue
             if block.kind is StructuredBlockKind.TABLE:
                 # La tabla viaja con su ruta: sin eso, un chunk de filas sueltas
@@ -362,7 +374,9 @@ def chunk_structured_document(
             items.append(block.text)
             texto_plano.append(block.text)
         items = [section.heading] + items if section.heading else items
-        content = "\n\n".join(items)
+        content = "\n\n".join(item for item in items if item and str(item).strip())
+        if not content.strip():
+            continue
         start = block_offsets[ids[0]]
         end = start + sum(len(_document_block_text(document, b)) for b in ids) + 2 * (len(ids) - 1)
         page_start = section.page_start if section.page_start is not None else _first_page_for(document, ids)
@@ -383,7 +397,9 @@ def chunk_structured_document(
             make_children(parent, pieza, start, pieces=[pieza])
 
     # bloques no cubiertos → root implícito del documento
-    leftover = [b for b in document.blocks if b.id not in covered_blocks]
+    leftover = [
+        b for b in document.blocks if b.id not in covered_blocks and not _skip_semantic(b)
+    ]
     if leftover:
         content = "\n\n".join(b.text for b in leftover)
         parent = make_parent(

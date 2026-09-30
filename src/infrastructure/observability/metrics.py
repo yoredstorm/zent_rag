@@ -133,6 +133,58 @@ knowledge_parse_latency = Histogram(
     buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
 )
 
+_DU_BUCKETS = (0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 15.0, 60.0)
+_DU_COUNT_BUCKETS = (0, 1, 2, 5, 10, 25, 50, 100, 250, 1000)
+
+document_understanding_seconds = Histogram(
+    "document_parse_seconds",
+    "Segundos del Document Understanding Engine por documento",
+    labelnames=["outcome"],
+    buckets=_DU_BUCKETS,
+)
+document_understanding_quality = Histogram(
+    "document_understanding_quality_score",
+    "Puntaje estimado de fidelidad documental (0-1)",
+    labelnames=["outcome"],
+    buckets=(0.2, 0.4, 0.55, 0.7, 0.85, 0.95, 1.0),
+)
+document_understanding_tables = Histogram(
+    "document_understanding_tables_detected",
+    "Tablas canónicas por documento",
+    labelnames=["outcome"],
+    buckets=_DU_COUNT_BUCKETS,
+)
+document_understanding_sections = Histogram(
+    "document_understanding_sections_detected",
+    "Secciones por documento",
+    labelnames=["outcome"],
+    buckets=_DU_COUNT_BUCKETS,
+)
+document_understanding_blocks = Histogram(
+    "document_understanding_canonical_blocks",
+    "Bloques canónicos por documento",
+    labelnames=["outcome"],
+    buckets=_DU_COUNT_BUCKETS,
+)
+document_understanding_literals = Histogram(
+    "document_understanding_exact_literals",
+    "Literales exactos conservados por documento",
+    labelnames=["outcome"],
+    buckets=_DU_COUNT_BUCKETS,
+)
+document_understanding_ocr_pages = Histogram(
+    "document_understanding_ocr_pages",
+    "Páginas que requieren OCR o ya fueron reconocidas",
+    labelnames=["outcome"],
+    buckets=_DU_COUNT_BUCKETS,
+)
+document_understanding_warnings = Histogram(
+    "document_understanding_warnings",
+    "Avisos de calidad por documento",
+    labelnames=["outcome"],
+    buckets=_DU_COUNT_BUCKETS,
+)
+
 # Knowledge Tabular V2 (Excel/CSV): profiling, detección, dual indexing.
 knowledge_tabular_ingestion_total = Counter(
     "knowledge_tabular_ingestion_total",

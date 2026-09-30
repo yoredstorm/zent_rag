@@ -133,7 +133,50 @@ async def list_source_documents(
     documents = await PostgresStructuredDocumentRepository().list_documents(
         ctx.organization_id, source_id
     )
-    return {"documents": documents, "count": len(documents)}
+    public = [_public_structured_document(row) for row in documents]
+    return {"documents": public, "count": len(public)}
+
+
+def _public_structured_document(row: dict) -> dict:
+    """Lista sin el markdown/AST. El detalle los pide aparte."""
+    from src.knowledge.understanding import public_understanding
+
+    meta = dict(row.get("metadata") or {})
+    understanding = meta.get("understanding")
+    if isinstance(understanding, dict):
+        trimmed = dict(understanding)
+        trimmed.pop("views", None)
+        meta["understanding"] = trimmed
+    published = dict(row)
+    published["metadata"] = meta
+    published["understanding"] = public_understanding(meta)
+    return published
+
+
+@router.get(
+    "/workspaces/{corpus_id}/sources/{source_id}/documents/{document_id}/understanding",
+    summary="Informe, árbol, markdown y AST canónicos",
+)
+async def document_understanding(
+    corpus_id: UUID, source_id: UUID, document_id: UUID, request: Request
+) -> dict:
+    from src.knowledge.understanding import public_understanding, understanding_views
+    from src.platform.rbac.policy import require_permission
+
+    ctx = require_permission(request, "knowledge:read")
+    sources = await _sources_for_corpus(ctx.organization_id, corpus_id)
+    if not any(str(item["id"]) == str(source_id) for item in sources):
+        raise HTTPException(404, "Source not found in this workspace")
+    row = await PostgresStructuredDocumentRepository().get_document(
+        ctx.organization_id, document_id
+    )
+    if row is None or str(row.get("source_id")) != str(source_id):
+        raise HTTPException(404, "Document not found")
+    return {
+        "document_id": str(document_id),
+        "understanding": public_understanding(row.get("metadata")),
+        "views": understanding_views(row.get("metadata")),
+    }
 
 
 class LocateRequest(BaseModel):

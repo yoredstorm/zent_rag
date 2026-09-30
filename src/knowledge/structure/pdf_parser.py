@@ -146,7 +146,19 @@ class PdfParser(StructuredParser):
                     continue
 
                 all_sizes.extend(word.get("size") or 0.0 for word in words if word.get("size"))
-                lines = _group_words_into_lines(words)
+                page_width = float(getattr(page, "width", 0) or 0)
+                from src.knowledge.understanding.layout import (
+                    column_word_groups,
+                    layout_analysis_enabled,
+                )
+
+                if layout_analysis_enabled():
+                    groups = column_word_groups(list(words), page_width)
+                else:
+                    groups = [list(words)]
+                lines = []
+                for group in groups:
+                    lines.extend(_group_words_into_lines(group))
                 page_tables = _extract_tables(
                     page, tables, page_no, organization_id, workspace_id, source_id, order
                 )

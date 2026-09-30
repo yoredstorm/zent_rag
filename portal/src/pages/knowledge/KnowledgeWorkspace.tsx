@@ -4,6 +4,10 @@ import { Link, useParams } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import PdfViewer from "../../components/PdfViewer";
+import {
+  UnderstandingReport,
+  type UnderstandingPayload,
+} from "../../components/knowledge/UnderstandingReport";
 import { ErrorInline, Spinner, StatusBadge } from "../../components/ui";
 
 type Corpus = {
@@ -54,7 +58,12 @@ type ViewerState =
   | {
       mode: "list";
       source: Source;
-      documents: { id: string; title: string; page_count: number }[];
+      documents: {
+        id: string;
+        title: string;
+        page_count: number;
+        understanding?: UnderstandingPayload | null;
+      }[];
     };
 
 type ChatMessage = {
@@ -235,7 +244,14 @@ export default function KnowledgeWorkspacePage() {
       return;
     }
 
-    api<{ documents: { id: string; title: string; page_count: number }[] }>(
+    api<{
+      documents: {
+        id: string;
+        title: string;
+        page_count: number;
+        understanding?: UnderstandingPayload | null;
+      }[];
+    }>(
       `/api/v1/knowledge/workspaces/${corpusId}/sources/${source.id}/documents`,
       { token: session.token, organizationId: session.organizationId },
     )
@@ -597,7 +613,12 @@ function ViewerPane({
   onBack,
 }: {
   source: Source;
-  documents: { id: string; title: string; page_count: number }[];
+  documents: {
+    id: string;
+    title: string;
+    page_count: number;
+    understanding?: UnderstandingPayload | null;
+  }[];
   highlighted: Citation | null;
   onBack: () => void;
 }) {
@@ -640,6 +661,9 @@ function ViewerPane({
                 <span className="ml-2 text-xs text-zinc-400">
                   {doc.page_count} páginas
                 </span>
+                {doc.understanding?.report ? (
+                  <UnderstandingReport data={doc.understanding} />
+                ) : null}
               </li>
             ))}
           </ul>

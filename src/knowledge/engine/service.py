@@ -634,6 +634,38 @@ class KnowledgeIngestionEngine:
             progress=100,
         )
 
+    async def _apply_document_understanding(self, job, document, raw_data: bytes, *, filename: str):
+        """Entiende el documento antes de persistir y chunkear. Flag off = no-op."""
+        try:
+            from src.core.config import get_settings
+
+            settings = get_settings()
+        except Exception:  # noqa: BLE001
+            return document
+        enabled = bool(getattr(settings, "DOCUMENT_UNDERSTANDING_ENABLED", False))
+        shadow = bool(getattr(settings, "DOCUMENT_UNDERSTANDING_SHADOW", False))
+        if not enabled and not shadow:
+            return document
+        try:
+            await self._jobs.update_job(job.id, progress=40)
+        except Exception:  # noqa: BLE001
+            pass
+        from src.knowledge.understanding.engine import apply_understanding, file_sha256, observe_understanding
+
+        understood = apply_understanding(
+            document,
+            mode="active" if enabled else "shadow",
+            file_hash=file_sha256(raw_data),
+            filename=filename,
+            merge_tables=bool(getattr(settings, "DOCUMENT_UNDERSTANDING_TABLES", True)),
+        )
+        try:
+            await self._jobs.update_job(job.id, progress=70)
+        except Exception:  # noqa: BLE001
+            pass
+        observe_understanding(job.organization_id, understood)
+        return understood
+
     async def _maybe_structured_v2(
         self,
         job,
@@ -686,6 +718,12 @@ class KnowledgeIngestionEngine:
                 source_id=source.id,
                 workspace_id=source.workspace_id,
                 source_name=str(record.metadata.get("filename") or external_id),
+            )
+            document = await self._apply_document_understanding(
+                job,
+                document,
+                raw_data,
+                filename=str(record.metadata.get("filename") or external_id),
             )
             document.check_consistency()
             outcome = "persist_error"
@@ -1046,8 +1084,12 @@ class KnowledgeIngestionEngine:
         from src.knowledge.structure import (
             chunk_structured_document as _chunk_structured_document,
         )
+        from src.knowledge.understanding import annotate_chunks, index_metadata
 
         chunks = _chunk_structured_document(document, config=_ChunkingConfig())
+        understanding = document.metadata.get("understanding") or {}
+        if understanding.get("mode") == "active":
+            annotate_chunks(document, chunks)
         if not chunks:
             return
         if change_kind == "unchanged":
@@ -1109,7 +1151,11 @@ class KnowledgeIngestionEngine:
                     "source_id": str(source.id),
                     "external_id": document.external_id,
                     "content_hash": chunk.content_hash,
-                    "chunking_strategy": "document_structure+parent_child",
+                    "chunking_strategy": (
+                        "document_understanding+parent_child"
+                        if (document.metadata.get("understanding") or {}).get("mode") == "active"
+                        else "document_structure+parent_child"
+                    ),
                     "chunk_type": chunk.chunk_type.value,
                     "chunk_id": str(chunk.id),
                     # Vecindad estructural (lectura): permite expandir a
@@ -1132,6 +1178,7 @@ class KnowledgeIngestionEngine:
                     "v2_chunk": "false" if is_parent else "true",
                     "v2_parent": "true" if is_parent else "false",
                     "v2_doc": "true",
+                    **index_metadata(document, chunk),
                     **(acl or {}),
                 }
                 points.append(

@@ -657,6 +657,41 @@ class Settings(BaseSettings):
             "Solo tras calibrar shadow. Nunca promueve INFERRED a APPROVED."
         ),
     )
+    DOCUMENT_UNDERSTANDING_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Document Understanding: reconstruye el StructuredDocument antes de "
+            "chunkear (layout, tablas, literales, árbol). Requiere "
+            "RAG_KNOWLEDGE_V2_ENABLED. Off no cambia la ingesta V1 ni V2."
+        ),
+    )
+    DOCUMENT_UNDERSTANDING_SHADOW: bool = Field(
+        default=False,
+        description=(
+            "Corre Document Understanding y guarda el informe en metadata "
+            "understanding_shadow, sin cambiar bloques ni chunks visibles."
+        ),
+    )
+    DOCUMENT_UNDERSTANDING_LAYOUT: bool = Field(
+        default=True,
+        description=(
+            "Orden de lectura por columnas cuando Document Understanding está "
+            "activo o en shadow. Ignorado si el master flag está off."
+        ),
+    )
+    DOCUMENT_UNDERSTANDING_TABLES: bool = Field(
+        default=True,
+        description=(
+            "Fusión de tablas multipágina cuando Document Understanding corre."
+        ),
+    )
+    DOCUMENT_UNDERSTANDING_VISION: bool = Field(
+        default=False,
+        description=(
+            "Permite un DocumentUnderstandingProvider inyectado. No llama a "
+            "ningún modelo de visión por sí solo."
+        ),
+    )
     # -------------------------------------------------------------------------
     # Knowledge Tabular V2 (Excel/CSV estructurado)
     # -------------------------------------------------------------------------
