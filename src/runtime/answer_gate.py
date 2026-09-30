@@ -598,8 +598,12 @@ async def judge_answer(
     missing_entities = tuple(sufficiency.missing_entities)
 
     if evidence_provided:
-        relevant = sufficiency.exact_entity_match is True or (
-            (sufficiency.entity_coverage or 0.0) > 0.0
+        # Señal canónica: sin faltantes documentables (los EXAMPLE_VALUE no
+        # entran; assess_sufficiency los excluye por rol). `exact_entity_match`
+        # ya NO decide relevancia por sí solo.
+        relevant = (
+            sufficiency.evidence_complete
+            or (sufficiency.entity_coverage or 0.0) > 0.0
             or (not sufficiency.entities_asked and sufficiency.supporting_chunks > 0)
         )
         # La acción se reutiliza como veredicto: compatibilidad con el runtime y

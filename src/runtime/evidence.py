@@ -683,6 +683,15 @@ class EvidenceSufficiency:
     def generate(self) -> bool:
         return self.recommended_action in {ACTION_GENERATE, ACTION_ANSWER_WITH_LIMITS}
 
+    @property
+    def documentable_missing(self) -> tuple[str, ...]:
+        """Faltantes documentables role-aware (sin EXAMPLE_VALUE)."""
+        return tuple((*self.missing_entities, *self.missing_anchors))
+
+    @property
+    def evidence_complete(self) -> bool:
+        return not self.documentable_missing and bool(self.supporting_chunks)
+
     def to_public_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "has_evidence": self.has_evidence,

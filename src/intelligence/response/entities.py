@@ -133,7 +133,12 @@ def entity_covered(entity: AskedEntity, evidence_text: str) -> bool:
 
 
 def uncovered_entities(question: str, evidence_text: str) -> list[AskedEntity]:
-    """Entidades pedidas que la evidencia NO menciona."""
+    """Entidades de la pregunta que el texto NO menciona.
+
+    Utilidad de inspección (KEEP como primitiva). NO usar para decidir si se
+    genera o si falta evidencia: esa decisión vive en el EvidenceState canónico
+    (`src.rag.longcontext.coverage`), que además separa EXAMPLE_VALUE.
+    """
     return [
         entity
         for entity in asked_entities(question)
@@ -257,15 +262,22 @@ _DISCLAIMER_RE = re.compile(
 def self_contradicting_disclaimer(
     answer: str,
     *,
-    entities_covered: bool,
+    evidence_complete: bool | None = None,
+    entities_covered: bool | None = None,
 ) -> str:
-    """Frase que declara que falta información cuando la evidencia sí la cubre.
+    """Frase que declara que falta información cuando la evidencia SÍ alcanza.
 
-    Devuelve la frase (para citarla en el pedido de corrección) o "" si la
-    respuesta no se contradice. Sólo se evalúa cuando las entidades que la
-    pregunta nombra están cubiertas por la evidencia del run.
+    La señal autorizada es `evidence_complete` del estado canónico (regla +
+    campo + requirements). `entities_covered` queda sólo por compatibilidad y
+    está DEPRECADO: cobertura de entidades no equivale a evidencia completa
+    (Record 2 y FCLAS pueden estar y faltar &&&F).
     """
-    if not answer or not entities_covered:
+    covered = (
+        bool(evidence_complete)
+        if evidence_complete is not None
+        else bool(entities_covered)
+    )
+    if not answer or not covered:
         return ""
     for oracion in re.split(r"(?<=[.!?\n])\s+", answer):
         if _DISCLAIMER_RE.search(oracion):
@@ -288,15 +300,21 @@ def disclaimer_note(phrase: str) -> str:
 def strip_contradicting_disclaimer(
     answer: str,
     *,
-    entities_covered: bool,
+    evidence_complete: bool | None = None,
+    entities_covered: bool | None = None,
 ) -> tuple[str, int]:
-    """Quita las frases que declaran que falta información cuando sí la hay.
+    """Quita frases que declaran falta de información cuando la evidencia alcanza.
 
-    Es saneo de presentación, no de contenido: esas frases son falsas respecto de
-    la evidencia del run (que cubre lo preguntado). El resto de la respuesta queda
-    intacto. Devuelve `(texto, frases_quitadas)`.
+    Saneo de presentación. La señal autorizada es `evidence_complete` del estado
+    canónico; `entities_covered` está DEPRECADO (no equivale a evidencia
+    completa). Devuelve `(texto, frases_quitadas)`.
     """
-    if not answer or not entities_covered:
+    covered = (
+        bool(evidence_complete)
+        if evidence_complete is not None
+        else bool(entities_covered)
+    )
+    if not answer or not covered:
         return answer, 0
     conservadas: list[str] = []
     quitadas = 0
@@ -313,10 +331,10 @@ def strip_contradicting_disclaimer(
 
 
 def _uncovered_anchors(question: str, evidence_text: str) -> list[str]:
-    """LABELS de anchors DOCUMENTABLES que la evidencia no menciona.
+    """DEPRECATED: etiquetas de anchors documentables faltantes (vía EvidenceState).
 
-    Consume el estado canónico de evidencia: un EXAMPLE_VALUE del usuario
-    («QNNF0SME») jamás entra como evidencia faltante.
+    Se conserva sólo por compatibilidad de tests. El runtime NO debe llamarla:
+    la autoridad es `build_evidence_state(...).missing_documentable_evidence`.
     """
     try:
         from src.rag.longcontext.coverage import build_evidence_state
@@ -333,12 +351,12 @@ def _uncovered_anchors(question: str, evidence_text: str) -> list[str]:
 
 
 def coverage_note(question: str, evidence_text: str) -> str:
-    """Bloque factual para el generador. Vacío cuando todo está cubierto.
+    """DEPRECATED: no usar en runtime.
 
-    Una sola fuente de verdad (EvidenceState): entidades y anchors
-    documentables faltantes. Los valores de ejemplo del usuario NO se declaran
-    ausentes: son input para aplicar la regla documentada, no un dato que deba
-    estar en el PDF.
+    El prompt y los disclaimers consumen el estado canónico
+    (`build_evidence_state`) / `GenerationPackage` y su
+    `render_evidence_state_block`. Esta función se conserva sólo por
+    compatibilidad de tests y jamás debe volver a decidir qué falta.
     """
     missing = uncovered_entities(question, evidence_text)
     missing_anchors = _uncovered_anchors(question, evidence_text)

@@ -62,7 +62,9 @@ class TestExtractorGenerico:
     def test_tope_de_anchors(self) -> None:
         anchors = extract_anchors("1111111 2222222 3333333 4444444 5555555 6666666")
 
-        assert len(anchors) <= 4
+        # Tope deliberado: 8. Con 4, el quinto token técnico se perdía en
+        # silencio (máscaras/códigos de la pregunta quedaban sin buscar).
+        assert len(anchors) <= 8
 
 
 class TestProviders:

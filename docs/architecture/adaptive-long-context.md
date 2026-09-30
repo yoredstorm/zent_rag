@@ -247,6 +247,33 @@ Tests: `tests/test_source_routing_regression.py` (aliases, router, starvation
 con semántica real del store, example value, PASS A con comportamiento, fuentes
 finales).
 
+## 7.d Consolidación: una sola autoridad de evidencia (refactor 2026-09)
+
+Regla arquitectónica: **ONE QUESTION → ONE QUERY INTERPRETATION → ONE EVIDENCE
+STATE → ONE GROUNDING DECISION**.
+
+- `coverage.build_evidence_state` es la autoridad: roles, requirements,
+  `missing_documentable_evidence` (jamás EXAMPLE_VALUE), conflictos y
+  `generation_mode` (`GENERATE_FULL | GENERATE_WITH_LIMITS | RETRIEVE_MORE |
+  ABSTAIN`). `decide_generation_mode` es la única transición.
+- `package.build_generation_package(evidence_state=…)`: si falta evidencia, el
+  `missing_evidence` sale SÓLO del estado; `render_evidence_state_block` es el
+  bloque único del prompt (`legacy coverage: disabled`).
+- `coverage_note`, `_uncovered_anchors` y `uncovered_entities` quedan
+  DEPRECADOS como utilidades de inspección: sin consumidores runtime.
+- Disclaimers (`self_contradicting_disclaimer` / `strip_…`): la señal es
+  `evidence_complete` canónico; `entities_covered` queda sólo por compatibilidad
+  y está deprecado (entidades cubiertas ≠ evidencia completa).
+- Orchestrator y AgentRuntime consumen la misma autoridad; el agente usa
+  `_sufficiency_complete` (role-aware) para disclaimers y el bloque canónico
+  para la observación de cobertura.
+- Validación post-generación: `validate_doc_citations` contra el
+  `citation_map` final (una fuente candidata que no llegó al paquete no es
+  citable). Los validadores de fechas/cifras/jerarquía se conservan.
+- Ver flujo muestra UNA decisión: `anchor_roles` con `authority`,
+  `legacy_coverage: disabled`, `missing_documentable_evidence`, `conflicts` y
+  `decision`; se eliminó el step duplicado `exact_requirements`.
+
 ## 8. Ingestión: vecindad estructural
 
 El chunker V2 (`src/knowledge/structure/chunker.py`) guarda por hermano

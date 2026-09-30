@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import html
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from src.intelligence.response.anchors import Anchor, anchor_covered
@@ -193,12 +193,19 @@ def apply_coverage_to_quality(
     return quality
 
 
+#: Modos de generación centralizados. Ninguna capa inventa el suyo.
+GENERATE_FULL = "generate_full"
+GENERATE_WITH_LIMITS = "generate_with_limits"
+RETRIEVE_MORE = "retrieve_more"
+ABSTAIN = "abstain"
+
+
 @dataclass(frozen=True, kw_only=True)
 class EvidenceState:
     """Estado ÚNICO de evidencia del run: una sola verdad para el coverage.
 
-    Todas las capas (coverage_note, agent runtime, evaluator, engine) deben
-    consumir esto en lugar de recalcular anchors/entidades por su cuenta.
+    Todas las capas (prompt, disclaimers, agent runtime, evaluator, engine)
+    consumen esto en lugar de recalcular anchors/entidades por su cuenta.
     Los EXAMPLE_VALUE no exigen match en fuentes: nunca aparecen en missing.
     """
 
@@ -212,15 +219,36 @@ class EvidenceState:
     missing_entities: tuple[str, ...] = ()
     missing_requirements: tuple[str, ...] = ()
     conflicts: tuple[str, ...] = ()
+    #: Entidades que SÍ aparecieron (para el bloque canónico del prompt).
+    entities_found: tuple[str, ...] = ()
+    #: Señales del evaluador/JEV (opcional): score, conflicts, etc.
+    quality: Any | None = None
+    #: Por qué se detuvo la investigación (stop_reason del engine, si hubo).
+    stop_reason: str = ""
+    #: ¿Quedan estrategias de retrieval legítimas? Lo decide el engine/runtime.
+    retrieval_available: bool = False
+    #: Decisión única derivada del estado (no la inventa cada runtime).
+    generation_mode: str = GENERATE_FULL
+    decision_reason: str = ""
+    #: Fuentes que sostienen la decisión (evidencia usada, no candidatos).
+    evidence_sources: tuple[dict[str, Any], ...] = ()
 
     @property
-    def complete(self) -> bool:
-        return not (
-            self.missing_anchors
-            or self.missing_entities
-            or self.missing_requirements
-            or self.conflicts
+    def missing_documentable_evidence(self) -> tuple[str, ...]:
+        """Faltantes DOCUMENTABLES. Un EXAMPLE_VALUE jamás entra acá."""
+        return tuple(
+            dict.fromkeys(
+                [
+                    *self.missing_anchors,
+                    *self.missing_entities,
+                    *self.missing_requirements,
+                ]
+            )
         )
+
+    @property
+    def evidence_complete(self) -> bool:
+        return not (self.missing_documentable_evidence or self.conflicts)
 
     @property
     def coverage(self) -> float:
@@ -231,7 +259,24 @@ class EvidenceState:
         return 0.0
 
     def to_public_dict(self) -> dict[str, Any]:
-        return {
+        found_anchors = set(self.anchor_coverage.found_values) if self.anchor_coverage else set()
+        found_examples = set(self.anchor_coverage.examples_found) if self.anchor_coverage else set()
+        anchors_payload: list[dict[str, Any]] = []
+        for anchor in (*self.documentable_anchors, *self.example_values):
+            role = str(getattr(anchor, "role", "") or "")
+            value = str(getattr(anchor, "value", ""))
+            anchors_payload.append(
+                {
+                    "value": value,
+                    "role": role,
+                    "found": value in (found_examples if role == "example_value" else found_anchors),
+                    "requires_source_match": role != "example_value",
+                }
+            )
+        payload: dict[str, Any] = {
+            "authority": "canonical_evidence_engine",
+            "legacy_coverage": "disabled",
+            "anchors": anchors_payload,
             "documentable_anchors": [
                 str(getattr(anchor, "value", "")) for anchor in self.documentable_anchors
             ],
@@ -239,13 +284,49 @@ class EvidenceState:
                 str(getattr(anchor, "value", "")) for anchor in self.example_values
             ],
             "examples_requires_source_match": False,
+            "entities": [
+                str(getattr(entity, "label", entity)) for entity in self.entities
+            ],
+            "entities_found": list(self.entities_found),
             "missing_anchors": list(self.missing_anchors),
             "missing_entities": list(self.missing_entities),
             "missing_requirements": list(self.missing_requirements),
+            "missing_documentable_evidence": list(self.missing_documentable_evidence),
             "conflicts": list(self.conflicts),
-            "complete": self.complete,
+            "complete": self.evidence_complete,
+            "evidence_complete": self.evidence_complete,
             "coverage": round(self.coverage, 4),
+            "stop_reason": self.stop_reason or None,
+            "retrieval_available": self.retrieval_available,
+            "generation_mode": self.generation_mode,
+            "decision_reason": self.decision_reason or None,
         }
+        if self.evidence_sources:
+            payload["evidence_sources"] = [dict(item) for item in self.evidence_sources[:12]]
+        if self.quality is not None and hasattr(self.quality, "to_public_dict"):
+            payload["quality"] = self.quality.to_public_dict()
+        return payload
+
+
+def decide_generation_mode(
+    state: EvidenceState,
+    *,
+    retrieval_available: bool = False,
+) -> tuple[str, str]:
+    """UNA decisión de grounding, derivada del estado (prohibido duplicarla).
+
+    - requirements completos y sin conflictos → GENERATE_FULL
+    - falta evidencia documentable y quedan estrategias → RETRIEVE_MORE
+    - falta evidencia y ya no hay estrategias → GENERATE_WITH_LIMITS
+    - falta evidencia, retrieval agotado y nada recuperado → ABSTAIN (policy)
+    """
+    if state.evidence_complete:
+        return GENERATE_FULL, "requirements complete; no conflicts"
+    if retrieval_available:
+        return RETRIEVE_MORE, "missing documentable evidence; retrieval available"
+    if not state.documentable_anchors and not state.entities and not state.requirements:
+        return ABSTAIN, "no evidence requested and nothing retrieved"
+    return GENERATE_WITH_LIMITS, "retrieval exhausted; answer with limits"
 
 
 def build_evidence_state(
@@ -255,8 +336,16 @@ def build_evidence_state(
     anchors: list[Any] | tuple[Any, ...] | None = None,
     entities: list[Any] | tuple[Any, ...] | None = None,
     conflicting: int = 0,
+    quality: Any | None = None,
+    stop_reason: str = "",
+    retrieval_available: bool = False,
+    evidence_sources: list[dict[str, Any]] | tuple[dict[str, Any], ...] = (),
 ) -> EvidenceState:
-    """Construye el estado canónico. `items` = chunks o texto plano."""
+    """Construye el estado canónico. `items` = chunks o texto plano.
+
+    Único lugar donde se decide qué falta y en qué modo se genera. Los
+    consumidores (prompt, disclaimers, runtime, flow) NO recalculan nada.
+    """
     from src.rag.longcontext.requirements import build_requirements, evaluate_requirements
     from src.rag.longcontext.views import build_query_views
 
@@ -300,20 +389,37 @@ def build_evidence_state(
     requirement_cov = evaluate_requirements(requirements, evidence_items)
 
     missing_anchors = tuple(anchor_cov.missing_values)
+    entity_label_by_needle: dict[str, str] = {}
+    for entity in resolved_entities:
+        for variant in getattr(entity, "variants", ()) or ():
+            value = str(variant).strip().lower()
+            if value:
+                entity_label_by_needle[value] = str(getattr(entity, "label", variant))
     missing_entities = tuple(
-        requirement.needles[0] if requirement.needles else requirement.description
+        entity_label_by_needle.get(
+            str(requirement.needles[0]).strip().lower()
+            if requirement.needles
+            else requirement.description,
+            requirement.needles[0] if requirement.needles else requirement.description,
+        )
         for requirement in requirement_cov.unanswered
         if requirement.kind == "entity"
     )
     missing_requirements = tuple(
         requirement.description for requirement in requirement_cov.unanswered
     )
+    entities_found = tuple(
+        requirement.needles[0] if requirement.needles else requirement.description
+        for requirement in requirement_cov.requirements
+        if requirement.kind == "entity"
+        and requirement.state == RequirementState.FOUND.value
+    )
     conflicts: list[str] = []
     if requirement_cov.conflicting:
         conflicts.append(f"{requirement_cov.conflicting} requirement(s) en conflicto")
     if conflicting:
         conflicts.append(f"{conflicting} fragmento(s) en conflicto")
-    return EvidenceState(
+    state = EvidenceState(
         question=question,
         documentable_anchors=tuple(documentable),
         example_values=tuple(examples),
@@ -324,7 +430,16 @@ def build_evidence_state(
         missing_entities=missing_entities,
         missing_requirements=missing_requirements,
         conflicts=tuple(conflicts),
+        entities_found=entities_found,
+        quality=quality,
+        stop_reason=stop_reason,
+        retrieval_available=bool(retrieval_available),
+        evidence_sources=tuple(dict(item) for item in evidence_sources or ()),
     )
+    mode, reason = decide_generation_mode(
+        state, retrieval_available=bool(retrieval_available)
+    )
+    return replace(state, generation_mode=mode, decision_reason=reason)
 
 
 def requirements_satisfied(
@@ -366,11 +481,16 @@ def requirements_satisfied(
 
 
 __all__ = [
+    "ABSTAIN",
     "AnchorCoverage",
     "EvidenceState",
+    "GENERATE_FULL",
+    "GENERATE_WITH_LIMITS",
+    "RETRIEVE_MORE",
     "anchor_coverage",
     "apply_coverage_to_quality",
     "build_evidence_state",
+    "decide_generation_mode",
     "requirement_coverage",
     "requirements_satisfied",
 ]

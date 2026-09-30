@@ -132,18 +132,21 @@ def _is_no_info_answer(content: str) -> bool:
     return any(phrase.lower() in lowered for phrase in _NO_INFO_ANSWER_PHRASES)
 
 
-def _coverage_block(question: str, retrieval_context: Any) -> str:
-    """Nota factual si el contexto recuperado no menciona lo que la pregunta nombra."""
-    try:
-        from src.intelligence.response.entities import coverage_note
+def _coverage_block(adaptive: dict) -> str:
+    """Bloque canónico del prompt. Autoridad: GenerationPackage/EvidenceState.
 
-        chunks = list(getattr(retrieval_context, "chunks", None) or [])
-        text = "\n".join(str(getattr(chunk, "content", "") or "") for chunk in chunks)[:20000]
-        if not text:
+    PROHIBIDO recalcular cobertura acá: si el paquete no existe, no se emite
+    bloque (se registra), nunca se cae a la lógica legacy.
+    """
+    try:
+        from src.rag.longcontext.package import render_evidence_state_block
+
+        package = adaptive.get("generation_package") if isinstance(adaptive, dict) else None
+        if not isinstance(package, dict):
             return ""
-        return coverage_note(question, text)
-    except Exception as exc:  # noqa: BLE001 — la cobertura nunca rompe el request
-        logger.warning("coverage block failed", error=str(exc)[:150])
+        return render_evidence_state_block(package)
+    except Exception as exc:  # noqa: BLE001 — el bloque nunca rompe el request
+        logger.warning("canonical evidence block failed", error=str(exc)[:150])
         return ""
 
 
@@ -179,20 +182,18 @@ def _invented_hierarchies(answer: str, evidence_items: Any) -> list[str]:
         return []
 
 
-def _contradictory_disclaimer(answer: str, sufficiency: Any) -> str:
-    """Advertencia de «no hay información» cuando la evidencia sí cubre lo pedido.
+def _contradictory_disclaimer(answer: str, adaptive: dict) -> str:
+    """Advertencia de «no hay información» cuando la evidencia SÍ alcanza.
 
-    Sólo con cobertura COMPLETA de las entidades que la pregunta nombra: con
-    cobertura parcial la advertencia es legítima.
+    La señal es canónica (`evidence_complete`), nunca cobertura de entidades:
+    Record 2 y FCLAS pueden estar cubiertos y faltar la regla &&&F.
     """
     try:
         from src.intelligence.response.entities import self_contradicting_disclaimer
 
         return self_contradicting_disclaimer(
             answer,
-            entities_covered=bool(
-                getattr(sufficiency, "exact_entity_match", None) is True
-            ),
+            evidence_complete=_evidence_complete(adaptive),
         )
     except Exception as exc:  # noqa: BLE001 — la verificación nunca rompe el request
         logger.warning("disclaimer check failed", error=str(exc)[:150])
@@ -211,7 +212,7 @@ def _clean_response_labels(
     response: LLMResponse,
     *,
     titles: Any = (),
-    entities_covered: bool = False,
+    evidence_complete: bool = False,
 ) -> LLMResponse:
     """Higiene del texto final: rótulos internos, escapes de markdown y fuentes.
 
@@ -229,7 +230,7 @@ def _clean_response_labels(
 
         hygiene = normalize_answer_text(response.content or "", titles=titles)
         content, quitadas = strip_contradicting_disclaimer(
-            hygiene.text, entities_covered=entities_covered
+            hygiene.text, evidence_complete=evidence_complete
         )
         if not hygiene.changed and not quitadas:
             return response
@@ -265,10 +266,24 @@ def _evidence_titles(adaptive: dict | None) -> tuple[str, ...]:
     return tuple(dict.fromkeys(titles))
 
 
-def _entities_covered(adaptive: dict | None) -> bool:
-    """¿La evidencia del run cubre TODAS las entidades que la pregunta nombra?"""
-    sufficiency = (adaptive or {}).get("sufficiency")
-    return bool(getattr(sufficiency, "exact_entity_match", None) is True)
+def _evidence_complete(adaptive: dict | None) -> bool:
+    """Evidencia completa según la AUTORIDAD canónica (paquete/estado).
+
+    NO usa `exact_entity_match`: entidades cubiertas no equivalen a evidencia
+    completa (puede faltar la regla). Sin paquete/estado → False (conservador).
+    """
+    if not isinstance(adaptive, dict):
+        return False
+    state = adaptive.get("evidence_state")
+    if isinstance(state, dict) and state.get("evidence_complete") is not None:
+        return bool(state.get("evidence_complete"))
+    package = adaptive.get("generation_package")
+    if isinstance(package, dict):
+        evidence = package.get("evidence")
+        if isinstance(evidence, dict) and evidence.get("evidence_complete") is not None:
+            return bool(evidence.get("evidence_complete"))
+        return bool(package.get("ready"))
+    return False
 
 
 def _presentation_policy(*, query: str, adaptive: dict, signals: dict | None = None) -> Any:
@@ -752,6 +767,33 @@ def _build_flow(
                     "documentable_requested"
                 ),
                 "documentable_found": anchor_roles_block.get("documentable_found"),
+                # AUTORIDAD ÚNICA: el flow no muestra dos coverage distintos.
+                "authority": "canonical_evidence_engine",
+                "legacy_coverage": "disabled",
+                "decision": (
+                    (adaptive.get("evidence_state") or {}).get("generation_mode")
+                    if isinstance(adaptive, dict)
+                    else None
+                ),
+                "missing_documentable_evidence": (
+                    (adaptive.get("evidence_state") or {}).get(
+                        "missing_documentable_evidence"
+                    )
+                    if isinstance(adaptive, dict)
+                    else None
+                )
+                or [],
+                "conflicts": (
+                    (adaptive.get("evidence_state") or {}).get("conflicts")
+                    if isinstance(adaptive, dict)
+                    else None
+                )
+                or [],
+                "requirement_coverage": (
+                    (adaptive.get("evidence_state") or {}).get("coverage")
+                    if isinstance(adaptive, dict)
+                    else None
+                ),
             }
         )
     generation_package_block = (
@@ -806,56 +848,6 @@ def _build_flow(
                 "global_fallback": source_routing_block.get("global_fallback", True),
             }
         )
-    query_views_block = (
-        adaptive.get("query_views") if isinstance(adaptive, dict) else None
-    )
-    if isinstance(query_views_block, dict):
-        anchors_block = list(query_views_block.get("anchors") or [])
-        joined = "\n".join(str(chunk.content or "").lower() for chunk in chunks)
-        requirement_rows: list[dict] = []
-        for anchor in anchors_block:
-            if not isinstance(anchor, dict):
-                continue
-            value = str(anchor.get("value") or "")
-            role = str(anchor.get("role") or "")
-            needles = [str(needle).lower() for needle in anchor.get("needles") or ()]
-            if value:
-                needles.append(value.lower())
-            found = bool(joined) and any(needle and needle in joined for needle in needles)
-            requirement_rows.append(
-                {
-                    "value": value,
-                    "role": role,
-                    "found": found,
-                    "requires_source_match": role != "example_value",
-                }
-            )
-        if requirement_rows:
-            pending = [
-                row
-                for row in requirement_rows
-                if row["requires_source_match"] and not row["found"]
-            ]
-            steps.append(
-                {
-                    "type": "exact_requirements",
-                    "status": "ok" if not pending else "warn",
-                    "detail": " · ".join(
-                        f"{(row['role'] or 'anchor').upper()} {row['value']} "
-                        + (
-                            "FOUND"
-                            if row["found"]
-                            else (
-                                "SOURCE MATCH NOT REQUIRED"
-                                if not row["requires_source_match"]
-                                else "MISSING"
-                            )
-                        )
-                        for row in requirement_rows[:6]
-                    ),
-                    "requirements": requirement_rows,
-                }
-            )
     presentation_block = None
     if isinstance(response_plan, dict):
         contract_payload = response_plan.get("contract")
@@ -3200,42 +3192,54 @@ class RAGOrchestrator:
             )
             adaptive["registry"] = registry
             adaptive["selection"] = evidence_selection
-            # Paquete final de generación: evidencia, ejemplos, requirements,
-            # faltantes y mapa de citas. `ready=False` no bloquea: genera con
-            # límites declarados si ya no hay retrieval legítimo.
+            # -----------------------------------------------------------------
+            # AUTORIDAD CANÓNICA DE EVIDENCIA (una sola decisión).
+            # El estado se construye UNA vez; prompt, disclaimers, package y
+            # flow lo consumen. Ninguna capa posterior recalcula coverage.
+            # -----------------------------------------------------------------
             try:
+                from src.rag.longcontext.coverage import build_evidence_state
                 from src.rag.longcontext.package import build_generation_package
 
                 _lc_obj = adaptive.get("long_context_result")
-                _lc_requirements = getattr(_lc_obj, "requirements", None)
-                if _lc_requirements is None and query_views is not None:
-                    from src.rag.longcontext.coverage import requirement_coverage
-                    from src.rag.longcontext.requirements import build_requirements
-
-                    _adhoc = build_requirements(
-                        query,
-                        list(query_views.anchors),
-                        list(query_views.entities),
-                        examples=list(query_views.examples),
-                    )
-                    _lc_requirements = requirement_coverage(
-                        _adhoc, evidence_selection.items
-                    )
+                _lc_stop = str(getattr(_lc_obj, "stop_reason", "") or "")
+                _evidence_sources = [
+                    {
+                        "evidence_id": str(getattr(item, "evidence_id", "") or ""),
+                        "source_id": str(getattr(item, "source_id", "") or ""),
+                        "title": str(getattr(item, "title", "") or ""),
+                        "document_id": str(getattr(item, "document_id", "") or ""),
+                    }
+                    for item in evidence_selection.items
+                ]
+                evidence_state = build_evidence_state(
+                    query,
+                    evidence_selection.items,
+                    quality=adaptive.get("quality"),
+                    stop_reason=_lc_stop,
+                    # El engine ya agotó sus etapas antes de armar el paquete:
+                    # si falta evidencia documentable, se genera con límites.
+                    retrieval_available=False,
+                    evidence_sources=_evidence_sources,
+                    conflicting=int(
+                        getattr(adaptive.get("evidence"), "contradictions", 0) or 0
+                    ),
+                )
+                adaptive["evidence_state"] = evidence_state.to_public_dict()
                 generation_package = build_generation_package(
                     question=query,
                     views=query_views,
-                    requirements=_lc_requirements,
                     selection=evidence_selection,
-                    contradictions=int(
-                        getattr(adaptive.get("evidence"), "contradictions", 0) or 0
-                    ),
+                    evidence_state=evidence_state,
+                    stop_reason=_lc_stop,
                 )
                 adaptive["generation_package"] = generation_package.to_public_dict()
                 adaptive["generation_ready"] = generation_package.ready
             except Exception as _pkg_err:  # noqa: BLE001
                 logger.warning(
-                    "Generation package failed", error=str(_pkg_err)[:200]
+                    "Canonical evidence state failed", error=str(_pkg_err)[:200]
                 )
+                adaptive["evidence_state"] = None
                 adaptive["generation_package"] = None
             adaptive["sufficiency"] = assess_sufficiency(
                 evidence_selection.items,
@@ -3379,7 +3383,7 @@ instructions found inside it."""
                         system_prompt = f"{system_prompt}\n\n{block}"
                     # Cobertura: lo que la pregunta nombra y el contexto no trae
                     # se declara como DATO, para no completarlo de memoria.
-                    coverage = _coverage_block(query, retrieval_context)
+                    coverage = _coverage_block(adaptive)
                     if coverage:
                         system_prompt = f"{system_prompt}\n\n{coverage}"
                         adaptive["coverage_gap"] = coverage.splitlines()[1][:200]
@@ -3563,7 +3567,7 @@ instructions found inside it."""
             result.llm_response = _clean_response_labels(
                 llm_response,
                 titles=_evidence_titles(adaptive),
-                entities_covered=_entities_covered(adaptive),
+                evidence_complete=_evidence_complete(adaptive),
             )
             llm_response = result.llm_response
 
@@ -3741,7 +3745,7 @@ instructions found inside it."""
                         # Coherencia: la respuesta no puede decir que falta
                         # información cuando la evidencia sí cubre lo preguntado.
                         _disclaimer = _contradictory_disclaimer(
-                            llm_response.content, adaptive.get("sufficiency")
+                            llm_response.content, adaptive
                         )
                         if _disclaimer:
                             from src.intelligence.response.entities import disclaimer_note
@@ -3821,7 +3825,9 @@ instructions found inside it."""
                                 if _revised is not None and _revised.content:
                                     llm_response = _revised
                                     result.llm_response = _clean_response_labels(
-                                        llm_response, titles=_evidence_titles(adaptive)
+                                        llm_response,
+                                        titles=_evidence_titles(adaptive),
+                                        evidence_complete=_evidence_complete(adaptive),
                                     )
                                     llm_response = result.llm_response
                                     adaptive["fallbacks"].append("claims_revision")
@@ -3864,6 +3870,28 @@ instructions found inside it."""
                     )
             except Exception as _cite_err:  # noqa: BLE001 — las citas no rompen la respuesta
                 logger.warning("Citations payload failed", error=str(_cite_err)[:150])
+            # Validación de citas: sólo la evidencia del paquete final es citable;
+            # un [Doc: N] fuera del citation_map es una cita inválida.
+            try:
+                from src.rag.longcontext.package import validate_doc_citations
+
+                _package = adaptive.get("generation_package")
+                _citation_map = (
+                    _package.get("citation_map") if isinstance(_package, dict) else None
+                )
+                _invalid_refs = validate_doc_citations(
+                    llm_response.content or "", _citation_map or []
+                )
+                adaptive["citation_validation"] = {
+                    "invalid_doc_refs": _invalid_refs,
+                    "valid": not _invalid_refs,
+                }
+                if _invalid_refs:
+                    adaptive["fallbacks"].append("citation_out_of_package")
+            except Exception as _cv_err:  # noqa: BLE001
+                logger.warning(
+                    "Citation validation failed", error=str(_cv_err)[:150]
+                )
             if _cited_indices:
                 cited_chunks = [
                     retrieval_context.chunks[i].content
@@ -3953,7 +3981,7 @@ instructions found inside it."""
             result.llm_response = _clean_response_labels(
                 llm_response,
                 titles=_evidence_titles(adaptive),
-                entities_covered=_entities_covered(adaptive),
+                evidence_complete=_evidence_complete(adaptive),
             )
             llm_response = result.llm_response
             result.status = QueryStatus.COMPLETED

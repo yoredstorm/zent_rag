@@ -657,14 +657,43 @@ def _canary_allows(settings, run_id: Any) -> bool:
 
 
 def _coverage_history_note(question: str, evidence_text: str) -> str:
-    """Nota factual si la evidencia no menciona lo que la pregunta nombra."""
-    try:
-        from src.intelligence.response.entities import coverage_note
+    """Bloque de evidencia CANÓNICO (misma autoridad que el orchestrator).
 
-        return coverage_note(question, evidence_text)
-    except Exception as exc:  # noqa: BLE001 — la cobertura nunca rompe el run
-        logger.warning("coverage note failed", error=str(exc)[:150])
+    No recalcula missing por su cuenta: construye EvidenceState y renderiza el
+    bloque único. Un fallo no reactiva coverage legacy: devuelve vacío.
+    """
+    try:
+        from src.rag.longcontext.coverage import build_evidence_state
+        from src.rag.longcontext.package import render_evidence_state_block
+
+        state = build_evidence_state(question, evidence_text)
+        return render_evidence_state_block(state.to_public_dict())
+    except Exception as exc:  # noqa: BLE001 — la evidencia nunca rompe el run
+        logger.warning("canonical coverage note failed", error=str(exc)[:150])
         return ""
+
+
+def _canonical_gap_line(note: str) -> str:
+    """Línea del bloque canónico que resume el hueco (para el step del flujo)."""
+    lines = [line for line in (note or "").splitlines() if line.strip()]
+    for line in lines:
+        if line.lower().startswith("missing documentable evidence"):
+            return line[:200]
+    return lines[1][:200] if len(lines) > 1 else (lines[0][:200] if lines else "")
+
+
+def _sufficiency_complete(sufficiency: object | None) -> bool:
+    """Evidencia completa con señal role-aware YA calculada (sin recalcular).
+
+    Un EXAMPLE_VALUE no aparece en missing_anchors (assess_sufficiency lo
+    excluye por rol), así que no puede degradar la decisión.
+    """
+    if sufficiency is None:
+        return False
+    return not (
+        tuple(getattr(sufficiency, "missing_entities", ()) or ())
+        or tuple(getattr(sufficiency, "missing_anchors", ()) or ())
+    )
 
 
 def _presentation_from_question(question: str, *, detail: str = ""):
@@ -1107,7 +1136,7 @@ async def _execute_jev_retrieval(
     coverage = _coverage_history_note(request.message, tool_result.output)
     if coverage:
         history.append(coverage)
-        step["coverage_gap"] = coverage.splitlines()[1][:200]
+        step["coverage_gap"] = _canonical_gap_line(coverage)
     result.steps.append(step)
     return _JevRetrievalOutcome.OK
 
@@ -2277,11 +2306,9 @@ class AgentRuntime:
                     strip_contradicting_disclaimer,
                 )
 
-                cubierto = bool(
-                    sufficiency is not None and sufficiency.exact_entity_match is True
-                )
+                cubierto = _sufficiency_complete(sufficiency)
                 limpio, quitadas = strip_contradicting_disclaimer(
-                    limpio, entities_covered=cubierto
+                    limpio, evidence_complete=cubierto
                 )
                 if quitadas:
                     result.steps.append(
@@ -2509,10 +2536,7 @@ class AgentRuntime:
                 # respuesta. Con cobertura parcial la advertencia es legítima.
                 contradiccion = self_contradicting_disclaimer(
                     draft,
-                    entities_covered=bool(
-                        sufficiency is not None
-                        and sufficiency.exact_entity_match is True
-                    ),
+                    evidence_complete=_sufficiency_complete(sufficiency),
                 )
                 if contradiccion:
                     if not revision_used:
@@ -3224,7 +3248,7 @@ class AgentRuntime:
                 coverage = _coverage_history_note(request.message, tool_result.output)
                 if coverage:
                     history.append(coverage)
-                    step_record["coverage_gap"] = coverage.splitlines()[1][:200]
+                    step_record["coverage_gap"] = _canonical_gap_line(coverage)
                 # ¿Aportó documentos nuevos? Repetir búsquedas que devuelven lo
                 # mismo hace crecer el prompt hasta reventar el presupuesto.
                 nuevos = _merge_evidence_refs(tool_result, retrieved_refs)
