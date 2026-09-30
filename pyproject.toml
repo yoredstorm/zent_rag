@@ -182,6 +182,7 @@ ignore = [
 "src/verticals/**/*.py" = ["E501"]  # prompt string constants de verticals
 "sdk/python/tests/**/*.py" = ["S101", "S105"]
 "src/scripts/**/*.py" = ["T201"]  # CLI scripts use print for stdout
+"tests/test_longcontext_benchmark.py" = ["T201"]  # benchmark imprime tabla con capsys.disabled
 "src/platform/knowledge_learning/repository.py" = ["S608", "E501", "B008"]
 "src/platform/knowledge_learning/knowledge_score.py" = ["S608", "E501"]
 "src/platform/knowledge_learning/orchestrator.py" = ["E501"]
