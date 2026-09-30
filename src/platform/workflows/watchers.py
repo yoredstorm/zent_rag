@@ -643,6 +643,24 @@ async def _default_query_runner(sql: str, params: dict[str, Any]) -> list[dict[s
         await session.close()
 
 
+def _is_undefined_table(exc: BaseException) -> bool:
+    """True si Postgres respondió 42P01 (la relación no existe)."""
+    stack: list[BaseException] = [exc]
+    seen: set[int] = set()
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        sqlstate = getattr(current, "sqlstate", None) or getattr(current, "pgcode", None)
+        if sqlstate == "42P01":
+            return True
+        for nxt in (getattr(current, "orig", None), current.__cause__, current.__context__):
+            if isinstance(nxt, BaseException):
+                stack.append(nxt)
+    return False
+
+
 def build_incremental_sql(watcher: dict[str, Any], checkpoint: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """SQL acotado con cursor; nunca full scan ni SQL libre del usuario."""
     table = _quoted_table(watcher.get("schema_name"), watcher["table_name"])
@@ -774,6 +792,13 @@ async def check_watcher(
         state.last_check_at = now
         await _save_state(organization_id, watcher_id, state)
         await _mark_checked(organization_id, watcher_id)
+        if _is_undefined_table(exc):
+            await update_watcher_status(organization_id, watcher_id, "paused")
+            outcome.status = "paused"
+            outcome.reason = (
+                f"La tabla ya no existe. El watcher quedó en pausa: {state.last_error}"
+            )
+            return outcome
         if state.failure_count >= 5:
             await update_watcher_status(organization_id, watcher_id, "error")
         outcome.status = "error"

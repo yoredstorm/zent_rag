@@ -420,3 +420,65 @@ async def test_watcher_api_rejects_unsafe_table(async_client: AsyncClient) -> No
         },
     )
     assert resp.status_code in (400, 422)
+
+
+def test_undefined_table_detects_wrapped_sqlstate() -> None:
+    from src.platform.workflows.watchers import _is_undefined_table
+
+    inner = Exception('relation "inventory" does not exist')
+    inner.sqlstate = "42P01"  # type: ignore[attr-defined]
+    outer = Exception("wrap")
+    outer.orig = inner  # type: ignore[attr-defined]
+    assert _is_undefined_table(outer) is True
+    assert _is_undefined_table(Exception("connection refused")) is False
+
+
+@pytest.mark.asyncio
+async def test_missing_relation_pauses_watcher_and_scheduler_skips_it(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org = await _org(async_client, "Living Missing Table")
+    created = await async_client.post(
+        "/api/v1/workflows/watchers",
+        headers=_headers(org),
+        json={
+            "name": "Tabla borrada",
+            "table_name": "inventory",
+            "primary_key": "id",
+            "selected_fields": ["stock"],
+            "condition": {"field": "stock", "operator": "<", "value": 5},
+        },
+    )
+    assert created.status_code == 200, created.text
+    watcher_id = created.json()["id"]
+
+    missing = Exception('relation "inventory" does not exist')
+    missing.sqlstate = "42P01"  # type: ignore[attr-defined]
+
+    async def boom(sql: str, params: dict) -> list[dict]:  # noqa: ARG001
+        raise missing
+
+    monkeypatch.setattr(watchers_module, "_default_query_runner", boom)
+    from src.platform.workflows.watchers import check_watcher
+
+    outcome = await check_watcher(UUID(org["organization_id"]), UUID(watcher_id))
+    assert outcome is not None
+    assert outcome.status == "paused"
+
+    fetched = await async_client.get(
+        f"/api/v1/workflows/watchers/{watcher_id}", headers=_headers(org)
+    )
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["status"] == "paused"
+
+    seen: list[str] = []
+
+    async def spy(organization_id, wid, **kwargs):  # noqa: ARG001
+        seen.append(str(wid))
+        return None
+
+    monkeypatch.setattr(watchers_module, "check_watcher", spy)
+    from src.platform.workflows.watchers import run_due_watchers
+
+    await run_due_watchers()
+    assert watcher_id not in seen

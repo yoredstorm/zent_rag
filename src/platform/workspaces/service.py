@@ -77,9 +77,10 @@ async def choose_trial_start_mode(
     user_id: UUID,
     mode: str,
 ) -> tuple[Workspace, bool]:
-    """Crea el primer workspace del trial. Idempotente si ya existe alguno.
+    """Crea el primer workspace business del trial. Idempotente si ya existe alguno.
 
-    Returns (workspace, created). created=False si la org ya tenía workspace.
+    `demo` y `blank` crean el mismo workspace vacío. Returns (workspace, created).
+    created=False si la org ya tenía workspace.
     """
     if mode not in ("demo", "blank"):
         raise ValueError("mode must be demo or blank")
@@ -99,14 +100,8 @@ async def choose_trial_start_mode(
                     return ws, False
         return existing[0], False
 
-    if mode == "demo":
-        ws = await ensure_demo_workspace(
-            repo, organization_id, created_by=user_id
-        )
-    else:
-        ws = await ensure_default_workspace(
-            repo, organization_id, kind="business"
-        )
+    # demo y blank arrancan iguales: workspace business vacío, sin dataset.
+    ws = await ensure_default_workspace(repo, organization_id, kind="business")
     await set_active_workspace(organization_id, user_id, ws.id)
     return ws, True
 

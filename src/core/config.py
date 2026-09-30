@@ -2157,15 +2157,14 @@ class Settings(BaseSettings):
         ),
     )
     SEED_DEMO_DATA: bool = Field(
-        default=True,
-        description="Permite sembrar datos demo/dev (token admin) en la BD.",
+        default=False,
+        description="Permite sembrar datos demo/dev (token admin) en la BD. El alta no lo usa.",
     )
     DEMO_PROVISION_ON_TRIAL: bool = Field(
-        default=True,
+        default=False,
         description=(
-            "Encola el dataset demo compartido (schema de ejemplo) al crear un "
-            "trial. Apagalo en entornos con LLM lento: cada alta re-embebe el "
-            "dataset completo y satura la cola de ingesta."
+            "Obsoleto: el alta ya no copia el dataset demo. Se conserva el flag "
+            "para no romper entornos que lo definen."
         ),
     )
     DEMO_SQL_ORGANIZATION_ID: str = Field(
