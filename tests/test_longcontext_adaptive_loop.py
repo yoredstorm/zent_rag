@@ -357,7 +357,7 @@ class TestGenerationPackage:
         )
         public = package.to_public_dict()
         assert public["ready"] is True
-        assert public["mode"] == "generate"
+        assert public["mode"] == "generate_full"
         assert public["examples"] == ["QNNF0SME"]
         assert public["examples_requires_source_match"] is False
         assert public["citation_map"]
