@@ -3,9 +3,9 @@
 // =============================================================================
 // Proveedor, JEV, scores, tokens, costos, ids y la traza cruda. No reemplaza la
 // Story: la complementa.
-import { CodeBlock } from "../../../components/ui";
 import { fmtCurrency } from "../../../lib/format";
 import type { ExecutionStory } from "../executionStory";
+import TechnicalValueTree from "./TechnicalValueTree";
 
 function fmtNumber(value: number | undefined | null, digits = 2): string {
   return value === undefined || value === null ? "—" : value.toFixed(digits);
@@ -200,7 +200,7 @@ export function TechnicalTrace({ story }: { story: ExecutionStory }) {
     ]);
   }
   if (technical.answerability) {
-    rows.push(["Answerability", JSON.stringify(technical.answerability)]);
+    rows.push(["Answerability", "Disponible en telemetría detallada"]);
   }
   rows.push(["Verificación", `${story.verification.label} (${story.verification.overall})`]);
   // §51, §53: la composición de la respuesta es auditable.
@@ -272,13 +272,9 @@ export function TechnicalTrace({ story }: { story: ExecutionStory }) {
       <ResponsePresentationTechnical story={story} />
       <JudgmentTechnical story={story} />
       <details>
-        <summary className="cursor-pointer text-[11.5px] text-accent">Ver traza técnica</summary>
-        <div className="mt-2">
-          <CodeBlock
-            code={JSON.stringify(technical.raw, null, 2)}
-            language="json"
-            maxHeight={320}
-          />
+        <summary className="cursor-pointer text-[11.5px] text-accent">Ver toda la telemetría</summary>
+        <div className="mt-2 rounded border border-border bg-surface/40 px-2.5 py-1">
+          <TechnicalValueTree value={technical.raw} />
         </div>
       </details>
     </div>

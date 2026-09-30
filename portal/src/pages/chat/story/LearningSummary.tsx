@@ -23,6 +23,17 @@ export function LearningSummary({
   const created = counts?.created ?? 0;
   const reinforced = counts?.reinforced ?? 0;
   const contradicted = counts?.contradicted ?? 0;
+  const validated = counts?.validated ?? 0;
+
+  if (!used && !created && !reinforced && !contradicted && !validated && state !== "loading") {
+    return (
+      <section aria-label="Memoria" className="rounded-md border border-border-soft px-3 py-2">
+        <p className="text-[11.5px] text-muted">
+          <span className="font-medium text-text">Memoria</span> · No fue necesaria en esta respuesta.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-3">

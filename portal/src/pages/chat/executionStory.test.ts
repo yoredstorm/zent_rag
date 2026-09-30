@@ -468,6 +468,25 @@ describe("fallbacks en su etapa (§46, §63)", () => {
   });
 });
 
+describe("estado final preciso", () => {
+  it("un bloqueo genérico de verificación no se llama evidencia insuficiente", () => {
+    const story = buildExecutionStory({
+      flow_version: 2,
+      status: "completed",
+      generation: { skipped: false },
+      verification: {
+        overall: "blocked",
+        checks: [{ key: "response_quality", state: "blocked" }],
+      },
+      events: [],
+      sources: [],
+    });
+
+    expect(story.outcomeLabel).toBe("Verificación bloqueada");
+    expect(story.outcomeLabel).not.toBe("Evidencia insuficiente");
+  });
+});
+
 describe("flows históricos (§64)", () => {
   const legacy = {
     query_id: "old-1",

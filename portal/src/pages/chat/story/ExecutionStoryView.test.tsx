@@ -116,6 +116,90 @@ const COMPLEX_FLOW = {
   ],
 };
 
+const HUMAN_NARRATIVE_FLOW = {
+  flow_version: 2,
+  status: "completed",
+  timings: { total_ms: 27500 },
+  generation: { cost: 0.00176 },
+  events: [{ id: "final", phase: "generation", kind: "final", status: "ok" }],
+  sources: [],
+  execution_narrative: {
+    schema_version: 1,
+    outcome: {
+      code: "ANSWERED_WITH_LIMITS",
+      reason_code: "verification_partial",
+      evidence_state: "complete",
+      verification_state: "partial",
+      final_status: "completed",
+      answer_delivered: true,
+    },
+    summary: {
+      decisions_influenced: 1,
+      judgment_count: 4,
+      jev_calls: 1,
+      total_ms: 27500,
+      cost_usd: 0.00176,
+    },
+    understanding: {
+      application: "Aplicar la regla al fare basis de ejemplo",
+      fields: ["FCLAS"],
+      rules: ["&&&F"],
+      examples: ["QNNF0SME"],
+    },
+    requirements: [
+      { id: "f", label: "FCLAS", kind: "DOCUMENTABLE", status: "FOUND", source_required: true },
+      { id: "r", label: "&&&F", kind: "DOCUMENTABLE", status: "FOUND", source_required: true },
+      { id: "e", label: "QNNF0SME", kind: "USER_INPUT", status: "PROVIDED", source_required: false },
+    ],
+    journey: [
+      { id: "j1", kind: "QUERY_UNDERSTOOD", sequence: 1 },
+      { id: "j2", kind: "KNOWLEDGE_SEARCHED", sequence: 2 },
+      { id: "j3", kind: "JEV_CHECKED", sequence: 3 },
+      { id: "j4", kind: "SEARCH_RETRIED", sequence: 4, decision_id: "d1" },
+      { id: "j5", kind: "EVIDENCE_COMPLETE", sequence: 5 },
+      { id: "j6", kind: "LLM_ANALYZED", sequence: 6, call_id: "llm-1" },
+      { id: "j7", kind: "ANSWER_DRAFTED", sequence: 7, call_id: "llm-2" },
+      { id: "j8", kind: "ANSWER_VERIFIED", sequence: 8 },
+    ],
+    judgments: [
+      { id: "needs_tool", question_code: "needs_tool", type: "NOUL", answer: "uncertain", certainty: 0.34, alternatives: [] },
+      { id: "tool", question_code: "tool", type: "CHOICE", answer: "search_knowledge", probability: 0.79, certainty: 0.61, alternatives: [] },
+      { id: "needs_more_evidence", question_code: "needs_more_evidence", type: "NOUL", answer: "yes", certainty: 0.55, confidence_band: "medium", applied_decision_id: "d1", alternatives: [] },
+      { id: "satisfied", question_code: "satisfied", type: "NOUL", answer: "yes", certainty: 0.81, alternatives: [] },
+    ],
+    applied_decisions: [
+      { id: "d1", phase: "post_retrieval", question_id: "needs_more_evidence", action: "retrieve_more", decider: "JEV", impact_code: "retrieve_more", affected_event_ids: [] },
+    ],
+    evidence: {
+      complete: true,
+      missing_documentable_evidence: [],
+      conflicts: [],
+      document_count: 2,
+      passage_count: 5,
+      searches: [{ index: 1, kind: "retrieval" }, { index: 2, kind: "jev_retrieval" }],
+      documents: [
+        { document_key: "document:rules", display_name: "Rec2_Rules.pdf", passage_count: 2, passages: [] },
+        { document_key: "document:cat", display_name: "Rec2_Cat10.pdf", passage_count: 3, passages: [] },
+      ],
+    },
+    model_calls: [
+      { id: "llm-1", sequence: 1, purpose: "ANALYSIS", duration_ms: 7700 },
+      { id: "llm-2", sequence: 2, purpose: "ANSWER", duration_ms: 5700 },
+    ],
+    verification: {
+      overall: "partial",
+      checks: [{ key: "grounding", state: "ok" }],
+      fallback_used: true,
+      fallback_code: "backup_verification",
+      affected_outcome: false,
+      corrections: [],
+    },
+    response_shape: {},
+    learning: {},
+    diagnostics: [],
+  },
+};
+
 function renderStory(mode: StoryMode = "story") {
   const story = buildExecutionStory(COMPLEX_FLOW);
   const utils = render(
@@ -159,7 +243,8 @@ function StoryHarness({
 }
 
 describe("ExecutionStoryView (§30, §31)", () => {
-  it("muestra KNOWLEDGE REPRESENTATION sin tratar el aviso como error de usuario", () => {
+  it("mueve KNOWLEDGE REPRESENTATION fuera de Historia", async () => {
+    const user = userEvent.setup();
     const story = buildExecutionStory({
       ...COMPLEX_FLOW,
       knowledge_representation: {
@@ -174,9 +259,11 @@ describe("ExecutionStoryView (§30, §31)", () => {
       },
     });
     render(<StoryHarness story={story} initialMode="story" />);
+    expect(screen.queryByLabelText("KNOWLEDGE REPRESENTATION")).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "Técnico" }));
     expect(screen.getByLabelText("KNOWLEDGE REPRESENTATION")).toBeTruthy();
-    expect(screen.getByText("ACTIVE")).toBeTruthy();
-    expect(screen.getByText("DOCUMENT UNDERSTANDING ACTIVE BUT PRODUCTIVE RETRIEVAL IS V1")).toBeTruthy();
+    expect(screen.getAllByText("ACTIVE").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("DOCUMENT UNDERSTANDING ACTIVE BUT PRODUCTIVE RETRIEVAL IS V1").length).toBeGreaterThan(0);
   });
 
   it("muestra la historia en lenguaje humano con fases numeradas", () => {
@@ -235,7 +322,7 @@ describe("ExecutionStoryView (§30, §31)", () => {
     expect(screen.queryByText("Traza técnica")).toBeNull();
     await user.click(screen.getByRole("tab", { name: "Técnico" }));
     expect(screen.getAllByText("Traza técnica").length).toBeGreaterThan(0);
-    expect(screen.getByText("deepseek-v3.2")).toBeTruthy();
+    expect(screen.getAllByText("deepseek-v3.2").length).toBeGreaterThan(0);
   });
 
   it("la pestaña Historia sigue siendo la vista principal", () => {
@@ -302,5 +389,37 @@ describe("Reasoning detail (§14-§22)", () => {
     renderStory();
     expect(screen.getAllByText(/no pudieron interpretarse/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/layout de los registros/).length).toBeGreaterThan(0);
+  });
+});
+
+describe("ExecutionNarrative human-first", () => {
+  it("cuenta una historia causal sin nombres internos ni JSON", () => {
+    const story = buildExecutionStory(HUMAN_NARRATIVE_FLOW);
+    render(<StoryHarness story={story} initialMode="story" />);
+
+    expect(screen.getByText("Respuesta con verificación parcial")).toBeTruthy();
+    expect(screen.getByText(/2 documentos · 5 fragmentos/)).toBeTruthy();
+    expect(screen.getByText("Entendió tu consulta")).toBeTruthy();
+    expect(screen.getByText("Qué necesitaba comprobar")).toBeTruthy();
+    expect(screen.getAllByText("JEV revisó el camino").length).toBeGreaterThan(0);
+    expect(screen.getByText(/4 comprobaciones/)).toBeTruthy();
+    expect(screen.getByText(/1 influyó en la ejecución/)).toBeTruthy();
+    expect(screen.getByText("El modelo resolvió el caso")).toBeTruthy();
+    expect(screen.getByText(/2 llamadas al modelo/)).toBeTruthy();
+    expect(screen.getByText("Verificación final")).toBeTruthy();
+    expect(screen.queryByText("Evidencia insuficiente")).toBeNull();
+    expect(screen.queryByText(/generation_package/i)).toBeNull();
+    expect(screen.queryByText(/canonical_version/i)).toBeNull();
+  });
+
+  it("muestra preguntas observables de JEV e impacto aplicado", async () => {
+    const user = userEvent.setup();
+    const story = buildExecutionStory(HUMAN_NARRATIVE_FLOW);
+    render(<StoryHarness story={story} initialMode="story" />);
+
+    await user.click(screen.getByText("Ver las 4 comprobaciones"));
+    expect(screen.getByText("¿Conviene buscar más evidencia?")).toBeTruthy();
+    expect(screen.getAllByText("Certeza media").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Zent hizo una búsqueda adicional/)).toBeTruthy();
   });
 });

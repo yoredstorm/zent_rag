@@ -812,12 +812,20 @@ def _build_flow(
                 ),
                 "ready": bool(generation_package_block.get("ready")),
                 "mode": generation_package_block.get("mode"),
+                "question": generation_package_block.get("question") or "",
                 "examples": generation_package_block.get("examples") or [],
                 "missing_evidence": generation_package_block.get("missing_evidence")
                 or [],
                 "contradictions": generation_package_block.get("contradictions") or [],
                 "context_chars": generation_package_block.get("context_chars"),
                 "citation_map": generation_package_block.get("citation_map") or [],
+                # Proyección pública del EvidenceState ya calculado. Ver flujo
+                # lo consume; aquí no se recalcula cobertura ni grounding.
+                "evidence": (
+                    generation_package_block.get("evidence")
+                    if isinstance(generation_package_block.get("evidence"), dict)
+                    else {}
+                ),
                 "uncertainty": (
                     adaptive.get("uncertainty") if isinstance(adaptive, dict) else None
                 ),

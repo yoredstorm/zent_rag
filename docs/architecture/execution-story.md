@@ -9,12 +9,38 @@ Tres niveles, un mismo dato:
 
 | Nivel | Para quién | Qué muestra |
 | --- | --- | --- |
-| **Historia** (default) | todos, incluido admin | fases, decisiones, evidencia, hipótesis, veredictos, límites, cómo lo explicó |
-| **Rendimiento** | todos | por qué demoró: wall-clock real, llamadas al modelo, búsquedas, juicio previo |
-| **Técnico** | admin | proveedor, JEV, scores, tokens, costos, ids, matriz de observabilidad y traza cruda |
+| **Historia** (default) | todos, incluido admin | qué entendió, qué comprobó, qué encontró, preguntas JEV, impacto, papel del modelo y verificación |
+| **Rendimiento** | todos | wall-clock, latencias, llamadas, tokens y costo |
+| **Técnico** | admin | proveedor, JEV, scores, ids, versiones, diagnósticos y toda la telemetría |
 
-La telemetría no se elimina: se separa y se mueve a Técnico. El administrador no
-es excusa para mostrar telemetría incomprensible por defecto.
+La telemetría no se elimina: se jerarquiza. Historia explica qué pasó;
+Rendimiento explica cuánto consumió; Técnico conserva cómo fue implementado.
+La traza técnica se presenta como árbol clave/valor, no como un muro JSON.
+
+## ExecutionNarrative: proyección presentacional
+
+`src/rag/execution_narrative.py` añade `execution_narrative` al flow. Esta capa
+sólo agrupa, normaliza, traduce y resume hechos ya decididos. No puede cambiar
+evidencia, grounding, routing, JEV, verificación ni el resultado del modelo.
+
+El contrato contiene:
+
+- `outcome`: resultado humano canónico. Precedencia: abstención explícita,
+  fallo, bloqueo, evidencia explícitamente incompleta, verificación parcial,
+  fallback material, reintento exitoso y respuesta normal.
+- `understanding` y `requirements`: anchors con nombres humanos y separación
+  entre requisitos documentables y valores aportados por el usuario.
+- `applied_decisions`: única colección para todo conteo e impacto JEV.
+- `judgments`: pregunta, respuesta, probabilidad, certeza, banda y alternativas.
+- `evidence`: estado canónico, documentos agrupados y fragmentos deduplicados.
+- `model_calls`: propósito observado o `UNKNOWN`, sin inventar actividad.
+- `journey`: secuencia causal presentacional enlazada a eventos de origen.
+- `verification`: comprobaciones, fallback y correcciones observables.
+- `diagnostics`: inconsistencias de presentación, por ejemplo probabilidades
+  fuera de `0..1`.
+
+`ExecutionNarrative` es aditivo y fail-soft. Si falta en un flow antiguo, el
+portal conserva el adaptador histórico sin fabricar datos.
 
 ### Rendimiento (§43-§47)
 
@@ -102,14 +128,20 @@ Reglas del contrato:
 
 ## Builder y componentes
 
-`portal/src/pages/chat/executionStory.ts` — función pura `buildExecutionStory(flow)`:
+`portal/src/pages/chat/executionNarrative.ts` valida y normaliza el contrato
+presentacional. `portal/src/pages/chat/executionStory.ts` conserva el adaptador
+de eventos y compatibilidad histórica.
 
 eventos crudos → eventos canónicos → agrupación por fase → resumen, narrativa,
 incidentes, breakdown y bloque técnico. Acá vive toda la traducción; los
 componentes sólo componen:
 
-- `story/StorySummary.tsx` — tarjeta superior + distribución del tiempo.
-- `story/ExecutionTimeline.tsx` — timeline vertical con divulgación progresiva.
+- `story/StoryHero.tsx` — resultado, acción, fuentes, JEV, tiempo y costo.
+- `story/NarrativeSteps.tsx` — historia causal compacta de cinco a siete pasos.
+- `story/ObservableReflection.tsx` — preguntas JEV observadas, respuestas,
+  certeza e impacto; nunca chain-of-thought.
+- `story/JevLlmJourney.tsx` — interacción compacta entre JEV, evidencia y modelo.
+- `story/ExecutionTimeline.tsx` — fallback para flows históricos.
 - `story/StoryCards.tsx` — decisiones, evidencia, fuentes, SQL, generación,
   juicio previo (`jev_pack`).
 - `story/ReasoningStory.tsx` — plan, escenario, cadena de estados, hipótesis,
@@ -117,8 +149,9 @@ componentes sólo componen:
 - `story/JudgmentStory.tsx` — packs JEV (agrupados), matriz de preparación,
   impacto agregado e incertidumbre.
 - `story/LearningSummary.tsx` — memoria usada / creada / reforzada / contradicha.
-- `story/TechnicalTrace.tsx` — modo técnico + juicios JEV (id, versión,
-  primitiva, distribución) + traza cruda.
+- `story/ProbabilityDisplay.tsx` — único formateador visual para valores `0..1`.
+- `story/TechnicalTrace.tsx` y `TechnicalValueTree.tsx` — modo técnico completo,
+  estructurado y expandible, sin serializar JSON como texto.
 - `pages/chat/FlowDrawer.tsx` — composición, carga de datos, memoria y replay.
 
 ## Juicio previo (JEV) en la historia
@@ -205,8 +238,11 @@ overall            verified
 
 - `verified` exige respaldo declarado; sin él, `partial` →
   "Verificada parcialmente" (no "Respaldada" si sólo corrió el gate).
-- `blocked` con abstención → "Retenida por seguridad"; con análisis incompleto
-  → "Análisis incompleto"; el resto → "Evidencia insuficiente".
+- `blocked` no equivale automáticamente a evidencia insuficiente. Si
+  `EvidenceState.complete = true` y no hay faltantes, una advertencia de
+  verificación se presenta como "Verificación parcial".
+- "Evidencia insuficiente" sólo se usa cuando el Evidence Engine declaró
+  evidencia canónica incompleta.
 - La telemetría faltante **no** marca el run como "Revisar": sólo lo hacen un
   error real, una verificación bloqueada, un fallback material, un guardrail o
   una retención.

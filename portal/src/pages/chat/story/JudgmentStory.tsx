@@ -15,6 +15,8 @@
 import { Badge } from "../../../components/ui";
 import type { StoryJevImpact, StoryJudgment, StoryJudgmentPack } from "../executionStory";
 import { reasonText } from "../executionStory";
+import ProbabilityDisplay from "./ProbabilityDisplay";
+import { formatProbability } from "./probability";
 
 const TYPE_TONES: Record<StoryJudgment["type"], "neutral" | "info" | "ok" | "warn"> = {
   choice: "info",
@@ -44,12 +46,12 @@ function JudgmentRow({ judgment }: { judgment: StoryJudgment }) {
         </span>
         {judgment.confidence !== undefined ? (
           <span className="text-xs text-muted tabular-nums">
-            {Math.round(judgment.confidence * 100)}%
+            <ProbabilityDisplay value={judgment.confidence} />
           </span>
         ) : null}
         {judgment.certainty !== undefined ? (
           <span className="text-xs text-muted tabular-nums">
-            certeza {Math.round(judgment.certainty * 100)}%
+            certeza <ProbabilityDisplay value={judgment.certainty} />
           </span>
         ) : null}
       </div>
@@ -74,7 +76,7 @@ function JudgmentDistribution({ judgment }: { judgment: StoryJudgment }) {
   if (!probabilities) return null;
   const entries = Object.entries(probabilities)
     .map(([key, value]) => [key, Number(value)] as const)
-    .filter(([, value]) => Number.isFinite(value))
+    .filter(([, value]) => formatProbability(value) !== null)
     .sort((left, right) => right[1] - left[1])
     .slice(0, 5);
   if (entries.length < 2) return null;
@@ -82,7 +84,8 @@ function JudgmentDistribution({ judgment }: { judgment: StoryJudgment }) {
     <div className="flex flex-wrap gap-2 text-[11px] text-faint tabular-nums">
       {entries.map(([key, value]) => (
         <span key={key}>
-          {judgment.type === "choice" ? key.replace(/_/g, " ") : key}: {(value * 100).toFixed(0)}%
+          {judgment.type === "choice" ? key.replace(/_/g, " ") : key}:{" "}
+          <ProbabilityDisplay value={value} />
         </span>
       ))}
     </div>
@@ -141,7 +144,7 @@ export function JudgmentPackCard({ pack }: { pack: StoryJudgmentPack }) {
                 <span className="text-text">{row.label}</span>
                 <Badge tone={readinessTone(row.state)}>{row.stateLabel}</Badge>
                 {row.confidence !== undefined ? (
-                  <span className="tabular-nums">{Math.round(row.confidence * 100)}%</span>
+                  <span className="tabular-nums"><ProbabilityDisplay value={row.confidence} /></span>
                 ) : null}
               </span>
             ))}

@@ -4,7 +4,6 @@
 // Traducen semántica a lenguaje humano. Nunca fabrican razones: si el evento no
 // trae reason codes, no se muestra un "porque".
 import { Badge, Progress, type Tone } from "../../../components/ui";
-import { fmtCurrency } from "../../../lib/format";
 import {
   authorityLabel,
   evidenceStatusLabel,
@@ -15,6 +14,8 @@ import {
   type StoryEvent,
 } from "../executionStory";
 import { JudgmentPackCard } from "./JudgmentStory";
+import ProbabilityDisplay from "./ProbabilityDisplay";
+import { formatProbability } from "./probability";
 
 function toneForStatus(status: string): Tone {
   const key = status.toUpperCase();
@@ -156,18 +157,18 @@ function SourcesCard({ event, detailed }: { event: StoryEvent; detailed: boolean
         {items.map((item) => (
           <li key={item.ref} className="text-[12px]">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="min-w-0 flex-1 truncate text-text">{item.title || item.ref}</span>
+              <span className="min-w-0 flex-1 truncate text-text">{item.title || "Documento sin título"}</span>
               {item.authority ? (
                 <Badge tone="neutral">{authorityLabel(item.authority)}</Badge>
               ) : null}
               <Badge tone={toneForStatus(item.status)}>{evidenceStatusLabel(item.status)}</Badge>
-              {item.relevance !== undefined ? (
+              {item.relevance !== undefined && formatProbability(item.relevance) !== null ? (
                 <span className="mono text-[11px] text-faint">
-                  {(item.relevance * 100).toFixed(0)}%
+                  <ProbabilityDisplay value={item.relevance} />
                 </span>
               ) : null}
             </div>
-            {item.relevance !== undefined ? (
+            {item.relevance !== undefined && formatProbability(item.relevance) !== null ? (
               <Progress value={Math.round(item.relevance * 100)} className="mt-1" />
             ) : null}
           </li>
@@ -187,17 +188,11 @@ function SqlCard({ event }: { event: StoryEvent }) {
   );
 }
 
-function GenerationCard({ event }: { event: StoryEvent }) {
-  const tokens = number(event.metrics.total_tokens);
-  const cost = number(event.metrics.cost_usd);
-  const model = String(event.technical?.model ?? "");
+function GenerationCard({ event: _event }: { event: StoryEvent }) {
   return (
-    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-[11.5px] text-muted">
-      {model ? <span>{model}</span> : null}
-      {tokens ? <span>{tokens} tokens</span> : null}
-      {cost ? <span className="mono">{fmtCurrency(cost, 6)}</span> : null}
+    <div className="mt-1 text-[11.5px] text-muted">
       <span className="text-faint">
-        El modelo redactó una conclusión que ya estaba sustentada.
+        El modelo preparó la respuesta usando la información disponible.
       </span>
     </div>
   );

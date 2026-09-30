@@ -7,6 +7,8 @@
 // ese total (solapamiento) y se declara, nunca se muestra como si fuera el total.
 // Todo lo que no se observó simplemente no aparece.
 import type { ExecutionStory } from "../executionStory";
+import { fmtCurrency } from "../../../lib/format";
+import ProbabilityDisplay from "./ProbabilityDisplay";
 
 function fmtMs(value: number): string {
   if (value <= 0) return "—";
@@ -17,6 +19,10 @@ function fmtMs(value: number): string {
 function share(ms: number, total: number): number {
   if (total <= 0) return 0;
   return Math.max(1, Math.round((ms / total) * 100));
+}
+
+function fmtCount(value: number): string {
+  return value >= 1000 ? `${(value / 1000).toFixed(1)}K` : String(value);
 }
 
 export function PerformanceStory({ story }: { story: ExecutionStory }) {
@@ -71,6 +77,36 @@ export function PerformanceStory({ story }: { story: ExecutionStory }) {
           <p className="mt-2 text-[11.5px] text-faint">{performance.note}</p>
         ) : null}
       </div>
+
+      {story.technical.tokens || story.costUsd !== null ? (
+        <div className="rounded-lg border border-border bg-surface p-4">
+          <p className="eyebrow">Consumo</p>
+          <dl className="mt-2 grid grid-cols-2 gap-3 text-[12px] sm:grid-cols-3">
+            {story.technical.tokens ? (
+              <>
+                <div>
+                  <dt className="text-faint">Tokens procesados</dt>
+                  <dd className="mono text-text">{fmtCount(story.technical.tokens.total)}</dd>
+                </div>
+                <div>
+                  <dt className="text-faint">Entrada</dt>
+                  <dd className="mono text-text">{fmtCount(story.technical.tokens.prompt)}</dd>
+                </div>
+                <div>
+                  <dt className="text-faint">Salida</dt>
+                  <dd className="mono text-text">{fmtCount(story.technical.tokens.completion)}</dd>
+                </div>
+              </>
+            ) : null}
+            {story.costUsd !== null ? (
+              <div>
+                <dt className="text-faint">Costo</dt>
+                <dd className="mono text-text">{fmtCurrency(story.costUsd, 6)}</dd>
+              </div>
+            ) : null}
+          </dl>
+        </div>
+      ) : null}
 
       {performance.llmCalls.length || performance.llmCallCount ? (
         <div className="rounded-lg border border-border bg-surface p-4">
@@ -143,7 +179,7 @@ export function PerformanceStory({ story }: { story: ExecutionStory }) {
                   <span className="min-w-0 flex-1 truncate text-text">{decision.label}</span>
                   {decision.confidence !== undefined ? (
                     <span className="mono shrink-0 tabular-nums text-muted">
-                      conf. mín. {Math.round(decision.confidence * 100)}%
+                      conf. mín. <ProbabilityDisplay value={decision.confidence} />
                     </span>
                   ) : null}
                   {decision.cached ? (

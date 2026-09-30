@@ -23,18 +23,16 @@ export function ResponseShapeCard({
   if (response.hedgingRequired) flags.push("sin certeza definitiva");
 
   return (
-    <section className="rounded-lg border border-border-soft px-3 py-2.5">
-      <div className="flex flex-wrap items-baseline gap-x-2">
-        <p className="eyebrow">Cómo lo explicó</p>
+    <details open={expanded} className="rounded-lg border border-border-soft px-3 py-2.5">
+      <summary className="cursor-pointer text-[11.5px] text-accent">Cómo decidió explicarlo</summary>
+      <div className="mt-2 flex flex-wrap items-baseline gap-x-2">
         <span className="text-[12.5px] text-text">{response.label}</span>
         <span className="text-[11.5px] text-faint">
           {response.detailLabel.toLowerCase()} · {response.decidedByLabel.toLowerCase()}
         </span>
       </div>
-      {flags.length ? (
-        <p className="mt-1 text-[11.5px] text-muted">{flags.join(" · ")}</p>
-      ) : null}
-      {expanded && response.sections.length ? (
+      {flags.length ? <p className="mt-1 text-[11.5px] text-muted">{flags.join(" · ")}</p> : null}
+      {response.sections.length ? (
         <div className="mt-2">
           <p className="text-[11.5px] text-faint">Orden sugerido</p>
           <ol className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[11.5px] text-muted">
@@ -47,7 +45,7 @@ export function ResponseShapeCard({
           </ol>
         </div>
       ) : null}
-    </section>
+    </details>
   );
 }
 

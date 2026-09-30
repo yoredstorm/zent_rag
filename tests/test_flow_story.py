@@ -189,6 +189,26 @@ def test_typed_steps_do_not_duplicate_block_events() -> None:
     assert [event["kind"] for event in events] == ["decision"]
 
 
+def test_with_story_adds_narrative_without_replacing_events() -> None:
+    flow = {
+        "status": "completed",
+        "generation": {"skipped": False},
+        "verification": {
+            "overall": "verified",
+            "checks": [{"key": "grounding", "state": "ok"}],
+        },
+        "steps": [{"type": "final", "status": "ok"}],
+        "sources": [],
+    }
+
+    enriched = with_story(flow)
+
+    assert enriched["flow_version"] == 2
+    assert isinstance(enriched["events"], list)
+    assert enriched["execution_narrative"]["schema_version"] == 1
+    assert enriched["execution_narrative"]["outcome"]["code"] == "ANSWERED"
+
+
 def test_with_story_never_raises_on_broken_flow() -> None:
     """Si la derivación falla, se devuelve el flow original sin eventos."""
 

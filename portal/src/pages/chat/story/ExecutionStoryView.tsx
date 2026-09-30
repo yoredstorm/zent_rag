@@ -10,10 +10,12 @@ import { ReplayCompare } from "../ReplayCompare";
 import type { ExecutionStory, StoryEvent } from "../executionStory";
 import ExecutionTimeline from "./ExecutionTimeline";
 import LearningSummary from "./LearningSummary";
+import NarrativeSteps from "./NarrativeSteps";
 import PerformanceStory from "./PerformanceStory";
 import ReasoningStory from "./ReasoningStory";
 import ResponseShapeCard from "./ResponseShapeCard";
 import StorySummary from "./StorySummary";
+import StoryHero from "./StoryHero";
 import TechnicalTrace from "./TechnicalTrace";
 
 export type StoryMode = "story" | "performance" | "technical";
@@ -69,18 +71,28 @@ export function ExecutionStoryView({
         ))}
       </div>
 
-      <StorySummary story={story} />
-      <KnowledgeRepresentation raw={story.technical.raw} />
+      {story.executionNarrative ? <StoryHero story={story} /> : <StorySummary story={story} />}
 
-      {mode === "story" ? <ExecutionTimeline story={story} /> : null}
+      {mode === "story" ? (
+        story.executionNarrative ? (
+          <NarrativeSteps story={story} />
+        ) : (
+          <ExecutionTimeline story={story} />
+        )
+      ) : null}
       {mode === "performance" ? <PerformanceStory story={story} /> : null}
-      {mode === "technical" ? <TechnicalTrace story={story} /> : null}
-
-      {mode !== "technical" && story.response ? (
-        <ResponseShapeCard story={story} expanded={mode === "story"} />
+      {mode === "technical" ? (
+        <>
+          <KnowledgeRepresentation raw={story.technical.raw} />
+          <TechnicalTrace story={story} />
+        </>
       ) : null}
 
-      {reasoningEvents.some((event) => isReasoningCard(event)) ? (
+      {mode === "story" && story.response ? (
+        <ResponseShapeCard story={story} expanded={false} />
+      ) : null}
+
+      {mode === "story" && !story.executionNarrative && reasoningEvents.some((event) => isReasoningCard(event)) ? (
         <ReasoningDetail events={reasoningEvents.filter((event) => isReasoningCard(event))} />
       ) : null}
 

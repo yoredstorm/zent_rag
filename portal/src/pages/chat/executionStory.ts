@@ -1,4 +1,6 @@
 // =============================================================================
+
+import { parseExecutionNarrative, type ExecutionNarrative } from "./executionNarrative";
 // Execution Story — de eventos canónicos a historia legible (§3, §36)
 // =============================================================================
 // Función pura y testeable: recibe el flow y devuelve la historia. Acá vive
@@ -317,6 +319,8 @@ export type ExecutionStory = {
   response: StoryResponseShape | null;
   /** §43-§47: rendimiento real del run. */
   performance: StoryPerformance;
+  /** Proyección presentacional canónica. Null en flows históricos. */
+  executionNarrative: ExecutionNarrative | null;
   technical: {
     provider?: string;
     decider?: string;
@@ -1777,6 +1781,7 @@ export function storyEvents(flow: Flow): { events: StoryEvent[]; legacy: boolean
 
 export function buildExecutionStory(flow: Flow | null | undefined): ExecutionStory {
   const safe = record(flow);
+  const executionNarrative = parseExecutionNarrative(safe.execution_narrative);
   const { events: rawEvents, legacy } = storyEvents(safe);
   const events = enrichCompletionEvents(rawEvents);
   const response = responseShapeFor(safe, events);
@@ -1843,27 +1848,39 @@ export function buildExecutionStory(flow: Flow | null | undefined): ExecutionSto
   const llmCalls = num(generation.calls);
   const confidence = num(decision.confidence);
 
+  const narrativeOutcome = executionNarrative
+    ? narrativeOutcomePresentation(executionNarrative)
+    : null;
+
   return {
     version: num(safe.flow_version) ?? (legacy ? 1 : 2),
     legacy,
     status: str(safe.status) || "completed",
-    headline: headlineFor(str(safe.status), analysisComplete),
+    headline: narrativeOutcome?.headline ?? headlineFor(str(safe.status), analysisComplete),
     // §47: la telemetría faltante NO convierte el run en warning. Sólo lo hacen
     // un error real, una verificación bloqueada, un fallback material o una
     // retención por seguridad.
-    headlineStatus: headlineStatusFor({
-      status: str(safe.status),
-      events,
-      verification,
-      fallbacks: list(safe.fallbacks),
-      analysisComplete,
-    }),
-    narrative: narrativeFor({ events, sourcesCount, analysisComplete }),
+    headlineStatus:
+      narrativeOutcome?.status ??
+      headlineStatusFor({
+        status: str(safe.status),
+        events,
+        verification,
+        fallbacks: list(safe.fallbacks),
+        analysisComplete,
+      }),
+    narrative:
+      narrativeOutcome?.description ??
+      narrativeFor({ events, sourcesCount, analysisComplete }),
     routeLabel: routeLabelFor(safe, events),
-    outcomeLabel: verification.label,
-    outcomeTone: verification.tone,
+    outcomeLabel: narrativeOutcome?.outcomeLabel ?? verification.label,
+    outcomeTone: narrativeOutcome?.tone ?? verification.tone,
     confidenceLabel: confidenceLabelFor(confidence),
-    evidenceLabel: sourcesCount ? `${sourcesCount} fuente${sourcesCount === 1 ? "" : "s"}` : "",
+    evidenceLabel: executionNarrative
+      ? `${executionNarrative.evidence.documentCount} documento${executionNarrative.evidence.documentCount === 1 ? "" : "s"} · ${executionNarrative.evidence.passageCount} fragmento${executionNarrative.evidence.passageCount === 1 ? "" : "s"}`
+      : sourcesCount
+        ? `${sourcesCount} fuente${sourcesCount === 1 ? "" : "s"}`
+        : "",
     // El razonamiento sólo se anuncia cuando la historia lo demuestra.
     reasoningLabel: hasReasoning
       ? shapeLabel(reasoningShape) || "Análisis secuencial"
@@ -1881,6 +1898,7 @@ export function buildExecutionStory(flow: Flow | null | undefined): ExecutionSto
     runId: str(execution.id) || undefined,
     response,
     performance,
+    executionNarrative,
     technical: {
       provider: str(decision.provider) || undefined,
       decider: str(verdict.decider) || undefined,
@@ -2095,6 +2113,84 @@ function routeLabelFor(flow: Flow, events: StoryEvent[]): string {
   return route || "Respuesta";
 }
 
+function narrativeOutcomePresentation(narrative: ExecutionNarrative): {
+  headline: string;
+  description: string;
+  outcomeLabel: string;
+  status: StoryStatus;
+  tone: "ok" | "warn" | "neutral";
+} {
+  const documents = narrative.evidence.documentCount;
+  const sourcePhrase = documents
+    ? ` usando ${documents} documento${documents === 1 ? "" : "s"}`
+    : "";
+  switch (narrative.outcome.code) {
+    case "ANSWERED":
+      return {
+        headline: "Respuesta completada",
+        description: `Zent respondió${sourcePhrase}.`,
+        outcomeLabel: "Respondió",
+        status: "ok",
+        tone: "ok",
+      };
+    case "RETRIED_AND_ANSWERED":
+      return {
+        headline: "Respuesta completada",
+        description: `Zent amplió la búsqueda y respondió${sourcePhrase}.`,
+        outcomeLabel: "Respondió después de buscar nuevamente",
+        status: "ok",
+        tone: "ok",
+      };
+    case "ANSWERED_WITH_LIMITS": {
+      const verificationPartial = narrative.outcome.reasonCode === "verification_partial";
+      return {
+        headline: verificationPartial
+          ? "Respuesta con verificación parcial"
+          : "Respuesta con límites",
+        description: verificationPartial
+          ? `Zent respondió${sourcePhrase}; una parte de la verificación quedó pendiente.`
+          : `Zent respondió${sourcePhrase} y declaró sus límites.`,
+        outcomeLabel: verificationPartial ? "Verificación parcial" : "Respondió con límites",
+        status: "warn",
+        tone: "warn",
+      };
+    }
+    case "ABSTAINED":
+      return {
+        headline: "Respuesta retenida",
+        description: "Zent no respondió porque no pudo respaldar el resultado con seguridad.",
+        outcomeLabel: "No pudo comprobarlo",
+        status: "warn",
+        tone: "warn",
+      };
+    case "FAILED":
+      return {
+        headline: "La ejecución falló",
+        description: "Zent no pudo completar esta respuesta.",
+        outcomeLabel: "Falló",
+        status: "error",
+        tone: "warn",
+      };
+    case "BLOCKED":
+      if (narrative.outcome.evidenceState === "incomplete") {
+        return {
+          headline: "No pudo comprobarlo",
+          description: "El motor de evidencia confirmó que faltaba respaldo documental.",
+          outcomeLabel: "Evidencia insuficiente",
+          status: "warn",
+          tone: "warn",
+        };
+      }
+      return {
+        headline: "Respuesta bloqueada",
+        description: "Zent detuvo la respuesta antes de entregarla.",
+        outcomeLabel: "Bloqueada",
+        status: "warn",
+        tone: "warn",
+      };
+  }
+}
+
 /** §22: la tarjeta de completitud muestra también lo que faltó en el escenario. */
 function enrichCompletionEvents(events: StoryEvent[]): StoryEvent[] {
   const missing: string[] = [];
@@ -2222,7 +2318,7 @@ function verificationLabel(overall: string, checks: StoryVerificationCheck[]): s
   if (gate?.detail === "abstain") return "Retenida por seguridad";
   const analysis = checks.find((check) => check.key === "analysis_complete");
   if (analysis?.state === "blocked") return "Análisis incompleto";
-  return "Evidencia insuficiente";
+  return "Verificación bloqueada";
 }
 
 const TELEMETRY_ORDER = [
