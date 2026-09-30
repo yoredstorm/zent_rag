@@ -21,7 +21,7 @@ from src.infrastructure.observability.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-MAX_ANCHORS = 4
+MAX_ANCHORS = 8
 
 #: Un run de 7+ dígitos no es prosa: es un identificador (tabla, cuenta, trama).
 _MIN_DIGITS = 7
@@ -43,6 +43,15 @@ _SIGLA_STOPWORDS = frozenset(
 #: Máscara con comodines: &&&F, *F*, F%. Un `?` de prosa («¿qué?») no cuenta.
 _MASK_CHARS = "&*?%#"
 _MASK_RUN_RE = re.compile(r"[A-Za-z0-9&*?%#]{2,16}")
+#: Rango con barra: 64/67.
+_SLASH_RANGE_RE = re.compile(r"\b(\d{1,4})\s*/\s*(\d{1,4})\b")
+#: Código corto palabra+dígitos pegados: CAT31, Byte105. La parte alfabética
+#: necesita una mayúscula: «gpt4» no es señal técnica.
+_WORD_DIGIT_RE = re.compile(r"\b([A-Za-zÁÉÍÓÚÑÜáéíóúñü]{2,14})(\d{1,6})\b")
+#: Código con guion: ABC-123, A-12 (si hay dígito o la parte previa es sigla).
+_HYPHEN_CODE_RE = re.compile(r"\b[A-Za-z]{1,8}-[A-Za-z0-9]{1,12}\b")
+#: Código con guion bajo: ABC_123, fare_basis.
+_UNDERSCORE_CODE_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]+\b")
 
 
 def _clean(question: str) -> str:
@@ -52,7 +61,14 @@ def _clean(question: str) -> str:
 
 @dataclass(frozen=True)
 class Anchor:
-    """Identificador estructurado con sus formas de búsqueda y cobertura."""
+    """Identificador estructurado con sus formas de búsqueda y cobertura.
+
+    `role`/`semantic_hint` los puede fijar un provider de dominio (plugin). El
+    core no conoce roles de negocio: si vienen vacíos, la capa long-context los
+    clasifica por forma (máscara=regla, sigla=campo, código=referencia o valor
+    de ejemplo según la pregunta). `must_search_exact` y `must_preserve` nacen
+    en True: un token técnico no puede perderse ni normalizarse.
+    """
 
     kind: str
     value: str
@@ -61,14 +77,33 @@ class Anchor:
     needles: tuple[str, ...]
     expansion_terms: tuple[str, ...] = field(default_factory=tuple)
     confidence: float = 1.0
+    #: rol declarado por un plugin de dominio (rule_anchor, field_anchor,
+    #: example_value, entity, reference). Vacío = lo clasifica el core.
+    role: str = ""
+    #: pista semántica de dominio («fare class positional mask»); el core la
+    #: suma al canal semántico, nunca la inventa.
+    semantic_hint: str = ""
+    #: True = el token debe conservarse literal durante TODO el retrieval.
+    must_preserve: bool = True
+    #: True = la pata exacta lo busca tal cual (sin pasar por tokenizadores).
+    must_search_exact: bool = True
 
     def to_public_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "kind": self.kind,
             "value": self.value,
             "label": self.label,
             "expansion_terms": list(self.expansion_terms),
         }
+        if self.role:
+            payload["role"] = self.role
+        if self.semantic_hint:
+            payload["semantic_hint"] = self.semantic_hint
+        if not self.must_preserve:
+            payload["must_preserve"] = False
+        if not self.must_search_exact:
+            payload["must_search_exact"] = False
+        return payload
 
 
 @runtime_checkable
@@ -162,9 +197,19 @@ def _codigo(value: str) -> Anchor:
 def _rango(first: str, second: str) -> Anchor:
     value = f"{first}-{second}"
     variants = tuple(
-        dict.fromkeys([value, f"{first} {second}", f"{first}–{second}", f"{first} - {second}"])
+        dict.fromkeys(
+            [
+                value,
+                f"{first} {second}",
+                f"{first}/{second}",
+                f"{first}–{second}",
+                f"{first} - {second}",
+            ]
+        )
     )
-    needles = tuple(dict.fromkeys([value, f"{first} {second}", f"{first}–{second}"]))
+    needles = tuple(
+        dict.fromkeys([value, f"{first} {second}", f"{first}/{second}", f"{first}–{second}"])
+    )
     return Anchor(
         kind="rango",
         value=value,
@@ -200,10 +245,13 @@ def _es_mascara(token: str) -> bool:
     """Comodines de verdad: 2+ comodines, o 1 con una MAYÚSCULA en el token.
 
     «&&&F» y «*F*» son máscaras. «2?» de «Record 2?» es prosa: un comodín con
-    dígito y sin letra no es un patrón.
+    dígito y sin letra no es un patrón. «FCLAS?» al final de una oración es la
+    sigla con signo de pregunta, no una máscara.
     """
     comodines = sum(1 for char in token if char in _MASK_CHARS)
     if not comodines or not any(char.isalnum() for char in token):
+        return False
+    if token.endswith("?") and comodines == 1:
         return False
     if comodines < 2 and not any(char.isupper() for char in token):
         return False
@@ -234,9 +282,22 @@ def _opaque_anchors(question: str) -> list[Anchor]:
         found.append(_codigo(match.group(0)))
     for match in _CODE_RE.finditer(text):
         found.append(_codigo(match.group(0)))
+    # Formas técnicas genéricas: CAT31, Byte105, ABC-123, ABC_123.
+    for match in _WORD_DIGIT_RE.finditer(text):
+        if any(char.isupper() for char in match.group(1)):
+            found.append(_codigo(match.group(0)))
+    for match in _HYPHEN_CODE_RE.finditer(text):
+        token = match.group(0)
+        if any(char.isdigit() for char in token) or token.split("-")[0].isupper():
+            found.append(_codigo(token))
+    for match in _UNDERSCORE_CODE_RE.finditer(text):
+        found.append(_codigo(match.group(0)))
     found.extend(_siglas(text))
     found.extend(_mascaras(text))
     for match in _RANGE_RE.finditer(text):
+        found.append(_rango(match.group(1), match.group(2)))
+    for match in _SLASH_RANGE_RE.finditer(text):
+        # Evita duplicar cuando la barra ya era parte de un código (ABC/123).
         found.append(_rango(match.group(1), match.group(2)))
     return found
 

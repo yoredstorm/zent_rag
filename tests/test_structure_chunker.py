@@ -88,6 +88,33 @@ def test_chunk_structured_document_builds_parent_child_tree() -> None:
             assert child.char_range.start < child.char_range.end
 
 
+def test_children_carry_structural_neighbors() -> None:
+    """Vecindad de lectura por hermanos: prev/next/chunk_index en metadata."""
+    chunks = chunk_structured_document(
+        _markdown_doc(), config=ChunkingConfig(child_max_chars=80)
+    )
+    children_by_parent: dict = {}
+    for chunk in chunks:
+        if chunk.chunk_type is ChunkType.PARENT_CHILD:
+            children_by_parent.setdefault(chunk.parent_id, []).append(chunk)
+    assert children_by_parent
+    linked = 0
+    for siblings in children_by_parent.values():
+        ordered = sorted(siblings, key=lambda child: child.chunk_index)
+        for position, child in enumerate(ordered):
+            assert child.metadata["chunk_index"] == str(child.chunk_index)
+            expected_prev = str(ordered[position - 1].id) if position > 0 else None
+            expected_next = (
+                str(ordered[position + 1].id)
+                if position + 1 < len(ordered)
+                else None
+            )
+            assert child.metadata["prev_chunk_id"] == expected_prev
+            assert child.metadata["next_chunk_id"] == expected_next
+            linked += 1
+    assert linked >= 2
+
+
 def test_chunk_without_sections_uses_implicit_root() -> None:
     doc = TextParser().parse(
         "Texto plano sin headings repartido en varios párrafos.\n\nSegundo párrafo.".encode("utf-8"),

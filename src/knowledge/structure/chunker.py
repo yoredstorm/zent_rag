@@ -288,6 +288,17 @@ def chunk_structured_document(
             next_index += 1
             made.append(child)
             chunks.append(child)
+        # Relaciones estructurales de vecindad: el retrieval puede expandir al
+        # hermano anterior/siguiente sin adivinar. Se completan al final porque
+        # el siguiente todavía no existe cuando se crea el actual.
+        for position, child in enumerate(made):
+            child.metadata["chunk_index"] = str(child.chunk_index)
+            child.metadata["prev_chunk_id"] = (
+                str(made[position - 1].id) if position > 0 else None
+            )
+            child.metadata["next_chunk_id"] = (
+                str(made[position + 1].id) if position + 1 < len(made) else None
+            )
         return made
 
     if not document.blocks and not document.sections:

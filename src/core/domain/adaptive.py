@@ -281,6 +281,22 @@ class EvidenceQuality:
     supporting_chunks: int | None = None
     #: Fragmentos marcados en conflicto por el Passage Judge (None = no se midió).
     conflicting_chunks: int | None = None
+    # --- Anchor / Requirement coverage (long-context, opcional) --------------
+    #: Cobertura de los anchors exactos de la pregunta (None = no se midió).
+    anchor_coverage: float | None = None
+    anchor_exact_match: bool | None = None
+    anchors_requested: tuple[str, ...] = ()
+    anchors_found: tuple[str, ...] = ()
+    anchors_missing: tuple[str, ...] = ()
+    #: Valores de ejemplo del usuario (no exigen match en fuentes).
+    examples: tuple[str, ...] = ()
+    examples_found: tuple[str, ...] = ()
+    #: Cobertura ponderada de los requirements derivados de la pregunta.
+    requirement_coverage: float | None = None
+    requirements_requested: int | None = None
+    requirements_found: int | None = None
+    requirements_missing: tuple[str, ...] = ()
+    requirements_states: tuple[tuple[str, str], ...] = ()
     #: generate | retrieve_more | answer_with_limits | abstain.
     recommended_action: str = ""
 
@@ -315,6 +331,30 @@ class EvidenceQuality:
             payload["supporting_chunks"] = self.supporting_chunks
         if self.conflicting_chunks is not None:
             payload["conflicting_chunks"] = self.conflicting_chunks
+        if self.anchor_coverage is not None:
+            payload["anchor_coverage"] = round(self.anchor_coverage, 4)
+            payload["anchors_found"] = list(self.anchors_found)[:8]
+            if self.anchors_missing:
+                payload["anchors_missing"] = list(self.anchors_missing)[:8]
+        if self.anchor_exact_match is not None:
+            payload["anchor_exact_match"] = self.anchor_exact_match
+        if self.examples:
+            payload["examples"] = list(self.examples)[:8]
+            payload["examples_found_in_evidence"] = list(self.examples_found)[:8]
+            payload["examples_requires_source_match"] = False
+        if self.requirement_coverage is not None:
+            payload["requirement_coverage"] = round(self.requirement_coverage, 4)
+            if self.requirements_requested is not None:
+                payload["requirements_requested"] = self.requirements_requested
+            if self.requirements_found is not None:
+                payload["requirements_found"] = self.requirements_found
+            if self.requirements_missing:
+                payload["requirements_missing"] = list(self.requirements_missing)[:8]
+            if self.requirements_states:
+                payload["requirements_states"] = [
+                    {"id": key, "state": state}
+                    for key, state in self.requirements_states[:12]
+                ]
         if self.recommended_action:
             payload["recommended_action"] = self.recommended_action
         return payload

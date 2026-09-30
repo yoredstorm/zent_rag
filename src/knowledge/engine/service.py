@@ -1112,6 +1112,11 @@ class KnowledgeIngestionEngine:
                     "chunking_strategy": "document_structure+parent_child",
                     "chunk_type": chunk.chunk_type.value,
                     "chunk_id": str(chunk.id),
+                    # Vecindad estructural (lectura): permite expandir a
+                    # hermanos exactos sin re-escanear el documento.
+                    "chunk_index": str(chunk.chunk_index),
+                    "prev_chunk_id": chunk.metadata.get("prev_chunk_id"),
+                    "next_chunk_id": chunk.metadata.get("next_chunk_id"),
                     "section_path": list(section_paths.get(chunk.section_id, ())),
                     "workspace_id": (
                         str(source.workspace_id) if source.workspace_id else None

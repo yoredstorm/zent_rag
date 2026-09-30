@@ -1595,6 +1595,190 @@ class Settings(BaseSettings):
         default="",
         description="Modelo cross-encoder vía LiteLLM rerank API (ej: cohere/rerank-v3.5).",
     )
+    # --- Pata exacta: símbolos, máscaras, códigos, MUST_KEEP -----------------
+    RAG_EXACT_SEARCH: str = Field(
+        default="on",
+        description=(
+            "Pata exacta (tercera pata): candidatos literales (máscaras, símbolos, "
+            "códigos) que la densa y la léxica no ven. Los aciertos se marcan "
+            "MUST_KEEP y no los expulsa umbral/rerank/presupuesto. 'off' = apagada."
+        ),
+    )
+    RAG_TECHNICAL_QUERY_VIEWS: str = Field(
+        default="on",
+        description=(
+            "Canales paralelos para consultas técnicas: semantic_query (embedding "
+            "sin tokens opacos + semantic_hint de plugins), lexical_terms y "
+            "exact_terms (nunca normalizados). Un valor de ejemplo del usuario "
+            "(rol example_value) viaja a la búsqueda pero NO exige match en "
+            "fuentes. 'off' = embedding y léxica usan la query cruda."
+        ),
+    )
+    RAG_EXACT_SEARCH_CHUNKS: int = Field(
+        default=4,
+        ge=1,
+        le=50,
+        description="Chunks que aporta la pata exacta por consulta.",
+    )
+    RAG_EXACT_SEARCH_MAX_NEEDLES: int = Field(
+        default=8,
+        ge=1,
+        le=24,
+        description="Tope de needles literales que usa la pata exacta.",
+    )
+    RAG_EXACT_SEARCH_MAX_POINTS: int = Field(
+        default=4000,
+        ge=0,
+        le=200000,
+        description="Tope de puntos del barrido literal (0 = sin barrido).",
+    )
+    RAG_EXACT_SEARCH_MAX_MS: float = Field(
+        default=1500.0,
+        ge=0.0,
+        le=30000.0,
+        description="Tope de tiempo del barrido literal, en milisegundos.",
+    )
+    # --- Adaptive Long-Context Engine ---------------------------------------
+    RAG_LONG_CONTEXT_MODE: str = Field(
+        default="off",
+        description=(
+            "Modo del motor de contexto adaptativo: off|shadow|active|canary. "
+            "off = comportamiento actual; shadow = mide sin alterar la respuesta; "
+            "active = expande contexto cuando falta evidencia; canary = porcentaje."
+        ),
+    )
+    RAG_LONG_CONTEXT_CANARY_PERCENTAGE: int = Field(default=0, ge=0, le=100)
+    RAG_CONTEXT_PROFILE: str = Field(
+        default="balanced",
+        description=(
+            "Perfil de costo/calidad: economy|balanced|quality|maximum_quality. "
+            "Ajusta cuánto puede expandirse el contexto, nunca si la evidencia "
+            "está completa (con evidencia completa se corta en todos los perfiles)."
+        ),
+    )
+    RAG_MODEL_CONTEXT_WINDOWS: str = Field(
+        default="",
+        description=(
+            "JSON {modelo: ventana_tokens} para el registry de capacidades. "
+            "Vacío = mapa builtin de modelos conocidos + default configurado."
+        ),
+    )
+    RAG_MODEL_DEFAULT_CONTEXT_WINDOW: int = Field(
+        default=32000,
+        ge=1000,
+        description=(
+            "Ventana usada cuando el modelo no está en el registry. No asumir 32K "
+            "ni 1M: este valor se configura por deployment con la capacidad real."
+        ),
+    )
+    RAG_CONTEXT_OUTPUT_RESERVE: int = Field(
+        default=2048,
+        ge=0,
+        description="Tokens reservados para la respuesta del modelo.",
+    )
+    RAG_CONTEXT_SYSTEM_RESERVE: int = Field(
+        default=3000,
+        ge=0,
+        description="Tokens reservados para system prompt + contrato de respuesta.",
+    )
+    RAG_CONTEXT_TOOL_RESERVE: int = Field(
+        default=1500,
+        ge=0,
+        description="Tokens reservados para definiciones/resultados de herramientas.",
+    )
+    RAG_CONTEXT_SAFETY_MARGIN: int = Field(
+        default=2048,
+        ge=0,
+        description="Margen de seguridad del presupuesto de contexto.",
+    )
+    RAG_LONG_CONTEXT_TIERS: str = Field(
+        default="4096,8192,16384,32768,65536,131072,262144,524288",
+        description=(
+            "Escalera de presupuestos de contexto en tokens (configurable, no "
+            "lógica de negocio). La última expansión se topa con usable_context."
+        ),
+    )
+    RAG_LONG_CONTEXT_START_TIER: int = Field(default=0, ge=0, le=12)
+    RAG_LONG_CONTEXT_MAX_TIER: int = Field(
+        default=7,
+        ge=0,
+        le=12,
+        description="Tope de la escalera al que puede llegar una expansión activa.",
+    )
+    RAG_LONG_CONTEXT_MAX_EXPANSIONS: int = Field(
+        default=6,
+        ge=0,
+        le=12,
+        description="Máximo de expansiones progresivas por consulta.",
+    )
+    RAG_LONG_CONTEXT_GAIN_MIN: float = Field(
+        default=0.04,
+        ge=0.0,
+        le=1.0,
+        description="Information gain mínimo para seguir expandiendo (0 = siempre).",
+    )
+    RAG_LONG_CONTEXT_REQUIREMENT_MIN: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Cobertura de requirements para considerar la evidencia completa sin "
+            "JEV. 0 = no exigir cobertura (sólo reglas determinísticas viejas)."
+        ),
+    )
+    RAG_LONG_CONTEXT_EXPANSION_CHUNKS: int = Field(
+        default=6,
+        ge=1,
+        le=50,
+        description="Chunks que puede aportar cada etapa de expansión progresiva.",
+    )
+    RAG_LONG_CONTEXT_EXPANSION_MAX_POINTS: int = Field(
+        default=6000,
+        ge=0,
+        le=200000,
+        description="Tope de puntos de los barridos de expansión.",
+    )
+    RAG_LONG_CONTEXT_EXPANSION_MAX_MS: float = Field(
+        default=2000.0,
+        ge=0.0,
+        le=60000.0,
+        description="Tope de tiempo de cada barrido de expansión, en milisegundos.",
+    )
+    RAG_LONG_CONTEXT_CONFIDENCE_MIN: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Confianza mínima del evidence evaluator para cerrar el bucle de "
+            "investigación. La evidencia completa por requirements manda igual."
+        ),
+    )
+    RAG_LONG_CONTEXT_REDUNDANT_STREAK: int = Field(
+        default=2,
+        ge=1,
+        le=10,
+        description=(
+            "Expansiones consecutivas con information gain bajo el mínimo antes "
+            "de detener el bucle (evita cortar por una racha mala aislada)."
+        ),
+    )
+    RAG_LONG_CONTEXT_PRESERVE_UNITS: str = Field(
+        default="on",
+        description=(
+            "Preservar unidades semánticas completas (tabla, nota, definición, "
+            "procedimiento, sección): el ContextBuilder prefiere la unidad entera "
+            "antes que cortarla por tier."
+        ),
+    )
+    RAG_LONG_CONTEXT_UNIT_HEADROOM: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=2.0,
+        description=(
+            "Margen sobre el soft budget (fracción) para cerrar una unidad "
+            "semántica. El tope duro sigue siendo usable_context del modelo."
+        ),
+    )
     RAG_ADMIN_ENABLED: bool = Field(default=True)
     RAG_CHUNK_MAX_CHARS: int = Field(default=1200, ge=200, le=8000)
     RAG_CHUNK_OVERLAP: int = Field(default=150, ge=0, le=500)

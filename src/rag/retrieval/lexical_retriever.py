@@ -17,7 +17,13 @@ class LexicalRetriever(Retriever):
         self._store = lexical_store
 
     async def retrieve(self, query: RetrievalQuery) -> RetrievalContext:
-        normalized = normalize_query(query.query)
+        # Términos de los canales (campos, valores, conceptos): suman señal a la
+        # pata léxica; el tokenizador aguas abajo los normaliza.
+        text = query.query or ""
+        terms = [str(term).strip() for term in (query.lexical_terms or []) if str(term or "").strip()]
+        if terms:
+            text = " ".join([text, *terms[:16]])
+        normalized = normalize_query(text)
         return await self._store.search_sparse(
             organization_id=query.organization_id,
             query_text=normalized,

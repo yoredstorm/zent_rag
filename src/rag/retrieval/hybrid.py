@@ -12,6 +12,9 @@ from typing import Any
 from src.core.domain.entities import RetrievalContext
 from src.core.ports import HybridStore, LexicalStore, VectorStore
 from src.infrastructure.observability.logging_config import get_logger
+from src.rag.longcontext.exact_search import ExactRetriever
+from src.rag.longcontext.exact_tokens import ExactToken, extract_exact_tokens
+from src.rag.longcontext.must_keep import is_must_keep, merge_must_keep
 from src.rag.reranking.base import Reranker
 from src.rag.retrieval.base import Retriever
 from src.rag.retrieval.builders import ContextBuilder
@@ -63,22 +66,32 @@ class HybridRetriever(Retriever):
         self._store = vector_store
         self._reranker = reranker
         self._builder = context_builder or ContextBuilder(max_context_tokens=32000)
+        # Tercera pata: candidatos literales (máscaras, símbolos, códigos) que
+        # la densa y la léxica no ven. Aditiva y best-effort.
+        self._exact = ExactRetriever(vector_store)
 
     async def retrieve(self, query: RetrievalQuery) -> RetrievalContext:
         start = time.perf_counter()
         classification = classify_query(query.query)
         normalized = normalize_query(query.query)
 
+        # La pata exacta corre en paralelo: no penaliza latencia del resto.
+        exact_task = asyncio.ensure_future(self._retrieve_exact_leg(query))
+
         context: RetrievalContext
         server_fused = False
-        if query.strategy == STRATEGY_HYBRID:
-            context, server_fused = await self._retrieve_hybrid(query, normalized)
-        elif query.strategy == STRATEGY_LEXICAL:
-            context = await self._retrieve_lexical(query, normalized)
-        elif query.strategy == STRATEGY_VECTOR:
-            context = await self._vector.retrieve(query)
-        else:
-            raise ValueError(f"Unknown retrieval strategy: {query.strategy}")
+        try:
+            if query.strategy == STRATEGY_HYBRID:
+                context, server_fused = await self._retrieve_hybrid(query, normalized)
+            elif query.strategy == STRATEGY_LEXICAL:
+                context = await self._retrieve_lexical(query, normalized)
+            elif query.strategy == STRATEGY_VECTOR:
+                context = await self._vector.retrieve(query)
+            else:
+                raise ValueError(f"Unknown retrieval strategy: {query.strategy}")
+        except Exception:
+            exact_task.cancel()
+            raise
 
         chunks = dedupe_chunks(context.chunks)
         chunks = apply_doc_type_priority(chunks, query.doc_type_priority)
@@ -90,6 +103,12 @@ class HybridRetriever(Retriever):
             # (las patas ya fueron filtradas por el store).
             chunks = filter_by_threshold(chunks, query.score_threshold)
 
+        # MUST_KEEP: la evidencia exacta entra después del umbral (no la
+        # descarta un cosine bajo) y antes del pin, del rerank y del builder.
+        exact_chunks = await exact_task
+        if exact_chunks:
+            chunks = merge_must_keep(exact_chunks, chunks)
+
         # Pin por entidad: lo que la pregunta nombra (byte 105, categoría 31,
         # record 4, tabla 961) tiene que estar. Va después del umbral para que
         # el umbral no lo descarte y antes del rerank para que el reranker lo vea.
@@ -98,12 +117,13 @@ class HybridRetriever(Retriever):
 
         if self._reranker is not None and chunks:
             try:
-                chunks = await self._reranker.rerank(
+                reranked = await self._reranker.rerank(
                     query=query.query,
                     chunks=chunks,
                     top_n=query.rerank_top_k,
                     organization_id=str(query.organization_id),
                 )
+                chunks = self._protect_must_keep(chunks, reranked)
             except Exception as exc:
                 logger.warning(
                     "Rerank failed, using retrieval order",
@@ -111,7 +131,9 @@ class HybridRetriever(Retriever):
                     organization_id=str(query.organization_id),
                 )
 
-        chunks = self._builder.fit_budget(chunks)
+        chunks = self._builder.fit_budget(
+            chunks, max_context_tokens=query.context_token_budget
+        )
         elapsed_ms = (time.perf_counter() - start) * 1000
         logger.info(
             "Hybrid retrieval completed",
@@ -126,6 +148,43 @@ class HybridRetriever(Retriever):
             query_embedding=query.query_embedding,
             retrieval_latency_ms=context.retrieval_latency_ms,
         )
+
+    async def _retrieve_exact_leg(self, query: RetrievalQuery) -> list[Any]:
+        """Candidatos literales de la consulta cruda (best-effort)."""
+        try:
+            needles = [
+                str(needle).strip()
+                for needle in (query.exact_needles or [])
+                if str(needle or "").strip()
+            ]
+            tokens: list[ExactToken] = (
+                [ExactToken(value=n, kind="literal", needles=(n,)) for n in needles]
+                if needles
+                else extract_exact_tokens(query.query)
+            )
+            if not tokens:
+                return []
+            context = await self._exact.retrieve(query, tokens)
+            return list(context.chunks)
+        except Exception as exc:  # noqa: BLE001 — la pata exacta jamás tumba el retrieval
+            logger.warning("Exact leg failed", error=str(exc)[:200])
+            return []
+
+    @staticmethod
+    def _protect_must_keep(
+        chunks: list[Any],
+        reranked: list[Any],
+    ) -> list[Any]:
+        """El reranker ordena, no expulsa: MUST_KEEP vuelve al frente."""
+        keep_ids = {chunk.document_id for chunk in reranked}
+        protected = [
+            chunk
+            for chunk in chunks
+            if is_must_keep(chunk) and chunk.document_id not in keep_ids
+        ]
+        if not protected:
+            return list(reranked)
+        return protected + list(reranked)
 
     async def _retrieve_lexical(
         self, query: RetrievalQuery, normalized: str

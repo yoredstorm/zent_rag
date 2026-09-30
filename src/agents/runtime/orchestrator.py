@@ -661,6 +661,97 @@ def _build_flow(
                 ),
             }
         )
+    long_context_block = (
+        adaptive.get("long_context") if isinstance(adaptive, dict) else None
+    )
+    if isinstance(long_context_block, dict):
+        lc_budget = long_context_block.get("budget") or {}
+        lc_model = long_context_block.get("model") or {}
+        lc_anchors = long_context_block.get("anchors") or {}
+        lc_requirements = long_context_block.get("requirements") or {}
+        lc_expansions = list(long_context_block.get("expansions") or [])
+        steps.append(
+            {
+                "type": "long_context",
+                "status": "ok",
+                "detail": (
+                    f"{long_context_block.get('stop_reason')} · "
+                    f"{long_context_block.get('final_tokens')} / "
+                    f"{lc_budget.get('usable_context')} tokens · "
+                    f"{len(lc_expansions)} expansiones"
+                ),
+                "mode": long_context_block.get("mode"),
+                "applied": bool(adaptive.get("long_context_applied")),
+                "model": lc_model.get("model"),
+                "model_context_limit": lc_model.get("context_window"),
+                "model_capability_source": lc_model.get("source"),
+                "profile": lc_budget.get("profile"),
+                "hard_limit": lc_budget.get("hard_limit"),
+                "usable_context": lc_budget.get("usable_context"),
+                "initial_tokens": long_context_block.get("initial_tokens"),
+                "final_tokens": long_context_block.get("final_tokens"),
+                "headroom_tokens": long_context_block.get("headroom_tokens"),
+                "stop_reason": long_context_block.get("stop_reason"),
+                "stopped_because": long_context_block.get("stopped_because"),
+                "timeline": long_context_block.get("timeline") or [],
+                "uncertainty": (
+                    adaptive.get("uncertainty") if isinstance(adaptive, dict) else None
+                ),
+                "anchors": lc_anchors,
+                "requirements": lc_requirements,
+                "pack": long_context_block.get("pack"),
+                "expansions": lc_expansions[:8],
+            }
+        )
+    anchor_roles_block = (
+        adaptive.get("anchor_roles") if isinstance(adaptive, dict) else None
+    )
+    if isinstance(anchor_roles_block, dict):
+        steps.append(
+            {
+                "type": "anchor_roles",
+                "status": str(anchor_roles_block.get("status") or "ok"),
+                "detail": str(anchor_roles_block.get("detail") or ""),
+                "fields": anchor_roles_block.get("fields") or [],
+                "rules": anchor_roles_block.get("rules") or [],
+                "references": anchor_roles_block.get("references") or [],
+                "entities": anchor_roles_block.get("entities") or [],
+                "examples": anchor_roles_block.get("examples") or [],
+                "rule_evidence": anchor_roles_block.get("rule_evidence"),
+                "application": anchor_roles_block.get("application") or "",
+                "documentable_requested": anchor_roles_block.get(
+                    "documentable_requested"
+                ),
+                "documentable_found": anchor_roles_block.get("documentable_found"),
+            }
+        )
+    generation_package_block = (
+        adaptive.get("generation_package") if isinstance(adaptive, dict) else None
+    )
+    if isinstance(generation_package_block, dict):
+        steps.append(
+            {
+                "type": "generation_package",
+                "status": "ok" if generation_package_block.get("ready") else "warn",
+                "detail": (
+                    f"{generation_package_block.get('mode')} · "
+                    f"{len(generation_package_block.get('context_blocks') or [])} bloques · "
+                    f"{len(generation_package_block.get('citation_map') or [])} citas · "
+                    f"{len(generation_package_block.get('missing_evidence') or [])} faltantes"
+                ),
+                "ready": bool(generation_package_block.get("ready")),
+                "mode": generation_package_block.get("mode"),
+                "examples": generation_package_block.get("examples") or [],
+                "missing_evidence": generation_package_block.get("missing_evidence")
+                or [],
+                "contradictions": generation_package_block.get("contradictions") or [],
+                "context_chars": generation_package_block.get("context_chars"),
+                "citation_map": generation_package_block.get("citation_map") or [],
+                "uncertainty": (
+                    adaptive.get("uncertainty") if isinstance(adaptive, dict) else None
+                ),
+            }
+        )
     presentation_block = None
     if isinstance(response_plan, dict):
         contract_payload = response_plan.get("contract")
@@ -1531,11 +1622,39 @@ class RAGOrchestrator:
             # -----------------------------------------------------------------
             # Paso 3: Generar embedding de la query
             # -----------------------------------------------------------------
+            # Canales técnicos: RAW (intacta), semantic (embedding sin tokens
+            # opacos + hints de dominio), lexical (campos/valores) y exact
+            # (anchors literales). El valor de ejemplo del usuario NO exige
+            # aparecer en las fuentes; la regla y el campo sí.
+            query_views = None
+            try:
+                from src.rag.longcontext.views import build_query_views
+
+                if str(
+                    getattr(get_settings(), "RAG_TECHNICAL_QUERY_VIEWS", "on")
+                ).lower() not in ("off", "0", "false"):
+                    query_views = build_query_views(query)
+            except Exception as _views_err:  # noqa: BLE001
+                query_views = None
+                logger.warning(
+                    "Query views failed; keeping raw query",
+                    error=str(_views_err)[:200],
+                )
+            adaptive["query_views"] = (
+                query_views.to_public_dict() if query_views is not None else None
+            )
+            _embed_text = query
+            if (
+                query_views is not None
+                and query_views.has_technical_anchors
+                and query_views.semantic.strip()
+            ):
+                _embed_text = query_views.semantic
             result.status = QueryStatus.RETRIEVING_CONTEXT
             _embedding_t0 = time.perf_counter()
             async with trace_span("rag.embedding", model=effective_embedding_model or "default"):
                 query_embedding = await self._embedding_provider.embed(
-                    query, model=effective_embedding_model
+                    _embed_text, model=effective_embedding_model
                 )
             _note_embedding_trace(last_embedding_route())
             flow_timings["embedding_ms"] += (time.perf_counter() - _embedding_t0) * 1000
@@ -1904,6 +2023,14 @@ class RAGOrchestrator:
                     filters=metadata_filters or {},
                     workspace_id=workspace_id,
                     query_embedding=list(embedding),  # type: ignore[arg-type]
+                    # Canales técnicos desde la query ORIGINAL: el texto del
+                    # retrieval puede venir reescrito, los anchors no.
+                    exact_needles=(
+                        list(query_views.exact_terms) if query_views is not None else []
+                    ),
+                    lexical_terms=(
+                        list(query_views.lexical_terms) if query_views is not None else []
+                    ),
                 )
                 return await self._retriever.retrieve(rquery)  # type: ignore[union-attr]
 
@@ -2288,6 +2415,266 @@ class RAGOrchestrator:
 
                     extra_retrieval_round = _extra_retrieval_round
 
+            # -----------------------------------------------------------------
+            # Adaptive Long-Context: la evidencia sigue incompleta y el modo lo
+            # permite → expansión progresiva con information gain y tope real
+            # del modelo. off = intacto; shadow = mide sin alterar la salida.
+            # -----------------------------------------------------------------
+            long_context_block = None
+            long_context_applied = False
+            try:
+                from src.rag.longcontext.exact_tokens import exact_needles_for_query
+                from src.rag.longcontext.settings import settings_from_org
+                from src.rag.longcontext.wiring import (
+                    engine_from_settings,
+                    long_context_settings,
+                    observe_long_context,
+                )
+
+                _lc_settings = settings_from_org(
+                    organization.config_json, long_context_settings()
+                )
+                if (
+                    _lc_settings.enabled()
+                    and _lc_settings.should_apply(query_id)
+                    and self._retriever is not None
+                ):
+                    _lc_plan = adaptive.get("plan")
+                    _lc_complexity = " ".join(
+                        part
+                        for part in (
+                            str(getattr(_lc_plan, "path", "") or ""),
+                            str(getattr(_lc_plan, "complexity", "") or ""),
+                            str(getattr(_lc_plan, "intent", "") or ""),
+                        )
+                        if part
+                    )
+                    _lc_multi = any(
+                        token in _lc_complexity.lower()
+                        for token in ("multi", "compare", "documentos", "documents")
+                    )
+                    _lc_raw_needles = (
+                        list(query_views.exact_terms)
+                        if query_views is not None and query_views.exact_terms
+                        else exact_needles_for_query(query)
+                    )
+                    _lc_lexical_terms = (
+                        list(query_views.lexical_terms) if query_views is not None else []
+                    )
+                    _lc_applies = _lc_settings.effective_mode in ("active", "canary")
+
+                    async def _lc_retrieve(spec: dict) -> RetrievalContext:
+                        _text = str(spec.get("text") or _retrieve_opts["text"] or query)
+                        _strategy = str(spec.get("strategy") or "hybrid")
+                        _embedding = (
+                            spec.get("embedding")
+                            or _retrieve_opts.get("embedding")
+                            or query_embedding
+                        )
+                        if _strategy == "vector" and not _embedding:
+                            _embedding = await _embed(_text)
+                        _source_ids: list[UUID] = []
+                        for _sid in spec.get("source_ids") or []:
+                            try:
+                                _source_ids.append(
+                                    _sid if isinstance(_sid, UUID) else UUID(str(_sid))
+                                )
+                            except (ValueError, TypeError, AttributeError):
+                                continue
+                        _top_k = max(1, int(spec.get("top_k") or top_k))
+                        _spec_filters = spec.get("filters") or metadata_filters or {}
+                        return await self._retriever.retrieve(  # type: ignore[union-attr]
+                            RetrievalQuery(
+                                query=_text,
+                                organization_id=organization_id,
+                                role=role,
+                                user_id=user_id,
+                                groups=(
+                                    list(
+                                        await self._resolve_user_groups(
+                                            organization_id, user_id
+                                        )
+                                    )
+                                    if user_id
+                                    else []
+                                ),
+                                top_k=_top_k,
+                                effective_top_k=_top_k,
+                                rerank_top_k=retrieval_config.rerank_top_k,
+                                score_threshold=retrieval_config.score_threshold,
+                                strategy=_strategy,
+                                fusion=retrieval_config.fusion,
+                                rrf_k=retrieval_config.rrf_k,
+                                lexical_weight=retrieval_config.lexical_weight,
+                                language=language,
+                                filters=_spec_filters,
+                                workspace_id=workspace_id,
+                                source_ids=_source_ids,
+                                query_embedding=list(_embedding) if _embedding else None,
+                                exact_needles=_lc_raw_needles,
+                                lexical_terms=[
+                                    *_lc_lexical_terms,
+                                    *[
+                                        str(term)
+                                        for term in (spec.get("lexical_terms") or [])
+                                    ],
+                                ][:20],
+                            )
+                        )
+
+                    async def _lc_check(chunks: list) -> object:
+                        from src.rag.adaptive.evidence import (
+                            build_evidence_set,
+                            evaluate_deterministic,
+                        )
+                        from src.rag.adaptive.settings import AdaptiveRagSettings
+
+                        evidence = build_evidence_set(
+                            query=query,
+                            retrieval=RetrievalContext(chunks=list(chunks)),
+                            sql_result=sql_result,
+                        )
+                        hook_settings = getattr(self._adaptive_hook, "settings", None)
+                        return evaluate_deterministic(
+                            evidence, hook_settings or AdaptiveRagSettings()
+                        )
+
+                    _lc_engine = engine_from_settings(
+                        retrieve_fn=_lc_retrieve,
+                        settings=_lc_settings,
+                        store=self._vector_store,
+                        evidence_check=_lc_check,
+                    )
+                    if _lc_engine is not None:
+                        _lc_t0 = time.perf_counter()
+                        _lc_base_embedding = (
+                            _retrieve_opts.get("embedding") or query_embedding
+                        )
+                        _lc_org_config = organization.config_json or {}
+                        _lc_tenant_limit = None
+                        try:
+                            _lc_raw_limit = (
+                                (_lc_org_config.get("limits") or {}).get("context_tokens")
+                                if isinstance(_lc_org_config.get("limits"), dict)
+                                else _lc_org_config.get("context_token_limit")
+                            )
+                            _lc_tenant_limit = (
+                                int(_lc_raw_limit) if _lc_raw_limit else None
+                            )
+                        except (TypeError, ValueError):
+                            _lc_tenant_limit = None
+                        _lc_result = await _lc_engine.run(
+                            query=RetrievalQuery(
+                                query=query,
+                                organization_id=organization_id,
+                                role=role,
+                                user_id=user_id,
+                                top_k=top_k,
+                                effective_top_k=effective_top_k,
+                                rerank_top_k=retrieval_config.rerank_top_k,
+                                score_threshold=retrieval_config.score_threshold,
+                                strategy=_retrieve_opts["strategy"],
+                                fusion=retrieval_config.fusion,
+                                rrf_k=retrieval_config.rrf_k,
+                                lexical_weight=_retrieve_opts["lexical_weight"],
+                                filters=metadata_filters or {},
+                                workspace_id=workspace_id,
+                                query_embedding=(
+                                    list(_lc_base_embedding)
+                                    if _lc_base_embedding
+                                    else None
+                                ),
+                                exact_needles=_lc_raw_needles,
+                                lexical_terms=_lc_lexical_terms,
+                            ),
+                            model=effective_model or "",
+                            initial=retrieval_context,
+                            shadow=not _lc_applies,
+                            tenant_limit=_lc_tenant_limit,
+                            complexity=_lc_complexity,
+                            multi_document=_lc_multi,
+                        )
+                        flow_timings["long_context_ms"] = (
+                            time.perf_counter() - _lc_t0
+                        ) * 1000
+                        observe_long_context(_lc_settings.effective_mode, _lc_result)
+                        adaptive["long_context_result"] = _lc_result
+                        long_context_block = _lc_result.to_public_dict()
+                        long_context_block["mode"] = _lc_settings.effective_mode
+                        if _lc_applies and _lc_result.packed.chunks:
+                            long_context_applied = True
+                            retrieval_context = RetrievalContext(
+                                chunks=_lc_result.packed.chunks,
+                                query_embedding=retrieval_context.query_embedding,
+                                retrieval_latency_ms=retrieval_context.retrieval_latency_ms,
+                            )
+                            if (
+                                self._adaptive_hook is not None
+                                and adaptive.get("evidence") is not None
+                            ):
+                                adaptive["evidence"] = self._adaptive_hook.build_evidence(  # type: ignore[union-attr]
+                                    query=_retrieve_opts["text"],
+                                    retrieval=retrieval_context,
+                                    sql_result=sql_result,
+                                )
+            except Exception as _lc_err:  # noqa: BLE001 — el motor nunca rompe la respuesta
+                logger.warning(
+                    "Long-context engine failed; keeping base retrieval",
+                    error=str(_lc_err)[:300],
+                )
+            adaptive["long_context"] = long_context_block
+            adaptive["long_context_applied"] = long_context_applied
+
+            # Roles de anchor visibles en «Ver flujo»: FIELD/RULE/REFERENCE
+            # deben estar en las fuentes; USER EXAMPLE no exige match.
+            anchor_roles_block = None
+            try:
+                from src.rag.longcontext.views import summarize_views_for_flow
+
+                anchor_roles_block = summarize_views_for_flow(
+                    adaptive.get("query_views"),
+                    [chunk.content or "" for chunk in retrieval_context.chunks],
+                )
+            except Exception as _roles_err:  # noqa: BLE001
+                logger.warning(
+                    "Anchor roles summary failed", error=str(_roles_err)[:200]
+                )
+            adaptive["anchor_roles"] = anchor_roles_block
+
+            # Separar RETRIEVAL UNCERTAINTY de REASONING UNCERTAINTY: si falta
+            # evidencia, el problema es el retrieval (no se escala modelo caro);
+            # si la evidencia está completa y el razonamiento es complejo, sí
+            # puede considerarse un modelo superior.
+            _lc_result_obj = adaptive.get("long_context_result")
+            _lc_complete = bool(
+                _lc_result_obj is not None
+                and str(getattr(_lc_result_obj, "stop_reason", ""))
+                in (
+                    "evidence_complete",
+                    "evidence_complete_initial",
+                    "confidence_threshold",
+                    "long_context_escalated",
+                )
+            )
+            _needs_reasoning = False
+            try:
+                _unc_plan = adaptive.get("plan")
+                _needs_reasoning = bool(
+                    _unc_plan is not None
+                    and (
+                        str(getattr(_unc_plan, "path", "") or "") == "complex"
+                        or str(getattr(_unc_plan, "reasoning_requirement", "none") or "")
+                        not in ("", "none")
+                    )
+                )
+            except Exception:  # noqa: BLE001
+                _needs_reasoning = False
+            adaptive["uncertainty"] = (
+                "retrieval"
+                if (_lc_result_obj is not None and not _lc_complete)
+                else ("reasoning" if _needs_reasoning else "none")
+            )
+
             result.retrieval_context = retrieval_context
             rag_vector_search_latency.labels(organization_id=str(organization_id)).observe(
                 retrieval_context.retrieval_latency_ms / 1000
@@ -2556,8 +2943,23 @@ class RAGOrchestrator:
                         else:
                             hint = _hooks.model_hint(_preflight_decision.tier)  # type: ignore[union-attr]
                             if hint and hint != effective_model:
-                                effective_model = hint
-                                adaptive["preflight_model"] = hint
+                                # No escalar modelo por falta de evidencia: si la
+                                # incertidumbre es de RETRIEVAL, primero se busca
+                                # mejor; el modelo superior se reserva para
+                                # razonamiento complejo con evidencia completa.
+                                from src.rag.longcontext.package import (
+                                    allow_model_escalation,
+                                )
+
+                                if not allow_model_escalation(
+                                    str(adaptive.get("uncertainty") or "")
+                                ):
+                                    adaptive["fallbacks"].append(
+                                        "model_escalation_skipped_retrieval_uncertainty"
+                                    )
+                                else:
+                                    effective_model = hint
+                                    adaptive["preflight_model"] = hint
             # -----------------------------------------------------------------
             # Evidencia del run: SOURCE != EVIDENCE.
             # -----------------------------------------------------------------
@@ -2567,6 +2969,7 @@ class RAGOrchestrator:
             # sección > léxico > semántico) y el MISMO texto —con `evidence_id`
             # estable— va al generador, a JEV y a «Ver flujo».
             from src.runtime.evidence import (
+                MAX_ITEM_CHARS,
                 EvidenceRegistry,
                 assess_sufficiency,
                 citations_payload,
@@ -2580,6 +2983,18 @@ class RAGOrchestrator:
             _evidence_budget = int(
                 getattr(_run_settings, "RUNTIME_EVIDENCE_BUDGET_CHARS", 0) or 0
             ) or 12_000
+            _evidence_max_item = MAX_ITEM_CHARS
+            _evidence_max_items = 12
+            if adaptive.get("long_context"):
+                _lc_pack = adaptive["long_context"].get("pack") or {}
+                _evidence_budget = max(
+                    _evidence_budget,
+                    int(_lc_pack.get("used_tokens") or 0) * 4 + 4000,
+                )
+                _evidence_max_items = max(12, min(48, len(retrieval_context.chunks)))
+                _evidence_max_item = max(
+                    MAX_ITEM_CHARS, min(16_000, _evidence_budget // 8)
+                )
             _evidence_t0 = time.perf_counter()
             registry = EvidenceRegistry()
             if not sql_mode:
@@ -2589,10 +3004,51 @@ class RAGOrchestrator:
                 registrados, _nuevos = registry.add(adaptive["evidence"].items)
                 adaptive["evidence"].items[:] = list(registrados)
             evidence_selection = select_evidence(
-                registry.all_items(), query, budget_chars=_evidence_budget
+                registry.all_items(),
+                query,
+                budget_chars=_evidence_budget,
+                max_item_chars=_evidence_max_item,
+                max_items=_evidence_max_items,
             )
             adaptive["registry"] = registry
             adaptive["selection"] = evidence_selection
+            # Paquete final de generación: evidencia, ejemplos, requirements,
+            # faltantes y mapa de citas. `ready=False` no bloquea: genera con
+            # límites declarados si ya no hay retrieval legítimo.
+            try:
+                from src.rag.longcontext.package import build_generation_package
+
+                _lc_obj = adaptive.get("long_context_result")
+                _lc_requirements = getattr(_lc_obj, "requirements", None)
+                if _lc_requirements is None and query_views is not None:
+                    from src.rag.longcontext.coverage import requirement_coverage
+                    from src.rag.longcontext.requirements import build_requirements
+
+                    _adhoc = build_requirements(
+                        query,
+                        list(query_views.anchors),
+                        list(query_views.entities),
+                        examples=list(query_views.examples),
+                    )
+                    _lc_requirements = requirement_coverage(
+                        _adhoc, evidence_selection.items
+                    )
+                generation_package = build_generation_package(
+                    question=query,
+                    views=query_views,
+                    requirements=_lc_requirements,
+                    selection=evidence_selection,
+                    contradictions=int(
+                        getattr(adaptive.get("evidence"), "contradictions", 0) or 0
+                    ),
+                )
+                adaptive["generation_package"] = generation_package.to_public_dict()
+                adaptive["generation_ready"] = generation_package.ready
+            except Exception as _pkg_err:  # noqa: BLE001
+                logger.warning(
+                    "Generation package failed", error=str(_pkg_err)[:200]
+                )
+                adaptive["generation_package"] = None
             adaptive["sufficiency"] = assess_sufficiency(
                 evidence_selection.items,
                 query,

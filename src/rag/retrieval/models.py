@@ -62,6 +62,20 @@ class RetrievalQuery:
     source_priority: list[UUID] = field(default_factory=list)
     # Embedding de la query (lo calcula el llamador para reuso en ambas patas)
     query_embedding: list[float] | None = None
+    # Pata exacta (tercera pata): candidatos literales que la densa y la léxica
+    # no ven (máscaras, símbolos, códigos). Aditiva; `exact_needles` permite
+    # que el llamador pase los needles de la query ORIGINAL (un rewrite no
+    # puede destruir los anchors exactos).
+    exact_search: bool = True
+    exact_needles: list[str] = field(default_factory=list)
+    # Términos extra para la pata léxica (campos, valores de ejemplo, conceptos
+    # del plugin): la query cruda diluye el token exacto, los términos no.
+    lexical_terms: list[str] = field(default_factory=list)
+    # Presupuesto de contexto por request (tokens). None = comportamiento
+    # histórico del ContextBuilder inyectado (RAG_MAX_CONTEXT_TOKENS).
+    context_token_budget: int | None = None
+    # Perfil de costo/calidad efectivo: economy|balanced|quality|maximum_quality.
+    budget_profile: str = ""
 
 
 @dataclass(kw_only=True)

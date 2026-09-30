@@ -219,7 +219,7 @@ def evaluate_deterministic(
         quality = min(1.0, quality + 0.05)
     if freshness:
         quality = min(1.0, quality + 0.03)
-    return EvidenceQuality(
+    evaluated = EvidenceQuality(
         sufficient=sufficient,
         score=quality,
         max_retrieval_score=max_score,
@@ -239,6 +239,36 @@ def evaluate_deterministic(
         supporting_chunks=len(items),
         recommended_action=ACTION_GENERATE if sufficient else ACTION_RETRIEVE_MORE,
     )
+    # Long-Context: anchors y requirements medidos, sin cambiar el gate viejo.
+    # Encontrar «&&&F» completa un anchor pero puede dejar requirements afuera:
+    # eso lo decide el motor de expansión (no esta función). Los roles separan
+    # regla/campo (documentables) de valor de ejemplo del usuario.
+    try:
+        from src.rag.longcontext.coverage import (
+            anchor_coverage,
+            apply_coverage_to_quality,
+        )
+        from src.rag.longcontext.requirements import (
+            build_requirements,
+            evaluate_requirements,
+        )
+        from src.rag.longcontext.views import build_query_views
+
+        views = build_query_views(evidence.query or "")
+        requirements = build_requirements(
+            evidence.query or "",
+            list(views.anchors),
+            list(views.entities),
+            examples=list(views.examples),
+        )
+        apply_coverage_to_quality(
+            evaluated,
+            anchors=anchor_coverage(list(views.anchors), items),
+            requirements=evaluate_requirements(requirements, items),
+        )
+    except Exception:  # noqa: BLE001 — coverage nunca rompe el evaluador
+        pass
+    return evaluated
 
 
 def apply_passage_summary(quality: EvidenceQuality, passages: Any) -> None:

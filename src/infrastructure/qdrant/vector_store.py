@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import time
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
@@ -866,6 +867,130 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         )
         return RetrievalContext(chunks=chunks, retrieval_latency_ms=latency_ms)
 
+    async def scan_text_literal(
+        self,
+        organization_id: UUID,
+        needles: list[str],
+        *,
+        source_ids: list[UUID] | None = None,
+        knowledge_base_id: UUID | None = None,
+        workspace_id: UUID | None = None,
+        role: str = "admin",
+        user_id: UUID | None = None,
+        groups: list[str] | None = None,
+        limit: int = 5,
+        max_points: int = 3000,
+        max_ms: float = 1500.0,
+        heading_only: bool = False,
+    ) -> RetrievalContext:
+        """Barrido LITERAL de frases: substring crudo, sin tokenizar.
+
+        `scan_text` pasa la aguja por el tokenizador BM25 (minúsculas, sin
+        símbolos), así que `&&&F` se vuelve `f` y jamás encuentra su máscara.
+        Este barrido compara la frase tal cual (case-insensitive, HTML
+        desescapado en ambos lados) y por eso es la base de la pata exacta.
+        Mismos filtros ACL/tenant, mismos topes de puntos y tiempo.
+        """
+        if organization_id is None:
+            raise ValueError("scan_text_literal() requires organization_id (tenant isolation)")
+        if not needles:
+            return RetrievalContext(chunks=[], retrieval_latency_ms=0.0)
+        organization_id = bind_organization_id(organization_id)
+        client = await _get_client()
+        await self._ensure_collection()
+
+        agujas: list[str] = []
+        for needle in needles:
+            value = html.unescape(str(needle or "")).strip().lower()
+            if len(value) < 2 or value in agujas:
+                continue
+            agujas.append(value)
+        if not agujas:
+            return RetrievalContext(chunks=[], retrieval_latency_ms=0.0)
+
+        qdrant_filter = self._build_qdrant_filter(
+            organization_id, None, None, role, knowledge_base_id,
+            user_id, groups, workspace_id, source_ids)
+
+        start = time.perf_counter()
+        encontrados: list = []
+        escaneados = 0
+        offset = None
+        cupo = max(limit * 3, limit) if heading_only else limit
+        while escaneados < max_points:
+            pagina, offset = await _retry_on_transient_error(
+                client.scroll,
+                reset_client=True,
+                collection_name=RAG_DOCUMENTS_COLLECTION,
+                scroll_filter=qdrant_filter,
+                limit=200,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in pagina:
+                escaneados += 1
+                payload = point.payload or {}
+                contenido = str(payload.get("content") or "")
+                if not contenido:
+                    continue
+                if heading_only:
+                    primera = contenido.splitlines()[0] if contenido.strip() else ""
+                    if not primera or "|" in primera:
+                        continue
+                    contenido = primera
+                cuerpo = contenido.lower()
+                cuerpo_unescaped = (
+                    html.unescape(contenido).lower() if "&" in contenido else cuerpo
+                )
+                if any(aguja in cuerpo or aguja in cuerpo_unescaped for aguja in agujas):
+                    encontrados.append(point)
+                    if len(encontrados) >= cupo:
+                        break
+            if offset is None or len(encontrados) >= cupo:
+                break
+            if (time.perf_counter() - start) * 1000 >= max_ms:
+                break
+
+        if heading_only and len(encontrados) > limit:
+            encontrados.sort(
+                key=lambda point: (
+                    0
+                    if str(
+                        ((point.payload or {}).get("metadata") or {}).get("v2_parent")
+                        or ""
+                    ).lower()
+                    == "true"
+                    else 1,
+                    -len(str((point.payload or {}).get("content") or "")),
+                )
+            )
+            encontrados = encontrados[:limit]
+
+        latency_ms = (time.perf_counter() - start) * 1000
+        chunks = [
+            RetrievalChunk(
+                document_id=UUID(point.id) if point.id else UUID(int=0),
+                content=(point.payload or {}).get("content", ""),
+                # Sin score de similitud: la pata exacta no mide cosine.
+                score=0.0,
+                metadata={
+                    **((point.payload or {}).get("metadata") or {}),
+                    "retrieval": "exact_scan",
+                },
+            )
+            for point in encontrados
+        ]
+        logger.info(
+            "Exact literal scan completed",
+            organization_id=str(organization_id),
+            needles=len(agujas),
+            scanned=escaneados,
+            matches=len(chunks),
+            scan_latency_ms=round(latency_ms, 2),
+        )
+        return RetrievalContext(chunks=chunks, retrieval_latency_ms=latency_ms)
+
     async def delete_points(self, organization_id: UUID, point_ids: list[str]) -> None:
         """Borra puntos por ID exacto. Los IDs son uuid5 deterministas scoped
         a la organización (generados por el Knowledge Engine desde su registry)."""
@@ -1139,6 +1264,99 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
             "Documents fetched by chunk id",
             organization_id=str(organization_id),
             requested=len(ids),
+            returned=len(chunks),
+            latency_ms=round(latency_ms, 2),
+        )
+        return RetrievalContext(chunks=chunks, retrieval_latency_ms=latency_ms)
+
+    async def get_neighborhood(
+        self,
+        organization_id: UUID,
+        *,
+        chunk_ids: list[str] | None = None,
+        parent_ids: list[str] | None = None,
+        section_ids: list[str] | None = None,
+        role: str = "admin",
+        user_id: UUID | None = None,
+        groups: list[str] | None = None,
+        limit: int = 60,
+    ) -> RetrievalContext:
+        """Trae chunks por vecindad estructural: chunk_id, parent_id, section_id.
+
+        Es la base de la expansión de sección/hermanos (prev/next): una sola
+        consulta por `should` sobre metadata, con verificación post-hoc de
+        tenant y visibilidad ACL. Sin valores, devuelve vacío.
+        """
+        if organization_id is None:
+            raise ValueError("get_neighborhood() requires organization_id (tenant isolation)")
+        organization_id = bind_organization_id(organization_id)
+        conditions = []
+        for key, values in (
+            ("metadata.chunk_id", chunk_ids),
+            ("metadata.parent_id", parent_ids),
+            ("metadata.section_id", section_ids),
+        ):
+            cleaned = [str(value) for value in (values or []) if str(value or "").strip()]
+            if cleaned:
+                conditions.append(
+                    qdrant_models.FieldCondition(
+                        key=key,
+                        match=qdrant_models.MatchAny(any=cleaned),
+                    )
+                )
+        if not conditions:
+            return RetrievalContext(chunks=[], retrieval_latency_ms=0.0)
+
+        client = await _get_client()
+        await self._ensure_collection()
+        start = time.perf_counter()
+        points, _ = await _retry_on_transient_error(
+            client.scroll,
+            reset_client=True,
+            collection_name=RAG_DOCUMENTS_COLLECTION,
+            scroll_filter=qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(
+                        key="organization_id",
+                        match=qdrant_models.MatchValue(value=str(organization_id)),
+                    )
+                ],
+                should=conditions,
+            ),
+            limit=max(1, int(limit)),
+            with_payload=True,
+            with_vectors=False,
+        )
+        latency_ms = (time.perf_counter() - start) * 1000
+
+        chunks: list[RetrievalChunk] = []
+        for point in points:
+            payload = point.payload or {}
+            if payload.get("organization_id") != str(organization_id):
+                logger.warning(
+                    "Cross-tenant neighborhood fetch blocked",
+                    point_id=str(point.id),
+                    requested_by=str(organization_id),
+                )
+                continue
+            if not payload_visible(payload, role=role, user_id=user_id, groups=groups):
+                continue
+            try:
+                document_id = UUID(str(point.id))
+            except (ValueError, TypeError, AttributeError):
+                continue
+            chunks.append(
+                RetrievalChunk(
+                    document_id=document_id,
+                    content=payload.get("content", ""),
+                    score=0.0,
+                    metadata=payload.get("metadata", {}),
+                )
+            )
+        logger.info(
+            "Neighborhood fetched",
+            organization_id=str(organization_id),
+            conditions=len(conditions),
             returned=len(chunks),
             latency_ms=round(latency_ms, 2),
         )

@@ -95,7 +95,14 @@ def _asked_anchors(question: str) -> list[Any]:
 
 
 #: Retrievals que marcan la sección completa que contiene al fragmento.
-SECTION_RETRIEVALS = ("entity_section", "section_parent")
+SECTION_RETRIEVALS = (
+    "entity_section",
+    "section_parent",
+    # Long-Context: expansiones estructurales y reconstrucción de sección.
+    "expansion_parent",
+    "expansion_section",
+    "section_reconstructed",
+)
 
 
 def question_needles(question: str) -> list[str]:
@@ -667,6 +674,8 @@ class EvidenceSufficiency:
     anchors_asked: tuple[str, ...] = ()
     anchors_covered: tuple[str, ...] = ()
     missing_anchors: tuple[str, ...] = ()
+    #: Valores de ejemplo del usuario: input a evaluar, NO exigen match.
+    examples_asked: tuple[str, ...] = ()
     top_score: float = 0.0
     conflicting_chunks: int | None = None
 
@@ -695,6 +704,9 @@ class EvidenceSufficiency:
             payload["anchors_covered"] = list(self.anchors_covered)[:6]
             if self.missing_anchors:
                 payload["missing_anchors"] = list(self.missing_anchors)[:6]
+        if self.examples_asked:
+            payload["examples_asked"] = list(self.examples_asked)[:6]
+            payload["examples_requires_source_match"] = False
         if self.conflicting_chunks is not None:
             payload["conflicting_chunks"] = self.conflicting_chunks
         return payload
@@ -728,7 +740,22 @@ def assess_sufficiency(
             top_score=0.0,
         )
     entities = _asked_entities(question)
-    anchors = _asked_anchors(question)
+    anchors_all = _asked_anchors(question)
+    # Roles: sólo los anchors documentables exigen match. Los valores de ejemplo
+    # del usuario («¿acepta QNNF0SME?») son input a evaluar con la regla.
+    examples_asked: tuple[str, ...] = ()
+    anchors: list[Any] = []
+    try:
+        from src.rag.longcontext.roles import assign_roles, is_documentable
+
+        anchors_rel = assign_roles(question, anchors_all)
+        for anchor in anchors_rel:
+            if is_documentable(str(getattr(anchor, "role", ""))):
+                anchors.append(anchor)
+            else:
+                examples_asked = (*examples_asked, str(getattr(anchor, "value", "")))
+    except Exception:  # noqa: BLE001 — sin roles, comportamiento histórico
+        anchors = list(anchors_all)
     if not entities and not anchors:
         return EvidenceSufficiency(
             has_evidence=True,
@@ -736,6 +763,7 @@ def assess_sufficiency(
             recommended_action=ACTION_GENERATE,
             reason="no_entities_asked",
             top_score=top_score,
+            examples_asked=examples_asked,
         )
     joined = "\n".join(_coverage_text(item) for item in items)
     asked = tuple(entity.label for entity in entities)
@@ -786,6 +814,7 @@ def assess_sufficiency(
         anchors_asked=anchors_asked,
         anchors_covered=anchors_covered,
         missing_anchors=missing_anchors,
+        examples_asked=examples_asked,
         top_score=top_score,
     )
 

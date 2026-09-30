@@ -49,14 +49,20 @@ def _strip_accents(text: str) -> str:
 
 
 def normalize_query(query: str) -> str:
-    """Normaliza para la pata lexical: minúsculas, sin acentos, sin puntuación.
+    """Compat: normalización lexical que conserva símbolos técnicos.
 
-    La pata semántica SIEMPRE usa el texto original (el embedding necesita
-    contexto y acentos). Esta normalización solo alimenta tokenización.
+    Antes esta función borraba símbolos (`re.sub(r"[^a-z0-9\\s]+", " ", ...)`) y
+    `&&&F` quedaba reducido a `F`: los MUST_KEEP de la pata exacta se destruían
+    antes de nacer. Ahora delega en `normalize_for_lexical_search`, que mantiene
+    los patrones técnicos (`&*%#._-+/=<>@$`) dentro del token. Los consumidores
+    basados en regex de tokens (`[a-z0-9]{2,}`) no cambian su comportamiento.
+
+    La pata semántica SIEMPRE usa el texto original; la exacta usa
+    `normalize_for_exact_search` (copia byte a byte).
     """
-    stripped = _strip_accents((query or "").lower())
-    cleaned = re.sub(r"[^a-z0-9\s]+", " ", stripped)
-    return re.sub(r"\s+", " ", cleaned).strip()
+    from src.rag.longcontext.normalize import normalize_for_lexical_search
+
+    return normalize_for_lexical_search(query)
 
 
 def detect_language(query: str) -> str | None:

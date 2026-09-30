@@ -653,6 +653,22 @@ zent_retrieval_entity_pin_total = Counter(
     "Queries whose asked entity (byte 105, categoria 31, ...) was pinned into evidence",
     labelnames=["outcome", "stage"],
 )
+# --- Long-Context Engine: expansión progresiva y evidencia completa -----------
+zent_long_context_total = Counter(
+    "zent_long_context_total",
+    "Consultas que pasaron por el motor de contexto adaptativo, por modo y stop reason",
+    labelnames=["mode", "stop_reason"],
+)
+zent_long_context_tokens = Histogram(
+    "zent_long_context_tokens",
+    "Tokens finales de contexto usados por el motor de contexto adaptativo",
+    buckets=(4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576),
+)
+zent_long_context_expansions = Histogram(
+    "zent_long_context_expansions",
+    "Cantidad de expansiones progresivas por consulta",
+    buckets=(0, 1, 2, 3, 4, 5, 6, 8, 10, 12),
+)
 # --- Turn intent: capa conversacional (saludo/queja/capacidad/charla) ----------
 zent_turn_intent_total = Counter(
     "zent_turn_intent_total",
