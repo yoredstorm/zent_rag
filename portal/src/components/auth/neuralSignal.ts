@@ -13,7 +13,7 @@ export type NeuralEvent =
   | { type: "submit" }
   | { type: "error" }
   | { type: "success" }
-  /** Acceso concedido: la cámara se mete en la red y la travesía empieza. */
+  /** Acceso concedido: el bitmap se congela y el zoom CSS entra. */
   | { type: "dive" }
   | { type: "stats"; stats: NetStats };
 

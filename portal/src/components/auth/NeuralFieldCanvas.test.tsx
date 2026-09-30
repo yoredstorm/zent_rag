@@ -1,7 +1,8 @@
 import { render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NeuralFieldCanvas, type NeuralStats } from "./NeuralFieldCanvas";
-import { onNeuralEvent, type NeuralEvent } from "./neuralSignal";
+import { emitNeuralEvent, onNeuralEvent, type NeuralEvent } from "./neuralSignal";
+import { BLOOM_MS, DIVE_HOLD, DIVE_MS, DIVE_SCALE } from "./entryTransit";
 
 function mockReducedMotion(reduce: boolean) {
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
@@ -106,5 +107,32 @@ describe("NeuralFieldCanvas", () => {
     const statsEvent = events.find((e) => e.type === "stats");
     expect(statsEvent && statsEvent.type === "stats" && statsEvent.stats.neurons).toBeGreaterThan(0);
     unsubscribe();
+  });
+
+  it("congela el lienzo al dive y apunta el origen al nodo", async () => {
+    mockReducedMotion(false);
+    let next = 1;
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockImplementation(() => next++);
+    const cancel = vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+
+    const { container } = render(
+      <div className="auth-net">
+        <NeuralFieldCanvas />
+      </div>
+    );
+
+    await waitFor(() => expect(raf).toHaveBeenCalled());
+    const callsBefore = cancel.mock.calls.length;
+    emitNeuralEvent({ type: "dive" });
+
+    expect(cancel.mock.calls.length).toBeGreaterThan(callsBefore);
+    const host = container.querySelector(".auth-net") as HTMLElement;
+    expect(host.style.getPropertyValue("--dive-x")).toMatch(/%$/);
+    expect(host.style.getPropertyValue("--dive-y")).toMatch(/%$/);
+    expect(host.style.getPropertyValue("--auth-dive-ms")).toBe(`${DIVE_MS}ms`);
+    expect(host.style.getPropertyValue("--auth-bloom-ms")).toBe(`${BLOOM_MS}ms`);
+    expect(host.style.getPropertyValue("--auth-bloom-delay")).toBe(`${DIVE_MS - BLOOM_MS}ms`);
+    expect(host.style.getPropertyValue("--auth-dive-scale")).toBe(String(DIVE_SCALE));
+    expect(host.style.getPropertyValue("--auth-dive-hold")).toBe(String(DIVE_HOLD));
   });
 });

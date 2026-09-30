@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  BLOOM_MS,
+  DIVE_ANTICIPATION,
+  DIVE_MS,
+  DIVE_SCALE,
   ENTRY_EXPIRY_MS,
   armEntry,
   disarmEntry,
@@ -39,5 +43,15 @@ describe("tránsito de entrada", () => {
     expect(entryArmed()).toBe(true);
     vi.advanceTimersByTime(ENTRY_EXPIRY_MS + 1);
     expect(entryArmed()).toBe(false);
+  });
+});
+
+describe("tiempos de la travesía", () => {
+  it("el bloom cabe dentro del zoom y la escala CSS no pixelea el bitmap", () => {
+    expect(DIVE_MS).toBeGreaterThan(BLOOM_MS);
+    expect(DIVE_ANTICIPATION).toBeGreaterThan(0);
+    expect(DIVE_ANTICIPATION).toBeLessThan(1);
+    expect(DIVE_SCALE).toBeGreaterThan(1);
+    expect(DIVE_SCALE).toBeLessThanOrEqual(2);
   });
 });

@@ -1061,6 +1061,13 @@
    superficie de trabajo. Los colores van fijos a propósito.
    Planos: mesh (ambiente) → red viva (canvas) → viñeta → grano → UI. */
 .auth-scene {
+  --auth-dive-ms: 1180ms;
+  --auth-bloom-ms: 320ms;
+  --auth-bloom-delay: 860ms;
+  --auth-dive-scale: 1.7;
+  --auth-dive-hold: 0.985;
+  --dive-x: 50%;
+  --dive-y: 44%;
   position: relative;
   min-height: 100dvh;
   overflow-x: clip;
@@ -1133,46 +1140,38 @@
 }
 
 /* --- Entrada al panel --------------------------------------------- */
-/* La escena cede el cuadro: la UI se apaga, la máscara de la red se abre y el
-   canvas se traga la pantalla mientras la cámara entra en una neurona. */
+/* Un último frame de la red (bitmap congelado) y zoom CSS hacia el nodo.
+   Duración y bloom salen de `--auth-dive-ms` / `--auth-bloom-*` (entryTransit). */
 .auth-header,
 .auth-rail,
 .auth-stage,
 .auth-net,
 .auth-vignette {
-  transition:
-    opacity 620ms cubic-bezier(0.32, 0.72, 0, 1),
-    transform 650ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition: opacity 620ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.auth-scene[data-dive="true"] {
+  overflow: clip;
 }
 
 .auth-scene[data-dive="true"] .auth-header,
 .auth-scene[data-dive="true"] .auth-rail,
 .auth-scene[data-dive="true"] .auth-stage {
   opacity: 0;
-  transform: scale(1.06);
   pointer-events: none;
-}
-
-.auth-scene[data-dive="true"] .auth-net {
-  opacity: 1;
-  -webkit-mask-image: none;
-  mask-image: none;
-  isolation: isolate;
 }
 
 .auth-scene[data-dive="true"] .auth-vignette {
   opacity: 0;
 }
 
-/* La UI sale por opacidad y escala, en su propia capa. Blur, filtro y
-   sombra animada no viajan con ella: samplear el canvas cada frame era el lag. */
 .auth-scene[data-dive="true"] .auth-header,
 .auth-scene[data-dive="true"] .auth-rail,
 .auth-scene[data-dive="true"] .auth-stage,
 .auth-scene[data-dive="true"] .auth-vignette {
-  will-change: transform, opacity;
-  backface-visibility: hidden;
+  will-change: opacity;
 }
+
 .auth-scene[data-dive="true"] .auth-pill,
 .auth-scene[data-dive="true"] .auth-card-core {
   -webkit-backdrop-filter: none;
@@ -1193,8 +1192,33 @@
   animation: none;
 }
 
-/* Destello y bloom: mismo gradiente que la cortina, opacidad en el compositor.
-   `plus-lighter` es el `lighter` que antes se pintaba dentro del canvas. */
+/* El bitmap se amplía hacia la neurona. Sin transition de transform: si no,
+   pelea con la animación. 18% = DIVE_ANTICIPATION. */
+@keyframes auth-dive-zoom {
+  0% {
+    transform: scale(1);
+  }
+  18% {
+    transform: scale(var(--auth-dive-hold, 0.985));
+  }
+  100% {
+    transform: scale(var(--auth-dive-scale, 1.7));
+  }
+}
+
+.auth-scene[data-dive="true"] .auth-net {
+  opacity: 1;
+  -webkit-mask-image: none;
+  mask-image: none;
+  isolation: isolate;
+  transition: opacity 620ms cubic-bezier(0.32, 0.72, 0, 1);
+  transform-origin: var(--dive-x, 50%) var(--dive-y, 44%);
+  animation: auth-dive-zoom var(--auth-dive-ms, 1180ms) cubic-bezier(0.32, 0.72, 0, 1) both;
+  will-change: transform;
+  backface-visibility: hidden;
+}
+
+/* Destello y bloom: opacidad en el compositor. Mismo gradiente que la cortina. */
 .auth-dive-flash,
 .auth-dive-bloom {
   position: absolute;
@@ -1210,12 +1234,17 @@
     rgb(82 224 182 / 0) 100%
   );
 }
-.auth-scene[data-dive="true"] .auth-dive-flash,
-.auth-scene[data-dive="true"] .auth-dive-bloom {
+.auth-scene[data-dive="true"] .auth-dive-flash {
+  opacity: 0.42;
+  transition: opacity 220ms cubic-bezier(0.32, 0.72, 0, 1);
   will-change: opacity;
 }
-.auth-scene[data-dive="true"] .auth-dive-flash {
-  mix-blend-mode: plus-lighter;
+.auth-scene[data-dive="true"] .auth-dive-bloom {
+  opacity: 1;
+  transition:
+    opacity var(--auth-bloom-ms, 320ms) cubic-bezier(0.32, 0.72, 0, 1)
+    var(--auth-bloom-delay, 860ms);
+  will-change: opacity;
 }
 
 /* Cortina de relevo. Vive en la raíz de la app porque el canvas desaparece al
@@ -2047,6 +2076,13 @@
   .auth-net,
   .auth-vignette {
     transition: none;
+  }
+  .auth-scene[data-dive="true"] .auth-net {
+    animation: none;
+  }
+  .auth-scene[data-dive="true"] .auth-dive-flash,
+  .auth-scene[data-dive="true"] .auth-dive-bloom {
+    transition: opacity 200ms ease;
   }
   .auth-card-state[data-state="submit"] .auth-card-state__dot {
     animation: none;

@@ -1,6 +1,7 @@
 /**
- * Coreografía de la entrada: la cámara se mete en la red, la luz llena el
- * cuadro y la cortina de relevo sostiene esa misma luz mientras cambia la ruta.
+ * Coreografía de la entrada: un último frame de la red, zoom CSS hacia el
+ * nodo y luz que llena el cuadro. La cortina sostiene esa misma luz al
+ * cambiar de ruta.
  *
  * Vive fuera de React y del DOM a propósito: el canvas, la cortina y las
  * páginas de acceso leen los mismos números, así el zoom, el bloom y la
@@ -15,8 +16,12 @@ export const DIVE_REDUCED_MS = 300;
 export const BLOOM_MS = 320;
 /** Disolución de la cortina sobre el panel, ya montado. */
 export const ENTRY_REVEAL_MS = 680;
-/** Ampliación final de la cámara. */
-export const DIVE_ZOOM = 5.4;
+/** Anticipación: la cámara retrocede antes de entrar (fracción de DIVE_MS). */
+export const DIVE_ANTICIPATION = 0.18;
+/** Escala CSS del bitmap congelado. Más allá pixelea y cuesta en CPU. */
+export const DIVE_SCALE = 1.7;
+/** Recoil de la anticipación. */
+export const DIVE_HOLD = 0.985;
 /** Canales de la luz final. El mismo color va en `.auth-dive-bloom` y `.auth-entry-curtain`. */
 export const DIVE_BLOOM = "236, 255, 249";
 /** Si nadie llega a destino, el tránsito caduca: la cortina nunca queda colgada. */

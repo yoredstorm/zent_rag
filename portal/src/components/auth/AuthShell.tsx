@@ -190,9 +190,8 @@ export function AuthShell({
         if (state) state.dataset.state = "success";
         window.clearTimeout(resetTimer);
       } else if (event.type === "dive") {
-        // La escena cede el cuadro a la red: el CSS apaga la UI y abre la
-        // máscara del canvas mientras la cámara entra. Con movimiento reducido
-        // no hay travesía, así que la escena se queda como está.
+        // La escena cede el cuadro: el CSS apaga la UI, abre la máscara y
+        // amplía el bitmap congelado. Con movimiento reducido no hay travesía.
         const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
         if (!reduce && sceneRef.current) sceneRef.current.dataset.dive = "true";
       }
