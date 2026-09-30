@@ -1,6 +1,6 @@
-import { Sparkle } from "@phosphor-icons/react";
+import * as SwitchPrimitive from "@radix-ui/react-switch";
 import { motion, useReducedMotion } from "motion/react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { Brand } from "../Brand";
 import { NeuralFieldCanvas, type NeuralStats } from "./NeuralFieldCanvas";
 import { diveEffectOn } from "./divePref";
@@ -42,7 +42,8 @@ export function AuthShell({
 }) {
   const reveal = useReveal();
   const reduce = useReducedMotion();
-  const { on: diveOn, toggle: toggleDive } = useDiveEffect();
+  const { on: diveOn, set: setDive } = useDiveEffect();
+  const fxId = useId();
   const platform = variant === "platform";
   const sceneRef = useRef<HTMLDivElement>(null);
   const dockRef = useRef<HTMLDivElement>(null);
@@ -225,31 +226,44 @@ export function AuthShell({
             <Brand />
           </motion.div>
           <div className="auth-header-tools">
-            {!reduce && (
-              <button
-                type="button"
-                className="auth-fx"
-                aria-pressed={diveOn}
-                aria-label={
-                  diveOn
-                    ? "Quitar efecto visual. Úsalo si el equipo no tiene GPU."
-                    : "Activar efecto visual de entrada."
-                }
-                onClick={toggleDive}
+            {reduce ? (
+              <motion.span
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ type: "spring", bounce: 0, duration: 0.8, delay: 0.08 }}
+                className="auth-pill auth-pill--label"
               >
-                <Sparkle size={13} weight={diveOn ? "fill" : "light"} aria-hidden />
-                {diveOn ? "Quitar efecto" : "Activar efecto"}
-              </button>
+                <span className="auth-dot auth-dot--live" aria-hidden />
+                {platform ? "Control Center" : "Red activa"}
+              </motion.span>
+            ) : (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ type: "spring", bounce: 0, duration: 0.8, delay: 0.08 }}
+                className="auth-pill auth-fx"
+                data-on={diveOn ? "true" : "false"}
+              >
+                <label htmlFor={fxId} className="auth-fx__meta">
+                  <span
+                    className={diveOn ? "auth-dot auth-dot--live" : "auth-dot"}
+                    aria-hidden
+                  />
+                  <span className="auth-fx__copy">
+                    {platform ? "Control Center" : "Red activa"}
+                  </span>
+                </label>
+                <SwitchPrimitive.Root
+                  id={fxId}
+                  checked={diveOn}
+                  onCheckedChange={setDive}
+                  aria-label="Efecto visual de entrada"
+                  className="auth-fx__switch"
+                >
+                  <SwitchPrimitive.Thumb className="auth-fx__thumb" />
+                </SwitchPrimitive.Root>
+              </motion.div>
             )}
-            <motion.span
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ type: "spring", bounce: 0, duration: 0.8, delay: 0.08 }}
-              className="auth-pill auth-pill--label"
-            >
-              <span className="auth-dot auth-dot--live" aria-hidden />
-              {platform ? "Control Center" : "Red activa"}
-            </motion.span>
           </div>
         </header>
 

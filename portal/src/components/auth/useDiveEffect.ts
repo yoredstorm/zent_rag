@@ -11,6 +11,7 @@ export function useDiveEffect() {
   return {
     on,
     quiet,
+    set: setDiveEffect,
     toggle: () => setDiveEffect(!on),
   };
 }
