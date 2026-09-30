@@ -2,7 +2,7 @@ import { render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NeuralFieldCanvas, type NeuralStats } from "./NeuralFieldCanvas";
 import { emitNeuralEvent, onNeuralEvent, type NeuralEvent } from "./neuralSignal";
-import { BLOOM_MS, DIVE_HOLD, DIVE_MS, DIVE_SCALE } from "./entryTransit";
+import { BLOOM_MS, DIVE_HOLD, DIVE_INNER_SCALE, DIVE_MS, DIVE_OUTER_SCALE, DIVE_SCALE } from "./entryTransit";
 
 function mockReducedMotion(reduce: boolean) {
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({
@@ -134,5 +134,9 @@ describe("NeuralFieldCanvas", () => {
     expect(host.style.getPropertyValue("--auth-bloom-delay")).toBe(`${DIVE_MS - BLOOM_MS}ms`);
     expect(host.style.getPropertyValue("--auth-dive-scale")).toBe(String(DIVE_SCALE));
     expect(host.style.getPropertyValue("--auth-dive-hold")).toBe(String(DIVE_HOLD));
+    expect(host.style.getPropertyValue("--auth-outer-scale")).toBe(String(DIVE_OUTER_SCALE));
+    expect(host.style.getPropertyValue("--auth-inner-scale")).toBe(String(DIVE_INNER_SCALE));
+    expect(host.querySelector(".auth-membrane--outer")).not.toBeNull();
+    expect(host.querySelector(".auth-membrane--inner")).not.toBeNull();
   });
 });

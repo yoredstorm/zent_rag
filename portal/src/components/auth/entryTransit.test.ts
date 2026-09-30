@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BLOOM_MS,
   DIVE_ANTICIPATION,
+  DIVE_INNER_SCALE,
   DIVE_MS,
+  DIVE_OUTER_SCALE,
   DIVE_SCALE,
   ENTRY_EXPIRY_MS,
   armEntry,
@@ -52,6 +54,7 @@ describe("tiempos de la travesía", () => {
     expect(DIVE_ANTICIPATION).toBeGreaterThan(0);
     expect(DIVE_ANTICIPATION).toBeLessThan(1);
     expect(DIVE_SCALE).toBeGreaterThan(1);
-    expect(DIVE_SCALE).toBeLessThanOrEqual(2);
+    expect(DIVE_SCALE).toBeLessThan(DIVE_INNER_SCALE);
+    expect(DIVE_INNER_SCALE).toBeLessThan(DIVE_OUTER_SCALE);
   });
 });

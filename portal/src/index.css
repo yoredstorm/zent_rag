@@ -1064,8 +1064,10 @@
   --auth-dive-ms: 1180ms;
   --auth-bloom-ms: 320ms;
   --auth-bloom-delay: 860ms;
-  --auth-dive-scale: 1.7;
+  --auth-dive-scale: 1.32;
   --auth-dive-hold: 0.985;
+  --auth-outer-scale: 3.05;
+  --auth-inner-scale: 2.4;
   --dive-x: 50%;
   --dive-y: 44%;
   position: relative;
@@ -1140,8 +1142,8 @@
 }
 
 /* --- Entrada al panel --------------------------------------------- */
-/* Un último frame de la red (bitmap congelado) y zoom CSS hacia el nodo.
-   Duración y bloom salen de `--auth-dive-ms` / `--auth-bloom-*` (entryTransit). */
+/* Bitmap congelado atrás; dos folletos de membrana (CSS) pasan a distinta
+   velocidad. Solo transform y opacidad. Duración = `--auth-dive-ms`. */
 .auth-header,
 .auth-rail,
 .auth-stage,
@@ -1192,9 +1194,8 @@
   animation: none;
 }
 
-/* El bitmap se amplía hacia la neurona. Sin transition de transform: si no,
-   pelea con la animación. 18% = DIVE_ANTICIPATION. */
-@keyframes auth-dive-zoom {
+/* 18% = DIVE_ANTICIPATION. La red se queda atrás; las membranas adelantan. */
+@keyframes auth-dive-net {
   0% {
     transform: scale(1);
   }
@@ -1202,7 +1203,49 @@
     transform: scale(var(--auth-dive-hold, 0.985));
   }
   100% {
-    transform: scale(var(--auth-dive-scale, 1.7));
+    transform: scale(var(--auth-dive-scale, 1.32));
+  }
+}
+
+@keyframes auth-dive-outer {
+  0% {
+    opacity: 0;
+    transform: scale(0.78) rotate(0deg);
+  }
+  18% {
+    opacity: 0.72;
+    transform: scale(0.7) rotate(-0.4deg);
+  }
+  58% {
+    opacity: 0.55;
+    transform: scale(1.85) rotate(1.2deg);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(var(--auth-outer-scale, 3.05)) rotate(2.4deg);
+  }
+}
+
+@keyframes auth-dive-inner {
+  0% {
+    opacity: 0;
+    transform: scale(0.62) rotate(0deg);
+  }
+  18% {
+    opacity: 0;
+    transform: scale(0.58) rotate(0.2deg);
+  }
+  32% {
+    opacity: 0.78;
+    transform: scale(0.72) rotate(0.6deg);
+  }
+  72% {
+    opacity: 0.42;
+    transform: scale(1.55) rotate(-0.8deg);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(var(--auth-inner-scale, 2.4)) rotate(-1.4deg);
   }
 }
 
@@ -1212,13 +1255,57 @@
   mask-image: none;
   isolation: isolate;
   transition: opacity 620ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.auth-scene[data-dive="true"] .auth-net > canvas {
   transform-origin: var(--dive-x, 50%) var(--dive-y, 44%);
-  animation: auth-dive-zoom var(--auth-dive-ms, 1180ms) cubic-bezier(0.32, 0.72, 0, 1) both;
+  animation: auth-dive-net var(--auth-dive-ms, 1180ms) cubic-bezier(0.32, 0.72, 0, 1) both;
   will-change: transform;
   backface-visibility: hidden;
 }
 
-/* Destello y bloom: opacidad en el compositor. Mismo gradiente que la cortina. */
+/* Bicapa: dos elipses de pelo, sin blur ni blend. Se pintan una vez y el
+   compositor las escala. El origen es la neurona de destino. */
+.auth-membrane {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  transform-origin: var(--dive-x, 50%) var(--dive-y, 44%);
+  backface-visibility: hidden;
+}
+.auth-membrane--outer {
+  background: radial-gradient(
+    ellipse 46% 36% at var(--dive-x, 50%) var(--dive-y, 44%),
+    transparent 58%,
+    rgb(214 255 244 / 0.28) 61%,
+    rgb(82 224 182 / 0.14) 66%,
+    rgb(96 156 226 / 0.06) 71%,
+    transparent 76%
+  );
+}
+.auth-membrane--inner {
+  background: radial-gradient(
+    ellipse 28% 22% at var(--dive-x, 50%) var(--dive-y, 44%),
+    transparent 48%,
+    rgb(236 255 249 / 0.42) 52%,
+    rgb(82 224 182 / 0.2) 58%,
+    rgb(214 255 244 / 0.08) 64%,
+    transparent 70%
+  );
+}
+
+.auth-scene[data-dive="true"] .auth-membrane--outer {
+  animation: auth-dive-outer var(--auth-dive-ms, 1180ms) cubic-bezier(0.32, 0.72, 0, 1) both;
+  will-change: transform, opacity;
+}
+.auth-scene[data-dive="true"] .auth-membrane--inner {
+  animation: auth-dive-inner var(--auth-dive-ms, 1180ms) cubic-bezier(0.32, 0.72, 0, 1) both;
+  will-change: transform, opacity;
+}
+
+/* Destello y bloom: opacidad en el compositor. Mismo gradiente que la cortina.
+   No heredan el zoom: quedan fijos al cuadro. */
 .auth-dive-flash,
 .auth-dive-bloom {
   position: absolute;
@@ -2077,7 +2164,9 @@
   .auth-vignette {
     transition: none;
   }
-  .auth-scene[data-dive="true"] .auth-net {
+  .auth-scene[data-dive="true"] .auth-net,
+  .auth-scene[data-dive="true"] .auth-net > canvas,
+  .auth-scene[data-dive="true"] .auth-membrane {
     animation: none;
   }
   .auth-scene[data-dive="true"] .auth-dive-flash,

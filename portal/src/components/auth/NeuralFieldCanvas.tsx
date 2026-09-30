@@ -19,7 +19,7 @@ import {
   type NeuralNet,
   type NetStats,
 } from "../../lib/neuralNet";
-import { BLOOM_MS, DIVE_HOLD, DIVE_MS, DIVE_SCALE } from "./entryTransit";
+import { BLOOM_MS, DIVE_HOLD, DIVE_INNER_SCALE, DIVE_MS, DIVE_OUTER_SCALE, DIVE_SCALE } from "./entryTransit";
 import { emitNeuralEvent, onNeuralEvent } from "./neuralSignal";
 
 export type NeuralStats = NetStats;
@@ -123,8 +123,9 @@ function weakRaster(): boolean {
  * - El plano lejano se dibuja en un lienzo aparte a media resolución: al
  *   subirlo, el suavizado bilineal produce profundidad de campo real sin
  *   filtros GPU.
- * - En la travesía el bucle se corta: un último frame encendido y el zoom lo
- *   hace CSS sobre ese bitmap. Destello y bloom son opacidad, no raster.
+ * - En la travesía el bucle se corta: un último frame encendido. El zoom lo
+ *   hacen capas CSS (red lenta, dos membranas más rápidas). Destello y bloom
+ *   son opacidad, no raster.
  * - Se detiene cuando la pestaña no está visible; con `prefers-reduced-motion`
  *   compone un único frame curado (actividad repartida, inmóvil).
  * - Decorativo: `aria-hidden`, fuera del árbol accesible.
@@ -474,6 +475,8 @@ export function NeuralFieldCanvas({
           host.style.setProperty("--auth-bloom-delay", `${Math.max(0, DIVE_MS - BLOOM_MS)}ms`);
           host.style.setProperty("--auth-dive-scale", String(DIVE_SCALE));
           host.style.setProperty("--auth-dive-hold", String(DIVE_HOLD));
+          host.style.setProperty("--auth-outer-scale", String(DIVE_OUTER_SCALE));
+          host.style.setProperty("--auth-inner-scale", String(DIVE_INNER_SCALE));
         }
         draw();
         return;
@@ -517,6 +520,8 @@ export function NeuralFieldCanvas({
   return (
     <>
       <canvas ref={canvasRef} className={cn("block h-full w-full", className)} aria-hidden />
+      <div className="auth-membrane auth-membrane--outer" aria-hidden />
+      <div className="auth-membrane auth-membrane--inner" aria-hidden />
       <div className="auth-dive-flash" aria-hidden />
       <div className="auth-dive-bloom" aria-hidden />
     </>

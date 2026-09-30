@@ -191,7 +191,8 @@ export function AuthShell({
         window.clearTimeout(resetTimer);
       } else if (event.type === "dive") {
         // La escena cede el cuadro: el CSS apaga la UI, abre la máscara y
-        // amplía el bitmap congelado. Con movimiento reducido no hay travesía.
+        // las membranas adelantan al bitmap congelado. Con movimiento reducido
+        // no hay travesía.
         const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
         if (!reduce && sceneRef.current) sceneRef.current.dataset.dive = "true";
       }
