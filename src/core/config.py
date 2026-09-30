@@ -675,8 +675,9 @@ class Settings(BaseSettings):
     DOCUMENT_UNDERSTANDING_LAYOUT: bool = Field(
         default=True,
         description=(
-            "Orden de lectura por columnas cuando Document Understanding está "
-            "activo o en shadow. Ignorado si el master flag está off."
+            "Detección de columnas solo en el parseo productivo cuando "
+            "DOCUMENT_UNDERSTANDING_ENABLED está activo. Shadow no la usa "
+            "sobre el documento que se indexa."
         ),
     )
     DOCUMENT_UNDERSTANDING_TABLES: bool = Field(
@@ -689,7 +690,36 @@ class Settings(BaseSettings):
         default=False,
         description=(
             "Permite un DocumentUnderstandingProvider inyectado. No llama a "
-            "ningún modelo de visión por sí solo."
+            "ningún modelo de visión por sí solo. OCR y visión quedan fuera "
+            "de esta fase."
+        ),
+    )
+    CANONICAL_INLINE_MAX_BYTES: int = Field(
+        default=48_000,
+        description=(
+            "Markdown y AST canónicos caben inline en metadata hasta este "
+            "tamaño. Por encima se escriben como artefactos."
+        ),
+    )
+    SEMANTIC_UNIT_MAX_CHARS: int = Field(
+        default=1200,
+        description=(
+            "Una unidad semántica más chica no se parte. Solo se subdivide "
+            "si el texto de esa unidad supera este presupuesto."
+        ),
+    )
+    TABLE_MERGE_MIN_CONFIDENCE: float = Field(
+        default=0.65,
+        description=(
+            "Fusión automática de tablas multipágina solo si merge_confidence "
+            "alcanza este umbral. Por debajo queda continuation_candidate."
+        ),
+    )
+    COLUMN_MIN_CONFIDENCE: float = Field(
+        default=0.72,
+        description=(
+            "Si la confianza de columnas queda debajo, se conserva el orden "
+            "de lectura original."
         ),
     )
     # -------------------------------------------------------------------------

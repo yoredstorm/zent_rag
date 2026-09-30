@@ -8,6 +8,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import dataclasses
 import io
 import re
 import statistics
@@ -83,6 +84,18 @@ def _stable_document_id(organization_id: UUID, source_id: UUID | None, external_
     return uuid5(_NS, f"v2:{organization_id}:{source_id}:{external_id}")
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class PdfParseOptions:
+    """El llamador decide el parseo. El parser no lee flags globales.
+
+    column_detection=False es el camino productivo legacy y el de shadow.
+    Solo el camino de Document Understanding activo pide columnas.
+    """
+
+    column_detection: bool = False
+    column_min_confidence: float = 0.72
+
+
 class PdfParser(StructuredParser):
     """pdf → StructuredDocument (páginas, bloques con bbox, tablas, headings)."""
 
@@ -99,7 +112,9 @@ class PdfParser(StructuredParser):
         workspace_id: UUID | None = None,
         source_name: str = "document",
         mime_type: str | None = None,
+        options: PdfParseOptions | None = None,
     ) -> StructuredDocument:
+        parse_options = options or PdfParseOptions()
         try:
             import pdfplumber
         except ImportError as exc:  # pragma: no cover - dep declared in pyproject
@@ -147,13 +162,25 @@ class PdfParser(StructuredParser):
 
                 all_sizes.extend(word.get("size") or 0.0 for word in words if word.get("size"))
                 page_width = float(getattr(page, "width", 0) or 0)
-                from src.knowledge.understanding.layout import (
-                    column_word_groups,
-                    layout_analysis_enabled,
-                )
+                page_layout = {
+                    "column_applied": False,
+                    "column_confidence": None,
+                    "column_reason": "disabled",
+                }
+                if parse_options.column_detection:
+                    from src.knowledge.understanding.layout import detect_columns
 
-                if layout_analysis_enabled():
-                    groups = column_word_groups(list(words), page_width)
+                    decision = detect_columns(
+                        list(words),
+                        page_width,
+                        min_confidence=parse_options.column_min_confidence,
+                    )
+                    groups = decision.groups if decision.applied else [list(words)]
+                    page_layout = {
+                        "column_applied": decision.applied,
+                        "column_confidence": decision.column_confidence,
+                        "column_reason": decision.reason,
+                    }
                 else:
                     groups = [list(words)]
                 lines = []
@@ -242,6 +269,7 @@ class PdfParser(StructuredParser):
                         block_ids=tuple(b.id for b in page_blocks),
                         token_count=token_count(page_text),
                         content_hash=content_hash(page_text),
+                        metadata=page_layout,
                     )
                 )
 

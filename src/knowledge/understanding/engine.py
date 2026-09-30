@@ -19,21 +19,32 @@ from src.core.domain.knowledge_v2 import (
     StructuredDocument,
 )
 from src.knowledge.structure.base import content_hash, token_count
+from src.knowledge.understanding.artifacts import CanonicalArtifactStore
 from src.knowledge.understanding.enrich import (
     attach_section_owners,
-    classify_blocks,
     collapse_spaced_letters,
+    derive_document_semantics,
     link_neighbors,
     merge_multipage_tables,
 )
 from src.knowledge.understanding.layout import mark_repeated_chrome
 from src.knowledge.understanding.providers import DocumentUnderstandingProvider, PageOcrProvider
-from src.knowledge.understanding.versions import CHUNKING_VERSION, PARSER_VERSION, SCHEMA_VERSION
+from src.knowledge.understanding.units import build_retrieval_units
+from src.knowledge.understanding.versions import (
+    CHUNKING_VERSION,
+    PARSER_VERSION,
+    SCHEMA_VERSION,
+    SEMANTIC_UNIT_VERSION,
+    SOURCE_PROFILE_VERSION,
+    UNDERSTANDING_SCHEMA_VERSION,
+)
 from src.knowledge.understanding.views import (
     build_report,
-    content_fingerprint,
+    canonical_digest,
+    parsed_digest,
     pipeline_state,
     quality_report,
+    retrieval_digest,
     source_profile,
     to_ast,
     to_markdown,
@@ -108,15 +119,24 @@ def understand_document(
     current = attach_section_owners(current)
     current = collapse_spaced_letters(current)
     if merge_tables:
-        current = merge_multipage_tables(current)
+        current = merge_multipage_tables(
+            current,
+            min_confidence=float(_setting("TABLE_MERGE_MIN_CONFIDENCE", 0.65)),
+        )
         current = attach_section_owners(current)
-    current, extracted = classify_blocks(current)
+    current, extracted = derive_document_semantics(current)
     if model_provider is not None:
-        current, extracted = _apply_model(current, extracted, model_provider, warnings)
+        current, _ignored = _apply_model(current, extracted, model_provider, warnings)
+        current, extracted = derive_document_semantics(current)
     current = link_neighbors(current)
     current = _stamp_pages(current, ocr_used_pages)
 
-    quality = quality_report(current, ocr_pages=ocr_used_pages, warnings=warnings)
+    quality = quality_report(
+        current,
+        ocr_pages=ocr_used_pages,
+        warnings=warnings,
+        extracted=extracted,
+    )
     pending = [page for page in ocr_required if page not in ocr_used_pages]
     quality["ocr_required_pages"] = pending
     quality["ocr_pages"] = sorted(set(pending + ocr_used_pages))
@@ -136,18 +156,49 @@ def understand_document(
         state=state,
         elapsed_s=elapsed,
     )
-    plain = "\n".join(block.text for block in current.blocks if not block.metadata.get("chrome"))
-    fingerprint = content_fingerprint(plain, SCHEMA_VERSION, CHUNKING_VERSION)
-    visual = bool(current.figures) or bool(quality.get("ocr_pages")) or quality["table_confidence"] < 0.5
+    unit_source = dataclasses.replace(
+        current,
+        metadata={
+            **current.metadata,
+            "understanding": {
+                "exact_literals": extracted["exact_literals"],
+                "technical_fields": extracted["technical_fields"],
+                "relations": extracted["relations"],
+            },
+        },
+    )
+    units = build_retrieval_units(
+        unit_source,
+        budget=int(_setting("SEMANTIC_UNIT_MAX_CHARS", 1200)),
+    )
+    retrieval_hash = retrieval_digest(units)
+    canonical_hash = canonical_digest(ast, current)
+    parsed_hash = parsed_digest(current)
+    placed = CanonicalArtifactStore(root=_artifact_root()).place(
+        organization_id=str(current.organization_id),
+        document_id=str(current.id),
+        markdown=markdown,
+        ast=ast,
+        max_inline_bytes=int(_setting("CANONICAL_INLINE_MAX_BYTES", 48_000)),
+    )
+    table_score = quality.get("table_confidence")
+    visual = bool(current.figures) or bool(quality.get("ocr_pages")) or (
+        isinstance(table_score, (int, float)) and table_score < 0.5
+    )
     payload = {
         "mode": mode,
         "schema_version": SCHEMA_VERSION,
+        "understanding_schema_version": UNDERSTANDING_SCHEMA_VERSION,
         "parser_version": PARSER_VERSION,
         "chunking_version": CHUNKING_VERSION,
+        "semantic_unit_version": SEMANTIC_UNIT_VERSION,
+        "source_profile_version": SOURCE_PROFILE_VERSION,
         "canonical_version": SCHEMA_VERSION,
         "pipeline_state": state,
         "file_hash": file_hash,
-        "canonical_hash": hashlib.sha256(markdown.encode("utf-8")).hexdigest(),
+        "parsed_hash": parsed_hash,
+        "canonical_hash": canonical_hash,
+        "retrieval_hash": retrieval_hash,
         "profile": profile,
         "quality": quality,
         "report": report,
@@ -156,18 +207,90 @@ def understand_document(
         "exact_literals": extracted["exact_literals"],
         "cross_references": extracted["cross_references"],
         "relations": extracted["relations"],
+        "retrieval_units": [unit.compact() for unit in units],
+        "semantic_unit_count": sum(1 for unit in units if unit.unit_type != "SECTION"),
+        "semantic_units": True,
         "tree": tree,
         "visual_processing_required": visual,
-        "views": {"markdown": markdown, "ast": ast},
+        "artifact": {
+            "storage": placed["storage"],
+            "markdown_ref": placed.get("markdown_ref"),
+            "ast_ref": placed.get("ast_ref"),
+            "markdown_bytes": placed.get("markdown_bytes"),
+            "ast_bytes": placed.get("ast_bytes"),
+            "overflow": placed.get("overflow", False),
+        },
     }
+    if placed["storage"] == "inline":
+        payload["views"] = {"markdown": placed["markdown"], "ast": placed["ast"]}
     metadata = {**current.metadata, "filename": filename, "understanding": payload}
-    hashed = fingerprint if mode == "active" else current.content_hash
+    hashed = retrieval_hash if mode == "active" else current.content_hash
     return dataclasses.replace(
         current,
         content_hash=hashed,
         metadata=metadata,
         document_type=profile["document_type"],
     )
+
+
+def attach_shadow_report(
+    production: StructuredDocument,
+    shadow_source: StructuredDocument,
+    *,
+    file_hash: str | None = None,
+    filename: str | None = None,
+    merge_tables: bool = True,
+) -> StructuredDocument:
+    """Informe de comparación. No toca bloques, hash ni chunks productivos."""
+    understood = understand_document(
+        shadow_source,
+        file_hash=file_hash,
+        filename=filename,
+        merge_tables=merge_tables,
+        mode="active",
+    )
+    payload = understood.metadata.get("understanding") or {}
+    meta = dict(production.metadata)
+    meta.pop("understanding", None)
+    meta["understanding_shadow"] = {
+        "mode": "shadow",
+        "pipeline_state": payload.get("pipeline_state"),
+        "report": payload.get("report"),
+        "quality": payload.get("quality"),
+        "profile": payload.get("profile"),
+        "schema_version": SCHEMA_VERSION,
+        "parser_version": PARSER_VERSION,
+        "canonical_hash": payload.get("canonical_hash"),
+        "retrieval_hash": payload.get("retrieval_hash"),
+        "parsed_hash": payload.get("parsed_hash"),
+        "exact_literal_count": len(payload.get("exact_literals") or []),
+        "semantic_unit_count": payload.get("semantic_unit_count"),
+        "section_headings": [section.heading for section in understood.sections],
+    }
+    return dataclasses.replace(production, metadata=meta)
+
+
+def _setting(name: str, default):
+    try:
+        from src.core.config import get_settings
+
+        return getattr(get_settings(), name, default)
+    except Exception:  # noqa: BLE001
+        return default
+
+
+def _artifact_root():
+    try:
+        from pathlib import Path
+
+        from src.core.config import get_settings
+
+        raw = getattr(get_settings(), "UPLOAD_DIR", None)
+        if not raw:
+            return None
+        return Path(str(raw))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _apply_ocr(

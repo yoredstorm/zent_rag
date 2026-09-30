@@ -18,20 +18,32 @@ def annotate_chunks(document: StructuredDocument, chunks: list[DocumentChunk]) -
     fields = understanding.get("technical_fields") or []
     sections = {section.id: section for section in document.sections}
     for chunk in chunks:
-        block = _dominant_block(document, chunk.content)
-        found = [item["value"] for item in literals if item.get("value") and item["value"] in chunk.content]
-        if found:
-            chunk.metadata["exact_literals"] = found
         chunk.metadata["canonical_version"] = SCHEMA_VERSION
         chunk.metadata["parser_version"] = PARSER_VERSION
         chunk.metadata["filename"] = str(document.metadata.get("filename") or document.title)
+        section = sections.get(chunk.section_id) if chunk.section_id else None
+        if section is not None:
+            if section.metadata.get("prev_section_id"):
+                chunk.metadata["prev_section_id"] = section.metadata.get("prev_section_id")
+            if section.metadata.get("next_section_id"):
+                chunk.metadata["next_section_id"] = section.metadata.get("next_section_id")
+        if chunk.metadata.get("block_ids"):
+            chunk.metadata.setdefault("retrieval_unit", chunk.metadata.get("block_type") or "text")
+            continue
+        block = _dominant_block(document, chunk.content)
+        if not chunk.metadata.get("exact_literals"):
+            found = [item["value"] for item in literals if item.get("value") and item["value"] in chunk.content]
+            if found:
+                chunk.metadata["exact_literals"] = found
         if chunk.metadata.get("level") == "parent":
-            chunk.metadata["retrieval_unit"] = "section"
-            chunk.metadata["block_type"] = "section"
+            chunk.metadata["retrieval_unit"] = "SECTION"
+            chunk.metadata["block_type"] = "SECTION"
         elif block is not None:
             role = str(block.metadata.get("role") or block.kind.value)
             chunk.metadata["block_type"] = role
             chunk.metadata["retrieval_unit"] = _unit_for(role, chunk.content)
+            chunk.metadata["primary_block_id"] = str(block.id)
+            chunk.metadata["block_ids"] = [str(block.id)]
             if block.metadata.get("table_id"):
                 chunk.metadata["table_id"] = str(block.metadata["table_id"])
             if block.bbox is not None:
@@ -45,15 +57,10 @@ def annotate_chunks(document: StructuredDocument, chunks: list[DocumentChunk]) -
         else:
             chunk.metadata.setdefault("block_type", "text")
             chunk.metadata.setdefault("retrieval_unit", "text")
-        names = [item["name"] for item in fields if item.get("name") and item["name"] in chunk.content]
-        if names:
-            chunk.metadata["field_name"] = names[0]
-        section = sections.get(chunk.section_id) if chunk.section_id else None
-        if section is not None:
-            if section.metadata.get("prev_section_id"):
-                chunk.metadata["prev_section_id"] = section.metadata.get("prev_section_id")
-            if section.metadata.get("next_section_id"):
-                chunk.metadata["next_section_id"] = section.metadata.get("next_section_id")
+        if not chunk.metadata.get("field_name"):
+            names = [item["name"] for item in fields if item.get("name") and item["name"] in chunk.content]
+            if names:
+                chunk.metadata["field_name"] = names[0]
     return chunks
 
 
@@ -119,6 +126,10 @@ def index_metadata(document: StructuredDocument, chunk: DocumentChunk) -> dict:
         "prev_section_id",
         "next_section_id",
         "filename",
+        "block_ids",
+        "primary_block_id",
+        "primary_block_type",
+        "unit_id",
     )
     extra = {key: chunk.metadata.get(key) for key in keys if chunk.metadata.get(key) not in (None, [], "")}
     extra["canonical_version"] = understanding.get("schema_version")

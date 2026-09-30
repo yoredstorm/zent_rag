@@ -136,8 +136,16 @@ def collapse_spaced_letters(document: StructuredDocument) -> StructuredDocument:
     return dataclasses.replace(document, blocks=tuple(blocks))
 
 
-def merge_multipage_tables(document: StructuredDocument) -> StructuredDocument:
-    """Une tablas de páginas seguidas con el mismo encabezado. Una tabla lógica."""
+def merge_multipage_tables(
+    document: StructuredDocument,
+    *,
+    min_confidence: float = 0.65,
+) -> StructuredDocument:
+    """Une tablas solo si merge_confidence alcanza el umbral.
+
+    Misma cabecera y página siguiente no bastan. Sección o caption distintos
+    dejan continuation_candidate y no fusionan.
+    """
     if len(document.tables) < 2:
         return document
     ordered = sorted(
@@ -147,6 +155,8 @@ def merge_multipage_tables(document: StructuredDocument) -> StructuredDocument:
     used: set[UUID] = set()
     survivors: list[DocumentTable] = []
     merged_into: dict[UUID, UUID] = {}
+    low_conf: dict[UUID, float] = {}
+    merge_scores: dict[UUID, float] = {}
     for table in ordered:
         if table.id in used:
             continue
@@ -160,6 +170,11 @@ def merge_multipage_tables(document: StructuredDocument) -> StructuredDocument:
                 continue
             if not pages or other.page is None or other.page != pages[-1] + 1:
                 continue
+            confidence = _table_merge_confidence(table, other)
+            if confidence < min_confidence:
+                low_conf[other.id] = confidence
+                continue
+            merge_scores[table.id] = max(merge_scores.get(table.id, 0.0), confidence)
             extra = [
                 row
                 for row in other.rows
@@ -175,11 +190,23 @@ def merge_multipage_tables(document: StructuredDocument) -> StructuredDocument:
         meta["page_start"] = pages[0] if pages else table.page
         meta["page_end"] = pages[-1] if pages else table.page
         meta["merged_pages"] = pages
-        meta["provenance_type"] = "STRUCTURED" if absorbed else meta.get("provenance_type", "EXTRACTED")
+        if absorbed:
+            meta["merge_confidence"] = merge_scores.get(table.id, 0.0)
+            meta["merge_decision"] = "merged"
+            meta["provenance_type"] = "STRUCTURED"
+        elif table.id in low_conf:
+            meta["merge_confidence"] = low_conf[table.id]
+            meta["merge_decision"] = "related_table"
+            meta["continuation_candidate"] = True
+            meta["provenance_type"] = meta.get("provenance_type", "EXTRACTED")
+        else:
+            meta["provenance_type"] = meta.get("provenance_type", "EXTRACTED")
         survivors.append(dataclasses.replace(table, rows=tuple(rows), metadata=meta))
 
-    if not merged_into:
+    if not merged_into and not low_conf:
         return document
+    if not merged_into:
+        return dataclasses.replace(document, tables=tuple(survivors))
 
     rendered = {table.id: _render_rows(table) for table in survivors}
     blocks: list[StructuredBlock] = []
@@ -220,6 +247,40 @@ def _same_headers(left: DocumentTable, right: DocumentTable) -> bool:
     a = tuple(cell.strip().lower() for cell in left.headers if cell.strip())
     b = tuple(cell.strip().lower() for cell in right.headers if cell.strip())
     return bool(a) and a == b
+
+
+def _table_merge_confidence(left: DocumentTable, right: DocumentTable) -> float:
+    """Señales estructurales. No fusiona por cabecera repetida sola."""
+    if not _same_headers(left, right):
+        return 0.0
+    score = 0.35
+    if left.page and right.page and right.page == (left.page + 1):
+        score += 0.2
+    if left.headers and len(left.headers) == len(right.headers):
+        score += 0.15
+    left_section = str(left.metadata.get("section_id") or left.metadata.get("parent_section_id") or "")
+    right_section = str(right.metadata.get("section_id") or right.metadata.get("parent_section_id") or "")
+    if left_section and right_section and left_section == right_section:
+        score += 0.15
+    elif left_section and right_section and left_section != right_section:
+        score -= 0.4
+    left_caption = _caption_key(left)
+    right_caption = _caption_key(right)
+    if left_caption and right_caption and left_caption == right_caption:
+        score += 0.1
+    elif left_caption and right_caption and left_caption != right_caption:
+        score -= 0.45
+    if left.bbox is not None and right.bbox is not None:
+        overlap = min(left.bbox.x1, right.bbox.x1) - max(left.bbox.x0, right.bbox.x0)
+        width = max(left.bbox.x1 - left.bbox.x0, 1.0)
+        if overlap / width >= 0.6:
+            score += 0.1
+    return max(0.0, min(1.0, round(score, 2)))
+
+
+def _caption_key(table: DocumentTable) -> str:
+    raw = table.caption or str(table.metadata.get("caption") or "")
+    return re.sub(r"\s+", " ", raw).strip().lower()
 
 
 def _is_header_repeat(row: tuple[str, ...], headers: tuple[str, ...]) -> bool:
@@ -307,15 +368,18 @@ def classify_blocks(document: StructuredDocument) -> tuple[StructuredDocument, d
     for index, block in enumerate(blocks):
         if block.metadata.get("chrome") or block.metadata.get("superseded"):
             continue
-        role, kind, confidence = _role_for(block)
-        if role:
-            meta = dict(block.metadata)
-            meta["role"] = role
-            meta["confidence"] = confidence
-            meta["derived_by"] = "rules"
-            meta.setdefault("provenance_type", "EXTRACTED")
-            blocks[index] = dataclasses.replace(block, kind=kind, metadata=meta)
-            block = blocks[index]
+        if block.metadata.get("derived_by") == "model" and block.metadata.get("role"):
+            pass
+        else:
+            role, kind, confidence = _role_for(block)
+            if role:
+                meta = dict(block.metadata)
+                meta["role"] = role
+                meta["confidence"] = confidence
+                meta["derived_by"] = "rules"
+                meta.setdefault("provenance_type", "EXTRACTED")
+                blocks[index] = dataclasses.replace(block, kind=kind, metadata=meta)
+                block = blocks[index]
         for item in _definitions_in(block):
             definitions.append(item)
         for item in _literals_in(block):
@@ -344,6 +408,15 @@ def classify_blocks(document: StructuredDocument) -> tuple[StructuredDocument, d
             "relations": relations,
         },
     )
+
+
+def derive_document_semantics(document: StructuredDocument) -> tuple[StructuredDocument, dict]:
+    """Idempotente. Rearma derivados desde los bloques ya clasificados.
+
+    Un rol con derived_by=model se conserva. Definiciones, campos, literales,
+    relaciones y referencias se reconstruyen siempre. Sin OCR ni visión.
+    """
+    return classify_blocks(document)
 
 
 def _role_for(block: StructuredBlock) -> tuple[str | None, StructuredBlockKind, float]:
@@ -438,12 +511,27 @@ def _literals_in(block: StructuredBlock) -> list[dict]:
         if any(ch.isspace() for ch in literal) and pattern_type != "byte_ref":
             return
         seen.add(literal)
+        section_id = block.metadata.get("parent_section_id")
+        bbox = None
+        if block.bbox is not None:
+            bbox = {
+                "page": block.bbox.page,
+                "x0": block.bbox.x0,
+                "y0": block.bbox.y0,
+                "x1": block.bbox.x1,
+                "y1": block.bbox.y1,
+            }
         found.append(
             {
                 "value": literal,
                 "pattern_type": pattern_type,
                 "block_id": str(block.id),
                 "page": block.page,
+                "section_id": str(section_id) if section_id else None,
+                "field_name": None,
+                "bbox": bbox,
+                "relation_target": None,
+                "canonical_source": "text_layer",
                 "parent_definition": None,
                 "confidence": 0.95,
                 "derived_by": "rules",
@@ -682,6 +770,10 @@ def _link_patterns(fields: list[dict], literals: list[dict], relations: list[dic
         owner = next((item for item in literals if item["value"] == pattern), None)
         if owner is not None:
             owner["parent_definition"] = field["name"]
+            owner["field_name"] = field["name"]
+            owner["relation_target"] = field["name"]
+            if not owner.get("section_id") and field.get("section_id"):
+                owner["section_id"] = field["section_id"]
         relations.append(
             {
                 "relation_type": "HAS_PATTERN",

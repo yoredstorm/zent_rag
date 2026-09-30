@@ -159,6 +159,26 @@ function StoryHarness({
 }
 
 describe("ExecutionStoryView (§30, §31)", () => {
+  it("muestra KNOWLEDGE REPRESENTATION sin tratar el aviso como error de usuario", () => {
+    const story = buildExecutionStory({
+      ...COMPLEX_FLOW,
+      knowledge_representation: {
+        document_understanding: "ACTIVE",
+        canonical_version: "2",
+        retrieval: "V1",
+        source_profile_used: true,
+        semantic_units: true,
+        exact_literals: 3,
+        legacy_chunks_used: true,
+        warning: "DOCUMENT UNDERSTANDING ACTIVE BUT PRODUCTIVE RETRIEVAL IS V1",
+      },
+    });
+    render(<StoryHarness story={story} initialMode="story" />);
+    expect(screen.getByLabelText("KNOWLEDGE REPRESENTATION")).toBeTruthy();
+    expect(screen.getByText("ACTIVE")).toBeTruthy();
+    expect(screen.getByText("DOCUMENT UNDERSTANDING ACTIVE BUT PRODUCTIVE RETRIEVAL IS V1")).toBeTruthy();
+  });
+
   it("muestra la historia en lenguaje humano con fases numeradas", () => {
     renderStory();
     expect(screen.getByText("Respuesta completada")).toBeTruthy();

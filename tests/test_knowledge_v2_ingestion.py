@@ -214,7 +214,11 @@ async def test_engine_with_v2_repo_runs_v2_and_v1_in_parallel(context) -> None:
     assert v2_points
     assert all(p[3]["document_id"] == str(doc.id) for p in v2_points)
     assert any(p[3].get("section_id") for p in v2_points)
-    assert v2_points[0][3]["chunking_strategy"] == "document_structure+parent_child"
+    mode = (doc.metadata.get("understanding") or {}).get("mode")
+    expected_strategy = (
+        "semantic_units+parent_child" if mode == "active" else "document_structure+parent_child"
+    )
+    assert v2_points[0][3]["chunking_strategy"] == expected_strategy
     # el adapter inyecta organization_id en el PAYLOAD top-level (no en metadata)
     assert v2_points[0][3]["source_id"] == str(context["source"].id)
 

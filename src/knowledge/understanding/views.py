@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 
 from src.core.domain.knowledge_v2 import (
@@ -11,6 +12,12 @@ from src.core.domain.knowledge_v2 import (
     StructuredBlock,
     StructuredBlockKind,
     StructuredDocument,
+)
+from src.knowledge.understanding.versions import (
+    CHUNKING_VERSION,
+    SEMANTIC_UNIT_VERSION,
+    SOURCE_PROFILE_VERSION,
+    UNDERSTANDING_SCHEMA_VERSION,
 )
 
 _MARKDOWN_CAP = 200_000
@@ -21,15 +28,14 @@ def quality_report(
     *,
     ocr_pages: list[int],
     warnings: list[str],
+    extracted: dict | None = None,
 ) -> dict:
-    """Puntaje estimado. No finge precisión de un juez humano."""
+    """Dimensiones reales. overall no sube solo porque no hubo excepciones."""
+    extracted = extracted or {}
     pages = list(document.pages)
-    if not pages:
-        text_confidence = 1.0 if document.blocks else 0.0
-        empty_pages: list[int] = []
-    else:
+    empty_pages: list[int] = []
+    if pages:
         scores: list[float] = []
-        empty_pages = []
         for page in pages:
             size = len((page.text or "").strip())
             if size >= 40:
@@ -39,29 +45,119 @@ def quality_report(
                 empty_pages.append(page.page_number)
             else:
                 scores.append(0.45)
-        text_confidence = sum(scores) / len(scores)
-    layout_confidence = 0.85 if any(block.bbox is not None for block in document.blocks) else 0.5
-    table_confidence = 0.8 if document.tables else 0.7
-    reading_confidence = 0.8
-    score = (
-        0.5 * text_confidence
-        + 0.2 * layout_confidence
-        + 0.15 * table_confidence
-        + 0.15 * reading_confidence
-    )
-    score = max(0.0, score - min(0.2, 0.05 * len(warnings)))
+        text_fidelity = sum(scores) / len(scores)
+    else:
+        usable = [
+            block
+            for block in document.blocks
+            if (block.text or "").strip() and not block.metadata.get("chrome")
+        ]
+        covered = sum(min(len(block.text), 80) for block in usable)
+        text_fidelity = 0.0 if not usable else min(1.0, covered / (80 * len(usable)))
+
+    indexable = [
+        block
+        for block in document.blocks
+        if not block.metadata.get("chrome") and not block.metadata.get("superseded")
+    ]
+    if not indexable:
+        structure_confidence = 0.0
+    else:
+        owned = sum(
+            1
+            for block in indexable
+            if block.metadata.get("parent_section_id") or block.kind is StructuredBlockKind.HEADING
+        )
+        structure_confidence = owned / len(indexable)
+
+    layout_values = [
+        float(page.metadata["column_confidence"])
+        for page in pages
+        if isinstance(page.metadata.get("column_confidence"), (int, float))
+    ]
+    if layout_values:
+        layout_confidence = sum(layout_values) / len(layout_values)
+    elif any(block.bbox is not None for block in document.blocks):
+        layout_confidence = 0.55
+    else:
+        layout_confidence = 0.4
+
+    if document.tables:
+        confidences = [
+            float(table.metadata["merge_confidence"])
+            for table in document.tables
+            if isinstance(table.metadata.get("merge_confidence"), (int, float))
+        ]
+        candidates = sum(1 for table in document.tables if table.metadata.get("continuation_candidate"))
+        table_confidence = sum(confidences) / len(confidences) if confidences else 0.6
+        if candidates:
+            table_confidence = min(table_confidence, 0.5)
+    else:
+        table_confidence = None
+
+    if document.sections:
+        headed = sum(1 for section in document.sections if (section.heading or "").strip())
+        section_confidence = headed / len(document.sections)
+    else:
+        section_confidence = 0.2 if indexable else 0.0
+
+    symbol_preservation = _symbol_preservation(document, extracted)
+    dimensions = {
+        "text_fidelity": text_fidelity,
+        "structure_confidence": structure_confidence,
+        "layout_confidence": layout_confidence,
+        "section_confidence": section_confidence,
+    }
+    if table_confidence is not None:
+        dimensions["table_confidence"] = table_confidence
+    if symbol_preservation is not None:
+        dimensions["symbol_preservation"] = symbol_preservation
+    weights = {
+        "text_fidelity": 0.3,
+        "structure_confidence": 0.2,
+        "layout_confidence": 0.15,
+        "section_confidence": 0.15,
+        "table_confidence": 0.1,
+        "symbol_preservation": 0.1,
+    }
+    weighted = sum(weights[name] * value for name, value in dimensions.items())
+    weight_sum = sum(weights[name] for name in dimensions)
+    overall = weighted / weight_sum if weight_sum else 0.0
+    if warnings:
+        overall = max(0.0, overall - min(0.15, 0.03 * len(warnings)))
+    reading = layout_confidence
     return {
-        "text_confidence": round(text_confidence, 2),
+        "text_fidelity": round(text_fidelity, 2),
+        "text_confidence": round(text_fidelity, 2),
+        "structure_confidence": round(structure_confidence, 2),
         "layout_confidence": round(layout_confidence, 2),
-        "table_confidence": round(table_confidence, 2),
-        "reading_order_confidence": reading_confidence,
+        "table_confidence": None if table_confidence is None else round(table_confidence, 2),
+        "symbol_preservation": None if symbol_preservation is None else round(symbol_preservation, 2),
+        "section_confidence": round(section_confidence, 2),
+        "reading_order_confidence": round(reading, 2),
+        "overall_score": round(overall, 2),
         "ocr_used": bool(ocr_pages),
         "ocr_pages": list(ocr_pages),
         "empty_pages": empty_pages,
         "warnings": list(warnings),
-        "score": round(score, 2),
-        "quality_is_estimate": True,
+        "score": round(overall, 2),
+        "quality_is_estimate": False,
+        "dimensions": {key: round(value, 2) for key, value in dimensions.items()},
     }
+
+
+def _symbol_preservation(document: StructuredDocument, extracted: dict) -> float | None:
+    masks: list[str] = []
+    pattern = re.compile(r"(?=.*[&%#?*])[&%#?*A-Za-z0-9._\-]{2,32}")
+    for block in document.blocks:
+        if block.metadata.get("chrome"):
+            continue
+        masks.extend(pattern.findall(block.text or ""))
+    unique = list(dict.fromkeys(masks))
+    if not unique:
+        return None
+    found = {item.get("value") for item in extracted.get("exact_literals") or []}
+    return sum(1 for mask in unique if mask in found) / len(unique)
 
 
 def pipeline_state(quality: dict) -> str:
@@ -219,9 +315,8 @@ def _block_node(block: StructuredBlock) -> dict:
     role = str(block.metadata.get("role") or block.kind.value)
     node: dict = {
         "type": role,
-        "id": str(block.id),
+        "block_id": str(block.id),
         "page": block.page,
-        "text": block.text,
         "provenance": block.metadata.get("provenance_type") or "EXTRACTED",
     }
     if block.bbox is not None:
@@ -320,14 +415,22 @@ def source_profile(
     terms = [item["term"] for item in extracted.get("definitions") or []][:20]
     field_names = [item["name"] for item in extracted.get("technical_fields") or []][:20]
     literals = [item["value"] for item in extracted.get("exact_literals") or []][:12]
-    if field_names:
+    mask_literals = [
+        item for item in extracted.get("exact_literals") or [] if item.get("pattern_type") == "mask"
+    ]
+    strong_spec = len(field_names) >= 2 or (len(field_names) >= 1 and (document.tables or mask_literals))
+    if strong_spec:
         document_type = "technical_specification"
+        profile_confidence = 0.74
     elif any(str(block.metadata.get("role")) == "procedure" for block in document.blocks):
         document_type = "procedure"
+        profile_confidence = 0.62
     elif len(document.sections) >= 4:
         document_type = "manual"
+        profile_confidence = 0.58
     else:
-        document_type = document.document_type or "document"
+        document_type = "document"
+        profile_confidence = 0.4
     body = next(
         (
             block.text.strip()
@@ -336,19 +439,35 @@ def source_profile(
         ),
         "",
     )
+    paths = [" / ".join(section.section_path) for section in document.sections if section.section_path][:24]
+    captions = [table.caption for table in document.tables if table.caption][:12]
+    references = [
+        item.get("target_candidate")
+        for item in extracted.get("cross_references") or []
+        if item.get("target_candidate")
+    ][:12]
+    scopes = list(dict.fromkeys(headings))[:24]
     return {
         "source_id": str(document.source_id) if document.source_id else None,
         "title": document.title,
         "normalized_filename": (filename or document.title or "").strip(),
         "document_type": document_type,
+        "profile_confidence": profile_confidence,
+        "profile_version": SOURCE_PROFILE_VERSION,
         "major_sections": headings,
+        "section_paths": paths,
+        "declared_scopes": scopes,
+        "field_vocabulary": field_names,
+        "reference_vocabulary": references,
+        "table_captions": captions,
         "important_terms": terms,
         "declared_entities": field_names,
         "scope": body[:240],
         "content_summary": " · ".join(headings[:6]),
         "summary_provenance": "EXTRACTED",
         "exact_literals_sample": literals,
-        "structure_quality": quality.get("score"),
+        "important_exact_literals": literals[:8],
+        "structure_quality": quality.get("overall_score", quality.get("score")),
     }
 
 
@@ -390,6 +509,76 @@ def build_report(
             state,
         ],
     }
+
+
+def canonical_digest(ast: dict, document: StructuredDocument) -> str:
+    """Hash estructural. No usa solo Markdown ni ids aleatorios."""
+
+    def stable(node):
+        if isinstance(node, dict):
+            return {
+                key: stable(value)
+                for key, value in node.items()
+                if key not in {"id", "block_id"}
+            }
+        if isinstance(node, list):
+            return [stable(item) for item in node]
+        return node
+
+    blocks = [
+        {
+            "order": block.order,
+            "kind": block.kind.value,
+            "role": block.metadata.get("role"),
+            "page": block.page,
+            "text": block.text,
+        }
+        for block in document.blocks
+        if not block.metadata.get("chrome") and not block.metadata.get("superseded")
+    ]
+    material = json.dumps(
+        {
+            "schema": UNDERSTANDING_SCHEMA_VERSION,
+            "ast": stable(ast),
+            "blocks": blocks,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def retrieval_digest(units: list) -> str:
+    """Hash de unidades ordenadas. Un informe distinto no lo cambia."""
+    material = [
+        {
+            "type": unit.unit_type,
+            "heading": (unit.metadata or {}).get("heading"),
+            "page_start": unit.page_start,
+            "content": unit.content,
+            "field_name": unit.field_name,
+            "literals": list(unit.exact_literals),
+        }
+        for unit in units
+    ]
+    raw = json.dumps(
+        {
+            "semantic_unit_version": SEMANTIC_UNIT_VERSION,
+            "chunking_version": CHUNKING_VERSION,
+            "units": material,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def parsed_digest(document: StructuredDocument) -> str:
+    lines = [
+        f"{block.page}|{block.order}|{block.kind.value}|{block.text}"
+        for block in document.blocks
+    ]
+    return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
 
 
 def content_fingerprint(text: str, schema_version: str, chunking_version: str) -> str:

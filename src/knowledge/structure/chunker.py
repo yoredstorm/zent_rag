@@ -294,7 +294,7 @@ def chunk_structured_document(
                 content_hash=content_hash(piece),
                 provenance=CatalogProvenance.OBSERVED,
                 status=KnowledgeObjectStatus.OBSERVED,
-                metadata={"level": "child", **parent.metadata},
+                metadata={**parent.metadata, "level": "child"},
             )
             next_index += 1
             made.append(child)

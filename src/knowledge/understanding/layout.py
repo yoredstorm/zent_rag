@@ -22,18 +22,12 @@ _CHROME_MAX_CHARS = 90
 
 
 def layout_analysis_enabled() -> bool:
-    """Columnas solo con el master flag. Off = el parser V2 de siempre."""
-    try:
-        from src.core.config import get_settings
+    """El parser no consulta flags globales.
 
-        settings = get_settings()
-    except Exception:  # noqa: BLE001 — un fallo de config no cambia el parseo
-        return False
-    master = bool(
-        getattr(settings, "DOCUMENT_UNDERSTANDING_ENABLED", False)
-        or getattr(settings, "DOCUMENT_UNDERSTANDING_SHADOW", False)
-    )
-    return master and bool(getattr(settings, "DOCUMENT_UNDERSTANDING_LAYOUT", True))
+    Quien llama elige PdfParseOptions. Shadow no puede encender columnas
+    en el documento productivo. Esta función queda en False a propósito.
+    """
+    return False
 
 
 def _width(word: dict) -> float:
@@ -62,28 +56,65 @@ def _distinct_tops(words: list[dict]) -> int:
     return len({round(_top(word), 0) for word in words})
 
 
-def column_word_groups(words: list[dict], page_width: float) -> list[list[dict]]:
-    """Grupos de palabras en orden de lectura. Una columna devuelve un solo grupo.
+@dataclasses.dataclass(frozen=True)
+class ColumnLayout:
+    """Decisión de columnas. applied=False conserva el orden original."""
 
-    Dos columnas: bloque ancho de arriba, columna izquierda completa, columna
-    derecha completa, bloque ancho de abajo. Nunca intercala línea izquierda
-    con línea derecha.
+    groups: list[list[dict]]
+    column_confidence: float
+    applied: bool
+    reason: str
+
+
+def column_word_groups(words: list[dict], page_width: float) -> list[list[dict]]:
+    """Grupos en orden de lectura. Sin confianza suficiente, un solo grupo."""
+    decision = detect_columns(words, page_width)
+    if not decision.applied:
+        return [list(words)]
+    return decision.groups
+
+
+def detect_columns(
+    words: list[dict],
+    page_width: float,
+    *,
+    min_confidence: float = 0.72,
+) -> ColumnLayout:
+    """Regiones: encabezado ancho, cuerpo en columnas, pie ancho.
+
+    Una página no se asume de dos columnas. Sidebar, tres columnas o una
+    banda a todo el ancho (tabla) no reordenan el texto.
     """
+    original = [list(words)]
     material = [word for word in words if str(word.get("text") or "").strip()]
     if len(material) < 8 or page_width <= 0:
-        return [list(words)]
+        return ColumnLayout(original, 1.0, False, "single_column")
 
     narrow = [word for word in material if _width(word) <= page_width * 0.45]
     wide = [word for word in material if _width(word) > page_width * 0.45]
     if len(narrow) < 8:
-        return [list(words)]
+        return ColumnLayout(original, 1.0, False, "single_column")
 
-    split = _gap_split(narrow, page_width)
+    split = _gap_detail(narrow, page_width)
     if split is None:
-        return [list(words)]
-    left, right = split
+        return ColumnLayout(original, 1.0, False, "single_column")
+    left, right, best_gap, second_gap, split_x = split
+    if best_gap > 0 and second_gap >= best_gap * 0.7:
+        return ColumnLayout(original, 0.3, False, "multi_column")
+
+    full_rows, left, right = _peel_full_width(narrow, split_x, page_width)
+    if full_rows:
+        return ColumnLayout(original, 0.45, False, "mixed_full_width")
     if not _column_body(left) or not _column_body(right):
-        return [list(words)]
+        return ColumnLayout(original, 0.4, False, "weak_columns")
+
+    smaller, larger = (left, right) if len(left) <= len(right) else (right, left)
+    span = max(_x1(word) for word in smaller) - min(_x0(word) for word in smaller)
+    ratio = len(smaller) / max(len(larger), 1)
+    # Columna de texto corto puede ser angosta y seguir siendo dos columnas.
+    # Sidebar: poca masa Y franja fina.
+    if ratio <= 0.5 and span < page_width * 0.12:
+        return ColumnLayout(original, 0.34, False, "sidebar")
 
     body_top = min(_top(word) for word in left + right)
     body_bottom = max(_bottom(word) for word in left + right)
@@ -96,7 +127,18 @@ def column_word_groups(words: list[dict], page_width: float) -> list[list[dict]]
     groups.append(right)
     if below:
         groups.append(below)
-    return groups
+    confidence = 0.84 if above or below else 0.9
+    if confidence < min_confidence:
+        return ColumnLayout(original, confidence, False, "low_confidence")
+    return ColumnLayout(groups, confidence, True, "two_columns")
+
+
+def _x0(word: dict) -> float:
+    return float(word.get("x0") or 0.0)
+
+
+def _x1(word: dict) -> float:
+    return float(word.get("x1") or 0.0)
 
 
 def _column_body(words: list[dict]) -> bool:
@@ -122,6 +164,54 @@ def _gap_split(words: list[dict], page_width: float) -> tuple[list[dict], list[d
     if len(left) < 4 or len(right) < 4:
         return None
     return left, right
+
+
+def _gap_detail(
+    words: list[dict], page_width: float
+) -> tuple[list[dict], list[dict], float, float, float] | None:
+    centers = sorted(_center(word) for word in words)
+    gaps: list[tuple[float, float]] = []
+    for previous, current in zip(centers, centers[1:]):
+        gaps.append((current - previous, (previous + current) / 2.0))
+    if not gaps:
+        return None
+    gaps.sort(key=lambda item: item[0], reverse=True)
+    best_gap, split_x = gaps[0]
+    second_gap = gaps[1][0] if len(gaps) > 1 else 0.0
+    threshold = max(96.0, page_width * 0.15)
+    if best_gap < threshold:
+        return None
+    if not (page_width * 0.25 <= split_x <= page_width * 0.75):
+        return None
+    left = [word for word in words if _center(word) < split_x]
+    right = [word for word in words if _center(word) >= split_x]
+    if len(left) < 4 or len(right) < 4:
+        return None
+    return left, right, best_gap, second_gap, split_x
+
+
+def _peel_full_width(
+    words: list[dict], split_x: float, page_width: float
+) -> tuple[list[list[dict]], list[dict], list[dict]]:
+    """Filas que cruzan el hueco con gaps chicos son banda completa, no columnas."""
+    threshold = max(96.0, page_width * 0.15)
+    by_top: dict[int, list[dict]] = {}
+    for word in words:
+        by_top.setdefault(round(_top(word)), []).append(word)
+    full: list[list[dict]] = []
+    drop: set[int] = set()
+    for row in by_top.values():
+        centers = sorted(_center(word) for word in row)
+        max_gap = max((right - left for left, right in zip(centers, centers[1:])), default=0.0)
+        both = any(_center(word) < split_x for word in row) and any(
+            _center(word) >= split_x for word in row
+        )
+        if both and max_gap < threshold and len(row) >= 3:
+            full.append(row)
+            drop.update(id(word) for word in row)
+    left = [word for word in words if _center(word) < split_x and id(word) not in drop]
+    right = [word for word in words if _center(word) >= split_x and id(word) not in drop]
+    return full, left, right
 
 
 def _norm_chrome(text: str) -> str:

@@ -758,9 +758,61 @@ def with_story(flow: dict) -> dict:
         enriched = dict(flow)
         enriched["flow_version"] = FLOW_VERSION
         enriched["events"] = build_flow_events(enriched)
+        enriched["knowledge_representation"] = knowledge_representation_status()
         return enriched
     except Exception:  # noqa: BLE001 - el flujo nunca rompe la respuesta
         return flow
+
+
+def knowledge_representation_status() -> dict:
+    """Estado de retrieval visible en Ver Flujo. No es un error de usuario."""
+    try:
+        from src.core.config import get_settings
+
+        settings = get_settings()
+    except Exception:  # noqa: BLE001
+        return {
+            "document_understanding": "OFF",
+            "canonical_version": None,
+            "retrieval": "V1",
+            "source_profile_used": False,
+            "semantic_units": False,
+            "exact_literals": None,
+            "legacy_chunks_used": True,
+            "warning": None,
+        }
+    enabled = bool(getattr(settings, "DOCUMENT_UNDERSTANDING_ENABLED", False))
+    shadow = bool(getattr(settings, "DOCUMENT_UNDERSTANDING_SHADOW", False))
+    if enabled:
+        understanding = "ACTIVE"
+    elif shadow:
+        understanding = "SHADOW"
+    else:
+        understanding = "OFF"
+    v2 = bool(getattr(settings, "KNOWLEDGE_V2_ENABLED", False))
+    promote = bool(getattr(settings, "KNOWLEDGE_V2_PROMOTE", False))
+    v2_shadow = bool(getattr(settings, "KNOWLEDGE_V2_SHADOW", False))
+    if not v2:
+        retrieval = "V1"
+    elif promote:
+        retrieval = "V2_PROMOTED"
+    elif v2_shadow:
+        retrieval = "V2_SHADOW"
+    else:
+        retrieval = "V1"
+    warning = None
+    if understanding == "ACTIVE" and retrieval == "V1":
+        warning = "DOCUMENT UNDERSTANDING ACTIVE BUT PRODUCTIVE RETRIEVAL IS V1"
+    return {
+        "document_understanding": understanding,
+        "canonical_version": "2" if understanding == "ACTIVE" else None,
+        "retrieval": retrieval,
+        "source_profile_used": understanding == "ACTIVE",
+        "semantic_units": understanding == "ACTIVE",
+        "exact_literals": None,
+        "legacy_chunks_used": retrieval == "V1",
+        "warning": warning,
+    }
 
 
 __all__ = [
@@ -775,5 +827,6 @@ __all__ = [
     "UNMAPPED_STEP_PHASE",
     "build_flow_events",
     "canonical_status",
+    "knowledge_representation_status",
     "with_story",
 ]

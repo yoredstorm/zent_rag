@@ -7,8 +7,6 @@ import json
 import zlib
 from uuid import uuid4
 
-import pytest
-
 from src.core.domain.knowledge_v2 import (
     BoundingBox,
     DocumentPage,
@@ -160,9 +158,11 @@ def test_simbolo_exacto_sobrevive_en_canonico_markdown_y_indice() -> None:
 
 
 def test_retrieval_de_mascara_expande_al_padre_sin_exigir_el_ejemplo() -> None:
+    from src.knowledge.understanding.units import chunks_for_document
+
     understood = understand_document(_fclas_document())
     understood.check_consistency()
-    chunks = annotate_chunks(understood, chunk_structured_document(understood))
+    chunks = annotate_chunks(understood, chunks_for_document(understood))
     hit = expand_exact(chunks, "&&&F")
     assert hit is not None
     assert hit["parent"] is not None
@@ -316,11 +316,9 @@ def test_dos_columnas_leen_izquierda_completa_luego_derecha() -> None:
     assert lines == ["Left One", "Left Two", "Right Uno", "Right Dos"]
 
 
-def test_pdf_dos_columnas_no_mezcla_lineas(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "src.knowledge.understanding.layout.layout_analysis_enabled",
-        lambda: True,
-    )
+def test_pdf_dos_columnas_no_mezcla_lineas() -> None:
+    from src.knowledge.structure.pdf_parser import PdfParseOptions
+
     data = _pdf(
         [
             [
@@ -331,7 +329,13 @@ def test_pdf_dos_columnas_no_mezcla_lineas(monkeypatch: pytest.MonkeyPatch) -> N
             ]
         ]
     )
-    document = PdfParser().parse(data, organization_id=ORG, external_id="cols.pdf", source_name="cols.pdf")
+    document = PdfParser().parse(
+        data,
+        organization_id=ORG,
+        external_id="cols.pdf",
+        source_name="cols.pdf",
+        options=PdfParseOptions(column_detection=True),
+    )
     texts = [block.text for block in document.blocks]
     assert texts.index("Left One") < texts.index("Left Two") < texts.index("Right Uno") < texts.index("Right Dos")
 
@@ -355,6 +359,348 @@ def test_referencia_ambigua_no_se_resuelve() -> None:
     assert ref["target_candidate"] == "4.2"
     assert ref["resolved_target"] is None
     assert ref["confidence"] < 0.5
+
+
+def test_shadow_no_cambia_bloques_secciones_tablas_ni_chunks() -> None:
+    from src.knowledge.structure.chunker import chunk_structured_document as chunk
+    from src.knowledge.structure.pdf_parser import PdfParseOptions
+    from src.knowledge.understanding.engine import attach_shadow_report
+    from src.knowledge.understanding.layout import layout_analysis_enabled
+    from src.knowledge.understanding.parse_policy import production_pdf_options, shadow_pdf_options
+
+    class _Settings:
+        DOCUMENT_UNDERSTANDING_ENABLED = False
+        DOCUMENT_UNDERSTANDING_SHADOW = True
+        DOCUMENT_UNDERSTANDING_LAYOUT = True
+        COLUMN_MIN_CONFIDENCE = 0.72
+
+    assert layout_analysis_enabled() is False
+    assert production_pdf_options(_Settings()).column_detection is False
+    data = _pdf(
+        [
+            [
+                "BT /F1 11 Tf 72 620 Td (Left One) Tj ET",
+                "BT /F1 11 Tf 72 600 Td (Left Two) Tj ET",
+                "BT /F1 11 Tf 360 620 Td (Right Uno) Tj ET",
+                "BT /F1 11 Tf 360 600 Td (Right Dos) Tj ET",
+            ]
+        ]
+    )
+    off = PdfParser().parse(data, organization_id=ORG, external_id="off.pdf", source_name="off.pdf", options=PdfParseOptions())
+    production = PdfParser().parse(
+        data,
+        organization_id=ORG,
+        external_id="shadow.pdf",
+        source_name="shadow.pdf",
+        options=production_pdf_options(_Settings()),
+    )
+    assert _shape(off) == _shape(production)
+    assert [item.content for item in chunk(off)] == [item.content for item in chunk(production)]
+    shadow_parsed = PdfParser().parse(
+        data,
+        organization_id=ORG,
+        external_id="shadow-parse.pdf",
+        source_name="shadow-parse.pdf",
+        options=shadow_pdf_options(_Settings()),
+    )
+    shadow_result = understand_document(shadow_parsed, filename="shadow.pdf")
+    assert shadow_result.metadata["understanding"]["semantic_units"] is True
+    reported = attach_shadow_report(production, shadow_parsed, filename="shadow.pdf")
+    assert _shape(reported) == _shape(off)
+    assert reported.content_hash == production.content_hash
+    assert "understanding" not in reported.metadata
+    assert reported.metadata["understanding_shadow"]["mode"] == "shadow"
+    assert [block.text for block in shadow_parsed.blocks] != [block.text for block in production.blocks]
+
+
+def test_texto_repetido_conserva_su_block_id() -> None:
+    from src.knowledge.understanding.units import chunks_for_document
+
+    text = "Applies when the condition holds."
+    first_heading = _block("ONE", 0, kind=StructuredBlockKind.HEADING, y0=40)
+    first_body = _block(text, 1, y0=80)
+    second_heading = _block("TWO", 2, kind=StructuredBlockKind.HEADING, y0=140)
+    second_body = _block(text, 3, y0=180)
+    first_section = DocumentSection(
+        document_id=uuid4(),
+        organization_id=ORG,
+        section_path=("ONE",),
+        heading="ONE",
+        depth=0,
+        order=0,
+        page_start=1,
+        page_end=1,
+        block_ids=(first_heading.id,),
+        text="ONE",
+    )
+    second_section = DocumentSection(
+        document_id=uuid4(),
+        organization_id=ORG,
+        section_path=("TWO",),
+        heading="TWO",
+        depth=0,
+        order=1,
+        page_start=1,
+        page_end=1,
+        block_ids=(second_heading.id,),
+        text="TWO",
+    )
+    understood = understand_document(
+        _document(
+            [first_heading, first_body, second_heading, second_body],
+            sections=(first_section, second_section),
+        )
+    )
+    hits = [
+        chunk
+        for chunk in chunks_for_document(understood)
+        if chunk.content.strip() == text
+    ]
+    assert len(hits) == 2
+    assert {chunk.metadata["primary_block_id"] for chunk in hits} == {
+        str(first_body.id),
+        str(second_body.id),
+    }
+
+
+def test_literal_and_f_pertenece_a_fclas() -> None:
+    understood = understand_document(_fclas_document(), filename="Rec2_Rules.pdf")
+    literal = next(
+        item
+        for item in understood.metadata["understanding"]["exact_literals"]
+        if item["value"] == "&&&F"
+    )
+    assert literal["field_name"] == "FCLAS"
+    assert literal["section_id"]
+    assert literal["block_id"]
+    assert literal["page"] == 42
+    assert literal["bbox"]["page"] == 42
+    assert literal["canonical_source"] == "text_layer"
+    assert literal["provenance"] == "EXTRACTED"
+
+
+def test_unidad_chica_no_se_parte_y_la_grande_si() -> None:
+    from src.knowledge.understanding.units import build_retrieval_units, chunks_from_retrieval_units
+
+    heading = _block("DEF", 0, kind=StructuredBlockKind.HEADING, y0=40)
+    definition = _block("TERM — " + ("a" * 220), 1, y0=80)
+    section = DocumentSection(
+        document_id=uuid4(),
+        organization_id=ORG,
+        section_path=("DEF",),
+        heading="DEF",
+        depth=0,
+        order=0,
+        page_start=1,
+        page_end=1,
+        block_ids=(heading.id,),
+        text="DEF",
+    )
+    understood = understand_document(_document([heading, definition], sections=(section,)))
+    units = build_retrieval_units(understood, budget=1200)
+    definitions = [unit for unit in units if unit.unit_type == "DEFINITION"]
+    assert len(definitions) == 1
+    assert len(definitions[0].content) > 200
+    huge = _block("PARA\n" + "\n".join(f"line {index} " + ("x" * 40) for index in range(40)), 1, y0=80)
+    huge_doc = understand_document(_document([heading, huge], sections=(section,)))
+    split_units = [
+        unit
+        for unit in build_retrieval_units(huge_doc, budget=80)
+        if unit.unit_type == "PARAGRAPH_GROUP"
+    ]
+    assert len(split_units) > 1
+    chunks = chunks_from_retrieval_units(understood, units)
+    parent = next(chunk for chunk in chunks if chunk.metadata.get("level") == "parent")
+    assert parent.metadata["retrieval_unit"] == "SECTION"
+    assert "TERM" in parent.content
+
+
+def test_tablas_con_misma_cabecera_y_distinto_caption_no_se_fusionan() -> None:
+    headers = ("Code", "Description")
+    first = DocumentTable(
+        document_id=uuid4(),
+        organization_id=ORG,
+        headers=headers,
+        rows=(("A", "Alpha"),),
+        page=10,
+        caption="Table A",
+        metadata={"table_index": 0, "section_id": "section-a"},
+    )
+    second = DocumentTable(
+        document_id=uuid4(),
+        organization_id=ORG,
+        headers=headers,
+        rows=(("B", "Beta"),),
+        page=11,
+        caption="Table B",
+        metadata={"table_index": 0, "section_id": "section-b"},
+    )
+    understood = understand_document(
+        _document(
+            [
+                _block("Code | Description\nA | Alpha", 0, 10, kind=StructuredBlockKind.TABLE, table_id=first.id),
+                _block("Code | Description\nB | Beta", 1, 11, kind=StructuredBlockKind.TABLE, table_id=second.id),
+            ],
+            tables=(first, second),
+        )
+    )
+    assert len(understood.tables) == 2
+    assert any(table.metadata.get("continuation_candidate") for table in understood.tables)
+    assert all(table.metadata.get("merge_decision") != "merged" for table in understood.tables)
+
+
+def test_layout_no_reordena_casos_debiles() -> None:
+    from src.knowledge.understanding.layout import detect_columns
+
+    def word(text: str, x: float, y: float, width: float = 70) -> dict:
+        return {"text": text, "x0": x, "x1": x + width, "top": y, "bottom": y + 10}
+
+    single = [word(f"W{index}", 72, 80 + index * 16) for index in range(8)]
+    single_layout = detect_columns(single, 612)
+    assert single_layout.applied is False
+    assert single_layout.reason == "single_column"
+
+    two = [
+        word("Left", 72, 100),
+        word("One", 150, 100),
+        word("Right", 400, 100),
+        word("Uno", 480, 100),
+        word("Left", 72, 140),
+        word("Two", 150, 140),
+        word("Right", 400, 140),
+        word("Dos", 480, 140),
+    ]
+    titled = [word("TITLE", 72, 40, width=460), *two]
+    titled_layout = detect_columns(titled, 612)
+    assert titled_layout.applied is True
+    assert titled_layout.groups[0][0]["text"] == "TITLE"
+    assert titled_layout.column_confidence >= 0.72
+
+    foot = [*two, word("FOOT", 72, 700, width=460)]
+    foot_layout = detect_columns(foot, 612)
+    assert foot_layout.applied is True
+    assert foot_layout.groups[-1][0]["text"] == "FOOT"
+
+    sidebar = [word(f"L{index}", 72, 80 + (index % 4) * 20) for index in range(8)]
+    sidebar += [word("S", 560, 100, width=24), word("B", 560, 140, width=24), word("A", 560, 180, width=24), word("R", 560, 220, width=24)]
+    sidebar_layout = detect_columns(sidebar, 612)
+    assert sidebar_layout.applied is False
+
+    table = [
+        *two,
+        word("C0", 72, 220, width=40),
+        word("C1", 140, 220, width=40),
+        word("C2", 210, 220, width=40),
+        word("C3", 280, 220, width=40),
+        word("C4", 360, 220, width=40),
+        word("C5", 430, 220, width=40),
+        word("C6", 500, 220, width=40),
+    ]
+    table_layout = detect_columns(table, 612)
+    assert table_layout.applied is False
+    three = []
+    for y in (100, 140, 180):
+        three.extend([word("A", 60, y), word("B", 250, y), word("C", 460, y)])
+    assert detect_columns(three, 612).applied is False
+
+
+def test_sigla_suelta_no_inventa_technical_specification() -> None:
+    understood = understand_document(_document([_block("ABC", 0, y0=100)], title="notes"))
+    profile = understood.metadata["understanding"]["profile"]
+    assert profile["document_type"] == "document"
+    assert profile["profile_confidence"] < 0.7
+    quality = understood.metadata["understanding"]["quality"]
+    assert quality["quality_is_estimate"] is False
+    assert "text_fidelity" in quality["dimensions"]
+    assert "section_confidence" in quality["dimensions"]
+
+
+def test_artefacto_canonico_sale_de_metadata_si_supera_el_umbral(tmp_path) -> None:
+    from src.knowledge.understanding.artifacts import CanonicalArtifactStore
+
+    store = CanonicalArtifactStore(tmp_path)
+    placed = store.place(
+        organization_id="org",
+        document_id="doc",
+        markdown="x" * 40,
+        ast={"type": "document", "children": [{"block_id": "b1"}]},
+        max_inline_bytes=10,
+    )
+    assert placed["storage"] == "artifact"
+    assert "markdown" not in placed
+    assert (tmp_path / "org" / "understanding" / "doc" / "canonical.md").read_text(encoding="utf-8").startswith("x")
+
+
+def test_retrieval_hash_ignora_el_informe() -> None:
+    first = understand_document(_fclas_document())
+    second = understand_document(_fclas_document())
+    assert first.metadata["understanding"]["retrieval_hash"] == second.metadata["understanding"]["retrieval_hash"]
+    assert first.content_hash == first.metadata["understanding"]["retrieval_hash"]
+    changed = _fclas_document()
+    blocks = list(changed.blocks)
+    blocks[3] = _block("&&&G", 3, 42, y0=170)
+    altered = understand_document(_document(blocks, sections=changed.sections, title=changed.title))
+    assert altered.metadata["understanding"]["retrieval_hash"] != first.metadata["understanding"]["retrieval_hash"]
+
+
+def test_diagnostico_separa_capas_sin_llm() -> None:
+    from src.knowledge.understanding.diagnose import diagnose_question, find_literal, regression_gate, score_expected
+    from src.knowledge.understanding.units import chunks_for_document
+
+    understood = understand_document(_fclas_document(), filename="Rec2_Rules.pdf")
+    chunks = chunks_for_document(understood)
+    found = find_literal(understood, chunks, "&&&F")
+    assert found["found"] is True
+    assert found["field_name"] == "FCLAS"
+    assert found["parent_heading"] == "FCLAS"
+    query = (
+        "consulta si me viene en el record 2 esto en FCLAS &&&F quiere decir "
+        "que el farebasis debe ser de ese tamaño? en el boleto viene asi QNNF0SME cumplira?"
+    )
+    report = diagnose_question(
+        understood,
+        chunks,
+        query,
+        field_name="FCLAS",
+        literal="&&&F",
+        example="QNNF0SME",
+    )
+    assert report["layers"]["INGESTION"] == "PASS"
+    assert report["layers"]["EXACT_RETRIEVAL"] == "PASS"
+    assert report["layers"]["STRUCTURAL_EXPANSION"] == "PASS"
+    assert report["layers"]["EVIDENCE"] == "PASS"
+    assert report["layers"]["GENERATION"] == "SKIPPED"
+    assert report["example"]["source_match_required"] is False
+    scores = score_expected(
+        understood,
+        {"sections": ["FCLAS"], "exact_literals": ["&&&F"], "fields": ["FCLAS"], "tables": 0},
+    )
+    assert scores["exact_literal_recall"] == 1
+    assert score_expected(understood, None) == {}
+    assert regression_gate(scores, {**scores, "exact_literal_recall": 0.0}) == ["exact_literal_recall"]
+
+
+def test_rol_de_provider_rearma_derivados() -> None:
+    class _Provider:
+        def correct(self, *, raw_text: str, layout_blocks: list[dict], page_image: bytes | None = None) -> dict:
+            target = next(block for block in layout_blocks if str(block.get("text") or "").startswith("Note:"))
+            return {"block_roles": {target["id"]: "warning"}, "confidence": 0.66}
+
+    understood = understand_document(_fclas_document(), model_provider=_Provider())
+    note = next(block for block in understood.blocks if block.text.startswith("Note:"))
+    assert note.metadata["derived_by"] == "model"
+    assert note.metadata["role"] == "warning"
+    assert any(
+        item["relation_type"] == "HAS_WARNING" for item in understood.metadata["understanding"]["relations"]
+    )
+
+
+def _shape(document) -> dict:
+    return {
+        "blocks": [(block.kind.value, block.text, block.page, block.order) for block in document.blocks],
+        "sections": [(section.heading, section.section_path, section.page_start) for section in document.sections],
+        "tables": [(table.headers, table.rows, table.page, table.caption) for table in document.tables],
+    }
 
 
 def _pdf(page_ops: list[list[str]]) -> bytes:

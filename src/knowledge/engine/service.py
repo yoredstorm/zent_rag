@@ -190,6 +190,15 @@ def _validate_metadata(
     return cleaned, None
 
 
+def _document_understanding_settings():
+    try:
+        from src.core.config import get_settings
+
+        return get_settings()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 class KnowledgeIngestionEngine:
     """Motor de ingestion de la Knowledge Platform."""
 
@@ -711,20 +720,55 @@ class KnowledgeIngestionEngine:
         started = time.perf_counter()
         outcome = "parse_error"
         try:
+            filename = str(record.metadata.get("filename") or external_id)
+            parse_kwargs: dict = {}
+            du_settings = _document_understanding_settings()
+            if getattr(parser, "kind", None) == "pdf" and du_settings is not None:
+                from src.knowledge.understanding.parse_policy import production_pdf_options
+
+                parse_kwargs["options"] = production_pdf_options(du_settings)
             document = parser.parse(
                 raw_data,
                 organization_id=job.organization_id,
                 external_id=external_id,
                 source_id=source.id,
                 workspace_id=source.workspace_id,
-                source_name=str(record.metadata.get("filename") or external_id),
+                source_name=filename,
+                **parse_kwargs,
             )
-            document = await self._apply_document_understanding(
-                job,
-                document,
-                raw_data,
-                filename=str(record.metadata.get("filename") or external_id),
+            shadow_only = bool(
+                du_settings is not None
+                and getattr(du_settings, "DOCUMENT_UNDERSTANDING_SHADOW", False)
+                and not getattr(du_settings, "DOCUMENT_UNDERSTANDING_ENABLED", False)
+                and getattr(parser, "kind", None) == "pdf"
             )
+            if shadow_only:
+                from src.knowledge.understanding.engine import attach_shadow_report, file_sha256
+                from src.knowledge.understanding.parse_policy import shadow_pdf_options
+
+                shadow_doc = parser.parse(
+                    raw_data,
+                    organization_id=job.organization_id,
+                    external_id=external_id,
+                    source_id=source.id,
+                    workspace_id=source.workspace_id,
+                    source_name=filename,
+                    options=shadow_pdf_options(du_settings),
+                )
+                document = attach_shadow_report(
+                    document,
+                    shadow_doc,
+                    file_hash=file_sha256(raw_data),
+                    filename=filename,
+                    merge_tables=bool(getattr(du_settings, "DOCUMENT_UNDERSTANDING_TABLES", True)),
+                )
+            else:
+                document = await self._apply_document_understanding(
+                    job,
+                    document,
+                    raw_data,
+                    filename=filename,
+                )
             document.check_consistency()
             outcome = "persist_error"
             change_kind = await self._structured_v2.upsert_document(document)
@@ -1081,12 +1125,10 @@ class KnowledgeIngestionEngine:
         from src.knowledge.structure import (
             ChunkType as _ChunkType,
         )
-        from src.knowledge.structure import (
-            chunk_structured_document as _chunk_structured_document,
-        )
         from src.knowledge.understanding import annotate_chunks, index_metadata
+        from src.knowledge.understanding.units import chunks_for_document
 
-        chunks = _chunk_structured_document(document, config=_ChunkingConfig())
+        chunks = chunks_for_document(document, config=_ChunkingConfig())
         understanding = document.metadata.get("understanding") or {}
         if understanding.get("mode") == "active":
             annotate_chunks(document, chunks)
@@ -1152,7 +1194,7 @@ class KnowledgeIngestionEngine:
                     "external_id": document.external_id,
                     "content_hash": chunk.content_hash,
                     "chunking_strategy": (
-                        "document_understanding+parent_child"
+                        "semantic_units+parent_child"
                         if (document.metadata.get("understanding") or {}).get("mode") == "active"
                         else "document_structure+parent_child"
                     ),

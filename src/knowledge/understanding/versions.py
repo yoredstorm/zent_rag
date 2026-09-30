@@ -7,8 +7,11 @@
 # =============================================================================
 
 SCHEMA_VERSION = "2"
-PARSER_VERSION = "document-understanding-1.0.0"
-CHUNKING_VERSION = "structure-first-1"
+PARSER_VERSION = "pdfplumber-text-1.1"
+UNDERSTANDING_SCHEMA_VERSION = "1.1"
+SEMANTIC_UNIT_VERSION = "1"
+CHUNKING_VERSION = "semantic-units-1"
+SOURCE_PROFILE_VERSION = "1.1"
 PIPELINE = "document_understanding"
 
 # Namespace estable para ids derivados (procedimientos, relaciones). No es ATPCO.
