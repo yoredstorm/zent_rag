@@ -41,7 +41,7 @@ def _pct(part: float, total: float) -> float:
 
 
 class KnowledgeModelService:
-    def __init__(self, repository, materializer=None) -> None:
+    def __init__(self, repository, materializer) -> None:
         self._repo = repository
         self._materializer = materializer
 

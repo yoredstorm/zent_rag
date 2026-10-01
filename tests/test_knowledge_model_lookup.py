@@ -119,6 +119,6 @@ def test_assertion_row_expone_vigencia() -> None:
 async def test_service_passthrough(org) -> None:
     from src.platform.knowledge_model.service import KnowledgeModelService
 
-    service = KnowledgeModelService(PostgresKnowledgeModelRepository())
+    service = KnowledgeModelService(PostgresKnowledgeModelRepository(), None)
     assert await service.lookup_aliases(org.id, ["cat 31"]) == []
     assert await service.find_objects_by_names(org.id, ["no existe"]) == []
