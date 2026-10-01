@@ -7,10 +7,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from src.core.config import get_settings
-from src.runtime.cognitive_plan import CognitivePlan
-from src.runtime.knowledge_strategy import KnowledgeStrategy
+
+if TYPE_CHECKING:  # solo anotaciones: con `off` no se importa plan/strategy
+    from src.runtime.cognitive_plan import CognitivePlan
+    from src.runtime.knowledge_strategy import KnowledgeStrategy
 
 COGNITIVE_MODES = ("off", "shadow", "limited", "active")
 
