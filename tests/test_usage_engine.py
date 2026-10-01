@@ -151,7 +151,15 @@ class TestIdempotency:
         _require_dev()
         counters = UsageCounters()
         org = uuid4()
-        today = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
+        # En día 1, "ayer" cae en el mes anterior y la ventana mensual difiere.
+        # Se ancla la referencia dentro del mismo mes para probar el rollover
+        # diario con la ventana mensual compartida.
+        today = (
+            now.replace(day=2, hour=12, minute=0, second=0, microsecond=0)
+            if now.day == 1
+            else now
+        )
         yesterday = today - timedelta(days=1)
         await counters.record(org, uuid4(), tokens=5, cost=0.005, created_at=yesterday)
         await counters.record(org, uuid4(), tokens=7, cost=0.007, created_at=today)
