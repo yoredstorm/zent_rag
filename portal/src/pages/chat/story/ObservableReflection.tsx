@@ -73,14 +73,14 @@ export function ObservableReflection({
                 ) : null}
               </dd>
             </div>
-            <div>
-              <dt className="text-faint">Certeza de la decisión</dt>
-              <dd className="text-text">
-                {judgment.confidenceBand
-                  ? BAND_LABELS[judgment.confidenceBand] ?? judgment.confidenceBand
-                  : "No clasificada"}
-              </dd>
-            </div>
+            {judgment.confidenceBand ? (
+              <div>
+                <dt className="text-faint">Certeza de la decisión</dt>
+                <dd className="text-text">
+                  {BAND_LABELS[judgment.confidenceBand] ?? judgment.confidenceBand}
+                </dd>
+              </div>
+            ) : null}
           </dl>
           <p className="mt-1.5 text-[11.5px] text-muted">
             <span className="text-faint">Impacto: </span>

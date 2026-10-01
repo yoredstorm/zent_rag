@@ -136,7 +136,7 @@ function Judgment({ narrative }: { narrative: ExecutionNarrative }) {
   return (
     <>
       <p>
-        JEV hizo {count} comprobación{count === 1 ? "" : "es"}.{" "}
+        JEV hizo {count} {count === 1 ? "comprobación" : "comprobaciones"}.{" "}
         {influenced
           ? `${influenced} influyó en la ejecución.`
           : "Revisó el camino, pero no necesitó cambiarlo."}

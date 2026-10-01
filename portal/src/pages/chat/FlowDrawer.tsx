@@ -166,7 +166,7 @@ export default function FlowDrawer({
       open={open}
       onOpenChange={onOpenChange}
       title="Ver flujo"
-      description="La historia auditable de cómo Zent llegó a esta respuesta."
+      description="Qué hizo Zent, qué encontró y por qué respalda esta respuesta."
     >
       {loading ? <Skeleton className="h-40" /> : null}
       {error ? <p className="text-[13px] text-danger">{error}</p> : null}

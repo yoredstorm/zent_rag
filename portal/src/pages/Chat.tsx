@@ -339,6 +339,8 @@ export default function ChatPage() {
         role: "assistant",
         content: result.text,
         sources: result.sources,
+        sourceCount: result.sourceCount,
+        documentCount: result.documentCount,
         sqlQuery: result.sqlQuery ?? null,
         method: result.method,
         lazyIngested: result.lazyIngested,
@@ -1086,11 +1088,21 @@ function RagTracePanel({ trace }: { trace: Record<string, unknown> }) {
   );
 }
 
-/** Evidencia: las fuentes son una capacidad principal, no un link al pie. */
-function SourceEvidence({ sources }: { sources: Source[] }) {
-  const [openIndex, setOpenIndex] = useState<number | null>(null);
+/** Evidencia: agrupada por documento, sin fragmentos vacíos ni numeración doble. */
+function SourceEvidence({
+  sources,
+  sourceCount,
+  documentCount,
+}: {
+  sources: Source[];
+  sourceCount?: number;
+  documentCount?: number;
+}) {
   const [open, setOpen] = useState(false);
-  const selected = openIndex === null ? null : sources[openIndex];
+  const [selected, setSelected] = useState<Source | null>(null);
+  const groups = useMemo(() => groupSources(sources), [sources]);
+  const totalDocuments = documentCount ?? groups.length;
+  const totalFragments = sourceCount ?? sources.length;
 
   return (
     <>
@@ -1101,7 +1113,8 @@ function SourceEvidence({ sources }: { sources: Source[] }) {
         onClick={() => setOpen((o) => !o)}
       >
         <Quotes size={12} aria-hidden />
-        {sources.length} {sources.length === 1 ? "fuente" : "fuentes"} recuperadas
+        {totalDocuments} {totalDocuments === 1 ? "documento" : "documentos"} ·{" "}
+        {totalFragments} {totalFragments === 1 ? "fragmento" : "fragmentos"}
         <CaretDown
           size={11}
           className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`}
@@ -1110,31 +1123,38 @@ function SourceEvidence({ sources }: { sources: Source[] }) {
       </button>
       {open && (
         <ul className="mt-2 flex flex-col gap-1.5">
-          {sources.map((s, j) => (
-            <li key={j}>
-              <button
-                type="button"
-                onClick={() => setOpenIndex(j)}
-                className="w-full cursor-pointer rounded-sm border border-border-soft bg-surface px-2.5 py-2 text-left transition-colors duration-150 hover:border-border-strong"
-              >
-                <span className="flex items-start gap-2">
-                  <span className="mono mt-px shrink-0 text-[10px] text-faint">{j + 1}</span>
-                  <span className="line-clamp-2 min-w-0 flex-1 text-[12.5px] leading-relaxed text-muted">
-                    {s.text}
-                  </span>
-                  {s.score !== undefined && (
-                    <span className="mono shrink-0 text-[10px] text-faint">
-                      {(s.score * 100).toFixed(0)}%
-                    </span>
-                  )}
-                </span>
-                {s.score !== undefined && (
-                  <Progress
-                    value={Math.round(s.score * 100)}
-                    className="mt-1.5 pl-5"
-                  />
-                )}
-              </button>
+          {groups.map((group) => (
+            <li key={group.key} className="rounded-sm border border-border-soft bg-surface px-2.5 py-2">
+              <p className="text-[12.5px] leading-relaxed text-text">
+                {group.name || "Fuente sin nombre"}
+              </p>
+              <ul className="mt-1.5 flex flex-col gap-1">
+                {group.items.map((source, index) => (
+                  <li key={`${group.key}-${index}`}>
+                    <button
+                      type="button"
+                      disabled={!source.text}
+                      onClick={() => source.text && setSelected(source)}
+                      className="w-full cursor-pointer text-left text-[11.5px] text-muted transition-colors duration-150 hover:text-text disabled:cursor-default disabled:text-faint"
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className="shrink-0">
+                          Fragmento {index + 1}
+                          {source.page !== undefined ? ` · Página ${source.page}` : ""}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate">
+                          {source.text || "El texto del fragmento no está disponible en la traza."}
+                        </span>
+                        {source.score !== undefined && (
+                          <span className="mono shrink-0 text-[10px] text-faint">
+                            {(source.score * 100).toFixed(0)}%
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
             </li>
           ))}
         </ul>
@@ -1142,7 +1162,7 @@ function SourceEvidence({ sources }: { sources: Source[] }) {
 
       <Drawer
         open={selected !== null}
-        onOpenChange={(next) => !next && setOpenIndex(null)}
+        onOpenChange={(next) => !next && setSelected(null)}
         title="Evidencia recuperada"
         description={
           selected?.score !== undefined
@@ -1152,6 +1172,9 @@ function SourceEvidence({ sources }: { sources: Source[] }) {
       >
         {selected && (
           <div className="flex flex-col gap-4">
+            {selected.documentName ? (
+              <p className="text-[12px] text-faint">{selected.documentName}</p>
+            ) : null}
             {selected.image && (
               <img
                 src={`data:image/svg+xml;base64,${selected.image}`}
@@ -1174,6 +1197,21 @@ function SourceEvidence({ sources }: { sources: Source[] }) {
       </Drawer>
     </>
   );
+}
+
+function groupSources(sources: Source[]): Array<{ key: string; name?: string; items: Source[] }> {
+  const groups = new Map<string, { key: string; name?: string; items: Source[] }>();
+  sources.forEach((source, index) => {
+    const key = source.documentId || source.documentName || `fragment-${index}`;
+    const existing = groups.get(key);
+    if (existing) {
+      existing.items.push(source);
+      if (!existing.name && source.documentName) existing.name = source.documentName;
+      return;
+    }
+    groups.set(key, { key, name: source.documentName, items: [source] });
+  });
+  return Array.from(groups.values());
 }
 
 function MessageBubble({
@@ -1284,7 +1322,11 @@ function MessageBubble({
 
           {(message.sources?.length ?? 0) > 0 && (
             <div className="mt-2.5">
-              <SourceEvidence sources={message.sources!} />
+              <SourceEvidence
+                sources={message.sources!}
+                sourceCount={message.sourceCount}
+                documentCount={message.documentCount}
+              />
             </div>
           )}
           {developerMode && message.ragTrace ? <RagTracePanel trace={message.ragTrace} /> : null}

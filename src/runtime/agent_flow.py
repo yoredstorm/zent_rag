@@ -516,18 +516,43 @@ def collect_sources(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 continue
             current = sources.get(ref)
             score = _num(item.get("score"))
+            section_path = item.get("section_path")
+            if isinstance(section_path, str):
+                section_path = [section_path] if section_path else []
+            if isinstance(section_path, (list, tuple)):
+                section_path = [str(part) for part in section_path if str(part).strip()]
+            else:
+                section_path = None
+            excerpt = " ".join(str(item.get("excerpt") or "").split())[:400]
+            incoming = {
+                "document_id": item.get("document_id"),
+                "source_id": item.get("source_id"),
+                "title": item.get("title") or None,
+                "document_name": item.get("title") or None,
+                "chunk_id": item.get("chunk_id") or None,
+                "page": item.get("page") if isinstance(item.get("page"), int) else None,
+                "section_path": section_path or None,
+                "excerpt": excerpt or None,
+                "retrieval": item.get("retrieval") or None,
+                "knowledge_type": item.get("knowledge_type") or None,
+                "entity_pin": True if item.get("entity_pin") else None,
+                "score": round(score, 4),
+                "status": str(item.get("status") or "USED"),
+                "kind": "document",
+                "evidence_id": item.get("evidence_id") or None,
+            }
+            if item.get("authority"):
+                incoming["authority"] = item["authority"]
             if current is None:
-                sources[ref] = {
-                    "document_id": item.get("document_id"),
-                    "source_id": item.get("source_id"),
-                    "title": item.get("title"),
-                    "score": round(score, 4),
-                    "status": str(item.get("status") or "USED"),
-                    "kind": "document",
-                    **({"authority": item["authority"]} if item.get("authority") else {}),
-                }
-            elif score > _num(current.get("score")):
-                current["score"] = round(score, 4)
+                sources[ref] = {key: value for key, value in incoming.items() if value is not None}
+            else:
+                for key, value in incoming.items():
+                    if value is None:
+                        continue
+                    if key == "score":
+                        current[key] = max(_num(current.get(key)), value)
+                    elif not current.get(key):
+                        current[key] = value
     return list(sources.values())[:16]
 
 
@@ -964,7 +989,51 @@ def build_agent_flow(
     # SOURCE != EVIDENCE: `sources` son los documentos; esto es lo recuperado.
     evidence_block = getattr(result, "evidence", None)
     if isinstance(evidence_block, Mapping) and evidence_block.get("count"):
-        flow["evidence"] = dict(evidence_block)
+        block = dict(evidence_block)
+        # Conteos separados documento != fragmento (requisito §2). El universo
+        # completo está en `evidence_full` (sólo para contar: no se persiste).
+        public_items = [
+            item for item in (block.get("items") or []) if isinstance(item, Mapping)
+        ]
+        full_items = [
+            item
+            for item in (getattr(result, "evidence_full", None) or [])
+            if isinstance(item, Mapping)
+        ]
+        document_pool = full_items or public_items
+        used_items = [
+            item for item in public_items if str(item.get("status") or "") == "USED"
+        ]
+        cited_ids = {
+            str(item.get("evidence_id"))
+            for item in (getattr(result, "citations", None) or [])
+            if isinstance(item, Mapping) and item.get("cited") and item.get("evidence_id")
+        }
+        counts: dict[str, int] = {
+            "evidence_retrieved": int(block.get("count") or len(public_items)),
+            "documents_consulted": len(
+                {
+                    str(item.get("document_id") or item.get("source_id") or "")
+                    for item in document_pool
+                }
+                - {""}
+            ),
+        }
+        # Sólo se declara lo medido: si el bloque público no cubre todo lo
+        # recuperado, "usado" no se inventa.
+        if len(public_items) >= int(block.get("count") or 0):
+            counts["evidence_used"] = len(used_items)
+            counts["documents_used"] = len(
+                {
+                    str(item.get("document_id") or item.get("source_id") or "")
+                    for item in used_items
+                }
+                - {""}
+            )
+        if cited_ids:
+            counts["evidence_cited"] = len(cited_ids)
+        block["counts"] = counts
+        flow["evidence"] = block
     sufficiency_block = getattr(result, "evidence_sufficiency", None)
     if isinstance(sufficiency_block, Mapping) and sufficiency_block:
         flow["evidence_sufficiency"] = dict(sufficiency_block)

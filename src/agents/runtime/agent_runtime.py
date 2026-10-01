@@ -341,7 +341,7 @@ def _evidence_window(history: list[str], limit: int = 6) -> list[str]:
     return history[-limit:]
 
 
-def _evidence_meta_for_flow(meta: Any, *, excerpt_chars: int = 240) -> Any:
+def _evidence_meta_for_flow(meta: Any, *, excerpt_chars: int = 400) -> Any:
     """Meta de tool para «Ver flujo»: la evidencia va con excerpt, no con el texto.
 
     El contenido completo vive en el registry del run; el step persistido no

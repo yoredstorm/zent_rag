@@ -8,7 +8,9 @@ import type { ImpactLoad, QueryImpact } from "../MemoryImpact";
 import type { ReplayResult } from "../ReplayCompare";
 import { ReplayCompare } from "../ReplayCompare";
 import type { ExecutionStory, StoryEvent } from "../executionStory";
+import { parseTraceability } from "../experience";
 import ExecutionTimeline from "./ExecutionTimeline";
+import ExperienceStory from "./ExperienceStory";
 import LearningSummary from "./LearningSummary";
 import NarrativeSteps from "./NarrativeSteps";
 import PerformanceStory from "./PerformanceStory";
@@ -17,6 +19,7 @@ import ResponseShapeCard from "./ResponseShapeCard";
 import StorySummary from "./StorySummary";
 import StoryHero from "./StoryHero";
 import TechnicalTrace from "./TechnicalTrace";
+import TraceabilityDiagnostics from "./TraceabilityDiagnostics";
 
 export type StoryMode = "story" | "performance" | "technical";
 
@@ -61,6 +64,11 @@ export function ExecutionStoryView({
     )
     .flatMap((phase) => phase.events);
 
+  // El contrato canónico manda cuando existe: la vista explicada se deriva de
+  // `flow.traceability`. Sin él, se conserva la historia legacy intacta.
+  const traceability = parseTraceability(story.technical.raw?.traceability);
+  const explained = Boolean(traceability) && mode === "story";
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex items-center gap-1" role="tablist" aria-label="Vista del flujo">
@@ -71,9 +79,17 @@ export function ExecutionStoryView({
         ))}
       </div>
 
-      {story.executionNarrative ? <StoryHero story={story} /> : <StorySummary story={story} />}
+      {explained && traceability ? (
+        <ExperienceStory
+          story={story}
+          traceability={traceability}
+          onOpenTechnical={() => onModeChange("technical")}
+        />
+      ) : (
+        <>{story.executionNarrative ? <StoryHero story={story} /> : <StorySummary story={story} />}</>
+      )}
 
-      {mode === "story" ? (
+      {mode === "story" && !explained ? (
         story.executionNarrative ? (
           <NarrativeSteps story={story} />
         ) : (
@@ -83,16 +99,17 @@ export function ExecutionStoryView({
       {mode === "performance" ? <PerformanceStory story={story} /> : null}
       {mode === "technical" ? (
         <>
+          {traceability ? <TraceabilityDiagnostics traceability={traceability} /> : null}
           <KnowledgeRepresentation raw={story.technical.raw} />
           <TechnicalTrace story={story} />
         </>
       ) : null}
 
-      {mode === "story" && story.response ? (
+      {mode === "story" && !explained && story.response ? (
         <ResponseShapeCard story={story} expanded={false} />
       ) : null}
 
-      {mode === "story" && !story.executionNarrative && reasoningEvents.some((event) => isReasoningCard(event)) ? (
+      {mode === "story" && !explained && !story.executionNarrative && reasoningEvents.some((event) => isReasoningCard(event)) ? (
         <ReasoningDetail events={reasoningEvents.filter((event) => isReasoningCard(event))} />
       ) : null}
 

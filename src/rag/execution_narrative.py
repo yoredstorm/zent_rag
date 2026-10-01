@@ -27,6 +27,12 @@ _MATERIAL_FALLBACKS = {
     "disclaimer_contradiction",
 }
 _UUIDISH = re.compile(r"[0-9a-fA-F-]{32,36}")
+_GENERATED_NAME = re.compile(r"^documento\s+[0-9a-f]{6,}$", re.IGNORECASE)
+_UNAVAILABLE_NAME = "Fuente sin nombre"
+
+
+def _base_name(value: str) -> str:
+    return value.replace("\\", "/").rstrip("/").split("/")[-1].strip()
 
 
 def _record(value: Any) -> dict[str, Any]:
@@ -176,17 +182,28 @@ def _canonical_evidence(flow: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _display_name(source: Mapping[str, Any]) -> str:
+    """Fallback de identidad: título → filename → original/uploaded → uri → sentinel."""
     for key in (
+        "document_name",
         "display_name",
         "source_title",
         "document_title",
         "title",
         "filename",
+        "original_filename",
+        "uploaded_filename",
+        "source_uri",
     ):
         value = _text(source.get(key))
-        if value and not _UUIDISH.fullmatch(value):
+        if not value or _UUIDISH.fullmatch(value):
+            continue
+        if _GENERATED_NAME.match(value):
+            continue
+        if key == "source_uri":
+            value = _base_name(value)
+        if value:
             return value
-    return "Documento sin título"
+    return _UNAVAILABLE_NAME
 
 
 def _document_key(source: Mapping[str, Any]) -> str:
@@ -224,7 +241,7 @@ def _group_documents(
             continue
         seen_passages.add(passage_key)
         name = _display_name(source)
-        if name == "Documento sin título":
+        if name == _UNAVAILABLE_NAME:
             diagnostics.append(
                 {
                     "code": "SOURCE_NAME_MISSING",
@@ -245,11 +262,16 @@ def _group_documents(
                 "passages": [],
             },
         )
+        section_path = source.get("section_path")
+        if isinstance(section_path, (list, tuple)):
+            section = " · ".join(str(part) for part in section_path if str(part).strip())
+        else:
+            section = _text(source.get("section"))
         document["passages"].append(
             {
                 "evidence_id": _text(source.get("evidence_id")) or None,
                 "page": source.get("page"),
-                "section": source.get("section"),
+                "section": section or None,
                 "excerpt": _text(
                     source.get("excerpt")
                     or source.get("content")

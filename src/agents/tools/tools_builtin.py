@@ -628,6 +628,8 @@ class SearchKnowledgeTool(Tool):
                     title = str(
                         metadata.get("filename")
                         or metadata.get("title")
+                        or metadata.get("original_filename")
+                        or metadata.get("source_uri")
                         or metadata.get("source")
                         or ""
                     )[:160]

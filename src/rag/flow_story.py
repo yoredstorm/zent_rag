@@ -289,7 +289,12 @@ def _retrieval_event(flow: dict, sources: list, index: int) -> dict | None:
     chunks = _int_or_none(retrieval.get("chunks")) or 0
     if retrieval.get("used") is not True and chunks == 0:
         return None
-    used = len(sources)
+    # SOURCE != EVIDENCE: `sources` son documentos; la evidencia usada viene
+    # declarada por el backend. Si no está, se cae al conteo de fuentes.
+    evidence_used = _int_or_none(retrieval.get("evidence_used"))
+    documents_used = _int_or_none(retrieval.get("documents_used"))
+    used = evidence_used if evidence_used is not None else len(sources)
+    documents = documents_used if documents_used is not None else len(sources)
     status = STATUS_OK if retrieval.get("used") is not False else STATUS_SKIPPED
     return _event(
         event_id=f"flow-{index}",
@@ -299,7 +304,9 @@ def _retrieval_event(flow: dict, sources: list, index: int) -> dict | None:
         duration_ms=_number(retrieval.get("ms")),
         metrics={
             "chunks": chunks,
-            "sources_total": used or None,
+            "documents_used": documents or None,
+            "evidence_used": used or None,
+            "sources_total": len(sources) or None,
             "sources_used": used or None,
             "sources_discarded": max(0, chunks - used) if chunks and used else None,
             "top_score": _number(retrieval.get("top_score")),
@@ -307,6 +314,8 @@ def _retrieval_event(flow: dict, sources: list, index: int) -> dict | None:
         technical={
             "strategy": retrieval.get("strategy"),
             "candidate_count": _int_or_none(retrieval.get("candidates")),
+            "rounds": _int_or_none(retrieval.get("attempts")),
+            "expanded": bool(retrieval.get("expanded")),
         },
     )
 
@@ -770,6 +779,12 @@ def with_story(flow: dict) -> dict:
                 enriched,
                 enriched["events"],
             )
+        except Exception:  # noqa: BLE001 - la proyección es aditiva y fail-soft
+            pass
+        try:
+            from src.rag.traceability import build_traceability
+
+            enriched["traceability"] = build_traceability(enriched)
         except Exception:  # noqa: BLE001 - la proyección es aditiva y fail-soft
             pass
         return enriched

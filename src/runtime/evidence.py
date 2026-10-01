@@ -332,6 +332,8 @@ class EvidenceRegistry:
                     title=str(
                         metadata.get("filename")
                         or metadata.get("title")
+                        or metadata.get("original_filename")
+                        or metadata.get("source_uri")
                         or metadata.get("external_id")
                         or metadata.get("source")
                         or ""

@@ -4,11 +4,22 @@ import type { RunDetail } from "../../components/WorkflowRunInspector";
 import { answerFromSteps } from "../../components/workflowStudio/types";
 import type { PlaygroundTarget } from "./playgroundTargets";
 
-export type PlaygroundSource = { text: string; image?: string; score?: number };
+export type PlaygroundSource = {
+  text: string;
+  image?: string;
+  score?: number;
+  /** Identidad del documento (agrupa fragmentos del mismo archivo). */
+  documentId?: string;
+  documentName?: string;
+  page?: number;
+};
 
 export type PlaygroundTurnResult = {
   text: string;
   sources?: PlaygroundSource[];
+  /** Conteos reales del retrieval: documentos vs fragmentos. */
+  sourceCount?: number;
+  documentCount?: number;
   sqlQuery?: string | null;
   method: string;
   lazyIngested?: boolean;
@@ -227,6 +238,8 @@ export async function runKnowledgeTurn(input: {
 
   let acc = "";
   let sources: PlaygroundSource[] = [];
+  let sourceCount: number | undefined;
+  let documentCount: number | undefined;
   let sqlQuery: string | null = null;
   let method = "rag";
   let lazyIngested = false;
@@ -248,7 +261,15 @@ export async function runKnowledgeTurn(input: {
       } else if (event === "sources") {
         sawMeta = true;
         const payload = JSON.parse(data) as {
-          sources: ({ content?: string; score?: number; image_base64?: string | null } | string)[];
+          sources: ({
+            content?: string;
+            score?: number;
+            image_base64?: string | null;
+            document_id?: string;
+            metadata?: Record<string, string> | null;
+          } | string)[];
+          sources_total?: number;
+          documents_total?: number;
           method: string;
           sql_query: string | null;
           lazy_ingested: boolean;
@@ -261,15 +282,31 @@ export async function runKnowledgeTurn(input: {
             ? []
             : (payload.sources || [])
                 .filter(
-                  (s): s is { content?: string; score?: number; image_base64?: string | null } =>
-                    typeof s === "object" && s !== null,
+                  (s): s is {
+                    content?: string;
+                    score?: number;
+                    image_base64?: string | null;
+                    document_id?: string;
+                    metadata?: Record<string, string> | null;
+                  } => typeof s === "object" && s !== null,
                 )
                 .slice(0, 6)
-                .map((s) => ({
-                  text: (s.content || "").slice(0, 240),
-                  image: s.image_base64 || undefined,
-                  score: s.score,
-                }));
+                .map((s) => {
+                  const meta = s.metadata || {};
+                  const name =
+                    meta.filename || meta.title || meta.source || meta.external_id || "";
+                  const page = Number(meta.page_start);
+                  return {
+                    text: (s.content || "").slice(0, 240),
+                    image: s.image_base64 || undefined,
+                    score: s.score,
+                    documentId: s.document_id,
+                    documentName: name || undefined,
+                    page: Number.isFinite(page) && page > 0 ? page : undefined,
+                  };
+                });
+        sourceCount = payload.sources_total;
+        documentCount = payload.documents_total;
       } else if (event === "done") {
         const payload = JSON.parse(data) as {
           conversation_id: string;
@@ -296,6 +333,8 @@ export async function runKnowledgeTurn(input: {
   return {
     text: acc,
     sources: sources.length > 0 ? sources : undefined,
+    sourceCount,
+    documentCount,
     sqlQuery,
     method,
     lazyIngested,
@@ -388,7 +427,9 @@ export async function runAgentTurn(input: {
 
   return {
     text: answer || "(sin respuesta)",
-    sources: used.length > 0 ? used.map((id) => ({ text: id })) : undefined,
+    sources:
+      sourcesFromFlow(backendFlow) ??
+      (used.length > 0 ? used.map((id) => ({ text: id })) : undefined),
     method: "agent",
     runId: runId ?? undefined,
     conversationId: input.conversationId ?? undefined,
@@ -399,6 +440,26 @@ export async function runAgentTurn(input: {
       flowFromAgentStepsLegacy(steps, latencyMs, { model, cost, totalTokens }),
     flowSource: backendFlow ? "backend" : "legacy",
   };
+}
+
+/** Fuentes del flow canónico: nombra el documento, nunca inventa texto. */
+function sourcesFromFlow(flow: Record<string, unknown> | null): PlaygroundSource[] | undefined {
+  if (!flow) return undefined;
+  const list = Array.isArray(flow.sources) ? flow.sources : [];
+  const sources = list
+    .filter((item): item is Record<string, unknown> => !!item && typeof item === "object")
+    .map((item) => ({
+      text: typeof item.excerpt === "string" ? item.excerpt.slice(0, 240) : "",
+      documentId: typeof item.document_id === "string" ? item.document_id : undefined,
+      documentName:
+        (typeof item.document_name === "string" && item.document_name) ||
+        (typeof item.title === "string" && item.title) ||
+        undefined,
+      page: typeof item.page === "number" ? item.page : undefined,
+      score: typeof item.score === "number" ? item.score : undefined,
+    }))
+    .filter((item) => item.documentId || item.documentName);
+  return sources.length ? sources : undefined;
 }
 
 export async function runWorkflowTurn(input: {

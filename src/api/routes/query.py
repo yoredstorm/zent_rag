@@ -633,9 +633,14 @@ async def rag_query_stream(
             if not streamed_parts and result.llm_response and result.llm_response.content:
                 await queue.put(("delta", result.llm_response.content))
 
-            sources = [
-                s.model_dump(mode="json") for s in sources_for_client(result)[:6]
-            ]
+            client_sources = sources_for_client(result)
+            documents_total = len(
+                {
+                    chunk.document_id
+                    for chunk in (result.retrieval_context.chunks if result.retrieval_context else [])
+                }
+            )
+            sources = [s.model_dump(mode="json") for s in client_sources[:6]]
             sql_for_client = None
             if result.method == "sql" and result.role == "admin" and result.sql_query:
                 sql_for_client = result.sql_query
@@ -645,6 +650,9 @@ async def rag_query_stream(
                     "sources",
                     {
                         "sources": sources,
+                        # Conteos reales (requisito §2): documento != fragmento.
+                        "sources_total": len(client_sources),
+                        "documents_total": documents_total,
                         "method": result.method,
                         "sql_query": sql_for_client,
                         "lazy_ingested": bool(getattr(result, "lazy_ingested", False)),

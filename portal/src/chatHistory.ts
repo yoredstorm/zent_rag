@@ -1,7 +1,20 @@
+export type StoredSource = {
+  text: string;
+  image?: string;
+  score?: number;
+  /** Identidad del documento para agrupar fragmentos del mismo archivo. */
+  documentId?: string;
+  documentName?: string;
+  page?: number;
+};
+
 export type StoredMessage = {
   role: "user" | "assistant";
   content: string;
-  sources?: { text: string; image?: string; score?: number }[];
+  sources?: StoredSource[];
+  /** Conteos reales del retrieval (documento != fragmento). */
+  sourceCount?: number;
+  documentCount?: number;
   sqlQuery?: string | null;
   method?: string;
   lazyIngested?: boolean;

@@ -479,7 +479,9 @@ class KnowledgeIngestionEngine:
         # Knowledge V2/Tabular: external_ids de documentos estructurados
         # (un workbook Excel/CSV produce un documento, no un record por fila).
         v2_external_ids: set[str] = set()
-        pending_chunks: list[tuple[str, str]] = []  # (external_id, chunk_text)
+        # (external_id, chunk_text, identity) — identity lleva el nombre real del
+        # documento a la metadata para que la trazabilidad no muestre "sin nombre".
+        pending_chunks: list[tuple[str, str, dict[str, str]]] = []
         chunk_indexes: dict[str, int] = {}
         flush_index = 0  # índice estable de lote (idempotencia del evento de uso)
 
@@ -488,12 +490,35 @@ class KnowledgeIngestionEngine:
             chunk_indexes[external_id] = index + 1
             return index
 
+        def _record_identity(record: Record) -> dict[str, str]:
+            """Nombre legible del documento: metadata del connector o config."""
+            record_meta = dict(record.metadata or {})
+            identity = {
+                key: str(record_meta[key]).strip()
+                for key in ("filename", "title", "original_filename", "source_uri")
+                if record_meta.get(key) and str(record_meta[key]).strip()
+            }
+            if not identity.get("filename") and not identity.get("title"):
+                source_config = getattr(source, "config", None)
+                configured = (
+                    str(source_config.get("filename") or "").strip()
+                    if isinstance(source_config, dict)
+                    else ""
+                )
+                if configured:
+                    identity["filename"] = configured
+                else:
+                    source_name = str(getattr(source, "name", "") or "").strip()
+                    if source_name:
+                        identity["title"] = source_name
+            return identity
+
         async def flush() -> None:
             nonlocal flush_index
             if not pending_chunks:
                 return
             flush_index += 1
-            texts = self._embed_texts([t for _, t in pending_chunks])
+            texts = self._embed_texts([t for _, t, _ in pending_chunks])
             embeddings = await self._embeddings.embed(texts, model=kb.embedding_model if kb else None)
             if embeddings and not isinstance(embeddings[0], list):
                 embeddings = [embeddings]  # provider devolvió un solo vector
@@ -531,7 +556,7 @@ class KnowledgeIngestionEngine:
                         error=str(exc)[:200],
                     )
             points: list[tuple[UUID, list[float], str, dict | None]] = []
-            for (external_id, text), vector in zip(pending_chunks, embeddings):
+            for (external_id, text, identity), vector in zip(pending_chunks, embeddings):
                 chunk_index = next_index(external_id)
                 doc_id = _chunk_document_id(source_id, external_id, chunk_index)
                 points.append(
@@ -546,6 +571,7 @@ class KnowledgeIngestionEngine:
                             "chunking_strategy": chunker.__class__.__name__,
                             "organization_id": str(job.organization_id),
                             **({"knowledge_base_id": str(job.knowledge_base_id)} if job.knowledge_base_id else {}),
+                            **identity,
                             **_acl_payload(record.metadata),
                         },
                     )
@@ -574,8 +600,9 @@ class KnowledgeIngestionEngine:
             if not chunks:
                 records_failed += 1
                 continue
+            identity = _record_identity(record)
             for text in chunks:
-                pending_chunks.append((record.external_id, text))
+                pending_chunks.append((record.external_id, text, identity))
             if len(pending_chunks) >= _EMBED_BATCH:
                 await flush()
 
@@ -1220,6 +1247,12 @@ class KnowledgeIngestionEngine:
                     "v2_chunk": "false" if is_parent else "true",
                     "v2_parent": "true" if is_parent else "false",
                     "v2_doc": "true",
+                    # Identidad legible del documento: sin esto la trazabilidad
+                    # mostraba "sin título" aunque el documento tuviera nombre.
+                    "filename": (
+                        str(document.metadata.get("filename") or "").strip() or None
+                    ),
+                    "title": str(document.title or "").strip() or None,
                     **index_metadata(document, chunk),
                     **(acl or {}),
                 }
@@ -1368,6 +1401,18 @@ class KnowledgeIngestionEngine:
             points: list[tuple[UUID, list[float], str, dict | None]] = []
             for chunk, vector in zip(batch_chunks, embeddings):
                 metadata = chunk.metadata
+                merged_meta = dict(metadata)
+                # Identidad legible (misma regla que V2 texto): sin esto el
+                # fragmento tabular no puede nombrar su documento.
+                if not merged_meta.get("filename"):
+                    candidate = (
+                        str(document.metadata.get("filename") or "").strip()
+                        or str(document.title or "").strip()
+                    )
+                    if candidate:
+                        merged_meta["filename"] = candidate
+                if not merged_meta.get("title") and str(document.title or "").strip():
+                    merged_meta["title"] = str(document.title).strip()
                 level = int(metadata.get("level") or 0)
                 level_counts[level] = level_counts.get(level, 0) + 1
                 is_parent = level <= 2
@@ -1378,7 +1423,7 @@ class KnowledgeIngestionEngine:
                     else _v2_chunk_id(source.id, document.external_id, chunk.chunk_index)
                 )
                 chunk_metadata: dict = {
-                    **metadata,
+                    **merged_meta,
                     "chunk_id": str(chunk.id),
                     "chunk_type": chunk.chunk_type.value,
                     "content_hash": chunk.content_hash,

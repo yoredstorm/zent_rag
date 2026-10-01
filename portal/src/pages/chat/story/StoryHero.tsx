@@ -14,7 +14,7 @@ export function StoryHero({ story }: { story: ExecutionStory }) {
   const influenced = narrative.summary.decisionsInfluenced;
   const jevValue = narrative.summary.judgmentCount
     ? influenced
-      ? `${influenced} decisión${influenced === 1 ? "" : "es"} aplicada${influenced === 1 ? "" : "s"}`
+      ? `${influenced} ${influenced === 1 ? "decisión aplicada" : "decisiones aplicadas"}`
       : "Revisó sin cambiar el camino"
     : "No fue necesario";
   const metrics = [

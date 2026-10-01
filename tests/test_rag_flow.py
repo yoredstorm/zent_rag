@@ -122,6 +122,110 @@ def test_build_flow_jev_documents_with_timings() -> None:
     assert steps == ["Decisión", "Plan de búsqueda", "Búsqueda", "Respuesta"]
 
 
+def test_build_flow_publica_contrato_de_evidencia_y_trazabilidad() -> None:
+    from types import SimpleNamespace
+
+    from src.core.domain.adaptive import EvidenceItem
+    from src.runtime.evidence import (
+        EvidenceRegistry,
+        citations_payload,
+        select_evidence,
+    )
+
+    registry = EvidenceRegistry()
+    registry.add(
+        [
+            EvidenceItem(
+                source_type="qdrant",
+                content="Carrier Code ...",
+                document_id="d-1",
+                chunk_id="c-1",
+                title="Rec2_Rules.pdf",
+                page=18,
+                section_path=("Record 2",),
+            ),
+            EvidenceItem(
+                source_type="qdrant",
+                content="otro fragmento del mismo documento",
+                document_id="d-1",
+                chunk_id="c-2",
+                title="Rec2_Rules.pdf",
+            ),
+            EvidenceItem(
+                source_type="qdrant",
+                content="contenido de categoría",
+                document_id="d-2",
+                chunk_id="c-3",
+                title="Cat10.pdf",
+            ),
+        ]
+    )
+    selection = select_evidence(
+        registry.all_items(), "carrier code record 2", budget_chars=4000
+    )
+    citations = citations_payload(
+        selection, cited_ids={selection.items[0].evidence_id}
+    )
+    quality = SimpleNamespace(
+        sufficient=True,
+        score=0.9,
+        reason="exact_entity_match",
+        jev_used=False,
+        jev_answers={},
+    )
+    flow = _build_flow(
+        query_id=uuid4(),
+        organization_id=uuid4(),
+        conversation_id=None,
+        method="rag",
+        status="completed",
+        decision=RoutingDecision(
+            capability="knowledge.answer",
+            provider="jev",
+            confidence=0.9,
+            resolved=True,
+            metadata={"acting": True},
+        ),
+        decision_evaluated=True,
+        adaptive=_adaptive(
+            quality=quality,
+            evidence=SimpleNamespace(size=3),
+            registry=registry,
+            selection=selection,
+            citations=citations,
+        ),
+        retrieval_context=RetrievalContext(
+            chunks=[_chunk(0.9, "Rec2_Rules.pdf"), _chunk(0.7, "Cat10.pdf")],
+            retrieval_latency_ms=10.0,
+        ),
+        sql_result=None,
+        llm_response=LLMResponse(
+            content="respuesta",
+            model="m",
+            prompt_tokens=1,
+            completion_tokens=1,
+            total_tokens=2,
+            latency_ms=5.0,
+        ),
+        timings=_timings(retrieval_ms=10.0),
+        total_ms=100.0,
+        fallbacks=[],
+    )
+    counts = flow["evidence"]["counts"]
+    assert counts["evidence_retrieved"] == 3
+    assert counts["evidence_used"] == len(selection.items)
+    assert counts["documents_consulted"] == 2
+    detail = flow["evidence"]["items_detail"]
+    assert detail
+    assert any(item.get("page") == 18 for item in detail)
+    trace = flow["traceability"]
+    assert len(trace["evidence"]["documents"]) == 2
+    assert {
+        document["document_name"] for document in trace["evidence"]["documents"]
+    } == {"Rec2_Rules.pdf", "Cat10.pdf"}
+    assert trace["counts"]["evidence_retrieved"] == 3
+
+
 def test_build_flow_sql_route_legacy_decider() -> None:
     sql = SqlQueryResult(
         sql="SELECT COUNT(*) FROM ventas",

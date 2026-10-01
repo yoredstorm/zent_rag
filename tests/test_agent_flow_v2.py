@@ -184,16 +184,22 @@ def test_captura_real_jev_intervino_sin_score_global_falso() -> None:
 
 def test_captura_real_fuentes_desde_metadata_no_del_texto() -> None:
     flow = _flow()
-    assert flow["sources"] == [
-        {
-            "document_id": "d-1",
-            "source_id": "s-1",
-            "title": "contrato.pdf",
-            "score": 0.81,
-            "status": "USED",
-            "kind": "document",
-        }
-    ]
+    sources = flow["sources"]
+    assert len(sources) == 1
+    source = sources[0]
+    # La procedencia sale de la metadata de la tool, no del texto de la respuesta.
+    for key, value in {
+        "document_id": "d-1",
+        "source_id": "s-1",
+        "title": "contrato.pdf",
+        "document_name": "contrato.pdf",
+        "score": 0.81,
+        "status": "USED",
+        "kind": "document",
+    }.items():
+        assert source[key] == value
+    # Sin contenido en la metadata no se fabrica un excerpt.
+    assert "excerpt" not in source
 
 
 def test_captura_real_verificacion_no_colapsa_a_booleano() -> None:

@@ -402,7 +402,7 @@ describe("ExecutionNarrative human-first", () => {
     expect(screen.getByText("Entendió tu consulta")).toBeTruthy();
     expect(screen.getByText("Qué necesitaba comprobar")).toBeTruthy();
     expect(screen.getAllByText("JEV revisó el camino").length).toBeGreaterThan(0);
-    expect(screen.getByText(/4 comprobaciones/)).toBeTruthy();
+    expect(screen.getAllByText(/4 comprobaciones/).length).toBeGreaterThan(0);
     expect(screen.getByText(/1 influyó en la ejecución/)).toBeTruthy();
     expect(screen.getByText("El modelo resolvió el caso")).toBeTruthy();
     expect(screen.getByText(/2 llamadas al modelo/)).toBeTruthy();

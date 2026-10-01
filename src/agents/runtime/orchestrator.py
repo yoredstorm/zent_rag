@@ -475,51 +475,104 @@ def _build_flow(
 
     chunks = list(getattr(retrieval_context, "chunks", None) or [])
     scores = [float(getattr(chunk, "score", 0.0) or 0.0) for chunk in chunks]
+    selection = adaptive.get("selection") if isinstance(adaptive, dict) else None
+    selection_items = (
+        list(getattr(selection, "items", ()) or ()) if selection is not None else []
+    )
+    selection_matches = (
+        {
+            str(getattr(match, "evidence_id", "") or ""): match
+            for match in (getattr(selection, "matches", ()) or ())
+        }
+        if selection is not None
+        else {}
+    )
+    citations = (
+        list(adaptive.get("citations") or []) if isinstance(adaptive, dict) else []
+    )
+    cited_ids = {
+        str(item.get("evidence_id"))
+        for item in citations
+        if isinstance(item, dict) and item.get("cited") and item.get("evidence_id")
+    }
+    citations_known = bool(citations)
     sources: list[dict] = []
     # Fuentes = evidencia USADA (selection final), no candidatos del retrieval.
-    selection_block = adaptive.get("selection") if isinstance(adaptive, dict) else None
-    selection_items = (
-        list(getattr(selection_block, "items", ()) or ())
-        if selection_block is not None
-        else []
-    )
+    # Cada fuente viaja con su excerpt/localización para que «Ver flujo» no
+    # tenga que inventar nada (requisitos §3, §4, §25).
     if selection_items:
         seen_sources: set[str] = set()
         for item in selection_items[:10]:
             document_id = str(getattr(item, "document_id", "") or "")
             source_id = str(getattr(item, "source_id", "") or "")
-            key = document_id or source_id or str(getattr(item, "evidence_id", "") or "")
+            evidence_id = str(getattr(item, "evidence_id", "") or "")
+            key = document_id or source_id or evidence_id
             if not key or key in seen_sources:
                 continue
             seen_sources.add(key)
-            sources.append(
-                {
-                    "title": str(
-                        getattr(item, "title", "") or f"Documento {key[:8]}"
-                    ),
-                    "document_id": document_id or None,
-                    "source_id": source_id or None,
-                    "score": round(float(getattr(item, "score", 0.0) or 0.0), 4),
-                    "status": "USED",
-                    "evidence_id": str(getattr(item, "evidence_id", "") or "") or None,
-                }
-            )
+            public = item.to_public_dict()
+            match = selection_matches.get(evidence_id)
+            section_path = public.get("section_path")
+            source: dict[str, Any] = {
+                "title": public.get("title"),
+                "document_name": public.get("title"),
+                "document_id": document_id or None,
+                "source_id": source_id or None,
+                "chunk_id": public.get("chunk_id"),
+                "page": public.get("page"),
+                "section_path": list(section_path) if isinstance(section_path, list) else None,
+                "excerpt": public.get("excerpt"),
+                "score": round(float(getattr(item, "score", 0.0) or 0.0), 4),
+                "rerank_score": public.get("rerank_score"),
+                "retrieval": public.get("retrieval"),
+                "match": str(getattr(match, "match", "") or "") or None,
+                "authority": public.get("authority"),
+                "knowledge_type": public.get("knowledge_type"),
+                "status": "USED",
+                "evidence_id": evidence_id or None,
+            }
+            if citations_known:
+                source["cited"] = evidence_id in cited_ids
+            sources.append({key_: value for key_, value in source.items() if value is not None})
     else:
         for chunk in chunks[:8]:
             chunk_meta = dict(getattr(chunk, "metadata", None) or {})
+            chunk_doc = str(getattr(chunk, "document_id", "") or "")
             title = str(
                 chunk_meta.get("filename")
-                or chunk_meta.get("source")
                 or chunk_meta.get("title")
+                or chunk_meta.get("original_filename")
+                or chunk_meta.get("source_uri")
+                or chunk_meta.get("source")
                 or ""
             )
-            sources.append(
-                {
-                    "title": title or f"Documento {str(getattr(chunk, 'document_id', ''))[:8]}",
-                    "document_id": str(getattr(chunk, "document_id", "")),
-                    "score": round(float(getattr(chunk, "score", 0.0) or 0.0), 4),
-                }
+            section = chunk_meta.get("section_path")
+            if isinstance(section, str):
+                section = [section] if section else []
+            page = (
+                chunk_meta.get("page_start")
+                if isinstance(chunk_meta.get("page_start"), int)
+                else None
             )
+            excerpt = " ".join(str(getattr(chunk, "content", "") or "").split())[:400]
+            source = {
+                "title": title or None,
+                "document_name": title or None,
+                "document_id": chunk_doc,
+                "chunk_id": str(chunk_meta.get("chunk_id") or chunk_doc or "") or None,
+                "page": page,
+                "section_path": [str(part) for part in (section or ()) if str(part)]
+                or None,
+                "excerpt": excerpt or None,
+                "score": round(float(getattr(chunk, "score", 0.0) or 0.0), 4),
+                "status": "RETRIEVED",
+            }
+            sources.append({key_: value for key_, value in source.items() if value is not None})
+
+    def _attempt_field(attempt: Any, name: str, default: Any = None) -> Any:
+        if isinstance(attempt, dict):
+            return attempt.get(name, default)
+        return getattr(attempt, name, default)
 
     retrieval_block = {
         "used": bool(chunks) or float(getattr(retrieval_context, "retrieval_latency_ms", 0.0) or 0.0) > 0,
@@ -528,9 +581,33 @@ def _build_flow(
         "chunks": len(chunks),
         "top_score": round(max(scores), 4) if scores else None,
         "attempts": len(adaptive.get("attempts") or []),
+        # SOURCE != EVIDENCE: documento consultado != fragmento utilizado.
+        "documents_used": len(
+            {
+                str(getattr(item, "document_id", "") or getattr(item, "source_id", "") or "")
+                for item in selection_items
+            }
+            - {""}
+        )
+        or None,
+        "evidence_used": len(selection_items) or None,
         "rewritten_query": getattr(plan, "rewritten_query", None),
         "skip_retrieval": bool(getattr(plan, "skip_retrieval", False)),
         "ms": round(float(timings.get("retrieval_ms") or 0.0), 1),
+        # §13: rondas reales con su suficiencia, para resolver temporalidad.
+        "expanded": bool(adaptive.get("preflight_extra_round")),
+        "rounds": [
+            {
+                "attempt": int(_attempt_field(attempt, "attempt", index) or index),
+                "strategy": str(_attempt_field(attempt, "strategy", "") or "") or None,
+                "sufficient": bool(_attempt_field(attempt, "sufficient", False)),
+                "quality_score": round(
+                    float(_attempt_field(attempt, "quality_score", 0.0) or 0.0), 4
+                ),
+                "n_items": int(_attempt_field(attempt, "n_items", 0) or 0),
+            }
+            for index, attempt in enumerate(adaptive.get("attempts") or [], start=1)
+        ],
     }
 
     sql_block = None
@@ -556,13 +633,51 @@ def _build_flow(
             "jev_answers": _public_jev_answers(getattr(quality, "jev_answers", None)),
             **_public_evidence_signals(quality),
         }
-        selection = adaptive.get("selection")
         if selection is not None and not getattr(selection, "empty", True):
             evidence_block["selection"] = selection.to_public_dict()
+        # Contrato de evidencia (requisito §25): el MISMO objeto que alimenta
+        # citas, panel de fuentes y trazabilidad. UNKNOWN != ZERO.
+        registry = adaptive.get("registry") if isinstance(adaptive, dict) else None
+        counts: dict[str, int] = {}
+        if registry is not None and hasattr(registry, "to_public_dict"):
+            try:
+                detail = registry.to_public_dict(
+                    limit=24,
+                    cited_ids=cited_ids,
+                    selected_ids=list(getattr(selection, "ids", ()) or ())
+                    if selection is not None
+                    else None,
+                )
+                evidence_block["items_detail"] = detail.get("items", [])
+            except Exception:  # noqa: BLE001 — el flow nunca se rompe por el detalle
+                pass
+        if registry is not None and hasattr(registry, "all_items"):
+            all_items = list(registry.all_items())
+            counts["evidence_retrieved"] = len(all_items)
+            counts["documents_consulted"] = len(
+                {
+                    str(getattr(item, "document_id", "") or getattr(item, "source_id", "") or "")
+                    for item in all_items
+                }
+                - {""}
+            )
+        if selection is not None and not getattr(selection, "empty", True):
+            selected_items = list(selection.items)
+            counts["evidence_used"] = len(selected_items)
+            counts["documents_used"] = len(
+                {
+                    str(getattr(item, "document_id", "") or getattr(item, "source_id", "") or "")
+                    for item in selected_items
+                }
+                - {""}
+            )
+        if citations_known:
+            counts["evidence_cited"] = len(cited_ids)
+        if counts:
+            evidence_block["counts"] = counts
         sufficiency = adaptive.get("sufficiency")
         if sufficiency is not None:
             evidence_block["sufficiency"] = sufficiency.to_public_dict()
-        citations = adaptive.get("citations")
         if citations:
             evidence_block["citations"] = list(citations)[:16]
 
