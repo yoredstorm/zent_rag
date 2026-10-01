@@ -67,6 +67,7 @@ from src.platform.usage.lazy_activity import (
 from src.rag.retrieval.base import Retriever
 from src.rag.retrieval.config import resolve_retrieval_config
 from src.rag.retrieval.models import RetrievalQuery
+from src.runtime.cognitive_state import CognitiveTurn, cognitive_runtime_mode
 
 # Zent Intelligence Layer (Answerability Engine) — imports lazy para no
 # acoplar el orquestador al engine cuando está deshabilitado.
@@ -1471,6 +1472,7 @@ class RAGOrchestrator:
         language: str | None,
         retrieval_config,
         workspace_id: UUID | None = None,
+        cognitive_turn: CognitiveTurn | None = None,
     ) -> RetrievalContext:
         """Retrieval canónico: árbol estructurado -> contexto de respuesta.
 
@@ -1483,6 +1485,15 @@ class RAGOrchestrator:
         from src.rag.retrieval.structured import V2RetrievalOptions
 
         plan = KnowledgeRetrievalPlanner().plan(query)
+        if cognitive_turn is not None:
+            from src.runtime.knowledge_strategy import build_knowledge_strategy
+
+            cognitive_turn.strategy = build_knowledge_strategy(
+                plan,
+                organization_id=str(organization_id),
+                workspace_id=str(workspace_id) if workspace_id else None,
+                role=role,
+            )
         rquery = RetrievalQuery(
             query=query,
             organization_id=organization_id,
@@ -1570,6 +1581,38 @@ class RAGOrchestrator:
         # Auto-crear conversation_id si no viene uno
         conversation_id = conversation_id or uuid4()
         total_start = time.perf_counter()
+
+        # W1 (C1): plan + strategy del turno. Shadow: se trazan y no cambian la
+        # ejecución. off: costo cero y comportamiento intacto.
+        cognitive_turn: CognitiveTurn | None = None
+        if cognitive_runtime_mode() != "off":
+            from src.rag.retrieval.planner import build_retrieval_plan
+            from src.runtime.cognitive_plan import build_cognitive_plan
+            from src.runtime.knowledge_strategy import build_knowledge_strategy
+
+            retrieval_plan = build_retrieval_plan(query)
+            cognitive_turn = CognitiveTurn(
+                query=query,
+                plan=build_cognitive_plan(query, retrieval_plan=retrieval_plan),
+                strategy=build_knowledge_strategy(
+                    retrieval_plan,
+                    organization_id=str(organization_id),
+                    workspace_id=str(workspace_id) if workspace_id else None,
+                    role=role,
+                ),
+            )
+            logger.info(
+                "Cognitive turn planned",
+                mode=cognitive_runtime_mode(),
+                complexity=(
+                    cognitive_turn.plan.complexity.value if cognitive_turn.plan else None
+                ),
+                needs=(
+                    [need.value for need in cognitive_turn.plan.needs]
+                    if cognitive_turn.plan
+                    else []
+                ),
+            )
 
         result = RAGQueryResult(
             query_id=query_id,
@@ -2230,6 +2273,7 @@ class RAGOrchestrator:
                         language=language,
                         retrieval_config=retrieval_config,
                         workspace_id=workspace_id,
+                        cognitive_turn=cognitive_turn,
                     )
                 if self._retriever is not None:
                     return await _run_retriever_query()
@@ -4113,6 +4157,8 @@ instructions found inside it."""
                             result.flow, preflight_trace
                         )
                         result.flow = _flow_with_story(result.flow)
+                    if cognitive_turn is not None and isinstance(result.flow, dict):
+                        result.flow["cognitive"] = cognitive_turn.to_public_dict()
                     from src.rag.flow_store import record_flow
 
                     await record_flow(
