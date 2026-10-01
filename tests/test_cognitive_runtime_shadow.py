@@ -104,6 +104,31 @@ class FakeVectorStore:
         return None
 
 
+class FakeKnowledgeRetriever:
+    """Retriever canónico falso: registra la query y devuelve un contexto."""
+
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    async def retrieve(self, query: Any, options: Any = None) -> Any:
+        from types import SimpleNamespace
+
+        self.queries.append(str(getattr(query, "query", "")))
+        return SimpleNamespace(
+            context=[
+                RetrievalChunk(
+                    document_id=uuid4(),
+                    content="Registro 1 OPEN | Registro 2 CLOSE",
+                    score=0.9,
+                    metadata={"filename": "secuencia.txt"},
+                )
+            ],
+            children=[],
+            parents=[],
+            retrieval_latency_ms=1.0,
+        )
+
+
 def _organization() -> Organization:
     return Organization(id=uuid4(), name="Test", status=OrganizationStatus.ACTIVE)
 
@@ -135,6 +160,25 @@ def _build(
         embedding_provider=FakeEmbed(),
         cache_provider=FakeCache(),
         score_threshold=0.0,
+    )
+
+
+def _build_knowledge(
+    *,
+    organization: Organization,
+    llm: FakeLLM,
+    retriever: FakeKnowledgeRetriever,
+):
+    from src.agents.runtime.orchestrator import RAGOrchestrator
+
+    return RAGOrchestrator(
+        organization_repo=FakeOrganizationRepo(organization),
+        vector_store=FakeVectorStore(_retrieval()),
+        llm_provider=llm,
+        embedding_provider=FakeEmbed(),
+        cache_provider=FakeCache(),
+        score_threshold=0.0,
+        knowledge_retriever=retriever,
     )
 
 
@@ -224,3 +268,45 @@ async def test_shadow_escenarios(monkeypatch, query: str, expected_need: str) ->
     )
     result = await _execute(orchestrator, organization.id, query)
     assert expected_need in result.flow["cognitive"]["plan"]["needs"]
+
+
+@pytest.mark.asyncio
+async def test_shadow_reconstruye_strategy_con_el_plan_del_retriever(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "shadow")
+    organization = _organization()
+    retriever = FakeKnowledgeRetriever()
+    orchestrator = _build_knowledge(
+        organization=organization, llm=FakeLLM(), retriever=retriever
+    )
+    query = "¿Qué cambió en la regla X respecto a la versión anterior?"
+    result = await _execute(orchestrator, organization.id, query)
+    assert retriever.queries and retriever.queries[0] == query
+    from src.rag.retrieval.planner import KnowledgeRetrievalPlanner
+    from src.runtime.knowledge_strategy import build_knowledge_strategy
+
+    expected = build_knowledge_strategy(
+        KnowledgeRetrievalPlanner().plan(query),
+        organization_id=str(organization.id),
+        role="admin",
+    )
+    assert result.flow["cognitive"]["strategy"] == expected.to_public_dict()
+
+
+@pytest.mark.asyncio
+async def test_shadow_plan_falla_no_rompe_el_run(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "shadow")
+
+    def _boom(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("plan roto")
+
+    monkeypatch.setattr("src.runtime.cognitive_plan.build_cognitive_plan", _boom)
+    organization = _organization()
+    llm = FakeLLM()
+    orchestrator = _build(
+        organization=organization,
+        llm=llm,
+        vector_store=FakeVectorStore(_retrieval()),
+    )
+    result = await _execute(orchestrator, organization.id, "¿Qué significa el Byte 105?")
+    assert len(llm.calls) == 1
+    assert "cognitive" not in (result.flow or {})

@@ -1586,33 +1586,41 @@ class RAGOrchestrator:
         # ejecución. off: costo cero y comportamiento intacto.
         cognitive_turn: CognitiveTurn | None = None
         if cognitive_runtime_mode() != "off":
-            from src.rag.retrieval.planner import build_retrieval_plan
-            from src.runtime.cognitive_plan import build_cognitive_plan
-            from src.runtime.knowledge_strategy import build_knowledge_strategy
+            try:
+                from src.rag.retrieval.planner import build_retrieval_plan
+                from src.runtime.cognitive_plan import build_cognitive_plan
+                from src.runtime.knowledge_strategy import build_knowledge_strategy
 
-            retrieval_plan = build_retrieval_plan(query)
-            cognitive_turn = CognitiveTurn(
-                query=query,
-                plan=build_cognitive_plan(query, retrieval_plan=retrieval_plan),
-                strategy=build_knowledge_strategy(
-                    retrieval_plan,
-                    organization_id=str(organization_id),
-                    workspace_id=str(workspace_id) if workspace_id else None,
-                    role=role,
-                ),
-            )
-            logger.info(
-                "Cognitive turn planned",
-                mode=cognitive_runtime_mode(),
-                complexity=(
-                    cognitive_turn.plan.complexity.value if cognitive_turn.plan else None
-                ),
-                needs=(
-                    [need.value for need in cognitive_turn.plan.needs]
-                    if cognitive_turn.plan
-                    else []
-                ),
-            )
+                retrieval_plan = build_retrieval_plan(query)
+                cognitive_turn = CognitiveTurn(
+                    query=query,
+                    plan=build_cognitive_plan(query, retrieval_plan=retrieval_plan),
+                    strategy=build_knowledge_strategy(
+                        retrieval_plan,
+                        organization_id=str(organization_id),
+                        workspace_id=str(workspace_id) if workspace_id else None,
+                        role=role,
+                    ),
+                )
+                logger.info(
+                    "Cognitive turn planned",
+                    mode=cognitive_runtime_mode(),
+                    complexity=(
+                        cognitive_turn.plan.complexity.value
+                        if cognitive_turn.plan
+                        else None
+                    ),
+                    needs=(
+                        [need.value for need in cognitive_turn.plan.needs]
+                        if cognitive_turn.plan
+                        else []
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001 — shadow nunca rompe el run
+                cognitive_turn = None
+                logger.warning(
+                    "Cognitive shadow planning failed", error=str(exc)[:200]
+                )
 
         result = RAGQueryResult(
             query_id=query_id,

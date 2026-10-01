@@ -72,7 +72,7 @@ Modos de `RAG_COGNITIVE_OS_ENABLED`:
 
 ## 4. Etapas S1–S10 (contratos)
 
-Estado del turno: `TurnState` (`src/runtime/cognitive_state.py`): `intent`,
+Estado del turno: `CognitiveTurn` (`src/runtime/cognitive_state.py`): `intent`,
 `plan`, `strategy`, `evidence`, `brief`, `claims`, `verification`, `budget`,
 `loop`, `notes`. Cada etapa lee/escribe campos; nada de dicts sueltos.
 

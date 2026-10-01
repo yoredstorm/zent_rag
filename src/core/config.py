@@ -871,9 +871,10 @@ class Settings(BaseSettings):
     COGNITIVE_OS_ENABLED: str = Field(
         default="off",
         description=(
-            "Cutover del Cognitive OS: off | shadow | limited | active. En 'off' "
-            "los endpoints /api/v1/cognitive/* responden 503. Phase 3 solo "
-            "planifica (task graph + especialistas + presupuesto); sin ejecución."
+            "Cognitive runtime: off | shadow | limited | active. off = runtime "
+            "actual intacto (bloquea /api/v1/cognitive/* con 503). shadow = "
+            "plan+strategy trazados en el flow; la ejecución no cambia. limited = "
+            "pipeline cognitivo L0-L2. active = incluye DAG L3+."
         ),
     )
     # -------------------------------------------------------------------------
