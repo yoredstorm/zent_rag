@@ -239,7 +239,7 @@ de respuesta lo exige), `src/knowledge/compiler/pipeline.py`,
 
 | Fase | Contenido | Modo default | Plan |
 |---|---|---|---|
-| C1 | TurnState + cognitive plan + strategy + traza (shadow kernel) | `shadow` para probar; default `off` | `docs/superpowers/plans/2026-10-01-cognitive-runtime-c1-shadow-kernel.md` |
+| C1 | TurnState + cognitive plan + strategy + traza (shadow kernel) | `shadow` (default off) — **shipped** | `docs/superpowers/plans/2026-10-01-cognitive-runtime-c1-shadow-kernel.md` |
 | C2 | Runners de representación + entity resolution + señales JEV nuevas | shadow | pendiente |
 | C3 | EvidenceAssembly + KnowledgeBrief | shadow | pendiente |
 | C4 | AnswerVerifier único + ruteo L0–L2 + loop/budget + learning signal | limited | pendiente |

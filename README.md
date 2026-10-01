@@ -627,7 +627,7 @@ El plan canónico vive en [`docs/platform/ZENT_PLATFORM_ROADMAP.md`](docs/platfo
 
 | Horizonte | Iniciativa | Detalle |
 |---|---|---|
-| **En consolidación** | **Cognitive OS** | Activación de los motores cognitivos hoy flag-gated sobre el conocimiento canónico del Knowledge OS |
+| **En consolidación** | **Cognitive runtime (W1)** | Plan+strategy shadow en `/rag/query`; fases C1–C9 en [`docs/architecture/cognitive-runtime.md`](docs/architecture/cognitive-runtime.md) |
 | **En consolidación** | **Memoria Zent** | Llevar los tipos de memoria de la fundación observable al runtime de agentes y workflows con métricas de impacto |
 | **En consolidación** | **Aprendizaje gobernado** | Promociones y rollback del learning cycle con aprobación humana y replay de impacto |
 | **Próximo** | **Alertmanager + alerting** | Reglas ya definidas en [`config/prometheus/alert-rules.yml`](config/prometheus/alert-rules.yml); falta servicio y wiring |
