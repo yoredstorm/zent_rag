@@ -41,7 +41,7 @@ def _pct(part: float, total: float) -> float:
 
 
 class KnowledgeModelService:
-    def __init__(self, repository, materializer) -> None:
+    def __init__(self, repository, materializer=None) -> None:
         self._repo = repository
         self._materializer = materializer
 
@@ -560,6 +560,28 @@ class KnowledgeModelService:
 
     async def search(self, organization_id: UUID, q: str, *, limit: int = 10) -> dict:
         return await self._repo.search(organization_id, q, limit=limit)
+
+    async def lookup_aliases(
+        self, organization_id: UUID, normalized: list[str], *, limit: int = 50
+    ) -> list[dict]:
+        return await self._repo.lookup_aliases(
+            organization_id, normalized, limit=limit
+        )
+
+    async def find_objects_by_names(
+        self,
+        organization_id: UUID,
+        names: list[str],
+        *,
+        kinds: tuple[str, ...] | None = None,
+        limit: int = 20,
+    ) -> list[dict]:
+        kwargs: dict = {"limit": limit}
+        if kinds is not None:
+            kwargs["kinds"] = tuple(kinds)
+        return await self._repo.find_objects_by_names(
+            organization_id, names, **kwargs
+        )
 
     async def graph(self, organization_id: UUID, **kwargs) -> dict:
         return await self._repo.graph(organization_id, **kwargs)

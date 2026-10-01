@@ -70,6 +70,9 @@ _GAP_COLS = (
 
 _STALE_DAYS_DEFAULT = 14
 
+#: Kinds canónicos resolubles en runtime por nombre exacto (C2).
+_LOOKUP_KINDS = ("entity", "concept", "process", "rule", "business_rule", "kpi")
+
 
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
@@ -149,6 +152,8 @@ def _assertion_row(row) -> dict:
         "source_id": str(row.source_id) if row.source_id else None,
         "evidence_count": row.evidence_count or 0,
         "version": row.version or 1,
+        "valid_from": _iso(row.valid_from),
+        "valid_to": _iso(row.valid_to),
         "verified_at": _iso(row.verified_at),
         "stale_at": _iso(row.stale_at),
         "created_at": _iso(row.created_at),
@@ -1376,6 +1381,121 @@ class PostgresKnowledgeModelRepository:
             ]
             items = await self.list_objects(organization_id, q=q, limit=limit, order_by="name")
             return {"groups": groups, "items": items, "count": len(items)}
+        finally:
+            await session.close()
+
+    async def lookup_aliases(
+        self, organization_id: UUID, normalized: list[str], *, limit: int = 50
+    ) -> list[dict]:
+        """Alias normalizados -> objeto canónico (scoped, determinista)."""
+        names = [str(item).strip().lower() for item in normalized if str(item).strip()]
+        if not names:
+            return []
+        session = await get_async_session()
+        try:
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT a.normalized, a.alias, a.confidence,
+                               o.id AS entity_id,
+                               COALESCE(
+                                 NULLIF(o.name, ''),
+                                 NULLIF(o.display_name, ''),
+                                 o.title,
+                                 o.natural_key
+                               ) AS name,
+                               o.kind
+                        FROM knowledge_entity_aliases a
+                        JOIN knowledge_canonical_objects o
+                          ON o.id = a.entity_id
+                         AND o.organization_id = a.organization_id
+                        WHERE a.organization_id = :org
+                          AND a.normalized = ANY(:names)
+                        ORDER BY a.confidence DESC, o.name
+                        LIMIT :limit
+                        """
+                    ),
+                    {
+                        "org": organization_id,
+                        "names": names[:50],
+                        "limit": min(max(int(limit), 1), 200),
+                    },
+                )
+            ).fetchall()
+            return [
+                {
+                    "normalized": str(r.normalized),
+                    "alias": str(r.alias),
+                    "confidence": float(r.confidence or 0.0),
+                    "entity_id": str(r.entity_id),
+                    "name": str(r.name or ""),
+                    "kind": str(r.kind or ""),
+                }
+                for r in rows
+            ]
+        finally:
+            await session.close()
+
+    async def find_objects_by_names(
+        self,
+        organization_id: UUID,
+        names: list[str],
+        *,
+        kinds: tuple[str, ...] = _LOOKUP_KINDS,
+        limit: int = 20,
+    ) -> list[dict]:
+        """Objetos canónicos por nombre exacto (lower) entre los kinds resolubles."""
+        wanted = [str(item).strip().lower() for item in names if str(item).strip()]
+        if not wanted:
+            return []
+        session = await get_async_session()
+        try:
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT id, kind, natural_key, name, display_name, title,
+                               confidence, status, provenance
+                        FROM knowledge_canonical_objects
+                        WHERE organization_id = :org
+                          AND kind = ANY(:kinds)
+                          AND lower(COALESCE(
+                                NULLIF(name, ''),
+                                NULLIF(display_name, ''),
+                                title,
+                                natural_key
+                              )) = ANY(:names)
+                        ORDER BY confidence DESC NULLS LAST, name
+                        LIMIT :limit
+                        """
+                    ),
+                    {
+                        "org": organization_id,
+                        "kinds": list(kinds),
+                        "names": wanted[:50],
+                        "limit": min(max(int(limit), 1), 100),
+                    },
+                )
+            ).fetchall()
+            return [
+                {
+                    "id": str(r.id),
+                    "kind": str(r.kind),
+                    "type": normalize_object_type(r.kind),
+                    "natural_key": str(r.natural_key),
+                    "name": str(
+                        r.name or r.display_name or r.title or r.natural_key or ""
+                    ),
+                    "display_name": str(
+                        r.display_name or r.name or r.title or r.natural_key or ""
+                    ),
+                    "confidence": r.confidence,
+                    "status": r.status,
+                    "provenance": r.provenance,
+                }
+                for r in rows
+            ]
         finally:
             await session.close()
 
