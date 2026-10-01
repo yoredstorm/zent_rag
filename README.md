@@ -101,9 +101,10 @@ El cliente conecta sus fuentes (SQL, PDF, CSV/Excel, web, APIs, S3, Google Drive
 
 ### Knowledge OS — del dato crudo al conocimiento durable
 
-- **Ingesta V2 por fuente** con jobs durables (retry, resume por `cursor_snapshot`, dead letter) en [`src/knowledge/`](src/knowledge/).
+- **Ingesta por fuente** con jobs durables (retry, resume por `cursor_snapshot`, dead letter) en [`src/knowledge/`](src/knowledge/). Un solo camino: toda fuente se convierte en `StructuredDocument` antes de indexarse o compilarse.
 - **Structured documents**: parsers PDF/DOCX/HTML/XLSX/CSV que producen `StructuredDocument` con layout, tablas, unidades y secciones; las tablas de PDF entran al índice como bloques `TABLE` con su ruta de sección.
-- **Tabular V2 (SQL-first)**: detección de estructura, perfilado, chunking y consultas SQL-first para Excel/CSV — activo bajo `RAG_KNOWLEDGE_V2_ENABLED`.
+- **Knowledge Compiler** ([`src/knowledge/compiler/`](src/knowledge/compiler/)): convierte cada fuente entendida en conocimiento canónico — unidades semánticas → entidades con identidad canónica y alias → hechos → relaciones → reglas → conflictos clasificados → evidencia enlazada. Corre automáticamente al terminar cada ingesta, refuerza lo que ya existe (no duplica) y nunca publica conocimiento sin provenance.
+- **Tabular (SQL-first)**: Excel/CSV como DATOS, no como texto — detección de estructura, perfilado, schema, row/cell provenance y consultas SQL-first.
 - **Document Understanding**: layout, unidades, enriquecimiento y vistas de documento.
 - **Conectores**: registry (`sql`, `file`, `csv`, `excel`, `web`, `s3`, `api`, gdrive) + **plugin platform** con 12 entry-points (`postgres`, `mysql`, `mssql`, `oracle`, `db2`, `csv`, `excel`, `json_file`, `pdf`, `rest_api`, `graphql`, `s3_compat`).
 - **Catálogo semántico** ([`src/catalog/`](src/catalog/)): Discovery Engine, perfilado, authority, schema linking, búsqueda híbrida del catálogo y Mapping Studio gobernado.
@@ -580,7 +581,6 @@ Todas las settings usan prefijo **`RAG_`** (`pydantic-settings` en [`src/core/co
 | `RAG_PORTAL_SESSION_KEY` | (dev hex) | AES-256-GCM — **rotar en prod** |
 | `RAG_DECISION_ROUTING_MODE` | `legacy` | `legacy` · `shadow` · `jev` · `hybrid` |
 | `RAG_RUNTIME_*` | — | Guardrails del runtime (steps, costo, JEV loop, figuras) |
-| `RAG_KNOWLEDGE_V2_ENABLED` | `false` | Motor de conocimiento V2 |
 | `RAG_RAG_MCP_ENABLED` | `true` | Montar `/mcp` |
 
 Grupos del `.env.example` (más de 300 variables `RAG_`): entorno · PostgreSQL · Qdrant · Redis · LiteLLM · embeddings · performance de ingesta · Decision Engine (JEV) · Adaptive RAG · batching · JEV Preflight · Response Intelligence · Agent JEV Loop · Judgment Fabric · Zent AI Runtime · portal auth · RAG · billing · Knowledge Platform · worker · Vault · rate limiting · infra compose · Grafana · memory foundation · learning cycle · SDK.
@@ -627,7 +627,7 @@ El plan canónico vive en [`docs/platform/ZENT_PLATFORM_ROADMAP.md`](docs/platfo
 
 | Horizonte | Iniciativa | Detalle |
 |---|---|---|
-| **En consolidación** | **Knowledge OS V2 / Cognitive OS** | Cutover progresivo del motor de conocimiento V2 y activación de los motores cognitivos hoy flag-gated (`knowledge_v2_status`, `knowledge_v2_backfill`) |
+| **En consolidación** | **Cognitive OS** | Activación de los motores cognitivos hoy flag-gated sobre el conocimiento canónico del Knowledge OS |
 | **En consolidación** | **Memoria Zent** | Llevar los tipos de memoria de la fundación observable al runtime de agentes y workflows con métricas de impacto |
 | **En consolidación** | **Aprendizaje gobernado** | Promociones y rollback del learning cycle con aprobación humana y replay de impacto |
 | **Próximo** | **Alertmanager + alerting** | Reglas ya definidas en [`config/prometheus/alert-rules.yml`](config/prometheus/alert-rules.yml); falta servicio y wiring |
@@ -658,7 +658,7 @@ El plan canónico vive en [`docs/platform/ZENT_PLATFORM_ROADMAP.md`](docs/platfo
 | [`docs/architecture/response-intelligence.md`](docs/architecture/response-intelligence.md) | Forma de explicar, contrato de respuesta y gate de presentación |
 | [`docs/architecture/answer-experience.md`](docs/architecture/answer-experience.md) | Experiencia de lectura, capas y límites materiales |
 | [`docs/architecture/evidence-first-gate.md`](docs/architecture/evidence-first-gate.md) | Evidencia de primera clase, suficiencia y política del gate |
-| [`docs/architecture/enterprise-knowledge-refactor.md`](docs/architecture/enterprise-knowledge-refactor.md) | ADR Knowledge Engine V2 (CURRENT → TARGET) |
+| [`docs/architecture/knowledge-os.md`](docs/architecture/knowledge-os.md) | **Knowledge OS**: pipeline canónico, identidad, multi-representación y leyes del compilador |
 | [`docs/architecture/knowledge-cognitive-os.md`](docs/architecture/knowledge-cognitive-os.md) | Knowledge Operating System cognitivo (migraciones 102–108) |
 | [`docs/architecture/workflow-architect.md`](docs/architecture/workflow-architect.md) | Workflows: intención de negocio → grafo → aprobación |
 | [`docs/architecture/company-intelligence.md`](docs/architecture/company-intelligence.md) | Company Graph y descubrimiento empresarial |

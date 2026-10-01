@@ -216,6 +216,10 @@ async def test_sync_creates_job_and_engine_completes(
     from src.infrastructure.postgres.relational_db import (
         PostgresKnowledgeBaseRepository,
     )
+    from src.infrastructure.postgres.structured_documents import (
+        PostgresStructuredDocumentRepository,
+    )
+    from src.infrastructure.postgres.tabular import PostgresTabularRepository
     from src.knowledge.engine.service import KnowledgeIngestionEngine
     from tests.test_knowledge_jobs import FakeEmbedding, FakeVectorStore
 
@@ -227,6 +231,8 @@ async def test_sync_creates_job_and_engine_completes(
         source_repo=PostgresSourceRepository(),
         vector_store=FakeVectorStore(),
         embedding_provider=FakeEmbedding(),
+        structured_doc_repo=PostgresStructuredDocumentRepository(),
+        tabular_repo=PostgresTabularRepository(),
     )
     job = await engine.execute_job(UUID(job_id))
     assert job.status.value == "completed"

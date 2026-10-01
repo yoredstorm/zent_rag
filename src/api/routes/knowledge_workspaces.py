@@ -1,11 +1,10 @@
 # =============================================================================
-# Knowledge Workspaces — corpora V2 (Phase G UI backend)
+# Knowledge Workspaces — corpora del Knowledge OS
 # =============================================================================
-# Hombre de UI: Knowledge Workspaces (list/create/detail/sources) + chat
-# grounded (StructuredRetriever + GroundingService) cuando la retina V2 está
-# activa (RAG_KNOWLEDGE_V2_ENABLED + RAG_KNOWLEDGE_V2_PROMOTE). Sin esos flags
-# el chat responde 503 (UI muestra hint, nunca datos falsos). Aislamiento por
-# organization_id + workspace vía resolve_workspace, igual que el resto.
+# Home de UI: Knowledge Workspaces (list/create/detail/sources) + chat
+# grounded (KnowledgeRetriever + GroundingService) sobre el árbol canónico.
+# Aislamiento por organization_id + workspace vía resolve_workspace, igual que
+# el resto de la plataforma.
 # =============================================================================
 from __future__ import annotations
 
@@ -272,12 +271,6 @@ async def workspace_chat(
 
     ctx = require_permission(request, "knowledge:read")
     settings = get_settings()
-    if not (settings.KNOWLEDGE_V2_ENABLED and settings.KNOWLEDGE_V2_PROMOTE):
-        raise HTTPException(
-            503,
-            "Knowledge V2 retina is not enabled "
-            "(RAG_KNOWLEDGE_V2_ENABLED + RAG_KNOWLEDGE_V2_PROMOTE)",
-        )
 
     ws = await resolve_workspace(request)
     corpus = await get_corpus_repo().get_corpus(ctx.organization_id, corpus_id)
@@ -286,8 +279,8 @@ async def workspace_chat(
 
     from src.api.deps import (
         get_embedding_provider,
+        get_knowledge_retriever,
         get_llm_provider,
-        get_structured_retriever,
     )
     from src.rag.grounding import GroundingService
     from src.rag.retrieval.models import RetrievalQuery
@@ -328,7 +321,7 @@ async def workspace_chat(
         },
         query_embedding=list(query_embedding),
     )
-    assembled = await get_structured_retriever().retrieve(
+    assembled = await get_knowledge_retriever().retrieve(
         rquery, V2RetrievalOptions()
     )
 
@@ -413,11 +406,6 @@ async def workspace_studio(
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "knowledge:read")
-    settings = get_settings()
-    if not settings.KNOWLEDGE_V2_ENABLED:
-        raise HTTPException(
-            503, "Knowledge V2 is not enabled (RAG_KNOWLEDGE_V2_ENABLED)"
-        )
     ws = await resolve_workspace(request)
     corpus = await get_corpus_repo().get_corpus(ctx.organization_id, corpus_id)
     if corpus is None or corpus.get("workspace_id") != str(ws.id):
@@ -439,11 +427,6 @@ async def workspace_suggestions(corpus_id: UUID, request: Request) -> dict:
     from src.platform.rbac.policy import require_permission
 
     ctx = require_permission(request, "knowledge:read")
-    settings = get_settings()
-    if not settings.KNOWLEDGE_V2_ENABLED:
-        raise HTTPException(
-            503, "Knowledge V2 is not enabled (RAG_KNOWLEDGE_V2_ENABLED)"
-        )
     ws = await resolve_workspace(request)
     corpus = await get_corpus_repo().get_corpus(ctx.organization_id, corpus_id)
     if corpus is None or corpus.get("workspace_id") != str(ws.id):

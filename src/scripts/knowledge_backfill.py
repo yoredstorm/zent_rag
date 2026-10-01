@@ -1,14 +1,15 @@
 #!/usr/bin/env python
 # =============================================================================
-# Knowledge V2 backfill — re-procesa fuentes de archivo para generar
-# documentos estructurados + chunks V2 (tras activar RAG_KNOWLEDGE_V2_ENABLED).
+# Knowledge backfill — recompila fuentes de archivo.
 #
 # Uso:
-#   python -m src.scripts.knowledge_v2_backfill --dry-run
-#   python -m src.scripts.knowledge_v2_backfill --org <uuid> --limit 5
+#   python -m src.scripts.knowledge_backfill --dry-run
+#   python -m src.scripts.knowledge_backfill --org <uuid> --limit 5
 #
 # Solo encola jobs (estado en Postgres + wakeup Redis); el worker existente
-# los procesa. Se salta fuentes que ya tienen structured_documents.
+# los procesa. Se salta fuentes que ya tienen documento estructurado salvo
+# --force, que fuerza la recompilación (cambio de parser, chunker o
+# compilador de conocimiento).
 # =============================================================================
 from __future__ import annotations
 
@@ -19,7 +20,6 @@ from uuid import UUID
 
 from sqlalchemy import text
 
-from src.core.config import get_settings
 from src.infrastructure.postgres.knowledge_repos import (
     PostgresIngestionJobRepository,
 )
@@ -149,12 +149,6 @@ async def backfill(
 
 
 async def _main(args: argparse.Namespace) -> None:
-    settings = get_settings()
-    if not settings.KNOWLEDGE_V2_ENABLED:
-        _print(
-            "ATENCIÓN: RAG_KNOWLEDGE_V2_ENABLED está off. Los jobs correrán "
-            "solo el pipeline V1 (sin documentos estructurados ni chunks V2)."
-        )
     organization_id: UUID | None = None
     if args.org:
         organization_id = UUID(args.org)

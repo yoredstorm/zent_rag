@@ -1,5 +1,5 @@
 # =============================================================================
-# Knowledge Ingestion Engine — orquestador genérico (sin dominio vertical)
+# Knowledge Ingestion Engine — orquestador de fuentes -> conocimiento
 # =============================================================================
 # Flujo por job:
 #   pending -> running -> completed | failed ->(retry_at)-> pending
@@ -12,6 +12,11 @@
 #   ingestion_job_errors (nunca se pierde).
 # - Update/delete detection: registry source_documents + delete de vectores
 #   huérfanos por ID exacto.
+#
+# UN SOLO CAMINO: cada record se convierte en StructuredDocument (árbol
+# canónico), se persiste, se indexa como chunks derivados de esa estructura y
+# se compila a conocimiento canónico (entidades, hechos, relaciones, reglas,
+# evidencia). No existe camino alternativo de chunks sobre texto crudo.
 # =============================================================================
 from __future__ import annotations
 
@@ -24,6 +29,7 @@ from src.core.domain.entities import (
     IngestionJobStatus,
     KnowledgeBase,
 )
+from src.core.domain.knowledge_session import LearningStage
 from src.core.ports import (
     DocumentRegistryRepository,
     EmbeddingProvider,
@@ -38,21 +44,12 @@ from src.core.ports.tabular import TabularRepository
 from src.infrastructure.observability.logging_config import get_logger
 from src.knowledge.connectors.base import ConnectorError, Record
 from src.knowledge.connectors.registry import build_connector
-from src.rag.chunking.registry import get_chunker
 
 # structlog (kwargs-safe). El stdlib logger revienta con logging(key=value).
 logger = get_logger(__name__)
 
-# Namespace determinista para IDs de documentos (uuid5)
-_DOC_NS = UUID("6f9e0d4a-8a7b-4c3e-9f1e-2b5c8d7a6f90")
-# Namespace V2 (Phase C): separado del ns V1 para que los IDs de chunk V2
-# nunca colisionen con los chunks V1 (misma colección Qdrant).
-_V2_CHUNK_NS = UUID("c7a2e5d9-4b3f-4a1c-9d8e-6f5b2a4e8c10")
-
-# Chunking por defecto si la fuente no pertenece a una KB
-DEFAULT_CHUNK_STRATEGY = "fixed"
-DEFAULT_CHUNK_SIZE = 1200
-DEFAULT_CHUNK_OVERLAP = 150
+# Namespace de los puntos de chunk derivados de la estructura.
+_CHUNK_NS = UUID("c7a2e5d9-4b3f-4a1c-9d8e-6f5b2a4e8c10")
 
 _CHECKPOINT_EVERY = 10  # records entre updates de progreso
 _EMBED_BATCH = 32  # chunks por llamada de embedding
@@ -129,12 +126,8 @@ def compute_failure_retry_delay(
     return compute_retry_delay(attempt, base_seconds=base_seconds, cap_seconds=cap_seconds)
 
 
-def _chunk_document_id(source_id: UUID, external_id: str, chunk_index: int) -> UUID:
-    return uuid5(_DOC_NS, f"{source_id}:{external_id}:{chunk_index}")
-
-
-def _v2_chunk_id(source_id: UUID, external_id: str, chunk_index: int) -> UUID:
-    return uuid5(_V2_CHUNK_NS, f"v2:{source_id}:{external_id}:{chunk_index}")
+def _chunk_point_id(source_id: UUID, external_id: str, chunk_index: int) -> UUID:
+    return uuid5(_CHUNK_NS, f"v2:{source_id}:{external_id}:{chunk_index}")
 
 
 def _content_hash(content: str) -> str:
@@ -332,6 +325,8 @@ class KnowledgeIngestionEngine:
         summarizer: object | None = None,
         usage_tracker: object | None = None,
         company_discovery: object | None = None,
+        compiler: object | None = None,
+        session_service: object | None = None,
     ) -> None:
         self._jobs = job_repo
         self._state = sync_state_repo
@@ -342,18 +337,27 @@ class KnowledgeIngestionEngine:
         self._embeddings = embedding_provider
         self._backoff_base = backoff_base_seconds
         self._max_attempts_default = max_attempts_default
-        # Knowledge V2 (Phase B): paralelo, opcional, nunca rompe el camino V1.
-        self._structured_v2 = structured_doc_repo
-        # Knowledge Tabular V2: representación estructurada de Excel/CSV.
-        self._tabular_v2 = tabular_repo
-        # Phase C3: summarizer shadow (mode=shadow) — calcula, NO persiste.
+        # Árbol canónico de las fuentes (structured_documents + blocks).
+        self._structured = structured_doc_repo
+        # Representación tabular de Excel/CSV (datos, no texto).
+        self._tabular = tabular_repo
+        # Summarizer de secciones/documento (extractivo o LLM según budget).
         self._summarizer = summarizer
-        # Phase G (brief §41): registro de costos por corpus/source.
+        # Registro de costos por corpus/source.
         self._usage_tracker = usage_tracker
-        # Fase 5B: hook opcional de descubrimiento de compañía (fail-soft).
+        # Hook opcional de descubrimiento de compañía (fail-soft).
         self._company_discovery = company_discovery
-        self.v2_parsed = 0
-        self.v2_failed = 0
+        # Knowledge Compiler: fuente entendida -> conocimiento canónico.
+        if compiler is None:
+            from src.knowledge.compiler import KnowledgeCompiler
+
+            compiler = KnowledgeCompiler()
+        self._compiler = compiler
+        # Learning Sessions: observabilidad real del aprendizaje (opcional).
+        self._sessions = session_service
+        self.documents_parsed = 0
+        self.documents_failed = 0
+        self.compilations_failed = 0
 
     # ------------------------------------------------------------------
     # Entry point del worker
@@ -373,15 +377,47 @@ class KnowledgeIngestionEngine:
         )
         job = await self._jobs.get_job(None, job_id)
 
+        observer = await self._observer_for(job)
         try:
-            await self._run(job)
+            await self._run(job, observer)
             if job.source_id:
                 await _set_source_status(job.organization_id, job.source_id, "indexed")
+            await self._finish_observer(observer, success=True)
         except Exception as exc:
-            await self._handle_failure(job_id, job, exc)
+            await self._handle_failure(job_id, job, exc, observer)
         return await self._jobs.get_job(None, job_id)
 
-    async def _handle_failure(self, job_id: UUID, job: IngestionJob, exc: Exception) -> None:
+    async def _observer_for(self, job: IngestionJob):
+        """Observer de aprendizaje si el job pertenece a una sesión real."""
+        service = self._sessions
+        if service is None:
+            return None
+        try:
+            return await service.observer_for_job(job)
+        except Exception as exc:  # noqa: BLE001 — jamás frena la ingesta
+            logger.warning("Learning observer unavailable", error=str(exc)[:200])
+            return None
+
+    async def _finish_observer(
+        self,
+        observer,
+        *,
+        success: bool,
+        error: str | None = None,
+        technical: str = "",
+    ) -> None:
+        if observer is None or self._sessions is None:
+            return
+        try:
+            await self._sessions.on_source_finished(
+                observer, success=success, error=error, technical=technical
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Learning observer finish failed", error=str(exc)[:200])
+
+    async def _handle_failure(
+        self, job_id: UUID, job: IngestionJob, exc: Exception, observer=None
+    ) -> None:
         error_text = f"{type(exc).__name__}: {exc}"[:2000]
         await self._jobs.record_error(job_id, job.attempts, error_text)
 
@@ -417,16 +453,30 @@ class KnowledgeIngestionEngine:
                 success=False,
             )
             await _set_source_status(job.organization_id, job.source_id, "error")
+        final = job.attempts >= (job.max_attempts or self._max_attempts_default)
+        if final:
+            await self._finish_observer(
+                observer, success=False, technical=error_text
+            )
+        elif observer is not None:
+            # Reintentará: la fuente sigue "aprendiendo", sin marcar error.
+            try:
+                await observer.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     # ------------------------------------------------------------------
     # Flujo principal
     # ------------------------------------------------------------------
-    async def _run(self, job: IngestionJob) -> None:
+    async def _run(self, job: IngestionJob, observer=None) -> None:
         source = await self._sources.get_source(job.organization_id, job.source_id) if job.source_id else None
         if source is None:
             raise ConnectorError(f"Source {job.source_id} not found for this organization")
 
         await _set_source_status(job.organization_id, source.id, "ingesting")
+        if observer is not None:
+            await observer.set_stage(LearningStage.READING.value)
+            await observer.source_received()
 
         kb: KnowledgeBase | None = None
         if job.knowledge_base_id:
@@ -454,8 +504,22 @@ class KnowledgeIngestionEngine:
                 processed_count=outcome.records_processed,
                 success=not outcome.errors,
             )
+            if observer is not None:
+                await observer.set_stage(LearningStage.ORGANIZING.value)
+                await observer.metric("records", outcome.records_processed)
+                await observer.event(
+                    "INDEX_UPDATED",
+                    payload={
+                        "records": outcome.records_processed,
+                        "errors": outcome.records_failed,
+                    },
+                )
+                if self._sessions is not None:
+                    await self._sessions.on_source_available(observer)
+                for error in outcome.errors[:3]:
+                    await observer.warning(str(error)[:300])
         else:
-            await self._run_record_mode(job, source, connector, kb, cursor)
+            await self._run_record_mode(job, source, connector, kb, cursor, observer)
 
         await self._jobs.update_job(
             job.id,
@@ -464,148 +528,42 @@ class KnowledgeIngestionEngine:
             completed_at=datetime.now(timezone.utc),
         )
 
-    async def _run_record_mode(self, job, source, connector, kb, cursor) -> None:
-        source_id = source.id
-        chunker = get_chunker(
-            kb.chunking_strategy if kb else DEFAULT_CHUNK_STRATEGY,
-            chunk_size=kb.chunk_size if kb else DEFAULT_CHUNK_SIZE,
-            chunk_overlap=kb.chunk_overlap if kb else DEFAULT_CHUNK_OVERLAP,
-        )
+    async def _run_record_mode(self, job, source, connector, kb, cursor, observer=None) -> None:
+        if self._structured is None:
+            raise ConnectorError(
+                "Structured document repository is required: every source must "
+                "become a StructuredDocument before it can become knowledge."
+            )
         schema = kb.metadata_schema if kb else None
 
         records_processed = 0
         records_failed = 0
         seen_external_ids: set[str] = set()
-        # Knowledge V2/Tabular: external_ids de documentos estructurados
-        # (un workbook Excel/CSV produce un documento, no un record por fila).
-        v2_external_ids: set[str] = set()
-        # (external_id, chunk_text, identity) — identity lleva el nombre real del
-        # documento a la metadata para que la trazabilidad no muestre "sin nombre".
-        pending_chunks: list[tuple[str, str, dict[str, str]]] = []
-        chunk_indexes: dict[str, int] = {}
-        flush_index = 0  # índice estable de lote (idempotencia del evento de uso)
-
-        def next_index(external_id: str) -> int:
-            index = chunk_indexes.get(external_id, 0)
-            chunk_indexes[external_id] = index + 1
-            return index
-
-        def _record_identity(record: Record) -> dict[str, str]:
-            """Nombre legible del documento: metadata del connector o config."""
-            record_meta = dict(record.metadata or {})
-            identity = {
-                key: str(record_meta[key]).strip()
-                for key in ("filename", "title", "original_filename", "source_uri")
-                if record_meta.get(key) and str(record_meta[key]).strip()
-            }
-            if not identity.get("filename") and not identity.get("title"):
-                source_config = getattr(source, "config", None)
-                configured = (
-                    str(source_config.get("filename") or "").strip()
-                    if isinstance(source_config, dict)
-                    else ""
-                )
-                if configured:
-                    identity["filename"] = configured
-                else:
-                    source_name = str(getattr(source, "name", "") or "").strip()
-                    if source_name:
-                        identity["title"] = source_name
-            return identity
-
-        async def flush() -> None:
-            nonlocal flush_index
-            if not pending_chunks:
-                return
-            flush_index += 1
-            texts = self._embed_texts([t for _, t, _ in pending_chunks])
-            embeddings = await self._embeddings.embed(texts, model=kb.embedding_model if kb else None)
-            if embeddings and not isinstance(embeddings[0], list):
-                embeddings = [embeddings]  # provider devolvió un solo vector
-            if self._usage_tracker is not None:
-                # Gap de observabilidad cerrado: el camino V1 también registra
-                # tokens de embedding (antes solo lo hacía V2).
-                try:
-                    from src.knowledge.structure.base import token_count as _tokens
-
-                    batch_tokens = sum(_tokens(text) for text in texts)
-                    modelo = kb.embedding_model if kb else None
-                    costo = await self._embedding_cost(modelo, batch_tokens)
-                    await self._usage_tracker.record_embedding_tokens(
-                        job.organization_id,
-                        batch_tokens,
-                        model=modelo,
-                        cost_usd=costo,
-                        workspace_id=source.workspace_id,
-                        source_id=source_id,
-                    )
-                    self._observe_ingest("embedding", batch_tokens, costo)
-                    await self._record_ingest_usage_event(
-                        organization_id=job.organization_id,
-                        job_id=job.id,
-                        kind="embedding",
-                        tokens=batch_tokens,
-                        cost_usd=costo,
-                        index=flush_index,
-                        source_id=source_id,
-                        model=modelo,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "Knowledge usage tracking (V1 embeddings) failed",
-                        error=str(exc)[:200],
-                    )
-            points: list[tuple[UUID, list[float], str, dict | None]] = []
-            for (external_id, text, identity), vector in zip(pending_chunks, embeddings):
-                chunk_index = next_index(external_id)
-                doc_id = _chunk_document_id(source_id, external_id, chunk_index)
-                points.append(
-                    (
-                        doc_id,
-                        list(vector),
-                        text,
-                        {
-                            "source_id": str(source_id),
-                            "external_id": external_id,
-                            "content_hash": _content_hash(text),
-                            "chunking_strategy": chunker.__class__.__name__,
-                            "organization_id": str(job.organization_id),
-                            **({"knowledge_base_id": str(job.knowledge_base_id)} if job.knowledge_base_id else {}),
-                            **identity,
-                            **_acl_payload(record.metadata),
-                        },
-                    )
-                )
-                await self._registry.upsert_document(
-                    job.organization_id,
-                    source_id,
-                    f"{external_id}#{chunk_index}",
-                    doc_id,
-                    _content_hash(text),
-                )
-            await self._vectors.upsert_batch(
-                job.organization_id, points, knowledge_base_id=job.knowledge_base_id
-            )
-            pending_chunks.clear()
+        # external_ids de documentos estructurados (un workbook Excel/CSV
+        # produce un documento, no un record por fila).
+        structured_external_ids: set[str] = set()
 
         record: Record
         async for record in connector.iter_records(cursor):
             seen_external_ids.add(record.external_id)
-            clean_metadata, error = _validate_metadata(record.metadata, schema)
+            _clean_metadata, error = _validate_metadata(record.metadata, schema)
             if error:
                 records_failed += 1
                 continue
-            await self._maybe_structured_v2(job, source, record, v2_external_ids)
-            chunks = chunker.chunk(record.content)
-            if not chunks:
+            try:
+                await self._ingest_record(job, source, record, structured_external_ids, observer)
+            except Exception as exc:  # noqa: BLE001 — un record malo no mata el job
+                if is_rate_limit_error(exc):
+                    # Saturación/cuota del proveedor: es un fallo del job, no
+                    # del record. Debe reintentar con el backoff largo (429).
+                    raise
                 records_failed += 1
+                logger.warning(
+                    "Knowledge record failed",
+                    external_id=record.external_id,
+                    error=str(exc)[:400],
+                )
                 continue
-            identity = _record_identity(record)
-            for text in chunks:
-                pending_chunks.append((record.external_id, text, identity))
-            if len(pending_chunks) >= _EMBED_BATCH:
-                await flush()
-
             records_processed += 1
             if records_processed % _CHECKPOINT_EVERY == 0:
                 final_cursor = getattr(connector, "_last_cursor", None)
@@ -614,51 +572,55 @@ class KnowledgeIngestionEngine:
                     records_processed=records_processed,
                     records_failed=records_failed,
                     progress=50,  # progreso indeterminado hasta terminar
-                    cursor_snapshot=final_cursor if final_cursor is not None else job.cursor_snapshot,
+                    cursor_snapshot=(
+                        final_cursor if final_cursor is not None else job.cursor_snapshot
+                    ),
                 )
 
-        await flush()
-
         # Delete detection: registry marca 'deleted' lo no visto y retorna ids.
-        # El keep-set incluye los documentos estructurados V2/Tabular (workbook
-        # completo) además de los records V1.
-        keep_external_ids = seen_external_ids | v2_external_ids
-        deleted = await self._registry.mark_missing_deleted(source_id, keep_external_ids)
+        keep_external_ids = seen_external_ids | structured_external_ids
+        deleted = await self._registry.mark_missing_deleted(source.id, keep_external_ids)
         if deleted:
             ids = [str(d) for d in deleted]
             await self._vectors.delete_points(job.organization_id, ids)
 
-        # F5: purga V2 (Qdrant + Postgres) de documentos que ya no existen en
-        # la fuente. La lista `keep_external_ids` define qué queda vivo.
-        if self._structured_v2 is not None:
+        # Purga (Qdrant + Postgres) de documentos que ya no existen en la
+        # fuente. La lista `keep_external_ids` define qué queda vivo.
+        try:
+            await self._vectors.delete_stale_v2_documents(
+                job.organization_id, source.id, keep_external_ids
+            )
+            await self._structured.delete_missing_documents(
+                job.organization_id, source.id, keep_external_ids
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Knowledge stale purge failed",
+                source_id=str(source.id),
+                error=str(exc)[:300],
+            )
+        if self._tabular is not None:
             try:
-                await self._vectors.delete_stale_v2_documents(
-                    job.organization_id, source_id, keep_external_ids
-                )
-                await self._structured_v2.delete_missing_documents(
-                    job.organization_id, source_id, keep_external_ids
+                await self._tabular.delete_missing_workbooks(
+                    job.organization_id, source.id, structured_external_ids
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
-                    "Knowledge V2 stale purge failed",
-                    source_id=str(source_id),
-                    error=str(exc)[:300],
-                )
-        if self._tabular_v2 is not None:
-            try:
-                await self._tabular_v2.delete_missing_workbooks(
-                    job.organization_id, source_id, v2_external_ids
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "Knowledge Tabular stale purge failed",
-                    source_id=str(source_id),
+                    "Knowledge tabular stale purge failed",
+                    source_id=str(source.id),
                     error=str(exc)[:300],
                 )
 
         final_cursor = getattr(connector, "_last_cursor", None)
+        if observer is not None:
+            await observer.metric("records", records_processed)
+            if records_failed:
+                await observer.warning(
+                    f"{records_failed} registros no pudieron convertirse en conocimiento",
+                    payload={"records_failed": records_failed},
+                )
         await self._state.save_state(
-            source_id,
+            source.id,
             cursor=final_cursor or cursor,
             processed_count=records_processed,
             success=True,
@@ -670,30 +632,268 @@ class KnowledgeIngestionEngine:
             progress=100,
         )
 
-    async def _apply_document_understanding(self, job, document, raw_data: bytes, *, filename: str):
-        """Entiende el documento antes de persistir y chunkear. Flag off = no-op."""
-        try:
-            from src.core.config import get_settings
+    # ------------------------------------------------------------------
+    # Camino único: source -> StructuredDocument -> knowledge
+    # ------------------------------------------------------------------
+    async def _ingest_record(
+        self,
+        job,
+        source,
+        record: Record,
+        structured_external_ids: set[str],
+        observer=None,
+    ) -> None:
+        """Record -> árbol canónico -> persistencia -> índice -> conocimiento.
 
-            settings = get_settings()
-        except Exception:  # noqa: BLE001
-            return document
-        enabled = bool(getattr(settings, "DOCUMENT_UNDERSTANDING_ENABLED", False))
-        shadow = bool(getattr(settings, "DOCUMENT_UNDERSTANDING_SHADOW", False))
-        if not enabled and not shadow:
-            return document
+        Si un record no puede convertirse en estructura, no produce
+        conocimiento: se contabiliza como fallo y nunca se indexa texto crudo.
+        """
+        structured_repo = self._structured
+        if structured_repo is None:
+            raise ConnectorError("Structured document repository is not configured")
+
+        # El conector puede declarar el external_id del documento (una sola vez
+        # por archivo) aunque el record sea la fila N.
+        external_id = str(
+            record.metadata.get("document_external_id") or record.external_id
+        )
+        filename = str(
+            record.metadata.get("filename")
+            or record.metadata.get("title")
+            or record.metadata.get("original_filename")
+            or external_id
+        )
+        if observer is not None:
+            await observer.set_stage(LearningStage.READING.value)
+            await observer.event(
+                "PARSING_STARTED",
+                payload={"name": filename, "format": record.format or "text"},
+            )
+            if record.raw_data:
+                await observer.metric("bytes", len(record.raw_data))
+
+        document = self._parse_record(
+            record, job=job, source=source, external_id=external_id, filename=filename
+        )
+        document = await self._apply_document_understanding(
+            job, document, record.raw_data or b"", filename=filename
+        )
+        document.check_consistency()
+
+        if observer is not None:
+            await observer.metric("pages", len(document.pages))
+            await observer.metric("sections", len(document.sections))
+            await observer.metric("figures", len(document.figures))
+            await observer.event(
+                "STRUCTURE_DISCOVERED",
+                payload={
+                    "name": filename,
+                    "pages": len(document.pages),
+                    "sections": len(document.sections),
+                    "tables": len(document.tables),
+                    "figures": len(document.figures),
+                    "blocks": len(document.blocks),
+                },
+            )
+            if document.tabular is None:
+                for table in document.tables[:8]:
+                    await observer.event(
+                        "TABLE_DETECTED",
+                        payload={
+                            "table": table.caption or f"tabla {table.page or ''}".strip(),
+                            "columns": table.column_count,
+                            "rows": table.row_count,
+                            "page": table.page,
+                        },
+                    )
+                remaining_tables = len(document.tables) - 8
+                if remaining_tables > 0:
+                    await observer.event(
+                        "TABLE_DETECTED",
+                        payload={"count": remaining_tables, "table": "tablas adicionales"},
+                    )
+            await observer.set_stage(LearningStage.ORGANIZING.value)
+
+        change_kind = await structured_repo.upsert_document(document)
+        structured_external_ids.add(external_id)
+        if observer is not None:
+            document_change = str(change_kind or "")
+            if document_change == "unchanged":
+                await observer.metric("ignored", 1)
+                await observer.event(
+                    "DUPLICATE_DETECTED",
+                    payload={"name": filename, "reason": "sin cambios respecto a lo ya aprendido"},
+                )
+            elif document_change == "updated":
+                await observer.metric("updated", 1)
+        logger.info(
+            "Knowledge document persisted",
+            document_id=str(document.id),
+            external_id=external_id,
+            change_kind=change_kind or "unknown",
+            tabular=document.tabular is not None,
+        )
+
+        tabular_diff = await self._persist_tabular(
+            job, source, document, change_kind=change_kind, observer=observer
+        )
+        index_result = await self._index_chunks(
+            job,
+            source,
+            document,
+            change_kind=change_kind,
+            acl=_acl_payload(record.metadata),
+            tabular_diff=tabular_diff,
+        )
+        if observer is not None:
+            if index_result:
+                await observer.event(
+                    "INDEX_UPDATED",
+                    payload={"chunks": int(index_result), "name": filename},
+                )
+            if self._sessions is not None:
+                await self._sessions.on_source_available(observer)
+        if index_result and self._tabular is not None and document.tabular is not None:
+            try:
+                policy = self._chunking_policy_key(self._tabular_chunking_config())
+                await self._tabular.set_runtime_metadata(
+                    job.organization_id,
+                    document.tabular.id,
+                    {
+                        "chunking_policy": policy,
+                        "chunk_count": int(index_result),
+                    },
+                )
+                await self._tabular.set_representations(
+                    job.organization_id,
+                    document.tabular.id,
+                    {"structured": True, "semantic": True, "lexical": True},
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Knowledge tabular representations update failed",
+                    error=str(exc)[:200],
+                )
+        await self._summarize(document, change_kind=change_kind)
+        await self._maybe_discover_company(
+            job, source, document, change_kind=change_kind
+        )
+        await self._compile(job, source, document, observer)
+        self.documents_parsed += 1
+
+    def _parse_record(self, record: Record, *, job, source, external_id: str, filename: str):
+        """Bytes (o texto ya extraído) -> StructuredDocument del formato real."""
+        from src.knowledge.structure import get_parser
+
+        raw_data = record.raw_data
+        record_format = str(record.format or "").strip().lower().lstrip(".")
+        parser = get_parser(record_format) if record_format else None
+        if parser is None and raw_data is None:
+            # Conectores que entregan texto ya extraído (API, JSON, eventos):
+            # se parsea como texto estructurado para no perder su conocimiento.
+            from src.knowledge.structure.text_parser import TextParser
+
+            parser = TextParser()
+            raw_data = (record.content or "").encode("utf-8")
+        if parser is None or raw_data is None:
+            raise ConnectorError(
+                f"No structured parser for format '{record_format}' "
+                f"(external_id={external_id})"
+            )
+        parse_kwargs: dict = {}
+        du_settings = _document_understanding_settings()
+        if getattr(parser, "kind", None) == "pdf" and du_settings is not None:
+            from src.knowledge.understanding.parse_policy import production_pdf_options
+
+            parse_kwargs["options"] = production_pdf_options(du_settings)
+        return parser.parse(
+            raw_data,
+            organization_id=job.organization_id,
+            external_id=external_id,
+            source_id=source.id,
+            workspace_id=source.workspace_id,
+            source_name=filename,
+            **parse_kwargs,
+        )
+
+    async def _compile(self, job, source, document, observer=None) -> None:
+        """Compila el documento a conocimiento canónico.
+
+        La ingesta ya persistió el documento: un fallo del compilador se
+        registra y se reintenta en la próxima recompilación, nunca revierte la
+        fuente.
+        """
+        if self._compiler is None:
+            return
+        try:
+            await self._jobs.update_job(job.id, progress=90)
+        except Exception:  # noqa: BLE001 — el progreso es best-effort
+            pass
+        if observer is not None:
+            await observer.set_stage(LearningStage.CONNECTING.value)
+        compile_observer = None
+        if observer is not None:
+
+            async def compile_observer(event_type: str, payload: dict) -> None:
+                await observer.event(event_type, payload=payload)
+
+        try:
+            result = await self._compiler.compile_document(
+                document,
+                workspace_id=source.workspace_id,
+                observer=compile_observer,
+            )
+            logger.info(
+                "Knowledge compiled",
+                document_id=str(document.id),
+                **result.to_dict()["counts"],
+            )
+            if observer is not None:
+                status = str(result.persisted.get("status") or "completed")
+                if status != "completed":
+                    await observer.warning(
+                        "ZENT no pudo consolidar todo el conocimiento de esta fuente",
+                        payload={"document_id": str(document.id)},
+                    )
+                await observer.set_stage(LearningStage.VERIFYING.value)
+        except Exception as exc:  # noqa: BLE001 — el conocimiento nunca tumba la ingesta
+            self.compilations_failed += 1
+            logger.warning(
+                "Knowledge compilation failed",
+                document_id=str(document.id),
+                error=str(exc)[:400],
+            )
+            if observer is not None:
+                await observer.warning(
+                    "ZENT no pudo consolidar el conocimiento de esta fuente",
+                    payload={"document_id": str(document.id), "technical": str(exc)[:300]},
+                )
+
+    async def _apply_document_understanding(
+        self, job, document, raw_data: bytes, *, filename: str
+    ):
+        """Entiende el documento antes de persistir, indexar y compilar.
+
+        Determinista: OCR y modelo son providers opcionales (off por defecto).
+        """
         try:
             await self._jobs.update_job(job.id, progress=40)
         except Exception:  # noqa: BLE001
             pass
-        from src.knowledge.understanding.engine import apply_understanding, file_sha256, observe_understanding
+        from src.knowledge.understanding.engine import (
+            apply_understanding,
+            file_sha256,
+            observe_understanding,
+        )
 
+        settings = _document_understanding_settings()
         understood = apply_understanding(
             document,
-            mode="active" if enabled else "shadow",
-            file_hash=file_sha256(raw_data),
+            file_hash=file_sha256(raw_data) if raw_data else None,
             filename=filename,
-            merge_tables=bool(getattr(settings, "DOCUMENT_UNDERSTANDING_TABLES", True)),
+            merge_tables=bool(
+                getattr(settings, "DOCUMENT_UNDERSTANDING_TABLES", True)
+            ),
         )
         try:
             await self._jobs.update_job(job.id, progress=70)
@@ -701,184 +901,6 @@ class KnowledgeIngestionEngine:
             pass
         observe_understanding(job.organization_id, understood)
         return understood
-
-    async def _maybe_structured_v2(
-        self,
-        job,
-        source,
-        record: Record,
-        v2_external_ids: set[str] | None = None,
-    ) -> None:
-        """Phase B: parsea a StructuredDocument y persiste EN PARALELO a V1.
-
-        Nunca interrumpe el camino V1: errores de parseo/persistencia son warn
-        y se contabilizan (v2_failed). Requiere que el conector entregue los
-        bytes originales (record.raw_data + record.format).
-
-        Knowledge Tabular V2: si el documento trae árbol tabular (Excel/CSV),
-        se persiste la representación estructurada y los chunks se generan con
-        TabularChunker (multinivel) en lugar del chunker de secciones.
-        """
-        if self._structured_v2 is None:
-            return
-        raw_data = record.raw_data
-        record_format = record.format
-        if raw_data is None or not record_format:
-            return
-
-        from src.knowledge.structure import get_parser
-
-        parser = get_parser(record_format)
-        if parser is None:
-            return
-
-        import time
-
-        from src.infrastructure.observability.metrics import (
-            knowledge_parse_latency,
-            knowledge_parse_total,
-        )
-
-        # El conector puede declarar el external_id del documento (una sola
-        # vez por archivo) aunque el record sea la fila N.
-        external_id = str(
-            record.metadata.get("document_external_id") or record.external_id
-        )
-        started = time.perf_counter()
-        outcome = "parse_error"
-        try:
-            filename = str(record.metadata.get("filename") or external_id)
-            parse_kwargs: dict = {}
-            du_settings = _document_understanding_settings()
-            if getattr(parser, "kind", None) == "pdf" and du_settings is not None:
-                from src.knowledge.understanding.parse_policy import production_pdf_options
-
-                parse_kwargs["options"] = production_pdf_options(du_settings)
-            document = parser.parse(
-                raw_data,
-                organization_id=job.organization_id,
-                external_id=external_id,
-                source_id=source.id,
-                workspace_id=source.workspace_id,
-                source_name=filename,
-                **parse_kwargs,
-            )
-            shadow_only = bool(
-                du_settings is not None
-                and getattr(du_settings, "DOCUMENT_UNDERSTANDING_SHADOW", False)
-                and not getattr(du_settings, "DOCUMENT_UNDERSTANDING_ENABLED", False)
-                and getattr(parser, "kind", None) == "pdf"
-            )
-            if shadow_only:
-                from src.knowledge.understanding.engine import attach_shadow_report, file_sha256
-                from src.knowledge.understanding.parse_policy import shadow_pdf_options
-
-                shadow_doc = parser.parse(
-                    raw_data,
-                    organization_id=job.organization_id,
-                    external_id=external_id,
-                    source_id=source.id,
-                    workspace_id=source.workspace_id,
-                    source_name=filename,
-                    options=shadow_pdf_options(du_settings),
-                )
-                document = attach_shadow_report(
-                    document,
-                    shadow_doc,
-                    file_hash=file_sha256(raw_data),
-                    filename=filename,
-                    merge_tables=bool(getattr(du_settings, "DOCUMENT_UNDERSTANDING_TABLES", True)),
-                )
-            else:
-                document = await self._apply_document_understanding(
-                    job,
-                    document,
-                    raw_data,
-                    filename=filename,
-                )
-            document.check_consistency()
-            outcome = "persist_error"
-            change_kind = await self._structured_v2.upsert_document(document)
-            if v2_external_ids is not None:
-                v2_external_ids.add(external_id)
-            logger.info(
-                "Knowledge V2 document upserted",
-                document_id=str(document.id),
-                external_id=external_id,
-                change_kind=change_kind or "unknown",
-                tabular=document.tabular is not None,
-            )
-            outcome = "chunk_index"
-            tabular_diff = await self._persist_tabular_v2(
-                job, source, document, change_kind=change_kind
-            )
-            index_result = await self._index_v2_chunks(
-                job, source, document, change_kind=change_kind,
-                acl=_acl_payload(record.metadata),
-                tabular_diff=tabular_diff,
-            )
-            if index_result and self._tabular_v2 is not None and document.tabular is not None:
-                try:
-                    policy = self._chunking_policy_key(self._tabular_chunking_config())
-                    await self._tabular_v2.set_runtime_metadata(
-                        job.organization_id,
-                        document.tabular.id,
-                        {
-                            "chunking_policy": policy,
-                            "chunk_count": int(index_result),
-                        },
-                    )
-                    await self._tabular_v2.set_representations(
-                        job.organization_id,
-                        document.tabular.id,
-                        {
-                            "structured": True,
-                            "semantic": True,
-                            "lexical": True,
-                        },
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "Knowledge Tabular representations update failed",
-                        error=str(exc)[:200],
-                    )
-            outcome = "summarize"
-            await self._shadow_summarize(document, change_kind=change_kind)
-            await self._maybe_discover_company(
-                job, source, document, change_kind=change_kind
-            )
-            outcome = "ok"
-            self.v2_parsed += 1
-        except Exception as exc:
-            self.v2_failed += 1
-            logger.warning(
-                "Knowledge V2 structured pipeline failed",
-                external_id=external_id,
-                stage=outcome,
-                error=str(exc)[:500],
-            )
-            # Si falló DESPUÉS de persistir el documento, el hash nuevo ya quedó
-            # guardado y el próximo sync lo vería "unchanged" sin haber indexado
-            # nada: se marca para reindexar.
-            if outcome not in ("parse", "persist"):
-                try:
-                    await self._structured_v2.invalidate_content_hash(
-                        job.organization_id, document.id
-                    )
-                except Exception as inner:  # noqa: BLE001 — nunca tapar el error real
-                    logger.warning(
-                        "Knowledge V2 reindex mark failed", error=str(inner)[:200]
-                    )
-        finally:
-            knowledge_parse_total.labels(
-                organization_id=str(job.organization_id),
-                format=record_format,
-                outcome=outcome,
-            ).inc()
-            knowledge_parse_latency.labels(
-                organization_id=str(job.organization_id),
-                format=record_format,
-            ).observe(time.perf_counter() - started)
 
     @staticmethod
     def _chunking_policy_key(config) -> str:
@@ -942,14 +964,14 @@ class KnowledgeIngestionEngine:
             ),
         )
 
-    async def _persist_tabular_v2(self, job, source, document, *, change_kind):
+    async def _persist_tabular(self, job, source, document, *, change_kind, observer=None):
         """Persiste el árbol tabular y emite métricas (fail-soft → raise).
 
         Devuelve el WorkbookDiff (None si el documento no es tabular o no hay
         repositorio tabular configurado).
         """
         workbook = document.tabular
-        if workbook is None or self._tabular_v2 is None:
+        if workbook is None or self._tabular is None:
             return None
 
         import time
@@ -973,7 +995,7 @@ class KnowledgeIngestionEngine:
         tabular_format = workbook.format.value
         try:
             diff = await persist_tabular_workbook(
-                self._tabular_v2,
+                self._tabular,
                 workbook,
                 knowledge_base_id=job.knowledge_base_id,
                 chunking_policy=self._chunking_policy_key(
@@ -1035,6 +1057,50 @@ class KnowledgeIngestionEngine:
             rows_updated=diff.row_stats["updated"],
             rows_deleted=diff.row_stats["deleted"],
         )
+        if observer is not None:
+            tables = workbook.tables()
+            columns = sum(table.column_count for table in tables)
+            candidate_keys = sum(
+                1
+                for table in tables
+                for column in table.columns
+                if _is_candidate_key(column)
+            )
+            await observer.set_stage(LearningStage.ORGANIZING.value)
+            await observer.metric("sheets", workbook.sheet_count)
+            await observer.metric("rows", workbook.row_count)
+            await observer.metric("columns", columns)
+            await observer.metric("candidate_keys", candidate_keys)
+            await observer.metric("table_relations", len(workbook.relations))
+            await observer.event(
+                "STRUCTURE_DISCOVERED",
+                payload={
+                    "name": workbook.filename,
+                    "sheets": workbook.sheet_count,
+                    "tables": workbook.table_count,
+                    "columns": columns,
+                    "rows": workbook.row_count,
+                    "candidate_keys": candidate_keys,
+                    "table_relations": len(workbook.relations),
+                    "tabular": True,
+                },
+            )
+            for table in tables[:12]:
+                await observer.event(
+                    "TABLE_DETECTED",
+                    payload={
+                        "sheet": table.name,
+                        "table": table.name,
+                        "columns": table.column_count,
+                        "rows": table.row_count,
+                    },
+                )
+            remaining_tables = workbook.table_count - 12
+            if remaining_tables > 0:
+                await observer.event(
+                    "TABLE_DETECTED",
+                    payload={"count": remaining_tables, "table": "tablas adicionales"},
+                )
         await self._maybe_materialize_managed_db(
             source, workbook, diff, logger=_logger
         )
@@ -1101,8 +1167,8 @@ class KnowledgeIngestionEngine:
                 # Solo se fija la política con materialización efectiva: si la
                 # DB no existe todavía, el próximo sync reintenta.
                 values["materialization_policy"] = materialization_policy
-            if self._tabular_v2 is not None:
-                await self._tabular_v2.set_runtime_metadata(
+            if self._tabular is not None:
+                await self._tabular.set_runtime_metadata(
                     workbook.organization_id, workbook.id, values
                 )
             logger.info(
@@ -1117,7 +1183,7 @@ class KnowledgeIngestionEngine:
                 error=str(exc)[:300],
             )
 
-    async def _index_v2_chunks(
+    async def _index_chunks(
         self, job, source, document, *, change_kind: str | None = None,
         acl: dict | None = None,
         tabular_diff: object | None = None,
@@ -1258,7 +1324,7 @@ class KnowledgeIngestionEngine:
                 }
                 points.append(
                     (
-                        _v2_chunk_id(source.id, document.external_id, chunk.chunk_index),
+                        _chunk_point_id(source.id, document.external_id, chunk.chunk_index),
                         list(vector),
                         chunk.content,
                         chunk_metadata,
@@ -1420,7 +1486,7 @@ class KnowledgeIngestionEngine:
                 point_id = (
                     point_id_for(str(point_key))
                     if point_key
-                    else _v2_chunk_id(source.id, document.external_id, chunk.chunk_index)
+                    else _chunk_point_id(source.id, document.external_id, chunk.chunk_index)
                 )
                 chunk_metadata: dict = {
                     **merged_meta,
@@ -1503,11 +1569,11 @@ class KnowledgeIngestionEngine:
                 change_kind=change_kind or "unknown",
             )
 
-    async def _shadow_summarize(self, document, *, change_kind: str | None = None) -> None:
+    async def _summarize(self, document, *, change_kind: str | None = None) -> None:
         """Phase C3 shadow: calcula SectionSummary/DocumentSummary (INFERRED).
 
         No persiste nada; sirve de calibración (métricas + logs). Si el
-        summarizer no está inyectado o falla, el camino V1/V2 sigue intacto.
+        summarizer no está inyectado o falla, la ingesta sigue intacta.
         Con change_kind=unchanged se SKIPEA (mismo contenido → mismo resumen).
         El uso real (tokens y costo) se registra siempre, y si el costo
         estimado supera el presupuesto se cae al resumen extractivo.
@@ -1640,6 +1706,17 @@ class KnowledgeIngestionEngine:
             )
         except Exception as exc:  # noqa: BLE001 — el metering nunca rompe la ingesta
             logger.warning("Summary usage record failed", error=str(exc)[:200])
+
+
+def _is_candidate_key(column) -> bool:
+    """Columna que puede identificar una fila: tipo código/identificador + única."""
+    semantic = getattr(column.semantic_type, "value", column.semantic_type)
+    if str(semantic) not in ("code", "identifier"):
+        return False
+    try:
+        return float(column.unique_ratio or 0.0) >= 0.98
+    except (TypeError, ValueError):
+        return False
 
 
 async def _set_source_status(organization_id: UUID, source_id: UUID, status: str) -> None:

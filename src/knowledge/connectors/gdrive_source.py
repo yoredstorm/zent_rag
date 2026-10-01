@@ -1,5 +1,5 @@
 # =============================================================================
-# GDriveSourceConnector — carpeta de Drive → Markdown vía normalizers existentes
+# GDriveSourceConnector — carpeta de Drive → bytes originales al parser
 # =============================================================================
 # config: { folder_id, connector_id }
 # secrets: refresh_token en SecretStore(organization_id, connector_id) — nunca
@@ -21,7 +21,6 @@ from src.knowledge.connectors.base import (
     Record,
     SourceConnector,
 )
-from src.knowledge.normalize.base import NormalizerError, get_normalizer
 
 
 class GDriveSourceConnector(SourceConnector):
@@ -83,8 +82,6 @@ class GDriveSourceConnector(SourceConnector):
         return items
 
     async def iter_records(self, cursor: dict | None):
-        import src.knowledge.normalize  # noqa: F401
-
         await self.validate()
         token = await refresh_access_token(str(self.secrets["refresh_token"]))
         done_keys: set[str] = set(cursor.get("done_keys", [])) if cursor else set()
@@ -101,24 +98,22 @@ class GDriveSourceConnector(SourceConnector):
             ext = extension_for_file(name, mime)
             if ext is None:
                 continue
-            normalizer = get_normalizer(ext)
-            if normalizer is None:
-                continue
             try:
                 data = await download_file(token, file_id, mime)
-                markdown = normalizer.normalize(data, source_name=name)
-            except (NormalizerError, ValueError) as exc:
+            except ValueError as exc:
                 raise ConnectorError(f"Drive read failed for {name}: {exc}") from exc
             count += 1
             done_keys.add(file_id)
             yield Record(
                 external_id=file_id,
-                content=markdown,
+                content=name,
                 metadata={
                     "filename": name,
                     "format": ext,
                     "folder_id": self._folder_id(),
                     "mime_type": mime,
                 },
+                raw_data=data,
+                format=ext,
             )
             self._last_cursor = {"done_keys": sorted(done_keys)}

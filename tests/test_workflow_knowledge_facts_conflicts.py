@@ -125,41 +125,35 @@ async def _run_kb(
     llm: _FakeLLM | None = None,
     v2: bool = True,
 ) -> dict:
-    from src.api.deps import get_llm_provider, get_structured_retriever
+    from src.api.deps import get_knowledge_retriever, get_llm_provider
     from src.api.main import app
-    from src.core.config import get_settings
 
-    app.dependency_overrides[get_structured_retriever] = lambda: retriever
+    app.dependency_overrides[get_knowledge_retriever] = lambda: retriever
     if llm is not None:
         app.dependency_overrides[get_llm_provider] = lambda: llm
-    previous = get_settings().KNOWLEDGE_V2_ENABLED
-    get_settings().KNOWLEDGE_V2_ENABLED = v2
-    try:
-        graph = _graph(
-            [
-                _node("t", "trigger_webhook"),
-                _node("kb", "kb_query", {"knowledge_base_id": kb_id, **config}),
-            ],
-            [_edge("e1", "t", "kb")],
-            ["t"],
-        )
-        created = await async_client.post(
-            "/api/v1/workflows",
-            headers={**_headers(org), "Idempotency-Key": f"kf-{uuid4().hex}"},
-            json={"name": f"KF {config.get('operation')}", "trigger_type": "webhook", "graph": graph},
-        )
-        assert created.status_code == 200, created.text
-        run = await async_client.post(
-            f"/api/v1/workflows/{created.json()['workflow_id']}/run",
-            headers={**_headers(org), "Idempotency-Key": f"kfr-{uuid4().hex}"},
-            json={"payload": {}, "simulate": True},
-        )
-        assert run.status_code == 200, run.text
-        body = run.json()
-        assert body["status"] in ("simulated", "succeeded"), body
-        return body["result"]["structured_output"]["nodes"]["kb"]["output"]
-    finally:
-        get_settings().KNOWLEDGE_V2_ENABLED = previous
+    graph = _graph(
+        [
+            _node("t", "trigger_webhook"),
+            _node("kb", "kb_query", {"knowledge_base_id": kb_id, **config}),
+        ],
+        [_edge("e1", "t", "kb")],
+        ["t"],
+    )
+    created = await async_client.post(
+        "/api/v1/workflows",
+        headers={**_headers(org), "Idempotency-Key": f"kf-{uuid4().hex}"},
+        json={"name": f"KF {config.get('operation')}", "trigger_type": "webhook", "graph": graph},
+    )
+    assert created.status_code == 200, created.text
+    run = await async_client.post(
+        f"/api/v1/workflows/{created.json()['workflow_id']}/run",
+        headers={**_headers(org), "Idempotency-Key": f"kfr-{uuid4().hex}"},
+        json={"payload": {}, "simulate": True},
+    )
+    assert run.status_code == 200, run.text
+    body = run.json()
+    assert body["status"] in ("simulated", "succeeded"), body
+    return body["result"]["structured_output"]["nodes"]["kb"]["output"]
 
 
 @pytest.mark.asyncio
@@ -192,22 +186,19 @@ async def test_extract_facts_persists_proposed_claims(async_client: AsyncClient)
 
 
 @pytest.mark.asyncio
-async def test_extract_facts_without_v2_is_not_supported(async_client: AsyncClient) -> None:
-    org, kb_id = await _setup(async_client, "KF Facts NoV2")
-    retriever = _FakeRetriever({"contrato": _chunk(FACT_TEXT)})
+async def test_extract_facts_is_always_available(async_client: AsyncClient) -> None:
+    org, kb_id = await _setup(async_client, "KF Facts Always")
     output = await _run_kb(
         async_client,
         org,
         kb_id,
-        {"operation": "extract_facts", "query": "contrato"},
-        retriever=retriever,
-        v2=False,
+        {"operation": "extract_facts", "query": "descuento máximo 15%"},
+        retriever=_FakeRetriever({"descuento máximo 15%": _chunk(FACT_TEXT)}),
+        llm=_FakeLLM("La política define un descuento máximo del 15%."),
     )
-    assert output["status"] == "not_supported"
-    assert output["reason_codes"] == ["requires_knowledge_v2"]
+    assert output["status"] == "ok"
+    assert output["method"] == "knowledge"
 
-
-@pytest.mark.asyncio
 async def test_compare_returns_differences(async_client: AsyncClient) -> None:
     org, kb_id = await _setup(async_client, "KF Compare")
     retriever = _FakeRetriever(

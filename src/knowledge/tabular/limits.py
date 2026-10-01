@@ -20,7 +20,3 @@ def tabular_limits() -> TabularBuildLimits:
         row_group_size=int(settings.KNOWLEDGE_TABULAR_ROW_GROUP_SIZE),
         row_group_overlap=int(settings.KNOWLEDGE_TABULAR_ROW_GROUP_OVERLAP),
     )
-
-
-def tabular_enabled() -> bool:
-    return bool(get_settings().KNOWLEDGE_TABULAR_ENABLED)

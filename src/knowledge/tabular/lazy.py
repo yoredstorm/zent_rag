@@ -71,9 +71,6 @@ class TabularLazyIngestionService:
         settings = get_settings()
         started = time.perf_counter()
         outcome = TabularLazyOutcome()
-        if not settings.KNOWLEDGE_V2_ENABLED or not settings.KNOWLEDGE_TABULAR_ENABLED:
-            outcome.skipped_reason = "tabular_disabled"
-            return outcome
         if not settings.KNOWLEDGE_TABULAR_LAZY_ENABLED:
             outcome.skipped_reason = "lazy_disabled"
             return outcome

@@ -149,26 +149,47 @@ async def test_run_multi_step_success(async_client: AsyncClient) -> None:
 
     from sqlalchemy import text
 
-    from src.infrastructure.postgres.session import get_async_session
+    from src.api.deps import get_knowledge_retriever
+    from src.api.main import app
+    from src.core.domain.entities import RetrievalChunk
 
-    # Un documento para el kb_query.
-    session = await get_async_session()
-    try:
-        await session.execute(
-            text(
-                "INSERT INTO documents (id, organization_id, title, content_hash, status) "
-                "VALUES (gen_random_uuid(), :oid, 'Manual de operaciones', :ch, 'active')"
-            ),
-            {"oid": UUID(org["organization_id"]), "ch": uuid4().hex},
-        )
-        await session.commit()
-    finally:
-        await session.close()
+    # KB real + retriever canónico stubeado: kb_query busca en conocimiento,
+    # no en la tabla legacy de documentos.
+    kb = await async_client.post(
+        "/api/v1/knowledge-bases",
+        headers=_headers(org),
+        json={"name": "KB Run", "chunking_strategy": "fixed", "chunk_size": 500},
+    )
+    assert kb.status_code == 201, kb.text
+    kb_id = kb.json()["id"]
+
+    class _StubRetriever:
+        async def retrieve(self, query):  # noqa: ANN001
+            from src.rag.retrieval.structured import AssembledContext, V2RetrievalOptions
+
+            chunk = RetrievalChunk(
+                document_id=uuid4(),
+                content="Manual de operaciones: procedimiento.",
+                score=0.9,
+                metadata={"title": "Manual de operaciones"},
+            )
+            return AssembledContext(
+                children=(chunk,),
+                parents=(),
+                context=(chunk,),
+                options=V2RetrievalOptions(),
+            )
+
+    app.dependency_overrides[get_knowledge_retriever] = lambda: _StubRetriever()
+    steps_ok = [
+        {"type": "kb_query", "config": {"knowledge_base_id": kb_id, "query": "manual", "limit": 3}},
+        *STEPS_OK[1:],
+    ]
 
     created = await async_client.post(
         "/api/v1/workflows",
         headers={**_headers(org), "Idempotency-Key": f"wf-r-{uuid4().hex}"},
-        json={"name": "Flujo Run", "trigger_type": "webhook", "steps": STEPS_OK},
+        json={"name": "Flujo Run", "trigger_type": "webhook", "steps": steps_ok},
     )
     wid = created.json()["workflow_id"]
 
@@ -198,6 +219,8 @@ async def test_run_multi_step_success(async_client: AsyncClient) -> None:
     assert cond["output"]["result"] is True
 
     # La notificación se creó (paso notify).
+    from src.infrastructure.postgres.session import get_async_session
+
     session = await get_async_session()
     try:
         n = (

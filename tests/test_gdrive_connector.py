@@ -165,18 +165,10 @@ async def test_gdrive_plugin_lists_and_tests_with_mock_http(fake_drive) -> None:
 
 
 @pytest.mark.asyncio
-async def test_gdrive_source_indexes_pdf_via_normalizer(
+async def test_gdrive_source_delivers_raw_bytes_for_the_parser(
     fake_drive, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import src.knowledge.normalize  # noqa: F401
     from src.knowledge.connectors.gdrive_source import GDriveSourceConnector
-    from src.knowledge.normalize.base import get_normalizer
-
-    monkeypatch.setattr(
-        type(get_normalizer("pdf")),
-        "normalize",
-        lambda self, data, source_name="document": data.decode("utf-8"),
-    )
 
     source = KbSource(
         id=uuid4(),
@@ -191,7 +183,10 @@ async def test_gdrive_source_indexes_pdf_via_normalizer(
     records = [record async for record in connector.iter_records(None)]
     assert len(records) == 1
     assert records[0].external_id == "file-pdf-1"
-    assert "Contenido indexado" in records[0].content
+    # El conector entrega bytes + formato: el parser estructural hace el resto.
+    assert records[0].format == "pdf"
+    assert b"Contenido indexado" in records[0].raw_data
+    assert records[0].metadata["filename"] == "manual.pdf"
     assert connector._last_cursor["done_keys"] == ["file-pdf-1"]
 
 

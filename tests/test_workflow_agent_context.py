@@ -116,33 +116,26 @@ async def _run(
     kb_id: str | None = None,
     v2: bool = True,
 ) -> tuple[dict, dict]:
-    from src.api.deps import get_agent_runtime, get_structured_retriever
+    from src.api.deps import get_agent_runtime, get_knowledge_retriever
     from src.api.main import app
-    from src.core.config import get_settings
 
     app.dependency_overrides[get_agent_runtime] = lambda: runtime
-    app.dependency_overrides[get_structured_retriever] = lambda: _FakeRetriever()
-    previous = get_settings().KNOWLEDGE_V2_ENABLED
-    get_settings().KNOWLEDGE_V2_ENABLED = v2
-    try:
-        created = await async_client.post(
-            "/api/v1/workflows",
-            headers={**_headers(org), "Idempotency-Key": f"ac-{uuid4().hex}"},
-            json={"name": "Agent Context", "trigger_type": "webhook", "graph": graph},
-        )
-        assert created.status_code == 200, created.text
-        run = await async_client.post(
-            f"/api/v1/workflows/{created.json()['workflow_id']}/run",
-            headers={**_headers(org), "Idempotency-Key": f"acr-{uuid4().hex}"},
-            json={"payload": {"message": "analiza"}, "simulate": True},
-        )
-        assert run.status_code == 200, run.text
-        body = run.json()
-        assert body["status"] in ("simulated", "succeeded"), body
-        return body, body["result"]["structured_output"]["nodes"]
-    finally:
-        get_settings().KNOWLEDGE_V2_ENABLED = previous
-
+    app.dependency_overrides[get_knowledge_retriever] = lambda: _FakeRetriever()
+    created = await async_client.post(
+        "/api/v1/workflows",
+        headers={**_headers(org), "Idempotency-Key": f"ac-{uuid4().hex}"},
+        json={"name": "Agent Context", "trigger_type": "webhook", "graph": graph},
+    )
+    assert created.status_code == 200, created.text
+    run = await async_client.post(
+        f"/api/v1/workflows/{created.json()['workflow_id']}/run",
+        headers={**_headers(org), "Idempotency-Key": f"acr-{uuid4().hex}"},
+        json={"payload": {"message": "analiza"}, "simulate": True},
+    )
+    assert run.status_code == 200, run.text
+    body = run.json()
+    assert body["status"] in ("simulated", "succeeded"), body
+    return body, body["result"]["structured_output"]["nodes"]
 
 @pytest.mark.asyncio
 async def test_auto_context_includes_knowledge(async_client: AsyncClient) -> None:

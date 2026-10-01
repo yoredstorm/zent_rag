@@ -25,8 +25,6 @@ def isolated_settings(tmp_path, monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setattr(settings, "KNOWLEDGE_QUEUE_KEY", f"test:{uuid4().hex}")
-    monkeypatch.setattr(settings, "KNOWLEDGE_V2_ENABLED", True)
-    monkeypatch.setattr(settings, "KNOWLEDGE_TABULAR_ENABLED", True)
     monkeypatch.setattr(settings, "KNOWLEDGE_TABULAR_LAZY_ENABLED", True)
     monkeypatch.setattr(settings, "KNOWLEDGE_TABULAR_LAZY_TIMEOUT_SECONDS", 15)
     monkeypatch.setattr(settings, "KNOWLEDGE_TABULAR_LAZY_MAX_SOURCES", 3)

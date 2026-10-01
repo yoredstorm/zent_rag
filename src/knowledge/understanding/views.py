@@ -593,12 +593,9 @@ def public_understanding(metadata: dict | None) -> dict | None:
         return None
     block = metadata.get("understanding")
     if not isinstance(block, dict):
-        shadow = metadata.get("understanding_shadow")
-        if not isinstance(shadow, dict):
-            return None
-        return {"mode": "shadow", "report": shadow.get("report"), "pipeline_state": shadow.get("pipeline_state")}
+        return None
     return {
-        "mode": block.get("mode") or "active",
+        "mode": "active",
         "schema_version": block.get("schema_version"),
         "parser_version": block.get("parser_version"),
         "pipeline_state": block.get("pipeline_state"),

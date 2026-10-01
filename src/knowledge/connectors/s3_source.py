@@ -13,7 +13,6 @@ from src.knowledge.connectors.base import (
     Record,
     SourceConnector,
 )
-from src.knowledge.normalize.base import NormalizerError, get_normalizer
 
 
 class S3SourceConnector(SourceConnector):
@@ -96,23 +95,15 @@ class S3SourceConnector(SourceConnector):
                 data = response["Body"].read()
             except Exception as exc:
                 raise ConnectorError(f"S3 read failed for {key}: {exc}") from exc
-            ext = os.path.splitext(key)[1].lower()
-            normalizer = get_normalizer(ext)
-            if normalizer is None:
-                raise ConnectorError(
-                    f"Unsupported S3 object type '{ext}' for {key}. "
-                    f"Set 'extensions' in config."
-                )
-            try:
-                markdown = normalizer.normalize(data, source_name=key)
-            except NormalizerError as exc:
-                raise ConnectorError(str(exc)) from exc
+            ext = os.path.splitext(key)[1].lower().lstrip(".")
             count += 1
             done_keys.add(key)
             yield Record(
                 external_id=key,
-                content=markdown,
-                metadata={"bucket": self._bucket(), "object_key": key, "format": ext.lstrip(".")},
+                content=f"s3://{self._bucket()}/{key}",
+                metadata={"bucket": self._bucket(), "object_key": key, "format": ext},
+                raw_data=data,
+                format=ext,
             )
             # checkpoint: ceder el cursor actualizado al engine vía atributo
             self._last_cursor = {"done_keys": sorted(done_keys)}

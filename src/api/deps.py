@@ -417,52 +417,34 @@ def get_knowledge_session_service():
 def get_knowledge_engine():
     """Inyecta el motor de ingestion de la Knowledge Platform.
 
-    El repo de documentos estructurados (Knowledge V2) se activa SOLO con
-    RAG_KNOWLEDGE_V2_ENABLED=true; en su ausencia el motor queda idéntico a V1.
+    Camino único: todo record se convierte en StructuredDocument (árbol
+    canónico), se indexa desde esa estructura y se compila a conocimiento
+    canónico. No hay interruptores que activen una segunda arquitectura.
     """
     global _knowledge_engine
     if _knowledge_engine is None:
+        from src.infrastructure.postgres.structured_documents import (
+            PostgresStructuredDocumentRepository,
+        )
+        from src.infrastructure.postgres.tabular import PostgresTabularRepository
+        from src.knowledge.cost import KnowledgeUsageTracker
         from src.knowledge.engine.service import KnowledgeIngestionEngine
+        from src.knowledge.summarize.service import (
+            DocumentSummarizer,
+            SummarizerConfig,
+        )
 
-        structured_repo = None
-        tabular_repo = None
-        summarizer = None
         settings = get_settings()
-        if settings.KNOWLEDGE_V2_ENABLED and settings.KNOWLEDGE_TABULAR_ENABLED:
-            from src.infrastructure.postgres.tabular import (
-                PostgresTabularRepository,
-            )
-
-            tabular_repo = PostgresTabularRepository()
-        if settings.KNOWLEDGE_V2_ENABLED:
-            from src.infrastructure.postgres.structured_documents import (
-                PostgresStructuredDocumentRepository,
-            )
-
-            structured_repo = PostgresStructuredDocumentRepository()
-        if settings.KNOWLEDGE_V2_ENABLED and settings.KNOWLEDGE_SUMMARY_MODE == "shadow":
-            from src.knowledge.summarize.service import (
-                DocumentSummarizer,
-                SummarizerConfig,
-            )
-
-            summarizer = DocumentSummarizer(
-                llm=get_llm_provider(),
-                config=SummarizerConfig(
-                    model=settings.KNOWLEDGE_SUMMARY_MODEL or None,
-                    max_tokens=settings.KNOWLEDGE_SUMMARY_MAX_TOKENS,
-                    document_max_chars=settings.KNOWLEDGE_SUMMARY_DOC_MAX_CHARS,
-                    section_max_chars=settings.KNOWLEDGE_SUMMARY_SECTION_MAX_CHARS,
-                    max_sections=settings.KNOWLEDGE_SUMMARY_MAX_SECTIONS,
-                ),
-            )
-
-        usage_tracker = None
-        if settings.KNOWLEDGE_V2_ENABLED:
-            session_service=get_knowledge_session_service(),
-            from src.knowledge.cost import KnowledgeUsageTracker
-
-            usage_tracker = KnowledgeUsageTracker()
+        summarizer = DocumentSummarizer(
+            llm=get_llm_provider(),
+            config=SummarizerConfig(
+                model=settings.KNOWLEDGE_SUMMARY_MODEL or None,
+                max_tokens=settings.KNOWLEDGE_SUMMARY_MAX_TOKENS,
+                document_max_chars=settings.KNOWLEDGE_SUMMARY_DOC_MAX_CHARS,
+                section_max_chars=settings.KNOWLEDGE_SUMMARY_SECTION_MAX_CHARS,
+                max_sections=settings.KNOWLEDGE_SUMMARY_MAX_SECTIONS,
+            ),
+        )
 
         _knowledge_engine = KnowledgeIngestionEngine(
             job_repo=get_job_repo(),
@@ -472,11 +454,12 @@ def get_knowledge_engine():
             source_repo=get_source_repo(),
             vector_store=get_vector_store(),
             embedding_provider=get_embedding_provider(),
-            structured_doc_repo=structured_repo,
-            tabular_repo=tabular_repo,
+            structured_doc_repo=PostgresStructuredDocumentRepository(),
+            tabular_repo=PostgresTabularRepository(),
             summarizer=summarizer,
-            usage_tracker=usage_tracker,
+            usage_tracker=KnowledgeUsageTracker(),
             company_discovery=_company_discovery_hook(settings),
+            session_service=get_knowledge_session_service(),
         )
     return _knowledge_engine
 
@@ -502,18 +485,13 @@ _tabular_query_service: object | None = None
 
 
 def get_tabular_query_service():
-    """Servicio SQL-first de Excel/CSV (Knowledge Tabular V2).
+    """Servicio SQL-first de Excel/CSV: consultas sobre datos, no sobre texto.
 
-    Activo con RAG_KNOWLEDGE_V2_ENABLED + RAG_KNOWLEDGE_TABULAR_ENABLED.
     Incluye auto-ingesta al consultar si RAG_KNOWLEDGE_TABULAR_LAZY_ENABLED.
     """
     global _tabular_query_service
     if _tabular_query_service is None:
         settings = get_settings()
-        if not (
-            settings.KNOWLEDGE_V2_ENABLED and settings.KNOWLEDGE_TABULAR_ENABLED
-        ):
-            return None
         from src.infrastructure.postgres.tabular import PostgresTabularRepository
         from src.knowledge.tabular.lazy import TabularLazyIngestionService
         from src.knowledge.tabular.query import TabularQueryService
@@ -569,11 +547,12 @@ _retriever: object | None = None
 _structured_retriever: object | None = None
 
 
-def get_structured_retriever():
-    """Retriever V2 (Knowledge V2, Phase F) — solo lectura, mismo collection.
+def get_knowledge_retriever():
+    """Retriever canónico del Knowledge OS.
 
-    Reutiliza el vector/lexical/hybrid store + reranker existentes y el
-    ContextBuilder con presupuesto de contexto V2.
+    Búsqueda multi-representación sobre el MISMO índice (denso + léxico +
+    híbrido) con reranker y ensamblado parent/child desde el árbol
+    estructurado. Es el único camino de retrieval productivo.
     """
     global _structured_retriever
     if _structured_retriever is None:
@@ -1080,17 +1059,7 @@ def get_rag_orchestrator() -> RAGOrchestrator:
                 if settings.RAG_LEARNING_ENABLED
                 else None
             ),
-            structured_retriever=(
-                get_structured_retriever()
-                if settings.KNOWLEDGE_V2_ENABLED
-                and (settings.KNOWLEDGE_V2_SHADOW or settings.KNOWLEDGE_V2_PROMOTE)
-                else None
-            ),
-            promote_v2=(
-                settings.KNOWLEDGE_V2_PROMOTE
-                if settings.KNOWLEDGE_V2_ENABLED
-                else False
-            ),
+            knowledge_retriever=get_knowledge_retriever(),
             tabular_query=(
                 get_tabular_query_service()
                 if settings.KNOWLEDGE_TABULAR_SQL_FIRST

@@ -9,7 +9,6 @@ from src.knowledge.connectors.base import (
     Record,
     SourceConnector,
 )
-from src.knowledge.normalize.base import NormalizerError, get_normalizer
 from src.knowledge.storage import resolve_path
 
 
@@ -42,26 +41,23 @@ class FileSourceConnector(SourceConnector):
         path = self._path()
         if not path.exists():
             raise ConnectorError(f"Uploaded file not found: {path.name}")
+        from src.knowledge.structure import get_parser, supported_extensions
+
         data = path.read_bytes()
-        extension = path.suffix.lower()
-        normalizer = get_normalizer(extension)
-        if normalizer is None:
+        extension = path.suffix.lower().lstrip(".")
+        if get_parser(extension) is None:
             raise ConnectorError(
-                f"Unsupported file type '{extension}'. "
-                f"Supported: {', '.join(sorted([e for e in ['txt', 'md', 'json', 'pdf', 'docx', 'html']]))}"
+                f"Unsupported file type '.{extension}'. "
+                f"Supported: {', '.join(supported_extensions())}"
             )
-        try:
-            markdown = normalizer.normalize(data, source_name=path.name)
-        except NormalizerError as exc:
-            raise ConnectorError(str(exc)) from exc
         yield Record(
             external_id=self.config.get("object_key", path.name),
-            content=markdown,
+            content=path.name,
             metadata={
                 "filename": path.name,
-                "format": extension.lstrip("."),
+                "format": extension,
                 "size_bytes": path.stat().st_size,
             },
             raw_data=data,
-            format=extension.lstrip("."),
+            format=extension,
         )

@@ -555,19 +555,19 @@ def _citation_dict(citation: Any) -> dict[str, Any]:
     }
 
 
-async def _kb_v2_retrieve(rctx: NodeContext, *, kb_id: UUID, query: str, limit: int) -> dict[str, Any]:
-    """Knowledge V2: StructuredRetriever + citations + Evidence Ledger.
+async def _kb_retrieve(rctx: NodeContext, *, kb_id: UUID, query: str, limit: int) -> dict[str, Any]:
+    """Retrieval canónico: árbol estructurado + citations + Evidence Ledger.
 
     Devuelve el material crudo para los modos (search/answer/find_evidence).
     Solo se usa con `RAG_KNOWLEDGE_V2_ENABLED`.
     """
-    from src.api.deps import get_structured_retriever
+    from src.api.deps import get_knowledge_retriever
     from src.rag.grounding.citations import build_citations
     from src.rag.grounding.models import GroundedAnswer
     from src.rag.grounding.recorder import GroundingLedgerRecorder
     from src.rag.retrieval.models import RetrievalQuery
 
-    retriever = _resolve_dep(get_structured_retriever)
+    retriever = _resolve_dep(get_knowledge_retriever)
     assembled = await retriever.retrieve(
         RetrievalQuery(
             query=query,
@@ -684,7 +684,7 @@ async def _kb_query_answer(rctx: NodeContext, *, kb_id: UUID, query: str, limit:
     from src.rag.grounding import GroundingService
     from src.rag.grounding.models import ClaimStatus
 
-    retrieved = await _kb_v2_retrieve(rctx, kb_id=kb_id, query=query, limit=limit)
+    retrieved = await _kb_retrieve(rctx, kb_id=kb_id, query=query, limit=limit)
     citation_dicts = retrieved.get("citation_dicts") or []
     evidence_ids = retrieved.get("evidence_ids") or []
     chunks = retrieved.get("chunks") or []
@@ -701,7 +701,7 @@ async def _kb_query_answer(rctx: NodeContext, *, kb_id: UUID, query: str, limit:
             "chunks": [],
             "count": 0,
             "documents": [],
-            "method": "knowledge_v2",
+            "method": "knowledge",
         }
         return NodeOutcome(
             output=output,
@@ -761,7 +761,7 @@ async def _kb_query_answer(rctx: NodeContext, *, kb_id: UUID, query: str, limit:
         "chunks": chunks,
         "count": len(chunks),
         "documents": chunks,
-        "method": "knowledge_v2",
+        "method": "knowledge",
         "budget": {
             "llm_calls": 1,
             "prompt_tokens": int(getattr(llm_response, "prompt_tokens", 0) or 0),
@@ -794,7 +794,7 @@ async def _kb_query_find_evidence(
     rctx: NodeContext, *, kb_id: UUID, query: str, limit: int
 ) -> NodeOutcome:
     """FIND_EVIDENCE: evidencia localizable + coverage para una assertion/pregunta."""
-    retrieved = await _kb_v2_retrieve(rctx, kb_id=kb_id, query=query, limit=limit)
+    retrieved = await _kb_retrieve(rctx, kb_id=kb_id, query=query, limit=limit)
     citations = retrieved.get("citation_dicts") or []
     evidence_ids = retrieved.get("evidence_ids") or []
     sources = sorted(
@@ -822,7 +822,7 @@ async def _kb_query_find_evidence(
         "coverage": coverage,
         "sources": sources[:20],
         "count": len(citations),
-        "method": "knowledge_v2",
+        "method": "knowledge",
     }
     if retrieved.get("evidence_error"):
         output["evidence_error"] = retrieved["evidence_error"]
@@ -926,7 +926,7 @@ async def _kb_query_extract_facts(
     from src.core.domain.evidence import ClaimRecord, ClaimVerificationStatus
     from src.platform.data_onboarding.document_facts import extract_facts_from_text
 
-    retrieved = await _kb_v2_retrieve(rctx, kb_id=kb_id, query=query, limit=limit)
+    retrieved = await _kb_retrieve(rctx, kb_id=kb_id, query=query, limit=limit)
     citations = retrieved.get("citation_dicts") or []
     evidence_ids = retrieved.get("evidence_ids") or []
 
@@ -941,7 +941,7 @@ async def _kb_query_extract_facts(
             "entities": [],
             "evidence_ids": [],
             "count": 0,
-            "method": "knowledge_v2",
+            "method": "knowledge",
         }
         return NodeOutcome(
             output=output,
@@ -970,7 +970,7 @@ async def _kb_query_extract_facts(
             "entities": [],
             "evidence_ids": evidence_ids,
             "count": 0,
-            "method": "knowledge_v2",
+            "method": "knowledge",
         }
         return NodeOutcome(
             output=output,
@@ -1067,7 +1067,7 @@ async def _kb_query_extract_facts(
         "entities": entities,
         "evidence_ids": evidence_ids,
         "count": len(claims_out),
-        "method": "knowledge_v2",
+        "method": "knowledge",
     }
     return NodeOutcome(
         output=output,
@@ -1097,8 +1097,8 @@ async def _kb_query_compare(
     from src.api.deps import get_llm_provider
     from src.platform.deployments.output_schema import validate_json_answer
 
-    left_retrieved = await _kb_v2_retrieve(rctx, kb_id=kb_id, query=left, limit=limit)
-    right_retrieved = await _kb_v2_retrieve(rctx, kb_id=kb_id, query=right, limit=limit)
+    left_retrieved = await _kb_retrieve(rctx, kb_id=kb_id, query=left, limit=limit)
+    right_retrieved = await _kb_retrieve(rctx, kb_id=kb_id, query=right, limit=limit)
     citations = list(left_retrieved.get("citation_dicts") or []) + list(
         right_retrieved.get("citation_dicts") or []
     )
@@ -1117,7 +1117,7 @@ async def _kb_query_compare(
             "citations": [],
             "evidence_ids": [],
             "temporal_context": temporal,
-            "method": "knowledge_v2",
+            "method": "knowledge",
         }
         return NodeOutcome(
             output=output,
@@ -1188,7 +1188,7 @@ async def _kb_query_compare(
         "temporal_context": temporal,
         "confidence": 0.7 if differences else 0.2,
         "schema_errors": errors[:5] if errors else [],
-        "method": "knowledge_v2",
+        "method": "knowledge",
     }
     return NodeOutcome(
         output=output,
@@ -1461,69 +1461,6 @@ async def _exec_api_call(rctx: NodeContext) -> NodeOutcome:
     )
 
 
-async def _kb_query_search_v1(
-    rctx: NodeContext, *, kb_id: UUID, query: str, limit: int
-) -> NodeOutcome:
-    """SEARCH con HybridRetriever V1 (compat total; sin citations ni ledger)."""
-    from src.api.deps import get_retriever
-    from src.rag.retrieval.models import RetrievalQuery
-
-    try:
-        retriever = _resolve_dep(get_retriever)
-        context = await retriever.retrieve(
-            RetrievalQuery(
-                query=query,
-                organization_id=rctx.organization_id,
-                knowledge_base_id=kb_id,
-                top_k=limit,
-                effective_top_k=limit,
-            )
-        )
-        chunks = [
-            {
-                "title": (c.metadata or {}).get("title") or "",
-                "text": (c.content or "")[:800],
-            }
-            for c in (context.chunks or [])[:limit]
-        ]
-        status = KB_STATUS_OK if chunks else KB_STATUS_NOT_FOUND
-        return NodeOutcome(
-            output={
-                "operation": "search",
-                "status": status,
-                "reason_codes": [] if chunks else ["no_matches"],
-                "chunks": chunks,
-                "count": len(chunks),
-                "documents": chunks,
-                "citations": [],
-                "evidence_ids": [],
-                "method": "knowledge_v1",
-            },
-            contribution=_kb_query_contribution(
-                rctx,
-                query=query,
-                chunks=chunks,
-                count=len(chunks),
-                extra={"operation": "search", "status": status},
-            ),
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("kb_query retrieval failed", error=str(exc)[:200])
-        return NodeOutcome(
-            output={
-                "operation": "search",
-                "status": KB_STATUS_NOT_FOUND,
-                "reason_codes": ["retrieval_failed"],
-                "chunks": [],
-                "count": 0,
-                "documents": [],
-                "citations": [],
-                "evidence_ids": [],
-                "method": "knowledge_v1",
-            }
-        )
-
-
 async def _kb_owned_id(
     rctx: NodeContext, cfg: dict[str, Any]
 ) -> tuple[UUID | None, NodeOutcome | None]:
@@ -1768,9 +1705,7 @@ async def _exec_kb_query(rctx: NodeContext) -> NodeOutcome:
     `config.operation` (default "search") decide el camino; el output siempre
     incluye `operation` + `status` tipado para ramificar sin parsear strings.
     """
-    from sqlalchemy import text
 
-    from src.infrastructure.postgres.session import get_async_session
 
     cfg = rctx.node.config
     operation = str(cfg.get("operation") or "search").strip().lower()
@@ -1815,62 +1750,20 @@ async def _exec_kb_query(rctx: NodeContext) -> NodeOutcome:
             rctx, operation=operation, reason="requires_knowledge_base_id"
         )
 
-    from src.core.config import get_settings
-
-    v2_enabled = bool(get_settings().KNOWLEDGE_V2_ENABLED)
     if operation == "search":
         if kb_id is None:
-            # Legacy: búsqueda por título en `documents` (sin KB configurada).
-            session = await get_async_session()
-            try:
-                rows = (
-                    await session.execute(
-                        text(
-                            "SELECT id, title FROM documents WHERE organization_id = :oid "
-                            "AND (title ILIKE :pattern OR metadata_json::text ILIKE :pattern) "
-                            "LIMIT :lim"
-                        ),
-                        {"oid": rctx.organization_id, "pattern": f"%{query}%", "lim": limit},
-                    )
-                ).fetchall()
-            finally:
-                await session.close()
-            docs = [{"id": str(r.id), "title": r.title} for r in rows]
-            status = KB_STATUS_OK if docs else KB_STATUS_NOT_FOUND
-            return NodeOutcome(
-                output={
-                    "operation": "search",
-                    "status": status,
-                    "reason_codes": [] if docs else ["no_matches"],
-                    "documents": docs,
-                    "count": len(docs),
-                    "chunks": docs,
-                    "citations": [],
-                    "evidence_ids": [],
-                    "method": "documents_legacy",
-                },
-                contribution=_kb_query_contribution(
-                    rctx,
-                    query=query,
-                    chunks=docs,
-                    count=len(docs),
-                    extra={"operation": "search", "status": status},
-                ),
+            return _kb_unsupported_outcome(
+                rctx, operation="search", reason="requires_knowledge_base_id"
             )
-        if v2_enabled:
-            try:
-                retrieved = await _kb_v2_retrieve(rctx, kb_id=kb_id, query=query, limit=limit)
-                return _kb_search_outcome(
-                    rctx, query=query, retrieved=retrieved, method="knowledge_v2"
-                )
-            except Exception as exc:  # noqa: BLE001 — V2 no rompe; cae a V1
-                logger.warning("kb_query V2 failed, falling back to V1", error=str(exc)[:200])
-        return await _kb_query_search_v1(rctx, kb_id=kb_id, query=query, limit=limit)
+        try:
+            retrieved = await _kb_retrieve(rctx, kb_id=kb_id, query=query, limit=limit)
+            return _kb_search_outcome(
+                rctx, query=query, retrieved=retrieved, method="knowledge"
+            )
+        except Exception as exc:  # noqa: BLE001 — error técnico del modo
+            logger.warning("kb_query search failed", error=str(exc)[:200])
+            return NodeOutcome(error=f"kb_query search falló: {str(exc)[:200]}")
 
-    if not v2_enabled:
-        return _kb_unsupported_outcome(
-            rctx, operation=operation, reason="requires_knowledge_v2"
-        )
     if operation == "answer":
         try:
             return await _kb_query_answer(rctx, kb_id=kb_id, query=query, limit=limit)

@@ -11,14 +11,12 @@ from __future__ import annotations
 from collections.abc import Iterator
 from pathlib import Path
 
-from src.core.config import get_settings
 from src.knowledge.connectors.base import (
     ConnectorError,
     DiscoveredItem,
     Record,
     SourceConnector,
 )
-from src.knowledge.connectors.csv_source import rows_to_records
 from src.knowledge.storage import resolve_path
 
 
@@ -105,44 +103,19 @@ class ExcelSourceConnector(SourceConnector):
             raise ConnectorError(f"Uploaded file not found: {object_key}")
         data = path.read_bytes()
         extension = Path(object_key or path.name).suffix.lower().lstrip(".") or "xlsx"
-        if self._supersede_v1():
-            # Knowledge Tabular V2: la estructura fila/columna vive en el
-            # pipeline tabular; V1 solo indexa un resumen del archivo.
-            yield Record(
-                external_id=object_key,
-                content=self._summary_content(path, extension),
-                metadata={
-                    "filename": self.config.get("filename") or object_key,
-                    "format": "excel",
-                    "document_external_id": object_key,
-                    "supersede_v1": True,
-                },
-                raw_data=data,
-                format=extension,
-            )
-            return
-        records = rows_to_records(
-            self._iter_sheet_rows(path),
-            object_key,
-            extra_metadata={"format": "excel", "sheet": self._sheet()},
+        # La estructura fila/columna vive en la representación tabular; el
+        # índice textual solo guarda un resumen del archivo.
+        yield Record(
+            external_id=object_key,
+            content=self._summary_content(path, extension),
+            metadata={
+                "filename": self.config.get("filename") or object_key,
+                "format": "excel",
+                "document_external_id": object_key,
+            },
+            raw_data=data,
+            format=extension,
         )
-        first = True
-        for record in records:
-            if first:
-                first = False
-                yield self._with_document_payload(record, data, extension, object_key)
-            else:
-                yield record
-
-    def _supersede_v1(self) -> bool:
-        """True si V1 debe emitir un solo resumen (flag global o del source)."""
-        settings = get_settings()
-        if not (settings.KNOWLEDGE_V2_ENABLED and settings.KNOWLEDGE_TABULAR_ENABLED):
-            return False
-        override = self.config.get("supersede_v1")
-        if override is not None:
-            return bool(override)
-        return bool(getattr(settings, "KNOWLEDGE_TABULAR_SUPERSEDE_V1", False))
 
     def _summary_content(self, path, extension: str) -> str:
         """Resumen compacto del workbook (hojas + headers) para el índice V1."""

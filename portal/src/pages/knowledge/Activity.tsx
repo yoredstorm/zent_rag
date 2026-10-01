@@ -32,7 +32,11 @@ import {
   type LearningRun,
   type SourceLearning,
 } from "../../lib/knowledgeLearning";
-import { learnSource } from "../../lib/knowledgeModel";
+import {
+  fetchKnowledgeCompilations,
+  learnSource,
+  type KnowledgeCompilation,
+} from "../../lib/knowledgeModel";
 import { fmtDateTime } from "../../lib/format";
 
 type ConnectorRow = {
@@ -65,6 +69,7 @@ export default function KnowledgeActivityPage() {
   >({});
   const [selectedSource, setSelectedSource] = useState("");
   const [run, setRun] = useState<LearningRun | null>(null);
+  const [compilations, setCompilations] = useState<KnowledgeCompilation[]>([]);
   const [liveEvents, setLiveEvents] = useState<LearningEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -101,6 +106,13 @@ export default function KnowledgeActivityPage() {
       }
       const runsData = await fetchLearningRuns({ limit: 30 });
       setRuns(runsData.runs);
+      try {
+        const compiled = await fetchKnowledgeCompilations(20);
+        setCompilations(compiled.items);
+      } catch {
+        // El compilador es aditivo: si el endpoint no está, la página sigue.
+        setCompilations([]);
+      }
     } catch (err) {
       setRuns([]);
       setError(
@@ -426,6 +438,43 @@ export default function KnowledgeActivityPage() {
               )}
             </div>
           </div>
+        )}
+
+        {!loading && compilations.length > 0 && (
+          <Panel className="overflow-hidden">
+            <PanelHeader
+              title="Compilaciones de conocimiento"
+              description="Cada corrida del Knowledge Compiler: qué produjo cada documento."
+            />
+            <ul className="flex flex-col">
+              {compilations.map((item) => (
+                <li
+                  key={item.id}
+                  className="flex flex-col gap-1 border-b border-border px-4 py-3 last:border-0"
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="truncate text-sm font-medium">
+                      {item.document_title || item.document_id || "Documento"}
+                    </span>
+                    <Badge tone={item.status === "completed" ? "ok" : "warn"}>
+                      {item.status}
+                    </Badge>
+                  </span>
+                  <span className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
+                    <span>{item.counts.entities} entidades</span>
+                    <span>{item.counts.facts} hechos</span>
+                    <span>{item.counts.relationships} relaciones</span>
+                    <span>{item.counts.rules} reglas</span>
+                    <span>{item.counts.evidence} evidencias</span>
+                    <span>{Math.round(item.duration_ms)} ms</span>
+                  </span>
+                  {item.error && (
+                    <span className="text-xs text-danger">{item.error}</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </Panel>
         )}
       </div>
     </KnowledgeLayout>

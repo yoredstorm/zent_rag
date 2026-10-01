@@ -168,17 +168,15 @@ async def test_semantic_core_end_to_end(
     assert agent.status_code == 201, agent.text
     agent_id = agent.json()["id"]
 
-    from src.api.deps import get_agent_runtime, get_rag_orchestrator, get_structured_retriever
+    from src.api.deps import get_agent_runtime, get_knowledge_retriever, get_rag_orchestrator
     from src.api.main import app
-    from src.core.config import get_settings
 
     fake_runtime = _FakeAgentRuntime()
     app.dependency_overrides[get_agent_runtime] = lambda: fake_runtime
-    app.dependency_overrides[get_structured_retriever] = lambda: _FakeStructuredRetriever([_chunk()])
+    app.dependency_overrides[get_knowledge_retriever] = lambda: _FakeStructuredRetriever([_chunk()])
     app.dependency_overrides[get_rag_orchestrator] = lambda: _FakeOrchestrator(
         UUID(org["organization_id"])
     )
-    monkeypatch.setattr(get_settings(), "KNOWLEDGE_V2_ENABLED", True)
 
     graph = _graph(
         [
@@ -257,7 +255,7 @@ async def test_semantic_core_end_to_end(
     assert outputs["q"]["output"]["rows"] == [{"producto": "A", "stock": 3}]
     assert outputs["q"]["output"]["columns"] == ["producto", "stock"]
     assert outputs["q"]["output"]["evidence_ids"], outputs["q"]["output"]
-    assert outputs["kb"]["output"]["method"] == "knowledge_v2"
+    assert outputs["kb"]["output"]["method"] == "knowledge"
     assert outputs["kb"]["output"]["citations"][0]["document_name"] == "politica-reposicion.pdf"
     assert outputs["kb"]["output"]["evidence_ids"], outputs["kb"]["output"]
     assert outputs["ask"]["output"]["risk"] == "high"  # output_schema inyectado

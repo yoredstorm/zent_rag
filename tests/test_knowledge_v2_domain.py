@@ -8,7 +8,6 @@ from uuid import uuid4
 
 import pytest
 
-from src.core.config import Settings, get_settings
 from src.core.domain.catalog import CatalogProvenance
 from src.core.domain.knowledge_v2 import (
     BoundingBox,
@@ -36,35 +35,6 @@ from src.core.domain.knowledge_v2 import (
     StructuredDocument,
     inferred_is_not_approved,
 )
-
-_SESSION_KEY = "aa" * 32
-
-
-def _settings(**env: str) -> Settings:
-    get_settings.cache_clear()
-    return Settings()
-
-
-def test_knowledge_v2_flag_defaults_false(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Determinista: fija explícitamente false (el contrato de código es OFF;
-    # el .env local de desarrollo puede estar ON sin romper este contrato).
-    monkeypatch.setenv("RAG_PORTAL_SESSION_KEY", _SESSION_KEY)
-    monkeypatch.setenv("RAG_KNOWLEDGE_V2_ENABLED", "false")
-    monkeypatch.setenv("RAG_KNOWLEDGE_V2_PROMOTE", "false")
-    monkeypatch.setenv("RAG_KNOWLEDGE_V2_SHADOW", "false")
-    settings = _settings()
-    assert settings.KNOWLEDGE_V2_ENABLED is False
-    assert settings.KNOWLEDGE_V2_PROMOTE is False
-    assert settings.KNOWLEDGE_V2_SHADOW is False
-    get_settings.cache_clear()
-
-
-def test_knowledge_v2_flag_reads_single_rag_prefix(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("RAG_PORTAL_SESSION_KEY", _SESSION_KEY)
-    monkeypatch.setenv("RAG_KNOWLEDGE_V2_ENABLED", "true")
-    settings = _settings()
-    assert settings.KNOWLEDGE_V2_ENABLED is True
-    get_settings.cache_clear()
 
 
 def test_inferred_never_equals_approved() -> None:

@@ -12,7 +12,6 @@ import re
 from io import BytesIO
 
 from src.infrastructure.observability.logging_config import get_logger
-from src.knowledge.normalize.base import get_normalizer
 
 logger = get_logger(__name__)
 
@@ -57,16 +56,10 @@ def _fact(
 
 
 def _normalize_text(data: bytes, filename: str) -> str:
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
-    try:
-        normalizer = get_normalizer(ext)
-        if normalizer is not None:
-            text = normalizer.normalize(data, source_name=filename)
-            if text and text.strip():
-                return text
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("document normalize failed", error=str(exc)[:200])
-    return data[:8000].decode("utf-8", errors="replace")
+    """Texto del archivo por el parser estructural (un solo camino)."""
+    from src.knowledge.structure.text_view import extract_text
+
+    return extract_text(data, filename)
 
 
 def _page_count(data: bytes, filename: str) -> int | None:

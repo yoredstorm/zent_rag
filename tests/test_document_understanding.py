@@ -340,16 +340,20 @@ def test_pdf_dos_columnas_no_mezcla_lineas() -> None:
     assert texts.index("Left One") < texts.index("Left Two") < texts.index("Right Uno") < texts.index("Right Dos")
 
 
-def test_hash_canonico_estable_y_shadow_no_cambia_bloques() -> None:
+def test_hash_canonico_estable_y_entendimiento_idempotente() -> None:
     original = _fclas_document()
     first = understand_document(original)
     second = understand_document(original)
     assert first.metadata["understanding"]["canonical_hash"] == second.metadata["understanding"]["canonical_hash"]
-    shadowed = apply_understanding(original, mode="shadow", file_hash="abc")
-    assert [block.text for block in shadowed.blocks] == [block.text for block in original.blocks]
-    assert "understanding_shadow" in shadowed.metadata
-    assert "understanding" not in shadowed.metadata
-    assert shadowed.content_hash == original.content_hash
+    understood = apply_understanding(original, file_hash="abc")
+    assert [block.text for block in understood.blocks] == [
+        block.text for block in first.blocks
+    ]
+    assert "understanding" in understood.metadata
+    assert [section.section_path for section in understood.sections] == [
+        section.section_path for section in original.sections
+    ]
+    assert understood.content_hash == first.content_hash
 
 
 def test_referencia_ambigua_no_se_resuelve() -> None:
@@ -359,58 +363,6 @@ def test_referencia_ambigua_no_se_resuelve() -> None:
     assert ref["target_candidate"] == "4.2"
     assert ref["resolved_target"] is None
     assert ref["confidence"] < 0.5
-
-
-def test_shadow_no_cambia_bloques_secciones_tablas_ni_chunks() -> None:
-    from src.knowledge.structure.chunker import chunk_structured_document as chunk
-    from src.knowledge.structure.pdf_parser import PdfParseOptions
-    from src.knowledge.understanding.engine import attach_shadow_report
-    from src.knowledge.understanding.layout import layout_analysis_enabled
-    from src.knowledge.understanding.parse_policy import production_pdf_options, shadow_pdf_options
-
-    class _Settings:
-        DOCUMENT_UNDERSTANDING_ENABLED = False
-        DOCUMENT_UNDERSTANDING_SHADOW = True
-        DOCUMENT_UNDERSTANDING_LAYOUT = True
-        COLUMN_MIN_CONFIDENCE = 0.72
-
-    assert layout_analysis_enabled() is False
-    assert production_pdf_options(_Settings()).column_detection is False
-    data = _pdf(
-        [
-            [
-                "BT /F1 11 Tf 72 620 Td (Left One) Tj ET",
-                "BT /F1 11 Tf 72 600 Td (Left Two) Tj ET",
-                "BT /F1 11 Tf 360 620 Td (Right Uno) Tj ET",
-                "BT /F1 11 Tf 360 600 Td (Right Dos) Tj ET",
-            ]
-        ]
-    )
-    off = PdfParser().parse(data, organization_id=ORG, external_id="off.pdf", source_name="off.pdf", options=PdfParseOptions())
-    production = PdfParser().parse(
-        data,
-        organization_id=ORG,
-        external_id="shadow.pdf",
-        source_name="shadow.pdf",
-        options=production_pdf_options(_Settings()),
-    )
-    assert _shape(off) == _shape(production)
-    assert [item.content for item in chunk(off)] == [item.content for item in chunk(production)]
-    shadow_parsed = PdfParser().parse(
-        data,
-        organization_id=ORG,
-        external_id="shadow-parse.pdf",
-        source_name="shadow-parse.pdf",
-        options=shadow_pdf_options(_Settings()),
-    )
-    shadow_result = understand_document(shadow_parsed, filename="shadow.pdf")
-    assert shadow_result.metadata["understanding"]["semantic_units"] is True
-    reported = attach_shadow_report(production, shadow_parsed, filename="shadow.pdf")
-    assert _shape(reported) == _shape(off)
-    assert reported.content_hash == production.content_hash
-    assert "understanding" not in reported.metadata
-    assert reported.metadata["understanding_shadow"]["mode"] == "shadow"
-    assert [block.text for block in shadow_parsed.blocks] != [block.text for block in production.blocks]
 
 
 def test_texto_repetido_conserva_su_block_id() -> None:

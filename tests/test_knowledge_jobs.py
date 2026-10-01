@@ -25,6 +25,10 @@ from src.infrastructure.postgres.relational_db import (
     PostgresKnowledgeBaseRepository,
     PostgresOrganizationRepository,
 )
+from src.infrastructure.postgres.structured_documents import (
+    PostgresStructuredDocumentRepository,
+)
+from src.infrastructure.postgres.tabular import PostgresTabularRepository
 from src.knowledge.connectors.base import ConnectorError, Record, SourceConnector
 from src.knowledge.connectors.registry import register_connector
 from src.knowledge.engine.service import (
@@ -50,8 +54,21 @@ class FakeVectorStore:
     async def upsert(self, *args, **kwargs) -> None:
         self.upserted.append(args)
 
-    async def upsert_batch(self, organization_id, points, knowledge_base_id=None) -> None:
+    async def upsert_batch(
+        self, organization_id, points, knowledge_base_id=None, workspace_id=None
+    ) -> None:
         self.upserted.extend((organization_id, p, knowledge_base_id) for p in points)
+
+    async def delete_v2_document(self, organization_id, document_id) -> None:
+        self.deleted_points.append(str(document_id))
+
+    async def delete_v2_tables(self, organization_id, document_id, table_ids) -> None:
+        self.deleted_points.extend(str(t) for t in table_ids)
+
+    async def delete_stale_v2_documents(
+        self, organization_id, source_id, keep_external_ids
+    ) -> None:
+        return None
 
     async def delete_by_organization(self, organization_id) -> None:
         pass
@@ -155,6 +172,8 @@ def build_engine(backoff_base: int = 1) -> KnowledgeIngestionEngine:
         source_repo=PostgresSourceRepository(),
         vector_store=FakeVectorStore(),
         embedding_provider=FakeEmbedding(),
+        structured_doc_repo=PostgresStructuredDocumentRepository(),
+        tabular_repo=PostgresTabularRepository(),
         backoff_base_seconds=backoff_base,
         max_attempts_default=2,
     )
@@ -380,6 +399,8 @@ async def test_rate_limit_failure_schedules_long_retry(context) -> None:
         source_repo=PostgresSourceRepository(),
         vector_store=FakeVectorStore(),
         embedding_provider=RateLimitEmbedding(),
+        structured_doc_repo=PostgresStructuredDocumentRepository(),
+        tabular_repo=PostgresTabularRepository(),
         backoff_base_seconds=1,
         max_attempts_default=2,
     )
@@ -419,8 +440,8 @@ class FakeUsageTracker:
 
 
 @pytest.mark.asyncio
-async def test_v1_embedding_tokens_are_tracked(context) -> None:
-    """El camino V1 registra tokens de embedding (antes solo V2 lo hacía)."""
+async def test_embedding_tokens_are_tracked(context) -> None:
+    """La indexación registra tokens y costo reales de embedding."""
     tracker = FakeUsageTracker()
     engine = KnowledgeIngestionEngine(
         job_repo=PostgresIngestionJobRepository(),
@@ -430,6 +451,8 @@ async def test_v1_embedding_tokens_are_tracked(context) -> None:
         source_repo=PostgresSourceRepository(),
         vector_store=FakeVectorStore(),
         embedding_provider=FakeEmbedding(),
+        structured_doc_repo=PostgresStructuredDocumentRepository(),
+        tabular_repo=PostgresTabularRepository(),
         usage_tracker=tracker,
         backoff_base_seconds=1,
         max_attempts_default=2,
@@ -437,7 +460,7 @@ async def test_v1_embedding_tokens_are_tracked(context) -> None:
     job_id = await create_job(context)
     job = await engine.execute_job(job_id)
     assert job.status == IngestionJobStatus.COMPLETED
-    assert tracker.calls, "no se registraron tokens de embedding V1"
+    assert tracker.calls, "no se registraron tokens de embedding"
     total_tokens = sum(call["tokens"] for call in tracker.calls)
     assert total_tokens > 0
     assert all(call["organization_id"] == context["organization"].id for call in tracker.calls)

@@ -1,5 +1,5 @@
 # =============================================================================
-# WebSourceConnector — URL → HTML → Markdown (httpx + markitdown/markdownify)
+# WebSourceConnector — URL → bytes originales (el parser estructural entiende)
 # =============================================================================
 from __future__ import annotations
 
@@ -11,8 +11,6 @@ from src.knowledge.connectors.base import (
     Record,
     SourceConnector,
 )
-from src.knowledge.normalize.doc_html_normalizer import HtmlNormalizer
-from src.knowledge.normalize.text_normalizer import TextNormalizer
 
 
 class WebSourceConnector(SourceConnector):
@@ -45,12 +43,11 @@ class WebSourceConnector(SourceConnector):
     async def iter_records(self, cursor: dict | None):
         data, content_type = await self._fetch_bytes()
         is_html = "html" in content_type.lower() or data.lstrip().startswith(b"<")
-        if is_html:
-            markdown = HtmlNormalizer().normalize(data, source_name=self._url())
-        else:
-            markdown = TextNormalizer().normalize(data, source_name=self._url())
+        extension = "html" if is_html else "txt"
         yield Record(
             external_id=self._url(),
-            content=markdown,
-            metadata={"url": self._url(), "content_type": content_type},
+            content=self._url(),
+            metadata={"url": self._url(), "content_type": content_type, "format": extension},
+            raw_data=data,
+            format=extension,
         )

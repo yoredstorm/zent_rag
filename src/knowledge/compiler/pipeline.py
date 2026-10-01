@@ -1,0 +1,621 @@
+# =============================================================================
+# Knowledge Compiler — pipeline canónico
+# =============================================================================
+# Una sola entrada: una fuente ya entendida (StructuredDocument + tabular).
+# Una sola salida: conocimiento canónico con provenance.
+#
+#   RAW SOURCE -> Parsed Source -> Structural Model -> Semantic Units
+#              -> Entities -> Facts -> Relationships -> Rules -> Temporal Facts
+#              -> Knowledge Objects -> Evidence Links -> Canonical Knowledge
+#
+# Sin intervención humana en el flujo normal: el compilador corre al terminar
+# la ingesta y refuerza (no duplica) lo que ya existe. La revisión humana
+# solo aparece para VERIFICAR o para resolver conflictos que el motor no pudo
+# clasificar.
+# =============================================================================
+from __future__ import annotations
+
+import time
+from collections.abc import Awaitable, Callable
+from uuid import UUID
+
+from src.core.domain.canonical import CanonicalKind, canonical_uuid
+from src.core.domain.knowledge_v2 import StructuredDocument
+from src.infrastructure.observability.logging_config import get_logger
+from src.knowledge.compiler import conflicts as conflict_engine
+from src.knowledge.compiler import entities as entity_engine
+from src.knowledge.compiler import extract, temporal
+from src.knowledge.compiler import facts as fact_engine
+from src.knowledge.compiler import rules as rule_engine
+from src.knowledge.compiler.model import (
+    CompilationResult,
+    EntityCandidate,
+    EntityType,
+    EvidenceRef,
+    EvidenceType,
+    FactCandidate,
+    RelationshipCandidate,
+    SourceLocator,
+    TemporalScope,
+    normalize_term,
+)
+from src.knowledge.compiler.store import CompilerStore, PostgresCompilerStore, object_kind_for_entity
+
+logger = get_logger(__name__)
+
+
+class KnowledgeCompiler:
+    """Compila una fuente en conocimiento canónico verificable."""
+
+    def __init__(self, store: CompilerStore | None = None) -> None:
+        self._store = store or PostgresCompilerStore()
+
+    # ------------------------------------------------------- fase determinista
+    @staticmethod
+    def build(document: StructuredDocument) -> CompilationResult:
+        """Semantic units -> entidades -> hechos -> relaciones -> reglas.
+
+        Puro, sin I/O. Es la fase que se puede testear y auditar.
+        """
+        units = extract.extract_semantic_units(document)
+        units.extend(extract.extract_tabular_units(document.tabular, document=document))
+
+        sample_text = "\n".join(
+            (block.text or "") for block in document.blocks[:200]
+        )[:8000]
+        scope = temporal.infer_temporal_scope(document, sample_text=sample_text)
+
+        discovered = entity_engine.discover_entities(units, document=document)
+        resolver = entity_engine.EntityResolver()
+        consolidated, merges = resolver.consolidate(discovered)
+
+        fact_list = fact_engine.build_facts(units, temporal=scope)
+        fact_list.extend(fact_engine.entity_facts(consolidated, temporal=scope))
+
+        relationships = fact_engine.build_relationships(
+            units,
+            document_title=document.title,
+            extracted_relations=extract.extracta_for(document).get("relations") or [],
+        )
+
+        rules = rule_engine.extract_rules(document, temporal=scope)
+        conflict_list = conflict_engine.detect_conflicts(fact_list)
+
+        return CompilationResult(
+            organization_id=document.organization_id,
+            source_id=document.source_id,
+            document_id=document.id,
+            document_title=document.title,
+            compilation_kind="tabular" if document.tabular is not None else "document",
+            units=units,
+            entities=consolidated,
+            facts=fact_list,
+            relationships=relationships,
+            rules=rules,
+            conflicts=conflict_list,
+            merges=merges,
+            evidence_count=sum(
+                len(entity.evidence) for entity in consolidated
+            )
+            + sum(len(fact.evidence) for fact in fact_list)
+            + sum(len(rule.evidence) for rule in rules),
+        )
+
+    # --------------------------------------------------------------- fase I/O
+    async def compile_document(
+        self,
+        document: StructuredDocument,
+        *,
+        workspace_id: UUID | None = None,
+        persist: bool = True,
+        observer: "Callable[[str, dict], Awaitable[None]] | None" = None,
+    ) -> CompilationResult:
+        """Compila y persiste. En modo offline solo devuelve el resultado.
+
+        ``observer`` recibe eventos semánticos reales (ENTITY_DISCOVERED,
+        FACT_REINFORCED, RULE_DISCOVERED, CONFLICT_DETECTED, ...) a medida que
+        la persistencia ocurre. Es la fuente del "ZENT está aprendiendo".
+        """
+        started = time.perf_counter()
+        result = self.build(document)
+        if not persist:
+            return result
+
+        status = "completed"
+        error: str | None = None
+        try:
+            result.persisted = await self._persist(
+                result,
+                workspace_id=workspace_id or document.workspace_id,
+                observer=observer,
+            )
+        except Exception as exc:  # noqa: BLE001 — la ingesta ya persistió el documento
+            status = "failed"
+            error = str(exc)[:2000]
+            logger.warning(
+                "Knowledge compilation failed",
+                document_id=str(document.id),
+                error=error[:400],
+            )
+        finally:
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            try:
+                await self._store.record_compilation(
+                    document.organization_id,
+                    result=result,
+                    workspace_id=workspace_id or document.workspace_id,
+                    duration_ms=duration_ms,
+                    status=status,
+                    error=error,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Knowledge compilation trace failed", error=str(exc)[:200]
+                )
+        result.persisted["status"] = status
+        return result
+
+    async def _persist(
+        self,
+        result: CompilationResult,
+        *,
+        workspace_id: UUID | None,
+        observer: "Callable[[str, dict], Awaitable[None]] | None" = None,
+    ) -> dict:
+        store = self._store
+        organization_id = result.organization_id
+        source_id = result.source_id
+        document_id = result.document_id
+
+        aliases = await store.existing_aliases(organization_id)
+        resolver = entity_engine.EntityResolver(known=aliases)
+
+        counters: dict[str, int] = {
+            "entities_new": 0,
+            "entities_enriched": 0,
+            "merges": 0,
+            "facts_new": 0,
+            "facts_reinforced": 0,
+            "relationships": 0,
+            "relationships_related": 0,
+            "rules": 0,
+            "conflicts": 0,
+            "duplicates": 0,
+            "updated": 0,
+            "evidence": 0,
+        }
+
+        entity_ids: dict[str, UUID] = {}
+        alias_ids: dict[str, UUID] = {}
+        known_names: set[str] = set()
+        objects_created = 0
+        merged_aliases: set[str] = set()
+
+        for entity in result.entities:
+            outcome = resolver.resolve(entity)
+            known_before = _entity_is_known(entity, aliases)
+            object_id = await store.upsert_entity(
+                organization_id,
+                entity,
+                source_id=source_id,
+                workspace_id=workspace_id,
+            )
+            entity_ids[_entity_key(entity.entity_type, entity.name)] = object_id
+            alias_ids[normalize_term(entity.name)] = object_id
+            objects_created += 1
+            if known_before:
+                known_names.add(normalize_term(entity.name))
+                counters["entities_enriched"] += 1
+                await self._observe(
+                    observer,
+                    "ENTITY_MATCHED",
+                    {"name": entity.name, "entity_type": entity.entity_type},
+                )
+            else:
+                counters["entities_new"] += 1
+                await self._observe(
+                    observer,
+                    "ENTITY_DISCOVERED",
+                    {"name": entity.name, "entity_type": entity.entity_type},
+                )
+            for alias in entity.aliases:
+                evidence_ids = [
+                    value
+                    for value in [
+                        await store.add_evidence(
+                            organization_id,
+                            alias.evidence,
+                            canonical_id=object_id,
+                            workspace_id=workspace_id,
+                        )
+                        if alias.evidence
+                        else None
+                    ]
+                    if value is not None
+                ]
+                alias_ids[normalize_term(alias.alias)] = object_id
+                await store.upsert_alias(
+                    organization_id,
+                    entity_id=object_id,
+                    alias=alias,
+                    source_id=source_id,
+                    document_id=document_id,
+                    evidence_ids=evidence_ids,
+                )
+            if outcome.merged and outcome.merge is not None:
+                merged_aliases.add(outcome.merge.merged_alias)
+                counters["merges"] += 1
+                result.persisted.setdefault("merges_applied", []).append(
+                    outcome.merge.merged_alias
+                )
+                await self._observe(
+                    observer,
+                    "ENTITY_MERGED",
+                    {
+                        "canonical_name": outcome.merge.canonical_name,
+                        "merged_alias": outcome.merge.merged_alias,
+                        "alias_type": outcome.merge.alias_type,
+                        "reason": outcome.merge.reason,
+                    },
+                )
+
+        for merge in result.merges:
+            if merge.merged_alias in merged_aliases:
+                continue
+            merged_aliases.add(merge.merged_alias)
+            counters["merges"] += 1
+            await self._observe(
+                observer,
+                "ENTITY_MERGED",
+                {
+                    "canonical_name": merge.canonical_name,
+                    "merged_alias": merge.merged_alias,
+                    "alias_type": merge.alias_type,
+                    "reason": merge.reason,
+                },
+            )
+
+        if result.units:
+            await self._observe(
+                observer, "SEMANTIC_UNIT_CREATED", {"count": len(result.units)}
+            )
+
+        evidence_written = 0
+        assertions_written = 0
+        bounded_dates: list[str] = []
+        for fact in result.facts:
+            subject_id = entity_ids.get(_entity_key(fact.subject_type, fact.subject)) or (
+                alias_ids.get(normalize_term(fact.subject))
+            )
+            new_subject = False
+            if subject_id is None:
+                subject_id = await self._ensure_object(
+                    organization_id,
+                    name=fact.subject,
+                    entity_type=fact.subject_type,
+                    source_id=source_id,
+                    workspace_id=workspace_id,
+                )
+                alias_ids[normalize_term(fact.subject)] = subject_id
+                new_subject = True
+            assertion_id, _count, fact_status = await store.upsert_fact(
+                organization_id,
+                fact,
+                subject_id=subject_id,
+                source_id=source_id,
+                workspace_id=workspace_id,
+                document_id=document_id,
+            )
+            assertions_written += 1
+            if new_subject:
+                counters["entities_new"] += 1
+                objects_created += 1
+            if fact_status == "created":
+                counters["facts_new"] += 1
+                await self._observe(
+                    observer,
+                    "FACT_DISCOVERED",
+                    {
+                        "subject": fact.subject,
+                        "predicate": fact.predicate,
+                        "object_value": fact.object_value,
+                        "fact_kind": fact.fact_kind,
+                    },
+                )
+            else:
+                counters["facts_reinforced"] += 1
+                await self._observe(
+                    observer,
+                    "FACT_REINFORCED",
+                    {
+                        "subject": fact.subject,
+                        "predicate": fact.predicate,
+                        "object_value": fact.object_value,
+                        "fact_kind": fact.fact_kind,
+                    },
+                )
+            if fact.temporal.is_bounded:
+                if fact.temporal.effective_from:
+                    bounded_dates.append(fact.temporal.effective_from.isoformat())
+                if fact.temporal.effective_to:
+                    bounded_dates.append(fact.temporal.effective_to.isoformat())
+            for evidence in fact.evidence:
+                written = await store.add_evidence(
+                    organization_id,
+                    evidence,
+                    canonical_id=subject_id,
+                    assertion_id=assertion_id,
+                    workspace_id=workspace_id,
+                )
+                evidence_written += 1 if written else 0
+
+        if bounded_dates:
+            await self._observe(
+                observer,
+                "TEMPORAL_RANGE_DISCOVERED",
+                {
+                    "effective_from": min(bounded_dates),
+                    "effective_to": max(bounded_dates),
+                    "facts": len(bounded_dates),
+                },
+            )
+
+        edges_written = 0
+        for relationship in result.relationships:
+            subject_key = normalize_term(relationship.subject)
+            object_key = normalize_term(relationship.object_name)
+            subject_known = subject_key in known_names
+            object_known = object_key in known_names
+            subject_id = alias_ids.get(subject_key)
+            if subject_id is None:
+                subject_id = await self._ensure_object(
+                    organization_id,
+                    name=relationship.subject,
+                    entity_type=relationship.subject_type,
+                    source_id=source_id,
+                    workspace_id=workspace_id,
+                )
+                alias_ids[subject_key] = subject_id
+            object_id = alias_ids.get(object_key)
+            if object_id is None:
+                object_id = await self._ensure_object(
+                    organization_id,
+                    name=relationship.object_name,
+                    entity_type=relationship.object_type,
+                    source_id=source_id,
+                    workspace_id=workspace_id,
+                )
+                alias_ids[object_key] = object_id
+            edge_id, edge_status = await store.upsert_relationship(
+                organization_id,
+                relationship,
+                subject_id=subject_id,
+                object_id=object_id,
+                source_id=source_id,
+                workspace_id=workspace_id,
+            )
+            edges_written += 1 if edge_id else 0
+            if edge_id and edge_status == "created":
+                counters["relationships"] += 1
+                related = subject_known and object_known
+                if related:
+                    counters["relationships_related"] += 1
+                await self._observe(
+                    observer,
+                    "RELATIONSHIP_DISCOVERED",
+                    {
+                        "subject": relationship.subject,
+                        "predicate": relationship.predicate,
+                        "object": relationship.object_name,
+                        "related": related,
+                    },
+                )
+            for evidence in relationship.evidence:
+                written = await store.add_evidence(
+                    organization_id,
+                    evidence,
+                    canonical_id=subject_id,
+                    workspace_id=workspace_id,
+                )
+                evidence_written += 1 if written else 0
+
+        rules_written = 0
+        for rule in result.rules:
+            rule_id, rule_status = await store.upsert_rule(
+                organization_id,
+                rule,
+                source_id=source_id,
+                workspace_id=workspace_id,
+                document_id=document_id,
+            )
+            rules_written += 1
+            if rule_status == "created":
+                counters["rules"] += 1
+                await self._observe(
+                    observer,
+                    "RULE_DISCOVERED",
+                    {
+                        "subject": rule.subject,
+                        "statement": rule.statement,
+                        "rule_type": rule.rule_type,
+                        "modality": rule.modality,
+                    },
+                )
+            for evidence in rule.evidence:
+                written = await store.add_evidence(
+                    organization_id,
+                    evidence,
+                    canonical_id=rule_id,
+                    workspace_id=workspace_id,
+                )
+                evidence_written += 1 if written else 0
+
+        conflicts_written = 0
+        for conflict in result.conflicts:
+            subject_id = alias_ids.get(normalize_term(conflict.subject))
+            conflict_status = await store.upsert_conflict(
+                organization_id,
+                conflict,
+                object_id=subject_id,
+                workspace_id=workspace_id,
+            )
+            if conflict_status == "duplicate":
+                counters["duplicates"] += 1
+                await self._observe(
+                    observer,
+                    "DUPLICATE_DETECTED",
+                    {
+                        "subject": conflict.subject,
+                        "predicate": conflict.predicate,
+                        "conflict_type": conflict.conflict_type,
+                    },
+                )
+                continue
+            conflicts_written += 1
+            conflict_type = conflict.conflict_type
+            if conflict_type in ("VERSION_CHANGE", "TEMPORAL_CHANGE"):
+                counters["updated"] += 1
+            elif conflict_type == "POSSIBLE_DUPLICATE":
+                counters["duplicates"] += 1
+                await self._observe(
+                    observer,
+                    "DUPLICATE_DETECTED",
+                    conflict.to_dict(),
+                )
+                continue
+            else:
+                counters["conflicts"] += 1
+            await self._observe(
+                observer,
+                "CONFLICT_DETECTED",
+                conflict.to_dict(),
+            )
+
+        if evidence_written:
+            counters["evidence"] = evidence_written
+            await self._observe(
+                observer, "EVIDENCE_LINKED", {"count": evidence_written}
+            )
+
+        await self._observe(
+            observer,
+            "KNOWLEDGE_OBJECT_CREATED",
+            {
+                "objects": objects_created,
+                "assertions": assertions_written,
+                "edges": edges_written,
+                "rules": rules_written,
+                "conflicts": conflicts_written,
+                "evidence": evidence_written,
+                "entities_new": counters["entities_new"],
+                "entities_enriched": counters["entities_enriched"],
+                "facts_reinforced": counters["facts_reinforced"],
+            },
+        )
+
+        await store.refresh_counters(organization_id)
+
+        return {
+            "objects": objects_created,
+            "assertions": assertions_written,
+            "edges": edges_written,
+            "rules": rules_written,
+            "conflicts": conflicts_written,
+            "evidence": evidence_written,
+            **counters,
+        }
+
+    async def _observe(
+        self,
+        observer: "Callable[[str, dict], Awaitable[None]] | None",
+        event_type: str,
+        payload: dict,
+    ) -> None:
+        """Notifica un evento semántico real. Nunca interrumpe la compilación."""
+        if observer is None:
+            return
+        try:
+            await observer(event_type, payload)
+        except Exception as exc:  # noqa: BLE001 — la observación es best-effort
+            logger.debug("Knowledge observer failed", error=str(exc)[:160])
+
+    async def _ensure_object(
+        self,
+        organization_id: UUID,
+        *,
+        name: str,
+        entity_type: str,
+        source_id: UUID | None,
+        workspace_id: UUID | None,
+    ) -> UUID:
+        """Crea (determinista) el canónico de un término referenciado sin unidad."""
+        from src.knowledge.compiler.model import EntityAlias
+
+        candidate = EntityCandidate(
+            name=name,
+            entity_type=entity_type or EntityType.CONCEPT.value,
+            confidence=0.6,
+            evidence=[
+                EvidenceRef(
+                    locator=SourceLocator(
+                        source_id=source_id,
+                        document_title=name,
+                    ),
+                    evidence_type=EvidenceType.STRUCTURAL.value,
+                    excerpt=name,
+                    confidence=0.6,
+                )
+            ],
+        )
+        candidate.aliases = [
+            EntityAlias(
+                alias=name,
+                alias_type="contextual_name",
+                confidence=0.6,
+                reason="referenciado por otro hecho/relación de la misma fuente",
+            )
+        ]
+        object_id = await self._store.upsert_entity(
+            organization_id,
+            candidate,
+            source_id=source_id,
+            workspace_id=workspace_id,
+        )
+        for alias in candidate.aliases:
+            await self._store.upsert_alias(
+                organization_id,
+                entity_id=object_id,
+                alias=alias,
+                source_id=source_id,
+                document_id=None,
+                evidence_ids=[],
+            )
+        return object_id
+
+
+def _entity_key(entity_type: str, name: str) -> str:
+    return f"{entity_type}:{normalize_term(name)}"
+
+
+def _entity_is_known(entity: EntityCandidate, aliases: dict[str, str]) -> bool:
+    """¿ZENT ya conocía esta entidad (por nombre o por alias declarado)?"""
+    if not aliases:
+        return False
+    if normalize_term(entity.name) in aliases:
+        return True
+    return any(alias.normalized in aliases for alias in entity.aliases)
+
+
+__all__ = [
+    "KnowledgeCompiler",
+    "CompilationResult",
+    "CompilerStore",
+    "PostgresCompilerStore",
+    "FactCandidate",
+    "RelationshipCandidate",
+    "TemporalScope",
+    "canonical_uuid",
+    "CanonicalKind",
+    "object_kind_for_entity",
+    "conflict_engine",
+]

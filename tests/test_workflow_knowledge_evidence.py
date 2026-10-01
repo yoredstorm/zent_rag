@@ -95,14 +95,12 @@ async def test_kb_query_v2_records_citations_and_evidence(
     assert kb.status_code == 201, kb.text
     kb_id = kb.json()["id"]
 
-    from src.api.deps import get_structured_retriever
+    from src.api.deps import get_knowledge_retriever
     from src.api.main import app
 
-    app.dependency_overrides[get_structured_retriever] = lambda: FakeStructuredRetriever([_chunk()])
+    app.dependency_overrides[get_knowledge_retriever] = lambda: FakeStructuredRetriever([_chunk()])
 
-    from src.core.config import get_settings
 
-    monkeypatch.setattr(get_settings(), "KNOWLEDGE_V2_ENABLED", True)
 
     graph = _graph(
         [
@@ -134,7 +132,7 @@ async def test_kb_query_v2_records_citations_and_evidence(
     assert body["status"] == "succeeded", body
 
     output = body["result"]["structured_output"]["nodes"]["kb"]["output"]
-    assert output["method"] == "knowledge_v2"
+    assert output["method"] == "knowledge"
     assert output["count"] == 1
     assert output["citations"][0]["document_name"] == "politica-descuentos.pdf"
     assert output["citations"][0]["page"] == 3

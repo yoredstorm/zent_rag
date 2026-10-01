@@ -12,7 +12,7 @@ def reprocess_report(before: StructuredDocument | None, after: StructuredDocumen
     """Conteos antes y después. No reindexa ni embebe."""
 
     def counts(doc: StructuredDocument) -> dict:
-        payload = doc.metadata.get("understanding") or doc.metadata.get("understanding_shadow") or {}
+        payload = doc.metadata.get("understanding") or {}
         return {
             "sections": doc.section_count,
             "tables": doc.table_count,

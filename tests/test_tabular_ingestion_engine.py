@@ -1,8 +1,8 @@
 # =============================================================================
-# Knowledge Tabular V2 — end-to-end por el engine (Excel real + V1 + V2)
+# Knowledge Tabular — end-to-end por el engine (Excel real como DATOS)
 # =============================================================================
 # Repos Postgres reales; vector store y embeddings falsos. Verifica:
-#   - V1 sigue funcionando igual (un record por fila);
+#   - el archivo entra como UN documento (estructura fila/columna en tabular_*);
 #   - V2 persiste StructuredDocument + representación estructurada tabular;
 #   - dual indexing con metadata jerárquica y point keys deterministas;
 #   - incremental: re-sync sin cambios NO re-embebe tablas; cambio de una fila
@@ -110,9 +110,6 @@ def isolated_settings(tmp_path, monkeypatch):
     settings = get_settings()
     monkeypatch.setattr(settings, "UPLOAD_DIR", str(tmp_path / "uploads"))
     monkeypatch.setattr(settings, "KNOWLEDGE_QUEUE_KEY", f"test:{uuid4().hex}")
-    # Determinismo: el supersede V1 se prueba explícitamente; el .env local
-    # puede tenerlo activo y el resto de tests asume el camino por fila.
-    monkeypatch.setattr(settings, "KNOWLEDGE_TABULAR_SUPERSEDE_V1", False)
     return settings
 
 
@@ -177,18 +174,17 @@ async def run_engine(ctx, vectors) -> None:
     return result
 
 
-async def test_excel_dual_ingestion_v1_v2_and_tabular(ctx) -> None:
+async def test_excel_single_path_structure_and_tabular(ctx) -> None:
     # Instancia el fixture de forma explícita para mantener el nombre claro.
     context = ctx
     vectors = FakeVectorStore()
     result = await run_engine(context, vectors)
 
-    # V1 intacto (mismo comportamiento que antes de Tabular V2): el conector
-    # Excel V1 toma la fila 1 como header, así que este fixture produce
-    # 6 records (subtítulo + fila header + 4 filas de datos).
-    assert result.records_processed == 6
+    # Un archivo = un documento. La estructura fila/columna NO viaja como
+    # records de texto: vive en la representación tabular.
+    assert result.records_processed == 1
 
-    # V2 estructurado: documento con esqueleto tabular.
+    # Documento estructurado con esqueleto tabular.
     structured_repo = PostgresStructuredDocumentRepository()
     documents = await structured_repo.list_documents(
         context["organization"].id, context["source"].id
@@ -306,51 +302,11 @@ async def test_excel_incremental_resync_skips_and_updates(ctx) -> None:
     assert all(point[3]["table_id"] for point in table_levels)
 
 
-async def test_supersede_v1_emits_summary_and_deletes_row_points(ctx, monkeypatch) -> None:
-    """Flag supersede: V1 emite 1 resumen y borra los puntos V1 por fila.
-
-    Migración: primera corrida con flag OFF (6 records del fixture), segunda con
-    flag ON (1 record) y verificación de que el delete-detection purga los
-    documentos V1 de fila del sync anterior.
-    """
-    from src.core.config import get_settings
-
-    settings = get_settings()
-    context = ctx
-
-    vectors_off = FakeVectorStore()
-    first = await run_engine(context, vectors_off)
-    assert first.records_processed == 6  # comportamiento V1 actual
-    first_levels = {int(point[3]["level"]) for point in vectors_off.tabular_points()}
-    assert {0, 1, 2, 3, 4}.issubset(first_levels)
-
-    monkeypatch.setattr(settings, "KNOWLEDGE_V2_ENABLED", True)
-    monkeypatch.setattr(settings, "KNOWLEDGE_TABULAR_ENABLED", True)
-    monkeypatch.setattr(settings, "KNOWLEDGE_TABULAR_SUPERSEDE_V1", True)
-
-    vectors_on = FakeVectorStore()
-    second = await run_engine(context, vectors_on)
-    assert second.records_processed == 1  # solo el resumen
-
-    # El resumen V1 lleva external_id del workbook (no rows) y el doc V2 existe.
-    v1_points = [p for _org, p, _kb in vectors_on.upserted if p[3] and not p[3].get("v2_tabular")]
-    assert v1_points, "no se indexó el resumen V1"
-    assert all(":row:" not in str(p[3].get("external_id")) for p in v1_points)
-
-    # Delete detection: los documentos V1 de fila del sync previo se marcan y
-    # sus puntos se borran por ID exacto.
-    assert vectors_on.deleted_points, "no se purgaron los puntos V1 de fila"
-    # La representación tabular del segundo run no se re-embebe (fingerprint
-    # unchanged): se conserva la del primer run.
-    assert first_levels == {0, 1, 2, 3, 4}
-
-
 async def test_chunking_policy_change_triggers_full_reindex(ctx, monkeypatch) -> None:
     """Cambiar la política de chunking purga y re-indexa aunque el archivo no cambie."""
     from src.core.config import get_settings
 
     settings = get_settings()
-    monkeypatch.setattr(settings, "KNOWLEDGE_TABULAR_SUPERSEDE_V1", False)
     context = ctx
 
     vectors_first = FakeVectorStore()

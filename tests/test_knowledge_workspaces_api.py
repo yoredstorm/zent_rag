@@ -56,32 +56,25 @@ async def test_workspace_list_and_detail(async_client, monkeypatch) -> None:
     )
     assert other.status_code in (401, 403, 404)
 
-    # chat con V2 apagado → 503 (hint honesto, sin inventar respuesta).
-    # Determinista: fuerza los flags OFF incluso con .env local ON.
-    monkeypatch.setenv("RAG_KNOWLEDGE_V2_ENABLED", "false")
-    monkeypatch.setenv("RAG_KNOWLEDGE_V2_PROMOTE", "false")
-    get_settings.cache_clear()
-    try:
-        chat = await async_client.post(
-            f"/api/v1/knowledge/workspaces/{corpus_id}/chat",
-            headers=headers,
-            json={"query": "¿Cuál es la comisión?"},
-        )
-        assert chat.status_code == 503, chat.text
-    finally:
-        get_settings.cache_clear()
+    # chat grounded: el retriever canónico está siempre disponible.
+    chat = await async_client.post(
+        f"/api/v1/knowledge/workspaces/{corpus_id}/chat",
+        headers=headers,
+        json={"query": "¿Cuál es la comisión?"},
+    )
+    assert chat.status_code == 200, chat.text
 
-    # studio con V2 apagado → 503 honesto (sin artefactos falsos)
+    # studio: artefactos reales sobre el corpus.
     studio = await async_client.post(
         f"/api/v1/knowledge/workspaces/{corpus_id}/studio",
         headers=headers,
         json={"artifact": "key_facts"},
     )
-    assert studio.status_code == 503, studio.text
+    assert studio.status_code == 200, studio.text
 
-    # sugerencias con V2 apagado → 503
+    # sugerencias: preguntas sugeridas reales.
     suggestions = await async_client.get(
         f"/api/v1/knowledge/workspaces/{corpus_id}/suggestions",
         headers=headers,
     )
-    assert suggestions.status_code == 503, suggestions.text
+    assert suggestions.status_code == 200, suggestions.text

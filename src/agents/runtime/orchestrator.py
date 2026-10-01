@@ -1409,8 +1409,7 @@ class RAGOrchestrator:
         sql_router: object | None = None,
         intelligence: object | None = None,
         learning: object | None = None,
-        structured_retriever: object | None = None,
-        promote_v2: bool = False,
+        knowledge_retriever: object | None = None,
         tabular_query: object | None = None,
         tabular_sql_first: bool = True,
         decision_hook: object | None = None,
@@ -1435,14 +1434,11 @@ class RAGOrchestrator:
         self._sql_router = sql_router
         self._intelligence = intelligence
         self._learning = learning
-        # Phase F (conocimiento V2): retriever estructural en shadow. Solo se
-        # inyecta cuando los flags lo permiten; su presencia NUNCA cambia la
-        # respuesta visible (solo registra overlap/calidad contra V1).
-        self._structured_retriever = structured_retriever
-        # Phase G: override productivo del retriever (contexto real = V2).
-        self._promote_v2 = promote_v2
-        # Knowledge Tabular V2: SQL-first sobre Excel/CSV (lookup/agregación/filtro
-        # exactos sobre la representación estructurada) + auto-ingesta al consultar.
+        # Retriever canónico del Knowledge OS: árbol estructurado en la misma
+        # colección (children + parents) con el mismo contrato ACL.
+        self._knowledge_retriever = knowledge_retriever
+        # SQL-first sobre Excel/CSV (lookup/agregación/filtro exactos sobre la
+        # representación estructurada) + auto-ingesta al consultar.
         self._tabular_query = tabular_query
         self._tabular_sql_first = tabular_sql_first
         # Decision Engine (optional). Default None = legacy RAG unchanged.
@@ -1463,112 +1459,7 @@ class RAGOrchestrator:
         except Exception:  # noqa: BLE001
             return []
 
-    async def _maybe_v2_shadow(
-        self,
-        *,
-        organization_id: UUID,
-        user_id: UUID,
-        query: str,
-        role: str,
-        query_embedding: list[float],
-        retrieval_context: RetrievalContext,
-        metadata_filters: dict[str, str] | None,
-        language: str | None,
-        workspace_id: UUID | None = None,
-    ) -> None:
-        """Phase F: StructuredRetriever en sombra (comparación V1 vs V2).
-
-        Ejecuta el retrieval V2 en paralelo al productivo, registra overlap de
-        content_hash, intent y latencia, y NO modifica la respuesta. Fallos =
-        warn; la respuesta visible queda intacta.
-        """
-        if self._structured_retriever is None:
-            return
-        from src.rag.retrieval.models import RetrievalQuery
-        from src.rag.retrieval.structured import V2RetrievalOptions
-
-        settings = get_settings()
-        if not settings.KNOWLEDGE_V2_SHADOW:
-            return
-
-        async with trace_span("knowledge.retrieve.v2"):
-            started = time.perf_counter()
-            try:
-                from src.infrastructure.observability.metrics import (
-                    knowledge_shadow_latency,
-                    knowledge_shadow_overlap,
-                    knowledge_shadow_retrievals_total,
-                )
-                from src.rag.query_intelligence import build_query_plan
-
-                plan = build_query_plan(query)
-                rquery = RetrievalQuery(
-                    query=query,
-                    organization_id=organization_id,
-                    role=role,
-                    user_id=user_id,
-                    groups=(
-                        list(await self._resolve_user_groups(organization_id, user_id))
-                        if user_id
-                        else []
-                    ),
-                    top_k=min(settings.RAG_TOP_K, 100),
-                    rerank_top_k=12,
-                    score_threshold=settings.RAG_SCORE_THRESHOLD,
-                    strategy=settings.RAG_RETRIEVAL_STRATEGY,
-                    fusion=settings.RAG_HYBRID_FUSION,
-                    rrf_k=settings.RAG_RRF_K,
-                    lexical_weight=settings.RAG_HYBRID_LEXICAL_WEIGHT,
-                    language=language,
-                    filters=metadata_filters or {},
-                    workspace_id=workspace_id,
-                    query_embedding=list(query_embedding),
-                )
-                assembled = await self._structured_retriever.retrieve(
-                    rquery, V2RetrievalOptions()
-                )
-                latency_s = time.perf_counter() - started
-
-                v1_hashes = {
-                    c.metadata.get("content_hash")
-                    for c in retrieval_context.chunks[:50]
-                    if c.metadata.get("content_hash")
-                }
-                v2_hashes = {
-                    c.metadata.get("content_hash")
-                    for c in assembled.children
-                    if c.metadata.get("content_hash")
-                }
-                overlap = len(v1_hashes & v2_hashes)
-                v1_count = len(retrieval_context.chunks)
-                v2_count = len(assembled.children)
-                knowledge_shadow_retrievals_total.labels(
-                    organization_id=str(organization_id),
-                    intent=plan.normalized_intent,
-                ).inc()
-                knowledge_shadow_overlap.labels(
-                    organization_id=str(organization_id)
-                ).set(overlap)
-                knowledge_shadow_latency.labels(
-                    organization_id=str(organization_id)
-                ).observe(latency_s)
-                logger.info(
-                    "V2 shadow retrieval completed",
-                    organization_id=str(organization_id),
-                    intent=plan.intent,
-                    v1_chunks=v1_count,
-                    v2_chunks=v2_count,
-                    content_hash_overlap=overlap,
-                    latency_ms=round(latency_s * 1000, 2),
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "V2 shadow retrieval failed (answering stays on V1)",
-                    organization_id=str(organization_id),
-                    error=str(exc)[:300],
-                )
-
-    async def _run_v2_retrieve(
+    async def _run_knowledge_retrieve(
         self,
         *,
         organization_id: UUID,
@@ -1581,15 +1472,17 @@ class RAGOrchestrator:
         retrieval_config,
         workspace_id: UUID | None = None,
     ) -> RetrievalContext:
-        """Phase G (promote): retrieval productivo con StructuredRetriever.
+        """Retrieval canónico: árbol estructurado -> contexto de respuesta.
 
         Devuelve un RetrievalContext estándar (children + parents ensamblados
         con parent expansion + dedupe + diversidad + token budget) para que el
         resto del pipeline (prompt, [Doc: N], answerability) no cambie.
         """
         from src.rag.retrieval.models import RetrievalQuery
+        from src.rag.retrieval.planner import KnowledgeRetrievalPlanner
         from src.rag.retrieval.structured import V2RetrievalOptions
 
+        plan = KnowledgeRetrievalPlanner().plan(query)
         rquery = RetrievalQuery(
             query=query,
             organization_id=organization_id,
@@ -1612,12 +1505,22 @@ class RAGOrchestrator:
             filters=metadata_filters or {},
             workspace_id=workspace_id,
             query_embedding=list(query_embedding),
+            # Canales técnicos que el planner declara no negociables: los
+            # literales exactos (códigos, bytes) deben recuperarse literalmente.
+            exact_needles=list(plan.exact_needles),
         )
-        assembled = await self._structured_retriever.retrieve(  # type: ignore[union-attr]
+        assembled = await self._knowledge_retriever.retrieve(  # type: ignore[union-attr]
             rquery, V2RetrievalOptions()
         )
         chunks = list(assembled.context) or (
             list(assembled.children) + list(assembled.parents)
+        )
+        logger.info(
+            "Knowledge retrieval planned",
+            organization_id=str(organization_id),
+            primary=plan.primary,
+            representations=list(plan.representations),
+            entity_mentions=list(plan.entity_mentions[:3]),
         )
         return RetrievalContext(
             chunks=chunks,
@@ -2316,8 +2219,8 @@ class RAGOrchestrator:
                 if _retrieve_opts["skip_vector"]:
                     return await _empty_retrieval()
                 embedding = _retrieve_opts.get("embedding") or query_embedding
-                if self._structured_retriever is not None and self._promote_v2:
-                    return await self._run_v2_retrieve(
+                if self._knowledge_retriever is not None:
+                    return await self._run_knowledge_retrieve(
                         organization_id=organization_id,
                         user_id=user_id,
                         query=_retrieve_opts["text"],
@@ -2982,21 +2885,6 @@ class RAGOrchestrator:
             rag_vector_search_latency.labels(organization_id=str(organization_id)).observe(
                 retrieval_context.retrieval_latency_ms / 1000
             )
-
-            # Phase F: retrieval V2 en sombra — NUNCA altera la respuesta visible.
-            # Con promote (Phase G) el contexto productivo YA es V2 → no duplicar.
-            if not self._promote_v2:
-                await self._maybe_v2_shadow(
-                    organization_id=organization_id,
-                    user_id=user_id,
-                    query=query,
-                    role=role,
-                    query_embedding=list(query_embedding),  # type: ignore[arg-type]
-                    retrieval_context=retrieval_context,
-                    metadata_filters=metadata_filters,
-                    language=language,
-                    workspace_id=workspace_id,
-                )
 
             # -----------------------------------------------------------------
             # Paso 5: Ensamblar prompt — SQL-first si hay datos, o RAG estándar

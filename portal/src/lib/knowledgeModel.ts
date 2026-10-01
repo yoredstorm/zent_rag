@@ -352,6 +352,37 @@ export function fetchKnowledgeHealth(): Promise<KnowledgeHealth> {
   return withSession<KnowledgeHealth>("/api/v1/knowledge/health");
 }
 
+export type KnowledgeCompilation = {
+  id: string;
+  source_id: string | null;
+  document_id: string | null;
+  kind: string;
+  status: string;
+  counts: {
+    units: number;
+    entities: number;
+    entities_merged: number;
+    facts: number;
+    relationships: number;
+    rules: number;
+    conflicts: number;
+    evidence: number;
+  };
+  duration_ms: number;
+  error: string | null;
+  document_title: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+};
+
+export function fetchKnowledgeCompilations(
+  limit = 25
+): Promise<{ items: KnowledgeCompilation[]; total: number }> {
+  return withSession<{ items: KnowledgeCompilation[]; total: number }>(
+    `/api/v1/knowledge/compilations?limit=${limit}`
+  );
+}
+
 export function fetchKnowledgeObjects(
   params: {
     type?: string;

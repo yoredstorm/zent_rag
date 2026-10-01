@@ -156,7 +156,7 @@ async def test_engine_skips_reembed_when_content_unchanged() -> None:
     )
     job = SimpleNamespace(organization_id=uuid4(), knowledge_base_id=None)
     source = SimpleNamespace(id=uuid4(), workspace_id=None)
-    await engine._index_v2_chunks(  # noqa: SLF001
+    await engine._index_chunks(  # noqa: SLF001
         job, source, doc, change_kind="unchanged"
     )
     assert embedder.calls == 0

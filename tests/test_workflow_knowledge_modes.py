@@ -115,43 +115,37 @@ async def _kb_setup(async_client: AsyncClient, name: str) -> tuple[dict, str]:
 async def _run_kb(
     async_client: AsyncClient, org: dict, kb_id: str, config: dict, *, v2: bool = True
 ) -> dict:
-    from src.api.deps import get_llm_provider, get_structured_retriever
+    from src.api.deps import get_knowledge_retriever, get_llm_provider
     from src.api.main import app
-    from src.core.config import get_settings
 
     fake_llm = _FakeLLM()
-    app.dependency_overrides[get_structured_retriever] = lambda: _FakeStructuredRetriever([_chunk()])
+    app.dependency_overrides[get_knowledge_retriever] = lambda: _FakeStructuredRetriever([_chunk()])
     app.dependency_overrides[get_llm_provider] = lambda: fake_llm
-    previous = get_settings().KNOWLEDGE_V2_ENABLED
-    get_settings().KNOWLEDGE_V2_ENABLED = v2
 
-    try:
-        graph = _graph(
-            [
-                _node("t", "trigger_webhook"),
-                _node("kb", "kb_query", {"knowledge_base_id": kb_id, **config}),
-            ],
-            [_edge("e1", "t", "kb")],
-            ["t"],
-        )
-        created = await async_client.post(
-            "/api/v1/workflows",
-            headers={**_headers(org), "Idempotency-Key": f"km-{uuid4().hex}"},
-            json={"name": f"KM {config.get('operation', 'search')}", "trigger_type": "webhook", "graph": graph},
-        )
-        assert created.status_code == 200, created.text
-        wid = created.json()["workflow_id"]
-        run = await async_client.post(
-            f"/api/v1/workflows/{wid}/run",
-            headers={**_headers(org), "Idempotency-Key": f"kmr-{uuid4().hex}"},
-            json={"payload": {}, "simulate": True},
-        )
-        assert run.status_code == 200, run.text
-        body = run.json()
-        assert body["status"] in ("simulated", "succeeded"), body
-        return body["result"]["structured_output"]["nodes"]["kb"]["output"]
-    finally:
-        get_settings().KNOWLEDGE_V2_ENABLED = previous
+    graph = _graph(
+        [
+            _node("t", "trigger_webhook"),
+            _node("kb", "kb_query", {"knowledge_base_id": kb_id, **config}),
+        ],
+        [_edge("e1", "t", "kb")],
+        ["t"],
+    )
+    created = await async_client.post(
+        "/api/v1/workflows",
+        headers={**_headers(org), "Idempotency-Key": f"km-{uuid4().hex}"},
+        json={"name": f"KM {config.get('operation', 'search')}", "trigger_type": "webhook", "graph": graph},
+    )
+    assert created.status_code == 200, created.text
+    wid = created.json()["workflow_id"]
+    run = await async_client.post(
+        f"/api/v1/workflows/{wid}/run",
+        headers={**_headers(org), "Idempotency-Key": f"kmr-{uuid4().hex}"},
+        json={"payload": {}, "simulate": True},
+    )
+    assert run.status_code == 200, run.text
+    body = run.json()
+    assert body["status"] in ("simulated", "succeeded"), body
+    return body["result"]["structured_output"]["nodes"]["kb"]["output"]
 
 
 @pytest.mark.asyncio
@@ -160,7 +154,7 @@ async def test_search_default_stays_backward_compatible(async_client: AsyncClien
     output = await _run_kb(async_client, org, kb_id, {"query": "política de descuentos"})
     assert output["operation"] == "search"
     assert output["status"] == "ok"
-    assert output["method"] == "knowledge_v2"
+    assert output["method"] == "knowledge"
     assert output["citations"][0]["document_name"] == "politica-descuentos.pdf"
     assert output["evidence_ids"]
 
@@ -184,17 +178,16 @@ async def test_answer_grounds_with_claims(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_answer_without_v2_is_not_supported(async_client: AsyncClient) -> None:
-    org, kb_id = await _kb_setup(async_client, "KM Answer NoV2")
+async def test_answer_is_always_available(async_client: AsyncClient) -> None:
+    org, kb_id = await _kb_setup(async_client, "KM Answer")
     output = await _run_kb(
         async_client,
         org,
         kb_id,
         {"operation": "answer", "query": "descuentos"},
-        v2=False,
     )
-    assert output["status"] == "not_supported"
-    assert "requires_knowledge_v2" in output["reason_codes"]
+    assert output["status"] == "ok"
+    assert output["method"] == "knowledge"
 
 
 @pytest.mark.asyncio

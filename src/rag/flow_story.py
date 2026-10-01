@@ -796,53 +796,20 @@ def with_story(flow: dict) -> dict:
 
 
 def knowledge_representation_status() -> dict:
-    """Estado de retrieval visible en Ver Flujo. No es un error de usuario."""
-    try:
-        from src.core.config import get_settings
+    """Representación de conocimiento visible en Ver Flujo.
 
-        settings = get_settings()
-    except Exception:  # noqa: BLE001
-        return {
-            "document_understanding": "OFF",
-            "canonical_version": None,
-            "retrieval": "V1",
-            "source_profile_used": False,
-            "semantic_units": False,
-            "exact_literals": None,
-            "legacy_chunks_used": True,
-            "warning": None,
-        }
-    enabled = bool(getattr(settings, "DOCUMENT_UNDERSTANDING_ENABLED", False))
-    shadow = bool(getattr(settings, "DOCUMENT_UNDERSTANDING_SHADOW", False))
-    if enabled:
-        understanding = "ACTIVE"
-    elif shadow:
-        understanding = "SHADOW"
-    else:
-        understanding = "OFF"
-    v2 = bool(getattr(settings, "KNOWLEDGE_V2_ENABLED", False))
-    promote = bool(getattr(settings, "KNOWLEDGE_V2_PROMOTE", False))
-    v2_shadow = bool(getattr(settings, "KNOWLEDGE_V2_SHADOW", False))
-    if not v2:
-        retrieval = "V1"
-    elif promote:
-        retrieval = "V2_PROMOTED"
-    elif v2_shadow:
-        retrieval = "V2_SHADOW"
-    else:
-        retrieval = "V1"
-    warning = None
-    if understanding == "ACTIVE" and retrieval == "V1":
-        warning = "DOCUMENT UNDERSTANDING ACTIVE BUT PRODUCTIVE RETRIEVAL IS V1"
+    Un solo estado posible: el documento se entiende (árbol canónico), se
+    indexa desde esa estructura y se compila a conocimiento canónico.
+    """
     return {
-        "document_understanding": understanding,
-        "canonical_version": "2" if understanding == "ACTIVE" else None,
-        "retrieval": retrieval,
-        "source_profile_used": understanding == "ACTIVE",
-        "semantic_units": understanding == "ACTIVE",
+        "document_understanding": "ACTIVE",
+        "canonical_version": "2",
+        "retrieval": "KNOWLEDGE",
+        "source_profile_used": True,
+        "semantic_units": True,
         "exact_literals": None,
-        "legacy_chunks_used": retrieval == "V1",
-        "warning": warning,
+        "legacy_chunks_used": False,
+        "warning": None,
     }
 
 

@@ -614,84 +614,34 @@ class Settings(BaseSettings):
         ),
     )
     # -------------------------------------------------------------------------
-    # Knowledge V2 (Enterprise Knowledge Engine) — Phase A stub
+    # Knowledge OS — compilación de fuentes a conocimiento canónico
     # -------------------------------------------------------------------------
-    # Field name omits the extra RAG_ so the env var is RAG_KNOWLEDGE_V2_ENABLED
-    # (unlike RAG_KNOWLEDGE_LEARNING_* which become RAG_RAG_KNOWLEDGE_*).
-    KNOWLEDGE_V2_ENABLED: bool = Field(
-        default=False,
-        description=(
-            "Phase A stub: parallel Knowledge V2 pipeline (StructuredDocument "
-            "+ KnowledgeCorpus). Off by default. Does not change V1 ingestion, "
-            "APIs, or portal. Do not enable in production until Phase F shadow "
-            "metrics exist (see docs/architecture/enterprise-knowledge-refactor.md)."
-        ),
-    )
-    KNOWLEDGE_SUMMARY_MODE: str = Field(
-        default="off",
-        description=(
-            "Resúmenes multi-nivel V2 (Phase C3): off | shadow. shadow calcula "
-            "DocumentSummary/SectionSummary (siempre INFERRED) sin persistirlos; "
-            "sirve de calibración antes del rollout ASSISTED/ACTIVE."
-        ),
-    )
     KNOWLEDGE_SUMMARY_MODEL: str = Field(
         default="",
         description=(
-            "Modelo para resúmenes V2 (vacío = LITELLM_DEFAULT_MODEL / zent-default)."
-        ),
-    )
-    KNOWLEDGE_V2_SHADOW: bool = Field(
-        default=False,
-        description=(
-            "Phase F: retrieval V2 en sombra dentro del orchestrator. Requiere "
-            "RAG_KNOWLEDGE_V2_ENABLED. Ejecuta StructuredRetriever en paralelo, "
-            "registra overlap/top-k/latencia vs V1 y NO cambia la respuesta visible."
-        ),
-    )
-    KNOWLEDGE_V2_PROMOTE: bool = Field(
-        default=False,
-        description=(
-            "Phase G: override productivo del retriever. Con RAG_KNOWLEDGE_V2_ENABLED, "
-            "el contexto real de la respuesta usa StructuredRetriever (children+parents). "
-            "Solo tras calibrar shadow. Nunca promueve INFERRED a APPROVED."
-        ),
-    )
-    DOCUMENT_UNDERSTANDING_ENABLED: bool = Field(
-        default=False,
-        description=(
-            "Document Understanding: reconstruye el StructuredDocument antes de "
-            "chunkear (layout, tablas, literales, árbol). Requiere "
-            "RAG_KNOWLEDGE_V2_ENABLED. Off no cambia la ingesta V1 ni V2."
-        ),
-    )
-    DOCUMENT_UNDERSTANDING_SHADOW: bool = Field(
-        default=False,
-        description=(
-            "Corre Document Understanding y guarda el informe en metadata "
-            "understanding_shadow, sin cambiar bloques ni chunks visibles."
+            "Modelo para resúmenes de sección/documento (vacío = "
+            "LITELLM_DEFAULT_MODEL / zent-default)."
         ),
     )
     DOCUMENT_UNDERSTANDING_LAYOUT: bool = Field(
         default=True,
         description=(
-            "Detección de columnas solo en el parseo productivo cuando "
-            "DOCUMENT_UNDERSTANDING_ENABLED está activo. Shadow no la usa "
-            "sobre el documento que se indexa."
+            "Detección de columnas en el parseo productivo del documento "
+            "(estructura antes que chunks)."
         ),
     )
     DOCUMENT_UNDERSTANDING_TABLES: bool = Field(
         default=True,
         description=(
-            "Fusión de tablas multipágina cuando Document Understanding corre."
+            "Fusión de tablas multipágina durante el Document Understanding."
         ),
     )
     DOCUMENT_UNDERSTANDING_VISION: bool = Field(
         default=False,
         description=(
             "Permite un DocumentUnderstandingProvider inyectado. No llama a "
-            "ningún modelo de visión por sí solo. OCR y visión quedan fuera "
-            "de esta fase."
+            "ningún modelo de visión por sí solo: OCR y visión quedan fuera "
+            "salvo que se configure un provider."
         ),
     )
     CANONICAL_INLINE_MAX_BYTES: int = Field(
@@ -723,16 +673,8 @@ class Settings(BaseSettings):
         ),
     )
     # -------------------------------------------------------------------------
-    # Knowledge Tabular V2 (Excel/CSV estructurado)
+    # Knowledge Tabular (Excel/CSV como DATOS, no como texto)
     # -------------------------------------------------------------------------
-    KNOWLEDGE_TABULAR_ENABLED: bool = Field(
-        default=True,
-        description=(
-            "Pipeline tabular V2 para Excel/CSV (profiling, detección de tablas, "
-            "schema, dual indexing). Requiere RAG_KNOWLEDGE_V2_ENABLED para "
-            "persistir/embeder; con V2 off no tiene efecto."
-        ),
-    )
     KNOWLEDGE_TABULAR_MAX_WORKBOOK_BYTES: int = Field(
         default=52_428_800,
         ge=1_048_576,
@@ -779,14 +721,6 @@ class Settings(BaseSettings):
         description=(
             "Filas por tabla cubiertas por row-groups (cobertura semántica vía "
             "contexto compacto). 0 = no generar row-groups."
-        ),
-    )
-    KNOWLEDGE_TABULAR_SUPERSEDE_V1: bool = Field(
-        default=False,
-        description=(
-            "Excel/CSV: en vez de un record V1 por fila, emitir un único record de "
-            "resumen (la estructura fila/columna vive en el pipeline tabular V2). "
-            "Requiere RAG_KNOWLEDGE_V2_ENABLED; el re-sync migra las fuentes."
         ),
     )
     KNOWLEDGE_TABULAR_ROW_GROUP_SIZE: int = Field(

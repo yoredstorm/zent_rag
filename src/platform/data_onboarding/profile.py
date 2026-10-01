@@ -9,8 +9,6 @@ import re
 from pathlib import Path
 from uuid import UUID
 
-import src.knowledge.normalize  # noqa: F401 — registra PDF/docx/html
-from src.knowledge.normalize.base import get_normalizer
 from src.knowledge.storage import resolve_path
 
 
@@ -130,17 +128,10 @@ def _profile_excel(path: Path, filename: str) -> dict:
 
 
 def _profile_document(data: bytes, filename: str) -> dict:
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "txt"
-    text = ""
     pages = None
-    try:
-        normalizer = get_normalizer(ext)
-        if normalizer is not None:
-            text = normalizer.normalize(data, source_name=filename)
-        else:
-            text = data[:8000].decode("utf-8", errors="replace")
-    except Exception:
-        text = data[:8000].decode("utf-8", errors="replace")
+    from src.knowledge.structure.text_view import extract_text
+
+    text = extract_text(data, filename)
     headings = re.findall(r"^#{1,3}\s+(.+)$", text, flags=re.M)
     if not headings:
         headings = [

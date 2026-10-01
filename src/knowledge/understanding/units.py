@@ -158,9 +158,13 @@ def build_retrieval_units(
 
 
 def chunks_for_document(document: StructuredDocument, config=None) -> list[DocumentChunk]:
-    """DU activo: unidades semánticas. Si no, el chunker de secciones."""
+    """Chunks derivados del árbol entendido: unidades semánticas por defecto.
+
+    Si el documento llegó sin pasar por el Document Understanding (conectores
+    crudos, tests), se cae al chunker estructural — nunca a texto suelto.
+    """
     understanding = document.metadata.get("understanding") or {}
-    if understanding.get("mode") == "active":
+    if understanding:
         budget = _budget()
         return chunks_from_retrieval_units(document, build_retrieval_units(document, budget=budget))
     return chunk_structured_document(document, config=config)

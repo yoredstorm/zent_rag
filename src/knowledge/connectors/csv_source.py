@@ -12,7 +12,6 @@ import io
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
-from src.core.config import get_settings
 from src.knowledge.connectors.base import (
     ConnectorError,
     DiscoveredItem,
@@ -100,52 +99,19 @@ class CSVSourceConnector(SourceConnector):
             raise ConnectorError(f"Uploaded file not found: {object_key}")
         data = path.read_bytes()
         extension = Path(object_key or path.name).suffix.lower().lstrip(".") or "csv"
-        if self._supersede_v1():
-            yield Record(
-                external_id=object_key,
-                content=self._summary_content(path, data, extension),
-                metadata={
-                    "filename": self.config.get("filename") or path.name,
-                    "format": "csv",
-                    "document_external_id": object_key,
-                    "supersede_v1": True,
-                },
-                raw_data=data,
-                format=extension,
-            )
-            return
-        text = data.decode(self.config.get("encoding") or "utf-8-sig", errors="replace")
-        reader = csv.DictReader(io.StringIO(text), delimiter=self._delimiter())
-        first = True
-        for record in iter_rows_as_records(
-            reader, object_key, extra_metadata={"format": "csv"}
-        ):
-            if first:
-                first = False
-                metadata = {
-                    **record.metadata,
-                    "document_external_id": object_key,
-                    "filename": self.config.get("filename") or path.name,
-                }
-                yield Record(
-                    external_id=record.external_id,
-                    content=record.content,
-                    metadata=metadata,
-                    raw_data=data,
-                    format=extension,
-                )
-            else:
-                yield record
-
-    def _supersede_v1(self) -> bool:
-        """True si V1 debe emitir un solo resumen (flag global o del source)."""
-        settings = get_settings()
-        if not (settings.KNOWLEDGE_V2_ENABLED and settings.KNOWLEDGE_TABULAR_ENABLED):
-            return False
-        override = self.config.get("supersede_v1")
-        if override is not None:
-            return bool(override)
-        return bool(getattr(settings, "KNOWLEDGE_TABULAR_SUPERSEDE_V1", False))
+        # Excel/CSV entran como UN documento: la estructura fila/columna vive
+        # en la representación tabular, no en un record por fila de texto.
+        yield Record(
+            external_id=object_key,
+            content=self._summary_content(path, data, extension),
+            metadata={
+                "filename": self.config.get("filename") or path.name,
+                "format": "csv",
+                "document_external_id": object_key,
+            },
+            raw_data=data,
+            format=extension,
+        )
 
     def _summary_content(self, path, data: bytes, extension: str) -> str:
         """Resumen compacto del CSV (dialecto + headers) para el índice V1."""

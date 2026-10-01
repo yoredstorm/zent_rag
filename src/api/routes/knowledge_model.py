@@ -97,6 +97,81 @@ class LearnSourceRequest(BaseModel):
     trigger: str = Field(default="manual", pattern="^(manual|scheduled|onboarding)$")
 
 
+# ------------------------------------------------------ compilaciones
+@router.get("/compilations", summary="Trazas del Knowledge Compiler")
+async def knowledge_compilations(
+    request: Request,
+    limit: int = Query(default=25, ge=1, le=200),
+    document_id: UUID | None = Query(default=None),
+) -> dict:
+    """Cada corrida del compilador: qué fuente, qué produjo y cuánto tardó."""
+    ctx = require_permission(request, "knowledge:read")
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    session = await get_async_session()
+    try:
+        rows = (
+            await session.execute(
+                text(
+                    """
+                    SELECT id, workspace_id, source_id, document_id,
+                           compilation_kind, status, units, entities,
+                           entities_merged, facts, relationships, rules,
+                           conflicts, evidence, duration_ms, error, metadata,
+                           started_at, finished_at
+                    FROM knowledge_compilations
+                    WHERE organization_id = :org
+                      AND (CAST(:document_id AS uuid) IS NULL
+                           OR document_id = CAST(:document_id AS uuid))
+                    ORDER BY started_at DESC
+                    LIMIT :limit
+                    """
+                ),
+                {
+                    "org": ctx.organization_id,
+                    "document_id": str(document_id) if document_id else None,
+                    "limit": limit,
+                },
+            )
+        ).fetchall()
+    except Exception as exc:  # noqa: BLE001 — tabla ausente en entornos previos
+        logger.warning("knowledge_compilations read failed", error=str(exc)[:200])
+        raise _unavailable(KnowledgeModelUnavailable(str(exc)[:200])) from exc
+    finally:
+        await session.close()
+
+    return {
+        "items": [
+            {
+                "id": str(row.id),
+                "source_id": str(row.source_id) if row.source_id else None,
+                "document_id": str(row.document_id) if row.document_id else None,
+                "kind": row.compilation_kind,
+                "status": row.status,
+                "counts": {
+                    "units": row.units,
+                    "entities": row.entities,
+                    "entities_merged": row.entities_merged,
+                    "facts": row.facts,
+                    "relationships": row.relationships,
+                    "rules": row.rules,
+                    "conflicts": row.conflicts,
+                    "evidence": row.evidence,
+                },
+                "duration_ms": row.duration_ms,
+                "error": row.error,
+                "document_title": (row.metadata or {}).get("document_title"),
+                "started_at": row.started_at.isoformat() if row.started_at else None,
+                "finished_at": row.finished_at.isoformat() if row.finished_at else None,
+            }
+            for row in rows
+        ],
+        "total": len(rows),
+    }
+
+
 # ------------------------------------------------------------------- overview
 @router.get("/overview", summary="Knowledge Command Center")
 async def knowledge_overview(

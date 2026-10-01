@@ -183,7 +183,7 @@ async def create_job(ctx) -> uuid.UUID:
 
 
 @pytest.mark.asyncio
-async def test_engine_with_v2_repo_runs_v2_and_v1_in_parallel(context) -> None:
+async def test_engine_persists_structure_and_indexes_its_chunks(context) -> None:
     structured_repo = FakeStructuredDocRepo()
     engine = build_engine(structured_repo)
     vectors: FakeVectorStore = engine._vectors
@@ -193,18 +193,18 @@ async def test_engine_with_v2_repo_runs_v2_and_v1_in_parallel(context) -> None:
     assert job.status == IngestionJobStatus.COMPLETED
     assert job.records_processed == 1
 
-    # V2: parseó y persistió estructura
+    # El documento estructurado es obligatorio y se persiste primero
     assert len(structured_repo.documents) == 1
     doc = structured_repo.documents[0]
     assert doc.title == "Manual"
     assert doc.block_count > 0
     assert doc.section_count == 1
-    assert engine.v2_parsed == 1
-    assert engine.v2_failed == 0
+    assert engine.documents_parsed == 1
+    assert engine.documents_failed == 0
     # el registro V2 usa el parser correcto por extensión
     assert get_parser("md") is not None
 
-    # V1 intacto: chunks aún se indexaron en Qdrant
+    # Los chunks se derivan de esa estructura y se indexan
     assert len(vectors.upserted) >= 1
 
     # V2: child chunks indexados con payload estructural (mismo collection)
@@ -256,14 +256,15 @@ async def test_engine_with_v2_repo_runs_v2_and_v1_in_parallel(context) -> None:
 
 
 @pytest.mark.asyncio
-async def test_engine_without_v2_repo_keeps_v1_only(context) -> None:
+async def test_engine_sin_repo_estructurado_falla_el_job(context) -> None:
+    """Sin árbol canónico no hay conocimiento: el job falla, no indexa texto crudo."""
     structured_repo = FakeStructuredDocRepo()
     engine = build_engine(None)
     vectors: FakeVectorStore = engine._vectors
     job_id = await create_job(context)
 
     job = await engine.execute_job(job_id)
-    assert job.status == IngestionJobStatus.COMPLETED
+    assert job.status == IngestionJobStatus.FAILED
     assert structured_repo.documents == []
-    assert engine.v2_parsed == 0
-    assert len(vectors.upserted) >= 1  # camino V1 sin cambios
+    assert engine.documents_parsed == 0
+    assert vectors.upserted == []

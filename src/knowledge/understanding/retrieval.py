@@ -12,7 +12,7 @@ from src.knowledge.understanding.versions import PARSER_VERSION, SCHEMA_VERSION
 
 def annotate_chunks(document: StructuredDocument, chunks: list[DocumentChunk]) -> list[DocumentChunk]:
     understanding = document.metadata.get("understanding") or {}
-    if understanding.get("mode") != "active":
+    if not understanding:
         return chunks
     literals = understanding.get("exact_literals") or []
     fields = understanding.get("technical_fields") or []
@@ -112,7 +112,7 @@ def expand_exact(chunks: list[DocumentChunk], needle: str) -> dict | None:
 def index_metadata(document: StructuredDocument, chunk: DocumentChunk) -> dict:
     """Campos extra del payload. No incluye el documento entero."""
     understanding = document.metadata.get("understanding") or {}
-    if understanding.get("mode") != "active":
+    if not understanding:
         return {}
     keys = (
         "exact_literals",

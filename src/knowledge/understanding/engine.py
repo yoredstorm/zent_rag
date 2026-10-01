@@ -57,42 +57,21 @@ _OCR_MIN_CHARS = 12
 def apply_understanding(
     document: StructuredDocument,
     *,
-    mode: str,
     file_hash: str | None = None,
     filename: str | None = None,
     merge_tables: bool = True,
     ocr_provider: PageOcrProvider | None = None,
     model_provider: DocumentUnderstandingProvider | None = None,
 ) -> StructuredDocument:
-    """`active` sustituye el documento. `shadow` solo anota el informe."""
-    if mode not in {"active", "shadow"}:
-        return document
-    enriched = understand_document(
+    """Entiende el documento: layout, tablas, literales, árbol y semánticas."""
+    return understand_document(
         document,
         file_hash=file_hash,
         filename=filename,
         merge_tables=merge_tables,
         ocr_provider=ocr_provider,
         model_provider=model_provider,
-        mode=mode,
     )
-    if mode == "shadow":
-        payload = enriched.metadata.get("understanding") or {}
-        return dataclasses.replace(
-            document,
-            metadata={
-                **document.metadata,
-                "understanding_shadow": {
-                    "mode": "shadow",
-                    "pipeline_state": payload.get("pipeline_state"),
-                    "report": payload.get("report"),
-                    "quality": payload.get("quality"),
-                    "schema_version": SCHEMA_VERSION,
-                    "parser_version": PARSER_VERSION,
-                },
-            },
-        )
-    return enriched
 
 
 def understand_document(
@@ -103,7 +82,6 @@ def understand_document(
     merge_tables: bool = True,
     ocr_provider: PageOcrProvider | None = None,
     model_provider: DocumentUnderstandingProvider | None = None,
-    mode: str = "active",
 ) -> StructuredDocument:
     started = time.perf_counter()
     warnings: list[str] = []
@@ -186,7 +164,6 @@ def understand_document(
         isinstance(table_score, (int, float)) and table_score < 0.5
     )
     payload = {
-        "mode": mode,
         "schema_version": SCHEMA_VERSION,
         "understanding_schema_version": UNDERSTANDING_SCHEMA_VERSION,
         "parser_version": PARSER_VERSION,
@@ -224,50 +201,13 @@ def understand_document(
     if placed["storage"] == "inline":
         payload["views"] = {"markdown": placed["markdown"], "ast": placed["ast"]}
     metadata = {**current.metadata, "filename": filename, "understanding": payload}
-    hashed = retrieval_hash if mode == "active" else current.content_hash
+    hashed = retrieval_hash
     return dataclasses.replace(
         current,
         content_hash=hashed,
         metadata=metadata,
         document_type=profile["document_type"],
     )
-
-
-def attach_shadow_report(
-    production: StructuredDocument,
-    shadow_source: StructuredDocument,
-    *,
-    file_hash: str | None = None,
-    filename: str | None = None,
-    merge_tables: bool = True,
-) -> StructuredDocument:
-    """Informe de comparación. No toca bloques, hash ni chunks productivos."""
-    understood = understand_document(
-        shadow_source,
-        file_hash=file_hash,
-        filename=filename,
-        merge_tables=merge_tables,
-        mode="active",
-    )
-    payload = understood.metadata.get("understanding") or {}
-    meta = dict(production.metadata)
-    meta.pop("understanding", None)
-    meta["understanding_shadow"] = {
-        "mode": "shadow",
-        "pipeline_state": payload.get("pipeline_state"),
-        "report": payload.get("report"),
-        "quality": payload.get("quality"),
-        "profile": payload.get("profile"),
-        "schema_version": SCHEMA_VERSION,
-        "parser_version": PARSER_VERSION,
-        "canonical_hash": payload.get("canonical_hash"),
-        "retrieval_hash": payload.get("retrieval_hash"),
-        "parsed_hash": payload.get("parsed_hash"),
-        "exact_literal_count": len(payload.get("exact_literals") or []),
-        "semantic_unit_count": payload.get("semantic_unit_count"),
-        "section_headings": [section.heading for section in understood.sections],
-    }
-    return dataclasses.replace(production, metadata=meta)
 
 
 def _setting(name: str, default):
@@ -415,7 +355,7 @@ def file_sha256(data: bytes) -> str:
 
 def observe_understanding(_organization_id: object, document: StructuredDocument) -> None:
     """Métricas de ingesta. Un fallo de Prometheus no rompe el documento."""
-    payload = (document.metadata.get("understanding") or document.metadata.get("understanding_shadow") or {})
+    payload = document.metadata.get("understanding") or {}
     report = payload.get("report") or {}
     quality = payload.get("quality") or {}
     try:

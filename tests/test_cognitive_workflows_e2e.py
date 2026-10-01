@@ -182,23 +182,19 @@ async def _setup(async_client: AsyncClient, name: str) -> tuple[dict, str, str]:
 def _overrides(*, retriever, llm=None, runtime=None, orchestrator=None, v2=True, monkeypatch=None):
     from src.api.deps import (
         get_agent_runtime,
+        get_knowledge_retriever,
         get_llm_provider,
         get_rag_orchestrator,
-        get_structured_retriever,
     )
     from src.api.main import app
-    from src.core.config import get_settings
 
-    app.dependency_overrides[get_structured_retriever] = lambda: retriever
+    app.dependency_overrides[get_knowledge_retriever] = lambda: retriever
     if llm is not None:
         app.dependency_overrides[get_llm_provider] = lambda: llm
     if runtime is not None:
         app.dependency_overrides[get_agent_runtime] = lambda: runtime
     if orchestrator is not None:
         app.dependency_overrides[get_rag_orchestrator] = lambda: orchestrator
-    if monkeypatch is not None:
-        monkeypatch.setattr(get_settings(), "KNOWLEDGE_V2_ENABLED", v2)
-
 
 async def _create_workflow(async_client: AsyncClient, org: dict, graph: dict, name: str) -> str:
     created = await async_client.post(
@@ -227,16 +223,14 @@ async def test_e2e_sales_over_threshold_with_approval(
         '{"risk": "HIGH", "reason": "monto alto", "recommendation": "aprobar", '
         '"confidence": 0.9, "requires_review": true}'
     )
-    from src.api.deps import get_agent_runtime, get_rag_orchestrator, get_structured_retriever
+    from src.api.deps import get_agent_runtime, get_knowledge_retriever, get_rag_orchestrator
     from src.api.main import app
-    from src.core.config import get_settings
 
-    app.dependency_overrides[get_structured_retriever] = lambda: retriever
+    app.dependency_overrides[get_knowledge_retriever] = lambda: retriever
     app.dependency_overrides[get_agent_runtime] = lambda: runtime
     app.dependency_overrides[get_rag_orchestrator] = lambda: _FakeOrchestrator(
         UUID(org["organization_id"])
     )
-    monkeypatch.setattr(get_settings(), "KNOWLEDGE_V2_ENABLED", True)
 
     graph = _graph(
         [
@@ -369,14 +363,12 @@ async def test_e2e_new_contract_conflicts(
         '{"decision": "revisar", "reason": "contradicción de descuento", "confidence": 0.85}'
     )
 
-    from src.api.deps import get_agent_runtime, get_llm_provider, get_structured_retriever
+    from src.api.deps import get_agent_runtime, get_knowledge_retriever, get_llm_provider
     from src.api.main import app
-    from src.core.config import get_settings
 
-    app.dependency_overrides[get_structured_retriever] = lambda: retriever
+    app.dependency_overrides[get_knowledge_retriever] = lambda: retriever
     app.dependency_overrides[get_llm_provider] = lambda: llm
     app.dependency_overrides[get_agent_runtime] = lambda: legal
-    monkeypatch.setattr(get_settings(), "KNOWLEDGE_V2_ENABLED", True)
 
     # El kb_query usa el mismo provider LLM para compare y el agente usa runtime.
     graph = _graph(
@@ -461,16 +453,14 @@ async def test_e2e_daily_business_report(
     runtime = _FakeAgentRuntime(
         '{"risk": "MEDIUM", "reason": "avance parcial", "recommendation": "seguir", "confidence": 0.7}'
     )
-    from src.api.deps import get_agent_runtime, get_rag_orchestrator, get_structured_retriever
+    from src.api.deps import get_agent_runtime, get_knowledge_retriever, get_rag_orchestrator
     from src.api.main import app
-    from src.core.config import get_settings
 
-    app.dependency_overrides[get_structured_retriever] = lambda: retriever
+    app.dependency_overrides[get_knowledge_retriever] = lambda: retriever
     app.dependency_overrides[get_agent_runtime] = lambda: runtime
     app.dependency_overrides[get_rag_orchestrator] = lambda: _FakeOrchestrator(
         UUID(org["organization_id"])
     )
-    monkeypatch.setattr(get_settings(), "KNOWLEDGE_V2_ENABLED", True)
 
     graph = _graph(
         [
