@@ -47,12 +47,18 @@ async def execution_flow(kind: str, execution_id: str, request: Request) -> dict
 
     if resolved == "query":
         from src.rag.flow_store import get_flow
+        from src.rag.traceability import upgrade_flow_traceability
 
         flow = await get_flow(ctx.organization_id, target)
-        return {"flow": flow, "kind": resolved, "id": str(target)}
+        return {
+            "flow": upgrade_flow_traceability(flow),
+            "kind": resolved,
+            "id": str(target),
+        }
 
     if resolved == "agent":
         from src.agents.runtime.trace_store import ensure_agent_runs_table, get_flow, get_run
+        from src.rag.traceability import upgrade_flow_traceability
 
         await ensure_agent_runs_table()
         flow = await get_flow(ctx.organization_id, target)
@@ -79,7 +85,11 @@ async def execution_flow(kind: str, execution_id: str, request: Request) -> dict
             )
             flow["flow_version"] = 1
             flow.pop("events", None)
-        return {"flow": flow, "kind": resolved, "id": str(target)}
+        return {
+            "flow": upgrade_flow_traceability(flow),
+            "kind": resolved,
+            "id": str(target),
+        }
 
     from src.platform.workflows.engine import run_detail
     from src.rag.flow_story import with_story

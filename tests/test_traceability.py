@@ -406,7 +406,7 @@ def test_timeline_never_invents_answer_revision() -> None:
 def test_with_story_adds_traceability_without_touching_history() -> None:
     flow = _base_flow()
     enriched = with_story(dict(flow))
-    assert enriched["traceability"]["schema_version"] == 1
+    assert enriched["traceability"]["schema_version"] == 2
     for key in ("evidence", "grounding", "generation", "retrieval"):
         assert key in enriched
 

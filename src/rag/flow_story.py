@@ -766,25 +766,28 @@ def build_flow_events(flow: dict) -> list[dict]:
 
 
 def with_story(flow: dict) -> dict:
-    """Agrega eventos y narrativa. No toca los campos históricos."""
+    """Agrega eventos, trace canónico y narrativa. No toca los campos históricos."""
     try:
         enriched = dict(flow)
         enriched["flow_version"] = FLOW_VERSION
         enriched["events"] = build_flow_events(enriched)
         enriched["knowledge_representation"] = knowledge_representation_status()
+        trace = None
+        try:
+            from src.rag.traceability import build_traceability
+
+            trace = build_traceability(enriched)
+            enriched["traceability"] = trace
+        except Exception:  # noqa: BLE001 - la proyección es aditiva y fail-soft
+            pass
         try:
             from src.rag.execution_narrative import build_execution_narrative
 
             enriched["execution_narrative"] = build_execution_narrative(
                 enriched,
                 enriched["events"],
+                trace=trace,
             )
-        except Exception:  # noqa: BLE001 - la proyección es aditiva y fail-soft
-            pass
-        try:
-            from src.rag.traceability import build_traceability
-
-            enriched["traceability"] = build_traceability(enriched)
         except Exception:  # noqa: BLE001 - la proyección es aditiva y fail-soft
             pass
         return enriched

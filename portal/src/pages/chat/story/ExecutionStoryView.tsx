@@ -9,6 +9,7 @@ import type { ReplayResult } from "../ReplayCompare";
 import { ReplayCompare } from "../ReplayCompare";
 import type { ExecutionStory, StoryEvent } from "../executionStory";
 import { parseTraceability } from "../experience";
+import { parseTraceabilityV2 } from "../traceabilityV2";
 import ExecutionTimeline from "./ExecutionTimeline";
 import ExperienceStory from "./ExperienceStory";
 import LearningSummary from "./LearningSummary";
@@ -20,6 +21,8 @@ import StorySummary from "./StorySummary";
 import StoryHero from "./StoryHero";
 import TechnicalTrace from "./TechnicalTrace";
 import TraceabilityDiagnostics from "./TraceabilityDiagnostics";
+import TraceV2Story from "./TraceV2Story";
+import TraceV2Technical from "./TraceV2Technical";
 
 export type StoryMode = "story" | "performance" | "technical";
 
@@ -65,9 +68,12 @@ export function ExecutionStoryView({
     .flatMap((phase) => phase.events);
 
   // El contrato canónico manda cuando existe: la vista explicada se deriva de
-  // `flow.traceability`. Sin él, se conserva la historia legacy intacta.
-  const traceability = parseTraceability(story.technical.raw?.traceability);
-  const explained = Boolean(traceability) && mode === "story";
+  // `flow.traceability`. Schema v2 usa la vista canónica nueva; schema 1
+  // (histórico, adaptado en lectura) conserva la vista anterior. Sin él, la
+  // historia legacy queda intacta.
+  const traceV2 = parseTraceabilityV2(story.technical.raw?.traceability);
+  const traceability = traceV2 ? null : parseTraceability(story.technical.raw?.traceability);
+  const explained = (Boolean(traceV2) || Boolean(traceability)) && mode === "story";
 
   return (
     <div className="flex flex-col gap-5">
@@ -79,17 +85,19 @@ export function ExecutionStoryView({
         ))}
       </div>
 
-      {explained && traceability ? (
+      {mode === "story" && traceV2 ? (
+        <TraceV2Story trace={traceV2} onOpenTechnical={() => onModeChange("technical")} />
+      ) : explained && traceability ? (
         <ExperienceStory
           story={story}
           traceability={traceability}
           onOpenTechnical={() => onModeChange("technical")}
         />
-      ) : (
+      ) : mode === "story" ? (
         <>{story.executionNarrative ? <StoryHero story={story} /> : <StorySummary story={story} />}</>
-      )}
+      ) : null}
 
-      {mode === "story" && !explained ? (
+      {mode === "story" && !explained && !traceV2 ? (
         story.executionNarrative ? (
           <NarrativeSteps story={story} />
         ) : (
@@ -99,17 +107,20 @@ export function ExecutionStoryView({
       {mode === "performance" ? <PerformanceStory story={story} /> : null}
       {mode === "technical" ? (
         <>
-          {traceability ? <TraceabilityDiagnostics traceability={traceability} /> : null}
+          {traceV2 ? <TraceV2Technical trace={traceV2} /> : null}
+          {!traceV2 && traceability ? (
+            <TraceabilityDiagnostics traceability={traceability} />
+          ) : null}
           <KnowledgeRepresentation raw={story.technical.raw} />
           <TechnicalTrace story={story} />
         </>
       ) : null}
 
-      {mode === "story" && !explained && story.response ? (
+      {mode === "story" && !explained && !traceV2 && story.response ? (
         <ResponseShapeCard story={story} expanded={false} />
       ) : null}
 
-      {mode === "story" && !explained && !story.executionNarrative && reasoningEvents.some((event) => isReasoningCard(event)) ? (
+      {mode === "story" && !explained && !traceV2 && !story.executionNarrative && reasoningEvents.some((event) => isReasoningCard(event)) ? (
         <ReasoningDetail events={reasoningEvents.filter((event) => isReasoningCard(event))} />
       ) : null}
 

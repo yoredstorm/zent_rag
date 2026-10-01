@@ -76,6 +76,20 @@ composición y el gate de presentación. Ver
 [response-intelligence.md](response-intelligence.md).
 
 
+## Fase 8 — Traceability Schema v2
+
+La proyección `flow.traceability` evolucionó a **schema v2** (ver
+[traceability-v2.md](traceability-v2.md)): identidad canónica de fuentes,
+deduplicación real, conteos recuperado/seleccionado/usado/citado, semántica JEV
+sin "intervención" genérica, taxonomía de fallbacks, evaluación de max_tokens,
+tiempos wall-clock vs acumulado, invariantes y diagnóstico autoexplicativo.
+
+`build_traceability()` es la única interpretación canónica;
+`build_execution_narrative()` la proyecta para el contrato v1. El portal usa
+`TraceV2Story` / `TraceV2Technical` (`portal/src/pages/chat/traceabilityV2.ts`)
+cuando `schema_version === 2`, y conserva la vista anterior para traces
+históricos adaptados en lectura.
+
 ## Qué nunca se muestra
 
 Cadena de pensamiento, scratchpad, razonamiento libre del modelo. La interfaz

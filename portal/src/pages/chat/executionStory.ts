@@ -632,6 +632,7 @@ export const QUESTION_LABELS: Record<string, string> = {
   risk_of_wrong_answer: "¿Qué riesgo hay de responder mal?",
   generation_complexity: "¿Qué complejidad tiene la redacción?",
   next_action: "¿Qué corresponde hacer ahora?",
+  tool: "¿Qué herramienta parecía más apropiada?",
   generation_tier: "¿Qué nivel de generación necesita?",
   evidence_sufficient: "¿Ya tiene evidencia suficiente?",
   evidence_on_topic: "¿La evidencia es del tema?",

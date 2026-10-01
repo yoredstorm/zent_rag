@@ -791,23 +791,239 @@ def _response_shape(flow: Mapping[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in step.items() if key not in {"type", "id"}}
 
 
+def _trace_overrides(
+    *,
+    trace: Mapping[str, Any] | None,
+    documents: list[dict[str, Any]],
+    judgments: list[dict[str, Any]],
+    applied: list[dict[str, Any]],
+    model_calls: list[dict[str, Any]],
+    verification: dict[str, Any],
+) -> dict[str, Any]:
+    """Deriva evidencia/juicios/decisiones/llamadas del trace canónico v2.
+
+    Sin trace (llamadas directas de tests o flows sin proyección) se conserva
+    el cálculo local; con trace, TODO sale de la misma estructura v2 para que
+    la historia y la vista técnica no puedan discrepar.
+    """
+    if not isinstance(trace, Mapping) or trace.get("schema_version") != 2:
+        return {
+            "documents": documents,
+            "judgments": judgments,
+            "applied": applied,
+            "influenced": None,
+            "model_calls": model_calls,
+            "verification": verification,
+        }
+    evidence_block = _record(trace.get("evidence"))
+    trace_documents: list[dict[str, Any]] = []
+    for doc in _records(evidence_block.get("documents")):
+        name = (
+            _text(doc.get("document_name"))
+            or _text(doc.get("display_name"))
+            or _UNAVAILABLE_NAME
+        )
+        passages: list[dict[str, Any]] = []
+        for item in _records(doc.get("items")):
+            section = item.get("section_path")
+            section_text = (
+                " · ".join(str(part) for part in section if str(part).strip())
+                if isinstance(section, (list, tuple))
+                else _text(item.get("section"))
+            )
+            passages.append(
+                {
+                    "evidence_id": _text(item.get("evidence_id")) or None,
+                    "page": item.get("page"),
+                    "section": section_text or None,
+                    "excerpt": _text(
+                        item.get("excerpt") or item.get("content") or item.get("snippet")
+                    ),
+                    "status": _text(item.get("status")) or "USED",
+                    "relevance": _number(item.get("score")),
+                    "cited": item.get("cited") is True,
+                    "used": item.get("used_in_answer") is True,
+                    "source_event_ids": [],
+                }
+            )
+        trace_documents.append(
+            {
+                "document_key": _text(doc.get("document_key")),
+                "document_id": _text(doc.get("document_id")) or None,
+                "source_id": _text(doc.get("source_id")) or None,
+                "display_name": name,
+                "title": name,
+                "canonical_source_id": doc.get("canonical_source_id"),
+                "name_missing": bool(doc.get("name_missing")),
+                "passage_count": len(passages),
+                "passages": passages,
+            }
+        )
+
+    trace_judgments: list[dict[str, Any]] = []
+    for judgment in _records(_record(trace.get("jev")).get("judgments")):
+        interpretation = _record(judgment.get("interpretation"))
+        alternatives = [
+            {
+                "key": _text(option.get("key")),
+                "probability": option.get("probability"),
+            }
+            for option in _records(interpretation.get("options"))
+        ] or _records(judgment.get("alternatives"))
+        trace_judgments.append(
+            {
+                "id": _text(judgment.get("id")) or _text(judgment.get("judgment_id")),
+                "pack_id": "trace",
+                "phase": _text(judgment.get("phase")),
+                "question_code": _text(judgment.get("question_code"))
+                or _text(judgment.get("id")),
+                "type": _text(judgment.get("type")).upper() or "NOUL",
+                "answer": judgment.get("answer"),
+                "probability": interpretation.get("selected_probability"),
+                "certainty": interpretation.get("certainty"),
+                "confidence_band": interpretation.get("band"),
+                "ambiguous": bool(interpretation.get("ambiguous")),
+                "alternatives": alternatives,
+                "applied_decision_id": judgment.get("applied_decision_id"),
+                "effect_code": judgment.get("effect_code"),
+                "source_event_ids": list(judgment.get("source_event_ids") or []),
+                "distribution": _record(judgment.get("raw")).get("distribution") or {},
+            }
+        )
+
+    trace_applied: list[dict[str, Any]] = []
+    for decision in _records(_record(trace.get("jev")).get("decisions_applied")):
+        effects = list(decision.get("effect_codes") or [])
+        trace_applied.append(
+            {
+                "id": _text(decision.get("decision_id")) or _text(decision.get("id")),
+                "phase": _text(decision.get("phase")),
+                "question_id": _text(decision.get("question_id")) or None,
+                "action": _text(decision.get("action")),
+                "decider": _text(decision.get("provider")) or "JEV",
+                "reason_codes": list(decision.get("reason_codes") or []),
+                "impact_code": effects[0] if effects else _text(decision.get("action")),
+                "affected_event_ids": [],
+                "source_event_ids": list(decision.get("source_event_ids") or []),
+            }
+        )
+
+    generation = _record(trace.get("generation"))
+    purpose_map = {
+        "reasoning": "ANALYSIS",
+        "tool_decision": "ANALYSIS",
+        "answer_generation": "ANSWER",
+        "revision": "REVISION",
+    }
+    trace_calls: list[dict[str, Any]] = []
+    for call in _records(generation.get("call_details")):
+        trace_calls.append(
+            {
+                "id": _text(call.get("id")) or f"model-call:{call.get('sequence')}",
+                "sequence": call.get("sequence"),
+                "purpose": purpose_map.get(_text(call.get("purpose")), "UNKNOWN"),
+                "model": call.get("model"),
+                "provider": call.get("provider"),
+                "duration_ms": call.get("duration_ms"),
+                "input_tokens": call.get("input_tokens"),
+                "output_tokens": call.get("output_tokens"),
+                "total_tokens": call.get("total_tokens"),
+                "cost_usd": call.get("cost_usd"),
+                "source_event_ids": list(call.get("source_event_ids") or []),
+            }
+        )
+    if not trace_calls and generation.get("calls"):
+        declared = int(_number(generation.get("calls")) or 0)
+        reasoning = int(_number(generation.get("reasoning_calls")) or 0)
+        answers = int(_number(generation.get("answer_calls")) or 0)
+        purposes = ["ANALYSIS"] * reasoning + ["ANSWER"] * answers
+        purposes.extend(["UNKNOWN"] * max(0, declared - len(purposes)))
+        for index, purpose in enumerate(purposes, start=1):
+            trace_calls.append(
+                {
+                    "id": f"model-call:{index}",
+                    "sequence": index,
+                    "purpose": purpose,
+                    "model": generation.get("model"),
+                    "provider": generation.get("provider"),
+                    "duration_ms": generation.get("duration_ms")
+                    if declared == 1
+                    else None,
+                    "input_tokens": None,
+                    "output_tokens": None,
+                    "total_tokens": None,
+                    "cost_usd": None,
+                    "source_event_ids": [],
+                }
+            )
+
+    trace_verification = _record(trace.get("verification"))
+    signals = _record(trace_verification.get("signals"))
+    status = _text(trace_verification.get("status"))
+    overall = {
+        "VERIFIED": "verified",
+        "PARTIALLY_VERIFIED": "partial",
+        "INSUFFICIENT_EVIDENCE": "blocked",
+        "CONFLICTING_EVIDENCE": "partial",
+        "UNVERIFIED": "not_verified",
+    }.get(status, "not_verified")
+    trace_verification_override = {
+        "overall": overall,
+        "checks": _records(trace_verification.get("checks")),
+        "primary_available": signals.get("grounded"),
+        "fallback_used": bool(signals.get("fallback_used")),
+        "fallback_code": signals.get("fallback_code"),
+        "affected_outcome": bool(signals.get("material_fallback"))
+        or any(
+            item.get("material_effect") is True
+            for item in _records(trace_verification.get("degradations"))
+        ),
+        "corrections": [],
+        "source_event_ids": [],
+    }
+
+    return {
+        "documents": trace_documents,
+        "judgments": trace_judgments,
+        "applied": trace_applied,
+        "influenced": len(_records(_record(trace.get("jev")).get("material_decisions"))),
+        "model_calls": trace_calls,
+        "verification": trace_verification_override,
+    }
+
+
 def build_execution_narrative(
-    flow: Mapping[str, Any], events: list[dict[str, Any]]
+    flow: Mapping[str, Any],
+    events: list[dict[str, Any]],
+    trace: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build an additive narrative without changing any canonical decision."""
     diagnostics: list[dict[str, Any]] = []
     evidence = _canonical_evidence(flow)
     documents = _group_documents(_records(flow.get("sources")), diagnostics)
-    evidence["documents"] = documents
-    evidence["document_count"] = len(documents)
-    evidence["passage_count"] = sum(item["passage_count"] for item in documents)
-    evidence["searches"] = _searches(flow)
     understanding = _understanding(flow)
     requirements = _requirements(flow)
     applied = _applied_decisions(flow, events)
     judgments = _judgments(flow, applied, diagnostics, events)
     model_calls = _model_calls(flow)
     verification = _verification(flow)
+    overrides = _trace_overrides(
+        trace=trace,
+        documents=documents,
+        judgments=judgments,
+        applied=applied,
+        model_calls=model_calls,
+        verification=verification,
+    )
+    documents = overrides["documents"]
+    judgments = overrides["judgments"]
+    applied = overrides["applied"]
+    model_calls = overrides["model_calls"]
+    verification = overrides["verification"]
+    evidence["documents"] = documents
+    evidence["document_count"] = len(documents)
+    evidence["passage_count"] = sum(item["passage_count"] for item in documents)
+    evidence["searches"] = _searches(flow)
     outcome = _outcome(flow, evidence, verification, applied)
     journey = _journey(
         flow,
@@ -833,11 +1049,16 @@ def build_execution_narrative(
     packs = _records(jev.get("packs"))
     timings = _record(flow.get("timings"))
     generation = _record(flow.get("generation"))
+    influenced = overrides.get("influenced")
     return {
         "schema_version": NARRATIVE_SCHEMA_VERSION,
         "outcome": outcome,
         "summary": {
-            "decisions_influenced": len(applied),
+            # Con trace canónico manda la intervención material; sin trace se
+            # conserva la semántica histórica (decisiones aplicadas).
+            "decisions_influenced": influenced
+            if influenced is not None
+            else len(applied),
             "judgment_count": len(judgments),
             "jev_calls": max(
                 sum(1 for item in packs if item.get("status", "ok") == "ok"),
