@@ -641,7 +641,7 @@ El plan canónico vive en [`docs/platform/ZENT_PLATFORM_ROADMAP.md`](docs/platfo
 | **Exploración** | **Tenancy avanzado** | BYO vector store / BYO LLM endpoint por organización enterprise |
 | **Exploración** | **Compliance enterprise** | Packs de retención, DPA y certificaciones extendidas (GDPR/HIPAA) |
 | **Exploración** | **Multi-región completo** | Replicación de Qdrant/Postgres con enrutamiento por región (la base edge/regions existe) |
-| **Exploración** | **Kubernetes al escalar** | Overlay Kustomize y runbook listos en [`deploy/k8s/`](deploy/k8s/); sólo con carga real |
+| **Exploración** | **Kubernetes al escalar** | Kubernetes **no es requisito de venta**: el camino de prod es Compose + servicios managed. Overlay Kustomize y runbook listos en [`deploy/k8s/`](deploy/k8s/); sólo con carga real |
 
 ---
 
