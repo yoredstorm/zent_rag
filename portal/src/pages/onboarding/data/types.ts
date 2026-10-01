@@ -156,6 +156,7 @@ export type ProgressPayload = {
   phases: Array<{ id: string; label: string; state: string }>;
   headline: string;
   technical_details: ProgressDetails;
+  learning_session_id?: string | null;
   percent?: number;
   glimpses?: AnalyzeGlimpse[];
 };

@@ -1,6 +1,6 @@
 import { ArrowsClockwise, Database, MagnifyingGlass, Plus, Trash, X } from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
@@ -12,6 +12,12 @@ import {
   uploadErrorMessage,
   type UploadItem,
 } from "../../lib/uploadQueue";
+import {
+  fetchLearningSessions,
+  sealLearningSession,
+  startLearningSession,
+  type LearningSessionDetail,
+} from "../../lib/knowledgeSessions";
 import {
   Badge,
   Button,
@@ -52,13 +58,14 @@ const PAGE_SIZE = 25;
 async function uploadSingleFile(
   file: File,
   auth: { token: string; organizationId: string },
-  opts: { kbId?: string; force: boolean },
+  opts: { kbId?: string; force: boolean; sessionId?: string },
 ): Promise<UploadItem> {
   const form = new FormData();
   form.append("files", file);
   const params = new URLSearchParams();
   if (opts.kbId) params.set("knowledge_base_id", opts.kbId);
   if (opts.force) params.set("force", "true");
+  if (opts.sessionId) params.set("session_id", opts.sessionId);
   const out = await api<{ items: UploadItem[] }>(
     `/api/v1/sources/files/upload-batch?${params.toString()}`,
     {
@@ -195,6 +202,9 @@ export default function KnowledgeSourcesPage() {
   const [deleting, setDeleting] = useState(false);
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
+  const [recentSessions, setRecentSessions] = useState<LearningSessionDetail[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const navigate = useNavigate();
   const { agents: deleteUsage, loading: deleteUsageLoading } = useSourceUsage(
     pendingDelete?.id ?? null,
   );
@@ -212,10 +222,12 @@ export default function KnowledgeSourcesPage() {
         token: session.token,
         organizationId: session.organizationId,
       }).catch(() => ({ knowledge_bases: [] as KnowledgeBase[] })),
+      fetchLearningSessions(6).catch(() => ({ sessions: [], count: 0 })),
     ])
-      .then(([data, kbData]) => {
+      .then(([data, kbData, sessionData]) => {
         setSources(data.sources || []);
         setKbs(kbData.knowledge_bases || []);
+        setRecentSessions(sessionData.sessions || []);
       })
       .catch((err) => setLoadError(err instanceof Error ? err.message : "Error"))
       .finally(() => setLoading(false));
@@ -347,11 +359,31 @@ export default function KnowledgeSourcesPage() {
     const results: UploadItem[] = [];
     let created = 0;
     let failed = 0;
+    let sessionId: string | null = null;
     try {
       const kbId = await ensureKbId();
+      // Una sola sesión de aprendizaje agrupa todos los archivos del lote:
+      // "ZENT está aprendiendo · N fuentes", con eventos reales por fuente.
+      try {
+        const learning = await startLearningSession({
+          title:
+            uploadFiles.length === 1
+              ? `Aprendiendo ${uploadFiles[0].name}`
+              : `Aprendiendo ${uploadFiles.length} fuentes`,
+          origin: "upload",
+        });
+        sessionId = learning.session_id;
+        setActiveSessionId(sessionId);
+      } catch {
+        // Sin sesión de aprendizaje: la carga de archivos sigue funcionando.
+      }
       for (const file of uploadFiles) {
         try {
-          const item = await uploadSingleFile(file, auth, { kbId, force });
+          const item = await uploadSingleFile(file, auth, {
+            kbId,
+            force,
+            sessionId: sessionId ?? undefined,
+          });
           results.push(item);
           if (item.status === "created") created += 1;
           else if (item.status === "error" || item.status === "rejected") failed += 1;
@@ -369,8 +401,8 @@ export default function KnowledgeSourcesPage() {
       if (created > 0) {
         setMsg(
           created === 1
-            ? "1 archivo en cola de indexado."
-            : `${created} archivos en cola de indexado.`,
+            ? "1 archivo en aprendizaje."
+            : `${created} archivos en aprendizaje.`,
         );
       }
       if (failed > 0) {
@@ -379,6 +411,17 @@ export default function KnowledgeSourcesPage() {
             ? "1 archivo no se pudo subir. Revisa el detalle."
             : `${failed} archivos no se pudieron subir. Revisa el detalle.`,
         );
+      }
+      if (created > 0 && sessionId) {
+        // El lote terminó: la sesión puede declarar el aprendizaje completo
+        // cuando todas las fuentes estén disponibles.
+        try {
+          await sealLearningSession(sessionId);
+        } catch {
+          // sin sello, el backend la cierra sola tras el margen de seguridad
+        }
+        navigate(`/knowledge/sessions/${sessionId}`);
+        return;
       }
       load();
     } catch (err) {
@@ -399,7 +442,7 @@ export default function KnowledgeSourcesPage() {
       const result = await uploadSingleFile(
         file,
         { token: session.token, organizationId: session.organizationId },
-        { kbId, force: true },
+        { kbId, force: true, sessionId: activeSessionId ?? undefined },
       );
       setUploadItems((prev) =>
         prev.map((i) => (i.filename === item.filename ? result : i)),
@@ -694,6 +737,50 @@ export default function KnowledgeSourcesPage() {
                   </div>
                 </form>
               )}
+            </div>
+          </Panel>
+        )}
+
+        {recentSessions.length > 0 && (
+          <Panel>
+            <PanelHeader
+              title="Aprendizaje de ZENT"
+              description="Cada sesión muestra qué aprendió ZENT de tus fuentes, con eventos reales del Knowledge Compiler."
+            />
+            <div className="panel-body">
+              <ul className="flex flex-col gap-1.5" data-testid="recent-sessions">
+                {recentSessions.map((learning) => {
+                  const activeSession = !["completed", "partial", "failed", "canceled"].includes(
+                    learning.status,
+                  );
+                  return (
+                    <li key={learning.session_id}>
+                      <Link
+                        to={`/knowledge/sessions/${learning.session_id}`}
+                        className="flex items-center justify-between gap-3 rounded-md px-2 py-1.5 transition-colors hover:bg-raised"
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[13px] text-text">
+                            {learning.title || "Aprendizaje de conocimiento"}
+                          </span>
+                          <span className="text-[11px] text-faint">
+                            {learning.source_count} fuente
+                            {learning.source_count === 1 ? "" : "s"} ·{" "}
+                            {learning.completed_at
+                              ? "completado"
+                              : learning.status === "learning"
+                                ? "aprendiendo ahora"
+                                : learning.status}
+                          </span>
+                        </span>
+                        <Badge tone={activeSession ? "accent" : "neutral"}>
+                          {activeSession ? "En vivo" : "Ver resumen"}
+                        </Badge>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
           </Panel>
         )}

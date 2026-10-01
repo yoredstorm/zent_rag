@@ -1,6 +1,6 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { COPY } from "./knowledgeCopy";
 import KnowledgeSourcesPage from "./Sources";
@@ -228,7 +228,81 @@ describe("KnowledgeSourcesPage", () => {
       await screen.findByText("Supera el máximo por archivo (25 MB). Prueba con uno más chico."),
     ).toBeInTheDocument();
     expect(uploaded).toEqual(["grande.pdf", "chico.pdf"]);
-    expect(await screen.findByText("1 archivo en cola de indexado.")).toBeInTheDocument();
+    expect(await screen.findByText("1 archivo en aprendizaje.")).toBeInTheDocument();
+  });
+
+  it("agrupa el lote en UNA sesión de aprendizaje y navega a ella", async () => {
+    const sessionBodies: unknown[] = [];
+    const uploadUrls: string[] = [];
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method || "GET").toUpperCase();
+      if (url.includes("/api/v1/knowledge/sessions") && url.includes("/seal") && method === "POST") {
+        return Promise.resolve(json({ session_id: "sess-1", status: "available" }));
+      }
+      if (url.includes("/api/v1/knowledge/sessions") && method === "POST") {
+        sessionBodies.push(JSON.parse(String(init?.body ?? "{}")));
+        return Promise.resolve(
+          json({
+            session_id: "sess-1",
+            title: "Aprendiendo 2 fuentes",
+            status: "preparing",
+            stages: [],
+            sources: [],
+            metrics: {},
+          }, 201),
+        );
+      }
+      if (url.includes("/api/v1/knowledge/sessions")) {
+        return Promise.resolve(json({ sessions: [], count: 0 }));
+      }
+      if (url.includes("/files/upload-batch") && method === "POST") {
+        uploadUrls.push(url);
+        return Promise.resolve(
+          json({
+            items: [{ filename: "uno.pdf", status: "created", source_id: "src-1", name: "uno.pdf", job_id: "job-1" }],
+            created: 1,
+            duplicates: 0,
+            rejected: 0,
+            failed: 0,
+          }),
+        );
+      }
+      if (url.includes("/knowledge-bases")) return Promise.resolve(json({ knowledge_bases: KBS }));
+      if (url.includes("/api/v1/sources")) return Promise.resolve(json({ sources: [] }));
+      return Promise.resolve(json({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/knowledge/sources"]}>
+        <Routes>
+          <Route path="/knowledge/sources" element={<KnowledgeSourcesPage />} />
+          <Route
+            path="/knowledge/sessions/:sessionId"
+            element={<div data-testid="session-route">sesión de aprendizaje</div>}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    await waitFor(() =>
+      expect(screen.getAllByRole("button", { name: /Nueva fuente/ }).length).toBeGreaterThan(0),
+    );
+    await user.click(screen.getAllByRole("button", { name: /Nueva fuente/ })[0]);
+    const input = await screen.findByTestId("source-files");
+    await user.upload(input, [
+      new File(["%PDF"], "uno.pdf", { type: "application/pdf" }),
+      new File(["%PDF"], "dos.pdf", { type: "application/pdf" }),
+    ]);
+    await user.click(screen.getByRole("button", { name: "Subir 2 archivos" }));
+
+    // Una sola sesión para todo el lote: "ZENT está aprendiendo 2 fuentes".
+    expect(await screen.findByTestId("session-route")).toBeInTheDocument();
+    expect(sessionBodies).toHaveLength(1);
+    expect((sessionBodies[0] as { title: string }).title).toContain("2 fuentes");
+    // Cada archivo viaja dentro de esa sesión.
+    expect(uploadUrls.every((url) => url.includes("session_id=sess-1"))).toBe(true);
+    expect(uploadUrls).toHaveLength(2);
   });
 
   it("avisa duplicado por archivo y permite subir igual", async () => {

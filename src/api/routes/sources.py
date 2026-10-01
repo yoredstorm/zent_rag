@@ -16,6 +16,7 @@ from sqlalchemy import text
 
 from src.api.deps import (
     get_job_repo,
+    get_knowledge_session_service,
     get_source_repo,
 )
 from src.core.config import get_settings
@@ -549,12 +550,59 @@ async def discover_source(
     }
 
 
+async def _open_learning_session(
+    ctx,
+    sessions,
+    *,
+    session_id: UUID | None,
+    title: str,
+    origin: str,
+    workspace_id: UUID | None,
+):
+    """Sesión existente (por id) o nueva. Fail-soft: sin sesión, la ingesta sigue."""
+    if sessions is None:
+        return None
+    try:
+        await sessions.ensure_tables()
+        if session_id is not None:
+            existing = await sessions.get_session(ctx.organization_id, session_id)
+            if existing is not None:
+                return existing
+        return await sessions.start_session(
+            ctx.organization_id,
+            title=title,
+            origin=origin,
+            workspace_id=workspace_id,
+        )
+    except Exception as exc:  # noqa: BLE001 — la observabilidad no bloquea
+        logger.warning("Learning session not created", error=str(exc)[:200])
+        return None
+
+
+def _session_attach_hook(sessions, session, source):
+    """Callback que registra fuente+job en la sesión ANTES del encolado."""
+    if sessions is None or session is None:
+        return None
+
+    async def _attach(job) -> None:
+        await sessions.attach_source(
+            session,
+            source_id=source.id,
+            job_id=job.id,
+            name=source.name,
+            source_type=source.type,
+        )
+
+    return _attach
+
+
 @router.post("/sources/{source_id}/sync", summary="Sincronizar fuente (background)")
 async def sync_source(
     source_id: str,
     request: Request,
     repo: SourceRepository = Depends(get_source_repo),
     jobs: IngestionJobRepository = Depends(get_job_repo),
+    sessions=Depends(get_knowledge_session_service),
 ):
     from src.platform.rbac.policy import require_permission
 
@@ -567,8 +615,25 @@ async def sync_source(
     if source is None:
         raise HTTPException(404, "Source not found")
 
-    job = await enqueue_source_sync(ctx, jobs, source)
-    return {"job_id": str(job.id), "status": job.status.value, "source_id": str(sid)}
+    session = await _open_learning_session(
+        ctx,
+        sessions,
+        session_id=None,
+        title=f"Aprendizaje: {source.name}",
+        origin="sync",
+        workspace_id=source.workspace_id,
+    )
+    job = await enqueue_source_sync(
+        ctx, jobs, source, on_created=_session_attach_hook(sessions, session, source)
+    )
+    if session is not None:
+        await sessions.seal_session(ctx.organization_id, session.id)
+    return {
+        "job_id": str(job.id),
+        "status": job.status.value,
+        "source_id": str(sid),
+        "session_id": str(session.id) if session else None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -591,6 +656,8 @@ async def _store_uploaded_file(
     name: str | None,
     force: bool,
     workspace_id: UUID | None = None,
+    session=None,
+    sessions=None,
 ):
     """Crea fuente + job para un archivo. Lanza HTTPException 413/415/409."""
     if len(data) > _MAX_UPLOAD_BYTES:
@@ -648,7 +715,9 @@ async def _store_uploaded_file(
         ctx, "source.created", "source", source.id,
         metadata={"name": source.name, "type": source.type, "object_key": object_key},
     )
-    job = await enqueue_source_sync(ctx, jobs, source)
+    job = await enqueue_source_sync(
+        ctx, jobs, source, on_created=_session_attach_hook(sessions, session, source)
+    )
     return source, job
 
 
@@ -663,8 +732,13 @@ async def upload_file_source(
         default=False,
         description="Crear copia aunque exista otra fuente con el mismo nombre.",
     ),
+    session_id: UUID | None = Query(
+        default=None,
+        description="Sesión de aprendizaje a la que pertenece la fuente.",
+    ),
     repo: SourceRepository = Depends(get_source_repo),
     jobs: IngestionJobRepository = Depends(get_job_repo),
+    sessions=Depends(get_knowledge_session_service),
 ):
     from src.platform.rbac.policy import require_permission
 
@@ -672,6 +746,14 @@ async def upload_file_source(
     if knowledge_base_id is not None:
         await _assert_own_kb(ctx, knowledge_base_id)
     ws = await resolve_workspace(request)
+    session = await _open_learning_session(
+        ctx,
+        sessions,
+        session_id=session_id,
+        title=f"Aprendizaje: {name or file.filename or 'archivo'}",
+        origin="upload",
+        workspace_id=ws.id,
+    )
     source, job = await _store_uploaded_file(
         ctx,
         repo,
@@ -683,8 +765,16 @@ async def upload_file_source(
         name=name,
         force=force,
         workspace_id=ws.id,
+        session=session,
+        sessions=sessions,
     )
-    return _source_response(source, extra={"job_id": str(job.id)})
+    return _source_response(
+        source,
+        extra={
+            "job_id": str(job.id),
+            "session_id": str(session.id) if session else None,
+        },
+    )
 
 
 @router.post(
@@ -700,13 +790,19 @@ async def upload_files_batch(
         default=False,
         description="Crear copia aunque exista otra fuente con el mismo nombre.",
     ),
+    session_id: UUID | None = Query(
+        default=None,
+        description="Sesión de aprendizaje existente (opcional).",
+    ),
     repo: SourceRepository = Depends(get_source_repo),
     jobs: IngestionJobRepository = Depends(get_job_repo),
+    sessions=Depends(get_knowledge_session_service),
 ) -> dict:
     """Sube N archivos sin pedir nombre: cada fuente hereda el nombre del archivo.
 
     Nunca corta el lote: devuelve el resultado por archivo (created, duplicate,
-    rejected, error). Cada fuente creada encola su job de indexado.
+    rejected, error). Cada fuente creada encola su job de indexado y todas las
+    creadas quedan dentro de UNA sesión de aprendizaje.
     """
     from src.platform.rbac.policy import require_permission
 
@@ -721,6 +817,14 @@ async def upload_files_batch(
 
     items: list[dict] = []
     created = duplicates = rejected = failed = 0
+    session = await _open_learning_session(
+        ctx,
+        sessions,
+        session_id=session_id,
+        title="Aprendizaje de conocimiento",
+        origin="upload",
+        workspace_id=ws.id,
+    )
     for upload in files:
         filename = upload.filename or "upload.bin"
         data = await upload.read()
@@ -736,6 +840,8 @@ async def upload_files_batch(
                 name=None,
                 force=force,
                 workspace_id=ws.id,
+                session=session,
+                sessions=sessions,
             )
         except HTTPException as exc:
             detail = exc.detail if isinstance(exc.detail, dict) else {}
@@ -785,6 +891,7 @@ async def upload_files_batch(
         "duplicates": duplicates,
         "rejected": rejected,
         "failed": failed,
+        "session_id": str(session.id) if session else None,
     }
 
 @router.post("/sources/{source_id}/profile", summary="Perfilizar fuente (SQL: null rates, cardinalidad, PII)")

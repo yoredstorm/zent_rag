@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { UploadQueueList } from "../../../components/UploadQueueList";
 import { rowsFromJobFiles } from "../../../lib/uploadQueue";
+import { WizardLearningPanel } from "../../../components/knowledgeSession/WizardLearningPanel";
 import { WIZARD_STEP_HEADINGS, type ProgressFile } from "./types";
 import { analyzePercent, type AnalyzeGlimpse } from "./wizardUx";
 
@@ -22,6 +23,7 @@ export function AnalysisProgressStep({
   glimpses = [],
   files = [],
   status,
+  learningSessionId = null,
 }: {
   headline: string;
   phases: Array<{ id: string; label: string; state: string }>;
@@ -34,6 +36,7 @@ export function AnalysisProgressStep({
   glimpses?: AnalyzeGlimpse[];
   files?: ProgressFile[];
   status?: string | null;
+  learningSessionId?: string | null;
 }) {
   const jobProgress =
     typeof technical?.job_progress === "number" ? (technical.job_progress as number) : null;
@@ -95,6 +98,11 @@ export function AnalysisProgressStep({
               {glimpse.text}
             </span>
           ))}
+        </div>
+      )}
+      {learningSessionId && (
+        <div className="mt-4">
+          <WizardLearningPanel sessionId={learningSessionId} />
         </div>
       )}
       {files.length > 0 && (

@@ -73,13 +73,31 @@ async def next_copy_name(repo: SourceRepository, organization_id, base_name: str
     return f"{base_name} copia {uuid4().hex[:6]}"
 
 
-async def enqueue_source_sync(ctx, jobs: IngestionJobRepository, source):
+async def enqueue_source_sync(
+    ctx,
+    jobs: IngestionJobRepository,
+    source,
+    *,
+    on_created=None,
+):
+    """Crea el job de sync y lo encola.
+
+    ``on_created(job)`` corre ANTES de encolar: permite registrar el job en su
+    sesión de aprendizaje antes de que el worker pueda tomarlo (sin carrera).
+    """
     job = await jobs.create_job(
         ctx.organization_id,
         job_type=f"sync_source:{source.type}",
         source_id=source.id,
         knowledge_base_id=source.knowledge_base_id,
     )
+    if on_created is not None:
+        try:
+            await on_created(job)
+        except Exception as exc:  # noqa: BLE001 — la observabilidad no bloquea
+            logger.warning(
+                "Source sync on_created hook failed", error=str(exc)[:200]
+            )
     from src.knowledge.queue import enqueue_knowledge_job
 
     await enqueue_knowledge_job(str(job.id))

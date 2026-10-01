@@ -48,6 +48,9 @@ const KnowledgeModelPage = lazy(() => import("./pages/knowledge/Model"));
 const KnowledgeQualityPage = lazy(() => import("./pages/knowledge/Quality"));
 const KnowledgeEvaluationPage = lazy(() => import("./pages/knowledge/Evaluation"));
 const KnowledgeActivityPage = lazy(() => import("./pages/knowledge/Activity"));
+const KnowledgeLearningSessionPage = lazy(
+  () => import("./pages/knowledge/LearningSession"),
+);
 const KnowledgeOnboardingPage = lazy(() => import("./pages/onboarding/data/OnboardingWizard"));
 const KnowledgeUnderstandingPage = lazy(() => import("./pages/knowledge/Understanding"));
 const KnowledgeCollectionsPage = lazy(() => import("./pages/knowledge/Collections"));
@@ -574,6 +577,7 @@ export default function App() {
         <Route path="/knowledge/add/:sessionId" element={<Suspense fallback={<PageFallback />}><KnowledgeOnboardingPage /></Suspense>} />
         <Route path="/knowledge/add" element={<Suspense fallback={<PageFallback />}><KnowledgeOnboardingPage /></Suspense>} />
         <Route path="/knowledge/sources/:sourceId" element={<Suspense fallback={<PageFallback />}><KnowledgeSourceDetailPage /></Suspense>} />
+        <Route path="/knowledge/sessions/:sessionId" element={<Suspense fallback={<PageFallback />}><KnowledgeLearningSessionPage /></Suspense>} />
         <Route path="/knowledge/sources" element={<Suspense fallback={<PageFallback />}><KnowledgeSourcesPage /></Suspense>} />
         <Route path="/knowledge/database/import" element={<Suspense fallback={<PageFallback />}><KnowledgeManagedImportPage /></Suspense>} />
         <Route path="/knowledge/database" element={<Suspense fallback={<PageFallback />}><KnowledgeDatabasePage /></Suspense>} />

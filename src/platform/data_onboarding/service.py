@@ -414,9 +414,19 @@ class DataOnboardingService:
             config_json=config,
             workspace_id=_workspace_uuid(row),
         )
+        # Una sola Learning Session por asistente: agrupa las fuentes y emite
+        # eventos reales del Knowledge Compiler mientras ZENT las aprende.
+        learning_session, learning_session_id = await self._ensure_learning_session(
+            organization_id, row, uploaded_count=len(source_ids) + 1
+        )
         job = None
         try:
-            job = await enqueue_source_sync(ctx, get_job_repo(), source)
+            job = await enqueue_source_sync(
+                ctx,
+                get_job_repo(),
+                source,
+                on_created=await self._learning_attach_hook(learning_session, source),
+            )
         except Exception as exc:  # noqa: BLE001 — el archivo ya quedó guardado
             logger.warning("onboarding enqueue upload failed", error=str(exc)[:200])
         job_id = str(job.id) if job is not None else None
@@ -427,6 +437,7 @@ class DataOnboardingService:
                 "filename": filename,
                 "source_type": source_type,
                 "object_key": object_key,
+                "learning_session_id": learning_session_id,
                 "source_ids": [*source_ids, str(source.id)],
                 "sources": [
                     *(state.get("sources") or []),
@@ -788,8 +799,10 @@ class DataOnboardingService:
         job_ids = [str(value) for value in (session_state.get("job_ids") or [])]
         if not job_ids and session_state.get("job_id"):
             job_ids = [str(session_state["job_id"])]
+        learning_session_id = session_state.get("learning_session_id")
         technical["job_ids"] = job_ids
         technical["job_id"] = job_ids[0] if job_ids else None
+        technical["learning_session_id"] = learning_session_id
         jobs_by_id: dict[str, Any] = {}
         if job_ids:
             from src.api.deps import get_job_repo
@@ -843,6 +856,7 @@ class DataOnboardingService:
             "phases": phases,
             "headline": flow.analyze_headline,
             "technical_details": technical,
+            "learning_session_id": learning_session_id,
             "percent": analyze_percent(
                 phases,
                 row["status"],
@@ -1515,10 +1529,77 @@ class DataOnboardingService:
         )
         return updated or await self._require(organization_id, session_id)
 
+    async def _ensure_learning_session(
+        self, organization_id: UUID, row: dict, *, uploaded_count: int
+    ):
+        """Sesión de aprendizaje del asistente (una por sesión de onboarding).
+
+        Devuelve ``(session | None, session_id | None)``. Fail-soft: sin
+        sesión, el asistente sigue funcionando igual.
+        """
+        from src.api.deps import get_knowledge_session_service
+
+        sessions = get_knowledge_session_service()
+        if sessions is None:
+            return None, None
+        source_count = max(1, int(uploaded_count))
+        title = f"Aprendiendo {source_count} fuente{'s' if source_count != 1 else ''}"
+        try:
+            await sessions.ensure_tables()
+            existing = (row.get("state") or {}).get("learning_session_id")
+            if existing:
+                try:
+                    session = await sessions.get_session(
+                        organization_id, UUID(str(existing))
+                    )
+                except (TypeError, ValueError):
+                    session = None
+                if session is not None:
+                    await sessions.rename_session(organization_id, session.id, title)
+                    return session, str(session.id)
+            workspace = row.get("workspace_id")
+            session = await sessions.start_session(
+                organization_id,
+                title=title,
+                origin="onboarding",
+                workspace_id=UUID(str(workspace)) if workspace else None,
+            )
+            return session, str(session.id)
+        except Exception as exc:  # noqa: BLE001 — el asistente no se bloquea
+            logger.warning(
+                "onboarding learning session unavailable", error=str(exc)[:200]
+            )
+            return None, None
+
+    async def _learning_attach_hook(self, session, source):
+        """Adjunta fuente+job a la sesión ANTES de encolarlo (sin carrera)."""
+        if session is None:
+            return None
+        from src.api.deps import get_knowledge_session_service
+
+        sessions = get_knowledge_session_service()
+        if sessions is None:
+            return None
+
+        async def _attach(job) -> None:
+            await sessions.attach_source(
+                session,
+                source_id=source.id,
+                job_id=job.id,
+                name=source.name,
+                source_type=source.type,
+            )
+
+        return _attach
+
     async def _analyze_files(
         self, ctx: TenantContext, session_id: UUID, row: dict
     ) -> dict:
-        from src.api.deps import get_job_repo, get_source_repo
+        from src.api.deps import (
+            get_job_repo,
+            get_knowledge_session_service,
+            get_source_repo,
+        )
         from src.knowledge.uploads import enqueue_source_sync
 
         organization_id = ctx.organization_id
@@ -1537,6 +1618,14 @@ class DataOnboardingService:
         catalog_source_id = row.get("catalog_source_id")
         repo = get_source_repo()
         jobs = get_job_repo()
+
+        # La misma experiencia de aprendizaje que en /knowledge/sources: una
+        # sesión real agrupa las fuentes del asistente y emite eventos del
+        # Knowledge Compiler mientras ZENT las entiende.
+        learning_session, learning_session_id = await self._ensure_learning_session(
+            organization_id, row, uploaded_count=len(source_ids)
+        )
+        sessions = get_knowledge_session_service()
 
         for raw_id in source_ids:
             source_id = str(raw_id)
@@ -1609,7 +1698,21 @@ class DataOnboardingService:
                     )
             if not entry.get("job_id"):
                 try:
-                    job = await enqueue_source_sync(ctx, jobs, source)
+                    hook = None
+                    if learning_session is not None and sessions is not None:
+
+                        async def _attach(job, _source=source) -> None:
+                            await sessions.attach_source(
+                                learning_session,
+                                source_id=_source.id,
+                                job_id=job.id,
+                                name=_source.name,
+                                source_type=_source.type,
+                            )
+
+                        hook = _attach
+
+                    job = await enqueue_source_sync(ctx, jobs, source, on_created=hook)
                     entry["job_id"] = str(job.id)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
@@ -1644,6 +1747,7 @@ class DataOnboardingService:
                 "understanding": understanding,
                 "understanding_by_source": per_source,
                 "analyzed_source_ids": analyzed,
+                "learning_session_id": learning_session_id,
                 "sources": [
                     tracked[source_id]
                     for source_id in source_ids

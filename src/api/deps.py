@@ -99,6 +99,8 @@ _adaptive_hook = None
 _preflight_hook = None
 _knowledge_engine = None
 _knowledge_learning_repo = None
+_knowledge_session_repo = None
+_knowledge_session_service = None
 _knowledge_learning_engine = None
 _knowledge_score_service = None
 _knowledge_graph_service = None
@@ -388,6 +390,30 @@ def get_shadow_evaluator():
     return _shadow_evaluator
 
 
+def get_knowledge_session_repo():
+    """Store de Learning Sessions (aprendizaje observable de la ingesta)."""
+    global _knowledge_session_repo
+    if _knowledge_session_repo is None:
+        from src.platform.knowledge_sessions.repository import (
+            PostgresKnowledgeSessionRepository,
+        )
+
+        _knowledge_session_repo = PostgresKnowledgeSessionRepository()
+    return _knowledge_session_repo
+
+
+def get_knowledge_session_service():
+    """Servicio de sesiones de aprendizaje (fuente de eventos semánticos)."""
+    global _knowledge_session_service
+    if _knowledge_session_service is None:
+        from src.platform.knowledge_sessions.service import LearningSessionService
+
+        _knowledge_session_service = LearningSessionService(
+            get_knowledge_session_repo()
+        )
+    return _knowledge_session_service
+
+
 def get_knowledge_engine():
     """Inyecta el motor de ingestion de la Knowledge Platform.
 
@@ -433,6 +459,7 @@ def get_knowledge_engine():
 
         usage_tracker = None
         if settings.KNOWLEDGE_V2_ENABLED:
+            session_service=get_knowledge_session_service(),
             from src.knowledge.cost import KnowledgeUsageTracker
 
             usage_tracker = KnowledgeUsageTracker()

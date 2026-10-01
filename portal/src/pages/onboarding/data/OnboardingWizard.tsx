@@ -780,6 +780,7 @@ export default function OnboardingWizardPage() {
           glimpses={progress?.glimpses}
           files={progress?.technical_details?.files ?? []}
           status={current?.status}
+          learningSessionId={progress?.learning_session_id ?? null}
         />
       )}
       {uiStep === "review" && (

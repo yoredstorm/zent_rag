@@ -373,6 +373,42 @@ async def test_progress_includes_percent_and_glimpses(
 
 
 @pytest.mark.asyncio
+async def test_analyze_creates_learning_session_with_attached_source(
+    async_client: AsyncClient,
+) -> None:
+    """El asistente también alimenta la Learning Session (eventos reales)."""
+    org = await _create_org(async_client, "Learning Wizard Co")
+    headers = await _owner_headers(org)
+    created = await async_client.post(
+        f"{PREFIX}/sessions", headers=headers, json={"kind": "documents"}
+    )
+    sid = created.json()["id"]
+    uploaded = await async_client.post(
+        f"{PREFIX}/sessions/{sid}/connect/upload",
+        headers={k: v for k, v in headers.items() if k != "Content-Type"},
+        files={"file": ("contrato.txt", BytesIO(_CONTRACT_TXT.encode("utf-8")), "text/plain")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    analyzed = await async_client.post(f"{PREFIX}/sessions/{sid}/analyze", headers=headers)
+    assert analyzed.status_code == 200, analyzed.text
+
+    progress = await async_client.get(f"{PREFIX}/sessions/{sid}/progress", headers=headers)
+    assert progress.status_code == 200, progress.text
+    learning_session_id = progress.json().get("learning_session_id")
+    assert learning_session_id, "el asistente debe exponer su sesión de aprendizaje"
+
+    learning = await async_client.get(
+        f"/api/v1/knowledge/sessions/{learning_session_id}", headers=headers
+    )
+    assert learning.status_code == 200, learning.text
+    body = learning.json()
+    assert body["origin"] == "onboarding"
+    assert body["source_count"] == 1
+    assert body["sources"][0]["job_id"], "la fuente se adjunta antes de encolar su job"
+    assert body["sources"][0]["name"]
+
+
+@pytest.mark.asyncio
 async def test_analyze_checkpoints_rule_facts_before_llm(
     async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
