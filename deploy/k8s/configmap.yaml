@@ -23,13 +23,35 @@ data:
   RAG_EMBEDDING_FALLBACK_API_BASE: "https://api.deepinfra.com/v1/openai"
   RAG_CORS_ALLOWED_ORIGINS: "https://app.example.com"
   RAG_UPLOAD_DIR: "/app/uploads"
-  # Knowledge V2 (StructuredDocument) — OFF por ADR hasta calibrar shadow.
+  # =========================================================================
+  # Knowledge OS — un solo camino: fuente -> estructura -> conocimiento
+  # =========================================================================
+  RAG_DOCUMENT_UNDERSTANDING_LAYOUT: "true"
+  RAG_DOCUMENT_UNDERSTANDING_TABLES: "true"
+  RAG_DOCUMENT_UNDERSTANDING_VISION: "false"
+  RAG_CANONICAL_INLINE_MAX_BYTES: "48000"
+  RAG_SEMANTIC_UNIT_MAX_CHARS: "1200"
+  RAG_TABLE_MERGE_MIN_CONFIDENCE: "0.65"
+  RAG_COLUMN_MIN_CONFIDENCE: "0.72"
+  RAG_KNOWLEDGE_SUMMARY_MODEL: ""
+  RAG_KNOWLEDGE_LOCATE_LLM_ENABLED: "false"
+  RAG_KNOWLEDGE_LOCATE_MODEL: ""
+  RAG_KNOWLEDGE_TABULAR_ROW_GROUP_SIZE: "20"
+  RAG_KNOWLEDGE_TABULAR_ROW_GROUP_OVERLAP: "2"
+  RAG_KNOWLEDGE_TABULAR_MAX_GROUP_ROWS: "20000"
+  RAG_KNOWLEDGE_TABULAR_GROUP_KEY_COLUMNS: "true"
+  RAG_KNOWLEDGE_TABULAR_WIDE_TABLE_COLUMNS: "12"
+  RAG_KNOWLEDGE_TABULAR_MAX_GROUP_KEY_COLUMNS: "8"
+  RAG_KNOWLEDGE_TABULAR_MAX_FREE_TEXT_CHARS: "160"
+  # -------------------------------------------------------------------------
+  # Knowledge Tabular (Excel/CSV como DATOS): estructura + SQL-first + lazy.
+  # -------------------------------------------------------------------------
   RAG_KNOWLEDGE_TABULAR_MAX_WORKBOOK_BYTES: "52428800"
+  RAG_KNOWLEDGE_TABULAR_MAX_EMBEDDING_ROWS: "5000"
   RAG_KNOWLEDGE_TABULAR_MAX_SHEETS: "50"
   RAG_KNOWLEDGE_TABULAR_MAX_ROWS_PER_SHEET: "100000"
   RAG_KNOWLEDGE_TABULAR_MAX_COLUMNS: "512"
   RAG_KNOWLEDGE_TABULAR_MAX_CELLS: "2000000"
-  RAG_KNOWLEDGE_TABULAR_MAX_EMBEDDING_ROWS: "5000"
   RAG_KNOWLEDGE_TABULAR_ROW_GROUP_SIZE: "20"
   RAG_KNOWLEDGE_TABULAR_ROW_GROUP_OVERLAP: "2"
   RAG_KNOWLEDGE_TABULAR_CELL_CHUNKS_ENABLED: "false"
