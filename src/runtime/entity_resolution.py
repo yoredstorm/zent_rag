@@ -144,31 +144,38 @@ async def resolve_mentions(
                     name=str(obj.get("name") or mention),
                     kind=str(obj.get("kind") or ""),
                     match="exact_name",
-                    confidence=float(obj.get("confidence") or 1.0),
+                    confidence=float(obj["confidence"])
+                    if obj.get("confidence") is not None
+                    else 1.0,
                 ),
             )
         for row in aliases_by_normalized.get(norm, []):
             canonical_id = str(row.get("entity_id") or "")
-            if not canonical_id or canonical_id in candidates:
+            if not canonical_id:
                 continue
-            candidates[canonical_id] = EntityMatch(
-                mention=mention,
-                canonical_id=canonical_id,
-                name=str(row.get("name") or mention),
-                kind=str(row.get("kind") or ""),
-                match="alias",
-                confidence=float(row.get("confidence") or 0.5),
-                alias=str(row.get("alias") or "") or None,
+            candidates.setdefault(
+                canonical_id,
+                EntityMatch(
+                    mention=mention,
+                    canonical_id=canonical_id,
+                    name=str(row.get("name") or mention),
+                    kind=str(row.get("kind") or ""),
+                    match="alias",
+                    confidence=float(row["confidence"])
+                    if row.get("confidence") is not None
+                    else 0.5,
+                    alias=str(row.get("alias") or "") or None,
+                ),
             )
-        ordered = tuple(
-            sorted(
-                candidates.values(),
-                key=lambda match: (-match.confidence, match.name, match.canonical_id),
-            )[: max(1, int(per_mention_limit))]
+        ordered_all = sorted(
+            candidates.values(),
+            key=lambda match: (-match.confidence, match.name, match.canonical_id),
         )
-        if len(ordered) == 1:
+        total = len(ordered_all)
+        ordered = tuple(ordered_all[: max(1, int(per_mention_limit))])
+        if total == 1:
             status = "resolved"
-        elif len(ordered) > 1:
+        elif total > 1:
             status = "ambiguous"
         else:
             status = "unresolved"

@@ -107,3 +107,14 @@ async def test_dedupe_y_cap_de_menciones() -> None:
     mentions = [item.mention for item in resolution.mentions]
     assert mentions == ["A", "B", "C", "D", "E", "F", "G", "H"]
     assert lookup.calls
+
+
+@pytest.mark.asyncio
+async def test_ambigua_no_se_oculta_por_limite() -> None:
+    first, second = _object("Record 4"), _object("Record 4", "process")
+    lookup = FakeLookup(names={"record 4": [first, second]})
+    resolution = await resolve_mentions(
+        lookup, uuid4(), ["Record 4"], per_mention_limit=1
+    )
+    assert resolution.mentions[0].status == "ambiguous"
+    assert len(resolution.mentions[0].matches) == 1
