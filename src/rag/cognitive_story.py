@@ -253,6 +253,7 @@ def build_cognitive_story(flow: Mapping | None) -> dict:
         "deep": dict(deep),
     }
     raw = {
+        "mode": cognitive.get("mode"),
         "run_id": run_id or None,
         "deep_metrics": dict(_mapping(deep.get("metrics"))),
         "budget": dict(budget),

@@ -78,6 +78,7 @@ def test_expanded_y_raw_acotados() -> None:
     assert story["expanded"]["strategy"]["primary"] == "exact"
     assert story["expanded"]["evidence"]["conflicts"] == 1
     assert story["expanded"]["budget"]["within_budget"] is True
+    assert story["raw"]["mode"] == "active"
     assert story["raw"]["run_id"] == "run-1"
     assert story["raw"]["deep_metrics"]["tokens"] == 1200
 
