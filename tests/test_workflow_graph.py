@@ -643,57 +643,40 @@ async def _create_event_workflow(
     return wid
 
 
-def _knowledge_event(org: dict, subject: str, rule_key: str) -> dict:
-    return {
-        "organization_id": org["organization_id"],
-        "event": "knowledge.new_rule",
-        "payload": {"subject": subject, "rule_key": rule_key},
-        "entity_id": f"e-{uuid4().hex}",
-    }
-
-
 @pytest.mark.asyncio
-async def test_event_trigger_filter_matches_nested_payload(
-    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    org = await _create_org(async_client, "WF Kn Filtro")
-    org["session"] = await _owner_session(async_client, org["organization_id"])
-    await _create_event_workflow(
-        async_client, org, "knowledge.new_rule", {"subject": "Rule X"}
+async def test_event_trigger_filter_matches_real_bus_payload() -> None:
+    from src.core.domain.knowledge_events import (
+        KnowledgeEventType,
+        KnowledgeSystemEvent,
     )
+    from src.platform.knowledge_events.emitter import KnowledgeSystemEventEmitter
+    from src.platform.workflows.events import _filters_match
 
-    import src.platform.workflows.engine as wf_engine
+    published: list[dict] = []
 
-    calls: list[dict] = []
+    class _Inner:
+        async def emit(self, **kwargs):
+            # Réplica del envelope real: el bus publica kwargs["payload"] bajo "payload".
+            published.append(
+                {
+                    "event": kwargs["event_type"],
+                    "organization_id": kwargs["organization_id"],
+                    "payload": kwargs["payload"],
+                }
+            )
 
-    async def fake_runner(workflow_id, payload, **kwargs):  # noqa: ANN001, ANN202
-        calls.append({"workflow_id": workflow_id, **kwargs})
-        return {"status": "succeeded"}
-
-    monkeypatch.setattr(wf_engine, "run_workflow", fake_runner)
-
-    from src.platform.workflows.events import dispatch_event_to_workflows
-
-    # El filtro ve el payload anidado: subject="Rule X" dispara.
-    fired = await dispatch_event_to_workflows(
-        "knowledge.new_rule", _knowledge_event(org, "Rule X", f"rk-{uuid4().hex}")
+    emitter = KnowledgeSystemEventEmitter(_Inner())
+    await emitter.emit(
+        KnowledgeSystemEvent(
+            type=KnowledgeEventType.NEW_RULE,
+            organization_id=uuid4(),
+            payload={"subject": "Rule X", "statement": "aplica"},
+            rule_key="rk-1",
+        )
     )
-    assert fired == 1
-    assert len(calls) == 1
-
-    # Otro subject no dispara.
-    no_match = await dispatch_event_to_workflows(
-        "knowledge.new_rule", _knowledge_event(org, "Rule Y", f"rk-{uuid4().hex}")
-    )
-    assert no_match == 0
-    assert len(calls) == 1
-
-    # El top level gana sobre el payload anidado (sin regresión).
-    top_event = _knowledge_event(org, "Rule X", f"rk-{uuid4().hex}")
-    top_event["subject"] = "Rule Z"
-    top_level = await dispatch_event_to_workflows("knowledge.new_rule", top_event)
-    assert top_level == 0
-    assert len(calls) == 1
+    message = published[0]
+    assert _filters_match({"subject": "Rule X"}, message) is True
+    assert _filters_match({"subject": "Rule Y"}, message) is False
 
 
 @pytest.mark.asyncio

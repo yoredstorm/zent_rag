@@ -32,7 +32,11 @@ class KnowledgeSystemEventEmitter:
                 message=event.event_name,
                 source_id=event.source_id,
                 severity="warning" if event.requires_review else "info",
-                payload={**event.to_public_dict(), "category": _CATEGORY},
+                payload={
+                    **(event.payload or {}),
+                    **event.to_public_dict(),
+                    "category": _CATEGORY,
+                },
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
