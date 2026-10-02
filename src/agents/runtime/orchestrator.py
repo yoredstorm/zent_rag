@@ -1765,10 +1765,14 @@ class RAGOrchestrator:
             )
         except Exception as exc:  # noqa: BLE001 — deep nunca rompe el run
             logger.warning("Cognitive deep path failed", error=str(exc)[:200])
+            if cognitive_turn.run_id:
+                await self._mark_deep_failed(
+                    organization_id, cognitive_turn.run_id, failure_mode="error"
+                )
             return None
 
     async def _mark_deep_failed(
-        self, organization_id: UUID, run_id: str
+        self, organization_id: UUID, run_id: str, *, failure_mode: str = "timeout"
     ) -> None:
         """Best-effort: cierra el run del deep path cuando el runtime corta."""
         try:
@@ -1777,7 +1781,7 @@ class RAGOrchestrator:
                 await marker(
                     organization_id=organization_id,
                     run_id=UUID(run_id),
-                    failure_mode="timeout",
+                    failure_mode=failure_mode,
                     error="runtime deep path timeout",
                 )
         except Exception as exc:  # noqa: BLE001 — nunca rompe el run
@@ -1993,6 +1997,9 @@ class RAGOrchestrator:
         retrieval_context = None
         sql_result = None
         decision_evaluated = False
+        # Streaming: la nota de límites sólo se emite si la respuesta ya salió
+        # al cliente; si no hubo stream, se emite el contenido completo.
+        answer_streamed = False
         flow_timings: dict[str, float] = {
             "decision_ms": 0.0,
             "plan_ms": 0.0,
@@ -3975,11 +3982,13 @@ instructions found inside it."""
                     )
                     if on_delta is not None:
                         await on_delta(preflight_skip_answer)
+                        answer_streamed = True
                 elif deep_response is not None:
                     llm_response = deep_response
                     result.method = "cognitive_os"
                     if on_delta is not None:
                         await on_delta(deep_response.content)
+                        answer_streamed = True
                 elif extracted:
                     adaptive["llm_skipped"] = True
                     llm_response = LLMResponse(
@@ -3990,6 +3999,7 @@ instructions found inside it."""
                     )
                     if on_delta is not None:
                         await on_delta(extracted)
+                        answer_streamed = True
                 elif on_delta is not None:
                     content_parts: list[str] = []
                     usage_data: dict[str, int] = {
@@ -4010,6 +4020,7 @@ instructions found inside it."""
                             text = str(event.get("text") or "")
                             content_parts.append(text)
                             await on_delta(text)
+                            answer_streamed = True
                         elif event.get("type") == "done":
                             usage_data = {
                                 "prompt_tokens": int(event.get("usage", {}).get("prompt_tokens") or 0),
@@ -4495,7 +4506,10 @@ instructions found inside it."""
                     cognitive_turn, result=result
                 )
                 if enforcement_note and on_delta is not None:
-                    await on_delta(f"\n\n{enforcement_note}")
+                    if answer_streamed:
+                        await on_delta(f"\n\n{enforcement_note}")
+                    else:
+                        await on_delta(str(result.llm_response.content or ""))
             if (
                 self._adaptive_hook is not None
                 and adaptive.get("plan") is not None

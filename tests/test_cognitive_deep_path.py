@@ -396,3 +396,70 @@ async def test_deep_timeout_marca_run_failed_y_cae_a_legacy(monkeypatch) -> None
     assert len(llm.calls) == 1
     assert executor.marked and executor.marked[0]["failure_mode"] == "timeout"
     assert result.flow["cognitive"]["deep"]["failure_mode"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_active_sin_stream_previo_emite_contenido_completo(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "active")
+    organization = _organization()
+    deltas: list[str] = []
+
+    async def _on_delta(text: str) -> None:
+        deltas.append(text)
+
+    class _EmptyStore(FakeVectorStore):
+        async def search(self, **kwargs: Any) -> RetrievalContext:
+            return RetrievalContext(chunks=[], query_embedding=[0.1] * 8)
+
+    from src.agents.runtime.orchestrator import RAGOrchestrator
+
+    orchestrator = RAGOrchestrator(
+        organization_repo=FakeOrganizationRepo(organization),
+        vector_store=_EmptyStore(_retrieval()),
+        llm_provider=FakeLLM(),
+        embedding_provider=FakeEmbed(),
+        cache_provider=FakeCache(),
+        score_threshold=0.0,
+        cognitive_service=FakeCognitiveService(),
+        cognitive_executor=FakeCognitiveExecutor(),
+    )
+    await orchestrator.execute(
+        organization_id=organization.id,
+        user_id=uuid4(),
+        query="¿Qué significa el Byte 105?",
+        role="admin",
+        model="fake-llm",
+        use_cache=False,
+        on_delta=_on_delta,
+    )
+    joined = "".join(deltas)
+    assert "No tengo suficiente información" in joined
+
+
+class FakeErrorExecutor(FakeCognitiveExecutor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.marked: list[dict] = []
+
+    async def execute_run(self, **kwargs: Any) -> dict:
+        raise RuntimeError("executor caído")
+
+    async def mark_failed(self, **kwargs: Any) -> None:
+        self.marked.append(kwargs)
+
+
+@pytest.mark.asyncio
+async def test_deep_error_generico_marca_run_failed(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "active")
+    organization = _organization()
+    llm = FakeLLM()
+    executor = FakeErrorExecutor()
+    orchestrator = _build(
+        organization=organization,
+        llm=llm,
+        service=FakeCognitiveService(),
+        executor=executor,
+    )
+    result = await _execute(orchestrator, organization.id, _L3_QUERY)
+    assert len(llm.calls) == 1
+    assert executor.marked and executor.marked[0]["failure_mode"] == "error"
