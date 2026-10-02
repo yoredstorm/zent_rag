@@ -77,6 +77,9 @@ if TYPE_CHECKING:  # solo anotaciones: los runners se importan lazy en runtime
 
 logger = get_logger(__name__)
 
+#: Tope del deep path L3+ (el executor además aplica su CognitiveBudget).
+DEEP_PATH_TIMEOUT_SECONDS = 90.0
+
 # System prompt genérico que encapsula el comportamiento del asistente RAG.
 # Mitiga prompt injection reforzando el rol en cada interacción.
 # Los verticales/organizations lo personalizan vía organizations.config_json.
@@ -1421,6 +1424,8 @@ class RAGOrchestrator:
         preflight_hook: object | None = None,
         knowledge_model: object | None = None,
         gap_recorder: object | None = None,
+        cognitive_service: object | None = None,
+        cognitive_executor: object | None = None,
     ) -> None:
         self._organization_repo = organization_repo
         self._vector_store = vector_store
@@ -1456,6 +1461,9 @@ class RAGOrchestrator:
         self._preflight_hook = preflight_hook
         # Knowledge OS canónico (C2, observación): entidades/grafo/temporal.
         self._knowledge_model = knowledge_model
+        # Cognitive OS (C5, deep path L3+): planificador + executor del DAG.
+        self._cognitive_service = cognitive_service
+        self._cognitive_executor = cognitive_executor
         # Align anti-hallucination gate with configured score threshold (min 0.1 when threshold is 0)
         self._min_meaningful_score = max(score_threshold, 0.1) if score_threshold > 0 else 0.1
 
@@ -1662,6 +1670,109 @@ class RAGOrchestrator:
         except Exception as exc:  # noqa: BLE001 — observación fail-soft
             logger.warning(
                 "Cognitive turn finalize failed", error=str(exc)[:200]
+            )
+
+    async def _run_deep_reasoning(
+        self,
+        *,
+        query: str,
+        organization_id: UUID,
+        user_id: UUID | None,
+        role: str,
+        workspace_id: UUID | None,
+        cognitive_turn: CognitiveTurn,
+    ) -> LLMResponse | None:
+        """DAG cognitivo para L3+ en active. None = seguir el camino legacy."""
+        try:
+            from src.core.domain.cognitive import CognitiveScope
+
+            groups = (
+                list(await self._resolve_user_groups(organization_id, user_id))
+                if user_id
+                else []
+            )
+            scope = CognitiveScope(
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+                user_id=user_id,
+                role=role,
+                groups=tuple(groups),
+            )
+            created = await self._cognitive_service.create_run(  # type: ignore[union-attr]
+                query=query, scope=scope, created_by=user_id
+            )
+            run_info = created.get("run") if isinstance(created, dict) else None
+            run_id = str((run_info or {}).get("id") or "")
+            if not run_id:
+                return None
+            cognitive_turn.run_id = run_id
+            started = time.perf_counter()
+            result = await asyncio.wait_for(
+                self._cognitive_executor.execute_run(  # type: ignore[union-attr]
+                    organization_id=organization_id,
+                    run_id=UUID(run_id),
+                    scope=scope,
+                ),
+                timeout=DEEP_PATH_TIMEOUT_SECONDS,
+            )
+            run_after = result.get("run") if isinstance(result, dict) else None
+            plan = (run_after or {}).get("plan") or {}
+            answer = str(plan.get("final_answer") or "").strip()
+            metrics = result.get("metrics") or {}
+            cognitive_turn.deep = {
+                "status": str((run_after or {}).get("status") or ""),
+                "failure_mode": str((run_after or {}).get("failure_mode") or ""),
+                "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+                "metrics": {
+                    key: metrics.get(key)
+                    for key in (
+                        "tasks",
+                        "evidence_count",
+                        "claims",
+                        "conflicts",
+                        "llm_calls",
+                        "tokens",
+                        "cost_usd",
+                        "latency_ms",
+                        "has_answer",
+                    )
+                    if metrics.get(key) is not None
+                },
+            }
+            if not answer:
+                return None
+            return LLMResponse(
+                content=answer,
+                model="cognitive_os",
+                total_tokens=int(metrics.get("tokens") or 0),
+                latency_ms=float(metrics.get("latency_ms") or 0.0),
+                finish_reason="stop",
+            )
+        except Exception as exc:  # noqa: BLE001 — deep nunca rompe el run
+            logger.warning("Cognitive deep path failed", error=str(exc)[:200])
+            return None
+
+    def _enforce_cognitive_verification(
+        self, turn: CognitiveTurn, *, result: Any
+    ) -> None:
+        """C5 (solo active): respuestas con límites/revise agregan la nota."""
+        try:
+            if (
+                turn.verification is None
+                or result.llm_response is None
+                or cognitive_runtime_mode() != "active"
+                or turn.verification.action not in {"answer_with_limits", "revise"}
+            ):
+                return
+            from src.runtime.verification import limits_note
+
+            note = limits_note(turn.verification)
+            content = str(result.llm_response.content or "")
+            if note and note not in content:
+                result.llm_response.content = f"{content}\n\n{note}"
+        except Exception as exc:  # noqa: BLE001 — enforcement fail-soft
+            logger.warning(
+                "Cognitive verification enforcement failed", error=str(exc)[:200]
             )
 
     async def _run_knowledge_retrieve(
@@ -3800,6 +3911,26 @@ instructions found inside it."""
                     adaptive["evidence"],
                     query,
                 )
+            deep_response = None
+            if (
+                self._cognitive_service is not None
+                and self._cognitive_executor is not None
+                and cognitive_turn is not None
+                and cognitive_turn.plan is not None
+                and cognitive_turn.plan.complexity.value in {"L3", "L4", "L5"}
+                and cognitive_turn.plan.requires_knowledge
+                and not sql_mode
+                and preflight_skip_answer is None
+                and cognitive_runtime_mode() == "active"
+            ):
+                deep_response = await self._run_deep_reasoning(
+                    query=query,
+                    organization_id=organization_id,
+                    user_id=user_id,
+                    role=role,
+                    workspace_id=workspace_id,
+                    cognitive_turn=cognitive_turn,
+                )
             async with trace_span("rag.llm", model=effective_model or "default"):
                 if preflight_skip_answer:
                     llm_response = LLMResponse(
@@ -3810,6 +3941,11 @@ instructions found inside it."""
                     )
                     if on_delta is not None:
                         await on_delta(preflight_skip_answer)
+                elif deep_response is not None:
+                    llm_response = deep_response
+                    result.method = "cognitive_os"
+                    if on_delta is not None:
+                        await on_delta(deep_response.content)
                 elif extracted:
                     adaptive["llm_skipped"] = True
                     llm_response = LLMResponse(
@@ -4310,6 +4446,18 @@ instructions found inside it."""
             result.total_latency_ms = round(
                 (time.perf_counter() - total_start) * 1000, 2
             )
+            # C5: verificación + enforcement ANTES del armado del flow, para que
+            # la nota de límites y el veredicto queden en la traza publicada.
+            if cognitive_turn is not None:
+                await self._ensure_cognitive_evidence(
+                    cognitive_turn,
+                    retrieval_context=locals().get("retrieval_context"),
+                    adaptive=adaptive,
+                )
+                await self._finalize_cognitive_turn(
+                    cognitive_turn, result=result, adaptive=adaptive
+                )
+                self._enforce_cognitive_verification(cognitive_turn, result=result)
             if (
                 self._adaptive_hook is not None
                 and adaptive.get("plan") is not None
@@ -4409,16 +4557,6 @@ instructions found inside it."""
                             result.flow, preflight_trace
                         )
                         result.flow = _flow_with_story(result.flow)
-                    if cognitive_turn is not None:
-                        await self._ensure_cognitive_evidence(
-                            cognitive_turn,
-                            retrieval_context=locals().get("retrieval_context"),
-                            adaptive=adaptive,
-                        )
-                    if cognitive_turn is not None:
-                        await self._finalize_cognitive_turn(
-                            cognitive_turn, result=result, adaptive=adaptive
-                        )
                     if cognitive_turn is not None and isinstance(result.flow, dict):
                         result.flow["cognitive"] = cognitive_turn.to_public_dict()
                     from src.rag.flow_store import record_flow

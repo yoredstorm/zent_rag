@@ -1069,6 +1069,8 @@ def get_rag_orchestrator() -> RAGOrchestrator:
             preflight_hook=_preflight_hook_or_none(),
             knowledge_model=get_knowledge_model_service(),
             gap_recorder=get_intelligence_store(),
+            cognitive_service=get_cognitive_service(),
+            cognitive_executor=get_cognitive_executor(),
         )
     return _orchestrator
 
