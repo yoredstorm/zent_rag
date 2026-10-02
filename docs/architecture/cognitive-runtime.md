@@ -80,7 +80,7 @@ Estado del turno: `CognitiveTurn` (`src/runtime/cognitive_state.py`): `intent`,
 |---|---|---|
 | S1 Intent | retirar `src/rag/query_intelligence/` (inert); usar `IntelligenceEngine.understand` | C1/C4 |
 | S2 Cognitive Plan | `cognitive_plan.py`: complejidad (existente) + needs `semantic_search · exact_lookup · structured_query · graph_traversal · temporal_lookup · cross_document_reasoning · rule_lookup · conflict_resolution · comparison · aggregation · calculation · external_tool · memory · no_retrieval` con razón por paso | C1 |
-| S3 JEV Preflight | señales nuevas (`entity_resolved`, `exact_lookup_needed`, `deep_reasoning_needed`); determinista primero; JEV solo ambigüedad | C2/C4 |
+| S3 JEV Preflight | señales nuevas (`entity_resolved`, `exact_lookup_declared`, `deep_reasoning_needed`); determinista primero; JEV solo ambigüedad | C2/C4 |
 | S4 Knowledge Strategy | consumir `RetrievalPlan` completo + entity→canonical + scope; trazada | C1/C2 |
 | S5 Retrieval multi-rep | runners: vector (híbrido existente), exact (anchors/needles), structured (`tabular_*`, assertions), graph (canonical objects/edges), temporal (valid_from/to); fail-soft por runner | C2 |
 | S6 Evidence Assembly | engine: dedupe · rank · group · connect · provenance · current-priority · conflictos retenidos · token budget; reemplaza el uso directo de top-K; blackboard cognitivo se retira | C3 |
