@@ -29,6 +29,10 @@ from src.core.domain.entities import (
     IngestionJobStatus,
     KnowledgeBase,
 )
+from src.core.domain.knowledge_events import (
+    KnowledgeEventType,
+    KnowledgeSystemEvent,
+)
 from src.core.domain.knowledge_session import LearningStage
 from src.core.ports import (
     DocumentRegistryRepository,
@@ -721,6 +725,7 @@ class KnowledgeIngestionEngine:
 
         change_kind = await structured_repo.upsert_document(document)
         structured_external_ids.add(external_id)
+        await self._emit_source_superseded(job, document, change_kind)
         if observer is not None:
             document_change = str(change_kind or "")
             if document_change == "unchanged":
@@ -785,6 +790,84 @@ class KnowledgeIngestionEngine:
         )
         await self._compile(job, source, document, observer)
         self.documents_parsed += 1
+
+    # ------------------------------------------------------------------
+    # Eventos de sistema C8 (best-effort: nunca frenan la ingesta)
+    # ------------------------------------------------------------------
+    async def _emit_source_superseded(self, job, document, change_kind) -> None:
+        """SOURCE_SUPERSEDED cuando el documento reemplaza una versión previa.
+
+        Solo aplica con change_kind=="updated" (implica hash distinto al ya
+        persistido) y cuando structured_document_versions ya tiene una versión
+        anterior registrada. Fail-soft: la mirada de versiones nunca rompe el job.
+        """
+        if self._system_emitter is None or str(change_kind or "") != "updated":
+            return
+        try:
+            versions = await _load_document_versions(
+                document.organization_id, document.id
+            )
+            if len(versions) < 2:
+                return
+            current, previous = versions[0], versions[1]
+            payload = {
+                "document_id": str(document.id),
+                "previous_version": int(previous["version"]),
+                "current_version": int(current["version"]),
+                "change_kind": str(change_kind),
+            }
+        except Exception as exc:  # noqa: BLE001 — la emisión es best-effort
+            logger.debug(
+                "source superseded lookup skipped",
+                document_id=str(document.id),
+                error=str(exc)[:160],
+            )
+            return
+        await self._emit_system(
+            KnowledgeEventType.SOURCE_SUPERSEDED,
+            organization_id=document.organization_id,
+            payload=payload,
+            source_id=document.source_id or job.source_id,
+            document_id=document.id,
+        )
+
+    async def _emit_system(
+        self,
+        event_type: KnowledgeEventType,
+        *,
+        organization_id: UUID,
+        payload: dict | None = None,
+        confidence: float | None = None,
+        requires_review: bool | None = None,
+        source_id: UUID | None = None,
+        document_id: UUID | None = None,
+        object_id: UUID | None = None,
+        rule_key: str | None = None,
+    ) -> None:
+        """Emite un evento de dominio C8. Best-effort: nunca interrumpe."""
+        emitter = self._system_emitter
+        if emitter is None:
+            return
+        try:
+            await emitter.emit(
+                KnowledgeSystemEvent(
+                    type=event_type,
+                    organization_id=organization_id,
+                    payload=payload,
+                    confidence=confidence,
+                    requires_review=requires_review,
+                    source_id=source_id,
+                    document_id=document_id,
+                    object_id=object_id,
+                    rule_key=rule_key,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — la emisión es best-effort
+            logger.debug(
+                "knowledge system event skipped",
+                event_type=str(event_type),
+                error=str(exc)[:160],
+            )
 
     def _parse_record(self, record: Record, *, job, source, external_id: str, filename: str):
         """Bytes (o texto ya extraído) -> StructuredDocument del formato real."""
@@ -1730,6 +1813,45 @@ def _is_candidate_key(column) -> bool:
         return float(column.unique_ratio or 0.0) >= 0.98
     except (TypeError, ValueError):
         return False
+
+
+async def _load_document_versions(
+    organization_id: UUID, document_id: UUID
+) -> list[dict]:
+    """Últimas versiones registradas del documento (más nueva primero).
+
+    Fail-soft: sin tabla/DB devuelve [] y el evento simplemente no se emite.
+    """
+    from sqlalchemy import text as _text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    try:
+        session = await get_async_session()
+        try:
+            rows = (
+                await session.execute(
+                    _text(
+                        "SELECT version, change_kind FROM structured_document_versions "
+                        "WHERE organization_id = :oid AND document_id = :did "
+                        "ORDER BY version DESC LIMIT 2"
+                    ),
+                    {"oid": organization_id, "did": document_id},
+                )
+            ).fetchall()
+        finally:
+            await session.close()
+        return [
+            {"version": int(row.version), "change_kind": row.change_kind}
+            for row in rows
+        ]
+    except Exception as exc:  # noqa: BLE001 — la versión nunca frena la ingesta
+        logger.warning(
+            "Knowledge document versions lookup failed",
+            document_id=str(document_id),
+            error=str(exc)[:200],
+        )
+        return []
 
 
 async def _set_source_status(organization_id: UUID, source_id: UUID, status: str) -> None:

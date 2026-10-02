@@ -8,13 +8,17 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
 
+import src.platform.knowledge_model.materializer as materializer_module
+from src.core.domain.knowledge_events import KnowledgeEventType
 from src.core.domain.knowledge_model import (
     ConfidenceSignals,
     GapImpact,
+    GapType,
     HealthDimension,
     KnowledgeObjectStatus,
     aggregate_health,
@@ -148,6 +152,160 @@ def test_status_and_kind_aliases_are_normalized() -> None:
     assert normalize_object_type("rule") == "business_rule"
     assert normalize_object_type("glossary_term") == "term"
     assert normalize_object_type("entity") == "entity"
+
+
+# ---------------------------------------------------------------------------
+# C8: eventos de sistema del materializer (repo/sesión/emisor fake)
+# ---------------------------------------------------------------------------
+
+
+class FakeSystemEmitter:
+    """Emisor C8 en memoria: registra los eventos de dominio emitidos."""
+
+    def __init__(self) -> None:
+        self.events: list = []
+
+    async def emit(self, event) -> None:
+        self.events.append(event)
+
+    def of_type(self, event_type: KnowledgeEventType) -> list:
+        return [event for event in self.events if event.type == event_type]
+
+
+class _FakeResult:
+    def __init__(self, rows: list) -> None:
+        self._rows = rows
+
+    def fetchall(self) -> list:
+        return self._rows
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+class _FakeGapSession:
+    """Sesión fake de `_generate_gaps`: responde solo lo que cada query pide."""
+
+    def __init__(self, occurrences_by_concept: dict[str, int]) -> None:
+        self.occurrences = occurrences_by_concept
+        self.closed = False
+        self.assertion = SimpleNamespace(
+            id=uuid4(),
+            subject_label="Order",
+            predicate="states",
+            object_value="pedido mínimo",
+            confidence=0.4,
+            source_id=None,
+        )
+        self.low_confidence_object = SimpleNamespace(
+            id=uuid4(),
+            kind="rule",
+            name="VAT",
+            confidence=0.4,
+            source_id=None,
+        )
+
+    async def execute(self, statement, params):
+        sql = str(statement)
+        if "SELECT occurrences FROM context_gaps" in sql:
+            return _FakeResult(
+                [(int(self.occurrences.get(params["concept"], 1)),)]
+            )
+        if "FROM knowledge_assertions" in sql:
+            return _FakeResult([self.assertion])
+        if "FROM knowledge_canonical_objects" in sql and "confidence < 0.6" in sql:
+            return _FakeResult([self.low_confidence_object])
+        return _FakeResult([])
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class FakeGapRepo:
+    def __init__(self) -> None:
+        self.gaps: list[dict] = []
+
+    async def upsert_gap(self, organization_id, **kwargs):
+        self.gaps.append(kwargs)
+        return uuid4()
+
+
+class FakeImpactRepo:
+    def __init__(self, counts: dict) -> None:
+        self.counts = counts
+        self.impact_calls: list = []
+
+    async def impact(self, organization_id, object_id):
+        self.impact_calls.append(object_id)
+        return {"count": int(self.counts.get(object_id, 0))}
+
+
+async def test_materializer_emite_gap_detected_solo_para_gaps_nuevos(
+    monkeypatch,
+) -> None:
+    """Un gap con occurrences==1 tras el upsert viaja al emisor; uno repetido no."""
+    org = uuid4()
+    session = _FakeGapSession(
+        {
+            "assertion:Order:states": 1,  # nuevo
+            "object:VAT": 3,  # ya existía en corridas previas
+        }
+    )
+    repo = FakeGapRepo()
+    emitter = FakeSystemEmitter()
+    materializer = KnowledgeModelMaterializer(repo, system_emitter=emitter)
+
+    async def fake_session():
+        return session
+
+    monkeypatch.setattr(materializer_module, "get_async_session", fake_session)
+
+    created = await materializer._generate_gaps(org)
+
+    assert created == 2
+    assert session.closed is True
+    events = emitter.of_type(KnowledgeEventType.KNOWLEDGE_GAP_DETECTED)
+    assert len(events) == 1, "solo el gap nuevo debe emitirse"
+    event = events[0]
+    assert event.organization_id == org
+    assert event.payload["gap_type"] == GapType.UNSUPPORTED_ASSERTION.value
+    assert event.payload["concept"] == "assertion:Order:states"
+    assert event.payload["priority"] in ("critical", "high", "medium", "low")
+    assert event.requires_review is True
+
+
+async def test_materializer_emite_high_impact_solo_sobre_el_umbral() -> None:
+    """Cambios con impacto >= umbral se emiten; por debajo no. Cap de 5."""
+    org = uuid4()
+    high, low = uuid4(), uuid4()
+    repo = FakeImpactRepo({high: 7, low: 2})
+    emitter = FakeSystemEmitter()
+    materializer = KnowledgeModelMaterializer(repo, system_emitter=emitter)
+
+    await materializer._emit_high_impact_changes(
+        org, [("entity", high), ("rule", low)]
+    )
+
+    events = emitter.of_type(KnowledgeEventType.HIGH_IMPACT_CHANGE)
+    assert len(events) == 1
+    event = events[0]
+    assert event.organization_id == org
+    assert event.object_id == high
+    assert event.payload["count"] == 7
+    assert event.payload["threshold"] == 5
+    assert event.requires_review is True
+    assert low in repo.impact_calls, "el bajo también se evalúa pero no se emite"
+
+    # Cap 5: con más objetos cambiados solo se evalúan/emiten los primeros cinco.
+    extra = uuid4()
+    repo.counts = {extra: 9}
+    emitter.events.clear()
+    repo.impact_calls.clear()
+    await materializer._emit_high_impact_changes(
+        org, [("entity", extra) for _ in range(7)]
+    )
+    assert len(repo.impact_calls) == 5
+    assert len(emitter.of_type(KnowledgeEventType.HIGH_IMPACT_CHANGE)) == 5
 
 
 # ---------------------------------------------------------------------------

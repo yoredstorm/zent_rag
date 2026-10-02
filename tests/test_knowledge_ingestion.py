@@ -12,7 +12,9 @@ from uuid import uuid4
 
 import pytest
 
+import src.knowledge.engine.service as engine_service
 from src.core.domain.entities import IngestionJobStatus
+from src.core.domain.knowledge_events import KnowledgeEventType
 from src.core.ports.structured import StructuredDocumentRepository
 from src.infrastructure.postgres.knowledge_repos import (
     PostgresDocumentRegistryRepository,
@@ -112,7 +114,11 @@ async def context():
     }
 
 
-def build_engine(structured_repo: StructuredDocumentRepository | None) -> KnowledgeIngestionEngine:
+def build_engine(
+    structured_repo: StructuredDocumentRepository | None,
+    *,
+    system_emitter: object | None = None,
+) -> KnowledgeIngestionEngine:
     return KnowledgeIngestionEngine(
         job_repo=PostgresIngestionJobRepository(),
         sync_state_repo=PostgresSyncStateRepository(),
@@ -124,6 +130,7 @@ def build_engine(structured_repo: StructuredDocumentRepository | None) -> Knowle
         backoff_base_seconds=1,
         max_attempts_default=2,
         structured_doc_repo=structured_repo,
+        system_emitter=system_emitter,
     )
 
 
@@ -268,3 +275,68 @@ async def test_engine_sin_repo_estructurado_falla_el_job(context) -> None:
     assert structured_repo.documents == []
     assert engine.documents_parsed == 0
     assert vectors.upserted == []
+
+
+# ---------------------------------------------------------------------------
+# C8: SOURCE_SUPERSEDED al registrar una versión actualizada
+# ---------------------------------------------------------------------------
+
+
+class FakeSystemEmitter:
+    """Emisor C8 en memoria: registra los eventos de dominio emitidos."""
+
+    def __init__(self) -> None:
+        self.events: list = []
+
+    async def emit(self, event) -> None:
+        self.events.append(event)
+
+    def of_type(self, event_type: KnowledgeEventType) -> list:
+        return [event for event in self.events if event.type == event_type]
+
+
+class FakeUpdatedStructuredDocRepo(FakeStructuredDocRepo):
+    """Registro V2 que siempre detecta una versión actualizada."""
+
+    async def upsert_document(self, document) -> str:
+        await super().upsert_document(document)
+        return "updated"
+
+
+@pytest.mark.asyncio
+async def test_engine_emite_source_superseded_al_actualizar_version(
+    context, monkeypatch
+) -> None:
+    """Con versión previa real y change_kind=updated se emite SOURCE_SUPERSEDED."""
+    structured_repo = FakeUpdatedStructuredDocRepo()
+    emitter = FakeSystemEmitter()
+    engine = build_engine(structured_repo, system_emitter=emitter)
+
+    async def fake_versions(organization_id, document_id):
+        return [
+            {"version": 2, "change_kind": "updated"},
+            {"version": 1, "change_kind": "created"},
+        ]
+
+    # raising=False: en RED la función todavía no existe y el evento no se emite.
+    monkeypatch.setattr(
+        engine_service, "_load_document_versions", fake_versions, raising=False
+    )
+
+    job_id = await create_job(context)
+    job = await engine.execute_job(job_id)
+    assert job.status == IngestionJobStatus.COMPLETED
+
+    document = structured_repo.documents[0]
+    events = emitter.of_type(KnowledgeEventType.SOURCE_SUPERSEDED)
+    assert len(events) == 1
+    event = events[0]
+    assert event.organization_id == context["organization"].id
+    assert event.document_id == document.id
+    assert event.payload == {
+        "document_id": str(document.id),
+        "previous_version": 1,
+        "current_version": 2,
+        "change_kind": "updated",
+    }
+    assert event.requires_review is True

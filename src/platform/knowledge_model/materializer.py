@@ -18,7 +18,12 @@ from uuid import UUID
 
 from sqlalchemy import text
 
+from src.core.config import get_settings
 from src.core.domain.canonical import CanonicalKind, canonical_uuid
+from src.core.domain.knowledge_events import (
+    KnowledgeEventType,
+    KnowledgeSystemEvent,
+)
 from src.core.domain.knowledge_model import (
     EVIDENCE_STRENGTH,
     AssertionMethod,
@@ -42,6 +47,11 @@ from src.infrastructure.postgres.session import get_async_session
 logger = get_logger(__name__)
 
 _CONFIDENCE_LABELS: dict[str, float] = {"high": 0.9, "medium": 0.7, "low": 0.5}
+
+# C8: topes de eventos de sistema por materialización.
+_GAP_EVENT_CAP = 10
+_HIGH_IMPACT_CHANGE_CAP = 5
+_HIGH_IMPACT_KINDS = frozenset({CanonicalKind.ENTITY.value, CanonicalKind.RULE.value})
 
 _STATUS_MAP: dict[str, str] = {
     "approved": KnowledgeObjectStatus.VERIFIED.value,
@@ -127,10 +137,15 @@ def _freshness_ratio(last_seen: datetime | None, stale_days: int = 14) -> float:
 class KnowledgeModelMaterializer:
     """Materializa el Knowledge Model desde la infraestructura existente."""
 
-    def __init__(self, repository, *, max_columns: int = 5000) -> None:
+    def __init__(
+        self, repository, *, max_columns: int = 5000, system_emitter=None
+    ) -> None:
         self._repo = repository
         self._max_columns = max_columns
         self._summary: dict | None = None
+        # Emisor de eventos de dominio C8 (opcional): sin él, la
+        # materialización mantiene exactamente su comportamiento actual.
+        self._system_emitter = system_emitter
 
     async def materialize(
         self,
@@ -165,6 +180,8 @@ class KnowledgeModelMaterializer:
         entity_objects: dict[str, UUID] = {}
         entity_tables: dict[str, str] = {}
         domain_objects: dict[str, UUID] = {}
+        # Objetos que ya existían y se volvieron a materializar (C8).
+        changed_objects: list[tuple[str, UUID]] = []
 
         async def upsert_object(**kwargs) -> UUID:
             kind = kwargs.pop("kind")
@@ -178,6 +195,8 @@ class KnowledgeModelMaterializer:
                 summary["by_kind_updated"][kind] = (
                     summary["by_kind_updated"].get(kind, 0) + 1
                 )
+                if kind in _HIGH_IMPACT_KINDS:
+                    changed_objects.append((kind, oid))
             else:
                 summary["objects_created"] += 1
                 summary["by_kind_created"][kind] = (
@@ -962,6 +981,7 @@ class KnowledgeModelMaterializer:
         summary["conflicts"] = await self._repo.detect_conflicts(organization_id)
         await self._repo.refresh_object_counters(organization_id)
         summary["gaps"] = await self._generate_gaps(organization_id)
+        await self._emit_high_impact_changes(organization_id, changed_objects)
         self._record_metrics(summary)
         await self._emit_event(
             organization_id, summary, run_id=run_id, source_id=source_id
@@ -1058,10 +1078,147 @@ class KnowledgeModelMaterializer:
         except Exception as exc:  # noqa: BLE001
             logger.debug("knowledge model event skipped", error=str(exc)[:160])
 
+    # ---------------------------------------------------------- eventos C8
+    def _high_impact_threshold(self) -> int:
+        """Umbral determinístico de referencias (setting, fail-soft a 5)."""
+        try:
+            return max(
+                int(
+                    getattr(
+                        get_settings(), "RAG_KNOWLEDGE_HIGH_IMPACT_MIN_REFS", 5
+                    )
+                    or 5
+                ),
+                1,
+            )
+        except Exception:  # noqa: BLE001 — sin settings, umbral por default
+            return 5
+
+    async def _emit_high_impact_changes(
+        self, organization_id: UUID, changed_objects: list[tuple[str, UUID]]
+    ) -> None:
+        """HIGH_IMPACT_CHANGE para reglas/entidades cambiadas con más referencias.
+
+        Score determinístico (`repo.impact`): nunca LLM. Cap 5 por corrida.
+        """
+        if self._system_emitter is None or not changed_objects:
+            return
+        threshold = self._high_impact_threshold()
+        for kind, object_id in changed_objects[:_HIGH_IMPACT_CHANGE_CAP]:
+            try:
+                impact = await self._repo.impact(organization_id, object_id)
+                count = int((impact or {}).get("count") or 0)
+            except Exception as exc:  # noqa: BLE001 — el impacto es best-effort
+                logger.debug(
+                    "knowledge impact lookup failed",
+                    object_id=str(object_id),
+                    error=str(exc)[:160],
+                )
+                continue
+            if count < threshold:
+                continue
+            await self._emit_system(
+                KnowledgeEventType.HIGH_IMPACT_CHANGE,
+                organization_id=organization_id,
+                payload={
+                    "object_id": str(object_id),
+                    "kind": kind,
+                    "count": count,
+                    "threshold": threshold,
+                },
+                object_id=object_id,
+                requires_review=True,
+            )
+
+    async def _emit_new_gaps(
+        self, organization_id: UUID, new_gaps: list[dict]
+    ) -> None:
+        """KNOWLEDGE_GAP_DETECTED para gaps nuevos (cap 10)."""
+        for gap in new_gaps[:_GAP_EVENT_CAP]:
+            await self._emit_system(
+                KnowledgeEventType.KNOWLEDGE_GAP_DETECTED,
+                organization_id=organization_id,
+                payload=gap,
+            )
+
+    async def _emit_system(
+        self,
+        event_type: KnowledgeEventType,
+        *,
+        organization_id: UUID,
+        payload: dict | None = None,
+        confidence: float | None = None,
+        requires_review: bool | None = None,
+        source_id: UUID | None = None,
+        document_id: UUID | None = None,
+        object_id: UUID | None = None,
+        rule_key: str | None = None,
+    ) -> None:
+        """Emite un evento de dominio C8. Best-effort: nunca interrumpe."""
+        emitter = self._system_emitter
+        if emitter is None:
+            return
+        try:
+            await emitter.emit(
+                KnowledgeSystemEvent(
+                    type=event_type,
+                    organization_id=organization_id,
+                    payload=payload,
+                    confidence=confidence,
+                    requires_review=requires_review,
+                    source_id=source_id,
+                    document_id=document_id,
+                    object_id=object_id,
+                    rule_key=rule_key,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — la emisión es best-effort
+            logger.debug(
+                "knowledge system event skipped",
+                event_type=str(event_type),
+                error=str(exc)[:160],
+            )
+
     async def _generate_gaps(self, organization_id: UUID) -> int:
-        """Gaps accionables persistidos (context_gaps), priorizados por impacto."""
+        """Gaps accionables persistidos (context_gaps), priorizados por impacto.
+
+        Cada gap nuevo (occurrences==1 tras el upsert) se emite como
+        KNOWLEDGE_GAP_DETECTED (cap 10) cuando hay emisor de sistema C8.
+        """
         session = await get_async_session()
         created = 0
+        new_gaps: list[dict] = []
+
+        async def upsert_gap(**kwargs) -> None:
+            """Upsert del gap + detección de gap nuevo para la emisión C8."""
+            await self._repo.upsert_gap(organization_id, **kwargs)
+            try:
+                row = (
+                    await session.execute(
+                        text(
+                            "SELECT occurrences FROM context_gaps "
+                            "WHERE organization_id = :org AND gap_type = :gap_type "
+                            "AND concept = :concept"
+                        ),
+                        {
+                            "org": organization_id,
+                            "gap_type": kwargs["gap_type"],
+                            "concept": str(kwargs["concept"])[:160],
+                        },
+                    )
+                ).first()
+            except Exception as exc:  # noqa: BLE001 — la detección es best-effort
+                logger.debug("gap occurrence lookup failed", error=str(exc)[:160])
+                return
+            if row is not None and int(row[0] or 1) == 1:
+                new_gaps.append(
+                    {
+                        "gap_type": kwargs["gap_type"],
+                        "concept": str(kwargs["concept"])[:160],
+                        "priority": kwargs.get("priority", "medium"),
+                    }
+                )
+
         try:
             # 1) Assertions sin evidencia.
             rows = (
@@ -1088,8 +1245,7 @@ class KnowledgeModelMaterializer:
                 priority, score = compute_gap_priority(
                     impact=impact, confidence=r.confidence, ambiguity=0.6, dependents=0.2
                 )
-                await self._repo.upsert_gap(
-                    organization_id,
+                await upsert_gap(
                     gap_type=GapType.UNSUPPORTED_ASSERTION.value,
                     concept=f"assertion:{r.subject_label}:{r.predicate}"[:160],
                     title=f"Sin evidencia: {r.subject_label} {r.predicate}",
@@ -1128,8 +1284,7 @@ class KnowledgeModelMaterializer:
                 priority, score = compute_gap_priority(
                     impact=impact, confidence=r.confidence, ambiguity=0.7, dependents=0.3
                 )
-                await self._repo.upsert_gap(
-                    organization_id,
+                await upsert_gap(
                     gap_type=GapType.LOW_CONFIDENCE.value,
                     concept=f"object:{r.name}"[:160],
                     title=f"Baja confianza: {r.name}",
@@ -1168,8 +1323,7 @@ class KnowledgeModelMaterializer:
                 priority, score = compute_gap_priority(
                     impact=impact, confidence=None, ambiguity=0.5, dependents=0.2
                 )
-                await self._repo.upsert_gap(
-                    organization_id,
+                await upsert_gap(
                     gap_type=GapType.UNKNOWN_DEFINITION.value,
                     concept=f"definition:{r.name}"[:160],
                     title=f"Sin definición: {r.name}",
@@ -1210,8 +1364,7 @@ class KnowledgeModelMaterializer:
                 priority, score = compute_gap_priority(
                     impact=impact, confidence=None, ambiguity=0.5, dependents=0.1
                 )
-                await self._repo.upsert_gap(
-                    organization_id,
+                await upsert_gap(
                     gap_type=GapType.MISSING_RELATIONSHIP.value,
                     concept=f"relationship:{r.name}"[:160],
                     title=f"Sin relaciones: {r.name}",
@@ -1250,8 +1403,7 @@ class KnowledgeModelMaterializer:
                 priority, score = compute_gap_priority(
                     impact=impact, confidence=None, ambiguity=0.6, dependents=0.5
                 )
-                await self._repo.upsert_gap(
-                    organization_id,
+                await upsert_gap(
                     gap_type=GapType.MISSING_METRIC_DEFINITION.value,
                     concept=f"metric:{r.name}"[:160],
                     title=f"Métrica sin definición: {r.name}",
@@ -1290,8 +1442,7 @@ class KnowledgeModelMaterializer:
                 priority, score = compute_gap_priority(
                     impact=impact, confidence=None, ambiguity=0.3, dependents=0.4
                 )
-                await self._repo.upsert_gap(
-                    organization_id,
+                await upsert_gap(
                     gap_type=GapType.STALE_KNOWLEDGE.value,
                     concept=f"source:{r.id}"[:160],
                     title=f"Fuente desactualizada: {r.connector_name or 'Fuente'}",
@@ -1325,8 +1476,7 @@ class KnowledgeModelMaterializer:
                 priority, score = compute_gap_priority(
                     impact=impact, confidence=None, ambiguity=0.9, dependents=0.6
                 )
-                await self._repo.upsert_gap(
-                    organization_id,
+                await upsert_gap(
                     gap_type=GapType.CONTRADICTION.value,
                     concept=f"conflict:{r.subject_label}:{r.predicate}"[:160],
                     title=f"Contradicción: {r.subject_label} {r.predicate}",
@@ -1342,6 +1492,7 @@ class KnowledgeModelMaterializer:
                 )
                 created += 1
 
+            await self._emit_new_gaps(organization_id, new_gaps)
             return created
         except Exception as exc:  # noqa: BLE001
             logger.warning("gap generation failed", error=str(exc)[:240])

@@ -546,6 +546,15 @@ class Settings(BaseSettings):
             "Si está OFF, los eventos siguen durables en knowledge_events."
         ),
     )
+    RAG_KNOWLEDGE_HIGH_IMPACT_MIN_REFS: int = Field(
+        default=5,
+        ge=1,
+        le=10000,
+        description=(
+            "Umbral determinístico de referencias (edges/assertions/agentes) "
+            "para emitir HIGH_IMPACT_CHANGE tras materializar conocimiento."
+        ),
+    )
     RAG_KNOWLEDGE_LLM_MODEL: str = Field(
         default="",
         description=(
