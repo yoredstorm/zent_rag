@@ -896,6 +896,7 @@ def get_knowledge_model_service():
         materializer = KnowledgeModelMaterializer(
             repository,
             max_columns=get_settings().KNOWLEDGE_MODEL_MAX_COLUMNS,
+            system_emitter=_knowledge_system_emitter(),
         )
         _knowledge_model_service = KnowledgeModelService(repository, materializer)
     return _knowledge_model_service
