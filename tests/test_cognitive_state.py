@@ -118,3 +118,16 @@ def test_jev_signals_entidad_resuelta(monkeypatch) -> None:
     signals = turn.jev_signals()
     assert signals["exact_lookup_declared"] is True
     assert signals["entity_resolved"] is True
+
+
+def test_turn_publica_run_id_y_deep(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "active")
+    turn = CognitiveTurn(query="q")
+    payload = turn.to_public_dict()
+    assert payload["run_id"] is None
+    assert payload["deep"] is None
+    turn.run_id = "run-123"
+    turn.deep = {"status": "completed", "metrics": {"tokens": 120}}
+    payload = turn.to_public_dict()
+    assert payload["run_id"] == "run-123"
+    assert payload["deep"]["metrics"]["tokens"] == 120

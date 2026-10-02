@@ -45,6 +45,8 @@ class CognitiveTurn:
     budget: "BudgetReport | None" = None
     loop: "LoopReport | None" = None
     learning: tuple["LearningSignal", ...] = ()
+    run_id: str | None = None
+    deep: dict | None = None
     notes: list[dict] = field(default_factory=list)
 
     def add_note(self, stage: str, detail: str) -> None:
@@ -97,4 +99,6 @@ class CognitiveTurn:
         )
         payload["loop"] = self.loop.to_public_dict() if self.loop is not None else None
         payload["learning"] = [signal.to_public_dict() for signal in self.learning]
+        payload["run_id"] = self.run_id
+        payload["deep"] = dict(self.deep) if self.deep is not None else None
         return payload
