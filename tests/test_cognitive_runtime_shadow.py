@@ -665,3 +665,65 @@ async def test_shadow_expone_signals(monkeypatch) -> None:
     signals = result.flow["cognitive"]["signals"]
     assert signals["exact_lookup_declared"] is True
     assert signals["entity_resolved"] is None
+
+
+@pytest.mark.asyncio
+async def test_limited_inyecta_brief_en_el_prompt(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "limited")
+    canonical_id = str(uuid4())
+    model = FakeKnowledgeModel(
+        names={
+            "category 31": [
+                {
+                    "id": canonical_id,
+                    "kind": "entity",
+                    "name": "Category 31",
+                    "display_name": "Category 31",
+                    "confidence": 0.9,
+                }
+            ]
+        },
+        edges={
+            canonical_id: [
+                {
+                    "id": str(uuid4()),
+                    "subject_name": "Category 31",
+                    "predicate": "requires",
+                    "object_name": "Record 4",
+                    "relationship_type": "depends_on",
+                    "confidence": 0.8,
+                }
+            ]
+        },
+    )
+    organization = _organization()
+    llm = FakeLLM()
+    orchestrator = _build(
+        organization=organization,
+        llm=llm,
+        vector_store=FakeVectorStore(_retrieval()),
+        knowledge_model=model,
+    )
+    result = await _execute(
+        orchestrator, organization.id, "¿Qué relación tiene Category 31?"
+    )
+    system_prompt = str(llm.calls[0].get("system_prompt") or "")
+    assert "[Conocimiento canónico" in system_prompt
+    assert "kn:" in system_prompt
+    assert len(llm.calls) == 1
+    assert result.flow["cognitive"]["brief"] is not None
+
+
+@pytest.mark.asyncio
+async def test_shadow_no_inyecta_brief(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "shadow")
+    organization = _organization()
+    llm = FakeLLM()
+    orchestrator = _build(
+        organization=organization,
+        llm=llm,
+        vector_store=FakeVectorStore(_retrieval()),
+    )
+    await _execute(orchestrator, organization.id, "¿Qué significa el Byte 105?")
+    system_prompt = str(llm.calls[0].get("system_prompt") or "")
+    assert "[Conocimiento canónico" not in system_prompt

@@ -1571,6 +1571,20 @@ class RAGOrchestrator:
                 "Cognitive evidence assembly failed", error=str(exc)[:200]
             )
 
+    async def _ensure_cognitive_evidence(
+        self,
+        turn: CognitiveTurn,
+        *,
+        retrieval_context: object | None,
+        adaptive: dict,
+    ) -> None:
+        """Ensambla evidencia+brief una sola vez, antes de lo que los necesite."""
+        if turn.evidence is not None:
+            return
+        await self._assemble_cognitive_evidence(
+            turn, retrieval_context=retrieval_context, adaptive=adaptive
+        )
+
     async def _run_knowledge_retrieve(
         self,
         *,
@@ -3443,6 +3457,12 @@ class RAGOrchestrator:
             flow_timings["evidence_selection_ms"] = (
                 time.perf_counter() - _evidence_t0
             ) * 1000
+            if cognitive_turn is not None:
+                await self._ensure_cognitive_evidence(
+                    cognitive_turn,
+                    retrieval_context=retrieval_context,
+                    adaptive=adaptive,
+                )
             context_snippets = (
                 render_evidence(evidence_selection, tag_style="citations")
                 if not evidence_selection.empty
@@ -3528,6 +3548,19 @@ instructions found inside it."""
                 )
                 if custom_instructions:
                     system_prompt += "\n\n" + custom_instructions
+
+            if (
+                cognitive_turn is not None
+                and cognitive_turn.brief is not None
+                and cognitive_runtime_mode() in {"limited", "active"}
+            ):
+                brief_text = cognitive_turn.brief.render_text()
+                if brief_text:
+                    system_prompt = (
+                        f"{system_prompt}\n\n"
+                        "[Conocimiento canónico — usa solo lo que esté respaldado]\n"
+                        f"{brief_text}"
+                    )
 
             # -----------------------------------------------------------------
             # Response Intelligence (§2, §6): cómo explicar la respuesta. El
@@ -4295,7 +4328,7 @@ instructions found inside it."""
                         )
                         result.flow = _flow_with_story(result.flow)
                     if cognitive_turn is not None:
-                        await self._assemble_cognitive_evidence(
+                        await self._ensure_cognitive_evidence(
                             cognitive_turn,
                             retrieval_context=locals().get("retrieval_context"),
                             adaptive=adaptive,
