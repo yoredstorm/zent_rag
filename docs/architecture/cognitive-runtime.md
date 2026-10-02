@@ -243,7 +243,7 @@ duplicada,
 | C2 | Runners de representación + entity resolution + señales JEV nuevas | `shadow` (default off) — **shipped** | `docs/superpowers/plans/2026-10-01-cognitive-runtime-c2-representations.md` |
 | C3 | EvidenceAssembly + KnowledgeBrief | `shadow` (default off) — **shipped** | `docs/superpowers/plans/2026-10-01-cognitive-runtime-c3-evidence-brief.md` |
 | C4 | AnswerVerifier único + ruteo L0–L2 + loop/budget + learning signal | `limited` (default off) — **shipped** | `docs/superpowers/plans/2026-10-01-cognitive-runtime-c4-verification-control.md` |
-| C5 | DAG L3+ vía runtime + persistencia runs + link inspector | active L3+ | pendiente |
+| C5 | DAG L3+ vía runtime + persistencia runs + link inspector | active L3+ (default off) — **shipped** | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c5-deep-path.md` |
 | C6 | W3 traza/explicación 3 niveles + portal | — | pendiente |
 | C7 | W4 knowledge_scope + RBAC | — | pendiente |
 | C8 | W5 knowledge events + triggers | — | pendiente |
@@ -252,6 +252,11 @@ duplicada,
 > **C4:** brief en prompt + verificación/budget/loop/learning trazados y gaps
 > persistidos; el enforcement de políticas de verificación y el bloqueo por
 > budget quedan para C5; promoción de modo sujeta a evals (W6).
+>
+> **C5:** Deep path usa el DAG existente (runs persistidos 104/105/108 + link
+> `flow['cognitive']['run_id']` → inspector); enforcement C5 = nota de límites
+> en `active`; `abstain` automático y contabilidad de costo del DAG quedan para
+> W6/C6; promoción sujeta a evals.
 
 ## 16. Verificación
 
