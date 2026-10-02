@@ -19,7 +19,6 @@ from src.core.domain.cognitive import (
     CognitiveTask,
     CognitiveTaskGraph,
     ComplexityLevel,
-    EvidenceBlackboard,
     classify_complexity,
 )
 from src.platform.cognitive.orchestrator import (
@@ -93,7 +92,7 @@ def test_task_graph_detects_cycles_duplicates_and_orders() -> None:
         )
 
 
-def test_message_and_blackboard() -> None:
+def test_message_validation() -> None:
     run_id = uuid4()
     message = AgentMessage(
         run_id=run_id,
@@ -103,26 +102,7 @@ def test_message_and_blackboard() -> None:
         evidence_ids=(uuid4(),),
         confidence=0.96,
     )
-    blackboard = EvidenceBlackboard(run_id=run_id)
-    blackboard.record_message(message)
-    blackboard.record_finding(
-        text="La penalidad es 7%",
-        subject="penalidad",
-        predicate="es",
-        object_value="7%",
-        evidence_ids=(uuid4(),),
-        confidence=0.9,
-    )
-    blackboard.record_question("¿Existe una adenda vigente?")
-    blackboard.record_conflict(
-        from_claim_id=uuid4(), to_claim_id=uuid4(), reason="valores distintos"
-    )
-    snapshot = blackboard.snapshot()
-    assert snapshot["messages"] == 1
-    assert snapshot["findings"] == 1
-    assert snapshot["questions"] == 1
-    assert snapshot["conflicts"] == 1
-    assert len(snapshot["evidence_ids"]) == 2
+    assert message.confidence == 0.96
 
     with pytest.raises(ValueError):
         AgentMessage(

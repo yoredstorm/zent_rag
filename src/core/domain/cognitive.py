@@ -2,7 +2,7 @@
 # Domain Layer — Cognitive OS (Phase 3)
 # =============================================================================
 # Contratos puros del supervisor cognitivo: complejidad, presupuesto, tareas,
-# task graph (DAG validado), mensajes entre agentes y blackboard de evidencia.
+# task graph (DAG validado) y mensajes entre agentes.
 #
 # Leyes:
 #   - Toda tarea/run pertenece a UNA organización (tenant isolation).
@@ -394,7 +394,7 @@ class CognitiveTaskGraph:
 
 
 # ---------------------------------------------------------------------------
-# Run + messages + blackboard
+# Run + messages
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True, kw_only=True)
@@ -475,75 +475,3 @@ class AgentExecution:
         if self.cost_usd < 0:
             raise ValueError("AgentExecution.cost_usd must be >= 0")
 
-
-class EvidenceBlackboard:
-    """Per-run shared workspace (brief §26); conclusions + evidence only."""
-
-    def __init__(self, *, run_id: UUID) -> None:
-        self.run_id = run_id
-        self._messages: list[AgentMessage] = []
-        self._findings: list[dict] = []
-        self._questions: list[str] = []
-        self._conflicts: list[dict] = []
-        self._evidence_ids: list[UUID] = []
-
-    def record_message(self, message: AgentMessage) -> None:
-        if message.run_id != self.run_id:
-            raise ValueError("AgentMessage.run_id does not match this blackboard")
-        self._messages.append(message)
-        self._evidence_ids.extend(message.evidence_ids)
-
-    def record_finding(
-        self,
-        *,
-        text: str,
-        subject: str,
-        predicate: str,
-        object_value: str | None = None,
-        evidence_ids: tuple[UUID, ...] = (),
-        confidence: float = 0.0,
-    ) -> UUID:
-        if not text.strip() or not subject.strip() or not predicate.strip():
-            raise ValueError("findings require text, subject and predicate")
-        if not 0.0 <= confidence <= 1.0:
-            raise ValueError("finding confidence must be within [0, 1]")
-        finding_id = uuid4()
-        self._findings.append(
-            {
-                "id": str(finding_id),
-                "text": text,
-                "subject": subject,
-                "predicate": predicate,
-                "object_value": object_value,
-                "evidence_ids": [str(e) for e in evidence_ids],
-                "confidence": confidence,
-            }
-        )
-        self._evidence_ids.extend(evidence_ids)
-        return finding_id
-
-    def record_question(self, text: str) -> None:
-        if not text.strip():
-            raise ValueError("question text must not be empty")
-        self._questions.append(text)
-
-    def record_conflict(
-        self, *, from_claim_id: UUID, to_claim_id: UUID, reason: str = ""
-    ) -> None:
-        self._conflicts.append(
-            {
-                "from_claim_id": str(from_claim_id),
-                "to_claim_id": str(to_claim_id),
-                "reason": reason,
-            }
-        )
-
-    def snapshot(self) -> dict:
-        return {
-            "run_id": str(self.run_id),
-            "messages": len(self._messages),
-            "findings": len(self._findings),
-            "questions": len(self._questions),
-            "conflicts": len(self._conflicts),
-            "evidence_ids": list(self._evidence_ids),
-        }

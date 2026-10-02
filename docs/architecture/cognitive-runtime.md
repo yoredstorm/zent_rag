@@ -83,7 +83,7 @@ Estado del turno: `CognitiveTurn` (`src/runtime/cognitive_state.py`): `intent`,
 | S3 JEV Preflight | señales nuevas (`entity_resolved`, `exact_lookup_declared`, `deep_reasoning_needed`); determinista primero; JEV solo ambigüedad | C2/C4 |
 | S4 Knowledge Strategy | consumir `RetrievalPlan` completo + entity→canonical + scope; trazada | C1/C2 |
 | S5 Retrieval multi-rep | runners: vector (híbrido existente), exact (anchors/needles), structured (`tabular_*`, assertions), graph (canonical objects/edges), temporal (valid_from/to); fail-soft por runner | C2 |
-| S6 Evidence Assembly | engine: dedupe · rank · group · connect · provenance · current-priority · conflictos retenidos · token budget; reemplaza el uso directo de top-K; blackboard cognitivo se retira | C3 |
+| S6 Evidence Assembly | engine: dedupe · rank · group · connect · provenance · current-priority · conflictos retenidos · token budget; reemplaza el uso directo de top-K; blackboard cognitivo retirado (C3) | C3 |
 | S7 Compression | `KnowledgeBrief`: Facts · Relations · Rules · Critical excerpts · Supporting excerpts con refs `kn:`/`ev:`; budget determinista (estructurado primero) | C3 |
 | S8 Reasoning | L0 determinista · L1 LLM barato · L2 fuerte · L3+ DAG (`src/platform/cognitive/executor.py`) consumiendo EvidencePackage+Brief; tools siguen en `AgentRuntime` | C4/C5 |
 | S9 Verification | `AnswerVerifier` único (soporte/conflicto/outdated/unsupported) → ledger; políticas approve/revise/abstain/limit; unifica adaptive claims + `fact_checker` | C4 |
@@ -241,7 +241,7 @@ de respuesta lo exige), `src/knowledge/compiler/pipeline.py`,
 |---|---|---|---|
 | C1 | TurnState + cognitive plan + strategy + traza (shadow kernel) | `shadow` (default off) — **shipped** | `docs/superpowers/plans/2026-10-01-cognitive-runtime-c1-shadow-kernel.md` |
 | C2 | Runners de representación + entity resolution + señales JEV nuevas | `shadow` (default off) — **shipped** | `docs/superpowers/plans/2026-10-01-cognitive-runtime-c2-representations.md` |
-| C3 | EvidenceAssembly + KnowledgeBrief | shadow | pendiente |
+| C3 | EvidenceAssembly + KnowledgeBrief | `shadow` (default off) — **shipped** | `docs/superpowers/plans/2026-10-01-cognitive-runtime-c3-evidence-brief.md` |
 | C4 | AnswerVerifier único + ruteo L0–L2 + loop/budget + learning signal | limited | pendiente |
 | C5 | DAG L3+ vía runtime + persistencia runs + link inspector | active L3+ | pendiente |
 | C6 | W3 traza/explicación 3 niveles + portal | — | pendiente |
