@@ -170,6 +170,15 @@ class FakeKnowledgeRetriever:
         )
 
 
+class FakeGapRecorder:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def record_gap(self, **kwargs):
+        self.calls.append(kwargs)
+        return "gap-1"
+
+
 def _organization() -> Organization:
     return Organization(id=uuid4(), name="Test", status=OrganizationStatus.ACTIVE)
 
@@ -197,6 +206,7 @@ def _build(
     knowledge_model: Any = None,
     tabular_query: Any = None,
     tabular_sql_first: bool = True,
+    gap_recorder: Any = None,
 ):
     from src.agents.runtime.orchestrator import RAGOrchestrator
 
@@ -210,6 +220,7 @@ def _build(
         knowledge_model=knowledge_model,
         tabular_query=tabular_query,
         tabular_sql_first=tabular_sql_first,
+        gap_recorder=gap_recorder,
     )
 
 
@@ -712,6 +723,46 @@ async def test_limited_inyecta_brief_en_el_prompt(monkeypatch) -> None:
     assert "kn:" in system_prompt
     assert len(llm.calls) == 1
     assert result.flow["cognitive"]["brief"] is not None
+
+
+@pytest.mark.asyncio
+async def test_limited_finaliza_verificacion_reportes_y_gaps(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "limited")
+    recorder = FakeGapRecorder()
+    organization = _organization()
+    llm = FakeLLM(content="El sistema usa blockchain cuántico.")
+    orchestrator = _build(
+        organization=organization,
+        llm=llm,
+        vector_store=FakeVectorStore(_retrieval()),
+        knowledge_model=FakeKnowledgeModel(),
+        gap_recorder=recorder,
+    )
+    result = await _execute(
+        orchestrator, organization.id, "¿Qué relación tiene Category 31?"
+    )
+    cognitive = result.flow["cognitive"]
+    assert cognitive["verification"]["action"] in {"revise", "abstain", "answer_with_limits"}
+    assert cognitive["budget"]["llm_calls"] == 1
+    assert "loop" in cognitive
+    assert recorder.calls  # el claim sin respaldo se persistió como gap
+    assert recorder.calls[0]["gap_type"] == "CONTEXT_MISSING"
+
+
+@pytest.mark.asyncio
+async def test_shadow_no_persiste_gaps(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "shadow")
+    recorder = FakeGapRecorder()
+    organization = _organization()
+    orchestrator = _build(
+        organization=organization,
+        llm=FakeLLM(content="El sistema usa blockchain cuántico."),
+        vector_store=FakeVectorStore(_retrieval()),
+        gap_recorder=recorder,
+    )
+    result = await _execute(orchestrator, organization.id, "¿Qué significa el Byte 105?")
+    assert result.flow["cognitive"]["verification"] is not None
+    assert recorder.calls == []
 
 
 @pytest.mark.asyncio

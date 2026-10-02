@@ -17,7 +17,10 @@ if TYPE_CHECKING:  # solo anotaciones: con `off` no se importa plan/strategy
     from src.runtime.evidence_assembly import EvidencePackage
     from src.runtime.knowledge_brief import KnowledgeBrief
     from src.runtime.knowledge_strategy import KnowledgeStrategy
+    from src.runtime.learning_signal import LearningSignal
     from src.runtime.representation_runners import RunnerResult
+    from src.runtime.turn_reports import BudgetReport, LoopReport
+    from src.runtime.verification import AnswerVerification
 
 COGNITIVE_MODES = ("off", "shadow", "limited", "active")
 
@@ -38,6 +41,10 @@ class CognitiveTurn:
     runners: tuple["RunnerResult", ...] = ()
     evidence: "EvidencePackage | None" = None
     brief: "KnowledgeBrief | None" = None
+    verification: "AnswerVerification | None" = None
+    budget: "BudgetReport | None" = None
+    loop: "LoopReport | None" = None
+    learning: tuple["LearningSignal", ...] = ()
     notes: list[dict] = field(default_factory=list)
 
     def add_note(self, stage: str, detail: str) -> None:
@@ -80,4 +87,14 @@ class CognitiveTurn:
         payload["brief"] = (
             self.brief.to_public_dict() if self.brief is not None else None
         )
+        payload["verification"] = (
+            self.verification.to_public_dict()
+            if self.verification is not None
+            else None
+        )
+        payload["budget"] = (
+            self.budget.to_public_dict() if self.budget is not None else None
+        )
+        payload["loop"] = self.loop.to_public_dict() if self.loop is not None else None
+        payload["learning"] = [signal.to_public_dict() for signal in self.learning]
         return payload

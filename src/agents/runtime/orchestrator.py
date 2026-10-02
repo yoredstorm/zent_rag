@@ -1420,6 +1420,7 @@ class RAGOrchestrator:
         adaptive_hook: object | None = None,
         preflight_hook: object | None = None,
         knowledge_model: object | None = None,
+        gap_recorder: object | None = None,
     ) -> None:
         self._organization_repo = organization_repo
         self._vector_store = vector_store
@@ -1439,6 +1440,7 @@ class RAGOrchestrator:
         self._sql_router = sql_router
         self._intelligence = intelligence
         self._learning = learning
+        self._gap_recorder = gap_recorder
         # Retriever canónico del Knowledge OS: árbol estructurado en la misma
         # colección (children + parents) con el mismo contrato ACL.
         self._knowledge_retriever = knowledge_retriever
@@ -1584,6 +1586,74 @@ class RAGOrchestrator:
         await self._assemble_cognitive_evidence(
             turn, retrieval_context=retrieval_context, adaptive=adaptive
         )
+
+    async def _finalize_cognitive_turn(
+        self,
+        turn: CognitiveTurn,
+        *,
+        result: Any,
+        adaptive: dict,
+    ) -> None:
+        """Verificación + budget + loop + learning. Nunca lanza."""
+        try:
+            from src.runtime.learning_signal import (
+                PERSISTABLE_KINDS,
+                build_learning_signals,
+            )
+            from src.runtime.turn_reports import (
+                build_budget_report,
+                build_loop_report,
+            )
+            from src.runtime.verification import verify_answer
+
+            usage = result.llm_response
+            answer = str(getattr(usage, "content", "") or "")
+            package = turn.evidence
+            if package is not None:
+                turn.verification = verify_answer(answer, package)
+            complexity = (
+                turn.plan.complexity.value if turn.plan is not None else None
+            )
+            tokens = int(getattr(usage, "total_tokens", 0) or 0) if usage else 0
+            turn.budget = build_budget_report(
+                complexity=complexity,
+                llm_calls=1 if usage else 0,
+                tokens=tokens,
+                elapsed_ms=float(getattr(result, "total_latency_ms", 0.0) or 0.0),
+            )
+            turn.loop = build_loop_report(adaptive)
+            turn.learning = build_learning_signals(
+                entities=turn.entities,
+                package=package,
+                verification=turn.verification,
+                requires_knowledge=bool(
+                    turn.plan.requires_knowledge if turn.plan is not None else False
+                ),
+            )
+            if (
+                self._gap_recorder is not None
+                and cognitive_runtime_mode() in {"limited", "active"}
+            ):
+                for signal in turn.learning:
+                    if signal.kind not in PERSISTABLE_KINDS:
+                        continue
+                    try:
+                        await self._gap_recorder.record_gap(  # type: ignore[union-attr]
+                            organization_id=result.organization_id,
+                            gap_type="CONTEXT_MISSING",
+                            concept=signal.concept,
+                            hints=[signal.detail],
+                            question=turn.query,
+                            impact=signal.priority,
+                        )
+                    except Exception as gap_exc:  # noqa: BLE001
+                        logger.warning(
+                            "Cognitive gap record failed", error=str(gap_exc)[:160]
+                        )
+        except Exception as exc:  # noqa: BLE001 — observación fail-soft
+            logger.warning(
+                "Cognitive turn finalize failed", error=str(exc)[:200]
+            )
 
     async def _run_knowledge_retrieve(
         self,
@@ -4332,6 +4402,10 @@ instructions found inside it."""
                             cognitive_turn,
                             retrieval_context=locals().get("retrieval_context"),
                             adaptive=adaptive,
+                        )
+                    if cognitive_turn is not None:
+                        await self._finalize_cognitive_turn(
+                            cognitive_turn, result=result, adaptive=adaptive
                         )
                     if cognitive_turn is not None and isinstance(result.flow, dict):
                         result.flow["cognitive"] = cognitive_turn.to_public_dict()

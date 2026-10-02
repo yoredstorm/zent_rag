@@ -1068,6 +1068,7 @@ def get_rag_orchestrator() -> RAGOrchestrator:
             adaptive_hook=_adaptive_hook_or_none(),
             preflight_hook=_preflight_hook_or_none(),
             knowledge_model=get_knowledge_model_service(),
+            gap_recorder=get_intelligence_store(),
         )
     return _orchestrator
 

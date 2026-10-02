@@ -60,6 +60,23 @@ def test_turn_publica_evidence_y_brief(monkeypatch) -> None:
     assert [section["kind"] for section in payload["brief"]["sections"]][0] == "facts"
 
 
+def test_turn_publica_verificacion_budget_loop_learning(monkeypatch) -> None:
+    from src.runtime.evidence_assembly import EvidencePackage
+    from src.runtime.turn_reports import build_budget_report, build_loop_report
+    from src.runtime.verification import verify_answer
+
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "shadow")
+    turn = CognitiveTurn(query="q")
+    turn.verification = verify_answer("", EvidencePackage())
+    turn.budget = build_budget_report(complexity="L1", llm_calls=1, tokens=100, elapsed_ms=10)
+    turn.loop = build_loop_report({})
+    payload = turn.to_public_dict()
+    assert payload["verification"]["action"] == "approve"
+    assert payload["budget"]["complexity"] == "L1"
+    assert payload["loop"]["count"] == 0
+    assert payload["learning"] == []
+
+
 def test_jev_signals_sin_entidades(monkeypatch) -> None:
     monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "shadow")
     query = "¿Aplica la regla 12?"
