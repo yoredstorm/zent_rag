@@ -6,7 +6,7 @@ import { api, platformApi, type Session } from "../api";
 import { useAuth } from "../auth";
 import { usePlatformAuth } from "../platformAuth";
 import { visibleNavLeaves } from "../lib/nav";
-import { platformNavLeaves } from "../lib/platformNav";
+import { visiblePlatformNav } from "../lib/platformNav";
 import { useEntitlements } from "../lib/entitlements";
 import { Kbd } from "./ui/code";
 import { Skeleton } from "./ui/states";
@@ -98,15 +98,20 @@ async function buildTenantCommands(session: Session, entitlements: Record<string
   ];
 }
 
-async function buildPlatformCommands(token: string): Promise<Command[]> {
-  const nav = platformNavLeaves().map((l) => ({
-    id: `nav-${l.to}`,
-    label: l.label,
-    group: "Navegación",
-    to: l.to,
-    icon: l.icon,
-    keywords: l.to,
-  }));
+async function buildPlatformCommands(
+  token: string,
+  permissions?: string[]
+): Promise<Command[]> {
+  const nav = visiblePlatformNav(permissions)
+    .flatMap((g) => g.items)
+    .map((l) => ({
+      id: `nav-${l.to}`,
+      label: l.label,
+      group: "Navegación",
+      to: l.to,
+      icon: l.icon,
+      keywords: l.to,
+    }));
   const tenants = await platformApi<{
     organizations: { id: string; name: string; company_name: string | null }[];
   }>("/api/v1/platform/organizations", { token }).catch(
@@ -185,7 +190,7 @@ export function CommandPaletteRoot({ mode }: { mode: PaletteMode }) {
       mode === "tenant" && session
         ? buildTenantCommands(session, entitlements)
         : mode === "platform" && platformSession
-          ? buildPlatformCommands(platformSession.token)
+          ? buildPlatformCommands(platformSession.token, platformSession.permissions)
           : Promise.resolve([]);
     request
       .then(setCommands)

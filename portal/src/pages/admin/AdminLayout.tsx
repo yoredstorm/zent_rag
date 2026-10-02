@@ -6,13 +6,13 @@ import {
   SignOut,
 } from "@phosphor-icons/react";
 import { motion, useReducedMotion } from "motion/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, NavLink, Navigate, Outlet, useLocation } from "react-router-dom";
 import { platformApi } from "../../api";
 import { usePlatformAuth } from "../../platformAuth";
 import {
-  PLATFORM_NAV,
   platformNavContextForPath,
+  visiblePlatformNav,
   type PlatformNavItem,
 } from "../../lib/platformNav";
 import { CommandPaletteRoot, openCommandPalette } from "../../components/CommandPalette";
@@ -142,14 +142,17 @@ function ControlNav({
   collapsed,
   instanceId,
   onNavigate,
+  permissions,
 }: {
   collapsed: boolean;
   instanceId: string;
   onNavigate?: () => void;
+  permissions?: string[];
 }) {
   const { pathname } = useLocation();
   const [query, setQuery] = useState("");
   const [collapsedGroups, setCollapsedGroups] = useState<string[]>(readCollapsedGroups);
+  const navGroups = useMemo(() => visiblePlatformNav(permissions), [permissions]);
 
   useEffect(() => {
     try {
@@ -162,7 +165,8 @@ function ControlNav({
   // Un grupo colapsado que contiene la ruta activa se abre solo.
   useEffect(() => {
     setCollapsedGroups((prev) => {
-      const hiddenActive = PLATFORM_NAV.filter((g) => prev.includes(g.label))
+      const hiddenActive = navGroups
+        .filter((g) => prev.includes(g.label))
         .filter((g) =>
           g.items.some(
             (item) =>
@@ -173,11 +177,11 @@ function ControlNav({
       if (hiddenActive.length === 0) return prev;
       return prev.filter((label) => !hiddenActive.includes(label));
     });
-  }, [pathname]);
+  }, [pathname, navGroups]);
 
   const q = query.trim().toLowerCase();
   const flat = q
-    ? PLATFORM_NAV.flatMap((g) => g.items).filter((item) =>
+    ? navGroups.flatMap((g) => g.items).filter((item) =>
         item.label.toLowerCase().includes(q)
       )
     : [];
@@ -226,7 +230,7 @@ function ControlNav({
             </div>
           )
         ) : (
-          PLATFORM_NAV.map((group) => {
+          navGroups.map((group) => {
             const groupCollapsed = collapsedGroups.includes(group.label);
             return (
               <div key={group.label}>
@@ -320,7 +324,12 @@ function AdminSidebar({
         </>
       )}
 
-      <ControlNav collapsed={collapsed} instanceId={instanceId} onNavigate={onNavigate} />
+      <ControlNav
+        collapsed={collapsed}
+        instanceId={instanceId}
+        onNavigate={onNavigate}
+        permissions={session?.permissions}
+      />
 
       <div className={cn("mt-2 border-t border-border py-3", collapsed ? "px-2" : "px-3")}>
         {!collapsed && identity && (

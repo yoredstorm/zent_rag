@@ -32,7 +32,13 @@ import {
   type Icon,
 } from "@phosphor-icons/react";
 
-export type PlatformNavItem = { to: string; label: string; icon: Icon; end?: boolean };
+export type PlatformNavItem = {
+  to: string;
+  label: string;
+  icon: Icon;
+  end?: boolean;
+  permission?: string;
+};
 export type PlatformNavGroup = { label: string; items: PlatformNavItem[] };
 
 const BASE = "/control-center";
@@ -43,7 +49,7 @@ export const PLATFORM_NAV: PlatformNavGroup[] = [
     label: "Business",
     items: [
       { to: `${BASE}`, label: "Overview", icon: Gauge, end: true },
-      { to: `${BASE}/tenants`, label: "Tenants", icon: Buildings },
+      { to: `${BASE}/tenants`, label: "Tenants", icon: Buildings, permission: "tenant.read" },
       { to: `${BASE}/customers`, label: "Customers", icon: UsersThree },
       { to: `${BASE}/subscriptions`, label: "Subscriptions", icon: Cards },
       { to: `${BASE}/revenue`, label: "Revenue", icon: TrendUp },
@@ -93,7 +99,7 @@ export const PLATFORM_NAV: PlatformNavGroup[] = [
       { to: `${BASE}/risk-center`, label: "Risk Center", icon: ShieldWarning },
       { to: `${BASE}/governance`, label: "Governance", icon: ShieldCheck },
       { to: `${BASE}/compliance`, label: "Compliance", icon: ShieldCheck },
-      { to: `${BASE}/audit`, label: "Audit", icon: Scroll },
+      { to: `${BASE}/audit`, label: "Audit", icon: Scroll, permission: "audit.read" },
       { to: `${BASE}/audit-intel`, label: "Audit Intelligence", icon: ShieldWarning },
     ],
   },
@@ -118,11 +124,20 @@ export const PLATFORM_NAV: PlatformNavGroup[] = [
       { to: `${BASE}/ecosystem`, label: "Ecosystem", icon: Storefront },
       { to: `${BASE}/notifications`, label: "Notifications", icon: BellSimple },
       { to: `${BASE}/onboarding`, label: "Onboarding", icon: RocketLaunch },
-      { to: `${BASE}/security`, label: "Security", icon: ShieldCheck },
-      { to: `${BASE}/settings`, label: "Settings", icon: UsersThree },
+      { to: `${BASE}/security`, label: "Security", icon: ShieldCheck, permission: "platform.users.manage" },
+      { to: `${BASE}/settings`, label: "Settings", icon: UsersThree, permission: "platform.settings.manage" },
     ],
   },
 ];
+
+export function visiblePlatformNav(permissions?: string[]): PlatformNavGroup[] {
+  if (!permissions || permissions.length === 0) return PLATFORM_NAV;
+  const allow = new Set(permissions);
+  return PLATFORM_NAV.map((g) => ({
+    ...g,
+    items: g.items.filter((it) => !it.permission || allow.has(it.permission) || allow.has("*")),
+  })).filter((g) => g.items.length > 0);
+}
 
 export function platformNavLeaves(): PlatformNavItem[] {
   return PLATFORM_NAV.flatMap((g) => g.items);
