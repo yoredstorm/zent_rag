@@ -951,3 +951,44 @@ def test_real_execution_regression_explains_every_difference() -> None:
         if item["code"] == "MAX_TOKENS_RECOVERY"
     )
     assert recovery["params"]["impact"] == "RECOVERED_NO_IMPACT"
+
+
+# ---------------------------------------------------------------------------
+# §C6 — sección cognitiva
+# ---------------------------------------------------------------------------
+
+
+def test_seccion_cognitive_presente_y_estable() -> None:
+    flow = _flow()
+    flow["cognitive"] = {
+        "mode": "active",
+        "run_id": "run-1",
+        "plan": {"complexity": "L3"},
+        "strategy": {"primary": "exact", "representations": [{"representation": "exact"}]},
+        "entities": {"resolved": True, "mentions": []},
+        "evidence": {"count": 2, "counts": {"fact": 1}, "conflicts": [{"key": "k"}]},
+        "brief": {"chars": 200},
+        "verification": {"action": "approve"},
+        "budget": {"within_budget": True},
+        "loop": {"count": 1, "exhausted": False},
+        "learning": [{"kind": "conflict"}],
+        "deep": {"status": "completed", "failure_mode": ""},
+    }
+    trace = build_traceability(flow)
+    cognitive = trace["cognitive"]
+    assert cognitive["mode"] == "active"
+    assert cognitive["run_id"] == "run-1"
+    assert cognitive["complexity"] == "L3"
+    assert cognitive["strategy_primary"] == "exact"
+    assert cognitive["representations"] == 1
+    assert cognitive["entities_resolved"] is True
+    assert cognitive["conflicts"] == 1
+    assert cognitive["verification_action"] == "approve"
+    assert cognitive["budget_within"] is True
+    assert cognitive["loop_rounds"] == 1
+    assert cognitive["learning_count"] == 1
+    assert cognitive["deep_status"] == "completed"
+
+    empty = build_traceability(_flow())
+    assert empty["cognitive"]["mode"] is None
+    assert empty["cognitive"]["run_id"] is None

@@ -1022,6 +1022,72 @@ def build_retrieval_section(flow: Mapping[str, Any]) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Cognitiva (C6)
+# ---------------------------------------------------------------------------
+
+
+def _cognitive_section(flow: Mapping | None) -> dict:
+    """Sección cognitiva de la traza (C6): resumen estable, sin texto de UI."""
+    cognitive = flow.get("cognitive") if isinstance(flow, Mapping) else None
+    if not isinstance(cognitive, Mapping):
+        cognitive = {}
+    plan = cognitive.get("plan") if isinstance(cognitive.get("plan"), Mapping) else {}
+    strategy = (
+        cognitive.get("strategy")
+        if isinstance(cognitive.get("strategy"), Mapping)
+        else {}
+    )
+    entities = (
+        cognitive.get("entities")
+        if isinstance(cognitive.get("entities"), Mapping)
+        else {}
+    )
+    evidence = (
+        cognitive.get("evidence")
+        if isinstance(cognitive.get("evidence"), Mapping)
+        else {}
+    )
+    brief = (
+        cognitive.get("brief") if isinstance(cognitive.get("brief"), Mapping) else {}
+    )
+    verification = (
+        cognitive.get("verification")
+        if isinstance(cognitive.get("verification"), Mapping)
+        else {}
+    )
+    budget = (
+        cognitive.get("budget") if isinstance(cognitive.get("budget"), Mapping) else {}
+    )
+    loop = cognitive.get("loop") if isinstance(cognitive.get("loop"), Mapping) else {}
+    deep = cognitive.get("deep") if isinstance(cognitive.get("deep"), Mapping) else {}
+    learning = cognitive.get("learning") if isinstance(cognitive.get("learning"), list) else []
+    representations = strategy.get("representations")
+    conflicts = evidence.get("conflicts")
+    return {
+        "mode": cognitive.get("mode"),
+        "run_id": cognitive.get("run_id"),
+        "complexity": plan.get("complexity"),
+        "strategy_primary": strategy.get("primary"),
+        "representations": (
+            len(representations) if isinstance(representations, list) else None
+        ),
+        "entities_resolved": entities.get("resolved"),
+        "evidence_counts": dict(evidence.get("counts") or {})
+        if isinstance(evidence.get("counts"), Mapping)
+        else {},
+        "conflicts": len(conflicts) if isinstance(conflicts, list) else None,
+        "brief_chars": brief.get("chars"),
+        "verification_action": verification.get("action"),
+        "budget_within": budget.get("within_budget"),
+        "loop_rounds": loop.get("count"),
+        "loop_exhausted": loop.get("exhausted"),
+        "learning_count": len(learning),
+        "deep_status": deep.get("status"),
+        "deep_failure_mode": deep.get("failure_mode") or None,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Invariantes temporales (schema 1, preservados)
 # ---------------------------------------------------------------------------
 
@@ -1494,6 +1560,7 @@ def build_traceability(flow: Mapping[str, Any] | None) -> dict[str, Any]:
         "fallbacks": controls["fallbacks"],
         "diagnostics": diagnostics,
         "presentation": presentation,
+        "cognitive": _cognitive_section(safe),
         # --- espejo schema 1 (misma verdad, nombres históricos) ---
         "counts": counts_legacy,
         "decisions": jev["decisions"],
