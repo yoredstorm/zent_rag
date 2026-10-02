@@ -133,7 +133,9 @@ def register_tools(server, deps: McpDeps | None = None) -> None:
         description=(
             "Semantic search over the organization's knowledge base. "
             "Returns relevant document chunks with scores and metadata. "
-            "Use to find facts, policies or content stored in Zent."
+            "Use to find facts, policies or content stored in Zent. "
+            "Optional `source_ids` narrows results to explicit sources; it "
+            "only reduces the caller's authorized scope, never expands it."
         ),
     )
     async def search_knowledge(
@@ -142,6 +144,7 @@ def register_tools(server, deps: McpDeps | None = None) -> None:
         role: str | None = None,
         filters: dict[str, str] | None = None,
         knowledge_base_id: str | None = None,
+        source_ids: list[str] | None = None,
         ctx: McpSdkContext = None,  # type: ignore[assignment]
     ) -> dict:
         async def _run(*, tenant, role, org_config):
@@ -150,6 +153,12 @@ def register_tools(server, deps: McpDeps | None = None) -> None:
             kb_id = None
             if knowledge_base_id:
                 kb_id = UUID(knowledge_base_id)
+            parsed_sources: list[UUID] = []
+            for raw in source_ids or []:
+                try:
+                    parsed_sources.append(UUID(str(raw)))
+                except (TypeError, ValueError):
+                    continue
             rquery = RetrievalQuery(
                 query=query,
                 organization_id=tenant.tenant_id,
@@ -163,6 +172,7 @@ def register_tools(server, deps: McpDeps | None = None) -> None:
                 strategy="vector",
                 filters=filters or {},
                 query_embedding=embedding if isinstance(embedding, list) else None,
+                source_ids=parsed_sources,
             )
             result = await deps.retriever().retrieve(rquery)
             chunks = [

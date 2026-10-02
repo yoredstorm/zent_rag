@@ -555,7 +555,27 @@ def _citation_dict(citation: Any) -> dict[str, Any]:
     }
 
 
-async def _kb_retrieve(rctx: NodeContext, *, kb_id: UUID, query: str, limit: int) -> dict[str, Any]:
+def _source_ids_from_config(config: dict[str, Any]) -> list[UUID]:
+    """UUIDs válidos de `config.source_ids`; los inválidos se descartan (fail-soft)."""
+    raw = config.get("source_ids")
+    if not isinstance(raw, list):
+        return []
+    source_ids: list[UUID] = []
+    for item in raw:
+        try:
+            source_ids.append(UUID(str(item)))
+        except (TypeError, ValueError):
+            continue
+    return source_ids
+
+
+async def _kb_retrieve(
+    rctx: NodeContext,
+    *,
+    kb_id: UUID,
+    query: str,
+    limit: int,
+) -> dict[str, Any]:
     """Retrieval canónico: árbol estructurado + citations + Evidence Ledger.
 
     Devuelve el material crudo para los modos (search/answer/find_evidence).
@@ -575,6 +595,7 @@ async def _kb_retrieve(rctx: NodeContext, *, kb_id: UUID, query: str, limit: int
             knowledge_base_id=kb_id,
             top_k=limit,
             effective_top_k=limit,
+            source_ids=_source_ids_from_config(rctx.node.config),
         )
     )
     citations = list(build_citations(assembled, limit=limit))
@@ -1528,14 +1549,7 @@ async def _cognitive_scope(rctx: NodeContext, *, kb_id: UUID | None) -> Any:
             groups = list(await user_group_names(rctx.organization_id, rctx.execution.actor_id))
         except Exception as exc:  # noqa: BLE001 — groups best-effort
             logger.warning("cognitive scope groups failed", error=str(exc)[:150])
-    source_ids: list[UUID] = []
-    raw_sources = rctx.node.config.get("source_ids")
-    if isinstance(raw_sources, list):
-        for item in raw_sources:
-            try:
-                source_ids.append(UUID(str(item)))
-            except (TypeError, ValueError):
-                continue
+    source_ids = _source_ids_from_config(rctx.node.config)
     return CognitiveScope(
         organization_id=rctx.organization_id,
         workspace_id=rctx.workspace_id,

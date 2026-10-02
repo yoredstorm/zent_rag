@@ -176,11 +176,13 @@ class FakeEmbedding:
 class FakeRetriever:
     def __init__(self) -> None:
         self.calls = 0
+        self.queries: list = []
 
     async def retrieve(self, query):
         from src.core.domain.entities import RetrievalChunk, RetrievalContext
 
         self.calls += 1
+        self.queries.append(query)
         document_id = uuid4()
         return RetrievalContext(
             chunks=[
@@ -385,6 +387,29 @@ async def test_execute_l1_runs_librarian_and_retrieval() -> None:
     assert len(evidence_repo.records) == 2
     message_types = {m["message_type"] for m in result["messages"]}
     assert {"handoff", "evidence"} <= message_types
+
+
+@pytest.mark.asyncio
+async def test_retrieval_forwards_scope_source_ids() -> None:
+    repo = FakeCognitiveRepository()
+    source_id = uuid4()
+    scope = CognitiveScope(organization_id=uuid4(), source_ids=(source_id,))
+    plan = KnowledgeCognitiveOrchestrator().plan(
+        query="¿Dónde aparece la política de vacaciones?",
+        scope=scope,
+    )
+    seed_run(repo, plan)
+    retriever = FakeRetriever()
+    executor = make_executor(repo, retriever=retriever, evidence_repo=FakeEvidenceRepo())
+
+    await executor.execute_run(
+        organization_id=plan.run.organization_id,
+        run_id=plan.run.id,
+        scope=scope,
+    )
+
+    assert retriever.queries
+    assert retriever.queries[0].source_ids == [source_id]
 
 
 @pytest.mark.asyncio

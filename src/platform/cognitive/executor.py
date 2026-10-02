@@ -478,6 +478,7 @@ class CognitiveExecutor:
             top_k=20,
             score_threshold=0.1,
             query_embedding=list(embedding),
+            source_ids=list(state.scope.source_ids),
         )
         context = await self._deps.retriever.retrieve(rquery)  # type: ignore[union-attr]
 

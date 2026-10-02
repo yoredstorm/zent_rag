@@ -23,8 +23,10 @@ ANSWER_TEXT = "La política permite un descuento máximo del 15% para clientes r
 class _FakeStructuredRetriever:
     def __init__(self, chunks: list[RetrievalChunk]) -> None:
         self._chunks = chunks
+        self.queries: list = []
 
     async def retrieve(self, query, options=None):  # noqa: ANN001
+        self.queries.append(query)
         return AssembledContext(
             children=tuple(self._chunks),
             parents=(),
@@ -113,13 +115,20 @@ async def _kb_setup(async_client: AsyncClient, name: str) -> tuple[dict, str]:
 
 
 async def _run_kb(
-    async_client: AsyncClient, org: dict, kb_id: str, config: dict, *, v2: bool = True
+    async_client: AsyncClient,
+    org: dict,
+    kb_id: str,
+    config: dict,
+    *,
+    v2: bool = True,
+    retriever: _FakeStructuredRetriever | None = None,
 ) -> dict:
     from src.api.deps import get_knowledge_retriever, get_llm_provider
     from src.api.main import app
 
     fake_llm = _FakeLLM()
-    app.dependency_overrides[get_knowledge_retriever] = lambda: _FakeStructuredRetriever([_chunk()])
+    fake_retriever = retriever or _FakeStructuredRetriever([_chunk()])
+    app.dependency_overrides[get_knowledge_retriever] = lambda: fake_retriever
     app.dependency_overrides[get_llm_provider] = lambda: fake_llm
 
     graph = _graph(
@@ -204,6 +213,26 @@ async def test_find_evidence_reports_coverage(async_client: AsyncClient) -> None
     assert output["coverage"]["evidence_count"] >= 1
     assert output["evidence"][0]["page"] == 3
     assert output["sources"] == ["politica-descuentos.pdf"]
+
+
+@pytest.mark.asyncio
+async def test_search_forwards_source_ids_and_drops_invalid(async_client: AsyncClient) -> None:
+    org, kb_id = await _kb_setup(async_client, "KM Scope")
+    source_id = uuid4()
+    retriever = _FakeStructuredRetriever([_chunk()])
+    output = await _run_kb(
+        async_client,
+        org,
+        kb_id,
+        {
+            "query": "política de descuentos",
+            "source_ids": [str(source_id), "no-es-uuid"],
+        },
+        retriever=retriever,
+    )
+    assert output["status"] == "ok"
+    assert retriever.queries
+    assert retriever.queries[0].source_ids == [source_id]
 
 
 @pytest.mark.asyncio

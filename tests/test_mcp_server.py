@@ -363,6 +363,25 @@ class TestMcpTools:
             called = fake_deps["retriever"].queries[0]
             assert called.organization_id == UUID(trial_auth["X-Organization-Id"])
 
+    async def test_search_knowledge_forwards_source_ids(
+        self,
+        trial_auth: dict[str, str],
+        fake_deps: dict,
+    ) -> None:
+        async with mcp_client_ctx() as client:
+            headers = {"Authorization": trial_auth["Authorization"]}
+            source_id = str(uuid4())
+            msg = await _tool_call(
+                client,
+                "search_knowledge",
+                {"query": "paracetamol", "source_ids": [source_id, "no-es-uuid"]},
+                headers,
+            )
+            result = _tool_result(msg)
+            assert result["count"] == 1
+            called = fake_deps["retriever"].queries[0]
+            assert called.source_ids == [UUID(source_id)]
+
     async def test_query_database_exposes_sql_only_to_admin(
         self,
         trial_auth: dict[str, str],
