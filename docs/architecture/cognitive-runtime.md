@@ -244,7 +244,7 @@ duplicada,
 | C3 | EvidenceAssembly + KnowledgeBrief | `shadow` (default off) — **shipped** | `docs/superpowers/plans/2026-10-01-cognitive-runtime-c3-evidence-brief.md` |
 | C4 | AnswerVerifier único + ruteo L0–L2 + loop/budget + learning signal | `limited` (default off) — **shipped** | `docs/superpowers/plans/2026-10-01-cognitive-runtime-c4-verification-control.md` |
 | C5 | DAG L3+ vía runtime + persistencia runs + link inspector | active L3+ (default off) — **shipped** | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c5-deep-path.md` |
-| C6 | W3 traza/explicación 3 niveles + portal | — | pendiente |
+| C6 | W3 traza/explicación 3 niveles + portal **shipped** | — | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c6-trace-portal.md` |
 | C7 | W4 knowledge_scope + RBAC | — | pendiente |
 | C8 | W5 knowledge events + triggers | — | pendiente |
 | C9 | W6 evals completas + poda legacy | cutover | pendiente |
@@ -257,6 +257,10 @@ duplicada,
 > `flow['cognitive']['run_id']` → inspector); enforcement C5 = nota de límites
 > en `active`; `abstain` automático y contabilidad de costo del DAG quedan para
 > W6/C6; promoción sujeta a evals.
+>
+> **C6:** 3 niveles derivados en `cognitive_story` + eventos + sección
+> `cognitive` en trace v2 + componentes portal; inspector de runs profundos
+> enlazado por `run_id`; promoción de modos sujeta a evals (W6).
 
 ## 16. Verificación
 
