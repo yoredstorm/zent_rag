@@ -460,8 +460,27 @@ def get_knowledge_engine():
             usage_tracker=KnowledgeUsageTracker(),
             company_discovery=_company_discovery_hook(settings),
             session_service=get_knowledge_session_service(),
+            system_emitter=_knowledge_system_emitter(),
         )
     return _knowledge_engine
+
+
+def _knowledge_system_emitter():
+    """C8: eventos de conocimiento durables + bus (fail-soft)."""
+    try:
+        from src.platform.knowledge_events.emitter import (
+            KnowledgeSystemEventEmitter,
+        )
+        from src.platform.knowledge_learning.events import KnowledgeEventEmitter
+        from src.platform.knowledge_learning.repository import (
+            PostgresKnowledgeLearningRepository,
+        )
+
+        return KnowledgeSystemEventEmitter(
+            KnowledgeEventEmitter(PostgresKnowledgeLearningRepository())
+        )
+    except Exception:  # noqa: BLE001 — sin emisor, la ingesta sigue igual
+        return None
 
 
 def _company_discovery_hook(settings):
