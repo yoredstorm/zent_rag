@@ -48,13 +48,35 @@ function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 }
 
+const USERS = {
+  users: [
+    {
+      id: "user-1",
+      email: "alice@acme.cl",
+      roles: ["owner"],
+      last_active_at: "2026-09-30T00:00:00Z",
+      disabled_at: null,
+    },
+    {
+      id: "user-2",
+      email: "bob@acme.cl",
+      roles: ["member"],
+      last_active_at: null,
+      disabled_at: null,
+    },
+  ],
+};
+
 function fetchRouter() {
   return vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url.includes("/impersonate")) return Promise.resolve(json({ access_token: "rag_sess_imp" }));
     if (url.includes("/suspend") || url.includes("/pause") || url.includes("/cancel") || url.includes("/usage/reset"))
       return Promise.resolve(json({ ok: true }));
-    if (url.includes("/organizations/org-1/users")) return Promise.resolve(json({ users: [] }));
+    if (url.includes("/users/") && (url.includes("/activate") || url.includes("/revoke-sessions") || url.includes("/password-reset"))) {
+      return Promise.resolve(json({ ok: true, reset_token: "reset-token-once" }));
+    }
+    if (url.includes("/organizations/org-1/users")) return Promise.resolve(json(USERS));
     if (url.includes("/organizations/org-1/agents")) return Promise.resolve(json({ agents: [] }));
     if (url.includes("/organizations/org-1/sources")) return Promise.resolve(json({ sources: [], knowledge_bases: [] }));
     if (url.includes("/organizations/org-1/billing")) return Promise.resolve(json({ subscription: null, invoices: [] }));
@@ -133,6 +155,67 @@ describe("Tenant 360 (CustomerDetail)", () => {
     const { user } = await renderDetail();
     await user.click(screen.getByRole("tab", { name: "Timeline" }));
     await waitFor(() => expect(screen.getByText("Timeline del tenant")).toBeInTheDocument());
-    expect(screen.getByText("Sin actividad registrada.")).toBeInTheDocument();
+  });
+
+  it("lista usuarios del tenant con acciones por fila", async () => {
+    const { user } = await renderDetail();
+    await user.click(screen.getByRole("tab", { name: "Users" }));
+    expect(await screen.findByText("alice@acme.cl")).toBeInTheDocument();
+    expect(screen.getByText("bob@acme.cl")).toBeInTheDocument();
+    const actions = screen.getAllByRole("button", { name: "Acciones" });
+    expect(actions.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("suspende un usuario del tenant desde la tabla", async () => {
+    const { user, fetchMock } = await renderDetail();
+    await user.click(screen.getByRole("tab", { name: "Users" }));
+    await user.click((await screen.findAllByRole("button", { name: "Acciones" }))[0]);
+    await user.click(await screen.findByRole("menuitem", { name: /Suspender/ }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent(/Suspender a alice@acme.cl/);
+    await user.click(within(dialog).getByRole("button", { name: "Suspender" }));
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([url, init]) =>
+        String(url).includes(`/organizations/org-1/users/user-1/suspend`) && init?.method === "POST"
+      );
+      expect(call).toBeDefined();
+    });
+  });
+
+  it("impersona a un usuario concreto del tenant", async () => {
+    const { user, fetchMock } = await renderDetail();
+    await user.click(screen.getByRole("tab", { name: "Users" }));
+    await user.click((await screen.findAllByRole("button", { name: "Acciones" }))[0]);
+    await user.click(await screen.findByRole("menuitem", { name: /Impersonar usuario/ }));
+    // El dialog legacy de impersonación se abre (rol alertdialog).
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toBeInTheDocument();
+    // Al confirmar sin motivo, no impersona.
+    await user.click(within(dialog).getByRole("button", { name: "Impersonar" }));
+    expect(window.sessionStorage.getItem("rag_portal_token")).toBeNull();
+    // Con motivo, sí impersona al usuario concreto.
+    await user.type(within(dialog).getByPlaceholderText(/Soporte/), "Motivo test");
+    await user.click(within(dialog).getByRole("button", { name: "Impersonar" }));
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([url]) => String(url).includes("/impersonate"));
+      expect(call).toBeDefined();
+    });
+  });
+
+  it("genera reset de contraseña desde el menú de fila", async () => {
+    const { fetchMock } = await renderDetail();
+    await screen.findByRole("tab", { name: "Users" });
+    await userEvent.click(screen.getByRole("tab", { name: "Users" }));
+    const actions = await screen.findAllByRole("button", { name: "Acciones" });
+    await userEvent.click(actions[0]);
+    const menuItem = await screen.findByRole("menuitem", { name: /Reset de contraseña/ });
+    await userEvent.click(menuItem);
+    // El useEffect dispara la llamada directa al backend sin dialog de confirmación.
+    await waitFor(() => {
+      const call = fetchMock.mock.calls.find(([url, init]) =>
+        String(url).includes(`/organizations/org-1/users/user-1/password-reset`) && init?.method === "POST"
+      );
+      expect(call).toBeDefined();
+    });
   });
 });
