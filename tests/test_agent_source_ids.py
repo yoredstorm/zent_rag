@@ -475,12 +475,15 @@ async def test_runtime_narrows_knowledge_scope_with_legacy_sources() -> None:
         AgentRunRequest(agent=agent, message="cuentame sobre el record 4", role="admin")
     )
     assert echo.calls
-    assert echo.calls[0].org_config.get("source_ids") == [str(shared)]
+    org_config = echo.calls[0].org_config
+    assert org_config.get("source_ids") == [str(shared)]
+    assert not org_config.get("knowledge_deny")
 
 
 @pytest.mark.asyncio
 async def test_runtime_denies_disjoint_scope_and_legacy_sources() -> None:
     from src.agents.tools.registry import register_tool
+    from src.agents.tools.tools_builtin import SearchKnowledgeTool
     from tests.test_agent_runtime import _agent as runtime_agent
     from tests.test_agent_runtime import _EchoTool
 
@@ -501,8 +504,98 @@ async def test_runtime_denies_disjoint_scope_and_legacy_sources() -> None:
     )
     assert echo.calls
     org_config = echo.calls[0].org_config
+    assert org_config.get("knowledge_deny") is True
     assert org_config.get("source_ids") == []
-    assert not org_config.get("knowledge_base_ids")
+
+    # El deny debe cortar el tool: sin llamar al retriever (una lista vacía
+    # sola no alcanza porque significa "sin filtro").
+    called = {"n": 0}
+
+    class _FakeRetriever:
+        async def retrieve(self, query: RetrievalQuery):
+            called["n"] += 1
+            return RetrievalContext(chunks=[])
+
+    tool = SearchKnowledgeTool(_FakeRetriever())
+    result = await tool.execute(
+        ToolContext(tenant_id=ORG, org_config=org_config), {"query": "record 4"}
+    )
+    assert called["n"] == 0
+    assert result.output == "(fuera del scope autorizado)"
+    assert result.meta.get("scope_denied") is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_denies_disjoint_knowledge_bases_only() -> None:
+    from src.agents.tools.registry import register_tool
+    from tests.test_agent_runtime import _agent as runtime_agent
+    from tests.test_agent_runtime import _EchoTool
+
+    echo = _EchoTool()
+    register_tool(echo)
+    scope_kb, legacy_kb = uuid4(), uuid4()
+    agent = runtime_agent(
+        tools=["echo"],
+        config_json={
+            "knowledge_base_ids": [str(legacy_kb)],
+            "knowledge_scope": {"knowledge_base_ids": [str(scope_kb)]},
+        },
+    )
+    runtime = AgentRuntime(llm_provider=_CaptureLLM())
+    await runtime.run(
+        AgentRunRequest(agent=agent, message="cuentame sobre el record 4", role="admin")
+    )
+    assert echo.calls
+    org_config = echo.calls[0].org_config
+    assert org_config.get("knowledge_deny") is True
+    assert org_config.get("knowledge_base_ids") == []
+
+
+@pytest.mark.asyncio
+async def test_runtime_keeps_matching_knowledge_base_without_deny() -> None:
+    from src.agents.tools.registry import register_tool
+    from tests.test_agent_runtime import _agent as runtime_agent
+    from tests.test_agent_runtime import _EchoTool
+
+    echo = _EchoTool()
+    register_tool(echo)
+    kb_id = uuid4()
+    agent = runtime_agent(
+        tools=["echo"],
+        config_json={
+            "knowledge_base_ids": [str(kb_id)],
+            "knowledge_scope": {"knowledge_base_ids": [str(kb_id)]},
+        },
+    )
+    runtime = AgentRuntime(llm_provider=_CaptureLLM())
+    await runtime.run(
+        AgentRunRequest(agent=agent, message="cuentame sobre el record 4", role="admin")
+    )
+    assert echo.calls
+    org_config = echo.calls[0].org_config
+    assert org_config.get("knowledge_base_ids") == [str(kb_id)]
+    assert not org_config.get("knowledge_deny")
+
+
+@pytest.mark.asyncio
+async def test_query_tabular_data_respects_knowledge_deny() -> None:
+    from src.agents.tools.tools_builtin import QueryTabularDataTool
+
+    called = {"n": 0}
+
+    class _FakeService:
+        async def try_answer(self, *args, **kwargs):
+            called["n"] += 1
+            return None
+
+    tool = QueryTabularDataTool(_FakeService())
+    result = await tool.execute(
+        ToolContext(tenant_id=ORG, org_config={"knowledge_deny": True}),
+        {"query": "posición"},
+    )
+    assert called["n"] == 0
+    assert result.output == "(fuera del scope autorizado)"
+    assert result.meta.get("scope_denied") is True
 
 
 @pytest.mark.asyncio

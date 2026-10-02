@@ -447,6 +447,15 @@ class SearchKnowledgeTool(Tool):
             # búsqueda queda org-wide como antes.
             workspace_ids = self._uuids(ctx, "knowledge_workspace_ids")
             workspace_id = workspace_ids[0] if len(workspace_ids) == 1 else None
+            # C7: scope deliberadamente denegado: no buscar (ni global ni por
+            # KBs legacy). La lista vacía no es señal suficiente porque los
+            # tools la interpretan como "sin filtro".
+            if bool((ctx.org_config or {}).get("knowledge_deny")):
+                return ToolResult(
+                    output="(fuera del scope autorizado)",
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                    meta={"scope_denied": True},
+                )
             query_text = str(arguments["query"])
             from src.intelligence.response.anchors import (
                 dense_query_rewrite,
@@ -821,6 +830,13 @@ class QueryTabularDataTool(Tool):
             return ToolResult(error="query is required", latency_ms=0.0)
         source_ids = self._uuids(ctx, "source_ids")
         kb_ids = self._uuids(ctx, "knowledge_base_ids")
+        # C7: deny explícito del scope (ver SearchKnowledgeTool).
+        if bool((ctx.org_config or {}).get("knowledge_deny")):
+            return ToolResult(
+                output="(fuera del scope autorizado)",
+                latency_ms=0.0,
+                meta={"scope_denied": True},
+            )
         try:
             result = await self._service.try_answer(
                 ctx.tenant_id,

@@ -13,7 +13,7 @@ import json
 import re
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -1540,9 +1540,10 @@ class AgentRuntime:
 
         org_config = dict(request.org_config or {})
         # C7: scope declarativo del agente ∩ scope legacy. El scope nunca
-        # amplía: campo vacío = sin restricción (narrow). Si ambos lados traen
-        # source_ids no vacíos y no se cruzan, se niega la búsqueda (sin caer a
-        # las KBs legacy).
+        # amplía: campo vacío = sin restricción (narrow). Si ambos lados
+        # restringen el mismo campo y no se cruzan, `knowledge_deny` corta la
+        # búsqueda explícitamente: las listas vacías no alcanzan porque los
+        # tools las interpretan como "sin filtro".
         from src.core.domain.knowledge_scope import from_config, narrow
 
         config_json = agent.config_json or {}
@@ -1553,15 +1554,15 @@ class AgentRuntime:
                 "knowledge_base_ids": config_json.get("knowledge_base_ids"),
             }
         )
-        if scope.source_ids or legacy.source_ids:
-            effective = narrow(scope, legacy)
-        else:
-            effective = scope
-        deny_sources = bool(
-            scope.source_ids and legacy.source_ids and not effective.source_ids
+        effective = narrow(scope, legacy)
+        deny = bool(
+            (scope.source_ids and legacy.source_ids and not effective.source_ids)
+            or (
+                scope.knowledge_base_ids
+                and legacy.knowledge_base_ids
+                and not effective.knowledge_base_ids
+            )
         )
-        if deny_sources:
-            effective = replace(effective, source_ids=(), knowledge_base_ids=())
         org_config["source_ids"] = [str(item) for item in effective.source_ids]
         org_config["knowledge_base_ids"] = [
             str(item) for item in effective.knowledge_base_ids
@@ -1569,6 +1570,8 @@ class AgentRuntime:
         org_config["knowledge_workspace_ids"] = [
             str(item) for item in effective.workspace_ids
         ]
+        if deny:
+            org_config["knowledge_deny"] = True
 
         # Inference Proxy: admisión con slot de capacidad y cola por plan.
         proxy_wait_ms = 0.0
