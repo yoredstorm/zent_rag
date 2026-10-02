@@ -242,12 +242,16 @@ duplicada,
 | C1 | TurnState + cognitive plan + strategy + traza (shadow kernel) | `shadow` (default off) — **shipped** | `docs/superpowers/plans/2026-10-01-cognitive-runtime-c1-shadow-kernel.md` |
 | C2 | Runners de representación + entity resolution + señales JEV nuevas | `shadow` (default off) — **shipped** | `docs/superpowers/plans/2026-10-01-cognitive-runtime-c2-representations.md` |
 | C3 | EvidenceAssembly + KnowledgeBrief | `shadow` (default off) — **shipped** | `docs/superpowers/plans/2026-10-01-cognitive-runtime-c3-evidence-brief.md` |
-| C4 | AnswerVerifier único + ruteo L0–L2 + loop/budget + learning signal | limited | pendiente |
+| C4 | AnswerVerifier único + ruteo L0–L2 + loop/budget + learning signal | `limited` (default off) — **shipped** | `docs/superpowers/plans/2026-10-01-cognitive-runtime-c4-verification-control.md` |
 | C5 | DAG L3+ vía runtime + persistencia runs + link inspector | active L3+ | pendiente |
 | C6 | W3 traza/explicación 3 niveles + portal | — | pendiente |
 | C7 | W4 knowledge_scope + RBAC | — | pendiente |
 | C8 | W5 knowledge events + triggers | — | pendiente |
 | C9 | W6 evals completas + poda legacy | cutover | pendiente |
+
+> **C4:** brief en prompt + verificación/budget/loop/learning trazados y gaps
+> persistidos; el enforcement de políticas de verificación y el bloqueo por
+> budget quedan para C5; promoción de modo sujeta a evals (W6).
 
 ## 16. Verificación
 
