@@ -110,6 +110,11 @@ class TemporalRunner:
                         refs={
                             "assertion_id": str(row.get("id") or ""),
                             "canonical_id": match.canonical_id,
+                            "subject_label": str(
+                                row.get("subject_label") or mention.mention
+                            ),
+                            "predicate": str(row.get("predicate") or ""),
+                            "object_value": str(row.get("object_value") or ""),
                             "validity": state,
                             "valid_from": valid_from,
                             "valid_to": valid_to,

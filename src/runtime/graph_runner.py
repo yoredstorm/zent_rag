@@ -67,6 +67,7 @@ class GraphRunner:
                         refs={
                             "edge_id": str(edge.get("id") or ""),
                             "canonical_id": match.canonical_id,
+                            "predicate": predicate,
                             "subject_id": str(edge.get("subject_id") or ""),
                             "object_id": str(edge.get("object_id") or ""),
                         },

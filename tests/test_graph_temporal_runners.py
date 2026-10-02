@@ -92,6 +92,7 @@ async def test_graph_runner_items_con_refs() -> None:
     result = await GraphRunner(lookup).run(_ctx(_resolved(str(uuid4()))))
     assert result.status == "ok"
     assert result.items[0].refs["edge_id"] == edge["id"]
+    assert result.items[0].refs["predicate"] == "requires"
     assert "Record 4" in result.items[0].title
     assert lookup.calls == 1
 
@@ -141,6 +142,8 @@ async def test_temporal_runner_estado_vigencia() -> None:
     states = [item.refs["validity"] for item in result.items]
     assert states == ["historical", "current"]
     assert result.items[0].refs["assertion_id"] == rows[0]["id"]
+    assert result.items[0].refs["object_value"] == "Category 31"
+    assert result.items[0].refs["subject_label"] == "Rule X"
 
 
 @pytest.mark.asyncio
