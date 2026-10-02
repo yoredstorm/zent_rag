@@ -24,6 +24,7 @@ from src.platform.workflows.business_events import (
 from src.platform.workflows.event_registry import (
     catalog_payload,
     get_event_schema,
+    is_registered,
     list_catalog,
 )
 from src.platform.workflows.watchers import (
@@ -162,6 +163,12 @@ def test_knowledge_events_registered_in_catalog() -> None:
         assert schema.category == "knowledge"
         assert schema.business_name
         assert schema.fields, f"{event_id} sin campos de payload"
+
+
+def test_legacy_knowledge_changed_retired() -> None:
+    """C9: el evento legado `knowledge.changed` ya no está registrado."""
+    assert not is_registered("knowledge.changed")
+    assert "knowledge.changed" not in {event.id for event in list_catalog("knowledge")}
 
 
 # ---------------------------------------------------------------------------

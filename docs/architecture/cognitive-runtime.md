@@ -185,15 +185,27 @@ declara en el paquete.
   brief: simple factual · exact literal · structured Excel · graph relationship
   · temporal · conflicting sources · insufficient evidence · multi-document ·
   greeting (no knowledge) · tool-required · knowledge+tool · JEV sin
-  intervención · JEV modifica ruta · verificación falla.
+  intervención · JEV modifica ruta · verificación falla. Implementado en
+  `tests/test_cognitive_eval.py` (14 escenarios determinísticos, sin DB ni LLM
+  real).
 - Métricas: grounding · citas · abstain correcto · latencia · tokens · costo ·
   acuerdo JEV · strategy correcta · rondas de loop.
-- Gates: `shadow → limited` (sin regresión, grounding ≥ baseline, costo
-  acotado) · `limited → active` L0–L2 (suite verde) · L3+ (profundos verdes en
-  budget).
+- **Gates de promoción** (siempre manuales, por admin; nunca automáticas):
+  - `off → shadow`: harness de 14 escenarios verde + `ruff check src tests`
+    limpio + sin regresión (`test_cognitive_runtime_shadow.py`,
+    `test_jev_preflight_flow.py`).
+  - `shadow → limited`: harness verde + portal `npm run typecheck` y vitest
+    verdes + grounding no peor que baseline (comparación shadow existente,
+    `compare_shadow`).
+  - `limited → active` L0–L2: harness verde + evals de `src/rag/evaluation/**`
+    sobre el golden set sin regresión.
+  - `active` L3+: escenarios deep verdes (`test_cognitive_deep_path.py`) +
+    costo del DAG dentro de `CognitiveBudget` (ya aplicado por el executor) y
+    visible en usage (`cognitive_cost_usd`).
 - Cutover (borrado, C9): `query_intelligence`, `knowledge.changed` y
   `POST /cognitive/runs/{id}/execute` (retirados); verificación cognitiva
-  duplicada y flags temporales al cierre de W6.
+  duplicada unificada en `AnswerVerifier` (C4) y sin sub-flags temporales
+  pendientes (solo queda `RAG_COGNITIVE_OS_ENABLED`).
   Rollback: flag a `off`. Migraciones aditivas hasta C9.
 
 ## 12. Archivos
@@ -214,10 +226,10 @@ de respuesta lo exige), `src/knowledge/compiler/pipeline.py`,
 (C5).
 
 **Retirado (C9):** `src/rag/query_intelligence/**`,
-`POST /api/v1/cognitive/runs/{id}/execute` (queda inspección) y el evento
-legado `knowledge.changed`.
-
-**Retirar (C9):** verificación cognitiva duplicada.
+`POST /api/v1/cognitive/runs/{id}/execute` (queda inspección), el evento
+legado `knowledge.changed`, la verificación cognitiva duplicada (unificada en
+`AnswerVerifier` desde C4) y los sub-flags temporales (no queda ninguno; solo
+`RAG_COGNITIVE_OS_ENABLED`).
 
 ## 13. Tablas, migraciones, flags
 
@@ -250,7 +262,7 @@ legado `knowledge.changed`.
 | C6 | W3 traza/explicación 3 niveles + portal **shipped** | — | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c6-trace-portal.md` |
 | C7 | W4 knowledge_scope + RBAC **shipped** | — | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c7-knowledge-scope.md` |
 | C8 | W5 knowledge events + triggers **shipped** | — | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c8-knowledge-events.md` |
-| C9 | W6 evals completas + poda legacy | cutover | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c9-evals-cutover.md` |
+| C9 | W6 evals completas + poda legacy | cutover — **shipped** | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c9-evals-cutover.md` |
 
 > **C4:** brief en prompt + verificación/budget/loop/learning trazados y gaps
 > persistidos; el enforcement de políticas de verificación y el bloqueo por
@@ -283,6 +295,12 @@ legado `knowledge.changed`.
 > `RAG_KNOWLEDGE_HIGH_IMPACT_MIN_REFS`; los filtros leen el payload plano.
 > Workflows aceptan los 7 tipos y sin trigger configurado no corre nada;
 > emisión fail-soft (nunca rompe el pipeline), sin dependencias nuevas.
+>
+> **C9:** harness determinístico de 14 escenarios (`tests/test_cognitive_eval.py`,
+> en CI); costo del DAG visible en usage (`cognitive_cost_usd`); retirados
+> `query_intelligence`, `POST /cognitive/runs/{id}/execute` y el evento legado
+> `knowledge.changed`; gates de promoción documentados en §11 y siempre
+> manuales (admin). Default `off` intacto.
 
 ## 16. Verificación
 
@@ -291,4 +309,5 @@ legado `knowledge.changed`.
 - Regresión relevante: `tests/test_architecture.py`,
   `tests/test_retrieval_planner.py`, `tests/test_jev_preflight_flow.py`,
   `tests/test_rag_query.py` (o suite equivalente), `tests/test_cognitive_*`.
-- Promoción de modo: suite W6 verde en shadow y limited antes de `active`.
+- Promoción de modo: gate de §11 verde y decisión manual del admin; nunca
+  automática.
