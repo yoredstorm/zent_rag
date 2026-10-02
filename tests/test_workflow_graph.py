@@ -614,6 +614,123 @@ async def test_knowledge_event_trigger_dispatches_workflow(
         assert accepted.status_code == 200, accepted.text
 
 
+async def _create_event_workflow(
+    async_client: AsyncClient, org: dict, event_type: str, filters: dict
+) -> str:
+    """Workflow con trigger de evento listo para dispatch (helper de tests)."""
+    created = await async_client.post(
+        "/api/v1/workflows",
+        headers={**_headers(org), "Idempotency-Key": f"kn-c-{uuid4().hex}"},
+        json={
+            "name": "Knowledge trigger",
+            "trigger_type": "event",
+            "steps": [
+                {
+                    "type": "notify",
+                    "config": {"channel": "in_app", "title": "K", "message": "ok"},
+                }
+            ],
+        },
+    )
+    assert created.status_code == 200, created.text
+    wid = created.json()["workflow_id"]
+    trig = await async_client.post(
+        "/api/v1/workflows/triggers",
+        headers={**_headers(org), "Idempotency-Key": f"kn-t-{uuid4().hex}"},
+        json={"workflow_id": wid, "event_type": event_type, "filters": filters},
+    )
+    assert trig.status_code == 200, trig.text
+    return wid
+
+
+def _knowledge_event(org: dict, subject: str, rule_key: str) -> dict:
+    return {
+        "organization_id": org["organization_id"],
+        "event": "knowledge.new_rule",
+        "payload": {"subject": subject, "rule_key": rule_key},
+        "entity_id": f"e-{uuid4().hex}",
+    }
+
+
+@pytest.mark.asyncio
+async def test_event_trigger_filter_matches_nested_payload(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org = await _create_org(async_client, "WF Kn Filtro")
+    org["session"] = await _owner_session(async_client, org["organization_id"])
+    await _create_event_workflow(
+        async_client, org, "knowledge.new_rule", {"subject": "Rule X"}
+    )
+
+    import src.platform.workflows.engine as wf_engine
+
+    calls: list[dict] = []
+
+    async def fake_runner(workflow_id, payload, **kwargs):  # noqa: ANN001, ANN202
+        calls.append({"workflow_id": workflow_id, **kwargs})
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(wf_engine, "run_workflow", fake_runner)
+
+    from src.platform.workflows.events import dispatch_event_to_workflows
+
+    # El filtro ve el payload anidado: subject="Rule X" dispara.
+    fired = await dispatch_event_to_workflows(
+        "knowledge.new_rule", _knowledge_event(org, "Rule X", f"rk-{uuid4().hex}")
+    )
+    assert fired == 1
+    assert len(calls) == 1
+
+    # Otro subject no dispara.
+    no_match = await dispatch_event_to_workflows(
+        "knowledge.new_rule", _knowledge_event(org, "Rule Y", f"rk-{uuid4().hex}")
+    )
+    assert no_match == 0
+    assert len(calls) == 1
+
+    # El top level gana sobre el payload anidado (sin regresión).
+    top_event = _knowledge_event(org, "Rule X", f"rk-{uuid4().hex}")
+    top_event["subject"] = "Rule Z"
+    top_level = await dispatch_event_to_workflows("knowledge.new_rule", top_event)
+    assert top_level == 0
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_event_dedupe_discriminates_nested_payload(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org = await _create_org(async_client, "WF Kn Dedupe")
+    org["session"] = await _owner_session(async_client, org["organization_id"])
+    await _create_event_workflow(async_client, org, "knowledge.new_rule", {})
+
+    import src.platform.workflows.engine as wf_engine
+
+    calls: list[dict] = []
+
+    async def fake_runner(workflow_id, payload, **kwargs):  # noqa: ANN001, ANN202
+        calls.append({"workflow_id": workflow_id, **kwargs})
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(wf_engine, "run_workflow", fake_runner)
+
+    from src.platform.workflows.events import dispatch_event_to_workflows
+
+    # Misma org y tipo, distinto payload.rule_key, dentro del TTL de dedupe:
+    # ambos eventos deben correr. Sin entity_id/id top-level (como publica C8).
+    for _ in range(2):
+        fired = await dispatch_event_to_workflows(
+            "knowledge.new_rule",
+            {
+                "organization_id": org["organization_id"],
+                "event": "knowledge.new_rule",
+                "payload": {"subject": "Rule X", "rule_key": f"rk-{uuid4().hex}"},
+            },
+        )
+        assert fired == 1
+    assert len(calls) == 2
+
+
 # ---------------------------------------------------------------------------
 # Schedules v2
 # ---------------------------------------------------------------------------

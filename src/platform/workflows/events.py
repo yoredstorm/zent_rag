@@ -41,17 +41,46 @@ STANDARD_EVENTS = (
 )
 
 
+def _filter_value(event: dict[str, Any], key: str) -> Any:
+    """Valor del filtro: top level primero, luego `payload` anidado (1 nivel)."""
+    if key in event:
+        return event.get(key)
+    payload = event.get("payload")
+    if isinstance(payload, dict):
+        return payload.get(key)
+    return None
+
+
 def _filters_match(filters: dict[str, Any], payload: dict[str, Any]) -> bool:
-    """Filtro simple: cada clave presente en filters debe existir e igualar."""
+    """Filtro simple: cada clave (top level o payload anidado) debe existir e igualar."""
     for key, expected in (filters or {}).items():
-        if key not in payload:
+        nested = payload.get("payload")
+        if key not in payload and not (isinstance(nested, dict) and key in nested):
             return False
-        actual = payload.get(key)
+        actual = _filter_value(payload, key)
         if isinstance(expected, str) and str(actual) != str(expected):
             return False
         if not isinstance(expected, str) and actual != expected:
             return False
     return True
+
+
+def _dedupe_discriminator(event: dict[str, Any]) -> str:
+    """Identificador del evento para dedupe: top level y luego payload anidado."""
+    nested = event.get("payload")
+    nested = nested if isinstance(nested, dict) else {}
+    for value in (
+        event.get("entity_id"),
+        event.get("id"),
+        nested.get("object_id"),
+        nested.get("rule_key"),
+        nested.get("document_id"),
+        nested.get("assertion_id"),
+        event.get("seq"),
+    ):
+        if value is not None and str(value) != "":
+            return str(value)
+    return ""
 
 
 async def list_event_triggers(organization_id: UUID, workspace_id: UUID | None = None) -> dict:
@@ -199,7 +228,7 @@ async def dispatch_event_to_workflows(event_type: str, payload: dict[str, Any]) 
     finally:
         await session.close()
     fired = 0
-    fingerprint = f"{event_type}:{org_raw}:{str(payload.get('entity_id') or payload.get('id') or '')}"
+    fingerprint = f"{event_type}:{org_raw}:{_dedupe_discriminator(payload)}"
     for row in rows:
         if not _filters_match(row.filters, payload):
             continue
