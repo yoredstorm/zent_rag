@@ -246,7 +246,7 @@ duplicada,
 | C5 | DAG L3+ vía runtime + persistencia runs + link inspector | active L3+ (default off) — **shipped** | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c5-deep-path.md` |
 | C6 | W3 traza/explicación 3 niveles + portal **shipped** | — | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c6-trace-portal.md` |
 | C7 | W4 knowledge_scope + RBAC **shipped** | — | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c7-knowledge-scope.md` |
-| C8 | W5 knowledge events + triggers | — | pendiente |
+| C8 | W5 knowledge events + triggers **shipped** | — | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c8-knowledge-events.md` |
 | C9 | W6 evals completas + poda legacy | cutover | pendiente |
 
 > **C4:** brief en prompt + verificación/budget/loop/learning trazados y gaps
@@ -271,6 +271,15 @@ duplicada,
 > (nunca amplían); lecturas canónicas con `source_ids` aplican regla
 > `source_id = ANY(...) OR source_id IS NULL` (NULL = org-level). RBAC existente
 > manda.
+>
+> **C8:** los 7 tipos de evento de conocimiento se emiten desde
+> compiler/materializer/engine de forma durable en la tabla `knowledge_events`
+> y al bus como `knowledge.<tipo>` (realtime gateado por
+> `RAG_KNOWLEDGE_LIVE_EVENTS_ENABLED`); sin migración nueva.
+> `HIGH_IMPACT_CHANGE` es determinístico con umbral configurable
+> `RAG_KNOWLEDGE_HIGH_IMPACT_MIN_REFS`; los filtros leen el payload plano.
+> Workflows aceptan los 7 tipos y sin trigger configurado no corre nada;
+> emisión fail-soft (nunca rompe el pipeline), sin dependencias nuevas.
 
 ## 16. Verificación
 
