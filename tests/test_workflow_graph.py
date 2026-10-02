@@ -519,6 +519,101 @@ async def test_event_trigger_dispatches_workflow(async_client: AsyncClient) -> N
     assert any(t["event_type"] == "invoice.detected" for t in listed.json()["triggers"])
 
 
+@pytest.mark.asyncio
+async def test_knowledge_event_trigger_dispatches_workflow(
+    async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    org = await _create_org(async_client, "WF Kn Org")
+    org["session"] = await _owner_session(async_client, org["organization_id"])
+    h = _headers(org)
+
+    created = await async_client.post(
+        "/api/v1/workflows",
+        headers={**_headers(org), "Idempotency-Key": f"kn-c-{uuid4().hex}"},
+        json={
+            "name": "En regla nueva",
+            "trigger_type": "event",
+            "steps": [
+                {
+                    "type": "notify",
+                    "config": {
+                        "channel": "in_app",
+                        "title": "REGLA",
+                        "message": "{{trigger.payload.subject}}",
+                    },
+                }
+            ],
+        },
+    )
+    assert created.status_code == 200, created.text
+    wid = created.json()["workflow_id"]
+
+    # create_event_trigger acepta knowledge.new_rule (registro).
+    trig = await async_client.post(
+        "/api/v1/workflows/triggers",
+        headers={**_headers(org), "Idempotency-Key": f"kn-t-{uuid4().hex}"},
+        json={"workflow_id": wid, "event_type": "knowledge.new_rule", "filters": {}},
+    )
+    assert trig.status_code == 200, trig.text
+
+    # Runner fake (mismo patrón que test_workflows): no corre el engine real.
+    import src.platform.workflows.engine as wf_engine
+
+    calls: list[dict] = []
+
+    async def fake_runner(workflow_id, payload, **kwargs):  # noqa: ANN001, ANN202
+        calls.append({"workflow_id": workflow_id, "payload": payload, **kwargs})
+        return {"status": "succeeded"}
+
+    monkeypatch.setattr(wf_engine, "run_workflow", fake_runner)
+
+    from src.platform.workflows.events import dispatch_event_to_workflows
+
+    fired = await dispatch_event_to_workflows(
+        "knowledge.new_rule",
+        {
+            "organization_id": org["organization_id"],
+            "event": "knowledge.new_rule",
+            "payload": {"subject": "Política de reposición", "statement": "Reponer a 10"},
+            "entity_id": f"rule-{uuid4().hex}",
+        },
+    )
+    assert fired == 1
+    assert len(calls) == 1
+    assert str(calls[0]["workflow_id"]) == wid
+    assert calls[0]["trigger"] == "event"
+    assert calls[0]["organization_id"] == UUID(org["organization_id"])
+
+    # Sin trigger configurado para ese tipo → no corre nada.
+    fired2 = await dispatch_event_to_workflows(
+        "knowledge.conflict_detected",
+        {
+            "organization_id": org["organization_id"],
+            "event": "knowledge.conflict_detected",
+            "entity_id": f"conflict-{uuid4().hex}",
+        },
+    )
+    assert fired2 == 0
+    assert len(calls) == 1
+
+    # Los 7 tipos C8 son aceptados por create_event_trigger.
+    from src.core.domain.knowledge_events import KnowledgeEventType
+
+    for tipo in KnowledgeEventType:
+        if tipo.value == "new_rule":
+            continue
+        accepted = await async_client.post(
+            "/api/v1/workflows/triggers",
+            headers={**_headers(org), "Idempotency-Key": f"kn-a-{uuid4().hex}"},
+            json={
+                "workflow_id": wid,
+                "event_type": f"knowledge.{tipo.value}",
+                "filters": {},
+            },
+        )
+        assert accepted.status_code == 200, accepted.text
+
+
 # ---------------------------------------------------------------------------
 # Schedules v2
 # ---------------------------------------------------------------------------

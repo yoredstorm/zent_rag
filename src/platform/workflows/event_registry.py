@@ -201,7 +201,10 @@ _EVENTS: list[EventSchema] = [
     EventSchema(
         id="knowledge.changed",
         business_name="Cambió conocimiento aprobado",
-        description="Un documento o política aprobada cambió de versión.",
+        description=(
+            "Deprecado: usá los eventos knowledge.* específicos. "
+            "Un documento o política aprobada cambió de versión."
+        ),
         category="knowledge",
         icon="book",
         source_kind="internal_event",
@@ -209,6 +212,101 @@ _EVENTS: list[EventSchema] = [
             _field("collection", "Colección", "text", "Políticas de compras"),
             _field("document", "Documento", "text", "politica-reposicion"),
             _field("change", "Cambio", "text", "actualizado"),
+        ],
+    ),
+    EventSchema(
+        id="knowledge.new_entity",
+        business_name="Se detectó una entidad nueva",
+        description="El compilador descubrió una entidad que no existía en el modelo.",
+        category="knowledge",
+        icon="plus",
+        source_kind="internal_event",
+        fields=[
+            _field("name", "Entidad", "text", "MacBook Pro 14"),
+            _field("entity_type", "Tipo", "text", "producto"),
+        ],
+    ),
+    EventSchema(
+        id="knowledge.new_rule",
+        business_name="Se detectó una regla nueva",
+        description="El compilador extrajo una regla de negocio que no existía.",
+        category="knowledge",
+        icon="book",
+        source_kind="internal_event",
+        fields=[
+            _field("subject", "Sujeto", "text", "reposición de stock"),
+            _field("statement", "Regla", "text", "Reponer al llegar a 10 unidades"),
+        ],
+    ),
+    EventSchema(
+        id="knowledge.rule_changed",
+        business_name="Cambió una regla de negocio",
+        description="Una regla existente cambió de clave o de versión.",
+        category="knowledge",
+        icon="pencil",
+        source_kind="internal_event",
+        fields=[
+            _field("subject", "Sujeto", "text", "reposición de stock"),
+            _field("previous_rule_key", "Regla anterior", "text", "rule-4f2a"),
+            _field("rule_key", "Regla nueva", "text", "rule-9c81"),
+        ],
+    ),
+    EventSchema(
+        id="knowledge.conflict_detected",
+        business_name="Se detectó un conflicto de conocimiento",
+        description="Dos afirmaciones del conocimiento se contradicen entre sí.",
+        category="knowledge",
+        icon="warning",
+        source_kind="internal_event",
+        fields=[
+            _field("subject", "Sujeto", "text", "stock mínimo"),
+            _field("predicate", "Predicado", "text", "cantidad"),
+            _field("conflict_type", "Tipo de conflicto", "text", "VALUE_CONFLICT"),
+            _field("value_a", "Valor A", "text", "10 unidades"),
+            _field("value_b", "Valor B", "text", "15 unidades"),
+        ],
+    ),
+    EventSchema(
+        id="knowledge.source_superseded",
+        business_name="Una fuente quedó reemplazada",
+        description="Una versión nueva de un documento reemplazó a la anterior.",
+        category="knowledge",
+        icon="refresh",
+        source_kind="internal_event",
+        fields=[
+            _field("document_id", "Documento", "text", "doc-123"),
+            _field("previous_version", "Versión anterior", "number", 1),
+            _field("current_version", "Versión nueva", "number", 2),
+            _field("change_kind", "Tipo de cambio", "text", "updated"),
+        ],
+    ),
+    EventSchema(
+        id="knowledge.knowledge_gap_detected",
+        business_name="Se detectó un vacío de conocimiento",
+        description="El modelo encontró información faltante o sin respaldo.",
+        category="knowledge",
+        icon="search",
+        source_kind="internal_event",
+        fields=[
+            _field("gap_type", "Tipo de vacío", "text", "unsupported_assertion"),
+            _field("concept", "Concepto", "text", "margen por producto"),
+            _field("priority", "Prioridad", "text", "high"),
+        ],
+    ),
+    EventSchema(
+        id="knowledge.high_impact_change",
+        business_name="Cambio de alto impacto en conocimiento",
+        description=(
+            "Un cambio de conocimiento impacta a más objetos que el umbral configurado."
+        ),
+        category="knowledge",
+        icon="zap",
+        source_kind="internal_event",
+        fields=[
+            _field("object_id", "Objeto", "text", "entity-123"),
+            _field("kind", "Tipo", "text", "rule"),
+            _field("count", "Impacto", "number", 7),
+            _field("threshold", "Umbral", "number", 5),
         ],
     ),
     EventSchema(

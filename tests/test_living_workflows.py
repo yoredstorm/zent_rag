@@ -140,6 +140,34 @@ def test_custom_event_falls_back_gracefully() -> None:
     assert list_catalog("inventario")
 
 
+def test_knowledge_events_registered_in_catalog() -> None:
+    """Los 7 eventos knowledge.<tipo> de C8 (W5) viven en el catálogo."""
+    from src.core.domain.knowledge_events import KnowledgeEventType
+
+    expected = {f"knowledge.{tipo.value}" for tipo in KnowledgeEventType}
+    assert expected == {
+        "knowledge.new_entity",
+        "knowledge.new_rule",
+        "knowledge.rule_changed",
+        "knowledge.conflict_detected",
+        "knowledge.source_superseded",
+        "knowledge.knowledge_gap_detected",
+        "knowledge.high_impact_change",
+    }
+
+    catalog = {event.id: event for event in list_catalog("knowledge")}
+    for event_id in expected:
+        schema = catalog.get(event_id)
+        assert schema is not None, f"{event_id} no está en list_catalog"
+        assert schema.category == "knowledge"
+        assert schema.business_name
+        assert schema.fields, f"{event_id} sin campos de payload"
+
+    # El legado knowledge.changed sigue registrado (deprecado) para no romper
+    # triggers existentes.
+    assert "knowledge.changed" in catalog
+
+
 # ---------------------------------------------------------------------------
 # WatcherDefinition / transiciones (puro)
 # ---------------------------------------------------------------------------
