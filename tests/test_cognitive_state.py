@@ -44,6 +44,22 @@ def test_turn_sin_plan_es_serializable() -> None:
     assert payload["notes"] == []
 
 
+def test_turn_publica_evidence_y_brief(monkeypatch) -> None:
+    from src.runtime.evidence_assembly import assemble_evidence
+    from src.runtime.knowledge_brief import build_knowledge_brief
+
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "shadow")
+    turn = CognitiveTurn(query="q")
+    assert turn.to_public_dict()["evidence"] is None
+    assert turn.to_public_dict()["brief"] is None
+    package = assemble_evidence()
+    turn.evidence = package
+    turn.brief = build_knowledge_brief(package)
+    payload = turn.to_public_dict()
+    assert payload["evidence"]["count"] == 0
+    assert [section["kind"] for section in payload["brief"]["sections"]][0] == "facts"
+
+
 def test_jev_signals_sin_entidades(monkeypatch) -> None:
     monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "shadow")
     query = "¿Aplica la regla 12?"

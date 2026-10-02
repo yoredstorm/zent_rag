@@ -14,6 +14,8 @@ from src.core.config import get_settings
 if TYPE_CHECKING:  # solo anotaciones: con `off` no se importa plan/strategy
     from src.runtime.cognitive_plan import CognitivePlan
     from src.runtime.entity_resolution import EntityResolution
+    from src.runtime.evidence_assembly import EvidencePackage
+    from src.runtime.knowledge_brief import KnowledgeBrief
     from src.runtime.knowledge_strategy import KnowledgeStrategy
     from src.runtime.representation_runners import RunnerResult
 
@@ -34,6 +36,8 @@ class CognitiveTurn:
     strategy: KnowledgeStrategy | None = None
     entities: "EntityResolution | None" = None
     runners: tuple["RunnerResult", ...] = ()
+    evidence: "EvidencePackage | None" = None
+    brief: "KnowledgeBrief | None" = None
     notes: list[dict] = field(default_factory=list)
 
     def add_note(self, stage: str, detail: str) -> None:
@@ -70,4 +74,10 @@ class CognitiveTurn:
         payload["runners"] = [
             runner.to_public_dict() for runner in self.runners
         ]
+        payload["evidence"] = (
+            self.evidence.to_public_dict() if self.evidence is not None else None
+        )
+        payload["brief"] = (
+            self.brief.to_public_dict() if self.brief is not None else None
+        )
         return payload

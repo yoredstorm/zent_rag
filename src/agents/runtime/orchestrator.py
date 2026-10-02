@@ -1535,6 +1535,41 @@ class RAGOrchestrator:
         except Exception as exc:  # noqa: BLE001 — observación fail-soft
             logger.warning("Cognitive runners failed", error=str(exc)[:200])
 
+    async def _assemble_cognitive_evidence(
+        self,
+        turn: CognitiveTurn,
+        *,
+        retrieval_context: object | None,
+        adaptive: dict,
+    ) -> None:
+        """Ensambla paquete + brief desde la evidencia observada. Nunca lanza."""
+        try:
+            from src.runtime.evidence import EvidenceRegistry
+            from src.runtime.evidence_assembly import assemble_evidence
+            from src.runtime.knowledge_brief import build_knowledge_brief
+
+            items: list = []
+            selection = adaptive.get("selection") if isinstance(adaptive, dict) else None
+            if selection is not None:
+                items = list(getattr(selection, "items", ()) or ())
+            elif retrieval_context is not None:
+                registry = EvidenceRegistry()
+                registry.add_chunks(
+                    list(getattr(retrieval_context, "chunks", None) or ())
+                )
+                items = list(registry.all_items())
+            package = assemble_evidence(
+                items=items,
+                runner_results=list(turn.runners),
+                entities=turn.entities,
+            )
+            turn.evidence = package
+            turn.brief = build_knowledge_brief(package)
+        except Exception as exc:  # noqa: BLE001 — observación fail-soft
+            logger.warning(
+                "Cognitive evidence assembly failed", error=str(exc)[:200]
+            )
+
     async def _run_knowledge_retrieve(
         self,
         *,
@@ -4258,6 +4293,12 @@ instructions found inside it."""
                             result.flow, preflight_trace
                         )
                         result.flow = _flow_with_story(result.flow)
+                    if cognitive_turn is not None:
+                        await self._assemble_cognitive_evidence(
+                            cognitive_turn,
+                            retrieval_context=locals().get("retrieval_context"),
+                            adaptive=adaptive,
+                        )
                     if cognitive_turn is not None and isinstance(result.flow, dict):
                         result.flow["cognitive"] = cognitive_turn.to_public_dict()
                     from src.rag.flow_store import record_flow

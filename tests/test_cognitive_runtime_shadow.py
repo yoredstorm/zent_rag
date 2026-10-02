@@ -528,6 +528,127 @@ async def test_shadow_observacion_falla_no_rompe_el_run(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_shadow_ensambla_evidencia_y_brief(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "shadow")
+    canonical_id = str(uuid4())
+    model = FakeKnowledgeModel(
+        names={
+            "category 31": [
+                {
+                    "id": canonical_id,
+                    "kind": "entity",
+                    "name": "Category 31",
+                    "display_name": "Category 31",
+                    "confidence": 0.9,
+                }
+            ]
+        },
+        edges={
+            canonical_id: [
+                {
+                    "id": str(uuid4()),
+                    "subject_name": "Category 31",
+                    "predicate": "requires",
+                    "object_name": "Record 4",
+                    "relationship_type": "depends_on",
+                    "confidence": 0.8,
+                }
+            ]
+        },
+    )
+    organization = _organization()
+    llm = FakeLLM()
+    orchestrator = _build(
+        organization=organization,
+        llm=llm,
+        vector_store=FakeVectorStore(_retrieval()),
+        knowledge_model=model,
+    )
+    result = await _execute(
+        orchestrator, organization.id, "¿Qué relación tiene Category 31?"
+    )
+    cognitive = result.flow["cognitive"]
+    assert cognitive["evidence"]["counts"].get("relation", 0) >= 1
+    assert cognitive["evidence"]["counts"].get("excerpt", 0) >= 1
+    sections = {item["kind"] for item in cognitive["brief"]["sections"]}
+    assert {"facts", "relations", "critical_excerpts"} <= sections
+    assert len(llm.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_shadow_conflicto_temporal_retenido(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "shadow")
+    canonical_id = str(uuid4())
+    model = FakeKnowledgeModel(
+        names={
+            "category 31": [
+                {
+                    "id": canonical_id,
+                    "kind": "entity",
+                    "name": "Category 31",
+                    "display_name": "Category 31",
+                    "confidence": 0.9,
+                }
+            ]
+        },
+        assertions={
+            canonical_id: [
+                {
+                    "id": str(uuid4()),
+                    "subject_label": "Rule X",
+                    "predicate": "aplica",
+                    "object_value": "2024",
+                    "confidence": 0.9,
+                    "valid_from": "2024-01-01T00:00:00+00:00",
+                    "valid_to": "2025-01-01T00:00:00+00:00",
+                },
+                {
+                    "id": str(uuid4()),
+                    "subject_label": "Rule X",
+                    "predicate": "aplica",
+                    "object_value": "2026",
+                    "confidence": 0.8,
+                    "valid_from": "2026-01-01T00:00:00+00:00",
+                    "valid_to": None,
+                },
+            ]
+        },
+    )
+    organization = _organization()
+    orchestrator = _build(
+        organization=organization,
+        llm=FakeLLM(),
+        vector_store=FakeVectorStore(_retrieval()),
+        knowledge_model=model,
+    )
+    result = await _execute(
+        orchestrator, organization.id, "¿La Category 31 sigue vigente?"
+    )
+    conflicts = result.flow["cognitive"]["evidence"]["conflicts"]
+    assert conflicts and conflicts[0]["values"] == ["2024", "2026"]
+
+
+@pytest.mark.asyncio
+async def test_shadow_assembly_falla_no_rompe_el_run(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "shadow")
+    def _boom(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("assembly roto")
+
+    monkeypatch.setattr("src.runtime.evidence_assembly.assemble_evidence", _boom)
+    organization = _organization()
+    llm = FakeLLM()
+    orchestrator = _build(
+        organization=organization,
+        llm=llm,
+        vector_store=FakeVectorStore(_retrieval()),
+    )
+    result = await _execute(orchestrator, organization.id, "¿Qué dice el Byte 105?")
+    assert result.flow["cognitive"]["evidence"] is None
+    assert result.flow["cognitive"]["brief"] is None
+    assert len(llm.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_shadow_expone_signals(monkeypatch) -> None:
     monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "shadow")
     organization = _organization()
