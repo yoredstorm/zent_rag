@@ -245,7 +245,7 @@ duplicada,
 | C4 | AnswerVerifier único + ruteo L0–L2 + loop/budget + learning signal | `limited` (default off) — **shipped** | `docs/superpowers/plans/2026-10-01-cognitive-runtime-c4-verification-control.md` |
 | C5 | DAG L3+ vía runtime + persistencia runs + link inspector | active L3+ (default off) — **shipped** | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c5-deep-path.md` |
 | C6 | W3 traza/explicación 3 niveles + portal **shipped** | — | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c6-trace-portal.md` |
-| C7 | W4 knowledge_scope + RBAC | — | pendiente |
+| C7 | W4 knowledge_scope + RBAC **shipped** | — | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c7-knowledge-scope.md` |
 | C8 | W5 knowledge events + triggers | — | pendiente |
 | C9 | W6 evals completas + poda legacy | cutover | pendiente |
 
@@ -261,6 +261,16 @@ duplicada,
 > **C6:** 3 niveles derivados en `cognitive_story` + eventos + sección
 > `cognitive` en trace v2 + componentes portal; inspector de runs profundos
 > enlazado por `run_id`; promoción de modos sujeta a evals (W6).
+>
+> **C7:** `knowledge_scope` declarativo en agentes/workflows/MCP; el scope solo
+> estrecha (intersección campo a campo, vacío = sin restricción; intersección
+> vacía de dos no-vacíos = deny, sin fallback a búsqueda global). Alcance de hoy:
+> `workspace_ids` múltiples y `tags` se parsean pero no se enforce (solo se usa
+> workspace único en `SearchKnowledgeTool`); el nodo `kb_query`/`knowledge_scope`
+> del workflow y el parámetro `source_ids` de MCP solo recortan lo autorizado
+> (nunca amplían); lecturas canónicas con `source_ids` aplican regla
+> `source_id = ANY(...) OR source_id IS NULL` (NULL = org-level). RBAC existente
+> manda.
 
 ## 16. Verificación
 
