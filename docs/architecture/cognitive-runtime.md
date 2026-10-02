@@ -78,7 +78,7 @@ Estado del turno: `CognitiveTurn` (`src/runtime/cognitive_state.py`): `intent`,
 
 | Etapa | Se construye/refactoriza | Fase |
 |---|---|---|
-| S1 Intent | retirar `src/rag/query_intelligence/` (inert); usar `IntelligenceEngine.understand` | C1/C4 |
+| S1 Intent | `IntelligenceEngine.understand` | C1/C4 |
 | S2 Cognitive Plan | `cognitive_plan.py`: complejidad (existente) + needs `semantic_search · exact_lookup · structured_query · graph_traversal · temporal_lookup · cross_document_reasoning · rule_lookup · conflict_resolution · comparison · aggregation · calculation · external_tool · memory · no_retrieval` con razón por paso | C1 |
 | S3 JEV Preflight | señales nuevas (`entity_resolved`, `exact_lookup_declared`, `deep_reasoning_needed`); determinista primero; JEV solo ambigüedad | C2/C4 |
 | S4 Knowledge Strategy | consumir `RetrievalPlan` completo + entity→canonical + scope; trazada | C1/C2 |
@@ -171,8 +171,8 @@ declara en el paquete.
   `CONFLICT_DETECTED` · `SOURCE_SUPERSEDED` · `KNOWLEDGE_GAP_DETECTED` ·
   `HIGH_IMPACT_CHANGE`.
 - Emisión desde compiler (`src/knowledge/compiler/pipeline.py`) y materializer →
-  store durable + bus Redis `rag:events` (infra existente). Reemplaza
-  `knowledge.changed` (registrado, nunca emitido).
+  store durable + bus Redis `rag:events` (infra existente). En C9 se retiró el
+  evento legado `knowledge.changed` (registrado, nunca emitido).
 - `HIGH_IMPACT_CHANGE`: score determinístico (referencias, agentes, workspaces),
   umbrales configurables. Nunca LLM.
 - `workflow_event_triggers` acepta los tipos nuevos. Eventos se emiten por
@@ -191,8 +191,9 @@ declara en el paquete.
 - Gates: `shadow → limited` (sin regresión, grounding ≥ baseline, costo
   acotado) · `limited → active` L0–L2 (suite verde) · L3+ (profundos verdes en
   budget).
-- Cutover (borrado, C9): `query_intelligence`, verificación duplicada,
-  `POST /cognitive/runs/{id}/execute`, flags temporales.
+- Cutover (borrado, C9): `query_intelligence`, `knowledge.changed` y
+  `POST /cognitive/runs/{id}/execute` (retirados); verificación cognitiva
+  duplicada y flags temporales al cierre de W6.
   Rollback: flag a `off`. Migraciones aditivas hasta C9.
 
 ## 12. Archivos
@@ -212,9 +213,11 @@ de respuesta lo exige), `src/knowledge/compiler/pipeline.py`,
 `src/platform/workflows/event_registry.py`, `src/platform/cognitive/executor.py`
 (C5).
 
-**Retirar (C9):** `src/rag/query_intelligence/**`, verificación cognitiva
-duplicada,
-`POST /api/v1/cognitive/runs/{id}/execute` (queda inspección).
+**Retirado (C9):** `src/rag/query_intelligence/**`,
+`POST /api/v1/cognitive/runs/{id}/execute` (queda inspección) y el evento
+legado `knowledge.changed`.
+
+**Retirar (C9):** verificación cognitiva duplicada.
 
 ## 13. Tablas, migraciones, flags
 
@@ -247,7 +250,7 @@ duplicada,
 | C6 | W3 traza/explicación 3 niveles + portal **shipped** | — | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c6-trace-portal.md` |
 | C7 | W4 knowledge_scope + RBAC **shipped** | — | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c7-knowledge-scope.md` |
 | C8 | W5 knowledge events + triggers **shipped** | — | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c8-knowledge-events.md` |
-| C9 | W6 evals completas + poda legacy | cutover | pendiente |
+| C9 | W6 evals completas + poda legacy | cutover | `docs/superpowers/plans/2026-10-02-cognitive-runtime-c9-evals-cutover.md` |
 
 > **C4:** brief en prompt + verificación/budget/loop/learning trazados y gaps
 > persistidos; el enforcement de políticas de verificación y el bloqueo por

@@ -199,22 +199,6 @@ _EVENTS: list[EventSchema] = [
     ),
     # --- Knowledge ----------------------------------------------------------
     EventSchema(
-        id="knowledge.changed",
-        business_name="Cambió conocimiento aprobado",
-        description=(
-            "Deprecado: usá los eventos knowledge.* específicos. "
-            "Un documento o política aprobada cambió de versión."
-        ),
-        category="knowledge",
-        icon="book",
-        source_kind="internal_event",
-        fields=[
-            _field("collection", "Colección", "text", "Políticas de compras"),
-            _field("document", "Documento", "text", "politica-reposicion"),
-            _field("change", "Cambio", "text", "actualizado"),
-        ],
-    ),
-    EventSchema(
         id="knowledge.new_entity",
         business_name="Se detectó una entidad nueva",
         description="El compilador descubrió una entidad que no existía en el modelo.",

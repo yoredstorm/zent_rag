@@ -60,7 +60,7 @@ Verificado contra código (no contra el prompt):
 
 - `CognitivePlanningService.create_run(query, scope, budget, created_by)` y `CognitiveExecutor.execute_run(organization_id, run_id, scope)`.
 - `CognitiveScope` (`src/core/domain/cognitive.py:242`): org/workspace/user/role/groups/source_ids/knowledge_base_id.
-- Rutas `/api/v1/cognitive/runs` (create/execute/curate) gate `_require_cognitive_enabled()` + permiso `knowledge:write`; el ejecutor escribe `EvidenceRecord`/`ClaimRecord`.
+- Rutas `/api/v1/cognitive/runs` (create/curate + inspección) gate `_require_cognitive_enabled()` + permiso `knowledge:write`; el ejecutor escribe `EvidenceRecord`/`ClaimRecord`.
 - `conflict_detector` verifica `find_conflicting` + `classify_conflict` + `propose_resolution`; `critic`/`fact_checker`/`synthesizer` producen `answer`, conflicts, critique, debate.
 - Inspector cognitivo sin CoT (`src/platform/cognitive/inspector.py`).
 - **Nada de esto está expuesto como nodo de workflow** (ni como modo). No hay `CALLS_COGNITIVE` en `_CAPABILITY_PERMISSION`.

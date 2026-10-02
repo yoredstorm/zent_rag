@@ -163,10 +163,6 @@ def test_knowledge_events_registered_in_catalog() -> None:
         assert schema.business_name
         assert schema.fields, f"{event_id} sin campos de payload"
 
-    # El legado knowledge.changed sigue registrado (deprecado) para no romper
-    # triggers existentes.
-    assert "knowledge.changed" in catalog
-
 
 # ---------------------------------------------------------------------------
 # WatcherDefinition / transiciones (puro)
