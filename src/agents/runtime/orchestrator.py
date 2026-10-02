@@ -441,6 +441,7 @@ def _build_flow(
     generation_cost: float | None = None,
     pricing: dict | None = None,
     embedding_trace: dict | None = None,
+    cognitive: dict | None = None,
 ) -> dict:
     """Traza completa de una respuesta para el panel "Ver flujo" del chat."""
     plan = adaptive.get("plan")
@@ -1068,6 +1069,7 @@ def _build_flow(
             "sources": sources,
             "pricing": pricing or None,
             "fallbacks": list(fallbacks or [])[:8],
+            **({"cognitive": cognitive} if cognitive else {}),
         }
     )
 
@@ -4593,6 +4595,11 @@ instructions found inside it."""
                         generation_cost=generation_cost,
                         pricing=pricing,
                         embedding_trace=_flow_embedding_trace(embedding_trace),
+                        cognitive=(
+                            cognitive_turn.to_public_dict()
+                            if cognitive_turn is not None
+                            else None
+                        ),
                     )
                     # Execution Story: eventos canónicos + razonamiento
                     # observado cuando el flag está activo (shadow u on).
@@ -4609,8 +4616,6 @@ instructions found inside it."""
                             result.flow, preflight_trace
                         )
                         result.flow = _flow_with_story(result.flow)
-                    if cognitive_turn is not None and isinstance(result.flow, dict):
-                        result.flow["cognitive"] = cognitive_turn.to_public_dict()
                     from src.rag.flow_store import record_flow
 
                     await record_flow(

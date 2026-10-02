@@ -819,3 +819,22 @@ async def test_loop_usa_el_cap_configurado(monkeypatch) -> None:
     )
     result = await _execute(orchestrator, organization.id, "¿Qué dice la regla 12?")
     assert result.flow["cognitive"]["loop"]["max_rounds"] == 5
+
+
+@pytest.mark.asyncio
+async def test_traza_incluye_cognitive_story_y_eventos(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "shadow")
+    organization = _organization()
+    orchestrator = _build(
+        organization=organization,
+        llm=FakeLLM(),
+        vector_store=FakeVectorStore(_retrieval()),
+    )
+    result = await _execute(
+        orchestrator, organization.id, "¿Qué relación tiene Category 31?"
+    )
+    flow = result.flow
+    assert flow["cognitive_story"]["normal"]
+    kinds = [event["kind"] for event in flow["events"]]
+    assert "cognitive_plan" in kinds
+    assert flow["traceability"]["cognitive"]["mode"] == "shadow"
