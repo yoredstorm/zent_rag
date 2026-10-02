@@ -14,6 +14,7 @@ from src.infrastructure.observability.logging_config import get_logger
 from src.infrastructure.postgres.relational_db import (
     PostgresAuditLogRepository,
     PostgresBillingRepository,
+    PostgresMembershipRepository,
     PostgresOrganizationRepository,
     PostgresUserRepository,
     get_async_session,
@@ -128,6 +129,8 @@ class ImpersonateBody(BaseModel):
     expires_seconds: int = Field(default=3600, ge=60, le=3600)
     reason: str = Field(..., min_length=3, max_length=500)
     ticket: str | None = Field(default=None, max_length=100)
+    # Opcional: impersonar a un usuario concreto del tenant (si no, default-admin).
+    user_id: str | None = Field(default=None)
 
 
 class PlanBody(BaseModel):
@@ -859,11 +862,20 @@ async def impersonate(org_id: str, body: ImpersonateBody, request: Request):
     org = await PostgresOrganizationRepository().get_by_id(oid)
     if org is None:
         raise HTTPException(404, "Organization not found")
-    user = await PostgresUserRepository().get_by_external_id(oid, "default-admin")
-    if user is None:
-        user = await PostgresUserRepository().get_any_user(oid)
-    if user is None:
-        raise HTTPException(404, "No user to impersonate in this organization")
+    if body.user_id:
+        target_uid = _parse_user(body.user_id)
+        membership = await PostgresMembershipRepository().get_membership(oid, target_uid)
+        if membership is None:
+            raise HTTPException(404, "User is not a member of this organization")
+        user = await PostgresUserRepository().get_by_user_id(target_uid)
+        if user is None:
+            raise HTTPException(404, "User not found")
+    else:
+        user = await PostgresUserRepository().get_by_external_id(oid, "default-admin")
+        if user is None:
+            user = await PostgresUserRepository().get_any_user(oid)
+        if user is None:
+            raise HTTPException(404, "No user to impersonate in this organization")
 
     await _audit().write_or_raise(
         ctx,
@@ -928,6 +940,32 @@ def _parse_org(org_id: str) -> UUID:
         return UUID(org_id)
     except ValueError:
         raise HTTPException(404, "Organization not found") from None
+
+
+def _parse_user(user_id: str) -> UUID:
+    try:
+        return UUID(user_id)
+    except ValueError:
+        raise HTTPException(400, "user_id must be a valid UUID") from None
+
+
+async def _require_org_ctx(request: Request, org_id: str, permission: str):
+    """(ctx, oid) con permiso de plataforma validado y organización existente."""
+    ctx = require_platform_permission(request, permission)
+    oid = _parse_org(org_id)
+    org = await PostgresOrganizationRepository().get_by_id(oid)
+    if org is None:
+        raise HTTPException(404, "Organization not found")
+    return ctx, oid
+
+
+async def _issue_reset_and_email(email: str | None, user_id: UUID) -> dict:
+    """Emite token de reset y lo intenta enviar por SMTP (fail-soft)."""
+    from src.platform.auth.password_reset import issue_reset_token, send_reset_email
+
+    token = await issue_reset_token(user_id)
+    sent = await send_reset_email(email, token)
+    return {"reset_token": token, "expires_in": 3600, "email_sent": sent}
 
 
 async def _subscription_event(sub, event_type: str, actor_user_id) -> None:
@@ -1031,6 +1069,271 @@ async def assign_platform_user_role(
         metadata={"role_name": body.role_name, "action": body.action},
     )
     return {"user_id": str(uid), "role_name": body.role_name, "action": body.action}
+
+
+# ---------------------------------------------------------------------------
+# Control total de usuarios — plataforma y tenant (por usuario)
+# ---------------------------------------------------------------------------
+
+
+class PlatformUserCreate(BaseModel):
+    email: str = Field(..., min_length=3, max_length=320)
+    role_name: str = Field(..., min_length=2, max_length=100)
+
+
+class PlatformUserEmail(BaseModel):
+    email: str = Field(..., min_length=3, max_length=320)
+
+
+async def _owned_platform_user(user_id: str):
+    from src.platform.rbac.repo import get_platform_user
+
+    uid = _parse_user(user_id)
+    target = await get_platform_user(uid)
+    if target is None:
+        raise HTTPException(404, "Platform user not found")
+    return uid, target
+
+
+async def _tenant_member(oid: UUID, user_id: str):
+    uid = _parse_user(user_id)
+    membership = await PostgresMembershipRepository().get_membership(oid, uid)
+    if membership is None:
+        raise HTTPException(404, "User is not a member of this organization")
+    user = await PostgresUserRepository().get_by_user_id(uid)
+    if user is None:
+        raise HTTPException(404, "User not found")
+    return uid, user
+
+
+@router.post("/users", summary="Crear usuario de plataforma")
+async def create_platform_user_route(body: PlatformUserCreate, request: Request):
+    ctx = require_platform_permission(request, "platform.users.manage")
+    await _require_step_up(request)
+    from src.platform.rbac.repo import (
+        assign_platform_role,
+        create_platform_user,
+        list_platform_roles,
+    )
+
+    email = body.email.strip().lower()
+    if await PostgresUserRepository().get_by_email(email) is not None:
+        raise HTTPException(409, "Email already in use")
+    role_names = {r["name"] for r in await list_platform_roles()}
+    if body.role_name not in role_names:
+        raise HTTPException(404, "Role not found")
+    uid = await create_platform_user(email)
+    await assign_platform_role(uid, body.role_name)
+    reset = await _issue_reset_and_email(email, uid)
+    await _audit().write_or_raise(
+        ctx,
+        "platform.user_created",
+        "platform_user",
+        uid,
+        ip_address=_client_ip(request),
+        metadata={"email": email, "role_name": body.role_name},
+    )
+    return {"user_id": str(uid), "email": email, "role_name": body.role_name, **reset}
+
+
+@router.patch("/users/{user_id}", summary="Editar email de usuario de plataforma")
+async def update_platform_user_email(
+    user_id: str, body: PlatformUserEmail, request: Request
+):
+    ctx = require_platform_permission(request, "platform.users.manage")
+    await _require_step_up(request)
+    uid, _target = await _owned_platform_user(user_id)
+    email = body.email.strip().lower()
+    existing = await PostgresUserRepository().get_by_email(email)
+    if existing is not None and existing.id != uid:
+        raise HTTPException(409, "Email already in use")
+    await PostgresUserRepository().update_email(uid, email)
+    await _audit().write_or_raise(
+        ctx,
+        "platform.user_updated",
+        "platform_user",
+        uid,
+        ip_address=_client_ip(request),
+        metadata={"email": email},
+    )
+    return {"user_id": str(uid), "email": email}
+
+
+@router.post("/users/{user_id}/deactivate", summary="Desactivar usuario de plataforma")
+async def deactivate_platform_user(user_id: str, request: Request):
+    ctx = require_platform_permission(request, "platform.users.manage")
+    await _require_step_up(request)
+    from src.platform.auth.session import revoke_user_sessions
+
+    uid, target = await _owned_platform_user(user_id)
+    if ctx.user_id == uid:
+        raise HTTPException(400, "No puedes desactivar tu propio usuario")
+    if "super_admin" in (target["roles"] or []):
+        from src.platform.rbac.repo import count_active_super_admins
+
+        if await count_active_super_admins() <= 1:
+            raise HTTPException(400, "No se puede desactivar al último super_admin activo")
+    await PostgresUserRepository().set_disabled(uid, True)
+    await revoke_user_sessions(uid)
+    await _audit().write_or_raise(
+        ctx,
+        "platform.user_deactivated",
+        "platform_user",
+        uid,
+        ip_address=_client_ip(request),
+        metadata={"email": target["email"]},
+    )
+    return {"user_id": str(uid), "disabled": True}
+
+
+@router.post("/users/{user_id}/activate", summary="Reactivar usuario de plataforma")
+async def activate_platform_user(user_id: str, request: Request):
+    ctx = require_platform_permission(request, "platform.users.manage")
+    uid, target = await _owned_platform_user(user_id)
+    await PostgresUserRepository().set_disabled(uid, False)
+    await _audit().write_or_raise(
+        ctx,
+        "platform.user_activated",
+        "platform_user",
+        uid,
+        ip_address=_client_ip(request),
+        metadata={"email": target["email"]},
+    )
+    return {"user_id": str(uid), "disabled": False}
+
+
+@router.post(
+    "/users/{user_id}/password-reset",
+    summary="Reset de contraseña (usuario de plataforma)",
+)
+async def platform_user_password_reset(user_id: str, request: Request):
+    ctx = require_platform_permission(request, "platform.users.manage")
+    await _require_step_up(request)
+    uid, target = await _owned_platform_user(user_id)
+    reset = await _issue_reset_and_email(target["email"], uid)
+    await _audit().write_or_raise(
+        ctx,
+        "platform.user_password_reset",
+        "platform_user",
+        uid,
+        ip_address=_client_ip(request),
+        metadata={"email": target["email"]},
+    )
+    return {"user_id": str(uid), **reset}
+
+
+@router.post(
+    "/organizations/{org_id}/users/{user_id}/suspend",
+    summary="Suspender usuario del tenant",
+)
+async def suspend_tenant_user(org_id: str, user_id: str, request: Request):
+    ctx, oid = await _require_org_ctx(request, org_id, "tenant.suspend")
+    await _require_step_up(request)
+    from src.platform.auth.session import revoke_user_sessions
+
+    uid, user = await _tenant_member(oid, user_id)
+    await PostgresUserRepository().set_disabled(uid, True)
+    await revoke_user_sessions(uid)
+    await _audit().write_or_raise(
+        ctx,
+        "platform.user_suspended",
+        "tenant_user",
+        uid,
+        organization_id=oid,
+        ip_address=_client_ip(request),
+        metadata={"target_user_id": str(uid), "email": user.email},
+    )
+    return {"user_id": str(uid), "disabled": True}
+
+
+@router.post(
+    "/organizations/{org_id}/users/{user_id}/activate",
+    summary="Reactivar usuario del tenant",
+)
+async def activate_tenant_user(org_id: str, user_id: str, request: Request):
+    ctx, oid = await _require_org_ctx(request, org_id, "tenant.write")
+    uid, user = await _tenant_member(oid, user_id)
+    await PostgresUserRepository().set_disabled(uid, False)
+    await _audit().write_or_raise(
+        ctx,
+        "platform.user_reactivated",
+        "tenant_user",
+        uid,
+        organization_id=oid,
+        ip_address=_client_ip(request),
+        metadata={"target_user_id": str(uid), "email": user.email},
+    )
+    return {"user_id": str(uid), "disabled": False}
+
+
+@router.post(
+    "/organizations/{org_id}/users/{user_id}/revoke-sessions",
+    summary="Cerrar todas las sesiones de un usuario del tenant",
+)
+async def revoke_tenant_user_sessions(org_id: str, user_id: str, request: Request):
+    ctx, oid = await _require_org_ctx(request, org_id, "tenant.write")
+    from src.platform.auth.session import revoke_user_sessions
+
+    uid, user = await _tenant_member(oid, user_id)
+    await revoke_user_sessions(uid)
+    await _audit().write_or_raise(
+        ctx,
+        "platform.user_sessions_revoked",
+        "tenant_user",
+        uid,
+        organization_id=oid,
+        ip_address=_client_ip(request),
+        metadata={"target_user_id": str(uid), "email": user.email},
+    )
+    return {"user_id": str(uid), "sessions_revoked": True}
+
+
+@router.post(
+    "/organizations/{org_id}/users/{user_id}/password-reset",
+    summary="Reset de contraseña (usuario del tenant)",
+)
+async def tenant_user_password_reset(org_id: str, user_id: str, request: Request):
+    ctx, oid = await _require_org_ctx(request, org_id, "tenant.write")
+    await _require_step_up(request)
+    uid, user = await _tenant_member(oid, user_id)
+    reset = await _issue_reset_and_email(user.email, uid)
+    await _audit().write_or_raise(
+        ctx,
+        "platform.user_password_reset",
+        "tenant_user",
+        uid,
+        organization_id=oid,
+        ip_address=_client_ip(request),
+        metadata={"target_user_id": str(uid), "email": user.email},
+    )
+    return {"user_id": str(uid), **reset}
+
+
+@router.patch(
+    "/organizations/{org_id}/users/{user_id}",
+    summary="Editar email de usuario del tenant",
+)
+async def update_tenant_user_email(
+    org_id: str, user_id: str, body: PlatformUserEmail, request: Request
+):
+    ctx, oid = await _require_org_ctx(request, org_id, "tenant.write")
+    await _require_step_up(request)
+    uid, _user = await _tenant_member(oid, user_id)
+    email = body.email.strip().lower()
+    existing = await PostgresUserRepository().get_by_email(email)
+    if existing is not None and existing.id != uid:
+        raise HTTPException(409, "Email already in use")
+    await PostgresUserRepository().update_email(uid, email)
+    await _audit().write_or_raise(
+        ctx,
+        "platform.user_updated",
+        "tenant_user",
+        uid,
+        organization_id=oid,
+        ip_address=_client_ip(request),
+        metadata={"target_user_id": str(uid), "email": email},
+    )
+    return {"user_id": str(uid), "email": email}
 
 
 # ---------------------------------------------------------------------------
@@ -1232,13 +1535,13 @@ async def tenant_users(org_id: str, request: Request):
         rows = (
             await session.execute(
                 text(
-                    "SELECT u.id, u.email, u.last_active_at, "
+                    "SELECT u.id, u.email, u.last_active_at, u.disabled_at, "
                     "COALESCE(array_agg(r.name ORDER BY r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles "
                     "FROM memberships m "
                     "JOIN users u ON u.id = m.user_id "
                     "JOIN roles r ON r.id = m.role_id "
                     "WHERE m.organization_id = :oid "
-                    "GROUP BY u.id, u.email, u.last_active_at ORDER BY u.email"
+                    "GROUP BY u.id, u.email, u.last_active_at, u.disabled_at ORDER BY u.email"
                 ),
                 {"oid": oid},
             )
@@ -1252,6 +1555,7 @@ async def tenant_users(org_id: str, request: Request):
                 "email": r.email,
                 "roles": list(r.roles),
                 "last_active_at": _iso(r.last_active_at),
+                "disabled_at": _iso(r.disabled_at),
             }
             for r in rows
         ]

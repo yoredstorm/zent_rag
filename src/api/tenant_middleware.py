@@ -267,7 +267,11 @@ class TenantMiddleware(BaseHTTPMiddleware):
                     content={"error_code": "invalid_session", "message": str(exc)},
                 )
             if session.typ == "platform":
-                if not await session_is_active(session.sid):
+                if not await session_is_active(
+                    session.sid,
+                    user_id=session.user_id,
+                    issued_at=session.issued_at,
+                ):
                     return JSONResponse(
                         status_code=401,
                         content={

@@ -115,3 +115,30 @@ async def consume_reset_token(token: str) -> UUID:
         raise
     finally:
         await session.close()
+
+
+async def send_reset_email(email: str | None, token: str) -> bool:
+    """Envía el token de reset por SMTP si está configurado (fail-soft).
+
+    Sin SMTP configurado devuelve False; el caller decide cómo exponer el
+    token (patrón invitaciones: mostrado una vez en la UI).
+    """
+    if not email:
+        return False
+    from src.core.config import get_settings
+    from src.platform.customer_success.customer_success import send_email
+
+    settings = get_settings()
+    portal_base = (settings.PORTAL_BASE_URL or "http://localhost:5173").rstrip("/")
+    html = f"""
+    <div style="font-family:sans-serif;max-width:520px;margin:auto">
+      <h2>Restablecer contraseña</h2>
+      <p>Recibimos una solicitud para restablecer tu contraseña en Zent RAG.
+      El código es válido por 1 hora:</p>
+      <p style="font-size:15px;background:#f3f4f6;padding:12px;border-radius:6px;
+      word-break:break-all"><b>{token}</b></p>
+      <p>Úsalo en el portal ({portal_base}) o pídele a soporte que lo aplique.
+      Si no lo solicitaste, ignora este correo.</p>
+    </div>
+    """
+    return await send_email(email, "Restablecer contraseña — Zent RAG", html)

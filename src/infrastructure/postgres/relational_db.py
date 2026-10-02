@@ -271,6 +271,9 @@ async def ensure_platform_admin_schema() -> None:
                 "is_platform_admin BOOLEAN NOT NULL DEFAULT false"
             )
         )
+        await session.execute(
+            text("ALTER TABLE users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ")
+        )
         await session.execute(text("ALTER TABLE users ALTER COLUMN organization_id DROP NOT NULL"))
         await session.execute(
             text("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_platform_admin_org_chk")
@@ -300,7 +303,7 @@ class PostgresUserRepository(UserRepository):
 
     _USER_COLS = (
         "id, organization_id, external_id, email_hash, role, email, password_hash, "
-        "COALESCE(is_platform_admin, false) AS is_platform_admin, created_at"
+        "COALESCE(is_platform_admin, false) AS is_platform_admin, disabled_at, created_at"
     )
 
     @staticmethod
@@ -314,6 +317,7 @@ class PostgresUserRepository(UserRepository):
             email=getattr(row, "email", None),
             password_hash=getattr(row, "password_hash", None),
             is_platform_admin=bool(getattr(row, "is_platform_admin", False)),
+            disabled_at=getattr(row, "disabled_at", None),
             created_at=row.created_at,
         )
 
@@ -327,6 +331,22 @@ class PostgresUserRepository(UserRepository):
                     "FROM users WHERE id = :user_id AND organization_id = :organization_id"
                 ),
                 {"user_id": user_id, "organization_id": organization_id},
+            )
+            row = result.fetchone()
+            if row is None:
+                return None
+            return self._row_to_user(row)
+        finally:
+            await session.close()
+
+    async def get_by_user_id(self, user_id: UUID) -> User | None:
+        """Usuario por id sin scoping de organización (Control Center)."""
+        await ensure_platform_admin_schema()
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(f"SELECT {self._USER_COLS} FROM users WHERE id = :uid"),
+                {"uid": user_id},
             )
             row = result.fetchone()
             if row is None:
@@ -397,6 +417,48 @@ class PostgresUserRepository(UserRepository):
             await session.execute(
                 text("UPDATE users SET password_hash = :ph WHERE id = :uid"),
                 {"ph": password_hash, "uid": user_id},
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    async def set_disabled(self, user_id: UUID, disabled: bool) -> None:
+        """Suspende (True) o reactiva (False) a un usuario (Control Center)."""
+        await ensure_platform_admin_schema()
+        session = await get_async_session()
+        try:
+            await session.execute(
+                text(
+                    "UPDATE users SET disabled_at = "
+                    "CASE WHEN :disabled THEN NOW() ELSE NULL END WHERE id = :uid"
+                ),
+                {"disabled": disabled, "uid": user_id},
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+    async def update_email(self, user_id: UUID, email: str) -> None:
+        """Cambia el email de login (normalizado) y su hash."""
+        import hashlib as _hl
+
+        normalized = email.strip().lower()
+        await ensure_platform_admin_schema()
+        session = await get_async_session()
+        try:
+            await session.execute(
+                text("UPDATE users SET email = :email, email_hash = :eh WHERE id = :uid"),
+                {
+                    "email": normalized,
+                    "eh": _hl.sha256(normalized.encode("utf-8")).hexdigest(),
+                    "uid": user_id,
+                },
             )
             await session.commit()
         except Exception:
@@ -553,7 +615,8 @@ class PostgresMembershipRepository(MembershipRepository):
             result = await session.execute(
                 text(
                     "SELECT u.id AS u_id, u.organization_id AS u_org, u.external_id, "
-                    "u.email_hash, u.role AS u_role, u.email, u.password_hash, u.created_at AS u_created, "
+                    "u.email_hash, u.role AS u_role, u.email, u.password_hash, u.disabled_at, "
+                    "u.created_at AS u_created, "
                     "r.id AS r_id, r.name AS r_name, r.organization_id AS r_org, "
                     "r.description, r.is_system "
                     "FROM memberships m "
@@ -574,6 +637,7 @@ class PostgresMembershipRepository(MembershipRepository):
                     role=row.u_role,
                     email=row.email,
                     password_hash=row.password_hash,
+                    disabled_at=row.disabled_at,
                     created_at=row.u_created,
                 )
                 role = Role(
