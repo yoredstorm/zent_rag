@@ -1705,12 +1705,16 @@ class RAGOrchestrator:
             run_id = str((run_info or {}).get("id") or "")
             if not run_id:
                 return None
+            try:
+                run_uuid = UUID(run_id)
+            except (TypeError, ValueError):
+                return None
             cognitive_turn.run_id = run_id
             started = time.perf_counter()
             result = await asyncio.wait_for(
                 self._cognitive_executor.execute_run(  # type: ignore[union-attr]
                     organization_id=organization_id,
-                    run_id=UUID(run_id),
+                    run_id=run_uuid,
                     scope=scope,
                 ),
                 timeout=DEEP_PATH_TIMEOUT_SECONDS,
@@ -1718,9 +1722,10 @@ class RAGOrchestrator:
             run_after = result.get("run") if isinstance(result, dict) else None
             plan = (run_after or {}).get("plan") or {}
             answer = str(plan.get("final_answer") or "").strip()
+            status = str((run_after or {}).get("status") or "")
             metrics = result.get("metrics") or {}
             cognitive_turn.deep = {
-                "status": str((run_after or {}).get("status") or ""),
+                "status": status,
                 "failure_mode": str((run_after or {}).get("failure_mode") or ""),
                 "latency_ms": round((time.perf_counter() - started) * 1000, 1),
                 "metrics": {
@@ -1739,7 +1744,7 @@ class RAGOrchestrator:
                     if metrics.get(key) is not None
                 },
             }
-            if not answer:
+            if not answer or status == "failed":
                 return None
             return LLMResponse(
                 content=answer,

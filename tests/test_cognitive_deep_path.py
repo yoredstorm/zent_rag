@@ -315,3 +315,25 @@ async def test_active_agrega_nota_de_limites(monkeypatch) -> None:
     )
     result = await _execute(orchestrator, organization.id, _L3_QUERY)
     assert "Límites de esta respuesta:" in result.llm_response.content
+
+
+@pytest.mark.asyncio
+async def test_deep_failed_con_respuesta_parcial_cae_a_legacy(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "active")
+    organization = _organization()
+    llm = FakeLLM()
+    executor = FakeCognitiveExecutor(
+        answer="Respuesta parcial del DAG",
+        status="failed",
+        failure_mode="budget_limit",
+    )
+    orchestrator = _build(
+        organization=organization,
+        llm=llm,
+        service=FakeCognitiveService(),
+        executor=executor,
+    )
+    result = await _execute(orchestrator, organization.id, _L3_QUERY)
+    assert result.method != "cognitive_os"
+    assert len(llm.calls) == 1
+    assert result.flow["cognitive"]["deep"]["status"] == "failed"
