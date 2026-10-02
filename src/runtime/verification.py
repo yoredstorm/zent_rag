@@ -202,3 +202,23 @@ def verify_answer(
         conflicted=conflicted,
         outdated=outdated,
     )
+
+
+def limits_note(verification: AnswerVerification) -> str:
+    """Nota determinista de límites para respuestas con evidencia incompleta."""
+    parts: list[str] = []
+    if verification.unsupported:
+        parts.append(f"{verification.unsupported} afirmación(es) sin respaldo")
+    if verification.partially_supported:
+        parts.append(f"{verification.partially_supported} con respaldo parcial")
+    if verification.conflicted:
+        parts.append(f"{verification.conflicted} en conflicto entre fuentes")
+    if verification.outdated:
+        parts.append(f"{verification.outdated} desactualizada(s)")
+    if not parts:
+        return ""
+    return (
+        "Límites de esta respuesta: "
+        + "; ".join(parts)
+        + ". Verifica en las fuentes citadas."
+    )

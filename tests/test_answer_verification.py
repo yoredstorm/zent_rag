@@ -115,3 +115,20 @@ def test_payload_publico_serializable() -> None:
     assert json.loads(json.dumps(payload)) == payload
     assert payload["action"] == "approve"
     assert payload["supported"] == 1
+
+
+def test_limits_note_vacia_en_approve() -> None:
+    from src.runtime.verification import limits_note
+
+    assert limits_note(verify_answer("", _package())) == ""
+
+
+def test_limits_note_declara_faltantes() -> None:
+    from src.runtime.verification import limits_note
+
+    report = verify_answer(
+        "El sistema usa blockchain cuántico.", _package()
+    )
+    note = limits_note(report)
+    assert note.startswith("Límites de esta respuesta:")
+    assert "sin respaldo" in note
