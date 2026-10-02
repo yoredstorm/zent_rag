@@ -115,6 +115,36 @@ def test_conflicto_retenido_no_resuelto() -> None:
     assert all(unit.conflict for unit in facts)
 
 
+def test_conflicto_no_se_reporta_si_el_budget_dropea_un_lado() -> None:
+    # Presupuesto justo para un fact: el otro se dropea y el par ya no se
+    # reporta como conflicto (semántica post-budget).
+    package = assemble_evidence(
+        runner_results=[
+            _runner_result(
+                "temporal",
+                _temporal_item(
+                    assertion_id="a1",
+                    canonical_id="c1",
+                    value="2024",
+                    validity="historical",
+                ),
+                _temporal_item(
+                    assertion_id="a2",
+                    canonical_id="c1",
+                    value="2026",
+                    validity="current",
+                ),
+            )
+        ],
+        budget_chars=18,
+    )
+    facts = [unit for unit in package.units if unit.kind == "fact"]
+    assert len(facts) == 1
+    assert facts[0].conflict is False
+    assert package.conflicts == ()
+    assert package.dropped
+
+
 def test_vigente_antes_que_historico() -> None:
     package = assemble_evidence(
         runner_results=[

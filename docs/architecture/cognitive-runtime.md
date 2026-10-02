@@ -192,7 +192,7 @@ declara en el paquete.
   acotado) · `limited → active` L0–L2 (suite verde) · L3+ (profundos verdes en
   budget).
 - Cutover (borrado, C9): `query_intelligence`, verificación duplicada,
-  `EvidenceBlackboard`, `POST /cognitive/runs/{id}/execute`, flags temporales.
+  `POST /cognitive/runs/{id}/execute`, flags temporales.
   Rollback: flag a `off`. Migraciones aditivas hasta C9.
 
 ## 12. Archivos
