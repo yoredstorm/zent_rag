@@ -537,14 +537,28 @@ class KnowledgeModelService:
     async def get_object(self, organization_id: UUID, object_id: UUID) -> dict | None:
         return await self._repo.get_object(organization_id, object_id)
 
-    async def object_edges(self, organization_id: UUID, object_id: UUID, **kwargs) -> dict:
-        return await self._repo.object_edges(organization_id, object_id, **kwargs)
+    async def object_edges(
+        self,
+        organization_id: UUID,
+        object_id: UUID,
+        *,
+        limit: int = 200,
+        source_ids: tuple[UUID, ...] | None = None,
+    ) -> dict:
+        return await self._repo.object_edges(
+            organization_id, object_id, limit=limit, source_ids=source_ids
+        )
 
     async def object_assertions(
-        self, organization_id: UUID, object_id: UUID, *, limit: int = 100
+        self,
+        organization_id: UUID,
+        object_id: UUID,
+        *,
+        limit: int = 100,
+        source_ids: tuple[UUID, ...] | None = None,
     ) -> list[dict]:
         return await self._repo.object_assertions(
-            organization_id, object_id, limit=limit
+            organization_id, object_id, limit=limit, source_ids=source_ids
         )
 
     async def object_evidence(self, organization_id: UUID, object_id: UUID) -> list[dict]:
@@ -566,10 +580,15 @@ class KnowledgeModelService:
         return await self._repo.search(organization_id, q, limit=limit)
 
     async def lookup_aliases(
-        self, organization_id: UUID, normalized: list[str], *, limit: int = 50
+        self,
+        organization_id: UUID,
+        normalized: list[str],
+        *,
+        limit: int = 50,
+        source_ids: tuple[UUID, ...] | None = None,
     ) -> list[dict]:
         return await self._repo.lookup_aliases(
-            organization_id, normalized, limit=limit
+            organization_id, normalized, limit=limit, source_ids=source_ids
         )
 
     async def find_objects_by_names(
@@ -579,8 +598,9 @@ class KnowledgeModelService:
         *,
         kinds: tuple[str, ...] | None = None,
         limit: int = 20,
+        source_ids: tuple[UUID, ...] | None = None,
     ) -> list[dict]:
-        kwargs: dict = {"limit": limit}
+        kwargs: dict = {"limit": limit, "source_ids": source_ids}
         if kinds is not None:
             kwargs["kinds"] = tuple(kinds)
         return await self._repo.find_objects_by_names(

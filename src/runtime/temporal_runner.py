@@ -20,7 +20,12 @@ from src.runtime.representation_runners import (
 
 class TemporalLookup(Protocol):
     async def object_assertions(
-        self, organization_id: UUID, object_id: UUID, *, limit: int = 100
+        self,
+        organization_id: UUID,
+        object_id: UUID,
+        *,
+        limit: int = 100,
+        source_ids: tuple[UUID, ...] | None = None,
     ) -> list[dict]: ...
 
 
@@ -91,6 +96,7 @@ class TemporalRunner:
                 ctx.organization_id,
                 UUID(match.canonical_id),
                 limit=self._max_assertions,
+                source_ids=ctx.source_ids or None,
             )
             for row in list(rows or ()):
                 valid_from = row.get("valid_from")

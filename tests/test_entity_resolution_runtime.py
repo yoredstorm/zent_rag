@@ -19,8 +19,8 @@ class FakeLookup:
         self.boom = boom
         self.calls: list[tuple] = []
 
-    async def find_objects_by_names(self, organization_id, names, *, kinds=None, limit=20):
-        self.calls.append(("names", tuple(names)))
+    async def find_objects_by_names(self, organization_id, names, *, kinds=None, limit=20, source_ids=None):
+        self.calls.append(("names", tuple(names), source_ids))
         if self.boom:
             raise RuntimeError("db caída")
         found = []
@@ -30,8 +30,8 @@ class FakeLookup:
                     found.extend(values)
         return found[:limit]
 
-    async def lookup_aliases(self, organization_id, normalized, *, limit=50):
-        self.calls.append(("aliases", tuple(normalized)))
+    async def lookup_aliases(self, organization_id, normalized, *, limit=50, source_ids=None):
+        self.calls.append(("aliases", tuple(normalized), source_ids))
         if self.boom:
             raise RuntimeError("db caída")
         return [row for row in self.aliases if row["normalized"] in normalized][:limit]
@@ -118,3 +118,34 @@ async def test_ambigua_no_se_oculta_por_limite() -> None:
     )
     assert resolution.mentions[0].status == "ambiguous"
     assert len(resolution.mentions[0].matches) == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_mentions_reenvia_source_ids() -> None:
+    source = uuid4()
+    obj = _object("Category 31")
+    lookup = FakeLookup(names={"category 31": [obj]})
+    resolution = await resolve_mentions(
+        lookup, uuid4(), ["Category 31"], source_ids=(source,)
+    )
+    assert resolution.resolved is True
+    assert lookup.calls == [
+        ("names", ("category 31",), (source,)),
+        ("aliases", ("category 31",), (source,)),
+    ]
+
+    unscoped = FakeLookup(names={"category 31": [obj]})
+    await resolve_mentions(unscoped, uuid4(), ["Category 31"])
+    assert unscoped.calls == [
+        ("names", ("category 31",), None),
+        ("aliases", ("category 31",), None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_resolve_mentions_scope_vacio_es_org_level() -> None:
+    obj = _object("Category 31")
+    lookup = FakeLookup(names={"category 31": [obj]})
+    resolution = await resolve_mentions(lookup, uuid4(), ["Category 31"], source_ids=())
+    assert resolution.resolved is True
+    assert lookup.calls[0][2] == ()

@@ -115,7 +115,9 @@ class FakeKnowledgeModel:
         self.assertions = assertions or {}
         self.boom = boom
 
-    async def find_objects_by_names(self, organization_id, names, *, kinds=None, limit=20):
+    async def find_objects_by_names(
+        self, organization_id, names, *, kinds=None, limit=20, source_ids=None
+    ):
         if self.boom:
             raise RuntimeError("db caída")
         found = []
@@ -123,15 +125,21 @@ class FakeKnowledgeModel:
             found.extend(self.names.get(wanted, []))
         return found[:limit]
 
-    async def lookup_aliases(self, organization_id, normalized, *, limit=50):
+    async def lookup_aliases(
+        self, organization_id, normalized, *, limit=50, source_ids=None
+    ):
         if self.boom:
             raise RuntimeError("db caída")
         return [row for row in self.aliases if row["normalized"] in normalized][:limit]
 
-    async def object_edges(self, organization_id, object_id, *, limit=200):
+    async def object_edges(
+        self, organization_id, object_id, *, limit=200, source_ids=None
+    ):
         return {"edges": self.edges.get(str(object_id), [])[:limit]}
 
-    async def object_assertions(self, organization_id, object_id, *, limit=100):
+    async def object_assertions(
+        self, organization_id, object_id, *, limit=100, source_ids=None
+    ):
         return self.assertions.get(str(object_id), [])[:limit]
 
 

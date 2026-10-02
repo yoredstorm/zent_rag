@@ -64,6 +64,7 @@ class RunnerContext:
     role: str
     strategy: "KnowledgeStrategy | None" = None
     entities: "EntityResolution | None" = None
+    source_ids: tuple[UUID, ...] = ()
 
 
 class RepresentationRunner(Protocol):

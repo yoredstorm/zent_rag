@@ -19,7 +19,12 @@ from src.runtime.representation_runners import (
 
 class GraphLookup(Protocol):
     async def object_edges(
-        self, organization_id: UUID, object_id: UUID, *, limit: int = 200
+        self,
+        organization_id: UUID,
+        object_id: UUID,
+        *,
+        limit: int = 200,
+        source_ids: tuple[UUID, ...] | None = None,
     ) -> dict: ...
 
 
@@ -55,6 +60,7 @@ class GraphRunner:
                 ctx.organization_id,
                 UUID(match.canonical_id),
                 limit=self._max_edges,
+                source_ids=ctx.source_ids or None,
             )
             for edge in list(data.get("edges") or ())[: self._max_edges]:
                 subject = str(edge.get("subject_name") or "")

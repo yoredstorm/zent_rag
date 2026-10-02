@@ -18,7 +18,12 @@ _MAX_MENTIONS = 8
 
 class EntityLookup(Protocol):
     async def lookup_aliases(
-        self, organization_id: UUID, normalized: list[str], *, limit: int = 50
+        self,
+        organization_id: UUID,
+        normalized: list[str],
+        *,
+        limit: int = 50,
+        source_ids: tuple[UUID, ...] | None = None,
     ) -> list[dict]: ...
 
     async def find_objects_by_names(
@@ -28,6 +33,7 @@ class EntityLookup(Protocol):
         *,
         kinds: tuple[str, ...] | None = None,
         limit: int = 20,
+        source_ids: tuple[UUID, ...] | None = None,
     ) -> list[dict]: ...
 
 
@@ -106,6 +112,7 @@ async def resolve_mentions(
     mentions,
     *,
     per_mention_limit: int = 5,
+    source_ids: tuple[UUID, ...] | None = None,
 ) -> EntityResolution:
     """Resuelve menciones con evidencia canónica. Nunca inventa matches."""
     cleaned = _clean_mentions(mentions)
@@ -114,11 +121,15 @@ async def resolve_mentions(
     lowered = [mention.lower() for mention in cleaned]
     normalized = [normalize_name(mention) for mention in cleaned]
 
-    objects = await lookup.find_objects_by_names(organization_id, lowered)
+    objects = await lookup.find_objects_by_names(
+        organization_id, lowered, source_ids=source_ids
+    )
     # El repo compara contra alias.normalized persistido (normalize_term:
     # minúsculas y espacios preservados), por eso se consulta con `lowered`.
     # La comparación fina se hace con normalize_name en ambos lados.
-    aliases = await lookup.lookup_aliases(organization_id, lowered)
+    aliases = await lookup.lookup_aliases(
+        organization_id, lowered, source_ids=source_ids
+    )
 
     by_name: dict[str, list[dict]] = {}
     for obj in objects:

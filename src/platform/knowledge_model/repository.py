@@ -1017,10 +1017,26 @@ class PostgresKnowledgeModelRepository:
             await session.close()
 
     async def object_edges(
-        self, organization_id: UUID, object_id: UUID, *, limit: int = 200
+        self,
+        organization_id: UUID,
+        object_id: UUID,
+        *,
+        limit: int = 200,
+        source_ids: tuple[UUID, ...] | None = None,
     ) -> dict:
         session = await get_async_session()
         try:
+            params: dict = {
+                "org": organization_id,
+                "oid": object_id,
+                "limit": min(limit, 500),
+            }
+            source_clause = ""
+            if source_ids:
+                params["source_ids"] = list(source_ids)
+                source_clause = (
+                    " AND (e.source_id = ANY(:source_ids) OR e.source_id IS NULL)"
+                )
             rows = (
                 await session.execute(
                     text(
@@ -1037,12 +1053,14 @@ class PostgresKnowledgeModelRepository:
                         JOIN knowledge_canonical_objects o
                           ON o.id = e.object_id AND o.organization_id = e.organization_id
                         WHERE e.organization_id = :org
-                          AND (e.subject_id = :oid OR e.object_id = :oid)
+                          AND (e.subject_id = :oid OR e.object_id = :oid)"""
+                        + source_clause
+                        + """
                         ORDER BY e.confidence DESC
                         LIMIT :limit
                         """
                     ),
-                    {"org": organization_id, "oid": object_id, "limit": min(limit, 500)},
+                    params,
                 )
             ).fetchall()
             edges = []
@@ -1059,19 +1077,36 @@ class PostgresKnowledgeModelRepository:
             await session.close()
 
     async def object_assertions(
-        self, organization_id: UUID, object_id: UUID, *, limit: int = 100
+        self,
+        organization_id: UUID,
+        object_id: UUID,
+        *,
+        limit: int = 100,
+        source_ids: tuple[UUID, ...] | None = None,
     ) -> list[dict]:
         session = await get_async_session()
         try:
+            params: dict = {
+                "org": organization_id,
+                "oid": object_id,
+                "limit": min(limit, 300),
+            }
+            source_clause = ""
+            if source_ids:
+                params["source_ids"] = list(source_ids)
+                source_clause = (
+                    " AND (source_id = ANY(:source_ids) OR source_id IS NULL)"
+                )
             rows = (
                 await session.execute(
                     text(
                         f"SELECT {_ASSERTION_COLS} FROM knowledge_assertions "
                         "WHERE organization_id = :org "
-                        "AND (subject_id = :oid OR object_id = :oid) "
-                        "ORDER BY confidence DESC, updated_at DESC LIMIT :limit"
+                        "AND (subject_id = :oid OR object_id = :oid)"
+                        + source_clause
+                        + " ORDER BY confidence DESC, updated_at DESC LIMIT :limit"
                     ),
-                    {"org": organization_id, "oid": object_id, "limit": min(limit, 300)},
+                    params,
                 )
             ).fetchall()
             return [_assertion_row(r) for r in rows]
@@ -1385,7 +1420,12 @@ class PostgresKnowledgeModelRepository:
             await session.close()
 
     async def lookup_aliases(
-        self, organization_id: UUID, normalized: list[str], *, limit: int = 50
+        self,
+        organization_id: UUID,
+        normalized: list[str],
+        *,
+        limit: int = 50,
+        source_ids: tuple[UUID, ...] | None = None,
     ) -> list[dict]:
         """Alias normalizados -> objeto canónico (scoped, determinista)."""
         names = [str(item).strip().lower() for item in normalized if str(item).strip()]
@@ -1393,6 +1433,17 @@ class PostgresKnowledgeModelRepository:
             return []
         session = await get_async_session()
         try:
+            params: dict = {
+                "org": organization_id,
+                "names": names[:50],
+                "limit": min(max(int(limit), 1), 200),
+            }
+            source_clause = ""
+            if source_ids:
+                params["source_ids"] = list(source_ids)
+                source_clause = (
+                    " AND (o.source_id = ANY(:source_ids) OR o.source_id IS NULL)"
+                )
             rows = (
                 await session.execute(
                     text(
@@ -1411,16 +1462,14 @@ class PostgresKnowledgeModelRepository:
                           ON o.id = a.entity_id
                          AND o.organization_id = a.organization_id
                         WHERE a.organization_id = :org
-                          AND a.normalized = ANY(:names)
+                          AND a.normalized = ANY(:names)"""
+                        + source_clause
+                        + """
                         ORDER BY a.confidence DESC, o.id
                         LIMIT :limit
                         """
                     ),
-                    {
-                        "org": organization_id,
-                        "names": names[:50],
-                        "limit": min(max(int(limit), 1), 200),
-                    },
+                    params,
                 )
             ).fetchall()
             return [
@@ -1444,6 +1493,7 @@ class PostgresKnowledgeModelRepository:
         *,
         kinds: tuple[str, ...] = _LOOKUP_KINDS,
         limit: int = 20,
+        source_ids: tuple[UUID, ...] | None = None,
     ) -> list[dict]:
         """Objetos canónicos por nombre exacto (lower) entre los kinds resolubles."""
         wanted = [str(item).strip().lower() for item in names if str(item).strip()]
@@ -1451,6 +1501,18 @@ class PostgresKnowledgeModelRepository:
             return []
         session = await get_async_session()
         try:
+            params: dict = {
+                "org": organization_id,
+                "kinds": list(kinds),
+                "names": wanted[:50],
+                "limit": min(max(int(limit), 1), 100),
+            }
+            source_clause = ""
+            if source_ids:
+                params["source_ids"] = list(source_ids)
+                source_clause = (
+                    " AND (source_id = ANY(:source_ids) OR source_id IS NULL)"
+                )
             rows = (
                 await session.execute(
                     text(
@@ -1465,17 +1527,14 @@ class PostgresKnowledgeModelRepository:
                                 NULLIF(display_name, ''),
                                 title,
                                 natural_key
-                              )) = ANY(:names)
+                              )) = ANY(:names)"""
+                        + source_clause
+                        + """
                         ORDER BY confidence DESC NULLS LAST, id
                         LIMIT :limit
                         """
                     ),
-                    {
-                        "org": organization_id,
-                        "kinds": list(kinds),
-                        "names": wanted[:50],
-                        "limit": min(max(int(limit), 1), 100),
-                    },
+                    params,
                 )
             ).fetchall()
             return [

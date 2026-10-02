@@ -20,7 +20,9 @@ from src.runtime.temporal_runner import TemporalRunner
 _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
-def _ctx(entities: EntityResolution | None) -> RunnerContext:
+def _ctx(
+    entities: EntityResolution | None, *, source_ids: tuple = ()
+) -> RunnerContext:
     return RunnerContext(
         query="q",
         organization_id=uuid4(),
@@ -28,6 +30,7 @@ def _ctx(entities: EntityResolution | None) -> RunnerContext:
         role="admin",
         strategy=None,
         entities=entities,
+        source_ids=source_ids,
     )
 
 
@@ -57,9 +60,13 @@ class FakeEdges:
         self.edges = edges
         self.boom = boom
         self.calls = 0
+        self.source_ids_calls: list = []
 
-    async def object_edges(self, organization_id, object_id, *, limit=200):
+    async def object_edges(
+        self, organization_id, object_id, *, limit=200, source_ids=None
+    ):
         self.calls += 1
+        self.source_ids_calls.append(source_ids)
         if self.boom:
             raise RuntimeError("caída")
         return {"edges": self.edges, "count": len(self.edges)}
@@ -69,8 +76,12 @@ class FakeAssertions:
     def __init__(self, rows, *, boom=False):
         self.rows = rows
         self.boom = boom
+        self.source_ids_calls: list = []
 
-    async def object_assertions(self, organization_id, object_id, *, limit=100):
+    async def object_assertions(
+        self, organization_id, object_id, *, limit=100, source_ids=None
+    ):
+        self.source_ids_calls.append(source_ids)
         if self.boom:
             raise RuntimeError("caída")
         return self.rows
@@ -162,3 +173,31 @@ async def test_temporal_runner_sin_ventana_es_empty() -> None:
     runner = TemporalRunner(FakeAssertions(rows), now=lambda: _NOW)
     result = await runner.run(_ctx(_resolved(str(uuid4()))))
     assert result.status == "empty"
+
+
+@pytest.mark.asyncio
+async def test_graph_runner_reenvia_source_ids() -> None:
+    source = uuid4()
+    lookup = FakeEdges([])
+    await GraphRunner(lookup).run(
+        _ctx(_resolved(str(uuid4())), source_ids=(source,))
+    )
+    assert lookup.source_ids_calls == [(source,)]
+
+    unscoped = FakeEdges([])
+    await GraphRunner(unscoped).run(_ctx(_resolved(str(uuid4()))))
+    assert unscoped.source_ids_calls == [None]
+
+
+@pytest.mark.asyncio
+async def test_temporal_runner_reenvia_source_ids() -> None:
+    source = uuid4()
+    lookup = FakeAssertions([])
+    await TemporalRunner(lookup, now=lambda: _NOW).run(
+        _ctx(_resolved(str(uuid4())), source_ids=(source,))
+    )
+    assert lookup.source_ids_calls == [(source,)]
+
+    unscoped = FakeAssertions([])
+    await TemporalRunner(unscoped, now=lambda: _NOW).run(_ctx(_resolved(str(uuid4()))))
+    assert unscoped.source_ids_calls == [None]
