@@ -44,13 +44,25 @@ def _keys(path: Path) -> list[str]:
     return keys
 
 
+def _valid_env_names() -> set[str]:
+    """Nombres de env aceptados: `RAG_` + campo, o los alias declarados."""
+    names: set[str] = set()
+    for name, field in Settings.model_fields.items():
+        names.add(f"RAG_{name.upper()}")
+        alias = field.validation_alias
+        choices = getattr(alias, "choices", None)
+        if choices:
+            names.update(str(choice).upper() for choice in choices)
+    return names
+
+
 @pytest.mark.parametrize("archivo", ARCHIVOS)
 def test_variables_de_entorno_mapean_a_un_campo(archivo: str) -> None:
-    campos = {name.upper() for name in Settings.model_fields}
+    validos = _valid_env_names()
     desconocidas = [
         key
         for key in _keys(ROOT / archivo)
-        if key not in NO_APLICAN and key[len("RAG_"):] not in campos
+        if key not in NO_APLICAN and key not in validos
     ]
     assert desconocidas == [], (
         f"{archivo}: estas variables no existen en Settings y se ignoran en "
@@ -82,10 +94,7 @@ def test_flags_del_gate_y_evidencia_existen() -> None:
 
 
 def test_nombres_documentados_coinciden_con_el_modelo() -> None:
-    """`.env.example` documenta el nombre real (RAG_ + campo), no uno inventado."""
-    campos = {name.upper() for name in Settings.model_fields}
-    exportados = {
-        key for key in _keys(ROOT / ".env.example") if not key.startswith("RAG_RAG_")
-    }
-    for key in sorted(exportados):
-        assert key[len("RAG_"):] in campos, key
+    """`.env.example` documenta el nombre real (RAG_ + campo o alias), no uno inventado."""
+    validos = _valid_env_names()
+    for key in sorted(_keys(ROOT / ".env.example")):
+        assert key in validos, key

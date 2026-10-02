@@ -1124,7 +1124,7 @@ class KnowledgeModelMaterializer:
             return max(
                 int(
                     getattr(
-                        get_settings(), "RAG_KNOWLEDGE_HIGH_IMPACT_MIN_REFS", 5
+                        get_settings(), "KNOWLEDGE_HIGH_IMPACT_MIN_REFS", 5
                     )
                     or 5
                 ),

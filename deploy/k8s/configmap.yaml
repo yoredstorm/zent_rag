@@ -69,6 +69,8 @@ data:
   RAG_KNOWLEDGE_MODEL_ENABLED: "true"
   RAG_KNOWLEDGE_MODEL_AUTO_MATERIALIZE: "true"
   RAG_KNOWLEDGE_MODEL_MAX_COLUMNS: "5000"
+  # C8: umbral determinístico de referencias para HIGH_IMPACT_CHANGE.
+  RAG_KNOWLEDGE_HIGH_IMPACT_MIN_REFS: "5"
   RAG_RAG_SEARCH_KNOWLEDGE_TIMEOUT_SECONDS: "20"
   # Decision Engine batching + Judgment Fabric (ADRs decision-engine-batching.md,
   # judgment-fabric.md). Defaults seguros: sin batching y target explícito.

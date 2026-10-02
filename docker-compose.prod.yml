@@ -53,8 +53,10 @@ x-prod-env: &prod-env
   RAG_UPLOAD_DIR: /app/uploads
   # Subida de archivos: 25 MB por archivo; el body HTTP lleva aire (32 MB).
   RAG_MAX_BODY_BYTES: ${RAG_MAX_BODY_BYTES:-33554432}
-  # Cognitive OS (fases 1-10): off | shadow | limited | active (default off).
+  # Cognitive Runtime (C1-C9): off | shadow | limited | active (default off).
   RAG_COGNITIVE_OS_ENABLED: ${RAG_COGNITIVE_OS_ENABLED:-off}
+  # C8: umbral determinístico de referencias para HIGH_IMPACT_CHANGE.
+  RAG_KNOWLEDGE_HIGH_IMPACT_MIN_REFS: ${RAG_KNOWLEDGE_HIGH_IMPACT_MIN_REFS:-5}
   RAG_DECISION_ROUTING_MODE: ${RAG_DECISION_ROUTING_MODE:-legacy}
   RAG_JEV_SHADOW_MODE: ${RAG_JEV_SHADOW_MODE:-false}
   RAG_JEV_CANARY_PERCENTAGE: ${RAG_JEV_CANARY_PERCENTAGE:-0}

@@ -222,10 +222,12 @@ x-common-env: &common-env
   RAG_RAG_SEARCH_KNOWLEDGE_TIMEOUT_SECONDS: ${RAG_RAG_SEARCH_KNOWLEDGE_TIMEOUT_SECONDS:-20}
   # Presupuesto total del run del agente (loop ReAct completo).
   RAG_RAG_AGENT_MAX_EXECUTION_SECONDS: ${RAG_RAG_AGENT_MAX_EXECUTION_SECONDS:-60}
-  # Cognitive OS (fases 1-10): off | shadow | limited | active.
+  # Cognitive Runtime (C1-C9): off | shadow | limited | active.
   # off bloquea /api/v1/cognitive/* (503). Requiere las migraciones 102-108
   # (el API las aplica al arrancar: alembic upgrade head).
   RAG_COGNITIVE_OS_ENABLED: ${RAG_COGNITIVE_OS_ENABLED:-off}
+  # C8: umbral determinístico de referencias para HIGH_IMPACT_CHANGE.
+  RAG_KNOWLEDGE_HIGH_IMPACT_MIN_REFS: ${RAG_KNOWLEDGE_HIGH_IMPACT_MIN_REFS:-5}
   RAG_DECISION_ROUTING_MODE: ${RAG_DECISION_ROUTING_MODE:-legacy}
   RAG_JEV_SHADOW_MODE: ${RAG_JEV_SHADOW_MODE:-false}
   RAG_JEV_CANARY_PERCENTAGE: ${RAG_JEV_CANARY_PERCENTAGE:-0}

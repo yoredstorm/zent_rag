@@ -546,7 +546,7 @@ class Settings(BaseSettings):
             "Si está OFF, los eventos siguen durables en knowledge_events."
         ),
     )
-    RAG_KNOWLEDGE_HIGH_IMPACT_MIN_REFS: int = Field(
+    KNOWLEDGE_HIGH_IMPACT_MIN_REFS: int = Field(
         default=5,
         ge=1,
         le=10000,
