@@ -132,9 +132,18 @@ def build_loop_report(adaptive: dict, *, max_rounds: int = 3) -> LoopReport:
             reason = "suficiente"
         else:
             reason = "sin_medicion"
+        attempt_value = _attempt_field(raw, "attempt", None)
+        try:
+            attempt = (
+                int(attempt_value)
+                if attempt_value is not None
+                else len(rounds) + 1
+            )
+        except (TypeError, ValueError):
+            attempt = len(rounds) + 1
         rounds.append(
             LoopRound(
-                attempt=int(_attempt_field(raw, "attempt") or len(rounds) + 1),
+                attempt=attempt,
                 strategy=str(_attempt_field(raw, "strategy") or ""),
                 sufficient=bool(sufficient) if sufficient is not None else None,
                 quality_score=(

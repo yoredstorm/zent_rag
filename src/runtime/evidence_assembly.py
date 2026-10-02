@@ -11,6 +11,8 @@ import hashlib
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Sequence
 
+from src.rag.adaptive.passages import sanitize_for_evidence
+
 if TYPE_CHECKING:
     from src.core.domain.adaptive import EvidenceItem
     from src.runtime.entity_resolution import EntityResolution
@@ -127,7 +129,9 @@ def _units_from_items(items: Sequence["EvidenceItem"]) -> list[EvidenceUnit]:
     units: list[EvidenceUnit] = []
     seen: set[str] = set()
     for item in items or ():
-        content = _clip(item.content)
+        raw_content = str(item.content or "")
+        safe_content, _redacted = sanitize_for_evidence(raw_content)
+        content = _clip(safe_content)
         if not content:
             continue
         key = _excerpt_key(item)
