@@ -3,9 +3,13 @@ import {
   CaretDown,
   ClockCounterClockwise,
   Database,
+  DotsThreeVertical,
   Key,
   Receipt,
   Robot,
+  SignOut,
+  UserMinus,
+  UserPlus,
   UserSwitch,
   UsersThree,
   WarningOctagon,
@@ -86,7 +90,13 @@ type Health = {
   organization_status: string;
 };
 
-type TenantUser = { id: string; email: string | null; roles: string[]; last_active_at: string | null };
+type TenantUser = {
+  id: string;
+  email: string | null;
+  roles: string[];
+  last_active_at: string | null;
+  disabled_at?: string | null;
+};
 type TenantAgent = { id: string; name: string; model: string | null; is_active: boolean; deployments: number; created_at: string | null };
 type TenantSource = { id: string; name: string; type: string; status: string | null; last_success_at: string | null; created_at: string | null };
 type TenantBilling = {
@@ -124,6 +134,15 @@ export default function AdminCustomerDetailPage() {
   const [impersonateConfirm, setImpersonateConfirm] = useState(false);
   const [impersonateReason, setImpersonateReason] = useState("");
   const [impersonateTicket, setImpersonateTicket] = useState("");
+  const [userAction, setUserAction] = useState<
+    | { kind: "suspend"; user: TenantUser }
+    | { kind: "activate"; user: TenantUser }
+    | { kind: "revoke-sessions"; user: TenantUser }
+    | { kind: "password-reset"; user: TenantUser }
+    | { kind: "impersonate"; user: TenantUser }
+    | null
+  >(null);
+  const [resetToken, setResetToken] = useState<string | null>(null);
 
   async function loadBase() {
     if (!session || !orgId) return;
@@ -255,6 +274,19 @@ export default function AdminCustomerDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, orgId, tab]);
 
+  // Acciones rápidas desde el menú de fila: impersonate abre el dialog legacy,
+  // password-reset dispara la llamada directa (sin confirmación extra).
+  useEffect(() => {
+    if (!userAction) return;
+    if (userAction.kind === "impersonate") {
+      setImpersonateConfirm(true);
+      setUserAction(null);
+    } else if (userAction.kind === "password-reset") {
+      void runUserAction();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userAction]);
+
   async function run(path: string, action: string) {
     if (!session || !orgId) return;
     setBusy(action);
@@ -269,6 +301,47 @@ export default function AdminCustomerDetailPage() {
       setConfirmAction("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "La acción falló");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function runUserAction() {
+    if (!session || !orgId || !userAction) return;
+    setBusy(userAction.kind);
+    setError("");
+    setResetToken(null);
+    try {
+      if (userAction.kind === "suspend") {
+        await platformApi(
+          `/api/v1/platform/organizations/${orgId}/users/${userAction.user.id}/suspend`,
+          { method: "POST", token: session.token, body: "{}" }
+        );
+        await loadTab("Users");
+      } else if (userAction.kind === "activate") {
+        await platformApi(
+          `/api/v1/platform/organizations/${orgId}/users/${userAction.user.id}/activate`,
+          { method: "POST", token: session.token, body: "{}" }
+        );
+        await loadTab("Users");
+      } else if (userAction.kind === "revoke-sessions") {
+        await platformApi(
+          `/api/v1/platform/organizations/${orgId}/users/${userAction.user.id}/revoke-sessions`,
+          { method: "POST", token: session.token, body: "{}" }
+        );
+      } else if (userAction.kind === "password-reset") {
+        const out = await platformApi<{ reset_token: string }>(
+          `/api/v1/platform/organizations/${orgId}/users/${userAction.user.id}/password-reset`,
+          { method: "POST", token: session.token, body: "{}" }
+        );
+        setResetToken(out.reset_token);
+      } else if (userAction.kind === "impersonate") {
+        setImpersonateConfirm(true);
+        return;
+      }
+      setUserAction(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "La acción falló");
     } finally {
       setBusy("");
     }
@@ -292,6 +365,7 @@ export default function AdminCustomerDetailPage() {
             expires_seconds: 3600,
             reason: impersonateReason.trim(),
             ticket: impersonateTicket.trim() || null,
+            user_id: userAction?.user.id || null,
           }),
         }
       );
@@ -335,6 +409,16 @@ export default function AdminCustomerDetailPage() {
           ))}
         </span>
       ),
+    },
+    {
+      key: "state",
+      header: "Estado",
+      render: (u) =>
+        u.disabled_at ? (
+          <Badge tone="danger">Suspendido</Badge>
+        ) : (
+          <Badge tone="ok">Activo</Badge>
+        ),
     },
     {
       key: "last",
@@ -645,6 +729,53 @@ export default function AdminCustomerDetailPage() {
             rowKey={(u) => u.id}
             caption="Usuarios del tenant"
             stickyHeader
+            rowActions={(u) => (
+              <Menu
+                label={`Acciones para ${u.email || u.id}`}
+                trigger={
+                  <Button variant="ghost" size="sm" leadingIcon={DotsThreeVertical} aria-label="Acciones" />
+                }
+              >
+                <MenuItem
+                  className={menuItemClass}
+                  onSelect={() => setUserAction({ kind: "impersonate", user: u })}
+                >
+                  <UserSwitch size={14} aria-hidden />
+                  Impersonar usuario
+                </MenuItem>
+                <MenuItem
+                  className={menuItemClass}
+                  onSelect={() => setUserAction({ kind: "revoke-sessions", user: u })}
+                >
+                  <SignOut size={14} aria-hidden />
+                  Cerrar sesiones
+                </MenuItem>
+                <MenuItem
+                  className={menuItemClass}
+                  onSelect={() => setUserAction({ kind: "password-reset", user: u })}
+                >
+                  <Key size={14} aria-hidden />
+                  Reset de contraseña
+                </MenuItem>
+                {u.disabled_at ? (
+                  <MenuItem
+                    className={menuItemClass}
+                    onSelect={() => setUserAction({ kind: "activate", user: u })}
+                  >
+                    <UserPlus size={14} aria-hidden />
+                    Reactivar
+                  </MenuItem>
+                ) : (
+                  <MenuItem
+                    className={menuItemClass}
+                    onSelect={() => setUserAction({ kind: "suspend", user: u })}
+                  >
+                    <UserMinus size={14} aria-hidden />
+                    Suspender
+                  </MenuItem>
+                )}
+              </Menu>
+            )}
             empty={
               <EmptyState
                 icon={UsersThree}
@@ -817,11 +948,19 @@ export default function AdminCustomerDetailPage() {
 
       <ConfirmDialog
         open={impersonateConfirm}
-        title="Impersonar tenant"
+        title={
+          userAction?.kind === "impersonate"
+            ? `Impersonar a ${userAction.user.email || userAction.user.id}`
+            : "Impersonar tenant"
+        }
         body={
           <div className="space-y-3">
             <p>
-              Vas a entrar como <strong className="text-text">{data?.company_name || data?.name || ""}</strong>{" "}
+              Vas a entrar como <strong className="text-text">
+                {userAction?.kind === "impersonate"
+                  ? userAction.user.email || userAction.user.id
+                  : data?.company_name || data?.name || ""}
+              </strong>{" "}
               usando tu sesión de plataforma. Es una <strong className="text-text">operación privilegiada</strong> que
               queda registrada en auditoría con el motivo. La sesión del admin real nunca se pierde.
             </p>
@@ -845,7 +984,63 @@ export default function AdminCustomerDetailPage() {
         confirmLabel="Impersonar"
         busy={busy === "impersonate"}
         onConfirm={() => void impersonate()}
-        onCancel={() => setImpersonateConfirm(false)}
+        onCancel={() => {
+          setImpersonateConfirm(false);
+          setUserAction(null);
+        }}
+      />
+
+      <ConfirmDialog
+        open={!!userAction && userAction.kind !== "impersonate"}
+        title={
+          userAction?.kind === "suspend"
+            ? `Suspender a ${userAction.user.email || userAction.user.id}?`
+            : userAction?.kind === "activate"
+              ? `Reactivar a ${userAction.user.email || userAction.user.id}?`
+              : userAction?.kind === "revoke-sessions"
+                ? `Cerrar todas las sesiones de ${userAction.user.email || userAction.user.id}?`
+                : userAction?.kind === "password-reset"
+                  ? `Reset de contraseña para ${userAction.user.email || userAction.user.id}?`
+                  : ""
+        }
+        body={
+          <div className="space-y-3">
+            {userAction?.kind === "suspend" && (
+              <p>El usuario no podrá iniciar sesión hasta reactivarlo. Sus sesiones activas se cierran al instante.</p>
+            )}
+            {userAction?.kind === "activate" && <p>Se restablece el acceso del usuario.</p>}
+            {userAction?.kind === "revoke-sessions" && (
+              <p>Todas las sesiones activas del usuario se revocan. Deberá iniciar sesión de nuevo.</p>
+            )}
+            {userAction?.kind === "password-reset" && (
+              <p>
+                Se genera un token de reset válido por 1 hora. Todas sus sesiones se cerrarán al
+                aplicar el cambio. Copia el token ahora; no se volverá a mostrar.
+              </p>
+            )}
+            {resetToken && (
+              <div className="rounded-sm border border-border bg-soft p-3">
+                <p className="mono text-xs break-all text-accent">{resetToken}</p>
+              </div>
+            )}
+          </div>
+        }
+        confirmLabel={
+          userAction?.kind === "suspend"
+            ? "Suspender"
+            : userAction?.kind === "activate"
+              ? "Reactivar"
+              : userAction?.kind === "revoke-sessions"
+                ? "Cerrar sesiones"
+                : "Generar token"
+        }
+        tone={userAction?.kind === "suspend" || userAction?.kind === "revoke-sessions" ? "danger" : "default"}
+        busy={busy === userAction?.kind}
+        onConfirm={() => void runUserAction()}
+        onCancel={() => {
+          setUserAction(null);
+          setResetToken(null);
+        }}
       />
     </div>
   );

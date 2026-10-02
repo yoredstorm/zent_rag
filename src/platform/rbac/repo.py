@@ -70,17 +70,20 @@ async def list_platform_roles() -> list[dict]:
 
 async def list_platform_users() -> list[dict]:
     """Usuarios de plataforma (email + roles)."""
+    from src.infrastructure.postgres.relational_db import ensure_platform_admin_schema
+
+    await ensure_platform_admin_schema()
     session = await get_async_session()
     try:
         result = await session.execute(
             text(
-                "SELECT u.id, u.email, u.is_platform_admin, "
+                "SELECT u.id, u.email, u.is_platform_admin, u.disabled_at, "
                 "COALESCE(array_agg(pr.name ORDER BY pr.name) FILTER (WHERE pr.name IS NOT NULL), '{}') AS roles "
                 "FROM users u "
                 "LEFT JOIN user_platform_roles upr ON upr.user_id = u.id "
                 "LEFT JOIN platform_roles pr ON pr.id = upr.role_id "
                 "WHERE u.is_platform_admin OR upr.user_id IS NOT NULL "
-                "GROUP BY u.id, u.email, u.is_platform_admin "
+                "GROUP BY u.id, u.email, u.is_platform_admin, u.disabled_at "
                 "ORDER BY u.email"
             )
         )
@@ -93,6 +96,7 @@ async def list_platform_users() -> list[dict]:
             "email": row.email,
             "is_platform_admin": row.is_platform_admin,
             "roles": list(row.roles),
+            "disabled_at": row.disabled_at.isoformat() if row.disabled_at else None,
         }
         for row in rows
     ]
@@ -110,12 +114,14 @@ async def assign_platform_role(user_id: UUID, role_name: str) -> bool:
             ),
             {"uid": user_id, "role": role_name},
         )
-        await session.execute(
-            text("UPDATE users SET is_platform_admin = true WHERE id = :uid"),
-            {"uid": user_id},
-        )
+        changed = result.rowcount > 0
+        if changed:
+            await session.execute(
+                text("UPDATE users SET is_platform_admin = true WHERE id = :uid"),
+                {"uid": user_id},
+            )
         await session.commit()
-        return result.rowcount > 0
+        return changed
     except Exception:
         await session.rollback()
         raise
@@ -165,5 +171,92 @@ async def role_name_exists(role_name: str, organization_id: UUID | None = None) 
             {"name": role_name, "org": organization_id},
         )
         return result.scalar() > 0
+    finally:
+        await session.close()
+
+
+async def get_platform_user(user_id: UUID) -> dict | None:
+    """Usuario de plataforma por id (None si no existe o no es de plataforma)."""
+    from src.infrastructure.postgres.relational_db import ensure_platform_admin_schema
+
+    await ensure_platform_admin_schema()
+    session = await get_async_session()
+    try:
+        result = await session.execute(
+            text(
+                "SELECT u.id, u.email, u.is_platform_admin, u.disabled_at, "
+                "COALESCE(array_agg(pr.name ORDER BY pr.name) FILTER (WHERE pr.name IS NOT NULL), '{}') AS roles "
+                "FROM users u "
+                "LEFT JOIN user_platform_roles upr ON upr.user_id = u.id "
+                "LEFT JOIN platform_roles pr ON pr.id = upr.role_id "
+                "WHERE u.id = :uid AND (u.is_platform_admin OR upr.user_id IS NOT NULL) "
+                "GROUP BY u.id, u.email, u.is_platform_admin, u.disabled_at"
+            ),
+            {"uid": user_id},
+        )
+        row = result.fetchone()
+    finally:
+        await session.close()
+    if row is None:
+        return None
+    return {
+        "id": str(row.id),
+        "email": row.email,
+        "is_platform_admin": row.is_platform_admin,
+        "roles": list(row.roles),
+        "disabled_at": row.disabled_at.isoformat() if row.disabled_at else None,
+    }
+
+
+async def create_platform_user(email: str) -> UUID:
+    """Crea un usuario de plataforma sin password (entra vía reset token)."""
+    import hashlib
+    from uuid import uuid4 as _uuid4
+
+    from src.infrastructure.postgres.relational_db import ensure_platform_admin_schema
+
+    await ensure_platform_admin_schema()
+    user_id = _uuid4()
+    normalized = email.strip().lower()
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "INSERT INTO users "
+                "(id, organization_id, external_id, email_hash, role, email, is_platform_admin) "
+                "VALUES (:id, NULL, :ext, :eh, 'admin', :email, true)"
+            ),
+            {
+                "id": user_id,
+                "ext": f"platform-{_uuid4().hex[:12]}",
+                "eh": hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
+                "email": normalized,
+            },
+        )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+    return user_id
+
+
+async def count_active_super_admins() -> int:
+    """Cantidad de super_admins de plataforma activos (no desactivados)."""
+    from src.infrastructure.postgres.relational_db import ensure_platform_admin_schema
+
+    await ensure_platform_admin_schema()
+    session = await get_async_session()
+    try:
+        result = await session.execute(
+            text(
+                "SELECT COUNT(DISTINCT u.id) FROM users u "
+                "JOIN user_platform_roles upr ON upr.user_id = u.id "
+                "JOIN platform_roles pr ON pr.id = upr.role_id "
+                "WHERE pr.name = 'super_admin' AND u.disabled_at IS NULL"
+            )
+        )
+        return int(result.scalar() or 0)
     finally:
         await session.close()

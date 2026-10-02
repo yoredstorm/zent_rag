@@ -281,6 +281,9 @@ async def forgot_password(body: ForgotPasswordRequest):
     user = await user_repo.get_by_email(body.email)
     if user is not None and not user.is_platform_admin and user.organization_id:
         token = await issue_reset_token(user.id)
+        from src.platform.auth.password_reset import send_reset_email
+
+        payload["email_sent"] = await send_reset_email(user.email or body.email, token)
         if get_settings().ENVIRONMENT == "development":
             payload["dev_reset_token"] = token
     return payload
@@ -296,6 +299,9 @@ async def reset_password(body: ResetPasswordRequest):
         raise HTTPException(status_code=400, detail="Invalid or expired reset token")
     user_repo = PostgresUserRepository()
     await user_repo.set_password(user_id, hash_password(body.password))
+    from src.platform.auth.session import revoke_user_sessions
+
+    await revoke_user_sessions(user_id)
     return {"status": "reset"}
 
 
@@ -339,6 +345,15 @@ async def login(body: LoginRequest, request: Request):
             detail={
                 "error_code": "invalid_credentials",
                 "message": "Invalid email or password.",
+            },
+        )
+
+    if user.disabled_at is not None:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error_code": "user_suspended",
+                "message": "Usuario suspendido. Contacta al administrador de tu organización.",
             },
         )
 
@@ -400,6 +415,15 @@ async def platform_login(body: LoginRequest, request: Request):
             detail={
                 "error_code": "invalid_credentials",
                 "message": "Invalid email or password.",
+            },
+        )
+
+    if user.disabled_at is not None:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error_code": "user_suspended",
+                "message": "Usuario de plataforma desactivado.",
             },
         )
 
@@ -561,6 +585,15 @@ async def platform_login_mfa(body: dict, request: Request):
             detail={"error_code": "mfa_code_invalid", "message": "Código TOTP inválido."},
         )
     await clear_auth_failures(f"mfa:{session.user_id}", _client_ip(request))
+    mfa_user = await PostgresUserRepository().get_by_user_id(session.user_id)
+    if mfa_user is None or mfa_user.disabled_at is not None:
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error_code": "user_suspended",
+                "message": "Usuario de plataforma desactivado.",
+            },
+        )
     import time as _time
 
     access_token = encrypt_session(

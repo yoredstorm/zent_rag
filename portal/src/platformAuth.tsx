@@ -17,6 +17,7 @@ export const IMPERSONATING_KEY = "rag_impersonating";
 export type PlatformSession = {
   token: string;
   email: string;
+  permissions?: string[];
 };
 
 function loadPlatformSession(): PlatformSession | null {
@@ -67,10 +68,50 @@ export function PlatformAuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
   }, []);
 
+  const refreshPermissions = useCallback(async (token: string) => {
+    try {
+      const me = await platformApi<{ permissions?: string[]; email?: string }>(
+        "/api/v1/auth/me",
+        { token }
+      );
+      return { permissions: me.permissions || [], email: me.email };
+    } catch {
+      return { permissions: [] as string[], email: "" };
+    }
+  }, []);
+
+  const saveWithPermissions = useCallback(
+    async (raw: { token: string; email: string }) => {
+      const { permissions, email } = await refreshPermissions(raw.token);
+      const next: PlatformSession = {
+        token: raw.token,
+        email: email || raw.email,
+        permissions,
+      };
+      savePlatformSession(next);
+      setSession(next);
+    },
+    [refreshPermissions]
+  );
+
+  useEffect(() => {
+    const current = loadPlatformSession();
+    if (!current) return;
+    void refreshPermissions(current.token).then((info) => {
+      if (!info.permissions.length && !info.email) return;
+      const next: PlatformSession = {
+        token: current.token,
+        email: info.email || current.email,
+        permissions: info.permissions,
+      };
+      savePlatformSession(next);
+      setSession(next);
+    });
+  }, [refreshPermissions]);
+
   const logout = useCallback(() => {
     const current = loadPlatformSession();
     if (current?.token) {
-      // Revocar server-side (FASE 06): la cookie HttpOnly se limpia en el servidor.
       void platformApi("/api/v1/auth/logout", {
         method: "POST",
         token: current.token,
@@ -94,10 +135,9 @@ export function PlatformAuthProvider({ children }: { children: ReactNode }) {
       return { mfaRequired: true, mfaSession: data.mfa_session };
     }
     const next = { token: data.access_token || "", email: data.email || email };
-    savePlatformSession(next);
-    setSession(next);
+    await saveWithPermissions(next);
     return undefined;
-  }, []);
+  }, [saveWithPermissions]);
 
   const loginMfa = useCallback(async (mfaSession: string, code: string) => {
     const data = await platformApi<{ access_token: string; email?: string }>(
@@ -108,9 +148,8 @@ export function PlatformAuthProvider({ children }: { children: ReactNode }) {
       }
     );
     const next = { token: data.access_token, email: data.email || "" };
-    savePlatformSession(next);
-    setSession(next);
-  }, []);
+    await saveWithPermissions(next);
+  }, [saveWithPermissions]);
 
   const stepUp = useCallback(async (code: string) => {
     const data = await platformApi<{ access_token: string; step_up?: boolean }>(
@@ -122,9 +161,8 @@ export function PlatformAuthProvider({ children }: { children: ReactNode }) {
     );
     const current = loadPlatformSession();
     const next = { token: data.access_token, email: current?.email || "" };
-    savePlatformSession(next);
-    setSession(next);
-  }, []);
+    await saveWithPermissions(next);
+  }, [saveWithPermissions]);
 
   const value = useMemo(
     () => ({ session, login, loginMfa, stepUp, logout }),

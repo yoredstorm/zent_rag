@@ -45,6 +45,30 @@ def _mem_is_revoked(sid: str) -> bool:
         return True
 
 
+# Revocación total por usuario: uid -> (revoked_before, expires_at epoch).
+_mem_user_revoked: dict[str, tuple[float, float]] = {}
+
+
+def _mem_revoke_user(uid: str, ttl_seconds: int) -> float:
+    marker = time.time()
+    with _mem_lock:
+        _mem_user_revoked[uid] = (marker, marker + ttl_seconds)
+    return marker
+
+
+def _mem_user_revoked_before(uid: str) -> float | None:
+    now = time.time()
+    with _mem_lock:
+        entry = _mem_user_revoked.get(uid)
+        if entry is None:
+            return None
+        marker, exp = entry
+        if now >= exp:
+            del _mem_user_revoked[uid]
+            return None
+        return marker
+
+
 class SessionTokenError(Exception):
     """Invalid, expired, or tampered portal session token."""
 
@@ -54,6 +78,7 @@ class SessionPayload:
     user_id: UUID
     organization_id: UUID | None
     exp: int
+    issued_at: float = 0.0  # epoch (segundos, sub-segundo); 0 = token legacy
     typ: str = "portal"
     sid: str | None = None  # session id for server-side revocation
     assurance: str | None = None  # FASE 07: "totp" cuando el login pasó MFA
@@ -104,6 +129,7 @@ def encrypt_session(
         "tid": str(organization_id) if organization_id is not None else None,
         "sid": sid,
         "exp": int(time.time()) + int(hours * 3600),
+        "iat": time.time(),
         "typ": typ,
     }
     if assurance:
@@ -145,19 +171,68 @@ async def revoke_session(token: str) -> None:
         _mem_revoke(payload.sid, ttl_seconds)
 
 
-async def session_is_active(sid: str | None) -> bool:
-    """False si la sesión fue revocada (logout). Sid None (tokens legacy) -> True."""
-    if not sid:
-        return True
+async def revoke_user_sessions(user_id: UUID) -> None:
+    """Revoca TODAS las sesiones activas de un usuario.
+
+    Escribe el marcador `rag:user:revoked:{uid}` (epoch actual): todo token
+    emitido antes (issued_at <= marker) deja de valer. TTL = máximo TTL de
+    sesión (168 h). Usado por suspensión, reset de contraseña y logout forzado.
+    """
+    ttl_seconds = 168 * 3600
+    uid = str(user_id)
     try:
         from src.infrastructure.redis.cache import _get_redis
 
         client = await _get_redis()
-        revoked = await client.exists(f"rag:session:revoked:{sid}")
-        return not bool(revoked)
+        await client.set(f"rag:user:revoked:{uid}", str(time.time()), ex=ttl_seconds)
     except Exception as exc:
-        logger.warning("Session registry unavailable; using in-memory", error=str(exc))
-        return not _mem_is_revoked(sid)
+        logger.warning(
+            "Redis unavailable; recording user revocation in-memory",
+            error=str(exc),
+        )
+        _mem_revoke_user(uid, ttl_seconds)
+
+
+async def _user_revoked_before(uid: str) -> float | None:
+    try:
+        from src.infrastructure.redis.cache import _get_redis
+
+        client = await _get_redis()
+        raw = await client.get(f"rag:user:revoked:{uid}")
+        return float(raw) if raw is not None else None
+    except Exception as exc:
+        logger.warning("User revocation registry unavailable; using in-memory", error=str(exc))
+        return _mem_user_revoked_before(uid)
+
+
+async def session_is_active(
+    sid: str | None,
+    *,
+    user_id: UUID | None = None,
+    issued_at: float | None = None,
+) -> bool:
+    """False si la sesión fue revocada (logout o suspensión del usuario).
+
+    Sid None (tokens legacy) -> True salvo que exista marcador de revocación
+    del usuario posterior a la emisión.
+    """
+    if sid:
+        try:
+            from src.infrastructure.redis.cache import _get_redis
+
+            client = await _get_redis()
+            revoked = await client.exists(f"rag:session:revoked:{sid}")
+            if revoked:
+                return False
+        except Exception as exc:
+            logger.warning("Session registry unavailable; using in-memory", error=str(exc))
+            if _mem_is_revoked(sid):
+                return False
+    if user_id is not None:
+        marker = await _user_revoked_before(str(user_id))
+        if marker is not None and (issued_at or 0.0) <= marker:
+            return False
+    return True
 
 
 def decrypt_session(token: str) -> SessionPayload:
@@ -196,6 +271,7 @@ def decrypt_session(token: str) -> SessionPayload:
             user_id=UUID(data["uid"]),
             organization_id=organization_id,
             exp=exp,
+            issued_at=float(data.get("iat", 0)),
             typ=typ,
             sid=data.get("sid"),
             assurance=data.get("assurance"),

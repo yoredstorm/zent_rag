@@ -61,7 +61,11 @@ class BillingService:
                 session = decrypt_session(token)
             except SessionTokenError as exc:
                 raise TokenValidationError(str(exc), 401, "invalid_session") from exc
-            if not await session_is_active(session.sid):
+            if not await session_is_active(
+                session.sid,
+                user_id=session.user_id,
+                issued_at=session.issued_at,
+            ):
                 raise TokenValidationError(
                     "Session has been revoked. Log in again.",
                     401,

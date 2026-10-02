@@ -66,6 +66,9 @@ skills-lock.json
 # Estado local del agente (taste/learnings): nunca se versiona
 .commandcode/
 
+# Grafo local de graphify (graph.json, graph.html, report): artefacto de máquina
+graphify-out/
+
 # Local scratch requests (contain webhook secrets)
 bruno/RAG/prueba.bru
 
