@@ -42,3 +42,46 @@ def test_turn_sin_plan_es_serializable() -> None:
     assert "plan" not in payload
     assert "strategy" not in payload
     assert payload["notes"] == []
+
+
+def test_jev_signals_sin_entidades(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "shadow")
+    query = "¿Aplica la regla 12?"
+    turn = CognitiveTurn(query=query, plan=build_cognitive_plan(query))
+    assert turn.jev_signals() == {
+        "exact_lookup_declared": False,
+        "entity_resolved": None,
+    }
+
+
+def test_jev_signals_entidad_resuelta(monkeypatch) -> None:
+    from src.runtime.entity_resolution import (
+        EntityMatch,
+        EntityResolution,
+        MentionResolution,
+    )
+
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "shadow")
+    query = "¿Qué significa el Byte 105?"
+    turn = CognitiveTurn(query=query, plan=build_cognitive_plan(query))
+    turn.entities = EntityResolution(
+        mentions=(
+            MentionResolution(
+                mention="Byte 105",
+                status="resolved",
+                matches=(
+                    EntityMatch(
+                        mention="Byte 105",
+                        canonical_id="c1",
+                        name="Byte 105",
+                        kind="entity",
+                        match="exact_name",
+                        confidence=1.0,
+                    ),
+                ),
+            ),
+        )
+    )
+    signals = turn.jev_signals()
+    assert signals["exact_lookup_declared"] is True
+    assert signals["entity_resolved"] is True

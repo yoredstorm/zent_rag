@@ -662,6 +662,8 @@ class DeterministicSignals:
     cheap_path: bool = False
     prefer_small_model: bool = False
     legacy_tier: str = TIER_STANDARD
+    entity_resolved: bool | None = None
+    exact_lookup_declared: bool | None = None
 
     def to_public_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {}
@@ -686,6 +688,10 @@ class DeterministicSignals:
             payload["answerability_reasons"] = list(self.answerability_reasons)
         if self.analysis_blockers:
             payload["analysis_blockers"] = list(self.analysis_blockers)
+        # Señales cognitivas (C2): siempre declaradas. Un `None` es "no
+        # disponible" y el consumidor debe poder distinguirlo de "ausente".
+        payload["entity_resolved"] = self.entity_resolved
+        payload["exact_lookup_declared"] = self.exact_lookup_declared
         return payload
 
 

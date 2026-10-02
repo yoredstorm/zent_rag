@@ -1077,3 +1077,14 @@ def test_estado_pre_reasoning_sin_company_context_queda_vacio() -> None:
     state = pre_reasoning_state(query="solo una pregunta")
     assert state["company_context_facts"] == {}
     assert state["company_context_counts"] == {}
+
+
+def test_signals_cognitivas_son_opcionales() -> None:
+    from src.decision.preflight import DeterministicSignals
+
+    base = DeterministicSignals()
+    assert base.entity_resolved is None
+    assert base.exact_lookup_declared is None
+    payload = base.to_public_dict()
+    assert payload["entity_resolved"] is None
+    assert payload["exact_lookup_declared"] is None

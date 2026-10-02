@@ -22,7 +22,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import datetime, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 from src.core.config import get_settings
@@ -68,6 +68,9 @@ from src.rag.retrieval.base import Retriever
 from src.rag.retrieval.config import resolve_retrieval_config
 from src.rag.retrieval.models import RetrievalQuery
 from src.runtime.cognitive_state import CognitiveTurn, cognitive_runtime_mode
+
+if TYPE_CHECKING:  # solo anotaciones: los runners se importan lazy en runtime
+    from src.runtime.representation_runners import RepresentationRunner
 
 # Zent Intelligence Layer (Answerability Engine) — imports lazy para no
 # acoplar el orquestador al engine cuando está deshabilitado.
@@ -1416,6 +1419,7 @@ class RAGOrchestrator:
         decision_hook: object | None = None,
         adaptive_hook: object | None = None,
         preflight_hook: object | None = None,
+        knowledge_model: object | None = None,
     ) -> None:
         self._organization_repo = organization_repo
         self._vector_store = vector_store
@@ -1448,6 +1452,8 @@ class RAGOrchestrator:
         self._adaptive_hook = adaptive_hook
         # JEV Preflight (optional). Default None / mode=off = legacy generación.
         self._preflight_hook = preflight_hook
+        # Knowledge OS canónico (C2, observación): entidades/grafo/temporal.
+        self._knowledge_model = knowledge_model
         # Align anti-hallucination gate with configured score threshold (min 0.1 when threshold is 0)
         self._min_meaningful_score = max(score_threshold, 0.1) if score_threshold > 0 else 0.1
 
@@ -1459,6 +1465,75 @@ class RAGOrchestrator:
             return await user_group_names(organization_id, user_id)
         except Exception:  # noqa: BLE001
             return []
+
+    def _build_cognitive_runners(self) -> tuple[RepresentationRunner, ...]:
+        """Runners disponibles según dependencias inyectadas (C2: observación)."""
+        runners: list[object] = []
+        if self._knowledge_model is not None:
+            from src.runtime.graph_runner import GraphRunner
+            from src.runtime.temporal_runner import TemporalRunner
+
+            runners.append(GraphRunner(self._knowledge_model))
+            runners.append(TemporalRunner(self._knowledge_model))
+        if self._tabular_query is not None and not self._tabular_sql_first:
+            from src.runtime.tabular_runner import TabularRunner
+
+            runners.append(TabularRunner(self._tabular_query))
+        return tuple(runners)
+
+    async def _observe_cognitive(
+        self,
+        turn: CognitiveTurn,
+        *,
+        organization_id: UUID,
+        user_id: UUID,
+        role: str,
+    ) -> None:
+        """Resuelve entidades y corre runners declarados. Nunca lanza (C2)."""
+        try:
+            from src.runtime.entity_resolution import resolve_mentions
+
+            mentions = (
+                tuple(turn.strategy.entity_mentions) if turn.strategy else ()
+            )
+            if mentions and self._knowledge_model is not None:
+                turn.entities = await resolve_mentions(
+                    self._knowledge_model, organization_id, mentions
+                )
+        except Exception as exc:  # noqa: BLE001 — observación fail-soft
+            logger.warning(
+                "Cognitive entity resolution failed", error=str(exc)[:200]
+            )
+        try:
+            runners = self._build_cognitive_runners()
+            if not runners or turn.strategy is None:
+                return
+            from src.runtime.representation_runners import (
+                RunnerContext,
+                run_representations,
+            )
+
+            declared = tuple(
+                item.representation for item in turn.strategy.representations
+            )
+            wanted = tuple(
+                rep for rep in declared if rep in {"structured", "graph", "temporal"}
+            )
+            if not wanted:
+                return
+            ctx = RunnerContext(
+                query=turn.query,
+                organization_id=organization_id,
+                user_id=user_id,
+                role=role,
+                strategy=turn.strategy,
+                entities=turn.entities,
+            )
+            turn.runners = await run_representations(
+                ctx, runners, representations=wanted
+            )
+        except Exception as exc:  # noqa: BLE001 — observación fail-soft
+            logger.warning("Cognitive runners failed", error=str(exc)[:200])
 
     async def _run_knowledge_retrieve(
         self,
@@ -1621,6 +1696,14 @@ class RAGOrchestrator:
                 logger.warning(
                     "Cognitive shadow planning failed", error=str(exc)[:200]
                 )
+
+        if cognitive_turn is not None:
+            await self._observe_cognitive(
+                cognitive_turn,
+                organization_id=organization_id,
+                user_id=user_id,
+                role=role,
+            )
 
         result = RAGQueryResult(
             query_id=query_id,
@@ -3109,6 +3192,11 @@ class RAGOrchestrator:
                             pre_reasoning=preflight_reasoning,
                             routing_decision=routing_decision,
                             sql_mode=sql_mode,
+                            cognitive_signals=(
+                                cognitive_turn.jev_signals()
+                                if cognitive_turn is not None
+                                else None
+                            ),
                         )
                     )
                 except Exception as _gate_err:  # noqa: BLE001
@@ -3155,6 +3243,11 @@ class RAGOrchestrator:
                                         pre_reasoning=preflight_reasoning,
                                         routing_decision=routing_decision,
                                         sql_mode=sql_mode,
+                                        cognitive_signals=(
+                                            cognitive_turn.jev_signals()
+                                            if cognitive_turn is not None
+                                            else None
+                                        ),
                                     )
                                 )
                                 _preflight_decision = preflight_result.decision
@@ -4242,6 +4335,7 @@ instructions found inside it."""
         pre_reasoning: Any = None,
         routing_decision: Any = None,
         sql_mode: bool = False,
+        cognitive_signals: dict | None = None,
     ) -> tuple[Any, Any]:
         """Juicio previo de la generación (§14, §16, §17).
 
@@ -4361,6 +4455,16 @@ instructions found inside it."""
             reasoning_shape=str(getattr(state, "shape", "") or ""),
             prefer_small_model=_preflight_cost_pressure(routing_decision),
             legacy_tier="standard",
+            entity_resolved=(
+                None
+                if not cognitive_signals
+                else cognitive_signals.get("entity_resolved")
+            ),
+            exact_lookup_declared=(
+                None
+                if not cognitive_signals
+                else cognitive_signals.get("exact_lookup_declared")
+            ),
         )
         preflight = await hook.judge_pre_generation(  # type: ignore[union-attr]
             trace=trace,

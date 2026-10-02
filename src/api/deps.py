@@ -1069,6 +1069,7 @@ def get_rag_orchestrator() -> RAGOrchestrator:
             decision_hook=_decision_hook_or_none(),
             adaptive_hook=_adaptive_hook_or_none(),
             preflight_hook=_preflight_hook_or_none(),
+            knowledge_model=get_knowledge_model_service(),
         )
     return _orchestrator
 
