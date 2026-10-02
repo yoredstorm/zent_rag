@@ -119,6 +119,24 @@ def _llm_completion_message(table: str, result: dict) -> str:
     return f"{base} {summary[:220]}" if summary else base
 
 
+def _system_emitter_for_events():
+    """C8: emisor de eventos de conocimiento para la materialización automática."""
+    try:
+        from src.platform.knowledge_events.emitter import (
+            KnowledgeSystemEventEmitter,
+        )
+        from src.platform.knowledge_learning.events import KnowledgeEventEmitter
+        from src.platform.knowledge_learning.repository import (
+            PostgresKnowledgeLearningRepository,
+        )
+
+        return KnowledgeSystemEventEmitter(
+            KnowledgeEventEmitter(PostgresKnowledgeLearningRepository())
+        )
+    except Exception:  # noqa: BLE001 — sin emisor, la materialización sigue igual
+        return None
+
+
 class KnowledgeLearningEngine:
     """Ejecuta el pipeline de aprendizaje con jobs durables (patrón FASE 24)."""
 
@@ -901,6 +919,7 @@ class KnowledgeLearningEngine:
             _summary = await KnowledgeModelMaterializer(
                 PostgresKnowledgeModelRepository(),
                 max_columns=_get_settings().KNOWLEDGE_MODEL_MAX_COLUMNS,
+                system_emitter=_system_emitter_for_events(),
             ).materialize(org, source_id=source_id, run_id=run_id)
             await self._emit(
                 org,
