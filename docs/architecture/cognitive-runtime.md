@@ -99,7 +99,7 @@ confianza, efecto).
 |---|---|---|
 | ¿Necesita Knowledge OS? | `needs_private_knowledge` | — |
 | ¿Entidad resuelta? | — | `entity_resolved` (determinista si match exacto/alias; JEV si ambiguo) |
-| ¿Búsqueda exacta además de semántica? | — | `exact_lookup_needed` (needles → determinista; JEV si duda) |
+| ¿Búsqueda exacta además de semántica? | — | `exact_lookup_declared` (C2: determinista desde el plan; JEV refina en C4) |
 | ¿Razonamiento profundo o LLM barato? | `simple_deterministic_answer_possible`, tiers | `deep_reasoning_needed` (L≥3 + señales; JEV desempata) |
 | ¿Evidencia suficiente? | `answerable_from_current_evidence` / `evidence_sufficient` | — |
 | ¿Ambigüedad / falta dato crítico? | `critical_fact_missing`, `choice.ambiguous` | — |

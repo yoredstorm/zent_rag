@@ -122,3 +122,11 @@ async def test_service_passthrough(org) -> None:
     service = KnowledgeModelService(PostgresKnowledgeModelRepository(), None)
     assert await service.lookup_aliases(org.id, ["cat 31"]) == []
     assert await service.find_objects_by_names(org.id, ["no existe"]) == []
+
+
+@pytest.mark.asyncio
+async def test_service_object_assertions_acepta_limit(org) -> None:
+    from src.platform.knowledge_model.service import KnowledgeModelService
+
+    service = KnowledgeModelService(PostgresKnowledgeModelRepository(), None)
+    assert await service.object_assertions(org.id, uuid4(), limit=1) == []

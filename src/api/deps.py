@@ -1060,11 +1060,9 @@ def get_rag_orchestrator() -> RAGOrchestrator:
                 else None
             ),
             knowledge_retriever=get_knowledge_retriever(),
-            tabular_query=(
-                get_tabular_query_service()
-                if settings.KNOWLEDGE_TABULAR_SQL_FIRST
-                else None
-            ),
+            # El servicio se inyecta siempre: con SQL-first el path productivo lo
+            # posee; sin SQL-first, la observación cognitiva (C2) lo usa.
+            tabular_query=get_tabular_query_service(),
             tabular_sql_first=bool(settings.KNOWLEDGE_TABULAR_SQL_FIRST),
             decision_hook=_decision_hook_or_none(),
             adaptive_hook=_adaptive_hook_or_none(),

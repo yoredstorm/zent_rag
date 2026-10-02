@@ -540,8 +540,12 @@ class KnowledgeModelService:
     async def object_edges(self, organization_id: UUID, object_id: UUID, **kwargs) -> dict:
         return await self._repo.object_edges(organization_id, object_id, **kwargs)
 
-    async def object_assertions(self, organization_id: UUID, object_id: UUID) -> list[dict]:
-        return await self._repo.object_assertions(organization_id, object_id)
+    async def object_assertions(
+        self, organization_id: UUID, object_id: UUID, *, limit: int = 100
+    ) -> list[dict]:
+        return await self._repo.object_assertions(
+            organization_id, object_id, limit=limit
+        )
 
     async def object_evidence(self, organization_id: UUID, object_id: UUID) -> list[dict]:
         return await self._repo.object_evidence(organization_id, object_id)

@@ -1412,7 +1412,7 @@ class PostgresKnowledgeModelRepository:
                          AND o.organization_id = a.organization_id
                         WHERE a.organization_id = :org
                           AND a.normalized = ANY(:names)
-                        ORDER BY a.confidence DESC, o.name
+                        ORDER BY a.confidence DESC, o.id
                         LIMIT :limit
                         """
                     ),
@@ -1466,7 +1466,7 @@ class PostgresKnowledgeModelRepository:
                                 title,
                                 natural_key
                               )) = ANY(:names)
-                        ORDER BY confidence DESC NULLS LAST, name
+                        ORDER BY confidence DESC NULLS LAST, id
                         LIMIT :limit
                         """
                     ),
