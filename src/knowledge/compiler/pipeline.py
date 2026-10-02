@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import time
 from collections.abc import Awaitable, Callable
+from typing import Protocol
 from uuid import UUID
 
 from src.core.domain.canonical import CanonicalKind, canonical_uuid
+from src.core.domain.knowledge_events import KnowledgeEventType, KnowledgeSystemEvent
 from src.core.domain.knowledge_v2 import StructuredDocument
 from src.infrastructure.observability.logging_config import get_logger
 from src.knowledge.compiler import conflicts as conflict_engine
@@ -42,6 +44,12 @@ from src.knowledge.compiler.model import (
 from src.knowledge.compiler.store import CompilerStore, PostgresCompilerStore, object_kind_for_entity
 
 logger = get_logger(__name__)
+
+
+class SystemEventEmitter(Protocol):
+    """Emisor de eventos de dominio del conocimiento (C8)."""
+
+    async def emit(self, event: KnowledgeSystemEvent) -> None: ...
 
 
 class KnowledgeCompiler:
@@ -109,12 +117,17 @@ class KnowledgeCompiler:
         workspace_id: UUID | None = None,
         persist: bool = True,
         observer: "Callable[[str, dict], Awaitable[None]] | None" = None,
+        system_emitter: "SystemEventEmitter | None" = None,
     ) -> CompilationResult:
         """Compila y persiste. En modo offline solo devuelve el resultado.
 
         ``observer`` recibe eventos semánticos reales (ENTITY_DISCOVERED,
         FACT_REINFORCED, RULE_DISCOVERED, CONFLICT_DETECTED, ...) a medida que
         la persistencia ocurre. Es la fuente del "ZENT está aprendiendo".
+
+        ``system_emitter`` (opcional, C8) recibe eventos de dominio
+        (NEW_ENTITY, NEW_RULE, RULE_CHANGED, CONFLICT_DETECTED) derivados de
+        esas mismas señales. Es best-effort: nunca altera el flujo.
         """
         started = time.perf_counter()
         result = self.build(document)
@@ -128,6 +141,7 @@ class KnowledgeCompiler:
                 result,
                 workspace_id=workspace_id or document.workspace_id,
                 observer=observer,
+                system_emitter=system_emitter,
             )
         except Exception as exc:  # noqa: BLE001 — la ingesta ya persistió el documento
             status = "failed"
@@ -161,6 +175,7 @@ class KnowledgeCompiler:
         *,
         workspace_id: UUID | None,
         observer: "Callable[[str, dict], Awaitable[None]] | None" = None,
+        system_emitter: "SystemEventEmitter | None" = None,
     ) -> dict:
         store = self._store
         organization_id = result.organization_id
@@ -217,6 +232,16 @@ class KnowledgeCompiler:
                     observer,
                     "ENTITY_DISCOVERED",
                     {"name": entity.name, "entity_type": entity.entity_type},
+                )
+                await self._emit_system(
+                    system_emitter,
+                    KnowledgeEventType.NEW_ENTITY,
+                    organization_id=organization_id,
+                    payload={"name": entity.name, "entity_type": entity.entity_type},
+                    confidence=entity.confidence,
+                    source_id=source_id,
+                    document_id=document_id,
+                    object_id=object_id,
                 )
             for alias in entity.aliases:
                 evidence_ids = [
@@ -420,6 +445,14 @@ class KnowledgeCompiler:
                 evidence_written += 1 if written else 0
 
         rules_written = 0
+        existing_rule_keys: dict[str, str] = {}
+        if system_emitter is not None:
+            try:
+                existing_rule_keys = await store.existing_rule_keys(organization_id)
+            except Exception as exc:  # noqa: BLE001 — el índice es best-effort
+                logger.debug(
+                    "Knowledge rule index lookup failed", error=str(exc)[:160]
+                )
         for rule in result.rules:
             rule_id, rule_status = await store.upsert_rule(
                 organization_id,
@@ -441,6 +474,39 @@ class KnowledgeCompiler:
                         "modality": rule.modality,
                     },
                 )
+                previous_rule_key = existing_rule_keys.get(rule.subject)
+                if previous_rule_key and previous_rule_key != rule.rule_key:
+                    await self._emit_system(
+                        system_emitter,
+                        KnowledgeEventType.RULE_CHANGED,
+                        organization_id=organization_id,
+                        payload={
+                            "previous_rule_key": previous_rule_key,
+                            "rule_key": rule.rule_key,
+                            "subject": rule.subject,
+                        },
+                        confidence=rule.confidence,
+                        requires_review=True,
+                        source_id=source_id,
+                        document_id=document_id,
+                        object_id=rule_id,
+                        rule_key=rule.rule_key,
+                    )
+                else:
+                    await self._emit_system(
+                        system_emitter,
+                        KnowledgeEventType.NEW_RULE,
+                        organization_id=organization_id,
+                        payload={
+                            "subject": rule.subject,
+                            "statement": rule.statement[:600],
+                        },
+                        confidence=rule.confidence,
+                        source_id=source_id,
+                        document_id=document_id,
+                        object_id=rule_id,
+                        rule_key=rule.rule_key,
+                    )
             for evidence in rule.evidence:
                 written = await store.add_evidence(
                     organization_id,
@@ -490,6 +556,25 @@ class KnowledgeCompiler:
                 "CONFLICT_DETECTED",
                 conflict.to_dict(),
             )
+            await self._emit_system(
+                system_emitter,
+                KnowledgeEventType.CONFLICT_DETECTED,
+                organization_id=organization_id,
+                payload={
+                    "subject": conflict.subject,
+                    "predicate": conflict.predicate,
+                    "conflict_type": conflict.conflict_type,
+                    "value_a": conflict.value_a[:300],
+                    "value_b": conflict.value_b[:300],
+                    "evidence_ids": [
+                        str(value) for value in conflict.evidence_ids
+                    ],
+                },
+                confidence=conflict.confidence,
+                source_id=source_id,
+                document_id=document_id,
+                object_id=subject_id,
+            )
 
         if evidence_written:
             counters["evidence"] = evidence_written
@@ -538,6 +623,44 @@ class KnowledgeCompiler:
             await observer(event_type, payload)
         except Exception as exc:  # noqa: BLE001 — la observación es best-effort
             logger.debug("Knowledge observer failed", error=str(exc)[:160])
+
+    async def _emit_system(
+        self,
+        emitter: "SystemEventEmitter | None",
+        event_type: KnowledgeEventType,
+        *,
+        organization_id: UUID,
+        payload: dict | None = None,
+        confidence: float | None = None,
+        requires_review: bool | None = None,
+        source_id: UUID | None = None,
+        document_id: UUID | None = None,
+        object_id: UUID | None = None,
+        rule_key: str | None = None,
+    ) -> None:
+        """Emite un evento de dominio C8. Best-effort: nunca interrumpe."""
+        if emitter is None:
+            return
+        try:
+            await emitter.emit(
+                KnowledgeSystemEvent(
+                    type=event_type,
+                    organization_id=organization_id,
+                    payload=payload,
+                    confidence=confidence,
+                    requires_review=requires_review,
+                    source_id=source_id,
+                    document_id=document_id,
+                    object_id=object_id,
+                    rule_key=rule_key,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — la emisión es best-effort
+            logger.debug(
+                "Knowledge system event failed",
+                event_type=event_type.value,
+                error=str(exc)[:160],
+            )
 
     async def _ensure_object(
         self,
@@ -608,6 +731,7 @@ def _entity_is_known(entity: EntityCandidate, aliases: dict[str, str]) -> bool:
 
 __all__ = [
     "KnowledgeCompiler",
+    "SystemEventEmitter",
     "CompilationResult",
     "CompilerStore",
     "PostgresCompilerStore",

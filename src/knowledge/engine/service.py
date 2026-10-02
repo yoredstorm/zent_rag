@@ -327,6 +327,7 @@ class KnowledgeIngestionEngine:
         company_discovery: object | None = None,
         compiler: object | None = None,
         session_service: object | None = None,
+        system_emitter: object | None = None,
     ) -> None:
         self._jobs = job_repo
         self._state = sync_state_repo
@@ -355,6 +356,10 @@ class KnowledgeIngestionEngine:
         self._compiler = compiler
         # Learning Sessions: observabilidad real del aprendizaje (opcional).
         self._sessions = session_service
+        # Eventos de sistema C8 (NEW_ENTITY, NEW_RULE, RULE_CHANGED, …).
+        # Independiente del observer de sesión y opcional: sin emisor, el
+        # pipeline del compilador mantiene su comportamiento actual.
+        self._system_emitter = system_emitter
         self.documents_parsed = 0
         self.documents_failed = 0
         self.compilations_failed = 0
@@ -838,11 +843,19 @@ class KnowledgeIngestionEngine:
                 await observer.event(event_type, payload=payload)
 
         try:
-            result = await self._compiler.compile_document(
-                document,
-                workspace_id=source.workspace_id,
-                observer=compile_observer,
-            )
+            if self._system_emitter is None:
+                result = await self._compiler.compile_document(
+                    document,
+                    workspace_id=source.workspace_id,
+                    observer=compile_observer,
+                )
+            else:
+                result = await self._compiler.compile_document(
+                    document,
+                    workspace_id=source.workspace_id,
+                    observer=compile_observer,
+                    system_emitter=self._system_emitter,
+                )
             logger.info(
                 "Knowledge compiled",
                 document_id=str(document.id),

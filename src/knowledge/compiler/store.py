@@ -96,6 +96,8 @@ class CompilerStore(Protocol):
 
     async def existing_aliases(self, organization_id: UUID) -> dict[str, str]: ...
 
+    async def existing_rule_keys(self, organization_id: UUID) -> dict[str, str]: ...
+
     async def upsert_entity(
         self,
         organization_id: UUID,
@@ -209,6 +211,41 @@ class PostgresCompilerStore:
         finally:
             await session.close()
         return {str(row.normalized): str(row.name) for row in rows}
+
+    async def existing_rule_keys(self, organization_id: UUID) -> dict[str, str]:
+        """{subject: rule_key} de las reglas ya persistidas por el compilador.
+
+        Las reglas del compilador viven en ``knowledge_canonical_objects`` con
+        ``kind='business_rule'`` (ver ``upsert_rule``), con el subject en
+        ``name`` y la clave en ``metadata->>'rule_key'``. La tabla
+        ``knowledge_business_rules`` pertenece a otra materialización y no la
+        escribe este store.
+        """
+        session = await get_async_session()
+        try:
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT DISTINCT name, metadata->>'rule_key' AS rule_key
+                        FROM knowledge_canonical_objects
+                        WHERE organization_id = :org
+                          AND kind = :kind
+                          AND metadata->>'rule_key' IS NOT NULL
+                        """
+                    ),
+                    {
+                        "org": organization_id,
+                        "kind": CanonicalKind.BUSINESS_RULE.value,
+                    },
+                )
+            ).fetchall()
+        except Exception as exc:  # noqa: BLE001 — tabla ausente en entornos previos
+            logger.warning("Knowledge rule index unavailable", error=str(exc)[:200])
+            return {}
+        finally:
+            await session.close()
+        return {str(row.name): str(row.rule_key) for row in rows}
 
     # ------------------------------------------------------------------ objetos
     async def upsert_entity(

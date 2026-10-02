@@ -19,11 +19,18 @@ from uuid import UUID, uuid4
 import pytest
 
 from src.core.domain.canonical import CanonicalKind, canonical_uuid
+from src.core.domain.knowledge_events import (
+    KnowledgeEventType,
+    KnowledgeSystemEvent,
+)
 from src.core.domain.knowledge_v2 import StructuredDocument
 from src.knowledge.compiler import (
+    CompilationResult,
+    ConflictCandidate,
     ConflictType,
     EntityResolver,
     KnowledgeCompiler,
+    RuleCandidate,
     SemanticUnitKind,
     classify_conflict,
     detect_conflicts,
@@ -545,10 +552,15 @@ class FakeCompilerStore:
         created = str(object_id) not in self.rules
         self.rules[str(object_id)] = {
             "statement": rule.statement,
+            "subject": rule.subject,
+            "rule_key": rule.rule_key,
             "evidence": len(rule.evidence),
             "sources": {str(source_id)} if source_id else set(),
         }
         return object_id, ("created" if created else "reinforced")
+
+    async def existing_rule_keys(self, organization_id):
+        return {row["subject"]: row["rule_key"] for row in self.rules.values()}
 
     async def add_evidence(
         self, organization_id, evidence, *, canonical_id=None, assertion_id=None, workspace_id=None, authority=None
@@ -595,6 +607,41 @@ class FakeCompilerStore:
 
     async def refresh_counters(self, organization_id) -> None:
         return None
+
+
+class FakeSystemEmitter:
+    """Emisor de eventos de sistema en memoria: registra lo emitido."""
+
+    def __init__(self) -> None:
+        self.events: list[KnowledgeSystemEvent] = []
+
+    async def emit(self, event: KnowledgeSystemEvent) -> None:
+        self.events.append(event)
+
+    def of_type(self, event_type: KnowledgeEventType) -> list[KnowledgeSystemEvent]:
+        return [event for event in self.events if event.type == event_type]
+
+
+class PreparedCompiler(KnowledgeCompiler):
+    """Compiler con resultado determinista: aísla el mapeo del pipeline."""
+
+    def __init__(self, result: CompilationResult, *, store=None) -> None:
+        super().__init__(store=store)
+        self._result = result
+
+    def build(self, document: StructuredDocument) -> CompilationResult:  # type: ignore[override]
+        return self._result
+
+
+def _prepared_result(**overrides) -> CompilationResult:
+    base = {
+        "organization_id": ORG,
+        "source_id": SOURCE_A,
+        "document_id": uuid4(),
+        "document_title": "manual.pdf",
+    }
+    base.update(overrides)
+    return CompilationResult(**base)
 
 
 @pytest.mark.asyncio
@@ -701,3 +748,157 @@ async def test_compilador_no_rompe_si_el_store_falla() -> None:
     # El conocimiento determinista se calculó igual; el fallo queda registrado.
     assert result.facts, "el build determinista no debe depender del store"
     assert result.persisted.get("status") == "failed"
+
+
+# ---------------------------------------------------------------------------
+# 5. Eventos de sistema (C8): el pipeline mapea señales reales, best-effort
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_compilador_emite_eventos_de_sistema_desde_el_pipeline_real() -> None:
+    """Entidad nueva y regla nueva viajan al emisor de sistema con sus ids."""
+    store = FakeCompilerStore()
+    emitter = FakeSystemEmitter()
+    compiler = KnowledgeCompiler(store=store)
+    document = parse_pdf(record4_pdf(), external_id="record4.pdf", source_id=SOURCE_A)
+
+    await compiler.compile_document(document, system_emitter=emitter)
+
+    new_entities = emitter.of_type(KnowledgeEventType.NEW_ENTITY)
+    assert new_entities, "la entidad nueva debe emitirse al sistema"
+    assert all(event.object_id is not None for event in new_entities)
+    assert all(event.confidence is not None for event in new_entities)
+    assert all(event.document_id == document.id for event in new_entities)
+    assert all(event.source_id == SOURCE_A for event in new_entities)
+    assert all(event.requires_review is False for event in new_entities)
+    assert all(event.event_name == "knowledge.new_entity" for event in new_entities)
+
+    new_rules = emitter.of_type(KnowledgeEventType.NEW_RULE)
+    assert new_rules, "la regla nueva debe emitirse al sistema"
+    assert all(event.rule_key for event in new_rules)
+    assert all(event.object_id is not None for event in new_rules)
+    assert all(event.organization_id == ORG for event in emitter.events)
+    assert emitter.of_type(KnowledgeEventType.RULE_CHANGED) == []
+
+
+@pytest.mark.asyncio
+async def test_compilador_emite_rule_changed_si_el_sujeto_ya_tenia_otra_regla() -> None:
+    """Mismo subject con distinta rule_key: la regla previa queda a revisión."""
+    store = FakeCompilerStore()
+    emitter = FakeSystemEmitter()
+    first_rule = RuleCandidate(
+        subject="Record 4",
+        statement="Record 4 must renumber on reissue.",
+        rule_key="key-v1",
+    )
+    changed_rule = RuleCandidate(
+        subject="Record 4",
+        statement="Record 4 must renumber within 24 hours.",
+        rule_key="key-v2",
+    )
+    document = parse_pdf(record4_pdf(), external_id="record4.pdf", source_id=SOURCE_A)
+
+    first = PreparedCompiler(_prepared_result(rules=[first_rule]), store=store)
+    await first.compile_document(document, system_emitter=emitter)
+    assert emitter.of_type(KnowledgeEventType.NEW_RULE), "la primera regla es nueva"
+    assert emitter.of_type(KnowledgeEventType.RULE_CHANGED) == []
+    emitter.events.clear()
+
+    second = PreparedCompiler(_prepared_result(rules=[changed_rule]), store=store)
+    await second.compile_document(document, system_emitter=emitter)
+
+    changed = emitter.of_type(KnowledgeEventType.RULE_CHANGED)
+    assert len(changed) == 1, "el cambio de regla debe emitirse una sola vez"
+    event = changed[0]
+    assert event.payload == {
+        "previous_rule_key": "key-v1",
+        "rule_key": "key-v2",
+        "subject": "Record 4",
+    }
+    assert event.rule_key == "key-v2"
+    assert event.requires_review is True
+    assert emitter.of_type(KnowledgeEventType.NEW_RULE) == []
+
+
+@pytest.mark.asyncio
+async def test_compilador_emite_conflicto_de_sistema_con_tipo_e_ids() -> None:
+    """El conflicto real del pipeline viaja con tipo, ids y revisión humana."""
+    store = FakeCompilerStore()
+    emitter = FakeSystemEmitter()
+    evidence_id = uuid4()
+    conflict = ConflictCandidate(
+        subject="Byte 105",
+        predicate="has_length",
+        value_a="3",
+        value_b="5",
+        conflict_type=ConflictType.SOURCE_CONFLICT.value,
+        confidence=0.8,
+        reason="dos fuentes independientes declaran longitudes distintas",
+        evidence_ids=[evidence_id],
+    )
+    compiler = PreparedCompiler(_prepared_result(conflicts=[conflict]), store=store)
+    document = parse_pdf(record4_pdf(), external_id="record4.pdf", source_id=SOURCE_A)
+
+    await compiler.compile_document(document, system_emitter=emitter)
+
+    events = emitter.of_type(KnowledgeEventType.CONFLICT_DETECTED)
+    assert len(events) == 1
+    event = events[0]
+    assert event.payload["conflict_type"] == ConflictType.SOURCE_CONFLICT.value
+    assert event.payload["evidence_ids"] == [str(evidence_id)]
+    assert event.confidence == 0.8
+    assert event.requires_review is True
+
+
+@pytest.mark.asyncio
+async def test_compilador_sin_emisor_de_sistema_no_cambia_el_flujo() -> None:
+    """Sin emisor no hay lookups nuevos ni eventos: comportamiento intacto."""
+
+    class RecordingStore(FakeCompilerStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.rule_key_lookups = 0
+
+        async def existing_rule_keys(self, organization_id):
+            self.rule_key_lookups += 1
+            return await super().existing_rule_keys(organization_id)
+
+    store = RecordingStore()
+    compiler = KnowledgeCompiler(store=store)
+    document = parse_pdf(record4_pdf(), external_id="record4.pdf", source_id=SOURCE_A)
+
+    result = await compiler.compile_document(document)
+
+    assert result.persisted["status"] == "completed"
+    assert store.rules, "las reglas se siguen persistiendo sin emisor"
+    assert store.rule_key_lookups == 0
+
+
+@pytest.mark.asyncio
+async def test_fallos_del_emisor_y_del_indice_de_reglas_no_rompen_el_pipeline() -> None:
+    """Emisión e índice de reglas son best-effort: nunca tumban la compilación."""
+
+    class BrokenEmitter:
+        async def emit(self, event) -> None:
+            raise RuntimeError("bus caído")
+
+    class BrokenRuleIndex(FakeCompilerStore):
+        async def existing_rule_keys(self, organization_id):
+            raise RuntimeError("índice caído")
+
+    document = parse_pdf(record4_pdf(), external_id="record4.pdf", source_id=SOURCE_A)
+
+    broken_emitter = await KnowledgeCompiler(
+        store=BrokenRuleIndex()
+    ).compile_document(document, system_emitter=BrokenEmitter())
+    assert broken_emitter.persisted["status"] == "completed"
+
+    emitter = FakeSystemEmitter()
+    broken_index = await KnowledgeCompiler(store=BrokenRuleIndex()).compile_document(
+        document, system_emitter=emitter
+    )
+    assert broken_index.persisted["status"] == "completed"
+    assert emitter.of_type(KnowledgeEventType.NEW_RULE), (
+        "sin índice de reglas, toda regla creada es nueva"
+    )
