@@ -3,6 +3,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -337,3 +338,61 @@ async def test_deep_failed_con_respuesta_parcial_cae_a_legacy(monkeypatch) -> No
     assert result.method != "cognitive_os"
     assert len(llm.calls) == 1
     assert result.flow["cognitive"]["deep"]["status"] == "failed"
+
+
+@pytest.mark.asyncio
+async def test_active_streaming_emite_nota_de_limites(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "active")
+    organization = _organization()
+    deltas: list[str] = []
+
+    async def _on_delta(text: str) -> None:
+        deltas.append(text)
+
+    executor = FakeCognitiveExecutor(answer="El sistema usa blockchain cuántico.")
+    orchestrator = _build(
+        organization=organization,
+        llm=FakeLLM(),
+        service=FakeCognitiveService(),
+        executor=executor,
+    )
+    await orchestrator.execute(
+        organization_id=organization.id,
+        user_id=uuid4(),
+        query=_L3_QUERY,
+        role="admin",
+        model="fake-llm",
+        use_cache=False,
+        on_delta=_on_delta,
+    )
+    assert any("Límites de esta respuesta:" in delta for delta in deltas)
+
+
+class FakeTimeoutExecutor(FakeCognitiveExecutor):
+    def __init__(self) -> None:
+        super().__init__()
+        self.marked: list[dict] = []
+
+    async def execute_run(self, **kwargs: Any) -> dict:
+        raise asyncio.TimeoutError()
+
+    async def mark_failed(self, **kwargs: Any) -> None:
+        self.marked.append(kwargs)
+
+
+@pytest.mark.asyncio
+async def test_deep_timeout_marca_run_failed_y_cae_a_legacy(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "active")
+    organization = _organization()
+    llm = FakeLLM()
+    executor = FakeTimeoutExecutor()
+    orchestrator = _build(
+        organization=organization,
+        llm=llm,
+        service=FakeCognitiveService(),
+        executor=executor,
+    )
+    result = await _execute(orchestrator, organization.id, _L3_QUERY)
+    assert len(llm.calls) == 1
+    assert executor.marked and executor.marked[0]["failure_mode"] == "timeout"
+    assert result.flow["cognitive"]["deep"]["failure_mode"] == "timeout"

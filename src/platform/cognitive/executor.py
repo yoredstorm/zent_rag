@@ -358,6 +358,28 @@ class CognitiveExecutor:
             ),
         }
 
+    async def mark_failed(
+        self,
+        *,
+        organization_id: UUID,
+        run_id: UUID,
+        failure_mode: str = "timeout",
+        error: str = "",
+    ) -> None:
+        """Cierra un run que quedó RUNNING (p. ej. timeout del caller)."""
+        try:
+            await self._repo.update_run_status(
+                organization_id,
+                run_id,
+                CognitiveRunStatus.FAILED,
+                plan_patch={
+                    "failure_mode": failure_mode,
+                    "error": error[:200],
+                },
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Cognitive run fail-mark failed", error=str(exc)[:200])
+
     async def _resolve_authority(self, claim: ClaimRecord) -> str | None:
         """Hook opcional: autoridad (catalog_authority) por concepto."""
         if self._deps.authority_resolver is None:

@@ -664,3 +664,26 @@ async def test_execute_without_deps_skips_handlers_gracefully() -> None:
     assert statuses["retrieve"] == "skipped"
     executions = result["executions"]
     assert len(executions) == 2
+
+
+@pytest.mark.asyncio
+async def test_mark_failed_cierra_run_running() -> None:
+    repo = FakeCognitiveRepository()
+    plan = KnowledgeCognitiveOrchestrator().plan(
+        query="Resume las obligaciones de este contrato.",
+        scope=CognitiveScope(organization_id=uuid4()),
+    )
+    seed_run(repo, plan)
+    executor = make_executor(repo)
+
+    await executor.mark_failed(
+        organization_id=plan.run.organization_id,
+        run_id=plan.run.id,
+        failure_mode="timeout",
+        error="test",
+    )
+
+    saved = await repo.get_run(plan.run.organization_id, plan.run.id)
+    assert saved is not None
+    assert saved["status"] == CognitiveRunStatus.FAILED.value
+    assert (saved.get("plan") or {}).get("failure_mode") == "timeout"

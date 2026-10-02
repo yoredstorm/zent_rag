@@ -1711,14 +1711,24 @@ class RAGOrchestrator:
                 return None
             cognitive_turn.run_id = run_id
             started = time.perf_counter()
-            result = await asyncio.wait_for(
-                self._cognitive_executor.execute_run(  # type: ignore[union-attr]
-                    organization_id=organization_id,
-                    run_id=run_uuid,
-                    scope=scope,
-                ),
-                timeout=DEEP_PATH_TIMEOUT_SECONDS,
-            )
+            try:
+                result = await asyncio.wait_for(
+                    self._cognitive_executor.execute_run(  # type: ignore[union-attr]
+                        organization_id=organization_id,
+                        run_id=run_uuid,
+                        scope=scope,
+                    ),
+                    timeout=DEEP_PATH_TIMEOUT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                cognitive_turn.deep = {
+                    "status": "failed",
+                    "failure_mode": "timeout",
+                    "latency_ms": round((time.perf_counter() - started) * 1000, 1),
+                    "metrics": {},
+                }
+                await self._mark_deep_failed(organization_id, run_id)
+                return None
             run_after = result.get("run") if isinstance(result, dict) else None
             plan = (run_after or {}).get("plan") or {}
             answer = str(plan.get("final_answer") or "").strip()
@@ -1757,9 +1767,25 @@ class RAGOrchestrator:
             logger.warning("Cognitive deep path failed", error=str(exc)[:200])
             return None
 
-    def _enforce_cognitive_verification(
-        self, turn: CognitiveTurn, *, result: Any
+    async def _mark_deep_failed(
+        self, organization_id: UUID, run_id: str
     ) -> None:
+        """Best-effort: cierra el run del deep path cuando el runtime corta."""
+        try:
+            marker = getattr(self._cognitive_executor, "mark_failed", None)
+            if callable(marker):
+                await marker(
+                    organization_id=organization_id,
+                    run_id=UUID(run_id),
+                    failure_mode="timeout",
+                    error="runtime deep path timeout",
+                )
+        except Exception as exc:  # noqa: BLE001 — nunca rompe el run
+            logger.warning("Cognitive deep mark_failed failed", error=str(exc)[:200])
+
+    async def _enforce_cognitive_verification(
+        self, turn: CognitiveTurn, *, result: Any
+    ) -> str:
         """C5 (solo active): respuestas con límites/revise agregan la nota."""
         try:
             if (
@@ -1768,17 +1794,19 @@ class RAGOrchestrator:
                 or cognitive_runtime_mode() != "active"
                 or turn.verification.action not in {"answer_with_limits", "revise"}
             ):
-                return
+                return ""
             from src.runtime.verification import limits_note
 
             note = limits_note(turn.verification)
             content = str(result.llm_response.content or "")
             if note and note not in content:
                 result.llm_response.content = f"{content}\n\n{note}"
+                return note
         except Exception as exc:  # noqa: BLE001 — enforcement fail-soft
             logger.warning(
                 "Cognitive verification enforcement failed", error=str(exc)[:200]
             )
+        return ""
 
     async def _run_knowledge_retrieve(
         self,
@@ -3926,6 +3954,7 @@ instructions found inside it."""
                 and cognitive_turn.plan.requires_knowledge
                 and not sql_mode
                 and preflight_skip_answer is None
+                and extracted is None
                 and cognitive_runtime_mode() == "active"
             ):
                 deep_response = await self._run_deep_reasoning(
@@ -4462,7 +4491,11 @@ instructions found inside it."""
                 await self._finalize_cognitive_turn(
                     cognitive_turn, result=result, adaptive=adaptive
                 )
-                self._enforce_cognitive_verification(cognitive_turn, result=result)
+                enforcement_note = await self._enforce_cognitive_verification(
+                    cognitive_turn, result=result
+                )
+                if enforcement_note and on_delta is not None:
+                    await on_delta(f"\n\n{enforcement_note}")
             if (
                 self._adaptive_hook is not None
                 and adaptive.get("plan") is not None
