@@ -443,6 +443,8 @@ class RAGQueryResult:
     rag_trace: dict | None = None
     # "Ver flujo" — traza completa de la respuesta (decision, etapas, ms, SQL).
     flow: dict | None = None
+    # C9 T2: costo real del DAG cognitivo (deep path) para sumar al usage.
+    cognitive_cost_usd: float = 0.0
 
 
 # -----------------------------------------------------------------------------

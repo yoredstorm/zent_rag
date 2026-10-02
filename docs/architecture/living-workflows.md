@@ -148,7 +148,7 @@ security_context`.
 - Catálogo agrupado para UI: Ventas, Inventario, Clientes, Documentos, Knowledge,
   Agentes, Sistema. IDs técnicos viven internamente; el usuario ve nombres de negocio.
 - Nuevos eventos de watcher: `inventory.stock.changed`, `inventory.stock.low`,
-  `invoice.overdue`, `knowledge.changed`, `sale.created`.
+  `invoice.overdue`, `sale.created`.
 
 ### 2.5 Watchers (Phase C+E implementado en MVP)
 

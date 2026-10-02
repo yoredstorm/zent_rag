@@ -115,7 +115,6 @@ El cliente conecta sus fuentes (SQL, PDF, CSV/Excel, web, APIs, S3, Google Drive
 ### Retrieval y respuesta con evidencia
 
 - **Retrieval híbrido**: `vector` · `lexical` (BM25 sparse) · `hybrid` con fusión RRF o weighted, más reranking (`llm` o cross-encoder).
-- **Query Intelligence**: clasificación de intención, detección de idioma y `QueryPlan` ([`src/rag/query_intelligence/`](src/rag/query_intelligence/)).
 - **Adaptive RAG** (`off|shadow|active|canary`): plan de retrieval, evidence gate, fast path extractivo, rewrite y grounding.
 - **Long-Context Engine**: empieza pequeño, señales exactas, expande alrededor de la evidencia, mide cobertura y corta ([`src/rag/longcontext/`](src/rag/longcontext/)).
 - **Entity pin**: si la pregunta nombra algo concreto (`byte 105`, `categoría 31`), corre la pata léxica con el label exacto y un barrido acotado por frase; el chunk se cambia por su **sección completa**.
