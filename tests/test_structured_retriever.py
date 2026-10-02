@@ -41,6 +41,11 @@ class FakeVectorStore:
         self.parents = parents or []
         self.last_filters: dict | None = None
         self.last_acl: dict = {}
+        self.calls: list[dict] = []
+
+    def _record(self, channel: str, **kwargs) -> None:
+        """Graba kwargs efectivos por canal (source_ids solo si vino)."""
+        self.calls.append({"channel": channel, **kwargs})
 
     async def search(
         self,
@@ -60,6 +65,11 @@ class FakeVectorStore:
         self.last_filters = filters
         self.last_acl = {"role": role, "user_id": user_id, "groups": groups}
         self.last_workspace_id = workspace_id
+        self._record(
+            "search",
+            workspace_id=workspace_id,
+            **({"source_ids": source_ids} if source_ids else {}),
+        )
         return RetrievalContext(chunks=[c for c in self.dense[:top_k]])
 
     async def search_sparse(
@@ -78,12 +88,23 @@ class FakeVectorStore:
         source_ids=None,
     ):
         self.last_workspace_id = workspace_id
+        self._record(
+            "search_sparse",
+            workspace_id=workspace_id,
+            **({"source_ids": source_ids} if source_ids else {}),
+        )
         return RetrievalContext(chunks=[c for c in self.sparse[:top_k]])
 
     async def get_documents(
         self, organization_id, document_ids, role="admin", user_id=None, groups=None
     ):
         self.last_parent_acl = {"role": role, "user_id": user_id, "groups": groups}
+        self._record(
+            "get_documents",
+            role=role,
+            user_id=user_id,
+            groups=groups,
+        )
         ids = {str(i) for i in document_ids}
         return RetrievalContext(
             chunks=[p for p in self.parents if str(p.document_id) in ids]
@@ -172,3 +193,51 @@ async def test_retriever_diversity_caps_per_document() -> None:
     assembled = await retriever.retrieve(_query(), options)
     assert len(assembled.children) == 3  # 2 del doc_a + 1 del doc_b
     assert assembled.deduped_count >= 0
+
+
+@pytest.mark.asyncio
+async def test_structured_retriever_reenvia_source_ids() -> None:
+    source_id = uuid4()
+    store = FakeVectorStore(dense=[_chunk({"v2_chunk": "true"})])
+    retriever = StructuredRetriever(vector_store=store, lexical_store=None)
+    query = _query(source_ids=[source_id])
+    await retriever.retrieve(query)
+
+    calls = [call for call in store.calls if call.get("source_ids")]
+    assert calls and calls[0]["source_ids"] == [source_id]
+
+
+@pytest.mark.asyncio
+async def test_structured_retriever_sin_source_ids_no_setea_kwarg() -> None:
+    store = FakeVectorStore(dense=[_chunk({"v2_chunk": "true"})])
+    retriever = StructuredRetriever(vector_store=store, lexical_store=None)
+    await retriever.retrieve(_query())
+
+    assert store.calls
+    assert all("source_ids" not in call for call in store.calls)
+
+
+@pytest.mark.asyncio
+async def test_structured_retriever_parents_filtran_por_source_id() -> None:
+    source_id = uuid4()
+    padre_ok = _chunk(
+        {"v2_chunk": "true", "source_id": str(source_id)}, content="sección ok"
+    )
+    padre_ajeno = _chunk(
+        {"v2_chunk": "true", "source_id": str(uuid4())}, content="sección ajena"
+    )
+    store = FakeVectorStore(
+        dense=[
+            _chunk({"v2_chunk": "true", "parent_id": str(padre_ok.document_id)}),
+            _chunk({"v2_chunk": "true", "parent_id": str(padre_ajeno.document_id)}),
+        ],
+        parents=[padre_ok, padre_ajeno],
+    )
+    retriever = StructuredRetriever(store)
+    assembled = await retriever.retrieve(_query(source_ids=[source_id]))
+
+    assert [p.content for p in assembled.parents] == ["sección ok"]
+    get_documents_calls = [
+        call for call in store.calls if call["channel"] == "get_documents"
+    ]
+    assert get_documents_calls  # el fetch de parents ocurrió y se filtró post-fetch

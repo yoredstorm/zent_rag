@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 from dataclasses import dataclass, field, replace
 from uuid import UUID
@@ -36,6 +37,20 @@ logger = get_logger(__name__)
 
 V2_CHUNK_FILTER_KEY = "metadata.v2_chunk"
 V2_CHUNK_FILTER = {V2_CHUNK_FILTER_KEY: "true"}
+
+
+def _forwards_source_ids(fetch) -> bool:
+    """True si `fetch` acepta `source_ids` (explícito o vía **kwargs)."""
+    try:
+        parameters = inspect.signature(fetch).parameters
+    except (TypeError, ValueError):  # pragma: no cover - callables exóticos
+        return False
+    if "source_ids" in parameters:
+        return True
+    return any(
+        param.kind is inspect.Parameter.VAR_KEYWORD
+        for param in parameters.values()
+    )
 
 
 def observe_stage(organization_id: UUID, stage: str, seconds: float) -> None:
@@ -194,6 +209,11 @@ class StructuredRetriever:
     async def _candidates(
         self, query: RetrievalQuery, options: V2RetrievalOptions
     ) -> list[RetrievalChunk]:
+        # `source_ids` viaja solo cuando la query lo trae: los stores legacy
+        # que no lo aceptan mantienen el comportamiento intacto.
+        source_kwargs = (
+            {"source_ids": list(query.source_ids)} if query.source_ids else {}
+        )
         if self._hybrid is not None and query.query_embedding is not None:
             started = time.perf_counter()
             ctx = await self._hybrid.search_hybrid(
@@ -209,6 +229,7 @@ class StructuredRetriever:
                 groups=query.groups,
                 knowledge_base_id=query.knowledge_base_id,
                 workspace_id=query.workspace_id,
+                **source_kwargs,
             )
             observe_stage(
                 query.organization_id, "hybrid_search", time.perf_counter() - started
@@ -232,6 +253,7 @@ class StructuredRetriever:
                 groups=query.groups,
                 knowledge_base_id=query.knowledge_base_id,
                 workspace_id=query.workspace_id,
+                **source_kwargs,
             )
             return ctx, (time.perf_counter() - started) * 1000
 
@@ -249,6 +271,7 @@ class StructuredRetriever:
                 groups=query.groups,
                 knowledge_base_id=query.knowledge_base_id,
                 workspace_id=query.workspace_id,
+                **source_kwargs,
             )
             return ctx, (time.perf_counter() - started) * 1000
 
@@ -291,6 +314,20 @@ class StructuredRetriever:
             return []
 
         fetch_by_chunk_id = getattr(self._vector, "get_documents_by_chunk_ids", None)
+        fetch = (
+            fetch_by_chunk_id
+            if callable(fetch_by_chunk_id)
+            else self._vector.get_documents
+        )
+        source_ids = list(query.source_ids)
+        # El fetch de parents no acepta `source_ids` en los adaptadores reales;
+        # si un store sí lo acepta se reenvía, y en ambos casos se filtra
+        # post-fetch por payload (`metadata.source_id`) cuando hay scope.
+        source_kwargs = (
+            {"source_ids": source_ids}
+            if source_ids and _forwards_source_ids(fetch)
+            else {}
+        )
         try:
             if callable(fetch_by_chunk_id):
                 # El `parent_id` del hijo es el `chunk_id` lógico del padre: el
@@ -301,6 +338,7 @@ class StructuredRetriever:
                     role=query.role,
                     user_id=query.user_id,
                     groups=query.groups or None,
+                    **source_kwargs,
                 )
             else:
                 ctx = await self._vector.get_documents(
@@ -309,6 +347,7 @@ class StructuredRetriever:
                     role=query.role,
                     user_id=query.user_id,
                     groups=query.groups or None,
+                    **source_kwargs,
                 )
         except Exception as exc:
             logger.warning(
@@ -318,10 +357,18 @@ class StructuredRetriever:
             )
             return []
 
+        chunks = list(ctx.chunks)
+        if source_ids:
+            allowed = {str(source_id) for source_id in source_ids}
+            chunks = [
+                chunk
+                for chunk in chunks
+                if str(chunk.metadata.get("source_id") or "") in allowed
+            ]
         by_chunk_id = {
-            str(chunk.metadata.get("chunk_id") or ""): chunk for chunk in ctx.chunks
+            str(chunk.metadata.get("chunk_id") or ""): chunk for chunk in chunks
         }
-        by_point_id = {chunk.document_id: chunk for chunk in ctx.chunks}
+        by_point_id = {chunk.document_id: chunk for chunk in chunks}
         ordered: list[RetrievalChunk] = []
         for pid in parent_ids:
             parent = by_chunk_id.get(str(pid)) or by_point_id.get(pid)
