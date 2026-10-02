@@ -178,6 +178,21 @@ JEV_ANSWER_SOURCES: dict[str, str] = {
     "grounding": "post_generation",
 }
 
+#: Paso cognitivo → fase de la historia (el orden lo manda `cognitive_story`).
+_COGNITIVE_STEP_PHASES: dict[str, str] = {
+    "cognitive_plan": PHASE_PLANNING,
+    "cognitive_strategy": PHASE_PLANNING,
+    "cognitive_entities": PHASE_UNDERSTANDING,
+    "cognitive_runner": PHASE_EVIDENCE,
+    "cognitive_evidence": PHASE_EVIDENCE,
+    "cognitive_brief": PHASE_PLANNING,
+    "cognitive_verification": PHASE_VERIFICATION,
+    "cognitive_budget": PHASE_DECISION,
+    "cognitive_loop": PHASE_EVIDENCE,
+    "cognitive_learning": PHASE_LEARNING,
+    "cognitive_deep_run": PHASE_GENERATION,
+}
+
 
 def canonical_status(value: Any) -> str:
     return _STATUS_MAP.get(str(value or "").strip().lower(), STATUS_OK)
@@ -628,6 +643,30 @@ def _jev_events(flow: dict, start_index: int) -> list[dict]:
     return events
 
 
+def _cognitive_events(flow: Mapping, index: int) -> list[dict]:
+    """Eventos cognitivos derivados de `cognitive_story.normal` (único origen)."""
+    story = flow.get("cognitive_story")
+    steps = story.get("normal") if isinstance(story, Mapping) else None
+    events: list[dict] = []
+    for position, step in enumerate(steps or []):
+        if not isinstance(step, Mapping):
+            continue
+        kind = str(step.get("kind") or "")
+        phase = _COGNITIVE_STEP_PHASES.get(kind)
+        if phase is None:
+            continue
+        events.append(
+            _event(
+                event_id=f"e{index}-cognitive-{position}",
+                kind=kind,
+                phase=phase,
+                status=canonical_status(step.get("status")),
+                metrics=dict(step.get("metrics") or {}),
+            )
+        )
+    return events
+
+
 def _fallback_events(flow: dict, start_index: int) -> list[dict]:
     fallbacks = flow.get("fallbacks")
     if not isinstance(fallbacks, list):
@@ -760,6 +799,7 @@ def build_flow_events(flow: dict) -> list[dict]:
     # Juicios previos al generador: un evento por pack JEV (§34, §35).
     jev_events = _jev_events(flow, index)
     events.extend(jev_events)
+    events.extend(_cognitive_events(flow, index))
 
     order = {phase: position for position, phase in enumerate(PHASE_ORDER)}
     return sorted(events, key=lambda item: order.get(str(item.get("phase")), 99))
@@ -770,6 +810,9 @@ def with_story(flow: dict) -> dict:
     try:
         enriched = dict(flow)
         enriched["flow_version"] = FLOW_VERSION
+        from src.rag.cognitive_story import build_cognitive_story
+
+        enriched["cognitive_story"] = build_cognitive_story(enriched)
         enriched["events"] = build_flow_events(enriched)
         enriched["knowledge_representation"] = knowledge_representation_status()
         trace = None

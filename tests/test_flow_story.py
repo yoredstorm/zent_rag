@@ -220,3 +220,33 @@ def test_with_story_never_raises_on_broken_flow() -> None:
     result = with_story(flow)
     assert result is flow
     assert "events" not in result
+
+
+def test_eventos_cognitivos_desde_la_story() -> None:
+    flow = {
+        "cognitive": {
+            "mode": "active",
+            "plan": {"complexity": "L3", "needs": ["comparison"]},
+            "evidence": {"count": 2, "conflicts": [], "counts": {"fact": 1}},
+            "verification": {"action": "answer_with_limits", "count": 1},
+        }
+    }
+    enriched = with_story(flow)
+    kinds = [event["kind"] for event in enriched["events"]]
+    assert "cognitive_plan" in kinds
+    assert "cognitive_evidence" in kinds
+    assert "cognitive_verification" in kinds
+    plan_event = next(event for event in enriched["events"] if event["kind"] == "cognitive_plan")
+    assert plan_event["phase"] == "planning"
+    assert plan_event["metrics"]["complexity"] == "L3"
+    verification_event = next(
+        event for event in enriched["events"] if event["kind"] == "cognitive_verification"
+    )
+    assert verification_event["status"] == "warn"
+    assert enriched["cognitive_story"]["schema_version"] == 1
+
+
+def test_sin_cognitive_no_hay_eventos_nuevos() -> None:
+    enriched = with_story({"method": "rag"})
+    assert enriched["cognitive_story"]["normal"] == []
+    assert all(not event["kind"].startswith("cognitive_") for event in enriched["events"])
