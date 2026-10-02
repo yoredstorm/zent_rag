@@ -509,6 +509,33 @@ async def test_deep_path_suma_costo_cognitivo_al_usage(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_deep_fallido_tambien_factura_costo_al_usage(monkeypatch) -> None:
+    """Un DAG que gasta y cae a legacy también entra al usage (fix review C9)."""
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "active")
+    captured = await _capture_usage(monkeypatch)
+    organization = _organization()
+    llm = FakeLLM()
+    executor = FakeCognitiveExecutor(answer=None, status="failed")
+    orchestrator = _build(
+        organization=organization,
+        llm=llm,
+        service=FakeCognitiveService(),
+        executor=executor,
+    )
+
+    result = await _execute(orchestrator, organization.id, _L3_QUERY)
+
+    assert result.method != "cognitive_os"
+    assert len(llm.calls) == 1  # cayó a legacy
+    assert result.cognitive_cost_usd == pytest.approx(0.01)
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.estimated_cost == pytest.approx(0.011)
+    assert event.actual_cost == pytest.approx(0.011)
+    assert event.cost_tags == {"cognitive_deep": True}
+
+
+@pytest.mark.asyncio
 async def test_legacy_no_suma_costo_cognitivo_al_usage(monkeypatch) -> None:
     monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "limited")
     captured = await _capture_usage(monkeypatch)

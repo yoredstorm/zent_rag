@@ -3974,6 +3974,14 @@ instructions found inside it."""
                     workspace_id=workspace_id,
                     cognitive_turn=cognitive_turn,
                 )
+                # C9 T2 (fix review): el DAG puede gastar y caer a legacy. El
+                # turn ya porta `deep.metrics.cost_usd`; se copia fail-soft acá,
+                # antes de decidir el branch, para que el usage siempre lo sume.
+                try:
+                    deep_metrics = (cognitive_turn.deep or {}).get("metrics") or {}
+                    result.cognitive_cost_usd = float(deep_metrics.get("cost_usd") or 0.0)
+                except (TypeError, ValueError):
+                    result.cognitive_cost_usd = 0.0
             async with trace_span("rag.llm", model=effective_model or "default"):
                 if preflight_skip_answer:
                     llm_response = LLMResponse(
@@ -3988,14 +3996,6 @@ instructions found inside it."""
                 elif deep_response is not None:
                     llm_response = deep_response
                     result.method = "cognitive_os"
-                    # C9 T2: `_run_deep_reasoning` devuelve LLMResponse | None y no
-                    # recibe `result`; el costo real del DAG queda en el turn
-                    # (`deep.metrics.cost_usd`). Se copia acá, fail-soft, al
-                    # construir la respuesta deep para que entre al usage event.
-                    deep_metrics = (cognitive_turn.deep or {}).get("metrics") or {}
-                    result.cognitive_cost_usd = float(
-                        deep_metrics.get("cost_usd") or 0.0
-                    )
                     if on_delta is not None:
                         await on_delta(deep_response.content)
                         answer_streamed = True
