@@ -189,6 +189,7 @@ class _FakeGapSession:
     def __init__(self, occurrences_by_concept: dict[str, int]) -> None:
         self.occurrences = occurrences_by_concept
         self.closed = False
+        self.occurrence_reads = 0
         self.assertion = SimpleNamespace(
             id=uuid4(),
             subject_label="Order",
@@ -208,6 +209,7 @@ class _FakeGapSession:
     async def execute(self, statement, params):
         sql = str(statement)
         if "SELECT occurrences FROM context_gaps" in sql:
+            self.occurrence_reads += 1
             return _FakeResult(
                 [(int(self.occurrences.get(params["concept"], 1)),)]
             )
@@ -302,7 +304,7 @@ async def test_materializer_emite_high_impact_solo_sobre_el_umbral() -> None:
     assert event.requires_review is True
     assert low in repo.impact_calls, "el bajo también se evalúa pero no se emite"
 
-    # Cap 5: con más objetos cambiados solo se evalúan/emiten los primeros cinco.
+    # Cap 5 por emisión: con más objetos de alto impacto se emiten cinco y break.
     extra = uuid4()
     repo.counts = {extra: 9}
     emitter.events.clear()
@@ -312,6 +314,57 @@ async def test_materializer_emite_high_impact_solo_sobre_el_umbral() -> None:
     )
     assert len(repo.impact_calls) == 5
     assert len(emitter.of_type(KnowledgeEventType.HIGH_IMPACT_CHANGE)) == 5
+
+
+async def test_materializer_high_impact_no_estrella_reglas_con_muchas_entidades() -> None:
+    """El cap aplica a emisiones: la regla de alto impacto no queda hambreada."""
+    org = uuid4()
+    entities = [uuid4() for _ in range(7)]
+    rule = uuid4()
+    repo = FakeImpactRepo({**{eid: 1 for eid in entities}, rule: 9})
+    emitter = FakeSystemEmitter()
+    materializer = KnowledgeModelMaterializer(repo, system_emitter=emitter)
+
+    changed = [("entity", eid) for eid in entities] + [("rule", rule)]
+    await materializer._emit_high_impact_changes(org, changed)
+
+    events = emitter.of_type(KnowledgeEventType.HIGH_IMPACT_CHANGE)
+    assert len(events) == 1, "la regla debe emitirse aunque haya 7 entidades antes"
+    assert events[0].object_id == rule
+    assert events[0].payload["count"] == 9
+    assert events[0].payload["threshold"] == 5
+    assert events[0].requires_review is True
+
+    # Cap por emisión: 6 reglas de alto impacto → exactamente 5 eventos.
+    rules = [uuid4() for _ in range(6)]
+    repo.counts = {rid: 9 for rid in rules}
+    emitter.events.clear()
+    repo.impact_calls.clear()
+    await materializer._emit_high_impact_changes(
+        org, [("rule", rid) for rid in rules]
+    )
+    events = emitter.of_type(KnowledgeEventType.HIGH_IMPACT_CHANGE)
+    assert len(events) == 5
+    assert len(repo.impact_calls) == 5, "break al alcanzar el cap de emisiones"
+
+
+async def test_materializer_sin_emisor_no_lee_occurrences(monkeypatch) -> None:
+    """Sin emisor no hay SELECT extra de ocurrencias; los gaps se persisten."""
+    org = uuid4()
+    session = _FakeGapSession({"assertion:Order:states": 1, "object:VAT": 1})
+    repo = FakeGapRepo()
+    materializer = KnowledgeModelMaterializer(repo, system_emitter=None)
+
+    async def fake_session():
+        return session
+
+    monkeypatch.setattr(materializer_module, "get_async_session", fake_session)
+
+    created = await materializer._generate_gaps(org)
+
+    assert created == 2
+    assert session.occurrence_reads == 0, "sin emisor no se consulta occurrences"
+    assert len(repo.gaps) == 2, "los gaps se siguen persistiendo"
 
 
 # ---------------------------------------------------------------------------

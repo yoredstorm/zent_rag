@@ -1099,12 +1099,21 @@ class KnowledgeModelMaterializer:
     ) -> None:
         """HIGH_IMPACT_CHANGE para reglas/entidades cambiadas con más referencias.
 
-        Score determinístico (`repo.impact`): nunca LLM. Cap 5 por corrida.
+        Score determinístico (`repo.impact`): nunca LLM. Las reglas se evalúan
+        primero (no quedan hambreadas por muchas entidades) y el cap de 5 aplica
+        a las EMISIONES, no a las evaluaciones.
         """
         if self._system_emitter is None or not changed_objects:
             return
         threshold = self._high_impact_threshold()
-        for kind, object_id in changed_objects[:_HIGH_IMPACT_CHANGE_CAP]:
+        ordered = sorted(
+            changed_objects,
+            key=lambda item: 0 if item[0] in ("rule", "business_rule") else 1,
+        )
+        emitted = 0
+        for kind, object_id in ordered:
+            if emitted >= _HIGH_IMPACT_CHANGE_CAP:
+                break
             try:
                 impact = await self._repo.impact(organization_id, object_id)
                 count = int((impact or {}).get("count") or 0)
@@ -1129,6 +1138,7 @@ class KnowledgeModelMaterializer:
                 object_id=object_id,
                 requires_review=True,
             )
+            emitted += 1
 
     async def _emit_new_gaps(
         self, organization_id: UUID, new_gaps: list[dict]
@@ -1192,6 +1202,9 @@ class KnowledgeModelMaterializer:
         async def upsert_gap(**kwargs) -> None:
             """Upsert del gap + detección de gap nuevo para la emisión C8."""
             await self._repo.upsert_gap(organization_id, **kwargs)
+            if self._system_emitter is None:
+                # Paridad sin emisor: ningún SELECT extra de ocurrencias.
+                return
             try:
                 row = (
                     await session.execute(
