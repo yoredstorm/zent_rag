@@ -10,6 +10,8 @@ import { ReplayCompare } from "../ReplayCompare";
 import type { ExecutionStory, StoryEvent } from "../executionStory";
 import { parseTraceability } from "../experience";
 import { parseTraceabilityV2 } from "../traceabilityV2";
+import CognitiveStorySection from "./CognitiveStorySection";
+import CognitiveTechnicalCard from "./CognitiveTechnicalCard";
 import ExecutionTimeline from "./ExecutionTimeline";
 import ExperienceStory from "./ExperienceStory";
 import LearningSummary from "./LearningSummary";
@@ -86,7 +88,10 @@ export function ExecutionStoryView({
       </div>
 
       {mode === "story" && traceV2 ? (
-        <TraceV2Story trace={traceV2} onOpenTechnical={() => onModeChange("technical")} />
+        <>
+          <TraceV2Story trace={traceV2} onOpenTechnical={() => onModeChange("technical")} />
+          <CognitiveStorySection raw={story.technical.raw} />
+        </>
       ) : explained && traceability ? (
         <ExperienceStory
           story={story}
@@ -107,7 +112,12 @@ export function ExecutionStoryView({
       {mode === "performance" ? <PerformanceStory story={story} /> : null}
       {mode === "technical" ? (
         <>
-          {traceV2 ? <TraceV2Technical trace={traceV2} /> : null}
+          {traceV2 ? (
+            <>
+              <TraceV2Technical trace={traceV2} />
+              <CognitiveTechnicalCard raw={story.technical.raw} />
+            </>
+          ) : null}
           {!traceV2 && traceability ? (
             <TraceabilityDiagnostics traceability={traceability} />
           ) : null}
