@@ -463,3 +463,70 @@ async def test_deep_error_generico_marca_run_failed(monkeypatch) -> None:
     result = await _execute(orchestrator, organization.id, _L3_QUERY)
     assert len(llm.calls) == 1
     assert executor.marked and executor.marked[0]["failure_mode"] == "error"
+
+
+# -----------------------------------------------------------------------------
+# C9 T2 — el costo del DAG deep entra al usage event.
+# Sin DB: se monkeypatchea record_event (usage_engine) y estimate_cost (pricing).
+# -----------------------------------------------------------------------------
+async def _capture_usage(monkeypatch, *, base_cost: float = 0.001) -> list:
+    captured: list = []
+
+    async def fake_record_event(event):
+        captured.append(event)
+        return False  # False evita contadores/DB tras insertar
+
+    async def fake_estimate_cost(model, **kwargs):
+        return base_cost
+
+    monkeypatch.setattr("src.platform.usage.usage_engine.record_event", fake_record_event)
+    monkeypatch.setattr("src.platform.billing.pricing.estimate_cost", fake_estimate_cost)
+    return captured
+
+
+@pytest.mark.asyncio
+async def test_deep_path_suma_costo_cognitivo_al_usage(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "active")
+    captured = await _capture_usage(monkeypatch)
+    organization = _organization()
+    orchestrator = _build(
+        organization=organization,
+        llm=FakeLLM(),
+        service=FakeCognitiveService(),
+        executor=FakeCognitiveExecutor(),
+    )
+
+    result = await _execute(orchestrator, organization.id, _L3_QUERY)
+
+    assert result.method == "cognitive_os"
+    # metrics.cost_usd == 0.01 del FakeCognitiveExecutor.
+    assert result.cognitive_cost_usd == pytest.approx(0.01)
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.estimated_cost == pytest.approx(0.011)
+    assert event.actual_cost == pytest.approx(0.011)
+    assert event.cost_tags == {"cognitive_deep": True}
+
+
+@pytest.mark.asyncio
+async def test_legacy_no_suma_costo_cognitivo_al_usage(monkeypatch) -> None:
+    monkeypatch.setattr(get_settings(), "COGNITIVE_OS_ENABLED", "limited")
+    captured = await _capture_usage(monkeypatch)
+    organization = _organization()
+    llm = FakeLLM()
+    orchestrator = _build(
+        organization=organization,
+        llm=llm,
+        service=FakeCognitiveService(),
+        executor=FakeCognitiveExecutor(),
+    )
+
+    result = await _execute(orchestrator, organization.id, _L3_QUERY)
+
+    assert result.method != "cognitive_os"
+    assert result.cognitive_cost_usd == 0.0
+    assert len(captured) == 1
+    event = captured[0]
+    assert event.estimated_cost == pytest.approx(0.001)
+    assert event.actual_cost == pytest.approx(0.001)
+    assert event.cost_tags == {}

@@ -3988,6 +3988,14 @@ instructions found inside it."""
                 elif deep_response is not None:
                     llm_response = deep_response
                     result.method = "cognitive_os"
+                    # C9 T2: `_run_deep_reasoning` devuelve LLMResponse | None y no
+                    # recibe `result`; el costo real del DAG queda en el turn
+                    # (`deep.metrics.cost_usd`). Se copia acá, fail-soft, al
+                    # construir la respuesta deep para que entre al usage event.
+                    deep_metrics = (cognitive_turn.deep or {}).get("metrics") or {}
+                    result.cognitive_cost_usd = float(
+                        deep_metrics.get("cost_usd") or 0.0
+                    )
                     if on_delta is not None:
                         await on_delta(deep_response.content)
                         answer_streamed = True
@@ -5024,11 +5032,17 @@ instructions found inside it."""
         chunks = len(result.retrieval_context.chunks) if result.retrieval_context else 0
         reranking_count = 1 if (self._reranker is not None and chunks) else 0
 
-        cost = await estimate_cost(
-            model,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            embedding_tokens=embedding_tokens,
+        # C9 T2: el deep path no factura vía tokens del LLMResponse; su costo
+        # real viaja en result.cognitive_cost_usd (fail-soft).
+        cognitive_cost = float(getattr(result, "cognitive_cost_usd", 0.0) or 0.0)
+        cost = (
+            await estimate_cost(
+                model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                embedding_tokens=embedding_tokens,
+            )
+            + cognitive_cost
         )
         event = UsageEvent(
             request_id=result.query_id,
@@ -5048,6 +5062,7 @@ instructions found inside it."""
             status=str(result.status),
             estimated_cost=cost,
             actual_cost=cost,
+            cost_tags={"cognitive_deep": True} if cognitive_cost > 0.0 else {},
         )
         inserted = await record_event(event)
         if inserted:
