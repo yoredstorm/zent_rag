@@ -1644,7 +1644,11 @@ class RAGOrchestrator:
                             concept=signal.concept,
                             hints=[signal.detail],
                             question=turn.query,
-                            impact=signal.priority,
+                            impact={
+                                "priority": signal.priority,
+                                "kind": signal.kind,
+                                "detail": signal.detail,
+                            },
                         )
                     except Exception as gap_exc:  # noqa: BLE001
                         logger.warning(

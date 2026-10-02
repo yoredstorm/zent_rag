@@ -747,6 +747,7 @@ async def test_limited_finaliza_verificacion_reportes_y_gaps(monkeypatch) -> Non
     assert "loop" in cognitive
     assert recorder.calls  # el claim sin respaldo se persistió como gap
     assert recorder.calls[0]["gap_type"] == "CONTEXT_MISSING"
+    assert recorder.calls[0]["impact"]["kind"] == "unresolved_entity"
 
 
 @pytest.mark.asyncio
