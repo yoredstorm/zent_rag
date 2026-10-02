@@ -270,7 +270,13 @@ async def test_materializer_emite_gap_detected_solo_para_gaps_nuevos(
     assert event.organization_id == org
     assert event.payload["gap_type"] == GapType.UNSUPPORTED_ASSERTION.value
     assert event.payload["concept"] == "assertion:Order:states"
-    assert event.payload["priority"] in ("critical", "high", "medium", "low")
+    expected_priority, _ = compute_gap_priority(
+        impact=GapImpact(affected_objects=1, business_impact=0.6, retrieval_impact=0.4),
+        confidence=0.4,
+        ambiguity=0.6,
+        dependents=0.2,
+    )
+    assert event.payload["priority"] == expected_priority
     assert event.requires_review is True
 
 
