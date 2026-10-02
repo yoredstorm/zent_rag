@@ -200,7 +200,7 @@ declara en el paquete.
 **Crear (por fase):** `src/runtime/cognitive_plan.py` (C1),
 `src/runtime/knowledge_strategy.py` (C1), `src/runtime/cognitive_state.py` (C1),
 runners de representación (C2), `src/runtime/evidence_assembly.py` +
-`src/core/domain/knowledge_brief.py` + `src/runtime/compression.py` (C3),
+`src/runtime/knowledge_brief.py` (C3),
 `src/runtime/verification.py` + `src/runtime/learning_signal.py` (C4),
 `src/core/domain/knowledge_scope.py` (C7), `src/core/domain/knowledge_events.py`
 (C8).
@@ -212,8 +212,8 @@ de respuesta lo exige), `src/knowledge/compiler/pipeline.py`,
 `src/platform/workflows/event_registry.py`, `src/platform/cognitive/executor.py`
 (C5).
 
-**Retirar (C9):** `src/rag/query_intelligence/**`, `EvidenceBlackboard`
-(`src/core/domain/cognitive.py`), verificación cognitiva duplicada,
+**Retirar (C9):** `src/rag/query_intelligence/**`, verificación cognitiva
+duplicada,
 `POST /api/v1/cognitive/runs/{id}/execute` (queda inspección).
 
 ## 13. Tablas, migraciones, flags

@@ -1563,8 +1563,9 @@ class RAGOrchestrator:
                 runner_results=list(turn.runners),
                 entities=turn.entities,
             )
+            brief = build_knowledge_brief(package)
             turn.evidence = package
-            turn.brief = build_knowledge_brief(package)
+            turn.brief = brief
         except Exception as exc:  # noqa: BLE001 — observación fail-soft
             logger.warning(
                 "Cognitive evidence assembly failed", error=str(exc)[:200]

@@ -572,6 +572,8 @@ async def test_shadow_ensambla_evidencia_y_brief(monkeypatch) -> None:
     assert cognitive["evidence"]["counts"].get("excerpt", 0) >= 1
     sections = {item["kind"] for item in cognitive["brief"]["sections"]}
     assert {"facts", "relations", "critical_excerpts"} <= sections
+    by_kind = {item["kind"]: item for item in cognitive["brief"]["sections"]}
+    assert by_kind["relations"]["items"]
     assert len(llm.calls) == 1
 
 

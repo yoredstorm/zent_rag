@@ -127,13 +127,13 @@ def _units_from_items(items: Sequence["EvidenceItem"]) -> list[EvidenceUnit]:
     units: list[EvidenceUnit] = []
     seen: set[str] = set()
     for item in items or ():
+        content = _clip(item.content)
+        if not content:
+            continue
         key = _excerpt_key(item)
         if key in seen:
             continue
         seen.add(key)
-        content = _clip(item.content)
-        if not content:
-            continue
         units.append(
             EvidenceUnit(
                 unit_id="",
@@ -167,9 +167,8 @@ def _units_from_runners(
             continue
         for item in getattr(result, "items", ()) or ():
             refs = dict(getattr(item, "refs", None) or {})
-            text = _clip(
-                str(getattr(item, "title", "") or getattr(item, "summary", ""))
-            )
+            title = str(getattr(item, "title", "") or "").strip()
+            text = _clip(title or str(getattr(item, "summary", "") or ""))
             if not text:
                 continue
             canonical = str(refs.get("canonical_id") or "")
@@ -259,7 +258,6 @@ def assemble_evidence(
 ) -> EvidencePackage:
     """Paquete coherente: dedupe, prioridad, conflictos retenidos y budget."""
     base = _units_from_items(items) + _units_from_runners(runner_results)
-    conflict_values = _conflict_values(base)
     resolved = {
         mention.matches[0].canonical_id
         for mention in (entities.mentions if entities is not None else ())
@@ -268,6 +266,7 @@ def assemble_evidence(
     selected, dropped, used = _apply_budget(
         _ordered(base), max(0, int(budget_chars))
     )
+    selected_conflict_values = _conflict_values(selected)
     units: list[EvidenceUnit] = []
     for index, unit in enumerate(selected, start=1):
         key = _fact_conflict_key(unit)
@@ -275,12 +274,12 @@ def assemble_evidence(
             replace(
                 unit,
                 unit_id=f"U{index}",
-                conflict=bool(key and key in conflict_values),
+                conflict=bool(key and key in selected_conflict_values),
                 connected=bool(set(unit.canonical_ids) & resolved),
             )
         )
     conflicts: list[EvidenceConflict] = []
-    for key, values in sorted(conflict_values.items()):
+    for key, values in sorted(selected_conflict_values.items()):
         unit_ids = tuple(
             unit.unit_id for unit in units if _fact_conflict_key(unit) == key
         )
