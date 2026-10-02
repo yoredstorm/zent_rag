@@ -3980,7 +3980,7 @@ instructions found inside it."""
                 try:
                     deep_metrics = (cognitive_turn.deep or {}).get("metrics") or {}
                     result.cognitive_cost_usd = float(deep_metrics.get("cost_usd") or 0.0)
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, AttributeError):
                     result.cognitive_cost_usd = 0.0
             async with trace_span("rag.llm", model=effective_model or "default"):
                 if preflight_skip_answer:

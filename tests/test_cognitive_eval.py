@@ -672,9 +672,27 @@ SCENARIOS: tuple[Scenario, ...] = (
 )
 
 
+CANONICAL_SCENARIO_IDS: tuple[str, ...] = (
+    "simple_factual",
+    "exact_literal",
+    "structured_excel",
+    "graph_relationship",
+    "temporal",
+    "conflicting_sources",
+    "insufficient_evidence",
+    "multi_document",
+    "greeting_no_knowledge",
+    "tool_required",
+    "knowledge_and_tool",
+    "jev_no_intervention",
+    "verification_failure",
+    "deep_l3_active",
+)
+
+
 def test_harness_declara_14_escenarios() -> None:
     assert len(SCENARIOS) == 14
-    assert len({scenario.id for scenario in SCENARIOS}) == 14
+    assert {scenario.id for scenario in SCENARIOS} == set(CANONICAL_SCENARIO_IDS)
 
 
 @pytest.mark.parametrize("scenario", SCENARIOS, ids=[s.id for s in SCENARIOS])

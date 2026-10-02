@@ -537,6 +537,23 @@ class CognitiveExecutor:
     # ------------------------------------------------------------------
     # Handlers con LLM
     # ------------------------------------------------------------------
+    async def _llm_cost(self, response: object) -> float:
+        """Costo estimado de una respuesta LLM (fail-soft a 0)."""
+        try:
+            from src.platform.billing.pricing import estimate_cost
+
+            model = str(getattr(response, "model", "") or "")
+            return float(
+                await estimate_cost(
+                    model,
+                    int(getattr(response, "prompt_tokens", 0) or 0),
+                    int(getattr(response, "completion_tokens", 0) or 0),
+                    0,
+                )
+            )
+        except Exception:  # noqa: BLE001 — el costo nunca rompe el run
+            return 0.0
+
     async def _handle_document_analyst(
         self, task: dict, state: _RunState
     ) -> SpecialistResult:
@@ -619,6 +636,7 @@ class CognitiveExecutor:
             messages=(message,),
             llm_calls=1,
             tokens=int(response.total_tokens or 0),
+            cost_usd=await self._llm_cost(response),
             result={"claims": len(claim_ids), "injection_suspected": injected},
         )
 
@@ -657,6 +675,7 @@ class CognitiveExecutor:
             messages=(message,),
             llm_calls=1,
             tokens=int(response.total_tokens or 0),
+            cost_usd=await self._llm_cost(response),
             result={"answer": answer},
         )
 

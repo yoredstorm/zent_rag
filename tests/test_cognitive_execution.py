@@ -712,3 +712,87 @@ async def test_mark_failed_cierra_run_running() -> None:
     assert saved is not None
     assert saved["status"] == CognitiveRunStatus.FAILED.value
     assert (saved.get("plan") or {}).get("failure_mode") == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_execute_prices_llm_responses(monkeypatch) -> None:
+    """El deep path cotiza cada respuesta LLM (document_analyst/synthesizer)."""
+    import src.platform.billing.pricing as pricing
+
+    calls: list[tuple] = []
+
+    async def fake_estimate_cost(
+        model, prompt_tokens, completion_tokens, embedding_tokens=0
+    ):
+        calls.append((model, prompt_tokens, completion_tokens, embedding_tokens))
+        return 0.05
+
+    monkeypatch.setattr(pricing, "estimate_cost", fake_estimate_cost)
+
+    repo = FakeCognitiveRepository()
+    evidence_repo = FakeEvidenceRepo()
+    claim_repo = FakeClaimRepo()
+    plan = KnowledgeCognitiveOrchestrator().plan(
+        query="Resume las obligaciones de este contrato.",
+        scope=CognitiveScope(organization_id=uuid4()),
+    )
+    seed_run(repo, plan)
+    executor = make_executor(
+        repo,
+        llm=FakeLLM([_FINDINGS_JSON, "La penalidad vigente es 7% según la adenda."]),
+        retriever=FakeRetriever(),
+        evidence_repo=evidence_repo,
+        claim_repo=claim_repo,
+    )
+
+    result = await executor.execute_run(
+        organization_id=plan.run.organization_id,
+        run_id=plan.run.id,
+        scope=CognitiveScope(organization_id=plan.run.organization_id),
+    )
+
+    assert result["run"]["status"] == CognitiveRunStatus.COMPLETED.value
+    # document_analyst + synthesizer = 2 respuestas cotizadas a 0.05
+    assert result["metrics"]["cost_usd"] == pytest.approx(0.10)
+    assert len(calls) == 2
+    assert {call[0] for call in calls} == {"fake"}
+    analyst_exec = next(
+        e for e in result["executions"] if e["agent_id"] == "document_analyst"
+    )
+    assert analyst_exec["cost_usd"] == pytest.approx(0.05)
+
+
+@pytest.mark.asyncio
+async def test_execute_pricing_failure_is_fail_soft(monkeypatch) -> None:
+    """Un fallo de pricing no rompe el run: el costo queda en 0."""
+    import src.platform.billing.pricing as pricing
+
+    async def broken_estimate_cost(*args, **kwargs):
+        raise RuntimeError("pricing unavailable")
+
+    monkeypatch.setattr(pricing, "estimate_cost", broken_estimate_cost)
+
+    repo = FakeCognitiveRepository()
+    evidence_repo = FakeEvidenceRepo()
+    claim_repo = FakeClaimRepo()
+    plan = KnowledgeCognitiveOrchestrator().plan(
+        query="Resume las obligaciones de este contrato.",
+        scope=CognitiveScope(organization_id=uuid4()),
+    )
+    seed_run(repo, plan)
+    executor = make_executor(
+        repo,
+        llm=FakeLLM([_FINDINGS_JSON, "La penalidad vigente es 7%."]),
+        retriever=FakeRetriever(),
+        evidence_repo=evidence_repo,
+        claim_repo=claim_repo,
+    )
+
+    result = await executor.execute_run(
+        organization_id=plan.run.organization_id,
+        run_id=plan.run.id,
+        scope=CognitiveScope(organization_id=plan.run.organization_id),
+    )
+
+    assert result["run"]["status"] == CognitiveRunStatus.COMPLETED.value
+    assert result["metrics"]["cost_usd"] == 0.0

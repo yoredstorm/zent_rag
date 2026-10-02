@@ -1,9 +1,10 @@
 # =============================================================================
-# Cognitive OS API — Phase 3 (planning runs)
+# Cognitive OS API — planning + inspection
 # =============================================================================
-# Gate por RAG_COGNITIVE_OS_ENABLED (off | shadow | limited | active). En esta
-# fase el endpoint SOLO planifica (task graph + asignaciones + presupuesto);
-# la ejecución de especialistas llega en fases posteriores.
+# Gate por RAG_COGNITIVE_OS_ENABLED (off | shadow | limited | active). Expone
+# planificación (task graph + asignaciones + presupuesto), runs y shadow para
+# inspección, y gobierno de sugerencias. La ejecución de especialistas es
+# interna del runtime y no se expone por API.
 # =============================================================================
 from __future__ import annotations
 
