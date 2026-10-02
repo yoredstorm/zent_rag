@@ -51,6 +51,7 @@ _CONFIDENCE_LABELS: dict[str, float] = {"high": 0.9, "medium": 0.7, "low": 0.5}
 # C8: topes de eventos de sistema por materialización.
 _GAP_EVENT_CAP = 10
 _HIGH_IMPACT_CHANGE_CAP = 5
+_HIGH_IMPACT_MAX_EVALUATIONS = 25
 _HIGH_IMPACT_KINDS = frozenset({CanonicalKind.ENTITY.value, CanonicalKind.RULE.value})
 
 _STATUS_MAP: dict[str, str] = {
@@ -187,15 +188,19 @@ class KnowledgeModelMaterializer:
             kind = kwargs.pop("kind")
             natural_key = kwargs.pop("natural_key")
             oid = canonical_uuid(organization_id, CanonicalKind(kind), natural_key)
-            existed = await self._repo.upsert_object(
-                organization_id, object_id=oid, kind=kind, natural_key=natural_key, **kwargs
+            existed, changed = await self._upsert_with_status(
+                organization_id,
+                object_id=oid,
+                kind=kind,
+                natural_key=natural_key,
+                **kwargs,
             )
             if existed:
                 summary["objects_updated"] += 1
                 summary["by_kind_updated"][kind] = (
                     summary["by_kind_updated"].get(kind, 0) + 1
                 )
-                if kind in _HIGH_IMPACT_KINDS:
+                if changed and kind in _HIGH_IMPACT_KINDS:
                     changed_objects.append((kind, oid))
             else:
                 summary["objects_created"] += 1
@@ -1079,6 +1084,40 @@ class KnowledgeModelMaterializer:
             logger.debug("knowledge model event skipped", error=str(exc)[:160])
 
     # ---------------------------------------------------------- eventos C8
+    async def _upsert_with_status(
+        self,
+        organization_id: UUID,
+        *,
+        object_id: UUID,
+        kind: str,
+        natural_key: str,
+        **kwargs,
+    ) -> tuple[bool, bool]:
+        """Upsert del objeto y detección de cambio real (C8).
+
+        Prefiere `upsert_object_with_status` del repo. Si el repo no lo expone
+        (fakes/adapters viejos), cae al contrato previo: `existed` = changed.
+        """
+        upsert_with_status = getattr(
+            self._repo, "upsert_object_with_status", None
+        )
+        if upsert_with_status is not None:
+            return await upsert_with_status(
+                organization_id,
+                object_id=object_id,
+                kind=kind,
+                natural_key=natural_key,
+                **kwargs,
+            )
+        existed = await self._repo.upsert_object(
+            organization_id,
+            object_id=object_id,
+            kind=kind,
+            natural_key=natural_key,
+            **kwargs,
+        )
+        return bool(existed), bool(existed)
+
     def _high_impact_threshold(self) -> int:
         """Umbral determinístico de referencias (setting, fail-soft a 5)."""
         try:
@@ -1101,7 +1140,8 @@ class KnowledgeModelMaterializer:
 
         Score determinístico (`repo.impact`): nunca LLM. Las reglas se evalúan
         primero (no quedan hambreadas por muchas entidades) y el cap de 5 aplica
-        a las EMISIONES, no a las evaluaciones.
+        a las EMISIONES, no a las evaluaciones; las evaluaciones se acotan a
+        `max(cap, 25)` candidatos para no recorrer modelos enormes.
         """
         if self._system_emitter is None or not changed_objects:
             return
@@ -1110,10 +1150,13 @@ class KnowledgeModelMaterializer:
             changed_objects,
             key=lambda item: 0 if item[0] in ("rule", "business_rule") else 1,
         )
+        max_evaluations = max(_HIGH_IMPACT_CHANGE_CAP, _HIGH_IMPACT_MAX_EVALUATIONS)
         emitted = 0
+        evaluated = 0
         for kind, object_id in ordered:
-            if emitted >= _HIGH_IMPACT_CHANGE_CAP:
+            if emitted >= _HIGH_IMPACT_CHANGE_CAP or evaluated >= max_evaluations:
                 break
+            evaluated += 1
             try:
                 impact = await self._repo.impact(organization_id, object_id)
                 count = int((impact or {}).get("count") or 0)

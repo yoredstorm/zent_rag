@@ -367,6 +367,147 @@ async def test_materializer_sin_emisor_no_lee_occurrences(monkeypatch) -> None:
     assert len(repo.gaps) == 2, "los gaps se siguen persistiendo"
 
 
+class _EmptySession:
+    """Sesión fake sin filas: los queries de `_generate_gaps` no crean gaps."""
+
+    async def execute(self, statement, params):
+        return _FakeResult([])
+
+    async def close(self) -> None:
+        return None
+
+
+class _MinimalMaterializeRepo:
+    """Lo mínimo que `materialize()` invoca, sin contrato de status (legacy)."""
+
+    def __init__(self, *, impact_count: int = 99, existed: bool = True) -> None:
+        self.impact_count = impact_count
+        self.legacy_existed = existed
+        self.impact_calls: list = []
+
+    async def upsert_object(self, organization_id, **kwargs) -> bool:
+        return bool(self.legacy_existed)
+
+    async def upsert_edge(self, *args, **kwargs) -> None:
+        return None
+
+    async def detect_conflicts(self, organization_id) -> int:
+        return 0
+
+    async def refresh_object_counters(self, organization_id) -> None:
+        return None
+
+    async def impact(self, organization_id, object_id):
+        self.impact_calls.append(object_id)
+        return {"count": self.impact_count}
+
+
+class FakeMaterializeRepo(_MinimalMaterializeRepo):
+    """Repo con el contrato C8: `statuses` mapea kind → (existed, changed)."""
+
+    def __init__(
+        self, statuses: dict[str, tuple[bool, bool]] | None = None, **kwargs
+    ) -> None:
+        super().__init__(**kwargs)
+        self.statuses = statuses or {}
+
+    async def upsert_object_with_status(self, organization_id, *, kind, **kwargs):
+        return self.statuses.get(kind, (True, False))
+
+
+def _entity_bundle() -> dict:
+    """Bundle mínimo de `_load_bundle`: una entidad sin tabla ni fuente."""
+    return {
+        "sources": [],
+        "tables": [],
+        "columns": [],
+        "entities": [
+            {
+                "id": uuid4(),
+                "name": "Order",
+                "display_name": "Pedido",
+                "description": "Pedido de venta",
+                "provenance": "OBSERVED",
+                "confidence": "high",
+                "status": "approved",
+                "mapped_table_id": None,
+                "table_name": None,
+                "schema_name": "sales",
+                "source_id": None,
+                "updated_at": None,
+            }
+        ],
+        "fields": [],
+        "relationships": [],
+        "metrics": [],
+        "definitions": [],
+        "rules": [],
+        "verified_queries": [],
+        "documents": [],
+        "authority": {},
+        "entity_names": {},
+        "table_names": {},
+        "metric_keys": {},
+    }
+
+
+async def _materialize_inmemory(
+    monkeypatch, repo, emitter
+) -> dict:
+    """`materialize()` sobre un bundle fake: sin DB, sin evento de learning."""
+    materializer = KnowledgeModelMaterializer(repo, system_emitter=emitter)
+    bundle = _entity_bundle()
+
+    async def fake_session():
+        return _EmptySession()
+
+    async def fake_load_bundle(session, organization_id, source_id):
+        return bundle
+
+    async def noop_emit_event(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(materializer_module, "get_async_session", fake_session)
+    monkeypatch.setattr(materializer, "_load_bundle", fake_load_bundle)
+    monkeypatch.setattr(materializer, "_emit_event", noop_emit_event)
+    return await materializer.materialize(uuid4())
+
+
+async def test_materializer_high_impact_solo_con_cambio_real(monkeypatch) -> None:
+    """Re-observar un objeto idéntico (True, False) no emite; un cambio real sí."""
+    emitter = FakeSystemEmitter()
+    sin_cambios = FakeMaterializeRepo(
+        {"entity": (True, False), "domain": (True, False)}
+    )
+    await _materialize_inmemory(monkeypatch, sin_cambios, emitter)
+    assert emitter.of_type(KnowledgeEventType.HIGH_IMPACT_CHANGE) == []
+    assert sin_cambios.impact_calls == [], "sin cambio no se evalúa el impacto"
+
+    emitter.events.clear()
+    con_cambio = FakeMaterializeRepo(
+        {"entity": (True, True), "domain": (True, False)}
+    )
+    await _materialize_inmemory(monkeypatch, con_cambio, emitter)
+    events = emitter.of_type(KnowledgeEventType.HIGH_IMPACT_CHANGE)
+    assert len(events) == 1
+    assert events[0].payload["kind"] == "entity"
+    assert events[0].payload["count"] == 99
+    assert events[0].requires_review is True
+
+
+async def test_materializer_upsert_sin_status_cae_al_contrato_previo(
+    monkeypatch,
+) -> None:
+    """Repo sin `upsert_object_with_status`: existed=True sigue contando como cambio."""
+    emitter = FakeSystemEmitter()
+    repo = _MinimalMaterializeRepo(existed=True)
+    await _materialize_inmemory(monkeypatch, repo, emitter)
+    events = emitter.of_type(KnowledgeEventType.HIGH_IMPACT_CHANGE)
+    assert len(events) == 1
+    assert events[0].payload["kind"] == "entity"
+    assert len(repo.impact_calls) == 1
+
+
 # ---------------------------------------------------------------------------
 # Materialización real + API (requiere Postgres local)
 # ---------------------------------------------------------------------------
@@ -510,6 +651,59 @@ async def _count_objects(org: UUID) -> int:
         return int(row.total or 0)
     finally:
         await session.close()
+
+
+async def test_repo_upsert_object_with_status_detecta_solo_cambios_reales() -> None:
+    """(False, True) al crear; (True, False) idéntico; (True, True) con cambio.
+
+    `upsert_object` conserva su bool público para los callers existentes.
+    """
+    org = uuid4()
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "INSERT INTO organizations (id, name) VALUES (:org, 'Status Test') "
+                "ON CONFLICT (id) DO NOTHING"
+            ),
+            {"org": org},
+        )
+        await session.commit()
+    finally:
+        await session.close()
+
+    repo = PostgresKnowledgeModelRepository()
+    oid = uuid4()
+    kwargs = {
+        "object_id": oid,
+        "kind": "entity",
+        "natural_key": f"status-test:{oid}",
+        "name": "Order",
+        "description": "Pedido de venta",
+        "domain": "sales",
+        "confidence": 0.7,
+        "status": KnowledgeObjectStatus.DISCOVERED.value,
+    }
+
+    assert await repo.upsert_object_with_status(org, **kwargs) == (False, True)
+    # Contrato público intacto: ya existía → True (aunque no haya cambiado).
+    assert await repo.upsert_object(org, **kwargs) is True
+    assert await repo.upsert_object_with_status(org, **kwargs) == (True, False)
+    assert await repo.upsert_object_with_status(
+        org, **{**kwargs, "name": "Order v2"}
+    ) == (True, True)
+
+    nuevo = uuid4()
+    assert (
+        await repo.upsert_object(
+            org,
+            object_id=nuevo,
+            kind="entity",
+            natural_key=f"status-test:{nuevo}",
+            name="Customer",
+        )
+        is False
+    )
 
 
 async def test_materialize_produces_objects_edges_assertions_and_evidence() -> None:

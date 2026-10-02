@@ -227,6 +227,33 @@ def _gap_row(row) -> dict:
     }
 
 
+def _object_fields_changed(
+    existing,
+    *,
+    name: str,
+    description: str | None,
+    domain: str | None,
+    confidence: float | None,
+    status: str,
+) -> bool:
+    """True si algún campo que el UPDATE pisaría difiere del persistido.
+
+    Respeta los COALESCE del UPDATE: un valor nuevo None no cambia el previo.
+    `confidence` se compara como float (la DB devuelve Decimal).
+    """
+    if existing.name != name[:512]:
+        return True
+    if description is not None and existing.description != description:
+        return True
+    if domain and existing.domain != domain:
+        return True
+    if confidence is not None:
+        previous = existing.confidence
+        if previous is None or float(previous) != float(confidence):
+            return True
+    return existing.status != status
+
+
 # -----------------------------------------------------------------------------
 # DDL espejo (dev/test sin alembic) — idempotente
 # -----------------------------------------------------------------------------
@@ -411,6 +438,17 @@ class PostgresKnowledgeModelRepository:
     async def upsert_object(
         self,
         organization_id: UUID,
+        **kwargs,
+    ) -> bool:
+        """Upsert idempotente. Devuelve True si el objeto ya existía."""
+        existed, _changed = await self.upsert_object_with_status(
+            organization_id, **kwargs
+        )
+        return existed
+
+    async def upsert_object_with_status(
+        self,
+        organization_id: UUID,
         *,
         object_id: UUID,
         kind: str,
@@ -429,8 +467,14 @@ class PostgresKnowledgeModelRepository:
         metadata: dict | None = None,
         freshness_at: datetime | None = None,
         touch_existing: bool = True,
-    ) -> bool:
-        """Upsert idempotente. Devuelve True si el objeto ya existía."""
+    ) -> tuple[bool, bool]:
+        """Upsert idempotente. Devuelve (ya_existía, cambió_real).
+
+        `changed` compara name/description/domain/confidence/status contra la
+        fila previa (mismo SELECT que ya hacía el upsert): re-observar un objeto
+        idéntico devuelve (True, False) y no dispara eventos de alto impacto.
+        Fila nueva → (False, True).
+        """
         session = await get_async_session()
         try:
             existing = (
@@ -485,7 +529,15 @@ class PostgresKnowledgeModelRepository:
                     payload,
                 )
                 await session.commit()
-                return False
+                return False, True
+            changed = _object_fields_changed(
+                existing,
+                name=name,
+                description=description,
+                domain=domain,
+                confidence=confidence,
+                status=status,
+            )
             if touch_existing:
                 await session.execute(
                     text(
@@ -511,7 +563,7 @@ class PostgresKnowledgeModelRepository:
                     payload,
                 )
                 await session.commit()
-            return True
+            return True, changed
         finally:
             await session.close()
 
