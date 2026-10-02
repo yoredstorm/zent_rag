@@ -442,6 +442,11 @@ class SearchKnowledgeTool(Tool):
             score_threshold = float(overrides.get("score_threshold") or 0.0)
             source_ids = self._uuids(ctx, "source_ids")
             kb_ids = self._uuids(ctx, "knowledge_base_ids")
+            # C7: workspace del scope. RetrievalQuery soporta un único
+            # `workspace_id`; con más de uno no se setea (no soportado) y la
+            # búsqueda queda org-wide como antes.
+            workspace_ids = self._uuids(ctx, "knowledge_workspace_ids")
+            workspace_id = workspace_ids[0] if len(workspace_ids) == 1 else None
             query_text = str(arguments["query"])
             from src.intelligence.response.anchors import (
                 dense_query_rewrite,
@@ -511,6 +516,7 @@ class SearchKnowledgeTool(Tool):
                     organization_id=ctx.tenant_id,
                     role=ctx.role,
                     source_ids=source_filter,
+                    workspace_id=workspace_id,
                     source_priority=prioridad if preferred else [],
                     preferred_source_ids=prioridad if preferred else [],
                     exact_anchors=exact_anchor_specs,

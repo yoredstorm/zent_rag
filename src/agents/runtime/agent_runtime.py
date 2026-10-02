@@ -13,7 +13,7 @@ import json
 import re
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -1539,12 +1539,36 @@ class AgentRuntime:
             return result
 
         org_config = dict(request.org_config or {})
-        kb_ids = (agent.config_json or {}).get("knowledge_base_ids") or []
-        if kb_ids:
-            org_config["knowledge_base_ids"] = [str(item) for item in kb_ids]
-        source_ids = (agent.config_json or {}).get("source_ids") or []
-        if source_ids:
-            org_config["source_ids"] = [str(item) for item in source_ids]
+        # C7: scope declarativo del agente ∩ scope legacy. El scope nunca
+        # amplía: campo vacío = sin restricción (narrow). Si ambos lados traen
+        # source_ids no vacíos y no se cruzan, se niega la búsqueda (sin caer a
+        # las KBs legacy).
+        from src.core.domain.knowledge_scope import from_config, narrow
+
+        config_json = agent.config_json or {}
+        scope = from_config(config_json)
+        legacy = from_config(
+            {
+                "source_ids": config_json.get("source_ids"),
+                "knowledge_base_ids": config_json.get("knowledge_base_ids"),
+            }
+        )
+        if scope.source_ids or legacy.source_ids:
+            effective = narrow(scope, legacy)
+        else:
+            effective = scope
+        deny_sources = bool(
+            scope.source_ids and legacy.source_ids and not effective.source_ids
+        )
+        if deny_sources:
+            effective = replace(effective, source_ids=(), knowledge_base_ids=())
+        org_config["source_ids"] = [str(item) for item in effective.source_ids]
+        org_config["knowledge_base_ids"] = [
+            str(item) for item in effective.knowledge_base_ids
+        ]
+        org_config["knowledge_workspace_ids"] = [
+            str(item) for item in effective.workspace_ids
+        ]
 
         # Inference Proxy: admisión con slot de capacidad y cola por plan.
         proxy_wait_ms = 0.0

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -76,6 +77,13 @@ class AgentConfig(BaseModel):
     tone: str = Field(default="professional", pattern="^(professional|friendly|concise)$")
     knowledge_base_ids: list[UUID] = Field(default_factory=list, max_length=50)
     source_ids: list[UUID] = Field(default_factory=list)
+    knowledge_scope: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Alcance de conocimiento declarativo (C7): fuentes, bases, workspaces, "
+            "kinds, dominios y tags. Estrecha el scope legacy; nunca lo amplía."
+        ),
+    )
     limits: AgentLimits | None = None
     security: AgentSecurity | None = None
     retrieval: dict | None = Field(
@@ -893,8 +901,67 @@ async def _classify_source_ids(ctx, source_ids: list[UUID]) -> tuple[list, list[
     return found, missing, foreign
 
 
+async def _apply_knowledge_scope(
+    ctx, config: AgentConfig
+) -> tuple[AgentConfig, list[str]]:
+    """Normaliza `knowledge_scope` (C7): ownership legacy y fail-soft.
+
+    Los ids inválidos se descartan campo a campo en el dominio. Las fuentes y
+    bases del scope se validan con el mismo criterio que el scope legacy: una
+    fuente de otra organización es 404; una inexistente se descarta con aviso.
+    """
+    from collections.abc import Mapping
+
+    from src.core.domain.knowledge_scope import from_config
+
+    raw = config.knowledge_scope
+    if raw is None:
+        return config, []
+    warnings: list[str] = []
+    if not isinstance(raw, Mapping) or not raw:
+        return config.model_copy(update={"knowledge_scope": None}), warnings
+    scope = from_config({"knowledge_scope": raw})
+    if scope.is_empty:
+        logger.warning(
+            "agent knowledge_scope invalid; dropped",
+            organization_id=str(ctx.organization_id),
+            fields=sorted(str(key) for key in raw)[:10],
+        )
+        warnings.append(
+            "Se descartó el alcance de conocimiento: no contenía fuentes, bases "
+            "ni valores válidos."
+        )
+        return config.model_copy(update={"knowledge_scope": None}), warnings
+    if scope.source_ids:
+        sources, missing, foreign = await _classify_source_ids(ctx, list(scope.source_ids))
+        if foreign:
+            raise HTTPException(
+                404,
+                "Source not found in this organization: "
+                + ", ".join(str(item) for item in foreign[:5]),
+            )
+        if missing:
+            logger.warning(
+                "agent knowledge_scope referenced unknown sources; dropped",
+                organization_id=str(ctx.organization_id),
+                dropped=[str(item) for item in missing][:10],
+                dropped_count=len(missing),
+            )
+            warnings.append(
+                f"Se quitaron {len(missing)} fuente(s) del alcance que ya no existen "
+                "en la organización. Vuelve a elegirlas en Fuentes."
+            )
+        scope = replace(scope, source_ids=tuple(source.id for source in sources))
+    if scope.knowledge_base_ids:
+        await _require_own_kbs(ctx, list(scope.knowledge_base_ids))
+    if scope.is_empty:
+        return config.model_copy(update={"knowledge_scope": None}), warnings
+    return config.model_copy(update={"knowledge_scope": scope.to_public_dict()}), warnings
+
+
 async def _apply_source_config(ctx, config: AgentConfig) -> tuple[AgentConfig, list[str]]:
     """Config con las fuentes vigentes + avisos de lo que se descartó."""
+    config, warnings = await _apply_knowledge_scope(ctx, config)
     if config.source_ids:
         sources, missing, foreign = await _classify_source_ids(ctx, config.source_ids)
         if foreign:
@@ -910,7 +977,6 @@ async def _apply_source_config(ctx, config: AgentConfig) -> tuple[AgentConfig, l
             if kb_id and kb_id not in seen:
                 seen.add(kb_id)
                 derived.append(kb_id)
-        warnings: list[str] = []
         if missing:
             logger.warning(
                 "agent config referenced unknown sources; dropped",
@@ -929,7 +995,7 @@ async def _apply_source_config(ctx, config: AgentConfig) -> tuple[AgentConfig, l
         )
     if config.knowledge_base_ids:
         await _require_own_kbs(ctx, config.knowledge_base_ids)
-    return config, []
+    return config, warnings
 
 # ---------------------------------------------------------------------------
 # Marketplace & Sharing (tenant)

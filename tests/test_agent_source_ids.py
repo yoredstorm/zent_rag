@@ -14,11 +14,45 @@ from src.agents.runtime.agent_runtime import (
     compose_agent_instructions,
 )
 from src.agents.tools.base import ToolContext
-from src.core.domain.entities import Agent, RetrievalChunk, RetrievalContext
+from src.core.domain.entities import Agent, LLMResponse, RetrievalChunk, RetrievalContext
+from src.core.ports import LLMProvider
 from src.platform.deployments.versions import snapshot_agent
 from src.rag.retrieval.models import RetrievalQuery
 
 ORG = UUID("00000000-0000-0000-0000-000000000001")
+
+
+class _CaptureLLM(LLMProvider):
+    """LLM fake: primera respuesta = tool call, segunda = respuesta final."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.prompts: list[str] = []
+        self.contents = [
+            '{"tool": "echo", "arguments": {"text": "x"}}',
+            '{"answer": "listo"}',
+        ]
+
+    async def generate(self, prompt: str, **kwargs) -> LLMResponse:
+        self.prompts.append(prompt)
+        idx = min(self.calls, len(self.contents) - 1)
+        self.calls += 1
+        return LLMResponse(
+            content=self.contents[idx],
+            model="fake",
+            prompt_tokens=10,
+            completion_tokens=10,
+            total_tokens=20,
+        )
+
+    async def generate_stream(self, *args, **kwargs):  # pragma: no cover
+        raise NotImplementedError
+
+    async def embed(self, text, model=None):  # pragma: no cover
+        raise NotImplementedError
+
+    async def rerank(self, query, documents, model=None, top_n=None):  # pragma: no cover
+        return []
 
 
 def _agent(**overrides) -> Agent:
@@ -162,43 +196,12 @@ async def test_search_knowledge_without_sources_does_not_scan_org() -> None:
 @pytest.mark.asyncio
 async def test_runtime_injects_source_ids_into_org_config() -> None:
     from src.agents.tools.registry import register_tool
-    from src.core.domain.entities import LLMResponse
-    from src.core.ports import LLMProvider
     from tests.test_agent_runtime import _agent as runtime_agent
     from tests.test_agent_runtime import _EchoTool
 
     echo = _EchoTool()
     register_tool(echo)
-    prompts: list[str] = []
-
-    class _CaptureLLM(LLMProvider):
-        def __init__(self) -> None:
-            self.calls = 0
-            self.contents = [
-                '{"tool": "echo", "arguments": {"text": "x"}}',
-                '{"answer": "listo"}',
-            ]
-
-        async def generate(self, prompt: str, **kwargs) -> LLMResponse:
-            prompts.append(prompt)
-            idx = min(self.calls, len(self.contents) - 1)
-            self.calls += 1
-            return LLMResponse(
-                content=self.contents[idx],
-                model="fake",
-                prompt_tokens=10,
-                completion_tokens=10,
-                total_tokens=20,
-            )
-
-        async def generate_stream(self, *args, **kwargs):  # pragma: no cover
-            raise NotImplementedError
-
-        async def embed(self, text, model=None):  # pragma: no cover
-            raise NotImplementedError
-
-        async def rerank(self, query, documents, model=None, top_n=None):  # pragma: no cover
-            return []
+    llm = _CaptureLLM()
 
     source_id = uuid4()
     agent = runtime_agent(
@@ -206,7 +209,7 @@ async def test_runtime_injects_source_ids_into_org_config() -> None:
         config_json={"source_ids": [str(source_id)], "purpose": "Inventario"},
         system_prompt="Sé breve.",
     )
-    runtime = AgentRuntime(llm_provider=_CaptureLLM())
+    runtime = AgentRuntime(llm_provider=llm)
     await runtime.run(
         AgentRunRequest(
             agent=agent, message="cuentame sobre el record 4", role="admin"
@@ -214,9 +217,9 @@ async def test_runtime_injects_source_ids_into_org_config() -> None:
     )
     assert echo.calls
     assert echo.calls[0].org_config.get("source_ids") == [str(source_id)]
-    assert prompts
-    assert "Inventario" in prompts[0]
-    assert "Sé breve." in prompts[0]
+    assert llm.prompts
+    assert "Inventario" in llm.prompts[0]
+    assert "Sé breve." in llm.prompts[0]
 
 
 async def _create_org(client: AsyncClient, name: str) -> dict:
@@ -347,3 +350,215 @@ def test_agent_config_rejects_501_source_ids_with_spanish_message() -> None:
     with pytest.raises(ValidationError) as exc:
         AgentConfig(source_ids=ids)
     assert "Un agente admite como máximo 500 fuentes." in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# C7 — knowledge_scope: config, runtime y tool
+# ---------------------------------------------------------------------------
+
+
+async def _create_kb_and_source(client: AsyncClient, headers: dict) -> tuple[str, str]:
+    kb = await client.post(
+        "/api/v1/knowledge-bases",
+        json={"name": f"kb-{uuid4().hex[:8]}"},
+        headers=headers,
+    )
+    assert kb.status_code == 201, kb.text
+    source = await client.post(
+        "/api/v1/sources",
+        json={
+            "name": f"src-{uuid4().hex[:8]}",
+            "type": "web",
+            "knowledge_base_id": kb.json()["id"],
+            "config": {"url": "https://example.com"},
+        },
+        headers=headers,
+    )
+    assert source.status_code == 201, source.text
+    return kb.json()["id"], source.json()["id"]
+
+
+@pytest.mark.asyncio
+async def test_create_agent_persists_knowledge_scope(async_client: AsyncClient) -> None:
+    org = await _create_org(async_client, "Agent Scope Org")
+    org["session"] = await _owner_session(org["organization_id"])
+    headers = _headers(org)
+    _, source_id = await _create_kb_and_source(async_client, headers)
+
+    create = await async_client.post(
+        "/api/v1/agents",
+        json={
+            "name": f"agent-{uuid4().hex[:8]}",
+            "tools": ["search_knowledge"],
+            "config": {
+                "knowledge_scope": {
+                    "source_ids": [source_id],
+                    "canonical_kinds": ["rule"],
+                }
+            },
+        },
+        headers=headers,
+    )
+    assert create.status_code == 201, create.text
+    scope = create.json()["config"]["knowledge_scope"]
+    assert scope["source_ids"] == [source_id]
+    assert scope["canonical_kinds"] == ["rule"]
+
+
+@pytest.mark.asyncio
+async def test_create_rejects_foreign_source_in_knowledge_scope(
+    async_client: AsyncClient,
+) -> None:
+    org_a = await _create_org(async_client, "Agent Scope Org A")
+    org_a["session"] = await _owner_session(org_a["organization_id"])
+    _, foreign_source = await _create_kb_and_source(async_client, _headers(org_a))
+
+    org_b = await _create_org(async_client, "Agent Scope Org B")
+    org_b["session"] = await _owner_session(org_b["organization_id"])
+
+    create = await async_client.post(
+        "/api/v1/agents",
+        json={
+            "name": f"agent-b-{uuid4().hex[:8]}",
+            "tools": ["search_knowledge"],
+            "config": {"knowledge_scope": {"source_ids": [foreign_source]}},
+        },
+        headers=_headers(org_b),
+    )
+    assert create.status_code == 404, create.text
+
+
+@pytest.mark.asyncio
+async def test_create_agent_discards_invalid_knowledge_scope(
+    async_client: AsyncClient,
+) -> None:
+    org = await _create_org(async_client, "Agent Bad Scope Org")
+    org["session"] = await _owner_session(org["organization_id"])
+
+    create = await async_client.post(
+        "/api/v1/agents",
+        json={
+            "name": f"agent-{uuid4().hex[:8]}",
+            "tools": ["search_knowledge"],
+            "config": {
+                "knowledge_scope": {
+                    "source_ids": ["no-es-uuid"],
+                    "domains": "pricing",
+                }
+            },
+        },
+        headers=_headers(org),
+    )
+    assert create.status_code == 201, create.text
+    assert create.json()["config"]["knowledge_scope"] is None
+    assert create.json().get("warnings")
+
+
+@pytest.mark.asyncio
+async def test_runtime_narrows_knowledge_scope_with_legacy_sources() -> None:
+    from src.agents.tools.registry import register_tool
+    from tests.test_agent_runtime import _agent as runtime_agent
+    from tests.test_agent_runtime import _EchoTool
+
+    echo = _EchoTool()
+    register_tool(echo)
+    shared, scope_only, legacy_only = uuid4(), uuid4(), uuid4()
+    agent = runtime_agent(
+        tools=["echo"],
+        config_json={
+            "source_ids": [str(shared), str(legacy_only)],
+            "knowledge_scope": {"source_ids": [str(shared), str(scope_only)]},
+        },
+    )
+    runtime = AgentRuntime(llm_provider=_CaptureLLM())
+    await runtime.run(
+        AgentRunRequest(agent=agent, message="cuentame sobre el record 4", role="admin")
+    )
+    assert echo.calls
+    assert echo.calls[0].org_config.get("source_ids") == [str(shared)]
+
+
+@pytest.mark.asyncio
+async def test_runtime_denies_disjoint_scope_and_legacy_sources() -> None:
+    from src.agents.tools.registry import register_tool
+    from tests.test_agent_runtime import _agent as runtime_agent
+    from tests.test_agent_runtime import _EchoTool
+
+    echo = _EchoTool()
+    register_tool(echo)
+    scope_source, legacy_source, kb_id = uuid4(), uuid4(), uuid4()
+    agent = runtime_agent(
+        tools=["echo"],
+        config_json={
+            "source_ids": [str(legacy_source)],
+            "knowledge_base_ids": [str(kb_id)],
+            "knowledge_scope": {"source_ids": [str(scope_source)]},
+        },
+    )
+    runtime = AgentRuntime(llm_provider=_CaptureLLM())
+    await runtime.run(
+        AgentRunRequest(agent=agent, message="cuentame sobre el record 4", role="admin")
+    )
+    assert echo.calls
+    org_config = echo.calls[0].org_config
+    assert org_config.get("source_ids") == []
+    assert not org_config.get("knowledge_base_ids")
+
+
+@pytest.mark.asyncio
+async def test_search_knowledge_uses_single_scope_workspace() -> None:
+    from src.agents.tools.tools_builtin import SearchKnowledgeTool
+
+    captured: list[RetrievalQuery] = []
+    source_id, workspace_id = uuid4(), uuid4()
+
+    class _FakeRetriever:
+        async def retrieve(self, query: RetrievalQuery):
+            captured.append(query)
+            return RetrievalContext(chunks=[])
+
+    class _StubEmbedder:
+        async def embed(self, text, model=None):
+            return [0.1, 0.2, 0.3]
+
+    tool = SearchKnowledgeTool(_FakeRetriever(), embedder=_StubEmbedder())
+    ctx = ToolContext(
+        tenant_id=ORG,
+        org_config={
+            "source_ids": [str(source_id)],
+            "knowledge_workspace_ids": [str(workspace_id)],
+        },
+    )
+    result = await tool.execute(ctx, {"query": "vacaciones"})
+    assert result.error is None
+    assert captured
+    assert captured[0].workspace_id == workspace_id
+
+
+@pytest.mark.asyncio
+async def test_search_knowledge_ignores_multiple_scope_workspaces() -> None:
+    from src.agents.tools.tools_builtin import SearchKnowledgeTool
+
+    captured: list[RetrievalQuery] = []
+
+    class _FakeRetriever:
+        async def retrieve(self, query: RetrievalQuery):
+            captured.append(query)
+            return RetrievalContext(chunks=[])
+
+    class _StubEmbedder:
+        async def embed(self, text, model=None):
+            return [0.1, 0.2, 0.3]
+
+    tool = SearchKnowledgeTool(_FakeRetriever(), embedder=_StubEmbedder())
+    ctx = ToolContext(
+        tenant_id=ORG,
+        org_config={
+            "source_ids": [str(uuid4())],
+            "knowledge_workspace_ids": [str(uuid4()), str(uuid4())],
+        },
+    )
+    result = await tool.execute(ctx, {"query": "vacaciones"})
+    assert result.error is None
+    assert captured
+    assert captured[0].workspace_id is None
