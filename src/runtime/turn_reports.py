@@ -75,6 +75,12 @@ def build_budget_report(
     )
 
 
+def _attempt_field(attempt: object, name: str, default=None):
+    if isinstance(attempt, dict):
+        return attempt.get(name, default)
+    return getattr(attempt, name, default)
+
+
 @dataclass(frozen=True)
 class LoopRound:
     attempt: int
@@ -116,10 +122,10 @@ def build_loop_report(adaptive: dict, *, max_rounds: int = 3) -> LoopReport:
     """Rondas reales del run, con su razón medida (nunca inferida)."""
     rounds: list[LoopRound] = []
     for raw in list((adaptive or {}).get("attempts") or []):
-        if not isinstance(raw, dict):
+        if raw is None:
             continue
-        sufficient = raw.get("sufficient")
-        quality = raw.get("quality_score")
+        sufficient = _attempt_field(raw, "sufficient")
+        quality = _attempt_field(raw, "quality_score")
         if sufficient is False:
             reason = "insuficiente"
         elif sufficient is True:
@@ -128,8 +134,8 @@ def build_loop_report(adaptive: dict, *, max_rounds: int = 3) -> LoopReport:
             reason = "sin_medicion"
         rounds.append(
             LoopRound(
-                attempt=int(raw.get("attempt") or len(rounds) + 1),
-                strategy=str(raw.get("strategy") or ""),
+                attempt=int(_attempt_field(raw, "attempt") or len(rounds) + 1),
+                strategy=str(_attempt_field(raw, "strategy") or ""),
                 sufficient=bool(sufficient) if sufficient is not None else None,
                 quality_score=(
                     float(quality) if quality is not None else None

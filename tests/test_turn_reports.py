@@ -59,3 +59,22 @@ def test_loop_agotado() -> None:
     }
     report = build_loop_report(adaptive, max_rounds=3)
     assert report.exhausted is True
+
+
+def test_loop_acepta_attempts_objeto() -> None:
+    from types import SimpleNamespace
+
+    adaptive = {
+        "attempts": [
+            SimpleNamespace(
+                attempt=1, strategy="hybrid", sufficient=False, quality_score=0.2
+            ),
+            SimpleNamespace(
+                attempt=2, strategy="exact", sufficient=True, quality_score=0.8
+            ),
+        ]
+    }
+    report = build_loop_report(adaptive)
+    assert [round_.attempt for round_ in report.rounds] == [1, 2]
+    assert report.rounds[1].sufficient is True
+    assert report.rounds[1].reason == "suficiente"
