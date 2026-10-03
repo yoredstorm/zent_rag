@@ -27,14 +27,6 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
         EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO rag_reader';
         EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON SEQUENCES TO rag_reader';
 
-        IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'farmacia') THEN
-            EXECUTE 'GRANT USAGE ON SCHEMA farmacia TO rag_reader';
-            EXECUTE 'GRANT SELECT ON ALL TABLES IN SCHEMA farmacia TO rag_reader';
-            EXECUTE 'GRANT SELECT ON ALL SEQUENCES IN SCHEMA farmacia TO rag_reader';
-            EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA farmacia GRANT SELECT ON TABLES TO rag_reader';
-            EXECUTE 'ALTER DEFAULT PRIVILEGES IN SCHEMA farmacia GRANT SELECT ON SEQUENCES TO rag_reader';
-        END IF;
-
         FOREACH t IN ARRAY ARRAY[
             'organizations','users','memberships','roles','permissions',
             'role_permissions','api_keys','subscriptions','plans','invoices',

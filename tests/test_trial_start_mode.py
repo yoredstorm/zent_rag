@@ -97,14 +97,6 @@ async def test_start_mode_demo_is_noop_with_existing_workspace(
 ) -> None:
     """StartMode ya no provisiona demo: el workspace del alta es el activo."""
 
-    async def _must_not_run(*_args, **_kwargs):
-        raise AssertionError("provision_demo_kb must not run after signup")
-
-    monkeypatch.setattr(
-        "src.verticals.demo_farmacia.provisioning.provision_demo_kb",
-        _must_not_run,
-    )
-
     signup = await _signup(async_client)
     result = await choose_start_mode(async_client, signup, "demo")
     assert result["kind"] == "business"
@@ -126,14 +118,6 @@ async def test_start_mode_demo_is_noop_with_existing_workspace(
 async def test_start_mode_blank_creates_business_without_provision(
     async_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def _must_not_run(*_args, **_kwargs):
-        raise AssertionError("provision_demo_kb must not run for blank")
-
-    monkeypatch.setattr(
-        "src.verticals.demo_farmacia.provisioning.provision_demo_kb",
-        _must_not_run,
-    )
-
     signup = await _signup(async_client)
     result = await choose_start_mode(async_client, signup, "blank")
     assert result["kind"] == "business"

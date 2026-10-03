@@ -6,7 +6,7 @@
 #
 # Uso (dentro del contenedor api):
 #   docker compose exec api python src/scripts/eval_engine.py \
-#       import-dataset --golden src/verticals/demo_farmacia/golden/rag_farmacia.json
+#       import-dataset --golden tests/golden/rag_retail.json
 #
 #   docker compose exec api python src/scripts/eval_engine.py \
 #       run --dataset-id <uuid> --target rag

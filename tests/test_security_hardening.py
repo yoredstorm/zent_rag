@@ -115,7 +115,7 @@ async def test_admin_sql_rejects_select_into(
 ) -> None:
     response = await async_client.post(
         "/api/v1/admin/sql",
-        json={"query": "SELECT * INTO hack_table FROM farmacia.products"},
+        json={"query": "SELECT * INTO hack_table FROM retail.products"},
         headers={
             "Authorization": f"Bearer {dev_api_token}",
             "X-Organization-Id": "00000000-0000-0000-0000-000000000001",

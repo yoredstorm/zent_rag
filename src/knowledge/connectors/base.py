@@ -3,7 +3,7 @@
 # =============================================================================
 # Toda fuente (sql, file, csv, excel, web, s3, api) implementa esta interfaz.
 # El motor de ingestion solo conoce esta abstracción: nunca sabe de dominios
-# verticales (farmacia, retail, ...).
+# verticales (retail, salud, ...).
 #
 # Dos modos de sync:
 # - self_contained=True  (sql): el conector hace su propio pipeline interno

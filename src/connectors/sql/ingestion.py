@@ -5,7 +5,7 @@
 # en texto enriquecido usando heurísticas de columnas, genera embeddings y
 # los indexa en Qdrant con payload completo para filtrado semántico.
 #
-# Principio: Cero configuración manual. Funciona para retail, farmacia,
+# Principio: Cero configuración manual. Funciona para retail, salud,
 # cafetería o cualquier dominio — el discovery de esquema es automático.
 # =============================================================================
 from __future__ import annotations
@@ -549,7 +549,7 @@ class PostgresIngestionService(IngestionService):
         since_ts: str | None = None
 
         if ignore_org_filter:
-            # Datos demo compartidos (schema farmacia): siempre se relee todo;
+            # Datos demo compartidos: siempre se relee todo;
             # los ids de vector son deterministas (uuid5), el upsert es idempotente.
             has_updated_at = False
             if self._cache:
@@ -734,7 +734,7 @@ class PostgresIngestionService(IngestionService):
 
                 # Aislamiento multi-organization: si la tabla tiene organization_id,
                 # SOLO se ingieren las filas del organization autenticado.
-                # ignore_org_filter=True: datos demo compartidos (schema farmacia)
+                # ignore_org_filter=True: datos demo compartidos
                 # — se ingieren todas las filas y se etiquetan con el org destino.
                 if has_organization_col and not ignore_org_filter and since_timestamp:
                     query = text(

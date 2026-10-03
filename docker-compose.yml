@@ -10,8 +10,8 @@ version: "3.9"
 x-common-env: &common-env
   TZ: ${TZ:-America/Lima}
   RAG_ENVIRONMENT: ${ENVIRONMENT:-development}
-  # Cada alta arranca vacía. El flag solo gobierna el seed SQL de init
-  # (08-seed-demo.sh) en un volumen nuevo. El alta no copia ese dataset.
+  # Cada alta arranca vacía. El flag solo gobierna el seed SQL de desarrollo
+  # en un volumen nuevo. El alta no copia datasets demo.
   RAG_SEED_DEMO_DATA: ${RAG_SEED_DEMO_DATA:-false}
   RAG_DEMO_PROVISION_ON_TRIAL: ${RAG_DEMO_PROVISION_ON_TRIAL:-false}
   # Pydantic Settings usa prefijo RAG_ (ver src/config.py)

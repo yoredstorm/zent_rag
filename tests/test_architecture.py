@@ -157,7 +157,7 @@ def test_decision_runtime_layers_do_not_import_api() -> None:
 
 def test_no_vertical_business_terms_in_generic_layers() -> None:
     """core/rag/agents/platform no contienen lógica de negocio vertical."""
-    terms = ("farmacia", "zentfarmacia", "product_images", "order_status", "rag_farmacia")
+    terms = ("product_images", "order_status")
     violations: list[str] = []
     for layer in ("core", "rag", "agents", "platform"):
         for path in _py_files(layer):

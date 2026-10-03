@@ -20,19 +20,19 @@ def _col(name: str, data_type: str = "uuid") -> ColumnMeta:
 
 _SOURCES = [
     DataSource(
-        "farmacia",
+        "retail",
         "sales",
         columns=[_col("id"), _col("product_id"), _col("customer_id"), _col("organization_id")],
         row_count=1,
     ),
     DataSource(
-        "farmacia",
+        "retail",
         "products",
         columns=[_col("id"), _col("name"), _col("organization_id")],
         row_count=1,
     ),
     DataSource(
-        "farmacia",
+        "retail",
         "customers",
         columns=[_col("id"), _col("name"), _col("organization_id")],
         row_count=1,
@@ -46,9 +46,9 @@ def _expert() -> PostgresSqlExpert:
 
 def test_organization_filter_injected_on_all_join_tables() -> None:
     sql = (
-        "SELECT p.name, s.quantity FROM farmacia.sales AS s "
-        "JOIN farmacia.products AS p ON s.product_id = p.id "
-        "JOIN farmacia.customers AS c ON s.customer_id = c.id "
+        "SELECT p.name, s.quantity FROM retail.sales AS s "
+        "JOIN retail.products AS p ON s.product_id = p.id "
+        "JOIN retail.customers AS c ON s.customer_id = c.id "
         "ORDER BY s.sale_date DESC, s.id DESC LIMIT 1"
     )
     out = _expert()._inject_organization_filter(sql, _OID, _SOURCES)
@@ -62,8 +62,8 @@ def test_organization_filter_injected_on_all_join_tables() -> None:
 
 def test_organization_filter_combines_with_existing_where() -> None:
     sql = (
-        "SELECT p.name FROM farmacia.sales AS s "
-        "JOIN farmacia.products AS p ON s.product_id = p.id "
+        "SELECT p.name FROM retail.sales AS s "
+        "JOIN retail.products AS p ON s.product_id = p.id "
         "WHERE s.order_status = 'completed' ORDER BY s.sale_date DESC LIMIT 1"
     )
     out = _expert()._inject_organization_filter(sql, _OID, _SOURCES)
@@ -74,8 +74,8 @@ def test_organization_filter_combines_with_existing_where() -> None:
 
 def test_organization_filter_overwrites_llm_written_organization_predicate() -> None:
     sql = (
-        "SELECT p.name FROM farmacia.sales AS s "
-        "JOIN farmacia.products AS p ON s.product_id = p.id "
+        "SELECT p.name FROM retail.sales AS s "
+        "JOIN retail.products AS p ON s.product_id = p.id "
         "WHERE organization_id = '11111111-1111-1111-1111-111111111111'::uuid "
         "ORDER BY s.sale_date DESC LIMIT 1"
     )
@@ -87,35 +87,35 @@ def test_organization_filter_overwrites_llm_written_organization_predicate() -> 
 def test_organization_filter_skips_tables_without_organization_column() -> None:
     sources = [
         DataSource(
-            "farmacia",
+            "retail",
             "sales",
             columns=[_col("id"), _col("organization_id")],
             row_count=1,
         ),
         DataSource(
-            "farmacia",
+            "retail",
             "labels",
             columns=[_col("id"), _col("name")],  # sin organization_id
             row_count=1,
         ),
     ]
     sql = (
-        "SELECT s.id, l.name FROM farmacia.sales AS s "
-        "JOIN farmacia.labels AS l ON s.id = l.id LIMIT 10"
+        "SELECT s.id, l.name FROM retail.sales AS s "
+        "JOIN retail.labels AS l ON s.id = l.id LIMIT 10"
     )
     out = _expert()._inject_organization_filter(sql, _OID, sources)
     assert "s.organization_id = CAST" in out, out
     assert "l.organization_id" not in out, out
 
 
-def test_farmacia_demo_schema_allows_seed_org_for_trial_tenant(monkeypatch) -> None:
+def test_retail_demo_schema_allows_seed_org_for_trial_tenant(monkeypatch) -> None:
     from src.core.config import get_settings
 
     settings = get_settings()
     monkeypatch.setattr(settings, "SEED_DEMO_DATA", True)
-    monkeypatch.setattr(settings, "DEMO_SQL_SCHEMAS", "farmacia")
+    monkeypatch.setattr(settings, "DEMO_SQL_SCHEMAS", "retail")
     trial = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    sql = "SELECT p.name FROM farmacia.products AS p LIMIT 10"
+    sql = "SELECT p.name FROM retail.products AS p LIMIT 10"
     expert = _expert()
     expert._query_workspace_kind = "demo"
     out = expert._inject_organization_filter(sql, trial, _SOURCES)
@@ -129,9 +129,9 @@ def test_business_workspace_does_not_or_seed_org(monkeypatch) -> None:
 
     settings = get_settings()
     monkeypatch.setattr(settings, "SEED_DEMO_DATA", True)
-    monkeypatch.setattr(settings, "DEMO_SQL_SCHEMAS", "farmacia")
+    monkeypatch.setattr(settings, "DEMO_SQL_SCHEMAS", "retail")
     trial = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    sql = "SELECT p.name FROM farmacia.products AS p LIMIT 10"
+    sql = "SELECT p.name FROM retail.products AS p LIMIT 10"
     expert = _expert()
     expert._query_workspace_kind = "business"
     out = expert._inject_organization_filter(sql, trial, _SOURCES)
@@ -145,9 +145,9 @@ def test_missing_workspace_kind_does_not_or_seed_org(monkeypatch) -> None:
 
     settings = get_settings()
     monkeypatch.setattr(settings, "SEED_DEMO_DATA", True)
-    monkeypatch.setattr(settings, "DEMO_SQL_SCHEMAS", "farmacia")
+    monkeypatch.setattr(settings, "DEMO_SQL_SCHEMAS", "retail")
     trial = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
-    sql = "SELECT p.name FROM farmacia.products AS p LIMIT 10"
+    sql = "SELECT p.name FROM retail.products AS p LIMIT 10"
     out = _expert()._inject_organization_filter(sql, trial, _SOURCES)
     assert str(trial) in out
     assert str(_OID) not in out
@@ -157,7 +157,7 @@ def test_filter_demo_sql_sources_hidden_unless_demo_workspace(monkeypatch) -> No
     from src.core.config import get_settings
 
     settings = get_settings()
-    monkeypatch.setattr(settings, "DEMO_SQL_SCHEMAS", "farmacia")
+    monkeypatch.setattr(settings, "DEMO_SQL_SCHEMAS", "retail")
     expert = _expert()
     expert._query_workspace_kind = "business"
     hidden = expert._filter_demo_sql_sources(_SOURCES)

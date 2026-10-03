@@ -38,11 +38,11 @@ async def test_admin_sql_allows_select_with_admin_scope(
 @pytest.mark.parametrize(
     "query",
     [
-        "UPDATE farmacia.products SET price = 0",
-        "DELETE FROM farmacia.products",
-        "INSERT INTO farmacia.products (name) VALUES ('x')",
-        "WITH x AS (DELETE FROM farmacia.products RETURNING *) SELECT * FROM x",
-        "DROP TABLE farmacia.products",
+        "UPDATE retail.products SET price = 0",
+        "DELETE FROM retail.products",
+        "INSERT INTO retail.products (name) VALUES ('x')",
+        "WITH x AS (DELETE FROM retail.products RETURNING *) SELECT * FROM x",
+        "DROP TABLE retail.products",
     ],
 )
 async def test_admin_sql_rejects_non_select(

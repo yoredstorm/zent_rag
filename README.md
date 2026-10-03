@@ -316,7 +316,7 @@ flowchart TB
 │   resilience (circuit breaker) · secrets (Vault + AES-GCM) ·       │
 │   db_init (SQL baseline + Alembic 134 migraciones) · billing       │
 ├────────────────────────────────────────────────────────────────────┤
-│ verticals/ — plugins de dominio (demo_farmacia, …)                 │
+│ verticals/ — plugins de dominio (opcionales, extensibles)           │
 │ Observabilidad (PLG) + Portal (nginx) + ingestion-worker           │
 └────────────────────────────────────────────────────────────────────┘
 ```
@@ -454,7 +454,7 @@ ruff check src/ tests/ sdk/python
 ```bash
 # Eval: importar dataset, correr target, comparar regresión
 docker compose exec api python src/scripts/eval_engine.py \
-  import-dataset --golden src/verticals/demo_farmacia/golden/rag_farmacia.json
+  import-dataset --golden tests/golden/rag_retail.json
 docker compose exec api python src/scripts/eval_engine.py run --dataset-id <uuid> --target rag
 docker compose exec api python src/scripts/eval_engine.py compare --baseline <a> --current <b>
 
@@ -497,7 +497,7 @@ zent_RAG/
 │   ├── connectors/          # plugin platform (SQL, files, APIs, S3, Drive)
 │   ├── platform/            # ~70 módulos: auth, billing, soc, dr, workflows, …
 │   ├── infrastructure/      # postgres, qdrant, redis, llm, secrets, db_init
-│   ├── verticals/           # plugins de dominio (demo_farmacia, …)
+│   ├── verticals/           # plugins de dominio (opcionales, extensibles)
 │   └── scripts/             # CLIs operativas: eval, billing, benchmarks, V2
 │
 ├── portal/                  # Vite + React 19 — Customer Portal + Control Center

@@ -24,7 +24,7 @@ ORG = UUID("00000000-0000-0000-0000-000000000001")
 def _sources() -> list[DataSource]:
     return [
         DataSource(
-            schema_name="farmacia",
+            schema_name="retail",
             table_name="sales",
             row_count=5000,
             columns=[
@@ -37,7 +37,7 @@ def _sources() -> list[DataSource]:
             ],
         ),
         DataSource(
-            schema_name="farmacia",
+            schema_name="retail",
             table_name="products",
             row_count=300,
             columns=[
@@ -97,21 +97,21 @@ class TestSelectOnly:
     async def test_multi_statement_injection_blocked(self) -> None:
         with pytest.raises(SqlValidationError):
             await _validate(
-                "SELECT name FROM farmacia.products; DROP TABLE farmacia.products; --"
+                "SELECT name FROM retail.products; DROP TABLE retail.products; --"
             )
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "sql",
         [
-            "INSERT INTO farmacia.products (name) VALUES ('x')",
-            "UPDATE farmacia.products SET name = 'x'",
-            "DELETE FROM farmacia.products",
-            "DROP TABLE farmacia.products",
-            "TRUNCATE farmacia.products",
-            "COPY farmacia.products TO '/tmp/out'",
-            "GRANT SELECT ON farmacia.products TO public",
-            "REVOKE SELECT ON farmacia.products FROM public",
+            "INSERT INTO retail.products (name) VALUES ('x')",
+            "UPDATE retail.products SET name = 'x'",
+            "DELETE FROM retail.products",
+            "DROP TABLE retail.products",
+            "TRUNCATE retail.products",
+            "COPY retail.products TO '/tmp/out'",
+            "GRANT SELECT ON retail.products TO public",
+            "REVOKE SELECT ON retail.products FROM public",
             "CALL some_procedure()",
             "EXEC some_procedure()",
             "SELECT pg_sleep(10)",
@@ -126,13 +126,13 @@ class TestSelectOnly:
     async def test_cte_with_delete_blocked(self) -> None:
         with pytest.raises(SqlValidationError):
             await _validate(
-                "WITH x AS (DELETE FROM farmacia.products RETURNING *) SELECT * FROM x"
+                "WITH x AS (DELETE FROM retail.products RETURNING *) SELECT * FROM x"
             )
 
     @pytest.mark.asyncio
     async def test_for_update_blocked(self) -> None:
         with pytest.raises(SqlValidationError):
-            await _validate("SELECT name FROM farmacia.products FOR UPDATE")
+            await _validate("SELECT name FROM retail.products FOR UPDATE")
 
 
 # -----------------------------------------------------------------------------
@@ -158,8 +158,8 @@ class TestAllowlist:
     @pytest.mark.asyncio
     async def test_organization_filter_injected(self) -> None:
         sql = (
-            "SELECT s.quantity FROM farmacia.sales s "
-            "JOIN farmacia.products p ON s.product_id = p.id LIMIT 10"
+            "SELECT s.quantity FROM retail.sales s "
+            "JOIN retail.products p ON s.product_id = p.id LIMIT 10"
         )
         safe = await _validate(sql)
         assert "organization_id" in safe.lower()
@@ -174,20 +174,20 @@ class TestPlanner:
     async def test_cross_join_blocked(self) -> None:
         with pytest.raises(SqlValidationError):
             await _validate(
-                "SELECT p.name FROM farmacia.products p CROSS JOIN farmacia.sales s"
+                "SELECT p.name FROM retail.products p CROSS JOIN retail.sales s"
             )
 
     @pytest.mark.asyncio
     async def test_join_on_single_side_blocked(self) -> None:
         with pytest.raises(SqlValidationError):
             await _validate(
-                "SELECT p.name FROM farmacia.products p "
-                "JOIN farmacia.sales s ON p.id = p.id"
+                "SELECT p.name FROM retail.products p "
+                "JOIN retail.sales s ON p.id = p.id"
             )
 
     @pytest.mark.asyncio
     async def test_massive_limit_capped(self) -> None:
-        safe = await _validate("SELECT name FROM farmacia.products LIMIT 999999")
+        safe = await _validate("SELECT name FROM retail.products LIMIT 999999")
         assert "999999" not in safe
         assert "LIMIT" in safe.upper()
 
@@ -197,7 +197,7 @@ class TestPlanner:
         # _run_query real agrega LIMIT cuando falta; simulamos la lógica vía
         # cap: validate no agrega LIMIT, la ejecución sí (cubierto en _run_query).
         expert = _NoDbExpert()
-        result = await expert._run_query("SELECT name FROM farmacia.products")
+        result = await expert._run_query("SELECT name FROM retail.products")
         assert result.error is None
 
 
@@ -231,7 +231,7 @@ class TestCost:
         expert._permissions = None
         with pytest.raises(SqlValidationError):
             await expert.validate_sql(
-                "SELECT name FROM farmacia.products LIMIT 5",
+                "SELECT name FROM retail.products LIMIT 5",
                 _sources(),
                 "admin",
                 ORG,
@@ -246,7 +246,7 @@ class TestCost:
         expert = _CostExpert(cost=50.0)
         expert._permissions = None
         safe = await expert.validate_sql(
-            "SELECT name FROM farmacia.products LIMIT 5",
+            "SELECT name FROM retail.products LIMIT 5",
             _sources(),
             "admin",
             ORG,
@@ -262,7 +262,7 @@ class TestPermissions:
     async def test_customer_aggregates_blocked(self) -> None:
         with pytest.raises(SqlValidationError):
             await _validate(
-                "SELECT SUM(s.quantity) FROM farmacia.sales s", role="customer"
+                "SELECT SUM(s.quantity) FROM retail.sales s", role="customer"
             )
 
     @pytest.mark.asyncio
@@ -270,7 +270,7 @@ class TestPermissions:
         permissions = {"column_blocklist": {"customer": ["cost"]}}
         with pytest.raises(SqlValidationError):
             await _validate(
-                "SELECT s.quantity, s.cost FROM farmacia.sales s LIMIT 5",
+                "SELECT s.quantity, s.cost FROM retail.sales s LIMIT 5",
                 role="customer",
                 permissions=permissions,
             )
@@ -279,7 +279,7 @@ class TestPermissions:
     async def test_admin_not_affected_by_customer_blocklist(self) -> None:
         permissions = {"column_blocklist": {"customer": ["cost"]}}
         safe = await _validate(
-            "SELECT s.cost FROM farmacia.sales s LIMIT 5",
+            "SELECT s.cost FROM retail.sales s LIMIT 5",
             role="admin",
             permissions=permissions,
         )
@@ -290,7 +290,7 @@ class TestPermissions:
         permissions = {"table_blocklist": ["sales"]}
         with pytest.raises(SqlValidationError):
             await _validate(
-                "SELECT quantity FROM farmacia.sales LIMIT 5",
+                "SELECT quantity FROM retail.sales LIMIT 5",
                 permissions=permissions,
             )
 
@@ -301,7 +301,7 @@ class TestPermissions:
         settings = get_settings()
         monkeypatch.setattr(settings, "RAG_SQL_SENSITIVE_COLUMNS", "cost")
         with pytest.raises(SqlValidationError):
-            await _validate("SELECT s.cost FROM farmacia.sales s LIMIT 5")
+            await _validate("SELECT s.cost FROM retail.sales s LIMIT 5")
 
 
 # -----------------------------------------------------------------------------
@@ -391,8 +391,8 @@ class TestSqlAudit:
             user_id=uuid4(),
             role="admin",
             question="¿Cuánto vendimos esta semana?",
-            generated_sql="SELECT * FROM farmacia.sales LIMIT 10",
-            tables=["farmacia.sales"],
+            generated_sql="SELECT * FROM retail.sales LIMIT 10",
+            tables=["retail.sales"],
             execution_time_ms=42.0,
             rows=10,
             cost=123.4,
@@ -402,7 +402,7 @@ class TestSqlAudit:
         entries = await list_sql_audit(org, limit=10)
         assert entries, "audit entry must be readable"
         entry = entries[0]
-        assert entry["generated_sql"] == "SELECT * FROM farmacia.sales LIMIT 10"
+        assert entry["generated_sql"] == "SELECT * FROM retail.sales LIMIT 10"
         assert entry["rows"] == 10
         assert entry["status"] == "success"
         # Nunca credenciales en el payload de auditoría.

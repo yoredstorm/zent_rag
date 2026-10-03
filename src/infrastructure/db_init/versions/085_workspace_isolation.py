@@ -96,7 +96,7 @@ def upgrade() -> None:
           AND EXISTS (
               SELECT 1 FROM knowledge_bases kb
               WHERE kb.organization_id = w.organization_id
-                AND (kb.name ILIKE '%demo%' OR kb.name ILIKE '%farmacia%')
+                AND kb.name ILIKE '%demo%'
           )
         """
     )

@@ -100,8 +100,8 @@ def test_lazy_cache_keys_are_organization_scoped() -> None:
     assert lazy_log_cache_key(a) != lazy_log_cache_key(b)
     assert a.hex in lazy_log_cache_key(a)
     assert b.hex not in lazy_log_cache_key(a)
-    assert lazy_rows_cache_key(a, "farmacia", "products") != lazy_rows_cache_key(
-        b, "farmacia", "products"
+    assert lazy_rows_cache_key(a, "retail", "products") != lazy_rows_cache_key(
+        b, "retail", "products"
     )
 
 
@@ -136,19 +136,19 @@ async def test_get_lazy_rows_indexed_reads_own_organization_key() -> None:
     cache = _FakeCache()
     organization = uuid4()
     other = uuid4()
-    cache.store[lazy_rows_cache_key(organization, "farmacia", "products")] = "18"
-    cache.store[lazy_rows_cache_key(other, "farmacia", "products")] = "99"
+    cache.store[lazy_rows_cache_key(organization, "retail", "products")] = "18"
+    cache.store[lazy_rows_cache_key(other, "retail", "products")] = "99"
     svc = PostgresIngestionService(_FakeVectorStore(), _FakeEmbed(), cache)
 
-    assert await svc.get_lazy_rows_indexed(organization, "farmacia", "products") == 18
-    assert await svc.get_lazy_rows_indexed(other, "farmacia", "products") == 99
-    assert await svc.get_lazy_rows_indexed(organization, "farmacia", "sales") == 0
+    assert await svc.get_lazy_rows_indexed(organization, "retail", "products") == 18
+    assert await svc.get_lazy_rows_indexed(other, "retail", "products") == 99
+    assert await svc.get_lazy_rows_indexed(organization, "retail", "sales") == 0
 
 
 @pytest.mark.asyncio
 async def test_get_lazy_rows_indexed_without_cache_returns_zero() -> None:
     svc = PostgresIngestionService(_FakeVectorStore(), _FakeEmbed(), None)
-    assert await svc.get_lazy_rows_indexed(uuid4(), "farmacia", "products") == 0
+    assert await svc.get_lazy_rows_indexed(uuid4(), "retail", "products") == 0
 
 
 class _FakeIngestion:
@@ -160,7 +160,7 @@ class _FakeIngestion:
     async def discover_sources(self, organization_id: UUID) -> list[DataSource]:
         return [
             DataSource(
-                schema_name="farmacia",
+                schema_name="retail",
                 table_name="products",
                 columns=[
                     ColumnMeta(

@@ -362,7 +362,7 @@ export function AgentPublishSection({
                 id="agent-embed-origins"
                 value={embedOrigins}
                 onChange={(e) => setEmbedOrigins(e.target.value)}
-                placeholder="https://farmacia.cl, https://www.farmacia.cl"
+                placeholder="https://tienda.cl, https://www.tienda.cl"
               />
             </AgentField>
             <div className="flex flex-wrap gap-2">

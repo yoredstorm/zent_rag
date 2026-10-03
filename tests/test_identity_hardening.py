@@ -246,7 +246,7 @@ def test_sql_llm_organization_literal_is_overwritten() -> None:
     tenant_a = uuid4()
     tenant_b = uuid4()
     sql = (
-        "SELECT p.name FROM farmacia.products AS p "
+        "SELECT p.name FROM retail.products AS p "
         f"WHERE organization_id = '{tenant_b}'::uuid"
     )
     out = rewrite_sql_organization_id(sql, tenant_a)

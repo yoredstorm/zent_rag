@@ -231,10 +231,10 @@ async def test_create_returns_parsed_config(async_client: AsyncClient) -> None:
     create = await async_client.post(
         "/api/v1/agents",
         json={
-            "name": f"pharmacy-{uuid4().hex[:8]}",
+            "name": f"retail-{uuid4().hex[:8]}",
             "tools": ["search_knowledge"],
             "model": "gpt-4o-mini",
-            "system_prompt": "Eres un asistente de farmacia.",
+            "system_prompt": "Eres un asistente de tienda.",
             "config": {
                 "purpose": "Consultar stock y productos",
                 "temperature": 0.2,

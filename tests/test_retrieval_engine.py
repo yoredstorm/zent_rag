@@ -176,7 +176,7 @@ class TestResolveConfig:
         settings = get_settings()
         monkeypatch.setattr(settings, "RAG_RETRIEVAL_STRATEGY", "vector")
         cfg = resolve_retrieval_config(
-            organization_config={"retrieval": {"business_rule": "farmacia", "top_k": 50}}
+            organization_config={"retrieval": {"business_rule": "retail", "top_k": 50}}
         )
         assert cfg.top_k == 50
 

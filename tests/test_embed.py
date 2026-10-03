@@ -79,7 +79,7 @@ async def test_create_embed_token_requires_entitlement(
     try:
         resp = await async_client.post(
             f"/api/v1/agents/{agent_id}/embed/token",
-            json={"allowed_origins": ["https://farmacia.cl"]},
+            json={"allowed_origins": ["https://tienda.cl"]},
             headers=_headers(org),
         )
         assert resp.status_code == 403, resp.text
@@ -96,7 +96,7 @@ async def test_embed_chat_rejects_origin_not_allowlisted(
         org, agent_id = await _org_with_agent(async_client, "Embed Origin Org")
         minted = await async_client.post(
             f"/api/v1/agents/{agent_id}/embed/token",
-            json={"allowed_origins": ["https://farmacia.cl"]},
+            json={"allowed_origins": ["https://tienda.cl"]},
             headers=_headers(org),
         )
         assert minted.status_code == 201, minted.text
@@ -121,7 +121,7 @@ async def test_revoked_embed_token_returns_401(async_client: AsyncClient) -> Non
         org, agent_id = await _org_with_agent(async_client, "Embed Revoke Org")
         minted = await async_client.post(
             f"/api/v1/agents/{agent_id}/embed/token",
-            json={"allowed_origins": ["https://farmacia.cl"]},
+            json={"allowed_origins": ["https://tienda.cl"]},
             headers=_headers(org),
         )
         assert minted.status_code == 201, minted.text
@@ -136,7 +136,7 @@ async def test_revoked_embed_token_returns_401(async_client: AsyncClient) -> Non
         resp = await async_client.post(
             f"/api/v1/embed/{public_id}/chat",
             json={"messages": [{"role": "user", "content": "hola"}]},
-            headers={"Origin": "https://farmacia.cl"},
+            headers={"Origin": "https://tienda.cl"},
         )
         assert resp.status_code == 401, resp.text
     finally:
@@ -174,7 +174,7 @@ async def test_embed_token_cannot_run_foreign_agent(
         org_b, agent_b = await _org_with_agent(async_client, "Embed Org B")
         minted = await async_client.post(
             f"/api/v1/agents/{agent_a}/embed/token",
-            json={"allowed_origins": ["https://farmacia.cl"]},
+            json={"allowed_origins": ["https://tienda.cl"]},
             headers=_headers(org_a),
         )
         assert minted.status_code == 201, minted.text
@@ -187,7 +187,7 @@ async def test_embed_token_cannot_run_foreign_agent(
                 "agent_id": agent_b,
                 "organization_id": org_b["organization_id"],
             },
-            headers={"Origin": "https://farmacia.cl"},
+            headers={"Origin": "https://tienda.cl"},
         )
         assert resp.status_code == 200, resp.text
         assert fake.last_request is not None

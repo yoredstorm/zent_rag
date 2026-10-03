@@ -40,6 +40,46 @@ def _headers(org: dict) -> dict:
     }
 
 
+async def _ensure_retail_fixture() -> None:
+    """Schema de prueba autocontenido (sin depender de seeds de demo)."""
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.session import get_async_session
+
+    session = await get_async_session()
+    try:
+        await session.execute(text("CREATE SCHEMA IF NOT EXISTS retail"))
+        await session.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS retail.products (
+                    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                    name varchar(200) NOT NULL,
+                    description text,
+                    price numeric(12,2),
+                    stock integer DEFAULT 0,
+                    category varchar(80),
+                    active boolean DEFAULT true
+                )
+                """
+            )
+        )
+        await session.execute(
+            text(
+                """
+                INSERT INTO retail.products (name, description, price, stock, category)
+                SELECT 'Producto ' || g, 'Producto de prueba ' || g,
+                       1000 + g, g * 3, 'General'
+                FROM generate_series(1, 8) AS g
+                WHERE NOT EXISTS (SELECT 1 FROM retail.products)
+                """
+            )
+        )
+        await session.commit()
+    finally:
+        await session.close()
+
+
 class TestProfilingHeuristics:
     def test_pii_flags_detected(self) -> None:
         from src.connectors.sql.profiling import _flags_for_column
@@ -69,6 +109,7 @@ class TestProfilingHeuristics:
 
 @pytest.mark.asyncio
 async def test_profile_endpoint_sql_source(async_client: AsyncClient) -> None:
+    await _ensure_retail_fixture()
     org = await _create_org(async_client, "Profile Org")
     org["session"] = await _owner_session(org["organization_id"])
     h = _headers(org)
@@ -85,7 +126,7 @@ async def test_profile_endpoint_sql_source(async_client: AsyncClient) -> None:
             "name": "Products SQL",
             "type": "sql",
             "knowledge_base_id": kb["id"],
-            "config": {"schema": "farmacia", "tables": ["products"]},
+            "config": {"schema": "retail", "tables": ["products"]},
         },
     )
     assert source.status_code == 201, source.text
@@ -158,7 +199,7 @@ async def test_training_run_creates_linked_jobs(async_client: AsyncClient) -> No
             "name": "Categories SQL",
             "type": "sql",
             "knowledge_base_id": kb["id"],
-            "config": {"schema": "farmacia", "tables": ["categories"]},
+            "config": {"schema": "retail", "tables": ["categories"]},
         },
     )
     assert src.status_code == 201, src.text

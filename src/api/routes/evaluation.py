@@ -145,13 +145,12 @@ async def run_golden_eval(
     if settings.GOLDEN_SET_PATH:
         golden_path = pathlib.Path(settings.GOLDEN_SET_PATH)
     else:
-        # Golden set por defecto: el del vertical demo (RAG_SEED_DEMO_DATA).
+        # Golden set por defecto: dataset retail genérico del repo.
         golden_path = (
-            pathlib.Path(__file__).resolve().parents[2]
-            / "verticals"
-            / "demo_farmacia"
+            pathlib.Path(__file__).resolve().parents[3]
+            / "tests"
             / "golden"
-            / "rag_farmacia.json"
+            / "rag_retail.json"
         )
 
     summary = await run_eval(

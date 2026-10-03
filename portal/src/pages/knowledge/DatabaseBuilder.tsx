@@ -174,7 +174,7 @@ export default function DatabaseBuilderPage() {
             className="input min-h-28"
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="I run a pharmacy and need products, customers, sales and inventory."
+            placeholder="I run a retail store and need products, customers, sales and inventory."
           />
           <button type="button" className="btn btn-secondary" onClick={() => void askAi()}>
             Propose schema

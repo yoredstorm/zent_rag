@@ -190,8 +190,8 @@ class FakeLazyIngestion(IngestionService):
             tables_processed=1,
             rows_indexed=2,
             vectors_upserted=2,
-            indexed_tables=["farmacia.products"],
-            table_row_counts={"farmacia.products": 2},
+            indexed_tables=["retail.products"],
+            table_row_counts={"retail.products": 2},
         )
 
 
@@ -396,7 +396,7 @@ async def test_sql_first_prompt_excludes_vector_chunks_and_uses_temp_zero() -> N
     llm = FakeLLM(content="El último producto vendido es Colágeno.")
     sql = FakeSqlExpert(
         SqlQueryResult(
-            sql="SELECT p.name FROM farmacia.sales s JOIN farmacia.products p ON s.product_id = p.id LIMIT 1",
+            sql="SELECT p.name FROM retail.sales s JOIN retail.products p ON s.product_id = p.id LIMIT 1",
             columns=["producto"],
             rows=[["Colágeno Hidrolizado"]],
             row_count=1,
@@ -517,7 +517,7 @@ async def test_lazy_fallback_indexes_and_retries_vector_search(enable_lazy) -> N
     assert event["rows_indexed"] == 2
     assert event["query_preview"] == query[:80]
     assert "at" in event
-    rows_key = lazy_rows_cache_key(organization.id, "farmacia", "products")
+    rows_key = lazy_rows_cache_key(organization.id, "retail", "products")
     assert cache.store[rows_key] == "2"
 
 
@@ -660,7 +660,7 @@ async def test_large_table_without_trigram_index_is_skipped(
     vs = FakeVectorStore()
     svc = PostgresIngestionService(vs, FakeEmbed(), FakeCache())
     big_source = DataSource(
-        schema_name="farmacia",
+        schema_name="retail",
         table_name="products",
         columns=[
             ColumnMeta(name="id", data_type="uuid", is_nullable=False, is_primary_key=True),
@@ -717,7 +717,7 @@ async def test_large_table_with_trigram_index_proceeds(
     vs = FakeVectorStore()
     svc = PostgresIngestionService(vs, FakeEmbed(), FakeCache())
     big_source = DataSource(
-        schema_name="farmacia",
+        schema_name="retail",
         table_name="products",
         columns=[
             ColumnMeta(name="id", data_type="uuid", is_nullable=False, is_primary_key=True),
@@ -806,7 +806,7 @@ async def test_ingest_candidates_concurrent_is_idempotent(
 
     assert all(not r.errors for r in results)
     expected_ids = {
-        uuid5(_VECTOR_NS, f"{organization_id}:farmacia.products:{pk}")
+        uuid5(_VECTOR_NS, f"{organization_id}:retail.products:{pk}")
         for pk in ("row-1", "row-2")
     }
     assert set(vs.points) == expected_ids
@@ -914,7 +914,7 @@ async def test_lazy_table_auto_promoted_after_threshold(
 
     assert len(enqueued) == 1
     assert enqueued[0]["organization_id"] == organization.id
-    assert enqueued[0]["schema_name"] == "farmacia"
+    assert enqueued[0]["schema_name"] == "retail"
     assert enqueued[0]["table_name"] == "products"
 
 
@@ -946,7 +946,7 @@ async def _dummy_async_session() -> _DummySession:
 
 def _products_source() -> DataSource:
     return DataSource(
-        schema_name="farmacia",
+        schema_name="retail",
         table_name="products",
         columns=[
             ColumnMeta(name="id", data_type="uuid", is_nullable=False, is_primary_key=True),
@@ -960,7 +960,7 @@ def _products_source() -> DataSource:
 
 def _sales_source() -> DataSource:
     return DataSource(
-        schema_name="farmacia",
+        schema_name="retail",
         table_name="sales",
         columns=[
             ColumnMeta(name="id", data_type="uuid", is_nullable=False, is_primary_key=True),
@@ -973,7 +973,7 @@ def _sales_source() -> DataSource:
 
 def _admin_view_source() -> DataSource:
     return DataSource(
-        schema_name="farmacia",
+        schema_name="retail",
         table_name="product_stats",
         columns=[
             ColumnMeta(name="product_name", data_type="text", is_nullable=True),
@@ -1055,7 +1055,7 @@ async def test_ingest_rows_idempotent_uuid5() -> None:
     ids_first = set(vs.points)
     second = await svc._ingest_rows(organization_id, source, rows, ingestion_mode="lazy")
 
-    expected = uuid5(_VECTOR_NS, f"{organization_id}:farmacia.products:row-1")
+    expected = uuid5(_VECTOR_NS, f"{organization_id}:retail.products:row-1")
     assert expected in vs.points
     assert ids_first == set(vs.points)
     assert first.vectors_upserted >= 1

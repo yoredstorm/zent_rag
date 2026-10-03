@@ -9,7 +9,7 @@
 #
 # Uso (stack docker arriba, embeddings disponibles):
 #   python src/scripts/benchmark_retrieval.py \
-#     [--golden src/verticals/demo_farmacia/golden/rag_farmacia.json] \
+#     [--golden tests/golden/rag_retail.json] \
 #     [--organization 00000000-0000-0000-0000-000000000001] \
 #     [--strategies vector,lexical,hybrid] [--top-k 20] [--runs 3]
 # =============================================================================
@@ -28,7 +28,7 @@ from src.rag.reranking.base import NoopReranker
 from src.rag.retrieval import HybridRetriever
 from src.rag.retrieval.models import RetrievalQuery
 
-DEFAULT_GOLDEN = Path(__file__).resolve().parents[1] / "verticals" / "demo_farmacia" / "golden" / "rag_farmacia.json"
+DEFAULT_GOLDEN = Path(__file__).resolve().parents[2] / "tests" / "golden" / "rag_retail.json"
 DEFAULT_ORGANIZATION = UUID("00000000-0000-0000-0000-000000000001")
 
 
