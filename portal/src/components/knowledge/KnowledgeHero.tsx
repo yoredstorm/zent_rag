@@ -111,7 +111,7 @@ export function KnowledgeHero({
           </p>
           <h1 className="mt-2 max-w-[24ch] text-[30px] font-semibold leading-[1.12] tracking-[-0.025em] text-text">
             {empty
-              ? "ZENT todavía no conoce tu negocio."
+              ? "ZENT todavía no tiene conocimiento de tu negocio."
               : "Tu conocimiento empresarial está creciendo"}
           </h1>
           <p className="prose-measure mt-2 text-sm leading-relaxed text-muted">

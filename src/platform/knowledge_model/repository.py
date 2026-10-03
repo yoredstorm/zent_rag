@@ -618,7 +618,7 @@ class PostgresKnowledgeModelRepository:
                     "object": object_id,
                     "rtype": relationship_type,
                     "confidence": max(0.0, min(1.0, float(confidence))),
-                    "status": status,
+                    "status": normalize_object_status(status),
                     "provenance": provenance,
                     "source_id": source_id,
                     "evidence": json.dumps(evidence or [], default=str),

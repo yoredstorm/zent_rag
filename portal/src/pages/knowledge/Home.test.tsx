@@ -274,7 +274,9 @@ describe("KnowledgeHomePage", () => {
     renderPage();
 
     await waitFor(() =>
-      expect(screen.getByText("ZENT todavía no conoce tu negocio.")).toBeInTheDocument()
+      expect(
+        screen.getByText("ZENT todavía no tiene conocimiento de tu negocio.")
+      ).toBeInTheDocument()
     );
     expect(screen.getByTestId("knowledge-first-steps")).toBeInTheDocument();
     expect(screen.getByTestId("knowledge-pulse-empty")).toBeInTheDocument();
