@@ -143,6 +143,18 @@ export default function ChatPage() {
   const hintTimer = useRef<number | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // Prefill desde Knowledge Map: /chat?q=... (se limpia el parámetro al usarlo).
+  useEffect(() => {
+    const question = searchParams.get("q");
+    if (!question) return;
+    setInput(question);
+    const next = new URLSearchParams(searchParams);
+    next.delete("q");
+    setSearchParams(next, { replace: true });
+    // Solo al montar: la pregunta viaja una vez desde el mapa.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     if (!session) return;
     setConversations(listConversations(session.organizationId));

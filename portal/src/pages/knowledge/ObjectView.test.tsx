@@ -94,6 +94,8 @@ function detailFixture(): KnowledgeObjectDetail {
         version: 1,
         verified_at: null,
         stale_at: null,
+        valid_from: null,
+        valid_to: null,
         created_at: now,
         updated_at: now,
       },

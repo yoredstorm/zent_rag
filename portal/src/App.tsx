@@ -45,6 +45,7 @@ const SettingsPage = lazy(() => import("./pages/Settings"));
 const KnowledgeSourcesPage = lazy(() => import("./pages/knowledge/Sources"));
 const KnowledgeHomePage = lazy(() => import("./pages/knowledge/Home"));
 const KnowledgeExplorerPage = lazy(() => import("./pages/knowledge/Explorer"));
+const KnowledgeMapPage = lazy(() => import("./pages/knowledge/Map"));
 const KnowledgeObjectPage = lazy(() => import("./pages/knowledge/ObjectView"));
 const KnowledgeSearchPage = lazy(() => import("./pages/knowledge/Search"));
 const KnowledgeQualityPage = lazy(() => import("./pages/knowledge/Quality"));
@@ -552,6 +553,7 @@ export default function App() {
         <Route path="/webhooks" element={<Suspense fallback={<PageFallback />}><WebhooksPage /></Suspense>} />
         <Route path="/knowledge" element={<Suspense fallback={<PageFallback />}><KnowledgeHomePage /></Suspense>} />
         <Route path="/knowledge/explorer" element={<Suspense fallback={<PageFallback />}><KnowledgeExplorerPage /></Suspense>} />
+        <Route path="/knowledge/map" element={<Suspense fallback={<PageFallback />}><KnowledgeMapPage /></Suspense>} />
         <Route path="/knowledge/objects/:objectId" element={<Suspense fallback={<PageFallback />}><KnowledgeObjectPage /></Suspense>} />
         <Route path="/knowledge/search" element={<Suspense fallback={<PageFallback />}><KnowledgeSearchPage /></Suspense>} />
         <Route path="/knowledge/health" element={<Suspense fallback={<PageFallback />}><KnowledgeQualityPage /></Suspense>} />
@@ -576,7 +578,6 @@ export default function App() {
         <Route path="/knowledge/learning" element={<Navigate to="/knowledge/activity" replace />} />
         <Route path="/knowledge/model" element={<Navigate to="/knowledge/explorer" replace />} />
         <Route path="/knowledge/quality" element={<Navigate to="/knowledge/health" replace />} />
-        <Route path="/knowledge/map" element={<Navigate to="/knowledge/explorer?view=graph" replace />} />
         <Route path="/knowledge/review" element={<Navigate to="/knowledge/health?tab=reviews" replace />} />
         <Route path="/knowledge/improvements" element={<Navigate to="/knowledge/health?tab=improvements" replace />} />
         <Route path="/knowledge/understanding" element={<Suspense fallback={<PageFallback />}><KnowledgeUnderstandingPage /></Suspense>} />

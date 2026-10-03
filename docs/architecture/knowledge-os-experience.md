@@ -219,6 +219,27 @@ detalle durable de la sesión:
 - **Replay**: la sesión se reabre con su historial durable; el resumen y los
   hitos se reconstruyen de los mismos eventos.
 
+### 5.10 Knowledge Map (`/knowledge/map`)
+
+Representación navegable del conocimiento con **zoom semántico** y LOD real:
+
+- Nivel 1 Dominios (clusters con tamaño por objetos y pulse si hay actividad).
+- Nivel 2 Temas (tipos de conocimiento del dominio, `domains[].by_type`).
+- Nivel 3 Objetos (grafo del tema con relaciones reales del backend).
+- Nivel 4 Entidad (vecindario enfocado, `focus_id` + depth).
+- Nunca se renderiza el grafo completo: cada nivel pide solo lo que se ve.
+- Click inspecciona, doble click profundiza, breadcrumb y URL compartible.
+- Inspector: entity card, Knowledge strength explicable (componentes reales de
+  `confidence_detail` + fuentes independientes + consistencia), relaciones,
+  evidence path ("¿cómo sabe ZENT esto?"), timeline de versiones y vigencias,
+  conflictos y preguntas abiertas.
+- Acciones desde el nodo: explorar, preguntar a ZENT (prefill de `/chat?q=`),
+  ver fuentes, compartir vista.
+- Rail de inteligencia: Knowledge Health, cobertura real por dominio, evolución
+  7 días, aprendido recientemente y vacíos.
+- Filtros básicos (tema, confianza) y avanzados (estado, solo conflictos,
+  cambios recientes) sin saturar la vista inicial.
+
 ## 6. Design system de conocimiento
 
 Componentes nuevos (`portal/src/components/knowledge/`), construidos sobre
@@ -258,6 +279,7 @@ tipografía Geist/Geist Mono, `tabular-nums` en todo dato numérico.
 | Fuentes | endpoints existentes de sources/documents/compilations |
 | Live Learning (sesión) | `GET/POST /api/v1/knowledge/sessions` + `/{id}` + `/{id}/events` + `/{id}/feed` + `/{id}/graph` + `/{id}/stream` (SSE) |
 | Modo técnico de sesión | eventos crudos + `GET /api/v1/knowledge/compilations` (filtrado por fuente) |
+| Knowledge Map | `GET /knowledge/domains` + `/graph` (focus/depth/limits) + `/objects/{id}` (+ evidencia, versiones) + `/conflicts` + `/health` + `/quality` + `/gaps` + `/delta` |
 
 Reglas de error: 503 tipado = estado de error con reintento; nunca ceros.
 

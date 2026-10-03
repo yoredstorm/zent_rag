@@ -106,6 +106,8 @@ export type KnowledgeAssertion = {
   version: number;
   verified_at: string | null;
   stale_at: string | null;
+  valid_from: string | null;
+  valid_to: string | null;
   created_at: string | null;
   updated_at: string | null;
 };

@@ -12,6 +12,7 @@ import {
 } from "@phosphor-icons/react";
 import {
   Button,
+  ButtonLink,
   EmptyState,
   ErrorInline,
   Panel,
@@ -343,6 +344,9 @@ export default function KnowledgeExplorerPage() {
           >
             Grafo
           </Button>
+          <ButtonLink to="/knowledge/map" size="sm" variant="primary" leadingIcon={Graph}>
+            Knowledge Map
+          </ButtonLink>
         </div>
       </header>
 
