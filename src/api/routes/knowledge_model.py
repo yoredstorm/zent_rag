@@ -560,6 +560,21 @@ async def resolve_gap(
     return {"id": str(gap_id), "status": body.status}
 
 
+@router.get("/ingestion-quality", summary="Calidad de ingesta (parsing, no conocimiento)")
+async def list_ingestion_quality(
+    request: Request,
+    status: str | None = "open",
+    kind: str | None = None,
+    limit: int = Query(default=100, ge=1, le=300),
+    service=Depends(get_knowledge_model_service),
+) -> dict:
+    require_permission(request, "knowledge:read")
+    _ensure_enabled()
+    return await service.ingestion_quality(
+        _org(request), status=status, kind=kind, limit=limit
+    )
+
+
 @router.get("/conflicts", summary="Conflictos de conocimiento")
 async def list_conflicts(
     request: Request,

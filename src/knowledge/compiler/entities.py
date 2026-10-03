@@ -30,6 +30,8 @@ from src.knowledge.compiler.model import (
     SemanticUnitKind,
     normalize_term,
 )
+from src.knowledge.quality.fragments import TextQualityStatus, analyze_text_quality
+from src.knowledge.quality.ingestion import QualityCollector, QualityKind
 
 UMBRAL_ALIAS = 0.85
 UMBRAL_SIGLA = 0.70
@@ -41,14 +43,21 @@ def _qualifies_one_another(left: str, right: str) -> bool:
 
     Solo el nombre CALIFICADO (más largo) puede absorber a un nombre que ya
     aparece completo al final. "ATPCO" es prefijo de "ATPCO Record 4", pero no
-    es el mismo concepto: no se fusiona.
+    es el mismo concepto: no se fusiona. Un pedazo a mitad de palabra
+    ("RECORD 2 – CATEG") no califica a nada.
     """
     if not left or not right or left == right:
         return False
     shorter, longer = sorted((left, right), key=len)
     if len(shorter) < 4:
         return False
-    return longer.endswith(shorter) and longer[-len(shorter) - 1] in " ([:,-"
+    if not shorter[:1].isalnum() or not shorter[-1:].isalnum():
+        return False
+    if not longer.endswith(shorter) or longer[-len(shorter) - 1] not in " ([:,-–—":
+        return False
+    # El nombre simple debe aparecer como palabra completa en el texto largo.
+    before = longer[-len(shorter) - 1]
+    return not before.isalnum()
 
 _ALIAS_MARKERS = (
     "also known as",
@@ -203,17 +212,75 @@ def _aliases_in(text: str, canonical: str) -> list[tuple[str, str, float, str]]:
 
 
 def discover_entities(
-    units: list[SemanticUnit], *, document: StructuredDocument
+    units: list[SemanticUnit],
+    *,
+    document: StructuredDocument,
+    quality: QualityCollector | None = None,
 ) -> list[EntityCandidate]:
     """Entidades nombradas por la fuente, cada una con su evidencia.
 
     La identidad es por nombre normalizado: el mismo nombre en un PDF y en un
     Excel es la misma entidad. El tipo lógico se queda con la observación más
     semántica (una definición describe mejor que una cabecera de columna).
+
+    Un nombre que es fragmento de otro texto de la misma fuente NO se convierte
+    en entidad: se registra en la cola de calidad de ingesta.
     """
+    from src.knowledge.compiler.extract import _reference_corpus
+
     document_domain = _domain_from(document)
+    references = _reference_corpus(document)
     entities: dict[str, EntityCandidate] = {}
     unit_index: dict[str, SemanticUnit] = {}
+
+    def _reject(
+        name: str,
+        status: str,
+        *,
+        evidence=None,
+        detail: dict | None = None,
+    ) -> None:
+        if quality is None:
+            return
+        kind = {
+            TextQualityStatus.FRAGMENT_OF_EXISTING_TEXT.value: (
+                QualityKind.FRAGMENT_OF_EXISTING_TEXT.value
+            ),
+            TextQualityStatus.TRUNCATED_WORD.value: QualityKind.TRUNCATED_WORD.value,
+            TextQualityStatus.LAYOUT_ARTIFACT.value: QualityKind.LAYOUT_ARTIFACT.value,
+            TextQualityStatus.SENTENCE_FRAGMENT.value: (
+                QualityKind.SENTENCE_FRAGMENT.value
+            ),
+            TextQualityStatus.TOO_LONG_FOR_TERM.value: (
+                QualityKind.TOO_LONG_FOR_TERM.value
+            ),
+        }.get(status, QualityKind.LOW_QUALITY_EXTRACTION.value)
+        quality.add(
+            kind,
+            name,
+            detail={"quality_status": status, "stage": "entity_discovery", **(detail or {})},
+            evidence=evidence,
+            source_id=document.source_id,
+            document_id=document.id,
+        )
+
+    def _usable(name: str) -> bool:
+        stripped = (name or "").strip()
+        if stripped.isdigit() or not any(char.isalpha() for char in stripped):
+            _reject(stripped, TextQualityStatus.LOW_QUALITY_EXTRACTION.value)
+            return False
+        verdict = analyze_text_quality(
+            stripped,
+            references=references,
+            min_length=3,
+            allow_code=True,
+            max_words=16,
+            max_length=160,
+        )
+        if not verdict.ok:
+            _reject(name, verdict.status)
+            return False
+        return True
 
     def entity_for(name: str, entity_type: str) -> EntityCandidate:
         key = normalize_term(name)
@@ -235,6 +302,22 @@ def discover_entities(
         normalized = alias.normalized
         if not normalized or normalized == normalize_term(entity.name):
             return
+        verdict = analyze_text_quality(
+            alias.alias,
+            references=references,
+            min_length=3,
+            allow_code=True,
+            max_words=12,
+            max_length=160,
+        )
+        if not verdict.ok:
+            _reject(
+                alias.alias,
+                verdict.status,
+                evidence=alias.evidence,
+                detail={"stage": "alias", "canonical": entity.name},
+            )
+            return
         for known in entity.aliases:
             if known.normalized == normalized:
                 if alias.confidence > known.confidence:
@@ -249,7 +332,7 @@ def discover_entities(
             continue
         if unit.kind == SemanticUnitKind.DEFINITION.value:
             primary_name, declared_alias = split_declared_alias(label)
-            if len(primary_name) < 2:
+            if len(primary_name) < 2 or not _usable(primary_name):
                 continue
             entity_type = infer_entity_type(primary_name)
             entity = entity_for(primary_name, entity_type)
@@ -293,17 +376,23 @@ def discover_entities(
                 )
             continue
         if unit.kind == SemanticUnitKind.FIELD.value:
+            if not _usable(label):
+                continue
             entity = entity_for(label, EntityType.FIELD.value)
             entity.description = entity.description or unit.text
             entity.confidence = max(entity.confidence, unit.confidence)
             entity.evidence.append(unit.evidence)
             continue
         if unit.kind == SemanticUnitKind.TABLE.value:
+            if not _usable(label):
+                continue
             entity = entity_for(label, EntityType.TABLE.value)
             entity.confidence = max(entity.confidence, unit.confidence)
             entity.evidence.append(unit.evidence)
             continue
         if unit.kind == SemanticUnitKind.COLUMN.value:
+            if not _usable(label):
+                continue
             table_reference = str(unit.attributes.get("table") or "").strip()
             entity_type = (
                 EntityType.COLUMN.value if not table_reference else EntityType.COLUMN.value
@@ -331,6 +420,8 @@ def discover_entities(
             SemanticUnitKind.PROCEDURE_STEP.value,
             SemanticUnitKind.SECTION.value,
         }:
+            if not _usable(label):
+                continue
             entity = entity_for(label, EntityType.PROCESS.value)
             entity.confidence = max(entity.confidence, unit.confidence)
             entity.evidence.append(unit.evidence)
@@ -539,12 +630,24 @@ class EntityResolver:
         # "ATPCO Record 4" (observado en este documento) y "Record 4" (definido
         # aquí) apuntan al mismo concepto. El nombre simple es el canónico y el
         # calificado queda como alias contextual, con la razón por escrito.
+        # Nunca aplica a columnas/tablas/códigos: ahí un sufijo suele ser un
+        # corte de layout, no un nombre calificado.
+        _R4_EXCLUDED_TYPES = {
+            EntityType.COLUMN.value,
+            EntityType.TABLE.value,
+            EntityType.FIELD.value,
+            EntityType.CODE.value,
+        }
         for candidate in list(by_key.values()):
+            if candidate.entity_type in _R4_EXCLUDED_TYPES:
+                continue
             folded = self.index_key(candidate.name)
             for other in list(by_key.values()):
-                if other is candidate:
+                if other is candidate or other.entity_type in _R4_EXCLUDED_TYPES:
                     continue
                 other_folded = self.index_key(other.name)
+                if len(other.name) > 120 or "|" in other.name or "\n" in other.name:
+                    continue
                 if not _qualifies_one_another(other_folded, folded):
                     continue
                 short, long = (

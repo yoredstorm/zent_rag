@@ -41,7 +41,13 @@ from src.knowledge.compiler import (
     infer_temporal_scope,
     values_equivalent,
 )
-from src.knowledge.compiler.model import FactCandidate, FactKind, TemporalScope
+from src.knowledge.compiler.model import (
+    EvidenceRef,
+    FactCandidate,
+    FactKind,
+    SourceLocator,
+    TemporalScope,
+)
 from src.knowledge.structure.csv_parser import CsvParser
 from src.knowledge.structure.pdf_parser import PdfParser
 from src.knowledge.structure.xlsx_parser import XlsxParser
@@ -833,8 +839,23 @@ async def test_compilador_emite_conflicto_de_sistema_con_tipo_e_ids() -> None:
         value_a="3",
         value_b="5",
         conflict_type=ConflictType.SOURCE_CONFLICT.value,
+        classification=ConflictType.TRUE_CONFLICT.value,
         confidence=0.8,
         reason="dos fuentes independientes declaran longitudes distintas",
+        source_a="manual-a.pdf",
+        source_b="manual-b.pdf",
+        evidence=[
+            EvidenceRef(
+                locator=SourceLocator(source_id=SOURCE_A, page=1),
+                excerpt="Byte 105 length 3",
+                confidence=0.9,
+            ),
+            EvidenceRef(
+                locator=SourceLocator(source_id=SOURCE_B, page=1),
+                excerpt="Byte 105 length 5",
+                confidence=0.9,
+            ),
+        ],
         evidence_ids=[evidence_id],
     )
     compiler = PreparedCompiler(_prepared_result(conflicts=[conflict]), store=store)

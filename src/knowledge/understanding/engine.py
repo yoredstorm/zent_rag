@@ -29,6 +29,7 @@ from src.knowledge.understanding.enrich import (
 )
 from src.knowledge.understanding.layout import mark_repeated_chrome
 from src.knowledge.understanding.providers import DocumentUnderstandingProvider, PageOcrProvider
+from src.knowledge.understanding.reconstruct import reflow_wrapped_blocks
 from src.knowledge.understanding.units import build_retrieval_units
 from src.knowledge.understanding.versions import (
     CHUNKING_VERSION,
@@ -96,6 +97,7 @@ def understand_document(
         warnings.append("text layer missing on some pages; OCR provider not configured")
     current = attach_section_owners(current)
     current = collapse_spaced_letters(current)
+    current = reflow_wrapped_blocks(current)
     if merge_tables:
         current = merge_multipage_tables(
             current,

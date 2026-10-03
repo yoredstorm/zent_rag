@@ -75,9 +75,21 @@ def rule_key(statement: str, subject: str) -> str:
     return digest[:24]
 
 
-def _subject_for(statement: str, section_path: tuple[str, ...]) -> str:
-    if section_path:
-        return section_path[-1][:200]
+def _subject_for(
+    statement: str,
+    section_path: tuple[str, ...],
+    *,
+    document_title: str = "",
+) -> str:
+    """Sujeto real de la regla, no el banner repetido del documento."""
+    title_key = normalize_term(document_title)
+    for part in reversed(section_path):
+        candidate = normalize_term(part)
+        if not candidate:
+            continue
+        if title_key and (candidate in title_key or title_key in candidate):
+            continue
+        return part[:200]
     first = re.split(r"[:.。\n]", statement.strip(), maxsplit=1)[0]
     words = first.split()
     return " ".join(words[:8])[:200] if words else "documento"
@@ -100,13 +112,18 @@ def extract_rules(
         text = " ".join((block.text or "").split())
         if len(text) < _MIN_STATEMENT:
             continue
+        if "|" in text:
+            # Fila de tabla renderizada: no es prosa normativa.
+            continue
         modality = detect_modality(text)
         if modality is None:
             continue
         section_path = section_paths.get(
             str(block.metadata.get("parent_section_id") or ""), ()
         )
-        subject = _subject_for(text, section_path)
+        subject = _subject_for(
+            text, section_path, document_title=document.title
+        )
         key = rule_key(text, subject)
         if key in seen or len(rules) >= _MAX_RULES:
             continue

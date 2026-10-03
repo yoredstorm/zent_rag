@@ -140,6 +140,7 @@ def build_facts(
                         method="schema",
                         confidence=unit.confidence,
                         temporal=scope,
+                        attributes={"table": table_reference},
                         evidence=[unit.evidence],
                     )
                 )
@@ -159,6 +160,7 @@ def build_facts(
                             method="schema",
                             confidence=unit.confidence,
                             temporal=scope,
+                            attributes={"table": table_reference},
                             evidence=[unit.evidence],
                         )
                     )
@@ -294,7 +296,12 @@ def build_relationships(
 def entity_facts(
     entities: list[EntityCandidate], *, temporal: TemporalScope | None = None
 ) -> list[FactCandidate]:
-    """Hechos de identidad: descripción y tipo declarados por la fuente."""
+    """Hechos de identidad: descripción y tipo declarados por la fuente.
+
+    Los alias NO se convierten en hechos ``also_known_as``: la identidad
+    multi-alias vive en ``knowledge_entity_aliases``. Convertirlos en hechos
+    producía "conflictos" entre alias legítimos del mismo canónico.
+    """
     scope = temporal or TemporalScope()
     facts: list[FactCandidate] = []
     for entity in entities:
@@ -310,24 +317,6 @@ def entity_facts(
                     confidence=entity.confidence,
                     temporal=scope,
                     evidence=list(entity.evidence[:3]),
-                )
-            )
-        for alias in entity.aliases:
-            facts.append(
-                FactCandidate(
-                    subject=entity.name,
-                    predicate="also_known_as",
-                    object_value=alias.alias,
-                    subject_type=entity.entity_type,
-                    fact_kind=FactKind.DEFINITION.value,
-                    method="document",
-                    confidence=alias.confidence,
-                    temporal=scope,
-                    attributes={
-                        "alias_type": alias.alias_type,
-                        "reason": alias.reason,
-                    },
-                    evidence=[alias.evidence] if alias.evidence else list(entity.evidence[:1]),
                 )
             )
     return facts

@@ -14,6 +14,7 @@ from __future__ import annotations
 from src.knowledge.compiler.conflicts import (
     classify_conflict,
     detect_conflicts,
+    is_auto_resolvable,
     values_equivalent,
 )
 from src.knowledge.compiler.entities import (
@@ -35,6 +36,7 @@ from src.knowledge.compiler.model import (
     AliasType,
     CompilationResult,
     ConflictCandidate,
+    ConflictMateriality,
     ConflictType,
     EntityAlias,
     EntityCandidate,
@@ -44,6 +46,7 @@ from src.knowledge.compiler.model import (
     EvidenceType,
     FactCandidate,
     FactKind,
+    QualityIssue,
     RelationshipCandidate,
     RelationshipKind,
     RuleCandidate,
@@ -68,6 +71,7 @@ __all__ = [
     "CompilationResult",
     "CompilerStore",
     "ConflictCandidate",
+    "ConflictMateriality",
     "ConflictType",
     "EntityAlias",
     "EntityCandidate",
@@ -80,6 +84,7 @@ __all__ = [
     "FactKind",
     "KnowledgeCompiler",
     "PostgresCompilerStore",
+    "QualityIssue",
     "RelationshipCandidate",
     "RelationshipKind",
     "RuleCandidate",
@@ -101,6 +106,7 @@ __all__ = [
     "extracta_for",
     "infer_entity_type",
     "infer_temporal_scope",
+    "is_auto_resolvable",
     "normalize_term",
     "object_kind_for_entity",
     "parse_date",

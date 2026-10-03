@@ -443,18 +443,97 @@ class RuleCandidate:
 class ConflictType(StrEnum):
     """Causa probable del conflicto. No se decide "quién está mal"."""
 
-    VERSION_CHANGE = "VERSION_CHANGE"
+    # Taxonomía semántica completa (§10 del contrato de calidad).
+    TRUE_CONFLICT = "TRUE_CONFLICT"
+    SAME_MEANING = "SAME_MEANING"
+    ALIAS_VARIATION = "ALIAS_VARIATION"
+    PARSER_FRAGMENT = "PARSER_FRAGMENT"
+    DUPLICATE = "DUPLICATE"
     TEMPORAL_CHANGE = "TEMPORAL_CHANGE"
+    VERSION_CHANGE = "VERSION_CHANGE"
     SCOPE_DIFFERENCE = "SCOPE_DIFFERENCE"
     EXCEPTION = "EXCEPTION"
+    COMPLEMENTARY_INFORMATION = "COMPLEMENTARY_INFORMATION"
+    INSUFFICIENT_CONTEXT = "INSUFFICIENT_CONTEXT"
+    SOURCE_QUALITY_PROBLEM = "SOURCE_QUALITY_PROBLEM"
     SOURCE_CONFLICT = "SOURCE_CONFLICT"
     POSSIBLE_DUPLICATE = "POSSIBLE_DUPLICATE"
     UNRESOLVED = "UNRESOLVED"
+    UNKNOWN = "UNKNOWN"
+
+
+class ConflictMateriality(StrEnum):
+    """Impacto potencial del conflicto si fuera real."""
+
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+#: Clasificaciones que NUNCA se muestran como conflicto.
+NON_CONFLICT_CLASSIFICATIONS: frozenset[str] = frozenset(
+    {
+        ConflictType.SAME_MEANING.value,
+        ConflictType.ALIAS_VARIATION.value,
+        ConflictType.PARSER_FRAGMENT.value,
+        ConflictType.DUPLICATE.value,
+        ConflictType.POSSIBLE_DUPLICATE.value,
+        ConflictType.TEMPORAL_CHANGE.value,
+        ConflictType.VERSION_CHANGE.value,
+        ConflictType.SCOPE_DIFFERENCE.value,
+        ConflictType.EXCEPTION.value,
+        ConflictType.COMPLEMENTARY_INFORMATION.value,
+        ConflictType.INSUFFICIENT_CONTEXT.value,
+        ConflictType.SOURCE_QUALITY_PROBLEM.value,
+        ConflictType.UNKNOWN.value,
+    }
+)
+
+#: Clasificaciones que sí pueden mostrarse (con evidencia y fuentes).
+DISPLAYABLE_CLASSIFICATIONS: frozenset[str] = frozenset(
+    {
+        ConflictType.TRUE_CONFLICT.value,
+        ConflictType.SOURCE_CONFLICT.value,
+    }
+)
+
+
+@dataclass(kw_only=True)
+class QualityIssue:
+    """Problema de ingesta. No es conocimiento: es calidad de extracción."""
+
+    kind: str
+    subject: str
+    detail: dict = field(default_factory=dict)
+    evidence: EvidenceRef | None = None
+    source_id: UUID | None = None
+    document_id: UUID | None = None
+    severity: str = "medium"
+    confidence: float | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "kind": self.kind,
+            "subject": self.subject[:300],
+            "detail": self.detail,
+            "severity": self.severity,
+            "confidence": self.confidence,
+            "evidence": self.evidence.to_dict() if self.evidence else None,
+            "source_id": str(self.source_id) if self.source_id else None,
+            "document_id": str(self.document_id) if self.document_id else None,
+        }
 
 
 @dataclass(kw_only=True)
 class ConflictCandidate:
-    """Dos afirmaciones incompatibles sobre el mismo sujeto y predicado."""
+    """Dos afirmaciones que podrían ser incompatibles. SIEMPRE pasan por el gate.
+
+    ``conflict_type`` conserva los nombres históricos para compatibilidad;
+    ``classification`` lleva la taxonomía semántica completa. Solo un
+    candidato clasificado como TRUE_CONFLICT/SOURCE_CONFLICT con evidencia y
+    fuentes completas puede mostrarse como conflicto.
+    """
 
     subject: str
     predicate: str
@@ -468,6 +547,31 @@ class ConflictCandidate:
     values_equivalent: bool = False
     evidence: list[EvidenceRef] = field(default_factory=list)
     evidence_ids: list[UUID] = field(default_factory=list)
+    statement_a: str = ""
+    statement_b: str = ""
+    classification: str = ""
+    possible_explanation: str = ""
+    temporal_relation: str | None = None
+    scope_relation: str | None = None
+    materiality: str = ConflictMateriality.MEDIUM.value
+    status: str = "open"
+    source_independence: str | None = None
+    comparison_meaningful: bool = True
+    confidence_components: dict = field(default_factory=dict)
+
+    @property
+    def displayable(self) -> bool:
+        """Gate estricto: sin evidencia ni fuentes no hay conflicto verificable."""
+        classification = self.classification or self.conflict_type
+        if classification not in DISPLAYABLE_CLASSIFICATIONS:
+            return False
+        if not self.comparison_meaningful or self.values_equivalent:
+            return False
+        if not self.source_a or not self.source_b:
+            return False
+        if not self.evidence:
+            return False
+        return True
 
     def to_dict(self) -> dict:
         return {
@@ -476,9 +580,18 @@ class ConflictCandidate:
             "value_a": self.value_a[:300],
             "value_b": self.value_b[:300],
             "conflict_type": self.conflict_type,
+            "classification": self.classification or self.conflict_type,
             "confidence": round(self.confidence, 4),
             "reason": self.reason,
+            "possible_explanation": self.possible_explanation,
             "values_equivalent": self.values_equivalent,
+            "materiality": self.materiality,
+            "status": self.status,
+            "source_a": self.source_a,
+            "source_b": self.source_b,
+            "source_independence": self.source_independence,
+            "comparison_meaningful": self.comparison_meaningful,
+            "confidence_components": self.confidence_components,
         }
 
 
@@ -503,12 +616,24 @@ class CompilationResult:
     rules: list[RuleCandidate] = field(default_factory=list)
     conflicts: list[ConflictCandidate] = field(default_factory=list)
     merges: list[EntityMerge] = field(default_factory=list)
+    quality_issues: list[QualityIssue] = field(default_factory=list)
+    rejected_count: int = 0
     evidence_count: int = 0
     persisted: dict = field(default_factory=dict)
 
     @property
     def objects_total(self) -> int:
         return len(self.entities) + len(self.facts) + len(self.rules)
+
+    @property
+    def displayable_conflicts(self) -> list[ConflictCandidate]:
+        return [conflict for conflict in self.conflicts if conflict.displayable]
+
+    def quality_counts(self) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for issue in self.quality_issues:
+            counts[issue.kind] = counts.get(issue.kind, 0) + 1
+        return counts
 
     def to_dict(self) -> dict:
         return {
@@ -525,7 +650,11 @@ class CompilationResult:
                 "relationships": len(self.relationships),
                 "rules": len(self.rules),
                 "conflicts": len(self.conflicts),
+                "conflicts_displayable": len(self.displayable_conflicts),
+                "quality_issues": len(self.quality_issues),
+                "rejected": self.rejected_count,
                 "evidence": self.evidence_count,
             },
+            "quality": self.quality_counts(),
             "persisted": self.persisted,
         }

@@ -500,6 +500,7 @@ class KnowledgeModelMaterializer:
                     confidence=confidence,
                     evidence_count=1,
                     status=AssertionStatus.CANDIDATE.value,
+                    source_id=field.get("source_id"),
                 )
 
         # --------------------------------------------------------- relaciones

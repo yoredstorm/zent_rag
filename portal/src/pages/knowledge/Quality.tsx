@@ -38,10 +38,13 @@ import {
   fetchKnowledgeGaps,
   fetchKnowledgeHealth,
   fetchKnowledgeQuality,
+  fetchIngestionQuality,
   gapTypeLabel,
   priorityTone,
   resolveKnowledgeConflict,
   resolveKnowledgeGap,
+  conflictClassificationLabel,
+  type IngestionQualityReport,
   type KnowledgeConflict,
   type KnowledgeGap,
   type KnowledgeHealth,
@@ -49,11 +52,12 @@ import {
 } from "../../lib/knowledgeModel";
 import { fmtDateTime } from "../../lib/format";
 
-type QualityTab = "issues" | "conflicts" | "gaps" | "questions" | "reviews" | "improvements";
+type QualityTab = "issues" | "conflicts" | "ingestion" | "gaps" | "questions" | "reviews" | "improvements";
 
 const TABS: { id: QualityTab; label: string }[] = [
   { id: "issues", label: "Problemas" },
   { id: "conflicts", label: "Conflictos" },
+  { id: "ingestion", label: "Calidad de ingesta" },
   { id: "gaps", label: "Vacíos de conocimiento" },
   { id: "questions", label: "Preguntas de negocio" },
   { id: "reviews", label: "Cola de revisión" },
@@ -103,6 +107,7 @@ export default function KnowledgeQualityPage() {
   const [quality, setQuality] = useState<QualityReport | null>(null);
   const [health, setHealth] = useState<KnowledgeHealth | null>(null);
   const [conflicts, setConflicts] = useState<KnowledgeConflict[]>([]);
+  const [ingestion, setIngestion] = useState<IngestionQualityReport | null>(null);
   const [gaps, setGaps] = useState<KnowledgeGap[]>([]);
   const [questions, setQuestions] = useState<KnowledgeQuestion[]>([]);
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -135,6 +140,8 @@ export default function KnowledgeQualityPage() {
       } else if (tab === "conflicts") {
         const data = await fetchKnowledgeConflicts("open");
         setConflicts(data.conflicts);
+      } else if (tab === "ingestion") {
+        setIngestion(await fetchIngestionQuality("open", 100));
       } else if (tab === "gaps") {
         const data = await fetchKnowledgeGaps({ status: "open", limit: 100 });
         setGaps(data.gaps);
@@ -386,7 +393,7 @@ export default function KnowledgeQualityPage() {
                 <EmptyState
                   icon={GitMerge}
                   title="Sin conflictos abiertos"
-                  body="Ninguna fuente contradice a otra en este momento."
+                  body="Ninguna fuente contradice a otra en este momento. Los fragmentos y la falta de contexto viven en Calidad de ingesta."
                 />
               </Panel>
             ) : (
@@ -394,28 +401,52 @@ export default function KnowledgeQualityPage() {
                 <Panel key={conflict.id}>
                   <div className="flex flex-col gap-3 p-4">
                     <div className="flex items-center justify-between gap-2">
-                      <h2 className="text-sm font-medium text-text">
-                        {conflict.subject_label} · {conflict.predicate}
-                      </h2>
+                      <div className="min-w-0">
+                        <p className="text-[11px] uppercase tracking-wide text-faint">
+                          {conflictClassificationLabel(
+                            conflict.classification?.classification ?? conflict.conflict_type
+                          )}
+                        </p>
+                        <h2 className="truncate text-sm font-medium text-text">
+                          {conflict.subject_label} · {conflict.predicate}
+                        </h2>
+                      </div>
                       <span className="badge badge-pending">{conflict.status}</span>
                     </div>
                     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div className="rounded-md border border-border p-3">
-                        <p className="eyebrow mb-1">Valor A</p>
+                        <p className="eyebrow mb-1">Afirmación A</p>
                         <p className="text-sm text-text">{conflict.value_a || "—"}</p>
                         <p className="mt-1 text-xs text-muted">
                           {conflict.source_a ? `Fuente ${conflict.source_a}` : "Sin fuente"}
                         </p>
                       </div>
                       <div className="rounded-md border border-border p-3">
-                        <p className="eyebrow mb-1">Valor B</p>
+                        <p className="eyebrow mb-1">Afirmación B</p>
                         <p className="text-sm text-text">{conflict.value_b || "—"}</p>
                         <p className="mt-1 text-xs text-muted">
                           {conflict.source_b ? `Fuente ${conflict.source_b}` : "Sin fuente"}
                         </p>
                       </div>
                     </div>
-                    <div className="flex justify-end">
+                    {(conflict.classification?.possible_explanation || conflict.reason) && (
+                      <p className="text-xs leading-relaxed text-muted">
+                        ZENT detectó:{" "}
+                        {conflict.classification?.possible_explanation || conflict.reason}
+                      </p>
+                    )}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] text-faint">
+                        {conflict.classification?.confidence != null
+                          ? `Confianza ${Math.round(
+                              Number(conflict.classification.confidence) * 100
+                            )}%`
+                          : ""}
+                        {conflict.classification?.source_independence ===
+                        "independent_sources"
+                          ? " · fuentes independientes"
+                          : ""}
+                      </span>
                       <Button
                         variant="primary"
                         onClick={() => {
@@ -426,6 +457,70 @@ export default function KnowledgeQualityPage() {
                         Resolver
                       </Button>
                     </div>
+                  </div>
+                </Panel>
+              ))
+            )}
+          </>
+        )}
+
+        {!loading && tab === "ingestion" && (
+          <>
+            <Panel>
+              <div className="flex flex-col gap-1 p-4">
+                <h2 className="text-sm font-medium text-text">Calidad de ingesta</h2>
+                <p className="text-xs text-muted">
+                  Problemas de parsing, fragmentos y procedencia faltante. No son
+                  conflictos de conocimiento: se corrigen en el pipeline de ingesta.
+                </p>
+                {ingestion && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <Badge tone="danger">
+                      {ingestion.summary.by_severity.high ?? 0} alta
+                    </Badge>
+                    <Badge tone="warn">
+                      {ingestion.summary.by_severity.medium ?? 0} media
+                    </Badge>
+                    <Badge tone="neutral">
+                      {ingestion.summary.by_severity.low ?? 0} baja
+                    </Badge>
+                  </div>
+                )}
+              </div>
+            </Panel>
+            {ingestion && ingestion.issues.length === 0 ? (
+              <Panel>
+                <EmptyState
+                  icon={CheckCircle}
+                  title="Sin problemas de ingesta"
+                  body="El parser y el compilador no reportaron fragmentos ni procedencia faltante."
+                />
+              </Panel>
+            ) : (
+              ingestion?.issues.map((issue) => (
+                <Panel key={issue.id}>
+                  <div className="flex flex-col gap-1 p-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={cn("badge", SEVERITY_TONE[issue.severity])}>
+                        {SEVERITY_LABEL[issue.severity] ?? issue.severity}
+                      </span>
+                      <span className="badge badge-muted">{issue.kind}</span>
+                      {issue.status !== "open" && (
+                        <span className="badge badge-muted">{issue.status}</span>
+                      )}
+                    </div>
+                    <p className="truncate text-sm text-text" title={issue.subject}>
+                      {issue.subject || "—"}
+                    </p>
+                    {issue.evidence_excerpt && (
+                      <p className="truncate text-xs text-muted" title={issue.evidence_excerpt}>
+                        {issue.evidence_excerpt}
+                      </p>
+                    )}
+                    <p className="text-[11px] text-faint">
+                      {issue.evidence_locator || "Sin locator"}
+                      {issue.created_at ? ` · ${fmtDateTime(issue.created_at)}` : ""}
+                    </p>
                   </div>
                 </Panel>
               ))

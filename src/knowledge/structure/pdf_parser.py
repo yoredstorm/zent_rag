@@ -187,7 +187,14 @@ class PdfParser(StructuredParser):
                 for group in groups:
                     lines.extend(_group_words_into_lines(group))
                 page_tables = _extract_tables(
-                    page, tables, page_no, organization_id, workspace_id, source_id, order
+                    page,
+                    tables,
+                    page_no,
+                    organization_id,
+                    workspace_id,
+                    source_id,
+                    order,
+                    words=words,
                 )
                 order += len(page_tables)
                 table_bboxes = [
@@ -507,10 +514,20 @@ def _extract_tables(
     workspace_id: UUID | None,
     source_id: UUID | None,
     order: int,
+    *,
+    words: list[dict] | None = None,
 ) -> list[DocumentTable]:
-    """Extrae tablas con find_tables y las anexa (orden estable)."""
+    """Extrae tablas con find_tables y las anexa (orden estable).
+
+    Las celdas se reconstruyen desde las PALABRAS COMPLETAS de la página: la
+    estrategia de texto de pdfplumber parte palabras por la mitad en layouts
+    justificados ("DATA AP|PLICA|TION"). Asignar cada palabra completa a su
+    celda evita entidades fragmentadas. Las tablas de prosa (una página entera
+    detectada como tabla) se rechazan: no son tablas, son párrafos.
+    """
     try:
         found = page.find_tables()
+        strategy = "default"
         if not found:
             # Tablas sin bordes (layouts fixed-width): la estrategia de texto
             # arma columnas por alineación de palabras.
@@ -520,16 +537,21 @@ def _extract_tables(
                     "horizontal_strategy": "text",
                 }
             )
+            strategy = "text"
     except Exception:
         return []
     extracted: list[DocumentTable] = []
     for i, table in enumerate(found):
-        rows = table.extract() or []
+        rows = _reconstruct_rows_from_words(table, words) if words else None
+        if not rows:
+            rows = table.extract() or []
         # Celdas vacías: pdfplumber devuelve None. Filtrarlas acá evita el crash
         # que tiraba abajo TODO el parseo V2 del documento (caía a texto crudo).
         filas_texto = [
             [str(celda) if celda is not None else "" for celda in row] for row in rows
         ]
+        if strategy == "text" and not _plausible_text_table(filas_texto):
+            continue
         headers = tuple(filas_texto[0]) if filas_texto else ()
         body = tuple(tuple(row) for row in filas_texto[1:])
         rendered = "\n".join(" | ".join(row) for row in filas_texto)
@@ -549,11 +571,72 @@ def _extract_tables(
             ),
             token_count=token_count(rendered),
             content_hash=content_hash(rendered),
-            metadata={"table_index": i, "order": order + i},
+            metadata={"table_index": i, "order": order + i, "strategy": strategy},
         )
         tables.append(dt)
         extracted.append(dt)
     return extracted
+
+
+def _reconstruct_rows_from_words(
+    table, words: list[dict]
+) -> list[list[str]] | None:
+    """Asigna palabras completas a las celdas de la tabla (por su centro).
+
+    Devuelve la grilla reconstruida o None si ninguna palabra cae en la tabla.
+    """
+    row_cells: list[list] = [[cell for cell in row.cells] for row in table.rows]
+    if not row_cells:
+        return None
+    grid = [["" for _cells in row] for row in row_cells]
+    assigned = 0
+    for word in words:
+        text = str(word.get("text") or "").strip()
+        if not text:
+            continue
+        cx = (float(word.get("x0") or 0.0) + float(word.get("x1") or 0.0)) / 2.0
+        cy = (float(word.get("top") or 0.0) + float(word.get("bottom") or 0.0)) / 2.0
+        placed = False
+        for r, cells in enumerate(row_cells):
+            for c, bbox in enumerate(cells):
+                if bbox is None:
+                    continue
+                x0, top, x1, bottom = bbox
+                if x0 - 1.0 <= cx <= x1 + 1.0 and top - 1.0 <= cy <= bottom + 1.0:
+                    grid[r][c] = (grid[r][c] + " " + text).strip()
+                    assigned += 1
+                    placed = True
+                    break
+            if placed:
+                break
+    if assigned == 0:
+        return None
+    return grid
+
+
+def _plausible_text_table(rows: list[list[str]]) -> bool:
+    """¿La tabla detectada por estrategia de texto es real o es prosa?
+
+    Una página entera de párrafos justificados parece una tabla de muchas
+    columnas. La prosa se detecta por celdas con oraciones completas.
+    """
+    if len(rows) < 2:
+        return False
+    total = 0
+    prose = 0
+    for row in rows:
+        for cell in row:
+            text = str(cell or "").strip()
+            if not text:
+                continue
+            total += 1
+            if len(text.split()) >= 12 or text.endswith((".", ";", ":")):
+                prose += 1
+    if total == 0:
+        return False
+    if prose / total > 0.35:
+        return False
+    return True
 
 
 def _inside_any_table(line: dict, table_bboxes: list[tuple[float, float, float, float]]) -> bool:

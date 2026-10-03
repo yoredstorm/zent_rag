@@ -812,6 +812,22 @@ class KnowledgeModelService:
             reason=reason,
         )
 
+    # ------------------------------------------------------- ingestion quality
+    async def ingestion_quality(
+        self,
+        organization_id: UUID,
+        *,
+        status: str | None = "open",
+        kind: str | None = None,
+        limit: int = 100,
+    ) -> dict:
+        """Cola de calidad de ingesta: problemas de parsing, no de conocimiento."""
+        items = await self._repo.list_ingestion_quality(
+            organization_id, status=status, kind=kind, limit=limit
+        )
+        counts = await self._repo.ingestion_quality_counts(organization_id)
+        return {"issues": items, "count": len(items), "summary": counts}
+
     # -------------------------------------------------------------- quality
     async def quality(self, organization_id: UUID, *, limit: int = 25) -> dict:
         findings = await self._repo.quality_findings(organization_id, limit=limit)

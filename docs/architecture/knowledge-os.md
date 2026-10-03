@@ -18,6 +18,7 @@ evidencia y conflictos.
 RAW SOURCE
   -> Parsed Source            src/knowledge/structure/     (PDF, DOCX, HTML, XLSX, CSV, texto)
   -> Structural Model         src/core/domain/knowledge_v2 (StructuredDocument: pages/blocks/sections/tables)
+  -> Semantic Reconstruction  src/knowledge/understanding/reconstruct.py (wrap + dehyphenation)
   -> Document Understanding   src/knowledge/understanding/ (layout, tablas, literales, semánticas, roles)
   -> Semantic Units           src/knowledge/compiler/extract.py
   -> Entities (+alias)        src/knowledge/compiler/entities.py
@@ -25,7 +26,8 @@ RAW SOURCE
   -> Relationships            src/knowledge/compiler/facts.py
   -> Rules                    src/knowledge/compiler/rules.py
   -> Temporal Facts           src/knowledge/compiler/temporal.py
-  -> Conflicts clasificados   src/knowledge/compiler/conflicts.py
+  -> Conflict Candidates      src/knowledge/compiler/conflicts.py (adjudicación + gate)
+  -> Ingestion Quality Queue  knowledge_ingestion_quality (fragmentos, sin fuente)
   -> Knowledge Objects        knowledge_canonical_objects   (+ knowledge_entity_aliases)
   -> Evidence Links           evidence_ledger
   -> Canonical Knowledge      knowledge_model (assertions/edges/conflicts + /knowledge/*)
@@ -36,6 +38,9 @@ El compilador corre al terminar cada ingesta
 idempotente: la identidad canónica es determinista
 (`canonical_uuid(org, kind, natural_key)`), así que el mismo conocimiento se
 refuerza en lugar de duplicarse.
+
+El detalle del gate de calidad, la taxonomía de conflictos y el reproceso
+limpio están en `knowledge-quality-gate.md`.
 
 ## Identidad canónica
 
@@ -72,9 +77,17 @@ representaciones + razones explícitas, visibles en la traza.
    sección, bloque, tabla, fila, celda y hash de contenido.
 3. **Corroboración, no duplicación**: un hecho sostenido por varias fuentes
    independientes sube su respaldo (`evidence_sources`), no se duplica.
-4. **El conflicto no se resuelve solo**: se clasifica
-   (`VERSION_CHANGE`, `TEMPORAL_CHANGE`, `SCOPE_DIFFERENCE`, `EXCEPTION`,
-   `SOURCE_CONFLICT`, `POSSIBLE_DUPLICATE`, `UNRESOLVED`) y decide un humano.
+4. **El conflicto no se resuelve solo**: se clasifica con la taxonomía
+   semántica (`TRUE_CONFLICT`, `ALIAS_VARIATION`, `PARSER_FRAGMENT`,
+   `DUPLICATE`, `TEMPORAL_CHANGE`, `VERSION_CHANGE`, `SCOPE_DIFFERENCE`,
+   `EXCEPTION`, `COMPLEMENTARY_INFORMATION`, `INSUFFICIENT_CONTEXT`, ...) y
+   solo pasa a la cola de conflictos si tiene evidencia y fuentes en ambos
+   lados. Todo lo demás se auto-resuelve y queda auditado.
+5. **La ingesta se separa del conocimiento**: fragmentos, parsing dudoso y
+   procedencia faltante van a `knowledge_ingestion_quality`. Un problema de
+   parsing no es un conflicto de conocimiento.
+6. **Sin fuente no hay conocimiento**: entidad, hecho o conflicto sin
+   `source_id` y evidencia localizable se rechaza hacia la cola de ingesta.
 5. **La ingesta nunca se cae por el conocimiento**: un fallo del compilador se
    registra en `knowledge_compilations` y se reintenta en la próxima
    recompilación; el documento y su índice quedan intactos.

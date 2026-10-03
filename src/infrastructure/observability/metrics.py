@@ -573,6 +573,34 @@ knowledge_model_gaps_total = Counter(
     labelnames=["type"],
 )
 
+# Knowledge OS — calidad semántica (Conflict Engine + Ingestion Quality).
+# Labels acotados: kind/classification/stage son vocabularios cerrados.
+knowledge_conflict_candidates_total = Counter(
+    "knowledge_conflict_candidates_total",
+    "Candidatos de conflicto generados (antes del gate)",
+    labelnames=["classification"],
+)
+knowledge_conflicts_visible_total = Counter(
+    "knowledge_conflicts_visible_total",
+    "Conflictos que pasaron el gate estricto (evidencia + fuentes)",
+    labelnames=["classification", "materiality"],
+)
+knowledge_conflicts_auto_resolved_total = Counter(
+    "knowledge_conflicts_auto_resolved_total",
+    "Candidatos auto-resueltos (alias, duplicado, temporal, scope, fragmento)",
+    labelnames=["classification"],
+)
+knowledge_ingestion_quality_total = Counter(
+    "knowledge_ingestion_quality_total",
+    "Problemas de ingesta registrados (no son conflictos de conocimiento)",
+    labelnames=["kind", "stage"],
+)
+knowledge_extraction_decisions_total = Counter(
+    "knowledge_extraction_decisions_total",
+    "Decisiones de extracción del compilador",
+    labelnames=["stage", "decision"],
+)
+
 
 # Decision Engine — low-cardinality labels only (no org/capability id).
 zent_decision_requests_total = Counter(

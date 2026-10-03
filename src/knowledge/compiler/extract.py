@@ -26,6 +26,8 @@ from src.knowledge.compiler.model import (
     SourceLocator,
     normalize_term,
 )
+from src.knowledge.quality.fragments import TextQualityStatus, analyze_text_quality
+from src.knowledge.quality.ingestion import QualityCollector, QualityKind
 
 _MIN_TEXT = 2
 _MAX_UNITS_PER_DOCUMENT = 20_000
@@ -119,6 +121,68 @@ def _position_attributes(text: str) -> dict:
 def _understood_payload(document: StructuredDocument) -> dict:
     payload = document.metadata.get("understanding")
     return payload if isinstance(payload, dict) else {}
+
+
+def _reference_corpus(document: StructuredDocument) -> tuple[str, ...]:
+    """Textos completos observados en la fuente, para detectar fragmentos.
+
+    Incluye título, bloques y secciones. NO incluye las tablas: el propio texto
+    de la tabla puede estar fragmentado, y usarlo como referencia convertiría
+    el fragmento en "palabra válida".
+    """
+    references: list[str] = []
+    if document.title:
+        references.append(document.title)
+    for block in document.blocks[:2000]:
+        text = (block.text or "").strip()
+        if text and len(text) <= 20_000:
+            references.append(text)
+    for section in document.sections[:800]:
+        heading = (section.heading or "").strip()
+        if heading:
+            references.append(heading)
+    return tuple(references)
+
+
+def _is_title_banner(term: str, document: StructuredDocument) -> bool:
+    """¿El 'término' es en realidad el título repetido de la fuente?
+
+    También rechaza rótulos estructurales que no son términos ("Example 1",
+    "KEY", "Figure 3"): un ejemplo o una leyenda no definen un concepto.
+    """
+    term_key = normalize_term(term)
+    title_key = normalize_term(document.title or "")
+    if not term_key:
+        return False
+    if term_key.isdigit():
+        return True
+    if term_key in {
+        "example", "note", "key", "figure", "fig", "table", "tabla",
+        "step", "paso", "chapter", "section",
+    }:
+        return True
+    first = re.split(r"[\s:;.,=|/]+", term_key, maxsplit=1)[0]
+    if first in {"example", "note", "key", "figure", "fig", "step", "paso"}:
+        return True
+    if not title_key or term_key == title_key:
+        return False
+    if term_key in title_key or title_key in term_key:
+        return True
+    return False
+
+
+def _label_quality(
+    label: str, references: tuple[str, ...], *, max_words: int = 16
+):
+    """Calidad de un nombre candidato (entidad, columna, término)."""
+    return analyze_text_quality(
+        label,
+        references=references,
+        min_length=3,
+        allow_code=True,
+        max_words=max_words,
+        max_length=160,
+    )
 
 
 def extracta_for(document: StructuredDocument) -> dict:
@@ -235,10 +299,48 @@ def _evidence(
     )
 
 
-def extract_semantic_units(document: StructuredDocument) -> list[SemanticUnit]:
-    """Unidades semánticas del documento: definiciones, campos, tablas, etc."""
+def _reject_label(
+    collector: QualityCollector | None,
+    document: StructuredDocument,
+    *,
+    subject: str,
+    quality_status: str,
+    evidence: EvidenceRef | None = None,
+    detail: dict | None = None,
+) -> None:
+    """Registra un candidato rechazado. Sin collector no hay I/O, solo skip."""
+    if collector is None:
+        return
+    kind = {
+        TextQualityStatus.FRAGMENT_OF_EXISTING_TEXT.value: QualityKind.FRAGMENT_OF_EXISTING_TEXT.value,
+        TextQualityStatus.TRUNCATED_WORD.value: QualityKind.TRUNCATED_WORD.value,
+        TextQualityStatus.LAYOUT_ARTIFACT.value: QualityKind.LAYOUT_ARTIFACT.value,
+        TextQualityStatus.SENTENCE_FRAGMENT.value: QualityKind.SENTENCE_FRAGMENT.value,
+        TextQualityStatus.TOO_LONG_FOR_TERM.value: QualityKind.TOO_LONG_FOR_TERM.value,
+    }.get(quality_status, QualityKind.LOW_QUALITY_EXTRACTION.value)
+    collector.add(
+        kind,
+        subject,
+        detail={"quality_status": quality_status, **(detail or {})},
+        evidence=evidence,
+        source_id=document.source_id,
+        document_id=document.id,
+    )
+
+
+def extract_semantic_units(
+    document: StructuredDocument,
+    *,
+    quality: QualityCollector | None = None,
+) -> list[SemanticUnit]:
+    """Unidades semánticas del documento: definiciones, campos, tablas, etc.
+
+    Unidad que no supera el control de calidad (fragmento, corte, artefacto)
+    no entra: se registra en la cola de calidad de ingesta.
+    """
     index = _LocatorIndex(document)
     extracted = extracta_for(document)
+    references = _reference_corpus(document)
     units: list[SemanticUnit] = []
     seen: set[tuple[str, str]] = set()
 
@@ -255,6 +357,32 @@ def extract_semantic_units(document: StructuredDocument) -> list[SemanticUnit]:
         term = str(item.get("term") or "").strip()
         body = str(item.get("definition") or "").strip()
         if len(term) < _MIN_TEXT or len(body) < _MIN_TEXT:
+            continue
+        if _is_title_banner(term, document):
+            _reject_label(
+                quality,
+                document,
+                subject=term,
+                quality_status=TextQualityStatus.LOW_QUALITY_EXTRACTION.value,
+                detail={"stage": "definition", "reason": "title_banner"},
+            )
+            continue
+        term_quality = _label_quality(term, references)
+        if not term_quality.ok:
+            _reject_label(
+                quality,
+                document,
+                subject=term,
+                quality_status=term_quality.status,
+                evidence=_evidence(
+                    index,
+                    excerpt=term,
+                    block_id=item.get("block_id"),
+                    section_id=item.get("section_id"),
+                    page=item.get("page"),
+                ),
+                detail={"stage": "definition"},
+            )
             continue
         add(
             SemanticUnit(
@@ -278,6 +406,23 @@ def extract_semantic_units(document: StructuredDocument) -> list[SemanticUnit]:
     for item in extracted["technical_fields"]:
         name = str(item.get("name") or "").strip()
         if len(name) < _MIN_TEXT:
+            continue
+        name_quality = _label_quality(name, references)
+        if not name_quality.ok:
+            _reject_label(
+                quality,
+                document,
+                subject=name,
+                quality_status=name_quality.status,
+                evidence=_evidence(
+                    index,
+                    excerpt=name,
+                    block_id=item.get("block_id"),
+                    section_id=item.get("section_id"),
+                    page=item.get("page"),
+                ),
+                detail={"stage": "technical_field"},
+            )
             continue
         description = str(item.get("description") or "").strip()
         start, end = item.get("start_position"), item.get("end_position")
@@ -343,6 +488,27 @@ def extract_semantic_units(document: StructuredDocument) -> list[SemanticUnit]:
         for position, header in enumerate(table.headers, start=1):
             column_name = str(header or "").strip()
             if len(column_name) < _MIN_TEXT:
+                continue
+            if _is_title_banner(column_name, document):
+                _reject_label(
+                    quality,
+                    document,
+                    subject=column_name,
+                    quality_status=TextQualityStatus.LOW_QUALITY_EXTRACTION.value,
+                    evidence=header_evidence,
+                    detail={"stage": "table_header", "table": reference, "reason": "banner"},
+                )
+                continue
+            column_quality = _label_quality(column_name, references, max_words=8)
+            if not column_quality.ok:
+                _reject_label(
+                    quality,
+                    document,
+                    subject=column_name,
+                    quality_status=column_quality.status,
+                    evidence=header_evidence,
+                    detail={"stage": "table_header", "table": reference},
+                )
                 continue
             add(
                 SemanticUnit(
@@ -421,7 +587,9 @@ def extract_semantic_units(document: StructuredDocument) -> list[SemanticUnit]:
             # Bloques de texto plano: el compilador aplica su propia extracción
             # tolerante ("Término: definición", "Byte 105 | 3 | ..."), sin
             # depender de que la heurística de roles los haya clasificado.
-            fallback = _unit_from_plain_block(block, index)
+            fallback = _unit_from_plain_block(
+                block, index, references=references, quality=quality
+            )
             if fallback is not None:
                 add(fallback)
             continue
@@ -442,6 +610,41 @@ def extract_semantic_units(document: StructuredDocument) -> list[SemanticUnit]:
             text = parsed["description"]
             attributes.update(parsed["attributes"])
             confidence = max(confidence, 0.8)
+        if kind in {
+            SemanticUnitKind.DEFINITION.value,
+            SemanticUnitKind.FIELD.value,
+            SemanticUnitKind.PROCEDURE_STEP.value,
+            SemanticUnitKind.SECTION.value,
+            SemanticUnitKind.REFERENCE.value,
+        }:
+            if kind in {
+                SemanticUnitKind.DEFINITION.value,
+                SemanticUnitKind.FIELD.value,
+            } and _is_title_banner(label, document):
+                _reject_label(
+                    quality,
+                    document,
+                    subject=label,
+                    quality_status=TextQualityStatus.LOW_QUALITY_EXTRACTION.value,
+                    detail={"stage": f"block:{kind}", "reason": "title_banner"},
+                )
+                continue
+            label_quality = _label_quality(label, references)
+            if not label_quality.ok:
+                _reject_label(
+                    quality,
+                    document,
+                    subject=label,
+                    quality_status=label_quality.status,
+                    evidence=_evidence(
+                        index,
+                        excerpt=text,
+                        block_id=block.id,
+                        page=block.page,
+                    ),
+                    detail={"stage": f"block:{kind}"},
+                )
+                continue
         add(
             SemanticUnit(
                 kind=kind,
@@ -496,7 +699,13 @@ def extract_semantic_units(document: StructuredDocument) -> list[SemanticUnit]:
     return units
 
 
-def _unit_from_plain_block(block, index: _LocatorIndex) -> SemanticUnit | None:
+def _unit_from_plain_block(
+    block,
+    index: _LocatorIndex,
+    *,
+    references: tuple[str, ...] = (),
+    quality: QualityCollector | None = None,
+) -> SemanticUnit | None:
     """Unidad desde un bloque de texto sin rol: alias, definición o campo."""
     text = (block.text or "").strip()
     if len(text) < _MIN_TEXT:
@@ -509,6 +718,16 @@ def _unit_from_plain_block(block, index: _LocatorIndex) -> SemanticUnit | None:
         name = declared.group("name").strip(" .,:;|-–—")
         alias = declared.group("alias").strip()
         if len(name) >= _MIN_TEXT and len(alias) >= _MIN_TEXT:
+            declared_quality = _label_quality(name, references)
+            if not declared_quality.ok:
+                _reject_label(
+                    quality,
+                    _document_for(index),
+                    subject=name,
+                    quality_status=declared_quality.status,
+                    detail={"stage": "plain_block:declared_alias"},
+                )
+                return None
             return SemanticUnit(
                 kind=SemanticUnitKind.DEFINITION.value,
                 key=f"definition:{normalize_term(name)}",
@@ -527,6 +746,25 @@ def _unit_from_plain_block(block, index: _LocatorIndex) -> SemanticUnit | None:
     definition = _parse_definition_line(text)
     if definition is not None:
         term, body = definition
+        if _is_title_banner(term, _document_for(index)):
+            _reject_label(
+                quality,
+                _document_for(index),
+                subject=term,
+                quality_status=TextQualityStatus.LOW_QUALITY_EXTRACTION.value,
+                detail={"stage": "plain_block:definition", "reason": "title_banner"},
+            )
+            return None
+        term_quality = _label_quality(term, references)
+        if not term_quality.ok:
+            _reject_label(
+                quality,
+                _document_for(index),
+                subject=term,
+                quality_status=term_quality.status,
+                detail={"stage": "plain_block:definition"},
+            )
+            return None
         return SemanticUnit(
             kind=SemanticUnitKind.DEFINITION.value,
             key=f"definition:{normalize_term(term)}",
@@ -546,6 +784,25 @@ def _unit_from_plain_block(block, index: _LocatorIndex) -> SemanticUnit | None:
     if first_line.count("|") >= 2:
         field = _parse_field_line(text)
         if field is not None:
+            if _is_title_banner(field["name"], _document_for(index)):
+                _reject_label(
+                    quality,
+                    _document_for(index),
+                    subject=field["name"],
+                    quality_status=TextQualityStatus.LOW_QUALITY_EXTRACTION.value,
+                    detail={"stage": "plain_block:field", "reason": "title_banner"},
+                )
+                return None
+            field_quality = _label_quality(field["name"], references)
+            if not field_quality.ok:
+                _reject_label(
+                    quality,
+                    _document_for(index),
+                    subject=field["name"],
+                    quality_status=field_quality.status,
+                    detail={"stage": "plain_block:field"},
+                )
+                return None
             attributes = {"role": "paragraph", **field["attributes"]}
             return SemanticUnit(
                 kind=SemanticUnitKind.FIELD.value,
@@ -563,6 +820,10 @@ def _unit_from_plain_block(block, index: _LocatorIndex) -> SemanticUnit | None:
                 ),
             )
     return None
+
+
+def _document_for(index: _LocatorIndex) -> StructuredDocument:
+    return index.document
 
 
 def extract_tabular_units(

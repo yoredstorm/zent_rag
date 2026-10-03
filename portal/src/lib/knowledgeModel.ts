@@ -316,7 +316,43 @@ export type KnowledgeConflict = {
   resolution: string | null;
   resolved_value: string | null;
   reason: string | null;
+  conflict_type?: string | null;
+  classification?: {
+    classification?: string;
+    confidence?: number;
+    possible_explanation?: string;
+    materiality?: string;
+    source_independence?: string;
+    statement_a?: string;
+    statement_b?: string;
+    temporal_relation?: string | null;
+    scope_relation?: string | null;
+  } | null;
   detected_at: string | null;
+};
+
+export type IngestionQualityIssue = {
+  id: string;
+  source_id: string | null;
+  document_id: string | null;
+  kind: string;
+  severity: "high" | "medium" | "low";
+  subject: string;
+  detail: Record<string, unknown>;
+  evidence_locator: string | null;
+  evidence_excerpt: string | null;
+  status: string;
+  created_at: string | null;
+};
+
+export type IngestionQualityReport = {
+  issues: IngestionQualityIssue[];
+  count: number;
+  summary: {
+    total: number;
+    by_kind: Record<string, number>;
+    by_severity: Record<string, number>;
+  };
 };
 
 export type QualityIssue = {
@@ -555,6 +591,15 @@ export function fetchKnowledgeConflicts(
   );
 }
 
+export function fetchIngestionQuality(
+  status = "open",
+  limit = 100
+): Promise<IngestionQualityReport> {
+  return withSession(
+    `/api/v1/knowledge/ingestion-quality?status=${encodeURIComponent(status)}&limit=${limit}`
+  );
+}
+
 export function resolveKnowledgeConflict(
   conflictId: string,
   payload: { resolution: string; resolved_value?: string | null; reason?: string | null }
@@ -679,6 +724,37 @@ export function objectTypeLabel(type: string): string {
 
 export function gapTypeLabel(type: string): string {
   return GAP_TYPE_LABELS[type] || type;
+}
+
+export const CONFLICT_CLASSIFICATION_LABELS: Record<string, string> = {
+  TRUE_CONFLICT: "Conflicto potencial real",
+  SOURCE_CONFLICT: "Conflicto entre fuentes",
+  SAME_MEANING: "Mismo significado",
+  ALIAS_VARIATION: "Variación de alias",
+  PARSER_FRAGMENT: "Fragmento de parsing",
+  DUPLICATE: "Duplicado",
+  POSSIBLE_DUPLICATE: "Posible duplicado",
+  TEMPORAL_CHANGE: "Cambio temporal",
+  VERSION_CHANGE: "Cambio de versión",
+  SCOPE_DIFFERENCE: "Diferencia de alcance",
+  EXCEPTION: "Excepción",
+  COMPLEMENTARY_INFORMATION: "Información complementaria",
+  INSUFFICIENT_CONTEXT: "Contexto insuficiente",
+  SOURCE_QUALITY_PROBLEM: "Problema de calidad de fuente",
+  UNRESOLVED: "Sin clasificar",
+  UNKNOWN: "Desconocido",
+};
+
+export const MATERIALITY_LABELS: Record<string, string> = {
+  LOW: "Impacto bajo",
+  MEDIUM: "Impacto medio",
+  HIGH: "Impacto alto",
+  CRITICAL: "Impacto crítico",
+};
+
+export function conflictClassificationLabel(value: string | null | undefined): string {
+  if (!value) return "Sin clasificar";
+  return CONFLICT_CLASSIFICATION_LABELS[value] || value;
 }
 
 export function statusTone(status: string): string {

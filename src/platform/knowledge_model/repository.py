@@ -58,7 +58,7 @@ _CONFLICT_COLS = (
     "id, organization_id, object_id, subject_label, predicate, assertion_a, "
     "assertion_b, value_a, value_b, source_a, source_b, status, resolution, "
     "resolved_value, resolved_by, resolved_at, reason, detected_at, created_at, "
-    "updated_at"
+    "updated_at, conflict_type, classification"
 )
 
 _GAP_COLS = (
@@ -194,6 +194,8 @@ def _conflict_row(row) -> dict:
         "source_a": row.source_a,
         "source_b": row.source_b,
         "status": row.status,
+        "conflict_type": row.conflict_type,
+        "classification": _loads(row.classification, {}) if row.classification else {},
         "resolution": row.resolution,
         "resolved_value": row.resolved_value,
         "resolved_by": str(row.resolved_by) if row.resolved_by else None,
@@ -851,7 +853,22 @@ class PostgresKnowledgeModelRepository:
             await session.close()
 
     async def detect_conflicts(self, organization_id: UUID) -> int:
-        """Conflicto real: mismo sujeto+predicado, distinto valor, distinta fuente."""
+        """Candidato a conflicto semántico con gate estricto.
+
+        Antes: "mismo sujeto+predicado, distinto valor" (producía conflictos
+        por descripciones de schema y cardinalidades). Ahora cada par pasa por
+        la adjudicación del Knowledge Compiler: alias, fragmentos, duplicados,
+        cambios temporales/de versión y diferencias de scope NO se insertan.
+        Solo un conflicto con evidencia y fuentes en ambos lados se abre.
+        """
+        from src.knowledge.compiler.conflicts import classify_conflict
+        from src.knowledge.compiler.model import (
+            EvidenceRef,
+            FactCandidate,
+            SourceLocator,
+            TemporalScope,
+        )
+
         session = await get_async_session()
         try:
             pairs = (
@@ -861,7 +878,10 @@ class PostgresKnowledgeModelRepository:
                         SELECT a.id AS a_id, b.id AS b_id,
                                a.subject_id, a.subject_label, a.predicate,
                                a.object_value AS value_a, b.object_value AS value_b,
-                               a.source_id AS source_a, b.source_id AS source_b
+                               a.source_id AS source_a, b.source_id AS source_b,
+                               a.scope AS scope_a, b.scope AS scope_b,
+                               a.evidence_count AS evidence_a,
+                               b.evidence_count AS evidence_b
                         FROM knowledge_assertions a
                         JOIN knowledge_assertions b
                           ON b.organization_id = a.organization_id
@@ -872,16 +892,57 @@ class PostgresKnowledgeModelRepository:
                         WHERE a.organization_id = :org
                           AND a.status NOT IN ('rejected')
                           AND b.status NOT IN ('rejected')
+                          AND a.evidence_count > 0
+                          AND b.evidence_count > 0
                           AND COALESCE(a.object_value, '') <> ''
                           AND COALESCE(b.object_value, '') <> ''
-                        LIMIT 200
+                          AND a.predicate NOT IN ('also_known_as')
+                        LIMIT 400
                         """
                     ),
                     {"org": organization_id},
                 )
             ).fetchall()
+
+            def _fact(row, *, value, source, scope, assertion_id) -> FactCandidate:
+                label = str(source) if source else None
+                fact = FactCandidate(
+                    subject=str(row.subject_label or ""),
+                    predicate=str(row.predicate or ""),
+                    object_value=str(value or ""),
+                    confidence=0.6,
+                    temporal=TemporalScope(scope=str(scope) if scope else None),
+                    attributes={"source_label": label},
+                )
+                fact.evidence = [
+                    EvidenceRef(
+                        locator=SourceLocator(source_id=source),
+                        evidence_type="structural",
+                        excerpt=str(value or "")[:400],
+                        confidence=0.6,
+                    )
+                ]
+                return fact
+
             created = 0
             for pair in pairs:
+                fact_a = _fact(
+                    pair,
+                    value=pair.value_a,
+                    source=pair.source_a,
+                    scope=pair.scope_a,
+                    assertion_id=pair.a_id,
+                )
+                fact_b = _fact(
+                    pair,
+                    value=pair.value_b,
+                    source=pair.source_b,
+                    scope=pair.scope_b,
+                    assertion_id=pair.b_id,
+                )
+                conflict = classify_conflict(fact_a, fact_b)
+                if not conflict.displayable:
+                    continue
                 exists = (
                     await session.execute(
                         text(
@@ -911,12 +972,14 @@ class PostgresKnowledgeModelRepository:
                         INSERT INTO knowledge_conflicts (
                             organization_id, object_id, subject_label, predicate,
                             assertion_a, assertion_b, value_a, value_b,
-                            source_a, source_b, status
+                            source_a, source_b, status, conflict_type,
+                            classification, reason
                         ) VALUES (
                             :org, :object_id, :label, :predicate,
                             :a, :b, :value_a, :value_b,
                             CAST(:source_a AS varchar), CAST(:source_b AS varchar),
-                            'open'
+                            'open', :conflict_type, CAST(:classification AS jsonb),
+                            :reason
                         )
                         """
                     ),
@@ -931,6 +994,9 @@ class PostgresKnowledgeModelRepository:
                         "value_b": pair.value_b,
                         "source_a": str(pair.source_a) if pair.source_a else None,
                         "source_b": str(pair.source_b) if pair.source_b else None,
+                        "conflict_type": conflict.conflict_type,
+                        "classification": json.dumps(conflict.to_dict(), default=str),
+                        "reason": conflict.reason,
                     },
                 )
                 created += 1
@@ -2486,9 +2552,102 @@ class PostgresKnowledgeModelRepository:
         finally:
             await session.close()
 
-    # -------------------------------------------------------------- conflictos
-    async def list_conflicts(
+    # ---------------------------------------------------- calidad de ingesta
+    async def list_ingestion_quality(
         self,
+        organization_id: UUID,
+        *,
+        status: str | None = "open",
+        kind: str | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Problemas de parsing/extracción. Nunca mezclados con conflictos."""
+        session = await get_async_session()
+        try:
+            clauses = ["organization_id = :org"]
+            params: dict = {"org": organization_id}
+            if status:
+                clauses.append("status = :status")
+                params["status"] = status
+            if kind:
+                clauses.append("kind = :kind")
+                params["kind"] = kind
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT id, workspace_id, source_id, document_id, kind,
+                               severity, subject, detail, evidence_locator,
+                               evidence_excerpt, locator, status,
+                               created_at, updated_at
+                        FROM knowledge_ingestion_quality
+                        WHERE """ + " AND ".join(clauses) + """
+                        ORDER BY (severity = 'high') DESC, created_at DESC
+                        LIMIT :limit OFFSET :offset
+                        """
+                    ),
+                    {**params, "limit": min(max(limit, 1), 300), "offset": max(offset, 0)},
+                )
+            ).fetchall()
+            return [
+                {
+                    "id": row.id,
+                    "workspace_id": row.workspace_id,
+                    "source_id": row.source_id,
+                    "document_id": row.document_id,
+                    "kind": row.kind,
+                    "severity": row.severity,
+                    "subject": row.subject,
+                    "detail": row.detail,
+                    "evidence_locator": row.evidence_locator,
+                    "evidence_excerpt": row.evidence_excerpt,
+                    "locator": row.locator,
+                    "status": row.status,
+                    "created_at": row.created_at,
+                    "updated_at": row.updated_at,
+                }
+                for row in rows
+            ]
+        finally:
+            await session.close()
+
+    async def ingestion_quality_counts(self, organization_id: UUID) -> dict:
+        session = await get_async_session()
+        try:
+            rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT kind, severity, COUNT(*) AS total
+                        FROM knowledge_ingestion_quality
+                        WHERE organization_id = :org AND status = 'open'
+                        GROUP BY kind, severity
+                        """
+                    ),
+                    {"org": organization_id},
+                )
+            ).fetchall()
+            by_kind: dict[str, int] = {}
+            by_severity: dict[str, int] = {}
+            total = 0
+            for row in rows:
+                count = int(row.total or 0)
+                total += count
+                by_kind[str(row.kind)] = by_kind.get(str(row.kind), 0) + count
+                by_severity[str(row.severity)] = (
+                    by_severity.get(str(row.severity), 0) + count
+                )
+            return {
+                "total": total,
+                "by_kind": by_kind,
+                "by_severity": by_severity,
+            }
+        finally:
+            await session.close()
+
+    # -------------------------------------------------------------- conflictos
+    async def list_conflicts(        self,
         organization_id: UUID,
         *,
         status: str | None = None,

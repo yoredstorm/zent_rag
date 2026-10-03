@@ -31,17 +31,20 @@ from src.knowledge.compiler import facts as fact_engine
 from src.knowledge.compiler import rules as rule_engine
 from src.knowledge.compiler.model import (
     CompilationResult,
+    ConflictType,
     EntityCandidate,
     EntityType,
     EvidenceRef,
     EvidenceType,
     FactCandidate,
+    QualityIssue,
     RelationshipCandidate,
     SourceLocator,
     TemporalScope,
     normalize_term,
 )
 from src.knowledge.compiler.store import CompilerStore, PostgresCompilerStore, object_kind_for_entity
+from src.knowledge.quality.ingestion import QualityCollector, QualityKind
 
 logger = get_logger(__name__)
 
@@ -63,9 +66,12 @@ class KnowledgeCompiler:
     def build(document: StructuredDocument) -> CompilationResult:
         """Semantic units -> entidades -> hechos -> relaciones -> reglas.
 
-        Puro, sin I/O. Es la fase que se puede testear y auditar.
+        Puro, sin I/O. Es la fase que se puede testear y auditar. Los controles
+        de calidad corren ANTES de crear conocimiento: lo que no tiene
+        estructura suficiente no llega a entidad, alias ni hecho.
         """
-        units = extract.extract_semantic_units(document)
+        quality = QualityCollector()
+        units = extract.extract_semantic_units(document, quality=quality)
         units.extend(extract.extract_tabular_units(document.tabular, document=document))
 
         sample_text = "\n".join(
@@ -73,12 +79,35 @@ class KnowledgeCompiler:
         )[:8000]
         scope = temporal.infer_temporal_scope(document, sample_text=sample_text)
 
-        discovered = entity_engine.discover_entities(units, document=document)
-        resolver = entity_engine.EntityResolver()
-        consolidated, merges = resolver.consolidate(discovered)
+        discovered = entity_engine.discover_entities(
+            units, document=document, quality=quality
+        )
+        # Gate de procedencia: entidad sin evidencia no es conocimiento.
+        accepted: list[EntityCandidate] = []
+        for entity in discovered:
+            if not entity.evidence:
+                quality.add(
+                    QualityKind.EVIDENCE_MISSING.value,
+                    entity.name,
+                    detail={"stage": "entity_discovery", "entity_type": entity.entity_type},
+                    source_id=document.source_id,
+                    document_id=document.id,
+                )
+                continue
+            accepted.append(entity)
+        rejected_entities = len(discovered) - len(accepted)
 
+        resolver = entity_engine.EntityResolver()
+        consolidated, merges = resolver.consolidate(accepted)
+
+        source_label = (document.title or "").strip() or None
         fact_list = fact_engine.build_facts(units, temporal=scope)
         fact_list.extend(fact_engine.entity_facts(consolidated, temporal=scope))
+        for fact in fact_list:
+            fact.attributes.setdefault("source_label", source_label)
+            fact.attributes.setdefault(
+                "document_id", str(document.id) if document.id else None
+            )
 
         relationships = fact_engine.build_relationships(
             units,
@@ -88,6 +117,20 @@ class KnowledgeCompiler:
 
         rules = rule_engine.extract_rules(document, temporal=scope)
         conflict_list = conflict_engine.detect_conflicts(fact_list)
+
+        quality_issues = [
+            QualityIssue(
+                kind=str(item.get("kind") or QualityKind.LOW_QUALITY_EXTRACTION.value),
+                subject=str(item.get("subject") or ""),
+                detail=item.get("detail") or {},
+                evidence=item.get("evidence"),
+                source_id=item.get("source_id"),
+                document_id=item.get("document_id"),
+                severity=str(item.get("severity") or "medium"),
+                confidence=item.get("confidence"),
+            )
+            for item in quality.issues
+        ]
 
         return CompilationResult(
             organization_id=document.organization_id,
@@ -102,6 +145,8 @@ class KnowledgeCompiler:
             rules=rules,
             conflicts=conflict_list,
             merges=merges,
+            quality_issues=quality_issues,
+            rejected_count=rejected_entities,
             evidence_count=sum(
                 len(entity.evidence) for entity in consolidated
             )
@@ -188,17 +233,39 @@ class KnowledgeCompiler:
         counters: dict[str, int] = {
             "entities_new": 0,
             "entities_enriched": 0,
+            "entities_rejected": 0,
             "merges": 0,
             "facts_new": 0,
             "facts_reinforced": 0,
+            "facts_rejected": 0,
             "relationships": 0,
             "relationships_related": 0,
             "rules": 0,
             "conflicts": 0,
+            "conflicts_auto_resolved": 0,
             "duplicates": 0,
             "updated": 0,
             "evidence": 0,
+            "quality_issues": 0,
         }
+
+        def collect_issue(
+            kind: str,
+            subject: str,
+            *,
+            detail: dict | None = None,
+            evidence: EvidenceRef | None = None,
+        ) -> None:
+            result.quality_issues.append(
+                QualityIssue(
+                    kind=kind,
+                    subject=subject,
+                    detail=detail or {},
+                    evidence=evidence,
+                    source_id=source_id,
+                    document_id=document_id,
+                )
+            )
 
         entity_ids: dict[str, UUID] = {}
         alias_ids: dict[str, UUID] = {}
@@ -207,6 +274,24 @@ class KnowledgeCompiler:
         merged_aliases: set[str] = set()
 
         for entity in result.entities:
+            # Procedencia obligatoria: sin fuente no se crea conocimiento.
+            if source_id is None:
+                counters["entities_rejected"] += 1
+                collect_issue(
+                    QualityKind.SOURCE_MISSING.value,
+                    entity.name,
+                    detail={"stage": "persist_entity", "entity_type": entity.entity_type},
+                    evidence=entity.evidence[0] if entity.evidence else None,
+                )
+                continue
+            if not entity.evidence:
+                counters["entities_rejected"] += 1
+                collect_issue(
+                    QualityKind.EVIDENCE_MISSING.value,
+                    entity.name,
+                    detail={"stage": "persist_entity", "entity_type": entity.entity_type},
+                )
+                continue
             outcome = resolver.resolve(entity)
             known_before = _entity_is_known(entity, aliases)
             object_id = await store.upsert_entity(
@@ -244,6 +329,8 @@ class KnowledgeCompiler:
                     object_id=object_id,
                 )
             for alias in entity.aliases:
+                if normalize_term(alias.alias) == normalize_term(entity.name):
+                    continue
                 evidence_ids = [
                     value
                     for value in [
@@ -309,6 +396,21 @@ class KnowledgeCompiler:
         assertions_written = 0
         bounded_dates: list[str] = []
         for fact in result.facts:
+            # Gate de procedencia: sin fuente ni evidencia localizable el hecho
+            # no entra al conocimiento canónico.
+            if source_id is None or not fact.evidence:
+                counters["facts_rejected"] += 1
+                collect_issue(
+                    (
+                        QualityKind.SOURCE_MISSING.value
+                        if source_id is None
+                        else QualityKind.EVIDENCE_MISSING.value
+                    ),
+                    fact.subject,
+                    detail={"stage": "persist_fact", "predicate": fact.predicate},
+                    evidence=fact.evidence[0] if fact.evidence else None,
+                )
+                continue
             subject_id = entity_ids.get(_entity_key(fact.subject_type, fact.subject)) or (
                 alias_ids.get(normalize_term(fact.subject))
             )
@@ -519,6 +621,52 @@ class KnowledgeCompiler:
         conflicts_written = 0
         for conflict in result.conflicts:
             subject_id = alias_ids.get(normalize_term(conflict.subject))
+
+            # Gate estricto: sin evidencia y fuentes en AMBOS lados no hay
+            # conflicto mostrable. Los fragmentos y la falta de contexto van a
+            # la cola de calidad de ingesta, nunca a la cola de conflictos.
+            classification = conflict.classification or conflict.conflict_type
+            if not conflict.displayable:
+                counters["conflicts_auto_resolved"] += 1
+                if classification == ConflictType.PARSER_FRAGMENT.value:
+                    collect_issue(
+                        QualityKind.PARSER_FRAGMENT.value,
+                        conflict.subject,
+                        detail={
+                            "stage": "conflict_gate",
+                            "predicate": conflict.predicate,
+                            "value_a": conflict.value_a[:200],
+                            "value_b": conflict.value_b[:200],
+                        },
+                        evidence=conflict.evidence[0] if conflict.evidence else None,
+                    )
+                elif classification in {
+                    ConflictType.INSUFFICIENT_CONTEXT.value,
+                    ConflictType.UNRESOLVED.value,
+                    ConflictType.UNKNOWN.value,
+                }:
+                    collect_issue(
+                        (
+                            QualityKind.SOURCE_MISSING.value
+                            if not conflict.source_a or not conflict.source_b
+                            else QualityKind.EVIDENCE_MISSING.value
+                        ),
+                        conflict.subject,
+                        detail={
+                            "stage": "conflict_gate",
+                            "predicate": conflict.predicate,
+                            "classification": classification,
+                        },
+                        evidence=conflict.evidence[0] if conflict.evidence else None,
+                    )
+                await self._observe(
+                    observer,
+                    "CONFLICT_AUTO_RESOLVED",
+                    conflict.to_dict(),
+                )
+                continue
+
+            conflict.status = "open"
             conflict_status = await store.upsert_conflict(
                 organization_id,
                 conflict,
@@ -564,6 +712,7 @@ class KnowledgeCompiler:
                     "subject": conflict.subject,
                     "predicate": conflict.predicate,
                     "conflict_type": conflict.conflict_type,
+                    "classification": conflict.classification,
                     "value_a": conflict.value_a[:300],
                     "value_b": conflict.value_b[:300],
                     "evidence_ids": [
@@ -575,6 +724,21 @@ class KnowledgeCompiler:
                 document_id=document_id,
                 object_id=subject_id,
             )
+
+        # Cola de calidad de ingesta: problemas de parsing, no conocimiento.
+        for issue in result.quality_issues:
+            recorder = getattr(store, "record_quality_issue", None)
+            if recorder is None:
+                break
+            try:
+                await recorder(
+                    organization_id, issue, workspace_id=workspace_id
+                )
+                counters["quality_issues"] += 1
+            except Exception as exc:  # noqa: BLE001 — best-effort
+                logger.debug(
+                    "Knowledge quality issue not persisted", error=str(exc)[:160]
+                )
 
         if evidence_written:
             counters["evidence"] = evidence_written
@@ -591,14 +755,19 @@ class KnowledgeCompiler:
                 "edges": edges_written,
                 "rules": rules_written,
                 "conflicts": conflicts_written,
+                "quality_issues": counters["quality_issues"],
                 "evidence": evidence_written,
                 "entities_new": counters["entities_new"],
                 "entities_enriched": counters["entities_enriched"],
+                "entities_rejected": counters["entities_rejected"],
+                "facts_rejected": counters["facts_rejected"],
+                "conflicts_auto_resolved": counters["conflicts_auto_resolved"],
                 "facts_reinforced": counters["facts_reinforced"],
             },
         )
 
         await store.refresh_counters(organization_id)
+        self._record_quality_metrics(result, counters)
 
         return {
             "objects": objects_created,
@@ -609,6 +778,51 @@ class KnowledgeCompiler:
             "evidence": evidence_written,
             **counters,
         }
+
+    @staticmethod
+    def _record_quality_metrics(result: CompilationResult, counters: dict) -> None:
+        """Métricas de calidad: fragmentos, rechazos, conflictos y auto-resueltos.
+
+        Best-effort: Prometheus jamás interrumpe una compilación.
+        """
+        try:
+            from src.infrastructure.observability.metrics import (
+                knowledge_conflict_candidates_total,
+                knowledge_conflicts_auto_resolved_total,
+                knowledge_conflicts_visible_total,
+                knowledge_extraction_decisions_total,
+                knowledge_ingestion_quality_total,
+            )
+        except Exception:  # noqa: BLE001
+            return
+        try:
+            for conflict in result.conflicts:
+                classification = conflict.classification or conflict.conflict_type
+                knowledge_conflict_candidates_total.labels(
+                    classification=classification
+                ).inc()
+                if conflict.displayable:
+                    knowledge_conflicts_visible_total.labels(
+                        classification=classification,
+                        materiality=conflict.materiality,
+                    ).inc()
+                else:
+                    knowledge_conflicts_auto_resolved_total.labels(
+                        classification=classification
+                    ).inc()
+            for issue in result.quality_issues:
+                knowledge_ingestion_quality_total.labels(
+                    kind=issue.kind,
+                    stage=str(issue.detail.get("stage") or "unknown"),
+                ).inc()
+            knowledge_extraction_decisions_total.labels(
+                stage="entity", decision="rejected"
+            ).inc(counters.get("entities_rejected", 0))
+            knowledge_extraction_decisions_total.labels(
+                stage="fact", decision="rejected"
+            ).inc(counters.get("facts_rejected", 0))
+        except Exception:  # noqa: BLE001 — la métrica nunca rompe el pipeline
+            return
 
     async def _observe(
         self,
@@ -672,8 +886,6 @@ class KnowledgeCompiler:
         workspace_id: UUID | None,
     ) -> UUID:
         """Crea (determinista) el canónico de un término referenciado sin unidad."""
-        from src.knowledge.compiler.model import EntityAlias
-
         candidate = EntityCandidate(
             name=name,
             entity_type=entity_type or EntityType.CONCEPT.value,
@@ -690,29 +902,12 @@ class KnowledgeCompiler:
                 )
             ],
         )
-        candidate.aliases = [
-            EntityAlias(
-                alias=name,
-                alias_type="contextual_name",
-                confidence=0.6,
-                reason="referenciado por otro hecho/relación de la misma fuente",
-            )
-        ]
         object_id = await self._store.upsert_entity(
             organization_id,
             candidate,
             source_id=source_id,
             workspace_id=workspace_id,
         )
-        for alias in candidate.aliases:
-            await self._store.upsert_alias(
-                organization_id,
-                entity_id=object_id,
-                alias=alias,
-                source_id=source_id,
-                document_id=None,
-                evidence_ids=[],
-            )
         return object_id
 
 

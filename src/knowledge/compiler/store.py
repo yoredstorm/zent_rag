@@ -170,6 +170,14 @@ class CompilerStore(Protocol):
         workspace_id: UUID | None,
     ) -> str: ...
 
+    async def record_quality_issue(
+        self,
+        organization_id: UUID,
+        issue: object,
+        *,
+        workspace_id: UUID | None,
+    ) -> None: ...
+
     async def record_compilation(
         self,
         organization_id: UUID,
@@ -858,7 +866,7 @@ class PostgresCompilerStore:
                         conflict_type, classification, evidence_ids, reason
                     ) VALUES (
                         :org, :object_id, :label, :predicate,
-                        :value_a, :value_b, :source_a, :source_b, 'open',
+                        :value_a, :value_b, :source_a, :source_b, :status,
                         :conflict_type, CAST(:classification AS jsonb),
                         CAST(:evidence_ids AS uuid[]), :reason
                     )
@@ -873,11 +881,22 @@ class PostgresCompilerStore:
                     "value_b": conflict.value_b[:4000],
                     "source_a": (conflict.source_a or "")[:200] or None,
                     "source_b": (conflict.source_b or "")[:200] or None,
+                    "status": conflict.status or "open",
                     "conflict_type": conflict.conflict_type,
                     "classification": _json(
                         {
+                            "classification": conflict.classification
+                            or conflict.conflict_type,
                             "confidence": conflict.confidence,
                             "values_equivalent": conflict.values_equivalent,
+                            "possible_explanation": conflict.possible_explanation,
+                            "temporal_relation": conflict.temporal_relation,
+                            "scope_relation": conflict.scope_relation,
+                            "materiality": conflict.materiality,
+                            "source_independence": conflict.source_independence,
+                            "confidence_components": conflict.confidence_components,
+                            "statement_a": conflict.statement_a[:600],
+                            "statement_b": conflict.statement_b[:600],
                             "workspace_id": str(workspace_id) if workspace_id else None,
                         }
                     ),
@@ -887,6 +906,62 @@ class PostgresCompilerStore:
             )
             await session.commit()
             return "created"
+        finally:
+            await session.close()
+
+    async def record_quality_issue(
+        self,
+        organization_id: UUID,
+        issue: object,
+        *,
+        workspace_id: UUID | None,
+    ) -> None:
+        """Registra un problema de ingesta. Nunca tumba la compilación."""
+        to_dict = getattr(issue, "to_dict", None)
+        payload = to_dict() if callable(to_dict) else {}
+        evidence = getattr(issue, "evidence", None)
+        locator = getattr(evidence, "locator", None) if evidence else None
+        session = await get_async_session()
+        try:
+            await session.execute(
+                text(
+                    """
+                    INSERT INTO knowledge_ingestion_quality (
+                        organization_id, workspace_id, source_id, document_id,
+                        kind, severity, subject, detail, evidence_locator,
+                        evidence_excerpt, locator
+                    ) VALUES (
+                        :org, :workspace, :source_id, :document_id,
+                        :kind, :severity, :subject, CAST(:detail AS jsonb),
+                        :evidence_locator, :evidence_excerpt, :locator
+                    )
+                    """
+                ),
+                {
+                    "org": organization_id,
+                    "workspace": workspace_id,
+                    "source_id": getattr(issue, "source_id", None),
+                    "document_id": getattr(issue, "document_id", None),
+                    "kind": str(getattr(issue, "kind", "UNKNOWN"))[:80],
+                    "severity": str(getattr(issue, "severity", "medium"))[:20],
+                    "subject": str(getattr(issue, "subject", ""))[:512],
+                    "detail": _json(payload.get("detail") or {}),
+                    "evidence_locator": (
+                        locator.locator_uri()[:1000] if locator is not None else None
+                    ),
+                    "evidence_excerpt": (
+                        str(getattr(evidence, "excerpt", "") or "")[:2000] or None
+                    ),
+                    "locator": (
+                        payload.get("evidence", {}).get("locator", {}).get("locator")
+                        if isinstance(payload.get("evidence"), dict)
+                        else None
+                    ),
+                },
+            )
+            await session.commit()
+        except Exception as exc:  # noqa: BLE001 — la calidad nunca rompe la compilación
+            logger.debug("Knowledge quality issue insert failed", error=str(exc)[:200])
         finally:
             await session.close()
 
@@ -939,6 +1014,9 @@ class PostgresCompilerStore:
                         {
                             "document_title": result.document_title,
                             "merges": [m.reason for m in result.merges][:50],
+                            "quality": result.quality_counts(),
+                            "rejected": result.rejected_count,
+                            "conflicts_displayable": len(result.displayable_conflicts),
                         }
                     ),
                 },
