@@ -2452,7 +2452,7 @@
 .ks-stage-tech {
   font-family: var(--font-mono, monospace);
   font-size: 10px;
-  color: var(--zent-ghost);
+  color: var(--zent-faint);
 }
 
 /* ------------------------------------------------------------ feed */
