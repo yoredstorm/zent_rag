@@ -412,6 +412,18 @@ def _classify(
             temporal_relation,
         )
 
+    if have_sources and source_a == source_b:
+        return (
+            ConflictType.TRUE_CONFLICT.value,
+            ConflictType.SOURCE_CONFLICT.value,
+            "Dos afirmaciones incompatibles dentro de la MISMA fuente.",
+            (
+                "No hay independencia de fuentes: puede ser inconsistencia "
+                "interna del documento, no una contradicción entre fuentes."
+            ),
+            temporal_relation,
+        )
+
     if have_sources:
         return (
             ConflictType.TRUE_CONFLICT.value,
