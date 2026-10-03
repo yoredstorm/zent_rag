@@ -10,6 +10,20 @@ async def test_workspace_list_and_detail(async_client, monkeypatch) -> None:
     from src.core.config import get_settings
 
     get_settings.cache_clear()
+
+    # Embeddings deterministas: el chat no debe depender de credenciales LLM
+    # externas (CI no tiene OPENAI_API_KEY). El retriever canónico sigue
+    # corriendo real contra Qdrant con el vector del query.
+    class _FakeEmbeddingProvider:
+        async def embed(self, _text: str):
+            return [[0.0] * 1024]
+
+    import src.api.deps as deps
+
+    monkeypatch.setattr(
+        deps, "get_embedding_provider", lambda: _FakeEmbeddingProvider()
+    )
+
     resp = await async_client.post(
         "/api/v1/billing/subscription/create-trial",
         json={"company_name": "WS API Co", "email": f"ws-{uuid4().hex[:8]}@example.com"},
