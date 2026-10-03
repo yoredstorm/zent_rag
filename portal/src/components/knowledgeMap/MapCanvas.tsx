@@ -95,6 +95,11 @@ export function MapCanvas({
           {layout.nodes.map((node) => {
             const selected = selectedId === node.id;
             const isHovered = hovered === node.id;
+            const showLabel =
+              layout.nodes.length <= 24 ||
+              node.size >= 2.6 ||
+              selected ||
+              isHovered;
             return (
               <g
                 key={node.id}
@@ -127,9 +132,11 @@ export function MapCanvas({
               >
                 {pulse && <circle r={node.size + 1.6} className="km-node-pulse" aria-hidden />}
                 <circle r={node.size} className="km-node-dot" />
-                <text className="km-node-label" y={node.size + 3.2} textAnchor="middle">
-                  {node.label.length > 20 ? `${node.label.slice(0, 19)}…` : node.label}
-                </text>
+                {showLabel && (
+                  <text className="km-node-label" y={node.size + 3.2} textAnchor="middle">
+                    {node.label.length > 20 ? `${node.label.slice(0, 19)}…` : node.label}
+                  </text>
+                )}
               </g>
             );
           })}

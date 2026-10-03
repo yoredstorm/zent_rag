@@ -4100,20 +4100,16 @@ button.km-crumb:hover {
   fill: none;
   stroke: var(--zent-accent);
   stroke-width: 0.25;
-  opacity: 0.5;
-  transform-origin: center;
-  transform-box: fill-box;
+  opacity: 0.35;
   animation: km-node-breathe 3.4s var(--ease-in-out) infinite;
 }
 @keyframes km-node-breathe {
   0%,
   100% {
-    transform: scale(1);
     opacity: 0.35;
   }
   50% {
-    transform: scale(1.35);
-    opacity: 0.12;
+    opacity: 0.1;
   }
 }
 .km-hover {
