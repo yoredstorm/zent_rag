@@ -25,7 +25,7 @@ test.describe("Customer portal — flujo smoke", () => {
     await loginAsTenant(page);
     await expect(page.getByRole("heading", { name: "Panel general" })).toBeVisible();
     const dashboardKnowledge = page.getByTestId("knowledge-pillar-links");
-    await expect(dashboardKnowledge.getByRole("link", { name: "Resumen" })).toHaveAttribute(
+    await expect(dashboardKnowledge.getByRole("link", { name: "Inicio" })).toHaveAttribute(
       "href",
       "/knowledge"
     );
@@ -33,10 +33,9 @@ test.describe("Customer portal — flujo smoke", () => {
       "href",
       "/knowledge/sources"
     );
-    await expect(dashboardKnowledge.getByRole("link", { name: "Modelo" })).toHaveAttribute(
-      "href",
-      "/knowledge/model"
-    );
+    await expect(
+      dashboardKnowledge.getByRole("link", { name: "Explorador" })
+    ).toHaveAttribute("href", "/knowledge/explorer");
     await expectNoA11yViolations(page);
 
     // Crear agente (UI)
@@ -76,12 +75,14 @@ test.describe("Customer portal — flujo smoke", () => {
 
     // Knowledge
     await page.goto("/knowledge");
-    await expect(page.getByRole("heading", { name: "Resumen", exact: true })).toBeVisible();
+    await expect(page.getByTestId("knowledge-hero")).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 })).toContainText(/conocimiento/i);
     const knowledgeNav = page.getByRole("navigation", { name: "Secciones de conocimiento" });
-    await expect(knowledgeNav.getByRole("link", { name: "Resumen" })).toBeVisible();
+    await expect(knowledgeNav.getByRole("link", { name: "Inicio" })).toBeVisible();
+    await expect(knowledgeNav.getByRole("link", { name: "Explorador" })).toBeVisible();
+    await expect(knowledgeNav.getByRole("link", { name: "Salud" })).toBeVisible();
     await expect(knowledgeNav.getByRole("link", { name: "Fuentes" })).toBeVisible();
-    await expect(knowledgeNav.getByRole("link", { name: "Modelo" })).toBeVisible();
-    await expect(knowledgeNav.getByRole("link", { name: "Calidad" })).toBeVisible();
+    await expect(knowledgeNav.getByRole("link", { name: "Actividad" })).toBeVisible();
     await expect(knowledgeNav.getByRole("button", { name: "Avanzado" })).toBeVisible();
     await expect(knowledgeNav.getByRole("link")).toHaveCount(5);
     await page.goto("/knowledge/sources");

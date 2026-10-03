@@ -11,7 +11,7 @@
 # =============================================================================
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from src.core.domain.knowledge_model import (
@@ -575,6 +575,72 @@ class KnowledgeModelService:
 
     async def domains(self, organization_id: UUID) -> list[dict]:
         return await self._repo.domains(organization_id)
+
+    # ------------------------------------------------------------------ delta
+    #: Ventanas soportadas por Knowledge Delta (horas reales).
+    DELTA_WINDOWS: dict[str, int] = {"24h": 24, "7d": 24 * 7, "30d": 24 * 30}
+
+    async def delta(
+        self,
+        organization_id: UUID,
+        *,
+        window: str = "24h",
+        since: datetime | None = None,
+        until: datetime | None = None,
+    ) -> dict:
+        """Qué cambió en la ventana: agregado real, sin inventar variaciones."""
+        now = datetime.now(timezone.utc)
+        until_dt = until or now
+        if window == "custom":
+            if since is None:
+                raise ValueError("window=custom requiere since")
+            since_dt = since
+        else:
+            hours = self.DELTA_WINDOWS.get(window)
+            if hours is None:
+                raise ValueError(f"window inválida: {window}")
+            since_dt = since or (until_dt - timedelta(hours=hours))
+        if since_dt >= until_dt:
+            raise ValueError("since debe ser anterior a until")
+        span_hours = (until_dt - since_dt).total_seconds() / 3600
+        bucket = "hour" if span_hours <= 72 else "day"
+        try:
+            raw = await self._repo.delta(
+                organization_id, since=since_dt, until=until_dt, bucket=bucket
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("delta failed", error=str(exc)[:240])
+            raise KnowledgeModelUnavailable(str(exc)[:240]) from exc
+
+        by_kind = {row["kind"]: row["total"] for row in raw["objects"]}
+        totals = {
+            "objects": sum(row["total"] for row in raw["objects"]),
+            "entities": by_kind.get("entity", 0),
+            "concepts": by_kind.get("concept", 0),
+            "relationships": raw["relationships"]["total"],
+            "facts": raw["facts"]["total"],
+            "rules": by_kind.get("business_rule", 0),
+            "metrics": by_kind.get("metric", 0) + by_kind.get("kpi", 0),
+            "terms": by_kind.get("term", 0) + by_kind.get("synonym", 0),
+            "processes": by_kind.get("process", 0),
+            "evidence": raw["evidence"],
+            "sources": raw["sources"],
+            "conflicts_resolved": raw["conflicts"]["resolved"],
+            "conflicts_detected": raw["conflicts"]["detected"],
+        }
+        return {
+            "window": window,
+            "since": since_dt.isoformat(),
+            "until": until_dt.isoformat(),
+            "bucket": bucket,
+            "totals": totals,
+            "by_type": raw["objects"],
+            "enriched": raw["enriched"],
+            "enriched_total": raw["enriched_total"],
+            "by_domain": raw["by_domain"],
+            "timeline": raw["timeline"],
+            "computed_at": now.isoformat(),
+        }
 
     async def search(self, organization_id: UUID, q: str, *, limit: int = 10) -> dict:
         return await self._repo.search(organization_id, q, limit=limit)

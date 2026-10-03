@@ -23,6 +23,7 @@ import {
   Textarea,
 } from "../../components/ui";
 import { KnowledgeLayout } from "../../components/KnowledgeLayout";
+import { HealthSummary } from "../../components/knowledge/HealthSummary";
 import { KnowledgeQuestionCard } from "../../components/knowledgeLearning/KnowledgeQuestionCard";
 import { KNOWLEDGE_HEADINGS } from "../../lib/knowledgeNav";
 import {
@@ -35,6 +36,7 @@ import {
 import {
   fetchKnowledgeConflicts,
   fetchKnowledgeGaps,
+  fetchKnowledgeHealth,
   fetchKnowledgeQuality,
   gapTypeLabel,
   priorityTone,
@@ -42,6 +44,7 @@ import {
   resolveKnowledgeGap,
   type KnowledgeConflict,
   type KnowledgeGap,
+  type KnowledgeHealth,
   type QualityReport,
 } from "../../lib/knowledgeModel";
 import { fmtDateTime } from "../../lib/format";
@@ -51,8 +54,8 @@ type QualityTab = "issues" | "conflicts" | "gaps" | "questions" | "reviews" | "i
 const TABS: { id: QualityTab; label: string }[] = [
   { id: "issues", label: "Problemas" },
   { id: "conflicts", label: "Conflictos" },
-  { id: "gaps", label: "Gaps" },
-  { id: "questions", label: "Preguntas" },
+  { id: "gaps", label: "Vacíos de conocimiento" },
+  { id: "questions", label: "Preguntas de negocio" },
   { id: "reviews", label: "Cola de revisión" },
   { id: "improvements", label: "Mejoras" },
 ];
@@ -98,6 +101,7 @@ export default function KnowledgeQualityPage() {
   const tab = (params.get("tab") as QualityTab) || "issues";
 
   const [quality, setQuality] = useState<QualityReport | null>(null);
+  const [health, setHealth] = useState<KnowledgeHealth | null>(null);
   const [conflicts, setConflicts] = useState<KnowledgeConflict[]>([]);
   const [gaps, setGaps] = useState<KnowledgeGap[]>([]);
   const [questions, setQuestions] = useState<KnowledgeQuestion[]>([]);
@@ -121,6 +125,11 @@ export default function KnowledgeQualityPage() {
     setLoading(true);
     setError("");
     try {
+      void fetchKnowledgeHealth()
+        .then((data) => setHealth(data))
+        .catch(() => {
+          // La salud es informativa: su fallo no oculta los problemas accionables.
+        });
       if (tab === "issues") {
         setQuality(await fetchKnowledgeQuality(30));
       } else if (tab === "conflicts") {
@@ -265,16 +274,18 @@ export default function KnowledgeQualityPage() {
     <KnowledgeLayout>
       <PageHeader
         title={KNOWLEDGE_HEADINGS.quality}
-        subtitle="Problemas reales del conocimiento: conflictos, gaps, baja confianza, evidencia faltante y fuentes con fallos."
+        subtitle="Qué tan sano está el conocimiento y qué necesita una decisión humana: conflictos, vacíos, baja confianza y evidencia faltante."
         actions={
-          <Link to="/knowledge/model" className="btn btn-secondary min-h-9 px-3 text-xs">
-            Explorar modelo
+          <Link to="/knowledge/explorer" className="btn btn-secondary min-h-9 px-3 text-xs">
+            Explorar conocimiento
           </Link>
         }
       />
 
       <div className="flex flex-col gap-4">
-        <div className="tabs" role="tablist" aria-label="Secciones de calidad">
+        <HealthSummary health={health} loading={loading && !health} />
+
+        <div className="tabs" role="tablist" aria-label="Secciones de salud">
           {TABS.map((item) => (
             <button
               key={item.id}

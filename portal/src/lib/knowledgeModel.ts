@@ -159,7 +159,61 @@ export type KnowledgeDomain = {
   measured: boolean;
   avg_confidence: number | null;
   sources: number;
+  edges?: number;
+  conflicts?: number;
+  last_updated?: string | null;
+  /** Temas (tipos de conocimiento) que ZENT aprendió dentro del dominio. */
+  by_type?: { type: string; total: number; verified: number }[];
 };
+
+export type KnowledgeDeltaTotals = {
+  objects: number;
+  entities: number;
+  concepts: number;
+  relationships: number;
+  facts: number;
+  rules: number;
+  metrics: number;
+  terms: number;
+  processes: number;
+  evidence: number;
+  sources: number;
+  conflicts_resolved: number;
+  conflicts_detected: number;
+};
+
+export type KnowledgeDeltaEnriched = {
+  id: string;
+  type: string;
+  name: string;
+  updated_at: string | null;
+  created_at: string | null;
+};
+
+export type KnowledgeDeltaTimelinePoint = {
+  bucket: string | null;
+  objects: number;
+  facts: number;
+  relationships: number;
+  evidence: number;
+};
+
+export type KnowledgeDelta = {
+  window: string;
+  since: string;
+  until: string;
+  bucket: "hour" | "day";
+  totals: KnowledgeDeltaTotals;
+  by_type: { kind: string; total: number; verified: number }[];
+  enriched: KnowledgeDeltaEnriched[];
+  enriched_total: number;
+  by_domain: { domain: string; objects: number }[];
+  timeline: KnowledgeDeltaTimelinePoint[];
+  computed_at: string;
+};
+
+export const KNOWLEDGE_DELTA_WINDOWS = ["24h", "7d", "30d"] as const;
+export type KnowledgeDeltaWindow = (typeof KNOWLEDGE_DELTA_WINDOWS)[number] | "custom";
 
 export type KnowledgeAttention = {
   kind: string;
@@ -348,6 +402,27 @@ export function fetchKnowledgeOverview(): Promise<KnowledgeOverview> {
   return withSession<KnowledgeOverview>("/api/v1/knowledge/overview");
 }
 
+export function fetchKnowledgeDelta(params: {
+  window: KnowledgeDeltaWindow;
+  since?: string;
+  until?: string;
+}): Promise<KnowledgeDelta> {
+  const query = new URLSearchParams();
+  query.set("window", params.window);
+  if (params.since) query.set("since", params.since);
+  if (params.until) query.set("until", params.until);
+  return withSession<KnowledgeDelta>(`/api/v1/knowledge/delta?${query.toString()}`);
+}
+
+export function fetchKnowledgeDomains(): Promise<{
+  domains: KnowledgeDomain[];
+  count: number;
+}> {
+  return withSession<{ domains: KnowledgeDomain[]; count: number }>(
+    "/api/v1/knowledge/domains"
+  );
+}
+
 export function fetchKnowledgeHealth(): Promise<KnowledgeHealth> {
   return withSession<KnowledgeHealth>("/api/v1/knowledge/health");
 }
@@ -376,10 +451,13 @@ export type KnowledgeCompilation = {
 };
 
 export function fetchKnowledgeCompilations(
-  limit = 25
+  limit = 25,
+  sourceId?: string
 ): Promise<{ items: KnowledgeCompilation[]; total: number }> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (sourceId) query.set("source_id", sourceId);
   return withSession<{ items: KnowledgeCompilation[]; total: number }>(
-    `/api/v1/knowledge/compilations?limit=${limit}`
+    `/api/v1/knowledge/compilations?${query.toString()}`
   );
 }
 

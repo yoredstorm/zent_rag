@@ -1414,7 +1414,8 @@ class PostgresKnowledgeModelRepository:
                                COUNT(*) FILTER (WHERE status IN ('verified','approved')) AS verified,
                                COUNT(*) FILTER (WHERE confidence IS NOT NULL) AS scored,
                                AVG(confidence) AS avg_confidence,
-                               COUNT(DISTINCT source_id) AS sources
+                               COUNT(DISTINCT source_id) AS sources,
+                               MAX(updated_at) AS last_updated
                         FROM knowledge_canonical_objects
                         WHERE organization_id = :org
                           AND kind NOT IN ('source','table','column','document','section','chunk')
@@ -1425,6 +1426,70 @@ class PostgresKnowledgeModelRepository:
                     {"org": organization_id},
                 )
             ).fetchall()
+            edge_rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT d.domain, COUNT(*) AS total FROM (
+                            SELECT e.id, COALESCE(s.domain, 'Sin dominio') AS domain
+                            FROM knowledge_edges e
+                            JOIN knowledge_canonical_objects s ON s.id = e.subject_id
+                            WHERE e.organization_id = :org
+                            UNION
+                            SELECT e.id, COALESCE(t.domain, 'Sin dominio') AS domain
+                            FROM knowledge_edges e
+                            JOIN knowledge_canonical_objects t ON t.id = e.object_id
+                            WHERE e.organization_id = :org
+                        ) AS d
+                        GROUP BY 1
+                        """
+                    ),
+                    {"org": organization_id},
+                )
+            ).fetchall()
+            conflict_rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT COALESCE(o.domain, 'Sin dominio') AS domain,
+                               COUNT(*) AS total
+                        FROM knowledge_conflicts c
+                        JOIN knowledge_canonical_objects o ON o.id = c.object_id
+                        WHERE c.organization_id = :org
+                          AND c.status IN ('open','investigating')
+                        GROUP BY 1
+                        """
+                    ),
+                    {"org": organization_id},
+                )
+            ).fetchall()
+            type_rows = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT COALESCE(domain, 'Sin dominio') AS domain,
+                               kind,
+                               COUNT(*) AS total,
+                               COUNT(*) FILTER (WHERE status IN ('verified','approved')) AS verified
+                        FROM knowledge_canonical_objects
+                        WHERE organization_id = :org
+                          AND kind NOT IN ('source','table','column','document','section','chunk')
+                        GROUP BY 1, 2
+                        ORDER BY total DESC
+                        """
+                    ),
+                    {"org": organization_id},
+                )
+            ).fetchall()
+            edges_by_domain = {r.domain: int(r.total or 0) for r in edge_rows}
+            conflicts_by_domain = {r.domain: int(r.total or 0) for r in conflict_rows}
+            types_by_domain: dict[str, dict[str, dict]] = {}
+            for row in type_rows:
+                normalized = normalize_object_type(row.kind)
+                bucket = types_by_domain.setdefault(row.domain, {})
+                entry = bucket.setdefault(normalized, {"total": 0, "verified": 0})
+                entry["total"] += int(row.total or 0)
+                entry["verified"] += int(row.verified or 0)
             return [
                 {
                     "name": r.domain,
@@ -1435,6 +1500,21 @@ class PostgresKnowledgeModelRepository:
                     if r.avg_confidence is not None
                     else None,
                     "sources": int(r.sources or 0),
+                    "edges": edges_by_domain.get(r.domain, 0),
+                    "conflicts": conflicts_by_domain.get(r.domain, 0),
+                    "last_updated": _iso(r.last_updated),
+                    "by_type": [
+                        {
+                            "type": kind,
+                            "total": data["total"],
+                            "verified": data["verified"],
+                        }
+                        for kind, data in sorted(
+                            types_by_domain.get(r.domain, {}).items(),
+                            key=lambda item: item[1]["total"],
+                            reverse=True,
+                        )
+                    ],
                 }
                 for r in rows
             ]
@@ -1941,6 +2021,270 @@ class PostgresKnowledgeModelRepository:
             }
         finally:
             await session.close()
+
+    async def delta(
+        self,
+        organization_id: UUID,
+        *,
+        since: datetime,
+        until: datetime,
+        bucket: str = "hour",
+        enriched_limit: int = 20,
+    ) -> dict:
+        """Qué cambió en una ventana temporal real (Knowledge Delta).
+
+        Solo objetos de negocio para `objects` (tablas/columnas/documentos son
+        soporte, no conocimiento). `enriched` = objetos tocados en la ventana
+        que ya existían antes (se reforzaron, no nacieron). ERROR != ZERO:
+        cualquier fallo se propaga a la capa de servicio.
+        """
+        session = await get_async_session()
+        params = {
+            "org": organization_id,
+            "since": since,
+            "until": until,
+            "limit": max(1, min(int(enriched_limit), 100)),
+        }
+        try:
+            objects = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT kind, COUNT(*) AS total,
+                               COUNT(*) FILTER (WHERE status IN ('verified','approved')) AS verified
+                        FROM knowledge_canonical_objects
+                        WHERE organization_id = :org
+                          AND created_at >= :since AND created_at < :until
+                          AND kind NOT IN ('source','table','column','document',
+                                           'section','chunk','block')
+                        GROUP BY kind
+                        """
+                    ),
+                    params,
+                )
+            ).fetchall()
+            enriched = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT id, kind,
+                               COALESCE(NULLIF(name, ''), NULLIF(display_name, ''),
+                                        natural_key) AS name,
+                               updated_at, created_at
+                        FROM knowledge_canonical_objects
+                        WHERE organization_id = :org
+                          AND updated_at >= :since AND updated_at < :until
+                          AND created_at < :since
+                          AND kind NOT IN ('source','table','column','document',
+                                           'section','chunk','block')
+                        ORDER BY updated_at DESC
+                        LIMIT :limit
+                        """
+                    ),
+                    params,
+                )
+            ).fetchall()
+            enriched_total = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*) AS total
+                        FROM knowledge_canonical_objects
+                        WHERE organization_id = :org
+                          AND updated_at >= :since AND updated_at < :until
+                          AND created_at < :since
+                          AND kind NOT IN ('source','table','column','document',
+                                           'section','chunk','block')
+                        """
+                    ),
+                    params,
+                )
+            ).scalar_one()
+            facts = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*) AS total,
+                               COUNT(*) FILTER (WHERE status = 'verified') AS verified,
+                               COUNT(*) FILTER (WHERE status = 'conflicted') AS conflicted
+                        FROM knowledge_assertions
+                        WHERE organization_id = :org
+                          AND created_at >= :since AND created_at < :until
+                        """
+                    ),
+                    params,
+                )
+            ).first()
+            relationships = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*) AS total,
+                               COUNT(*) FILTER (WHERE relationship_type = 'physical') AS physical
+                        FROM knowledge_edges
+                        WHERE organization_id = :org
+                          AND created_at >= :since AND created_at < :until
+                        """
+                    ),
+                    params,
+                )
+            ).first()
+            evidence = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*) AS total
+                        FROM evidence_ledger
+                        WHERE organization_id = :org
+                          AND created_at >= :since AND created_at < :until
+                        """
+                    ),
+                    params,
+                )
+            ).scalar_one()
+            sources = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT COUNT(*) AS total
+                        FROM catalog_sources
+                        WHERE organization_id = :org
+                          AND created_at >= :since AND created_at < :until
+                        """
+                    ),
+                    params,
+                )
+            ).scalar_one()
+            conflicts = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT
+                          COUNT(*) FILTER (WHERE status = 'resolved'
+                                           AND resolved_at >= :since
+                                           AND resolved_at < :until) AS resolved,
+                          COUNT(*) FILTER (WHERE status IN ('open','investigating')
+                                           AND detected_at >= :since
+                                           AND detected_at < :until) AS detected
+                        FROM knowledge_conflicts
+                        WHERE organization_id = :org
+                        """
+                    ),
+                    params,
+                )
+            ).first()
+            by_domain = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT domain, COUNT(*) AS objects
+                        FROM knowledge_canonical_objects
+                        WHERE organization_id = :org
+                          AND created_at >= :since AND created_at < :until
+                          AND domain IS NOT NULL AND domain <> ''
+                          AND kind NOT IN ('source','table','column','document',
+                                           'section','chunk','block')
+                        GROUP BY domain
+                        ORDER BY objects DESC
+                        LIMIT 12
+                        """
+                    ),
+                    params,
+                )
+            ).fetchall()
+            timeline = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT date_trunc(:bucket, t.at) AS bucket,
+                               SUM(t.objects)::int AS objects,
+                               SUM(t.facts)::int AS facts,
+                               SUM(t.relationships)::int AS relationships,
+                               SUM(t.evidence)::int AS evidence
+                        FROM (
+                            SELECT created_at AS at, 1 AS objects, 0 AS facts,
+                                   0 AS relationships, 0 AS evidence
+                            FROM knowledge_canonical_objects
+                            WHERE organization_id = :org
+                              AND created_at >= :since AND created_at < :until
+                              AND kind NOT IN ('source','table','column','document',
+                                               'section','chunk','block')
+                            UNION ALL
+                            SELECT created_at, 0, 1, 0, 0
+                            FROM knowledge_assertions
+                            WHERE organization_id = :org
+                              AND created_at >= :since AND created_at < :until
+                            UNION ALL
+                            SELECT created_at, 0, 0, 1, 0
+                            FROM knowledge_edges
+                            WHERE organization_id = :org
+                              AND created_at >= :since AND created_at < :until
+                            UNION ALL
+                            SELECT created_at, 0, 0, 0, 1
+                            FROM evidence_ledger
+                            WHERE organization_id = :org
+                              AND created_at >= :since AND created_at < :until
+                        ) AS t
+                        GROUP BY 1
+                        ORDER BY 1
+                        """
+                    ),
+                    {**params, "bucket": bucket},
+                )
+            ).fetchall()
+        finally:
+            await session.close()
+
+        return {
+            "objects": [
+                {
+                    "kind": normalize_object_type(row.kind),
+                    "total": int(row.total or 0),
+                    "verified": int(row.verified or 0),
+                }
+                for row in objects
+            ],
+            "enriched": [
+                {
+                    "id": str(row.id),
+                    "type": normalize_object_type(row.kind),
+                    "name": row.name,
+                    "updated_at": _iso(row.updated_at),
+                    "created_at": _iso(row.created_at),
+                }
+                for row in enriched
+            ],
+            "enriched_total": int(enriched_total or 0),
+            "facts": {
+                "total": int(facts.total or 0),
+                "verified": int(facts.verified or 0),
+                "conflicted": int(facts.conflicted or 0),
+            },
+            "relationships": {
+                "total": int(relationships.total or 0),
+                "physical": int(relationships.physical or 0),
+            },
+            "evidence": int(evidence or 0),
+            "sources": int(sources or 0),
+            "conflicts": {
+                "resolved": int(conflicts.resolved or 0),
+                "detected": int(conflicts.detected or 0),
+            },
+            "by_domain": [
+                {"domain": row.domain, "objects": int(row.objects or 0)}
+                for row in by_domain
+            ],
+            "timeline": [
+                {
+                    "bucket": _iso(row.bucket),
+                    "objects": int(row.objects or 0),
+                    "facts": int(row.facts or 0),
+                    "relationships": int(row.relationships or 0),
+                    "evidence": int(row.evidence or 0),
+                }
+                for row in timeline
+            ],
+        }
 
     async def retrieval_signals(self, organization_id: UUID) -> dict:
         """Calidad RAG real: eval runs + trazas fallidas recientes."""

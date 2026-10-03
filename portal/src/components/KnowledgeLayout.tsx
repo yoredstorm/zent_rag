@@ -1,10 +1,10 @@
 import {
-  BookOpen,
+  Brain,
+  CaretDown,
   Database,
   Graph,
-  ShieldCheck,
-  Flask,
-  CaretDown,
+  Heartbeat,
+  Pulse,
   type Icon,
 } from "@phosphor-icons/react";
 import { NavLink, useLocation } from "react-router-dom";
@@ -18,11 +18,11 @@ import {
 } from "../lib/knowledgeNav";
 
 const PILLAR_ICONS: Record<string, Icon> = {
-  resumen: BookOpen,
+  inicio: Brain,
+  explorador: Graph,
+  salud: Heartbeat,
   fuentes: Database,
-  modelo: Graph,
-  calidad: ShieldCheck,
-  evaluacion: Flask,
+  actividad: Pulse,
 };
 
 function TabLink({ tab, pathname }: { tab: KnowledgeTab; pathname: string }) {

@@ -1,17 +1,22 @@
 export const KNOWLEDGE_HEADINGS = {
-  overview: "Resumen",
+  home: "Conocimiento",
+  explorer: "Explorador",
+  health: "Salud",
   sources: "Fuentes",
-  model: "Modelo del negocio",
-  quality: "Calidad",
+  activity: "Actividad",
   evaluation: "Evaluación",
-  activity: "Actividad de aprendizaje",
+  object: "Objeto de conocimiento",
+  search: "Búsqueda de conocimiento",
   // Rutas legadas (redirects o Avanzado).
-  learning: "Aprendizaje",
-  map: "Mapa",
+  overview: "Conocimiento",
+  model: "Explorador",
+  quality: "Salud",
+  learning: "Actividad",
+  map: "Explorador",
   glossary: "Glosario de negocio",
   catalog: "Catálogo",
   understanding: "Estudio semántico",
-  review: "Cola de revisión",
+  review: "Conflictos",
   improvements: "Mejoras de inteligencia",
   jobs: "Trabajos de sync",
   playground: "Playground de búsqueda",
@@ -25,11 +30,11 @@ export const KNOWLEDGE_HEADINGS = {
 } as const;
 
 export type KnowledgePillarId =
-  | "resumen"
+  | "inicio"
+  | "explorador"
+  | "salud"
   | "fuentes"
-  | "modelo"
-  | "calidad"
-  | "evaluacion"
+  | "actividad"
   | "avanzado";
 
 export type KnowledgeTab = {
@@ -42,15 +47,21 @@ export type KnowledgePillar = KnowledgeTab & {
   id: Exclude<KnowledgePillarId, "avanzado">;
 };
 
+/**
+ * IA del Knowledge OS: el conocimiento primero, el pipeline después.
+ * Inicio (qué sabe) · Explorador (cómo se organiza) · Salud (qué necesita
+ * atención) · Fuentes (de dónde viene) · Actividad (qué está aprendiendo).
+ */
 export const KNOWLEDGE_PILLARS: KnowledgePillar[] = [
-  { id: "resumen", to: "/knowledge", label: "Resumen", end: true },
+  { id: "inicio", to: "/knowledge", label: "Inicio", end: true },
+  { id: "explorador", to: "/knowledge/explorer", label: "Explorador" },
+  { id: "salud", to: "/knowledge/health", label: "Salud" },
   { id: "fuentes", to: "/knowledge/sources", label: "Fuentes" },
-  { id: "modelo", to: "/knowledge/model", label: "Modelo" },
-  { id: "calidad", to: "/knowledge/quality", label: "Calidad" },
-  { id: "evaluacion", to: "/knowledge/evaluation", label: "Evaluación" },
+  { id: "actividad", to: "/knowledge/activity", label: "Actividad" },
 ];
 
 export const KNOWLEDGE_ADVANCED_TABS: KnowledgeTab[] = [
+  { to: "/knowledge/evaluation", label: "Evaluación" },
   { to: "/knowledge/understanding", label: "Estudio semántico" },
   { to: "/knowledge/playground", label: "Playground" },
   { to: "/knowledge/jobs", label: "Trabajos" },
@@ -63,14 +74,18 @@ export const KNOWLEDGE_ADVANCED_TABS: KnowledgeTab[] = [
 ];
 
 export const KNOWLEDGE_ROUTE_TITLES: Record<string, string> = {
-  "/knowledge": KNOWLEDGE_HEADINGS.overview,
+  "/knowledge": KNOWLEDGE_HEADINGS.home,
+  "/knowledge/explorer": KNOWLEDGE_HEADINGS.explorer,
+  "/knowledge/health": KNOWLEDGE_HEADINGS.health,
   "/knowledge/sources": KNOWLEDGE_HEADINGS.sources,
+  "/knowledge/activity": KNOWLEDGE_HEADINGS.activity,
+  "/knowledge/evaluation": KNOWLEDGE_HEADINGS.evaluation,
+  "/knowledge/search": KNOWLEDGE_HEADINGS.search,
+  // Rutas legadas.
   "/knowledge/model": KNOWLEDGE_HEADINGS.model,
   "/knowledge/quality": KNOWLEDGE_HEADINGS.quality,
-  "/knowledge/evaluation": KNOWLEDGE_HEADINGS.evaluation,
-  "/knowledge/activity": KNOWLEDGE_HEADINGS.activity,
   "/knowledge/learning": KNOWLEDGE_HEADINGS.activity,
-  "/knowledge/map": KNOWLEDGE_HEADINGS.model,
+  "/knowledge/map": KNOWLEDGE_HEADINGS.map,
   "/knowledge/glossary": KNOWLEDGE_HEADINGS.glossary,
   "/knowledge/catalog": KNOWLEDGE_HEADINGS.catalog,
   "/knowledge/understanding": KNOWLEDGE_HEADINGS.understanding,
@@ -88,16 +103,18 @@ export const KNOWLEDGE_ROUTE_TITLES: Record<string, string> = {
 
 const PREFIX_GROUPS: { id: KnowledgePillarId; prefixes: string[] }[] = [
   {
-    id: "fuentes",
-    prefixes: ["/knowledge/sources", "/knowledge/add"],
-  },
-  {
-    id: "modelo",
-    prefixes: ["/knowledge/model", "/knowledge/map"],
-  },
-  {
-    id: "calidad",
+    id: "explorador",
     prefixes: [
+      "/knowledge/explorer",
+      "/knowledge/objects",
+      "/knowledge/model",
+      "/knowledge/map",
+    ],
+  },
+  {
+    id: "salud",
+    prefixes: [
+      "/knowledge/health",
       "/knowledge/quality",
       "/knowledge/review",
       "/knowledge/improvements",
@@ -106,12 +123,17 @@ const PREFIX_GROUPS: { id: KnowledgePillarId; prefixes: string[] }[] = [
     ],
   },
   {
-    id: "evaluacion",
-    prefixes: ["/knowledge/evaluation"],
+    id: "fuentes",
+    prefixes: ["/knowledge/sources", "/knowledge/add"],
+  },
+  {
+    id: "actividad",
+    prefixes: ["/knowledge/activity", "/knowledge/learning", "/knowledge/sessions"],
   },
   {
     id: "avanzado",
     prefixes: [
+      "/knowledge/evaluation",
       "/knowledge/glossary",
       "/knowledge/understanding",
       "/knowledge/catalog",
@@ -122,8 +144,6 @@ const PREFIX_GROUPS: { id: KnowledgePillarId; prefixes: string[] }[] = [
       "/knowledge/collections",
       "/knowledge/documents",
       "/knowledge/playground",
-      "/knowledge/activity",
-      "/knowledge/learning",
       "/connectors",
     ],
   },
@@ -140,11 +160,11 @@ function matchesPrefix(path: string, prefix: string): boolean {
 
 export function knowledgePillarForPath(pathname: string): KnowledgePillarId {
   const path = normalizeKnowledgePath(pathname);
-  if (path === "/knowledge") return "resumen";
+  if (path === "/knowledge" || path === "/knowledge/search") return "inicio";
   for (const group of PREFIX_GROUPS) {
     if (group.prefixes.some((prefix) => matchesPrefix(path, prefix))) return group.id;
   }
-  return "resumen";
+  return "inicio";
 }
 
 export function knowledgeTabIsActive(pathname: string, tab: KnowledgeTab): boolean {

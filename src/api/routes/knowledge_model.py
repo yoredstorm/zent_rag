@@ -10,9 +10,11 @@
 # =============================================================================
 from __future__ import annotations
 
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from src.api.deps import (
@@ -103,6 +105,7 @@ async def knowledge_compilations(
     request: Request,
     limit: int = Query(default=25, ge=1, le=200),
     document_id: UUID | None = Query(default=None),
+    source_id: UUID | None = Query(default=None),
 ) -> dict:
     """Cada corrida del compilador: qué fuente, qué produjo y cuánto tardó."""
     ctx = require_permission(request, "knowledge:read")
@@ -125,6 +128,8 @@ async def knowledge_compilations(
                     WHERE organization_id = :org
                       AND (CAST(:document_id AS uuid) IS NULL
                            OR document_id = CAST(:document_id AS uuid))
+                      AND (CAST(:source_id AS uuid) IS NULL
+                           OR source_id = CAST(:source_id AS uuid))
                     ORDER BY started_at DESC
                     LIMIT :limit
                     """
@@ -132,6 +137,7 @@ async def knowledge_compilations(
                 {
                     "org": ctx.organization_id,
                     "document_id": str(document_id) if document_id else None,
+                    "source_id": str(source_id) if source_id else None,
                     "limit": limit,
                 },
             )
@@ -228,6 +234,31 @@ async def knowledge_activity(
         raise _unavailable(exc) from exc
 
 
+@router.get("/stream", summary="Eventos de conocimiento en vivo (replay durable + SSE)")
+async def knowledge_stream(
+    request: Request,
+    since_seq: int = Query(default=0, ge=0),
+):
+    """SSE tenant-scoped: replay durable de `knowledge_events` y live por bus.
+
+    Permite que Knowledge Pulse y el feed se actualicen con eventos reales sin
+    polling agresivo. Si el bus falla, el frontend cae a polling.
+    """
+    require_permission(request, "knowledge:read")
+    _ensure_enabled()
+    from src.platform.knowledge_learning.events import knowledge_event_source
+
+    return StreamingResponse(
+        knowledge_event_source(_org(request), since_seq=since_seq),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.get("/domains", summary="Dominios del negocio con objetos y cobertura")
 async def knowledge_domains(
     request: Request,
@@ -238,6 +269,36 @@ async def knowledge_domains(
     try:
         domains = await service.domains(_org(request))
         return {"domains": domains, "count": len(domains)}
+    except KnowledgeModelUnavailable as exc:
+        raise _unavailable(exc) from exc
+
+
+@router.get("/delta", summary="Knowledge Delta: qué cambió en una ventana")
+async def knowledge_delta(
+    request: Request,
+    window: str = Query(default="24h", pattern="^(24h|7d|30d|custom)$"),
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    service=Depends(get_knowledge_model_service),
+) -> dict:
+    """Altas, enriquecimientos, conflictos y timeline de una ventana real.
+
+    `window=custom` exige `since`. ERROR != ZERO: fallo de lectura → 503.
+    """
+    require_permission(request, "knowledge:read")
+    _ensure_enabled()
+    try:
+        return await service.delta(
+            _org(request), window=window, since=since, until=until
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            400,
+            {
+                "error_code": "knowledge_delta_invalid_window",
+                "message": str(exc),
+            },
+        ) from exc
     except KnowledgeModelUnavailable as exc:
         raise _unavailable(exc) from exc
 

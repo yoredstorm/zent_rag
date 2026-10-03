@@ -30,6 +30,13 @@ import { StatusBadge } from "../../components/ui/Badge";
 import SqlRunnerModal from "../../components/SqlRunnerModal";
 import { fmtDateTime, fmtNum } from "../../lib/format";
 import {
+  fetchKnowledgeCompilations,
+  fetchKnowledgeObjects,
+  objectTypeLabel,
+  type KnowledgeCompilation,
+  type KnowledgeObject,
+} from "../../lib/knowledgeModel";
+import {
   COPY,
   documentStatusLabel,
   parseSourceTab,
@@ -191,6 +198,10 @@ export default function SourceDetailPage() {
   const [previewError, setPreviewError] = useState("");
   const [showSqlRunner, setShowSqlRunner] = useState(false);
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
+  const [knowledgeImpact, setKnowledgeImpact] = useState<{
+    compilations: KnowledgeCompilation[];
+    objects: KnowledgeObject[];
+  } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
@@ -238,6 +249,31 @@ export default function SourceDetailPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Aporte real de la fuente al conocimiento (compilaciones + objetos canónicos).
+  useEffect(() => {
+    if (!sourceId) return;
+    let cancelled = false;
+    void Promise.allSettled([
+      fetchKnowledgeCompilations(25, sourceId),
+      fetchKnowledgeObjects({ source_id: sourceId, limit: 6, order_by: "updated_at" }),
+    ]).then(([compilationsResult, objectsResult]) => {
+      if (cancelled) return;
+      setKnowledgeImpact({
+        compilations:
+          compilationsResult.status === "fulfilled"
+            ? compilationsResult.value?.items ?? []
+            : [],
+        objects:
+          objectsResult.status === "fulfilled"
+            ? objectsResult.value?.items ?? []
+            : [],
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [sourceId]);
 
   function setTab(next: SourceTab) {
     setSearchParams(
@@ -469,6 +505,100 @@ export default function SourceDetailPage() {
                   </div>
                 </Panel>
 
+                {knowledgeImpact &&
+                (knowledgeImpact.compilations.length > 0 ||
+                  knowledgeImpact.objects.length > 0) ? (
+                  <Panel className="mt-4" data-testid="source-knowledge-impact">
+                    <PanelHeader
+                      title="Aportó al conocimiento"
+                      description="Lo que ZENT aprendió de esta fuente: compilaciones y objetos canónicos."
+                    />
+                    <div className="panel-body flex flex-col gap-4">
+                      {knowledgeImpact.compilations.length > 0 && (
+                        <>
+                          <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                            {[
+                              {
+                                label: "Entidades",
+                                value: knowledgeImpact.compilations.reduce(
+                                  (sum, item) => sum + item.counts.entities,
+                                  0
+                                ),
+                              },
+                              {
+                                label: "Hechos",
+                                value: knowledgeImpact.compilations.reduce(
+                                  (sum, item) => sum + item.counts.facts,
+                                  0
+                                ),
+                              },
+                              {
+                                label: "Relaciones",
+                                value: knowledgeImpact.compilations.reduce(
+                                  (sum, item) => sum + item.counts.relationships,
+                                  0
+                                ),
+                              },
+                              {
+                                label: "Reglas",
+                                value: knowledgeImpact.compilations.reduce(
+                                  (sum, item) => sum + item.counts.rules,
+                                  0
+                                ),
+                              },
+                              {
+                                label: "Evidencias",
+                                value: knowledgeImpact.compilations.reduce(
+                                  (sum, item) => sum + item.counts.evidence,
+                                  0
+                                ),
+                              },
+                              {
+                                label: "Conflictos",
+                                value: knowledgeImpact.compilations.reduce(
+                                  (sum, item) => sum + item.counts.conflicts,
+                                  0
+                                ),
+                              },
+                            ].map((tile) => (
+                              <div key={tile.label} className="kh-delta-tile">
+                                <dt>{tile.label}</dt>
+                                <dd>{fmtNum(tile.value)}</dd>
+                              </div>
+                            ))}
+                          </dl>
+                          <p className="text-xs text-muted">
+                            {knowledgeImpact.compilations.length} compilación(es) del
+                            Knowledge Compiler · última{" "}
+                            {fmtDateTime(
+                              knowledgeImpact.compilations[0]?.finished_at ||
+                                knowledgeImpact.compilations[0]?.started_at
+                            )}
+                          </p>
+                        </>
+                      )}
+                      {knowledgeImpact.objects.length > 0 && (
+                        <div>
+                          <p className="eyebrow mb-2">Enriqueció</p>
+                          <ul className="flex flex-wrap gap-2">
+                            {knowledgeImpact.objects.map((item) => (
+                              <li key={item.id}>
+                                <ButtonLink
+                                  to={`/knowledge/objects/${item.id}`}
+                                  variant="secondary"
+                                  size="sm"
+                                >
+                                  {objectTypeLabel(item.type)} ·{" "}
+                                  {item.display_name || item.name}
+                                </ButtonLink>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </Panel>
+                ) : null}
                 {tabular && (tabular.workbooks.length > 0 || tabular.tables.length > 0) ? (
                   <Panel className="mt-4">
                     <PanelHeader

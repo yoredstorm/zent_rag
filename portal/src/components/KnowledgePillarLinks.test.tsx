@@ -11,12 +11,14 @@ describe("KnowledgePillarLinks", () => {
       </MemoryRouter>
     );
     const nav = screen.getByRole("navigation", { name: "Pilares de conocimiento" });
-    expect(nav.querySelector('a[href="/knowledge"]')).toHaveTextContent("Resumen");
+    expect(nav.querySelector('a[href="/knowledge"]')).toHaveTextContent("Inicio");
+    expect(nav.querySelector('a[href="/knowledge/explorer"]')).toHaveTextContent(
+      "Explorador"
+    );
+    expect(nav.querySelector('a[href="/knowledge/health"]')).toHaveTextContent("Salud");
     expect(nav.querySelector('a[href="/knowledge/sources"]')).toHaveTextContent("Fuentes");
-    expect(nav.querySelector('a[href="/knowledge/model"]')).toHaveTextContent("Modelo");
-    expect(nav.querySelector('a[href="/knowledge/quality"]')).toHaveTextContent("Calidad");
-    expect(nav.querySelector('a[href="/knowledge/evaluation"]')).toHaveTextContent(
-      "Evaluación"
+    expect(nav.querySelector('a[href="/knowledge/activity"]')).toHaveTextContent(
+      "Actividad"
     );
     expect(nav.querySelector('a[href="/knowledge/glossary"]')).toBeNull();
   });

@@ -82,7 +82,7 @@ Todo dato numérico dinámico: `tabular-nums` (ya aplicado a `.mono`, `.stat-val
 
 - **Dashboard**: un foco ("Pulso del workspace": estado 30px + servicios + cuota + pendientes) y métricas demotadas con `Metric size="md"` (22px). Nunca 6 tarjetas idénticas de KPI. Sin tendencias inventadas: si no hay dato de variación, no se dibuja flecha.
 - **Chat/Playground**: composer multilínea (Enter envía, Shift+Enter salto), estados operacionales con `.state-rail[data-state=running]` mientras corre, fuentes como evidencia (lista numerada + `Drawer` con fragmento completo y relevancia), SQL en `CodeBlock`, error con "Reintentar" que re-ejecuta sin duplicar el mensaje del usuario.
-- **Knowledge**: `Overview` = foco + 3 métricas + atención; listas densas en panel único con `state-rail` por estado real; el resto con `DataTable` (sorting controlado, `table-sticky`, loading/vacío/error) y `Pagination`/`ResultCount`. `SourceDetail` usa back + estado en `meta` + tabs.
+- **Knowledge**: `Home` = hero vivo (conteos + delta 24 h + salud interpretada) + Knowledge Pulse + Delta + Dominios + atención + actividad. `Explorador` = dominios → objetos → vista de objeto (relaciones, hechos, evidencia, historial, impacto). `Salud` = health explicable + conflictos/vacíos/problemas. `Fuentes` = biblioteca de origen. `Actividad` = feed humano + modo técnico. El pipeline (runs, stages, compilaciones) vive en Avanzado. Estados del backend SIEMPRE por `StatusBadge`.
 - Los estados del backend van SIEMPRE por `StatusBadge` (traduce + icono + tono). Si un estado no existe en `STATUS_META`, se agrega ahí en vez de improvisar por página.
 
 ## Proceso (lecciones)
@@ -101,6 +101,7 @@ Todo dato numérico dinámico: `tabular-nums` (ya aplicado a `.mono`, `.stat-val
 - **Activity rail** (`.state-rail[data-state=…]`): rail de 2px en filas/nodos/items cuyo estado es real (`queued · running · ready · warning · failed`). El color acompaña, nunca es el único indicador.
 - **Evidence-first chat**: las citas son tarjetas de evidencia inspeccionables en drawer de contexto, no links al pie.
 - **Learning orb** (`.kl-*`): órbitas de etapas reales del pipeline de conocimiento.
+- **Knowledge Pulse** (`.kh-pulse-*`): grafo de vecindario real (≤ 42 nodos, agregado por grado) donde cada nodo es un objeto canónico, cada línea una relación y cada pulso un evento real del feed. Sin actividad = sin animación. `prefers-reduced-motion` elimina pulsos y trazos.
 
 ## Componentes (medidas)
 

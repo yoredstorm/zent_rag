@@ -870,6 +870,13 @@ async def test_api_materialize_explore_and_verify(async_client) -> None:
     assert quality.status_code == 200
     assert "issues" in quality.json()
 
+    domains = await async_client.get("/api/v1/knowledge/domains", headers=auth)
+    assert domains.status_code == 200
+    domain_payload = domains.json()
+    assert domain_payload["domains"], "los dominios salen del modelo real"
+    assert "by_type" in domain_payload["domains"][0]
+    assert "edges" in domain_payload["domains"][0]
+
     graph = await async_client.get("/api/v1/knowledge/graph", headers=auth)
     assert graph.status_code == 200
     assert graph.json()["nodes"], "el grafo se deriva del modelo, no de un dataset paralelo"
@@ -1059,3 +1066,93 @@ async def _trial_auth(client) -> dict[str, str]:
         "Authorization": f"Bearer {data['api_token']}",
         "X-Organization-Id": data["organization_id"],
     }
+
+
+# ---------------------------------------------------------------------------
+# Knowledge Delta
+# ---------------------------------------------------------------------------
+
+
+class _FakeDeltaRepo:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def delta(
+        self,
+        organization_id,
+        *,
+        since,
+        until,
+        bucket: str = "hour",
+        enriched_limit: int = 20,
+    ) -> dict:
+        self.calls.append({"since": since, "until": until, "bucket": bucket})
+        return {
+            "objects": [
+                {"kind": "entity", "total": 3, "verified": 1},
+                {"kind": "business_rule", "total": 2, "verified": 0},
+            ],
+            "enriched": [
+                {
+                    "id": str(uuid4()),
+                    "type": "entity",
+                    "name": "Record 4",
+                    "updated_at": None,
+                    "created_at": None,
+                }
+            ],
+            "enriched_total": 1,
+            "facts": {"total": 5, "verified": 2, "conflicted": 1},
+            "relationships": {"total": 4, "physical": 1},
+            "evidence": 9,
+            "sources": 1,
+            "conflicts": {"resolved": 1, "detected": 2},
+            "by_domain": [{"domain": "ATPCO", "objects": 3}],
+            "timeline": [],
+        }
+
+
+async def test_delta_service_shapes_real_totals_and_rejects_bad_window() -> None:
+    """El delta agrega por tipo y ventana; una ventana inválida no inventa datos."""
+    from src.platform.knowledge_model.service import KnowledgeModelService
+
+    repo = _FakeDeltaRepo()
+    service = KnowledgeModelService(repo, materializer=None)
+    data = await service.delta(uuid4(), window="24h")
+    assert data["totals"]["objects"] == 5
+    assert data["totals"]["entities"] == 3
+    assert data["totals"]["rules"] == 2
+    assert data["totals"]["facts"] == 5
+    assert data["totals"]["relationships"] == 4
+    assert data["totals"]["evidence"] == 9
+    assert data["totals"]["conflicts_resolved"] == 1
+    assert data["bucket"] == "hour"
+    assert repo.calls[0]["bucket"] == "hour"
+
+    for bad_kwargs in ({"window": "custom"}, {"window": "nope"}):
+        try:
+            await service.delta(uuid4(), **bad_kwargs)
+        except ValueError:
+            continue
+        raise AssertionError(f"{bad_kwargs} debía fallar")
+
+
+async def test_delta_api_validates_and_returns_window(async_client) -> None:
+    auth = await _trial_auth(async_client)
+    ok = await async_client.get("/api/v1/knowledge/delta?window=24h", headers=auth)
+    assert ok.status_code == 200, ok.text
+    body = ok.json()
+    assert body["window"] == "24h"
+    assert "totals" in body
+    assert "timeline" in body
+    assert "enriched" in body
+
+    custom = await async_client.get(
+        "/api/v1/knowledge/delta?window=custom", headers=auth
+    )
+    assert custom.status_code == 400
+    detail = custom.json().get("detail", custom.json())
+    assert detail["error_code"] == "knowledge_delta_invalid_window"
+
+    bad = await async_client.get("/api/v1/knowledge/delta?window=1y", headers=auth)
+    assert bad.status_code == 422

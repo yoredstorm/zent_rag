@@ -45,6 +45,64 @@ const DOCUMENTS = {
   ],
 };
 
+const COMPILATIONS = {
+  items: [
+    {
+      id: "comp-1",
+      source_id: "src-1",
+      document_id: "doc-1",
+      kind: "document",
+      status: "completed",
+      counts: {
+        units: 10,
+        entities: 43,
+        entities_merged: 2,
+        facts: 68,
+        relationships: 19,
+        rules: 4,
+        conflicts: 1,
+        evidence: 91,
+      },
+      duration_ms: 1200,
+      error: null,
+      document_title: "Rec4_dapp_C.pdf",
+      started_at: LAST_SYNC,
+      finished_at: LAST_SYNC,
+    },
+  ],
+  total: 1,
+};
+
+const KNOWLEDGE_OBJECTS = {
+  items: [
+    {
+      id: "obj-1",
+      type: "concept",
+      name: "Record 4",
+      display_name: "Record 4",
+      description: null,
+      domain: "ATPCO",
+      status: "inferred",
+      provenance: "INFERRED",
+      confidence: 0.8,
+      confidence_label: "alta",
+      source_of_truth: null,
+      source_id: "src-1",
+      authority_level: null,
+      evidence_count: 3,
+      assertion_count: 2,
+      verified_at: null,
+      freshness_at: null,
+      last_seen_at: null,
+      metadata: {},
+      created_at: LAST_SYNC,
+      updated_at: LAST_SYNC,
+    },
+  ],
+  count: 1,
+  total: 1,
+};
+
 const TABULAR = {
   source_id: "src-1",
   workbooks: [
@@ -118,6 +176,10 @@ function stubApi() {
       );
     if (url.includes("/test-query") && method === "POST")
       return Promise.resolve(json(TEST_QUERY_RESULT));
+    if (url.includes("/api/v1/knowledge/compilations"))
+      return Promise.resolve(json(COMPILATIONS));
+    if (url.includes("/api/v1/knowledge/objects"))
+      return Promise.resolve(json(KNOWLEDGE_OBJECTS));
     if (url.includes("/documents")) return Promise.resolve(json(DOCUMENTS));
     if (url.includes("/knowledge-bases")) return Promise.resolve(json(KBS));
     if (url.includes("/api/v1/sources/src-1") && method === "PUT") {
@@ -270,5 +332,17 @@ describe("SourceDetailPage", () => {
         ),
       ).toBe(true);
     });
+  });
+
+  it("muestra qué aportó la fuente al conocimiento", async () => {
+    stubApi();
+    renderDetail();
+    await waitFor(() =>
+      expect(screen.getByTestId("source-knowledge-impact")).toBeInTheDocument()
+    );
+    expect(screen.getByText("43")).toBeInTheDocument();
+    expect(screen.getByText("68")).toBeInTheDocument();
+    expect(screen.getByText(/1 compilación/)).toBeInTheDocument();
+    expect(screen.getByText(/Record 4/)).toBeInTheDocument();
   });
 });

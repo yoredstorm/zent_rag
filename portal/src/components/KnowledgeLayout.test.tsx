@@ -22,24 +22,24 @@ describe("KnowledgeLayout", () => {
     const buttons = within(nav).getAllByRole("button");
     expect(links.length + buttons.length).toBeLessThanOrEqual(6);
     expect(links.map((el) => el.textContent)).toEqual([
-      "Resumen",
+      "Inicio",
+      "Explorador",
+      "Salud",
       "Fuentes",
-      "Modelo",
-      "Calidad",
-      "Evaluación",
+      "Actividad",
     ]);
     expect(within(nav).getByRole("button", { name: "Avanzado" })).toHaveAttribute(
       "aria-expanded",
       "false"
     );
     expect(within(nav).queryByRole("link", { name: "Aprendizaje" })).not.toBeInTheDocument();
-    expect(within(nav).queryByRole("link", { name: "Mapa" })).not.toBeInTheDocument();
+    expect(within(nav).queryByRole("link", { name: "Modelo" })).not.toBeInTheDocument();
   });
 
   it("marca el pilar activo por ruta", () => {
-    renderAt("/knowledge/model");
+    renderAt("/knowledge/health");
     const nav = screen.getByRole("navigation", { name: "Secciones de conocimiento" });
-    expect(within(nav).getByRole("link", { name: "Modelo" })).toHaveAttribute(
+    expect(within(nav).getByRole("link", { name: "Salud" })).toHaveAttribute(
       "aria-current",
       "page"
     );
