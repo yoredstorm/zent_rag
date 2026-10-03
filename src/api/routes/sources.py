@@ -102,9 +102,14 @@ async def _source_stats(organization_id: UUID, source_ids: list[UUID]) -> dict[U
             FROM kb_sources s
             LEFT JOIN source_sync_state st ON st.source_id = s.id
             LEFT JOIN (
-                SELECT source_id, COUNT(*)::int AS document_count
-                FROM source_documents
-                WHERE organization_id = :oid AND status = 'active'
+                SELECT source_id, COUNT(DISTINCT external_id)::int AS document_count
+                FROM (
+                    SELECT source_id, external_id FROM structured_documents
+                    WHERE organization_id = :oid_docs
+                    UNION ALL
+                    SELECT source_id, external_id FROM source_documents
+                    WHERE organization_id = :oid_reg AND status = 'active'
+                ) merged_docs
                 GROUP BY source_id
             ) docs ON docs.source_id = s.id
             LEFT JOIN (
@@ -123,6 +128,8 @@ async def _source_stats(organization_id: UUID, source_ids: list[UUID]) -> dict[U
                     "oid": organization_id,
                     "oid2": organization_id,
                     "oid3": organization_id,
+                    "oid_docs": organization_id,
+                    "oid_reg": organization_id,
                     "ids": source_ids,
                 },
             )
@@ -359,12 +366,30 @@ async def list_source_documents(
             await session.execute(
                 text(
                     "SELECT id, external_id, document_id, status, last_seen_at "
-                    "FROM source_documents "
-                    "WHERE organization_id = :oid AND source_id = :sid "
+                    "FROM ("
+                    "  SELECT r.id, r.external_id, r.document_id, r.status, r.last_seen_at "
+                    "  FROM source_documents r "
+                    "  WHERE r.organization_id = :oid AND r.source_id = :sid "
+                    "  UNION ALL "
+                    "  SELECT s.id, s.external_id, s.id AS document_id, s.status, "
+                    "         s.updated_at AS last_seen_at "
+                    "  FROM structured_documents s "
+                    "  WHERE s.organization_id = :oid2 AND s.source_id = :sid "
+                    "    AND NOT EXISTS ("
+                    "      SELECT 1 FROM source_documents r2 "
+                    "      WHERE r2.source_id = s.source_id "
+                    "        AND r2.external_id = s.external_id"
+                    "    )"
+                    ") docs "
                     "ORDER BY last_seen_at DESC "
                     "LIMIT :lim"
                 ),
-                {"oid": ctx.organization_id, "sid": sid, "lim": limit},
+                {
+                    "oid": ctx.organization_id,
+                    "oid2": ctx.organization_id,
+                    "sid": sid,
+                    "lim": limit,
+                },
             )
         ).fetchall()
     finally:

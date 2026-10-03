@@ -648,6 +648,33 @@ class KnowledgeIngestionEngine:
     # ------------------------------------------------------------------
     # Camino único: source -> StructuredDocument -> knowledge
     # ------------------------------------------------------------------
+    async def _register_document(self, source, document, external_id: str) -> None:
+        """Mantiene `source_documents` en sync con el árbol canónico.
+
+        El pipeline unificado persiste `structured_documents`; el registry
+        legacy alimenta el conteo de documentos de la UI (agent picker),
+        `/sources/{id}/documents` y el delete detection. Sin esta fila todo
+        documento aparece como "sin indexar". Best-effort: nunca frena.
+        """
+        registry = self._registry
+        if registry is None:
+            return
+        try:
+            await registry.upsert_document(
+                document.organization_id,
+                source.id,
+                external_id,
+                document.id,
+                document.content_hash,
+            )
+        except Exception as exc:  # noqa: BLE001 — el registry no es crítico
+            logger.warning(
+                "Document registry upsert failed",
+                source_id=str(source.id),
+                external_id=external_id,
+                error=str(exc)[:200],
+            )
+
     async def _ingest_record(
         self,
         job,
@@ -728,6 +755,7 @@ class KnowledgeIngestionEngine:
             await observer.set_stage(LearningStage.ORGANIZING.value)
 
         change_kind = await structured_repo.upsert_document(document)
+        await self._register_document(source, document, external_id)
         structured_external_ids.add(external_id)
         await self._emit_source_superseded(job, document, change_kind)
         if observer is not None:

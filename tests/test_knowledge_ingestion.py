@@ -261,6 +261,54 @@ async def test_engine_persists_structure_and_indexes_its_chunks(context) -> None
     assert v2_points[0][3]["chunk_id"]
     assert v2_points[0][3]["section_path"]
 
+    # Registry source_documents en sync: el agent picker y el delete detection
+    # leen document_count de aquí; sin fila, una fuente indexada aparece
+    # como "sin indexar".
+    from sqlalchemy import text as sql_text
+
+    from src.api.routes.sources import _source_stats
+    from src.infrastructure.postgres.session import get_async_session
+
+    session = await get_async_session()
+    try:
+        row = (
+            await session.execute(
+                sql_text(
+                    "SELECT status, document_id FROM source_documents "
+                    "WHERE source_id = :sid AND external_id = :ext"
+                ),
+                {"sid": context["source"].id, "ext": "manual.md"},
+            )
+        ).fetchone()
+    finally:
+        await session.close()
+    assert row is not None
+    assert row.status == "active"
+    assert row.document_id == doc.id
+
+    stats = await _source_stats(context["organization"].id, [context["source"].id])
+    assert stats[context["source"].id]["document_count"] == 1
+
+    # Compatibilidad hacia atrás: documentos ya persistidos en
+    # structured_documents sin fila de registry (ingeridos antes del fix)
+    # también cuentan para el agente.
+    from src.infrastructure.postgres.structured_documents import (
+        PostgresStructuredDocumentRepository,
+    )
+
+    await PostgresStructuredDocumentRepository().upsert_document(doc)
+    session = await get_async_session()
+    try:
+        await session.execute(
+            sql_text("DELETE FROM source_documents WHERE source_id = :sid"),
+            {"sid": context["source"].id},
+        )
+        await session.commit()
+    finally:
+        await session.close()
+    stats = await _source_stats(context["organization"].id, [context["source"].id])
+    assert stats[context["source"].id]["document_count"] == 1
+
 
 @pytest.mark.asyncio
 async def test_engine_sin_repo_estructurado_falla_el_job(context) -> None:
