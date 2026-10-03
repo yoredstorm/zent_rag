@@ -1,34 +1,32 @@
 // =============================================================================
-// LearningSessionView — "ZENT está aprendiendo tu negocio"
+// LearningSessionView — "ZENT está aprendiendo tu empresa"
 // =============================================================================
-// Composición de la experiencia de aprendizaje:
-//   - estado y etapas humanas (Leyendo → Aprendido)
-//   - Knowledge Pulse con contadores reales
-//   - "Qué está aprendiendo" (descubrimientos agrupados)
-//   - evolución por fuente (documentos y Excel)
-//   - grafo vivo de la sesión
-//   - resumen final con delta y antes/después
-//
-// Desktop: panel principal + columna viva. Mobile: estado, descubrimientos,
-// métricas, fuentes; el grafo queda como vista secundaria.
+// Live Learning: estado, etapas cognitivas, Knowledge Pulse central, hitos,
+// reencuentros con conocimiento existente, descubrimientos, fichas por fuente,
+// resumen final con delta y modo técnico. Todo desde eventos reales.
 // =============================================================================
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowLeft,
   Broadcast,
   CircleNotch,
   PlugsConnected,
+  Wrench,
   WarningCircle,
 } from "@phosphor-icons/react";
 
-import { ButtonLink } from "../ui/Button";
+import { Button, ButtonLink } from "../ui";
+import { CognitiveStages } from "./CognitiveStages";
 import { DiscoveryFeed } from "./DiscoveryFeed";
-import { KnowledgeGraphLive } from "./KnowledgeGraphLive";
-import { KnowledgePulse } from "./KnowledgePulse";
-import { LearningStages } from "./LearningStages";
+import { KnowledgeMatches } from "./KnowledgeMatches";
+import { LearningHero } from "./LearningHero";
+import { LearningMilestones } from "./LearningMilestones";
+import { LearningPulse } from "./LearningPulse";
 import { LearningSummary } from "./LearningSummary";
+import { LearningTechDrawer } from "./LearningTechDrawer";
 import { SourceEvolution } from "./SourceEvolution";
-import { stageLabel } from "./stages";
+import { deriveMatches, deriveMilestones } from "./learningInsights";
 import { useLearningSession } from "./useLearningSession";
 
 const STATUS_COPY: Record<string, { label: string; tone: string }> = {
@@ -45,6 +43,7 @@ const STATUS_COPY: Record<string, { label: string; tone: string }> = {
 export function LearningSessionView({ sessionId }: { sessionId: string }) {
   const {
     detail,
+    events,
     graph,
     metrics,
     delta,
@@ -55,6 +54,13 @@ export function LearningSessionView({ sessionId }: { sessionId: string }) {
     error,
     active,
   } = useLearningSession(sessionId);
+  const [techOpen, setTechOpen] = useState(false);
+
+  const milestones = useMemo(
+    () => deriveMilestones(events, detail),
+    [events, detail]
+  );
+  const matches = useMemo(() => deriveMatches(events), [events]);
 
   if (loading && !detail) {
     return (
@@ -86,6 +92,7 @@ export function LearningSessionView({ sessionId }: { sessionId: string }) {
   };
   const finished = ["completed", "partial"].includes(detail.status);
   const failed = detail.status === "failed";
+  const partial = detail.status === "partial" || detail.failed_sources > 0;
 
   return (
     <div className="ks-session" data-testid="learning-session">
@@ -95,7 +102,9 @@ export function LearningSessionView({ sessionId }: { sessionId: string }) {
             <ArrowLeft size={13} />
             Fuentes
           </Link>
-          <h1 className="text-h1 ks-title">{detail.title || "Aprendizaje de conocimiento"}</h1>
+          <h1 className="text-h1 ks-title">
+            {detail.title || "Aprendizaje de conocimiento"}
+          </h1>
           <div className="ks-head-meta">
             <span className={`badge ${status.tone}`}>{status.label}</span>
             <span className="ks-live" data-connected={connected}>
@@ -112,91 +121,108 @@ export function LearningSessionView({ sessionId }: { sessionId: string }) {
               )}
             </span>
             <span className="text-faint text-[12px]">
-              {detail.source_count} fuente{detail.source_count === 1 ? "" : "s"} ·{" "}
-              {detail.available_sources} disponible
-              {detail.available_sources === 1 ? "" : "s"} para consultar
+              {detail.source_count} fuente{detail.source_count === 1 ? "" : "s"}
             </span>
           </div>
         </div>
+        <Button
+          variant="secondary"
+          size="sm"
+          leadingIcon={Wrench}
+          onClick={() => setTechOpen(true)}
+        >
+          Ver detalles técnicos
+        </Button>
       </header>
 
-      {(detail.failed_sources > 0 || failed) && (
+      {partial && (
         <div className="ks-recovery" role="status">
           <WarningCircle size={16} weight="fill" className="text-warn" />
           <p>
             {failed
               ? "ZENT no pudo completar esta sesión."
-              : `ZENT tuvo un problema con ${detail.failed_sources} fuente${
-                  detail.failed_sources === 1 ? "" : "s"
-                }. Las demás continuaron procesándose y quedaron aprendidas.`}{" "}
+              : `ZENT aprendió ${detail.completed_sources} de ${detail.source_count} fuentes. ${detail.failed_sources} necesita${
+                  detail.failed_sources === 1 ? "" : "n"
+                } atención.`}{" "}
             <span className="text-muted">
-              Revisa el detalle en cada fuente para ver qué parte quedó parcialmente
-              aprendida.
+              El resto del conocimiento está disponible: revisa el detalle en cada
+              fuente para ver qué parte quedó parcialmente aprendida.
             </span>
           </p>
         </div>
       )}
 
-      <div className="ks-layout">
-        <div className="ks-block-pulse">
-          <KnowledgePulse
-            metrics={metrics}
-            sources={detail.sources}
-            stageLabel={stageLabel(stage)}
-            active={active}
+      <LearningHero
+        detail={detail}
+        metrics={metrics}
+        delta={delta}
+        active={active}
+        connected={connected}
+      />
+
+      <CognitiveStages
+        stages={detail.stages}
+        metrics={metrics}
+        current={stage}
+        finished={finished}
+      />
+
+      <div className="ks-live-grid">
+        <LearningPulse
+          graph={graph}
+          events={events}
+          active={active}
+          metrics={metrics}
+        />
+        <div className="ks-live-side">
+          <LearningMilestones milestones={milestones} />
+          <KnowledgeMatches
+            matches={matches.matches}
+            matched={matches.matched}
+            merged={matches.merged}
+            reinforced={delta.reinforced_facts ?? 0}
+            enriched={delta.enriched_entities ?? 0}
           />
         </div>
-
-        <div className="ks-main">
-          <section className="panel ks-stages-panel">
-            <LearningStages stages={detail.stages} current={stage} />
-          </section>
-
-          <section className="panel" data-testid="what-zent-is-learning">
-            <header className="panel-header">
-              <div>
-                <p className="eyebrow">Qué está aprendiendo</p>
-                <h2 className="text-h3">Descubrimientos</h2>
-              </div>
-            </header>
-            <div className="panel-body">
-              <DiscoveryFeed discoveries={discoveries} sources={detail.sources} />
-            </div>
-          </section>
-
-          <section className="panel" data-testid="session-sources">
-            <header className="panel-header">
-              <div>
-                <p className="eyebrow">Fuentes</p>
-                <h2 className="text-h3">
-                  Evolución del aprendizaje por fuente
-                </h2>
-              </div>
-            </header>
-            <div className="panel-body">
-              <SourceEvolution sources={detail.sources} />
-            </div>
-          </section>
-
-          {(finished || failed) && (
-            <LearningSummary detail={detail} delta={delta} />
-          )}
-        </div>
-
-        <div className="ks-block-graph">
-          <section className="panel" data-testid="session-graph-panel">
-            <header className="panel-header">
-              <div>
-                <p className="eyebrow">Knowledge Graph</p>
-                <h2 className="text-h3">Conexiones de esta sesión</h2>
-              </div>
-            </header>
-            <div className="panel-body">
-              <KnowledgeGraphLive graph={graph} active={active} />
-            </div>
-          </section>
-        </div>
       </div>
+
+      <div className="ks-live-grid is-two">
+        <section className="panel" data-testid="what-zent-is-learning">
+          <header className="panel-header">
+            <div className="min-w-0">
+              <p className="eyebrow">Qué está aprendiendo</p>
+              <h2 className="text-h3">Descubrimientos</h2>
+            </div>
+          </header>
+          <div className="panel-body">
+            <DiscoveryFeed discoveries={discoveries} sources={detail.sources} />
+          </div>
+        </section>
+
+        <section className="panel" data-testid="session-sources">
+          <header className="panel-header">
+            <div className="min-w-0">
+              <p className="eyebrow">Fuentes</p>
+              <h2 className="text-h3">Aprendizaje por archivo</h2>
+            </div>
+          </header>
+          <div className="panel-body">
+            <SourceEvolution sources={detail.sources} events={events} />
+          </div>
+        </section>
+      </div>
+
+      {(finished || failed) && (
+        <LearningSummary detail={detail} delta={delta} />
+      )}
+
+      <LearningTechDrawer
+        open={techOpen}
+        onOpenChange={setTechOpen}
+        detail={detail}
+        events={events}
+        metrics={metrics}
+      />
     </div>
   );
 }

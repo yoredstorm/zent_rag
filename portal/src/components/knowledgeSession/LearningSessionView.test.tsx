@@ -103,14 +103,15 @@ describe("LearningSessionView", () => {
     };
   });
 
-  it("compone estado, descubrimientos, fuentes, grafo y resumen final", () => {
+  it("compone estado, hitos, descubrimientos, fuentes, pulse y resumen final", () => {
     renderView();
     expect(screen.getByTestId("learning-session")).toBeInTheDocument();
+    expect(screen.getByTestId("learning-hero")).toBeInTheDocument();
     expect(screen.getByTestId("knowledge-pulse")).toBeInTheDocument();
     expect(screen.getByTestId("learning-stages")).toBeInTheDocument();
+    expect(screen.getByTestId("learning-milestones")).toBeInTheDocument();
     expect(screen.getByTestId("what-zent-is-learning")).toBeInTheDocument();
     expect(screen.getByTestId("session-sources")).toBeInTheDocument();
-    expect(screen.getByTestId("session-graph-panel")).toBeInTheDocument();
     expect(screen.getByTestId("learning-summary")).toBeInTheDocument();
     // La evolución de la fuente muestra hitos reales, no "100%".
     expect(screen.getByText(/27/)).toBeInTheDocument();
@@ -123,10 +124,10 @@ describe("LearningSessionView", () => {
       detail: detail({ status: "partial", failed_sources: 1 }),
     };
     renderView();
+    expect(screen.getByText(/1 necesita atención/)).toBeInTheDocument();
     expect(
-      screen.getByText(/ZENT tuvo un problema con 1 fuente/),
+      screen.getByText(/El resto del conocimiento está disponible/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Las demás continuaron procesándose/)).toBeInTheDocument();
     expect(screen.getAllByText("Aprendizaje parcial").length).toBeGreaterThan(0);
   });
 
@@ -140,7 +141,47 @@ describe("LearningSessionView", () => {
     };
     renderView();
     expect(screen.getByText("ZENT está aprendiendo")).toBeInTheDocument();
-    expect(screen.getByText("En vivo")).toBeInTheDocument();
+    expect(screen.getAllByText("En vivo").length).toBeGreaterThan(0);
     expect(screen.queryByTestId("learning-summary")).toBeNull();
+  });
+
+  it("muestra hitos y reencuentros cuando hay eventos reales", () => {
+    state.current = {
+      ...state.current,
+      detail: detail({ status: "learning", completed_sources: 3 }),
+      active: true,
+      events: [
+        {
+          seq: 1,
+          session_id: "sess-1",
+          source_id: "src-1",
+          event_type: "RELATIONSHIP_DISCOVERED",
+          stage: "connecting",
+          severity: "info",
+          message: "ZENT descubrió una relación",
+          payload: { subject: "Record 4", object: "Record 2", related: true },
+          aggregate: false,
+          created_at: new Date().toISOString(),
+        },
+        {
+          seq: 2,
+          session_id: "sess-1",
+          source_id: "src-1",
+          event_type: "ENTITY_MATCHED",
+          stage: "organizing",
+          severity: "info",
+          message: "ZENT reconoció una entidad que ya conocía: Record 4",
+          payload: { name: "Record 4", entity_type: "record" },
+          aggregate: false,
+          created_at: new Date().toISOString(),
+        },
+      ],
+    };
+    renderView();
+    expect(
+      screen.getByText(/ZENT conectó dos áreas que ya conocía/)
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("knowledge-matches")).toBeInTheDocument();
+    expect(screen.getByText("Record 4")).toBeInTheDocument();
   });
 });

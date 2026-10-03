@@ -186,6 +186,39 @@ vista de objeto con sus relaciones y evidencia. Reutiliza `/knowledge/search`.
 cómo empieza a construir conocimiento." + Knowledge Pulse inicial (sin
 partículas falsas: solo el contorno del sistema).
 
+### 5.9 Live Learning (ingesta)
+
+La carga de fuentes es una sesión observable (`/knowledge/sessions/:id`), no un
+uploader. Todo viene de eventos semánticos reales del Knowledge Compiler y del
+detalle durable de la sesión:
+
+- **Hero**: "ZENT está aprendiendo", fuentes comprendidas (19/25), contadores
+  reales (conceptos, hechos, relaciones, reglas, evidencias) y clasificación
+  viva Nuevo · Reforzado · Actualizado · Conectado · Conflicto · Ignorado.
+- **Etapas cognitivas** expandibles: Leyendo (parser), Comprendiendo (semantic
+  units), Organizando (entity resolution), Conectando (knowledge graph),
+  Verificando (evidence linking), Aprendido (indexes), con contadores reales.
+- **Knowledge Pulse central**: núcleo ZENT, nodos de la sesión (nuevos vs ya
+  conocidos), relaciones reales y pulsos por evento (ENTITY_DISCOVERED,
+  RELATIONSHIP_DISCOVERED, ENTITY_MERGED, FACT_REINFORCED, CONFLICT_DETECTED).
+  Pantalla completa disponible; sin actividad no hay animación.
+- **Momentos importantes**: solo hitos (conexiones entre áreas conocidas,
+  versiones nuevas, conflictos, consolidaciones, descubrimientos grandes).
+- **Conocimiento existente**: reencuentros reales (ENTITY_MATCHED / MERGED) con
+  contadores de refuerzo y enriquecimiento.
+- **Descubrimientos**: feed agrupado en lenguaje humano (los eventos de alta
+  frecuencia llegan con `payload.count` + muestras).
+- **Fichas por archivo**: checklist de etapas con conteos por fuente; Excel/CSV
+  con su estructura (hojas, tablas, columnas, filas, claves, relaciones) y las
+  tablas reconocidas, sin animar filas.
+- **Resumen final**: "ZENT aprendió esta información", delta, antes/ahora,
+  qué cambió y CTAs (explorar, preguntar, mapa, conflictos, fuentes).
+- **Modo técnico**: drawer con eventos crudos, contadores, jobs y
+  compilaciones. Disponibilidad parcial y errores por fuente sin detener la
+  sesión.
+- **Replay**: la sesión se reabre con su historial durable; el resumen y los
+  hitos se reconstruyen de los mismos eventos.
+
 ## 6. Design system de conocimiento
 
 Componentes nuevos (`portal/src/components/knowledge/`), construidos sobre
@@ -223,6 +256,8 @@ tipografía Geist/Geist Mono, `tabular-nums` en todo dato numérico.
 | Activity | `GET /api/v1/knowledge/activity` + `/learning/events` + `/compilations` |
 | Search | `GET /api/v1/knowledge/search` |
 | Fuentes | endpoints existentes de sources/documents/compilations |
+| Live Learning (sesión) | `GET/POST /api/v1/knowledge/sessions` + `/{id}` + `/{id}/events` + `/{id}/feed` + `/{id}/graph` + `/{id}/stream` (SSE) |
+| Modo técnico de sesión | eventos crudos + `GET /api/v1/knowledge/compilations` (filtrado por fuente) |
 
 Reglas de error: 503 tipado = estado de error con reintento; nunca ceros.
 

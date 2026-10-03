@@ -8,9 +8,13 @@
 import {
   ArrowsClockwise,
   CheckCircle,
+  ChatCircleDots,
   CopySimple,
+  Database,
   GitMerge,
+  Graph,
   LinkSimple,
+  MagnifyingGlass,
   PlusCircle,
   ShieldWarning,
   Sparkle,
@@ -21,6 +25,7 @@ import {
 import type { ReactNode } from "react";
 
 import type { LearningSessionDetail } from "../../lib/knowledgeSessions";
+import { ButtonLink } from "../ui/Button";
 import { AnimatedNumber } from "./KnowledgePulse";
 
 type CategoryKey =
@@ -261,6 +266,58 @@ export function LearningSummary({
           sin duplicar conocimiento.
         </p>
       )}
+
+      <div className="ks-changed" data-testid="learning-changed">
+        <p className="eyebrow">Qué cambió en el conocimiento</p>
+        <ul>
+          {[
+            {
+              label: "Conceptos nuevos",
+              value: (delta.new_entities ?? 0) + (delta.new_concepts ?? 0),
+            },
+            { label: "Conexiones nuevas", value: delta.new_relationships ?? 0 },
+            { label: "Reglas nuevas", value: delta.new_rules ?? 0 },
+            { label: "Conocimiento actualizado", value: delta.updated ?? 0 },
+            { label: "Conflictos detectados", value: delta.conflicts ?? 0 },
+            { label: "Fuentes integradas", value: detail.completed_sources },
+          ].map((row) => (
+            <li key={row.label}>
+              <span className="text-muted">{row.label}</span>
+              <span className="font-mono tabular-nums text-text">
+                <AnimatedNumber value={row.value} />
+              </span>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <div className="ks-summary-cta" data-testid="learning-cta">
+        <ButtonLink to="/knowledge/explorer" variant="primary" leadingIcon={MagnifyingGlass}>
+          Explorar lo aprendido
+        </ButtonLink>
+        <ButtonLink to="/chat" variant="secondary" leadingIcon={ChatCircleDots}>
+          Preguntar a ZENT
+        </ButtonLink>
+        <ButtonLink
+          to="/knowledge/explorer?view=graph"
+          variant="secondary"
+          leadingIcon={Graph}
+        >
+          Ver Knowledge Map
+        </ButtonLink>
+        {(delta.conflicts ?? 0) > 0 && (
+          <ButtonLink
+            to="/knowledge/health?tab=conflicts"
+            variant="secondary"
+            leadingIcon={WarningCircle}
+          >
+            Revisar conflictos
+          </ButtonLink>
+        )}
+        <ButtonLink to="/knowledge/sources" variant="ghost" leadingIcon={Database}>
+          Ver fuentes
+        </ButtonLink>
+      </div>
     </section>
   );
 }

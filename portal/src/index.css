@@ -3369,3 +3369,581 @@ button.kh-crumb:hover {
   outline: 2px solid var(--zent-accent);
   outline-offset: 2px;
 }
+
+/* ==========================================================================
+   Live Learning (ks- v2) — hero, etapas cognitivas, pulse, hitos, matches
+   ========================================================================== */
+
+.ks-hero {
+  display: grid;
+  gap: 20px;
+  padding: 20px;
+}
+@media (min-width: 1024px) {
+  .ks-hero {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+}
+.ks-hero-title {
+  margin-top: 8px;
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.12;
+  color: var(--zent-text);
+}
+.ks-hero-sub {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--zent-muted);
+}
+.ks-hero-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 16px;
+  max-width: 560px;
+}
+.ks-hero-bar {
+  display: block;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--zent-track);
+}
+.ks-hero-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--zent-accent);
+  transition: width var(--dur-5) var(--ease-out);
+}
+.ks-hero-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+@media (min-width: 640px) {
+  .ks-hero-metrics {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+.ks-hero-metrics > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--zent-border-soft);
+  border-radius: var(--radius-md, 10px);
+  background: color-mix(in srgb, var(--zent-raised) 60%, transparent);
+}
+.ks-hero-metrics dt {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--zent-faint);
+}
+.ks-hero-metrics dd {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--zent-text);
+}
+.ks-hero-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--zent-border-soft);
+  border-radius: var(--radius-lg, 12px);
+  background: color-mix(in srgb, var(--zent-raised) 55%, transparent);
+}
+.ks-hero-available {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--zent-muted);
+}
+.ks-taxonomy-live {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.ks-taxonomy-live-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  border: 1px solid var(--zent-border-soft);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--zent-surface);
+}
+.ks-taxonomy-live-label {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--zent-faint);
+}
+.ks-taxonomy-live-value {
+  font-family: var(--font-mono, monospace);
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------ etapas cognitivas */
+.ks-cog-stages {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ks-cog-stage {
+  border-bottom: 1px solid var(--zent-border-soft);
+}
+.ks-cog-stage:last-child {
+  border-bottom: 0;
+}
+.ks-cog-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 4px;
+  text-align: left;
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+}
+.ks-cog-label {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--zent-text);
+}
+.ks-cog-stage[data-state="pending"] .ks-cog-label {
+  color: var(--zent-faint);
+}
+.ks-cog-detail {
+  padding: 2px 4px 12px 27px;
+}
+.ks-cog-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ks-cog-items li {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 12px;
+}
+
+/* ------------------------------------------------ learning pulse */
+.ks-learning-pulse {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.ks-learning-pulse.is-fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal, 50);
+  margin: 0;
+  border-radius: 0;
+  background: var(--zent-bg);
+}
+.ks-learning-pulse.is-fullscreen .ks-pulse-canvas {
+  flex: 1;
+}
+.ks-learning-pulse.is-fullscreen .ks-pulse-svg {
+  height: 100%;
+  min-height: 60vh;
+}
+.ks-pulse-canvas {
+  position: relative;
+  min-height: 300px;
+  background:
+    radial-gradient(circle at 50% 48%, color-mix(in srgb, var(--zent-accent) 6%, transparent), transparent 62%);
+}
+.ks-pulse-svg {
+  display: block;
+  width: 100%;
+  height: 320px;
+}
+.ks-pulse-core-halo {
+  fill: var(--zent-accent-soft);
+}
+.ks-pulse-core {
+  fill: var(--zent-accent);
+}
+.ks-pulse-core-label {
+  font-size: 2.6px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  fill: var(--zent-muted);
+}
+.ks-pulse-edge {
+  stroke: var(--zent-border-strong);
+  stroke-width: 0.18;
+}
+.ks-pulse-edge.is-new {
+  stroke: var(--zent-accent);
+  stroke-dasharray: 4;
+  animation: ks-edge-draw 0.6s var(--ease-out) both;
+}
+.ks-pulse-node {
+  cursor: pointer;
+  outline: none;
+}
+.ks-pulse-node .ks-pulse-node-dot {
+  fill: var(--zent-accent);
+  stroke: color-mix(in srgb, var(--zent-bg) 70%, transparent);
+  stroke-width: 0.3;
+}
+.ks-pulse-node.is-known .ks-pulse-node-dot {
+  fill: var(--zent-surface);
+  stroke: var(--zent-info);
+  stroke-width: 0.5;
+}
+.ks-pulse-node:hover .ks-pulse-node-dot,
+.ks-pulse-node.is-selected .ks-pulse-node-dot {
+  stroke: var(--zent-text);
+  stroke-width: 0.6;
+}
+.ks-pulse-node:focus-visible .ks-pulse-node-dot {
+  stroke: var(--zent-text);
+  stroke-width: 0.7;
+}
+.ks-pulse-node.is-new .ks-pulse-node-dot {
+  animation: ks-node-pop 0.42s var(--ease-swift, cubic-bezier(0.22, 1, 0.36, 1)) both;
+}
+.ks-pulse-ring {
+  fill: none;
+  stroke: var(--zent-accent);
+  stroke-width: 0.3;
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: ks-ring 1.5s var(--ease-out) both;
+  pointer-events: none;
+}
+.ks-pulse-ring.is-info {
+  stroke: var(--zent-info);
+}
+.ks-pulse-ring.is-warn {
+  stroke: var(--zent-warn);
+}
+.ks-pulse-ring.is-ok {
+  stroke: var(--zent-ok);
+}
+@keyframes ks-ring {
+  from {
+    opacity: 0.7;
+    transform: scale(0.5);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2.6);
+  }
+}
+.ks-pulse-detail {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--zent-border);
+  background: color-mix(in srgb, var(--zent-raised) 60%, transparent);
+}
+.ks-pulse-empty-copy {
+  position: absolute;
+  inset: auto 24px 16px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--zent-faint);
+}
+
+/* ------------------------------------------------ hitos */
+.ks-milestones {
+  overflow: hidden;
+}
+.ks-milestone-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ks-milestone {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--zent-border-soft);
+}
+.ks-milestone:last-child {
+  border-bottom: 0;
+}
+.ks-milestone.is-accent {
+  border-left: 2px solid var(--zent-accent);
+}
+.ks-milestone.is-info {
+  border-left: 2px solid var(--zent-info);
+}
+.ks-milestone.is-warn {
+  border-left: 2px solid var(--zent-warn);
+}
+.ks-milestone.is-ok {
+  border-left: 2px solid var(--zent-ok);
+}
+.ks-milestone-icon {
+  margin-top: 1px;
+}
+.ks-milestone-kind {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--zent-faint);
+}
+.ks-milestone-title {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--zent-text);
+}
+.ks-milestone-detail {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--zent-muted);
+}
+.ks-milestone-time {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--zent-faint);
+}
+
+/* ------------------------------------------------ matches */
+.ks-matches {
+  overflow: hidden;
+}
+.ks-match-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ks-match {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--zent-border-soft);
+  border-radius: var(--radius-sm, 8px);
+  background: color-mix(in srgb, var(--zent-raised) 50%, transparent);
+}
+.ks-match-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+/* ------------------------------------------------ fichas de fuente */
+.ks-stage-checks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+@media (min-width: 900px) {
+  .ks-stage-checks {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.ks-stage-check {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+}
+.ks-stage-check[data-state="pending"] {
+  opacity: 0.55;
+}
+.ks-stage-check-icon {
+  display: inline-flex;
+  align-self: center;
+}
+.ks-stage-check-label {
+  color: var(--zent-text);
+}
+.ks-stage-check-detail {
+  color: var(--zent-faint);
+  font-size: 11px;
+}
+.ks-recognized {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.ks-recognized ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* ------------------------------------------------ layout vivo */
+.ks-live-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (min-width: 1180px) {
+  .ks-live-grid {
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  }
+  .ks-live-grid.is-two {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+}
+.ks-live-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* ------------------------------------------------ resumen */
+.ks-changed {
+  padding: 14px 18px 0;
+}
+.ks-changed ul {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 18px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+@media (min-width: 760px) {
+  .ks-changed ul {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.ks-changed li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--zent-border-soft);
+  font-size: 13px;
+}
+.ks-summary-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 16px 18px 18px;
+}
+
+/* ------------------------------------------------ modo técnico */
+.ks-tech-kv,
+.ks-tech-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 16px;
+  margin: 0;
+}
+.ks-tech-kv > div,
+.ks-tech-metrics > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--zent-border-soft);
+  padding: 4px 0;
+}
+.ks-tech-kv dt,
+.ks-tech-metrics dt {
+  font-size: 11px;
+  color: var(--zent-faint);
+}
+.ks-tech-kv dd,
+.ks-tech-metrics dd {
+  font-size: 12px;
+  color: var(--zent-text);
+}
+.ks-tech-events,
+.ks-tech-sources,
+.ks-tech-compilations,
+.ks-tech-raw {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ks-tech-events li,
+.ks-tech-sources li,
+.ks-tech-compilations li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--zent-border-soft);
+}
+.ks-tech-sources li,
+.ks-tech-compilations li {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+}
+.ks-tech-raw li details {
+  border-bottom: 1px solid var(--zent-border-soft);
+  padding: 4px 0;
+}
+.ks-tech-raw summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+}
+.ks-tech-raw pre {
+  margin: 6px 0 2px;
+  padding: 8px;
+  overflow-x: auto;
+  border-radius: var(--radius-sm, 8px);
+  background: var(--zent-code-bg);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--zent-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ks-pulse-edge.is-new,
+  .ks-pulse-node.is-new .ks-pulse-node-dot,
+  .ks-pulse-ring {
+    animation: none !important;
+  }
+  .ks-pulse-ring {
+    opacity: 0.4;
+  }
+}

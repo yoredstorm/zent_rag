@@ -40,6 +40,9 @@ const EVENT_METRIC: Record<string, string> = {
   CONFLICT_DETECTED: "conflicts",
   DUPLICATE_DETECTED: "duplicates",
   TABLE_DETECTED: "tables",
+  INDEX_UPDATED: "chunks",
+  KNOWLEDGE_OBJECT_CREATED: "knowledge_objects",
+  TEMPORAL_RANGE_DISCOVERED: "temporal_ranges",
 };
 
 export interface LearningSessionState {
@@ -338,7 +341,26 @@ export function useLearningSession(
   }, [sessionId, includeGraph]);
 
   // ---------------------------------------------------------- derivaciones
-  const metrics = useMemo(() => deriveMetrics(events), [events]);
+  // Los contadores del servidor son la verdad durable; los derivados de
+  // eventos son la verdad viva. Se toma el mayor por clave (nunca se infla:
+  // ambos cuentan exactamente los mismos eventos y convergen).
+  const metrics = useMemo(() => {
+    const derived = deriveMetrics(events);
+    const server = (detail?.metrics ?? {}) as Record<string, unknown>;
+    const merged: Record<string, number> = { ...derived };
+    for (const [key, value] of Object.entries(server)) {
+      const numeric = Number(value);
+      if (Number.isFinite(numeric)) {
+        merged[key] = Math.max(merged[key] ?? 0, numeric);
+      }
+    }
+    merged.sources = Math.max(merged.sources ?? 0, detail?.source_count ?? 0);
+    merged.sources_available = Math.max(
+      merged.sources_available ?? 0,
+      detail?.available_sources ?? 0
+    );
+    return merged;
+  }, [events, detail?.metrics, detail?.source_count, detail?.available_sources]);
 
   const derivedDelta = useMemo(() => deriveDelta(events), [events]);
 
@@ -369,12 +391,14 @@ export function useLearningSession(
       const index = order.indexOf(String(value ?? ""));
       return index < 0 ? -1 : index;
     };
+    // La etapa del servidor manda; el último evento solo cubre sesiones sin
+    // etapa persistida. Un evento de fuente ya terminada no adelanta la sesión.
     const serverStage = stageOf(detail?.stage);
+    if (serverStage >= 0) return order[serverStage];
     const lastEventStage = events.length
       ? stageOf(events[events.length - 1].stage)
       : -1;
-    const pick = Math.max(serverStage, lastEventStage, 0);
-    return order[pick];
+    return order[Math.max(0, lastEventStage)];
   }, [detail?.stage, events]);
 
   const lastEventAt = events.length

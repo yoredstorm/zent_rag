@@ -1,15 +1,16 @@
 // =============================================================================
-// SourceEvolution — cada fuente muestra lo que ZENT realmente comprendió
+// SourceEvolution — cada archivo muestra su propio aprendizaje
 // =============================================================================
-// Nunca "100% completado": se listan hitos verificables (leído, estructura,
-// páginas, entidades, hechos, relaciones, evidencias, conocimiento integrado).
-// Excel/CSV tiene su propia representación: hoja -> tablas -> columnas ->
-// relaciones, sin intentar pintar 13.000 filas.
+// Leyendo · Comprendiendo · Organizando · Conectando · Verificando · Aprendido
+// con los conteos reales que produjo cada fuente. Excel/CSV tiene su propia
+// representación (hojas, tablas, columnas, filas, claves) y las tablas que
+// ZENT reconoció, sin pintar filas individuales.
 // =============================================================================
 import { useMemo, useState } from "react";
 import {
   CaretDown,
   CheckCircle,
+  Circle,
   CircleNotch,
   FileText,
   Table,
@@ -17,7 +18,8 @@ import {
 } from "@phosphor-icons/react";
 
 import { timeAgo } from "../../lib/format";
-import type { SessionSource } from "../../lib/knowledgeSessions";
+import type { SessionEvent, SessionSource } from "../../lib/knowledgeSessions";
+import { deriveRecognizedTables } from "./learningInsights";
 
 const STATUS_COPY: Record<string, string> = {
   pending: "En espera",
@@ -27,26 +29,101 @@ const STATUS_COPY: Record<string, string> = {
   failed: "Quedó parcialmente aprendida",
 };
 
-function Stat({ value, label }: { value: number; label: string }) {
+const STAGE_ORDER = [
+  "reading",
+  "understanding",
+  "organizing",
+  "connecting",
+  "verifying",
+  "learned",
+];
+
+const STAGE_LABELS: Record<string, string> = {
+  reading: "Leyendo",
+  understanding: "Comprendiendo",
+  organizing: "Organizando",
+  connecting: "Conectando",
+  verifying: "Verificando",
+  learned: "Aprendido",
+};
+
+const STAGE_STATS: Record<string, Array<[string, string]>> = {
+  reading: [
+    ["pages", "páginas"],
+    ["sections", "secciones"],
+    ["records", "registros"],
+  ],
+  understanding: [["semantic_units", "unidades"]],
+  organizing: [
+    ["entities", "conceptos"],
+    ["tables", "tablas"],
+    ["columns", "columnas"],
+  ],
+  connecting: [
+    ["relationships", "relaciones"],
+    ["merges", "fusiones"],
+  ],
+  verifying: [
+    ["evidence", "evidencias"],
+    ["conflicts", "conflictos"],
+    ["duplicates", "duplicados"],
+  ],
+  learned: [["knowledge_objects", "objetos"]],
+};
+
+function StageChecklist({ source }: { source: SessionSource }) {
+  const stats = source.stats ?? {};
+  const status = source.status;
+  const currentIndex = STAGE_ORDER.indexOf(source.stage);
+  const done = status === "completed";
   return (
-    <li>
-      <span className="ks-check" aria-hidden>
-        <CheckCircle size={13} weight="fill" />
-      </span>
-      <span className="text-[13px] text-text">
-        <span className="font-mono tabular-nums">{value.toLocaleString("es-PE")}</span>{" "}
-        {label}
-      </span>
-    </li>
+    <ol className="ks-stage-checks" aria-label={`Etapas de ${source.name}`}>
+      {STAGE_ORDER.map((stage, index) => {
+        const state = done
+          ? "done"
+          : index < currentIndex
+            ? "done"
+            : index === currentIndex
+              ? "current"
+              : "pending";
+        const details = (STAGE_STATS[stage] ?? [])
+          .map(([key, label]) => {
+            const value = Number(stats[key] ?? 0);
+            return value > 0
+              ? `${value.toLocaleString("es-PE")} ${label}`
+              : null;
+          })
+          .filter(Boolean) as string[];
+        return (
+          <li key={stage} className="ks-stage-check" data-state={state}>
+            <span className="ks-stage-check-icon" aria-hidden>
+              {state === "done" ? (
+                <CheckCircle size={13} weight="fill" className="text-ok" />
+              ) : state === "current" ? (
+                <CircleNotch size={13} className="ks-spin text-accent" />
+              ) : (
+                <Circle size={13} className="text-faint" />
+              )}
+            </span>
+            <span className="ks-stage-check-label">{STAGE_LABELS[stage]}</span>
+            {details.length > 0 && (
+              <span className="ks-stage-check-detail">{details.join(" · ")}</span>
+            )}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
 function TabularSpine({ stats }: { stats: Record<string, number> }) {
   const nodes = [
-    { key: "sheets", label: "hojas", icon: <Table size={13} /> },
-    { key: "tables", label: "tablas", icon: <Table size={13} /> },
-    { key: "columns", label: "columnas", icon: <Table size={13} /> },
-    { key: "table_relations", label: "relaciones", icon: <Table size={13} /> },
+    { key: "sheets", label: "hojas" },
+    { key: "tables", label: "tablas" },
+    { key: "columns", label: "columnas" },
+    { key: "rows", label: "filas" },
+    { key: "candidate_keys", label: "claves candidatas" },
+    { key: "table_relations", label: "relaciones entre tablas" },
   ].filter((node) => (stats[node.key] ?? 0) > 0);
   if (nodes.length === 0) return null;
   return (
@@ -54,7 +131,7 @@ function TabularSpine({ stats }: { stats: Record<string, number> }) {
       {nodes.map((node) => (
         <li key={node.key} className="ks-spine-item">
           <span className="ks-spine-icon" aria-hidden>
-            {node.icon}
+            <Table size={13} />
           </span>
           <span className="ks-spine-label">{node.label}</span>
           <span className="ks-spine-value font-mono tabular-nums">
@@ -66,7 +143,13 @@ function TabularSpine({ stats }: { stats: Record<string, number> }) {
   );
 }
 
-export function SourceEvolution({ sources }: { sources: SessionSource[] }) {
+export function SourceEvolution({
+  sources,
+  events = [],
+}: {
+  sources: SessionSource[];
+  events?: SessionEvent[];
+}) {
   const [open, setOpen] = useState<string | null>(null);
   const ordered = useMemo(() => sources, [sources]);
 
@@ -75,11 +158,13 @@ export function SourceEvolution({ sources }: { sources: SessionSource[] }) {
       {ordered.map((source) => {
         const stats = source.stats ?? {};
         const isTabular =
-          ["excel", "csv"].includes(source.source_type) ||
-          (stats.sheets ?? 0) > 0;
+          ["excel", "csv"].includes(source.source_type) || (stats.sheets ?? 0) > 0;
         const failed = source.status === "failed";
         const done = source.status === "completed";
         const working = source.status === "learning" || source.status === "pending";
+        const recognizedTables = isTabular
+          ? deriveRecognizedTables(events, source.source_id)
+          : [];
         return (
           <li key={source.id} className="ks-source" data-status={source.status}>
             <button
@@ -132,29 +217,20 @@ export function SourceEvolution({ sources }: { sources: SessionSource[] }) {
 
             {(open === source.id || source.status === "completed") && (
               <div className="ks-source-body">
-                {isTabular ? (
-                  <TabularSpine stats={stats} />
-                ) : (
-                  <ul className="ks-checks">
-                    {stats.pages ? <Stat value={stats.pages} label="páginas analizadas" /> : null}
-                    {stats.sections ? (
-                      <Stat value={stats.sections} label="secciones comprendidas" />
-                    ) : null}
-                    {stats.tables ? <Stat value={stats.tables} label="tablas detectadas" /> : null}
-                  </ul>
+                {isTabular && <TabularSpine stats={stats} />}
+                {recognizedTables.length > 0 && (
+                  <div className="ks-recognized">
+                    <span className="text-[11px] text-faint">ZENT reconoció:</span>
+                    <ul>
+                      {recognizedTables.map((name) => (
+                        <li key={name} className="badge badge-muted">
+                          {name}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
-                <ul className="ks-checks">
-                  {stats.entities ? <Stat value={stats.entities} label="entidades" /> : null}
-                  {stats.facts ? <Stat value={stats.facts} label="hechos" /> : null}
-                  {stats.relationships ? (
-                    <Stat value={stats.relationships} label="relaciones" />
-                  ) : null}
-                  {stats.rules ? <Stat value={stats.rules} label="reglas" /> : null}
-                  {stats.evidence ? <Stat value={stats.evidence} label="evidencias" /> : null}
-                  {stats.ignored ? (
-                    <Stat value={stats.ignored} label="fragmentos duplicados consolidados" />
-                  ) : null}
-                </ul>
+                <StageChecklist source={source} />
                 {source.status !== "failed" && (
                   <p className="ks-source-status-line">
                     {done ? (

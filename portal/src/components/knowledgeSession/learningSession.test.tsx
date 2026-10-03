@@ -3,6 +3,7 @@
 // =============================================================================
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it } from "vitest";
 
 import type { LearningSessionDetail, SessionEvent } from "../../lib/knowledgeSessions";
@@ -178,28 +179,39 @@ describe("LearningSummary", () => {
     } as LearningSessionDetail;
 
     render(
-      <LearningSummary
-        detail={detail}
-        delta={{
-          new_entities: 412,
-          new_facts: 1842,
-          new_relationships: 763,
-          new_rules: 96,
-          new_evidence: 2418,
-          enriched_entities: 126,
-          reinforced_facts: 31,
-          duplicates: 7,
-          conflicts: 2,
-          updated: 0,
-          related: 0,
-          ignored: 0,
-        }}
-      />,
+      <MemoryRouter>
+        <LearningSummary
+          detail={detail}
+          delta={{
+            new_entities: 412,
+            new_facts: 1842,
+            new_relationships: 763,
+            new_rules: 96,
+            new_evidence: 2418,
+            enriched_entities: 126,
+            reinforced_facts: 31,
+            duplicates: 7,
+            conflicts: 2,
+            updated: 0,
+            related: 0,
+            ignored: 0,
+          }}
+        />
+      </MemoryRouter>
     );
     expect(screen.getByText("ZENT aprendió esta información")).toBeInTheDocument();
     const beforeAfter = screen.getByTestId("before-after");
     expect(within(beforeAfter).getByText("+412")).toBeInTheDocument();
     expect(within(beforeAfter).getByText(/\+1[.,]842/)).toBeInTheDocument();
     expect(screen.getByTestId("learning-taxonomy")).toBeInTheDocument();
+    expect(screen.getByTestId("learning-changed")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Explorar lo aprendido/ })).toHaveAttribute(
+      "href",
+      "/knowledge/explorer"
+    );
+    expect(screen.getByRole("link", { name: /Revisar conflictos/ })).toHaveAttribute(
+      "href",
+      "/knowledge/health?tab=conflicts"
+    );
   });
 });
