@@ -16,6 +16,10 @@
 # Compiler (`metadata->>'compiled_by' = 'knowledge_compiler'`), salvo
 # `knowledge_conflicts` y `knowledge_ingestion_quality`, que son íntegramente
 # de esta pipeline.
+#
+# La reingesta corre el pipeline corregido con la Semantic Reconstruction Layer
+# obligatoria (source -> adapter -> IR -> gate -> compiler): el conocimiento
+# viejo con artifacts nunca se conserva "por compatibilidad".
 # =============================================================================
 from __future__ import annotations
 

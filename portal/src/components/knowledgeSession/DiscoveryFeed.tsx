@@ -52,7 +52,14 @@ function EventIcon({ type, severity }: { type: string; severity: string }) {
     case "TABLE_DETECTED":
       return <Table size={15} weight="bold" className="text-muted" />;
     case "STRUCTURE_DISCOVERED":
+    case "SEMANTIC_RECONSTRUCTED":
       return <TreeStructure size={15} weight="bold" className="text-muted" />;
+    case "CONTINUATIONS_MERGED":
+      return <LinkSimple size={15} weight="bold" className="text-accent" />;
+    case "FRAGMENTS_REJECTED":
+      return <WarningCircle size={15} weight="bold" className="text-warn" />;
+    case "SCHEMAS_INFERRED":
+      return <Table size={15} weight="bold" className="text-info" />;
     case "KNOWLEDGE_OBJECT_CREATED":
       return <Cube size={15} weight="fill" className="text-accent" />;
     case "KNOWLEDGE_READY":
@@ -101,6 +108,8 @@ function detailRows(item: Discovery): Array<[string, string]> {
   push("Valor A", read("value_a"));
   push("Valor B", read("value_b"));
   push("Páginas", read("pages"));
+  push("Bloques", read("raw_blocks"));
+  push("Reconstruidas", read("reconstructed"));
   push("Tablas", read("tables"));
   push("Filas", read("rows"));
   push("Columnas", read("columns"));

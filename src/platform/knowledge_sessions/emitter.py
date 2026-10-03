@@ -39,6 +39,10 @@ _HEARTBEAT_SECONDS = 15
 # Métrica del Pulse que incrementa cada tipo de evento.
 _EVENT_METRICS: dict[str, str] = {
     SessionEventType.SEMANTIC_UNIT_CREATED.value: "semantic_units",
+    SessionEventType.SEMANTIC_RECONSTRUCTED.value: "reconstruction_sources",
+    SessionEventType.CONTINUATIONS_MERGED.value: "merged_continuations",
+    SessionEventType.FRAGMENTS_REJECTED.value: "fragments_rejected",
+    SessionEventType.SCHEMAS_INFERRED.value: "schemas_inferred",
     SessionEventType.ENTITY_DISCOVERED.value: "entities_new",
     SessionEventType.ENTITY_MATCHED.value: "entities_enriched",
     SessionEventType.ENTITY_MERGED.value: "merges",

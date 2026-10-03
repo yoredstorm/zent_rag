@@ -104,6 +104,11 @@ def understand_document(
             min_confidence=float(_setting("TABLE_MERGE_MIN_CONFIDENCE", 0.65)),
         )
         current = attach_section_owners(current)
+    # Semantic Reconstruction Layer (obligatoria): estructura, continuidad y
+    # significado antes de que el Knowledge Compiler vea un solo bloque.
+    from src.knowledge.reconstruction import apply_semantic_reconstruction
+
+    current = apply_semantic_reconstruction(current)
     current, extracted = derive_document_semantics(current)
     if model_provider is not None:
         current, _ignored = _apply_model(current, extracted, model_provider, warnings)

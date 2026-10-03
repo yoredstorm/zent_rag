@@ -195,9 +195,15 @@ detalle durable de la sesión:
 - **Hero**: "ZENT está aprendiendo", fuentes comprendidas (19/25), contadores
   reales (conceptos, hechos, relaciones, reglas, evidencias) y clasificación
   viva Nuevo · Reforzado · Actualizado · Conectado · Conflicto · Ignorado.
-- **Etapas cognitivas** expandibles: Leyendo (parser), Comprendiendo (semantic
-  units), Organizando (entity resolution), Conectando (knowledge graph),
+- **Etapas cognitivas** expandibles: Leyendo (parser), Comprendiendo
+  (Semantic Reconstruction: estructura, continuidad y significado),
+  Organizando (entity resolution), Conectando (knowledge graph),
   Verificando (evidence linking), Aprendido (indexes), con contadores reales.
+- **Semantic Reconstruction visible**: "ZENT reconstruyó 18 bloques que estaban
+  divididos por el formato original", "Detectó 12 tablas", "Reconoció la
+  estructura de 3 hojas de cálculo", "Descartó 7 fragmentos incompletos"
+  (eventos `SEMANTIC_RECONSTRUCTED`, `CONTINUATIONS_MERGED`,
+  `FRAGMENTS_REJECTED`, `SCHEMAS_INFERRED`).
 - **Knowledge Pulse central**: núcleo ZENT, nodos de la sesión (nuevos vs ya
   conocidos), relaciones reales y pulsos por evento (ENTITY_DISCOVERED,
   RELATIONSHIP_DISCOVERED, ENTITY_MERGED, FACT_REINFORCED, CONFLICT_DETECTED).

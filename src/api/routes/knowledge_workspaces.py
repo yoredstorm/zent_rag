@@ -146,6 +146,24 @@ def _public_structured_document(row: dict) -> dict:
         trimmed = dict(understanding)
         trimmed.pop("views", None)
         meta["understanding"] = trimmed
+    reconstruction = meta.get("semantic_reconstruction")
+    if isinstance(reconstruction, dict):
+        # En listas solo el resumen: la IR completa se consulta en el detalle.
+        meta["semantic_reconstruction"] = {
+            key: reconstruction.get(key)
+            for key in (
+                "schema_version",
+                "pipeline",
+                "source_kind",
+                "adapter",
+                "status",
+                "stats",
+                "quality",
+                "llm",
+                "elapsed_ms",
+                "warnings",
+            )
+        }
     published = dict(row)
     published["metadata"] = meta
     published["understanding"] = public_understanding(meta)
@@ -159,6 +177,7 @@ def _public_structured_document(row: dict) -> dict:
 async def document_understanding(
     corpus_id: UUID, source_id: UUID, document_id: UUID, request: Request
 ) -> dict:
+    from src.knowledge.reconstruction import tech_view_from_metadata
     from src.knowledge.understanding import public_understanding, understanding_views
     from src.platform.rbac.policy import require_permission
 
@@ -175,6 +194,7 @@ async def document_understanding(
         "document_id": str(document_id),
         "understanding": public_understanding(row.get("metadata")),
         "views": understanding_views(row.get("metadata")),
+        "reconstruction": tech_view_from_metadata(row.get("metadata")),
     }
 
 

@@ -71,6 +71,12 @@ class KnowledgeCompiler:
         estructura suficiente no llega a entidad, alias ni hecho.
         """
         quality = QualityCollector()
+        # Puerta obligatoria: Semantic Reconstruction corre ANTES de extraer
+        # unidades. Si el documento llegó crudo (test, conector directo), se
+        # reconstruye aquí determinísticamente; nunca se compila texto crudo.
+        from src.knowledge.reconstruction import ensure_reconstruction
+
+        document, reconstruction_issues = ensure_reconstruction(document)
         units = extract.extract_semantic_units(document, quality=quality)
         units.extend(extract.extract_tabular_units(document.tabular, document=document))
 
@@ -131,6 +137,20 @@ class KnowledgeCompiler:
             )
             for item in quality.issues
         ]
+        # La cuarentena de Semantic Reconstruction entra como INGESTION_QUALITY:
+        # un problema de reconstrucción jamás será conflicto, gap ni canónico.
+        quality_issues.extend(
+            QualityIssue(
+                kind=str(item.get("kind") or "INGESTION_QUALITY"),
+                subject=str(item.get("subject") or "")[:300],
+                detail=item.get("detail") or {},
+                source_id=document.source_id,
+                document_id=document.id,
+                severity=str(item.get("severity") or "medium"),
+                confidence=item.get("confidence"),
+            )
+            for item in reconstruction_issues[:300]
+        )
 
         return CompilationResult(
             organization_id=document.organization_id,

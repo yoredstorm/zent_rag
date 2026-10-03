@@ -28,6 +28,7 @@ from src.knowledge.compiler.model import (
 )
 from src.knowledge.quality.fragments import TextQualityStatus, analyze_text_quality
 from src.knowledge.quality.ingestion import QualityCollector, QualityKind
+from src.knowledge.reconstruction.contracts import NON_KNOWLEDGE_STATUSES
 
 _MIN_TEXT = 2
 _MAX_UNITS_PER_DOCUMENT = 20_000
@@ -121,6 +122,22 @@ def _position_attributes(text: str) -> dict:
 def _understood_payload(document: StructuredDocument) -> dict:
     payload = document.metadata.get("understanding")
     return payload if isinstance(payload, dict) else {}
+
+
+def _rejected_terms(document: StructuredDocument) -> frozenset[str]:
+    """Términos que Semantic Reconstruction puso en cuarentena."""
+    payload = document.metadata.get("semantic_reconstruction")
+    if not isinstance(payload, dict):
+        return frozenset()
+    return frozenset(str(value) for value in payload.get("rejected_terms") or ())
+
+
+def _reconstruction_blocked(block) -> bool:
+    """Un bloque reconstruido como no-conocimiento no alimenta al compilador."""
+    if block.metadata.get("index_semantic") is False:
+        return True
+    status = str(block.metadata.get("reconstruction_status") or "")
+    return status in NON_KNOWLEDGE_STATUSES
 
 
 def _reference_corpus(document: StructuredDocument) -> tuple[str, ...]:
@@ -533,6 +550,8 @@ def extract_semantic_units(
             continue
         if block.metadata.get("chrome") or block.metadata.get("superseded"):
             continue
+        if _reconstruction_blocked(block):
+            continue
         kind = {
             "procedure": SemanticUnitKind.PROCEDURE_STEP.value,
             "note": SemanticUnitKind.NOTE.value,
@@ -696,6 +715,9 @@ def extract_semantic_units(
             )
         )
 
+    rejected = _rejected_terms(document)
+    if rejected:
+        units = [unit for unit in units if normalize_term(unit.label) not in rejected]
     return units
 
 
@@ -946,4 +968,10 @@ def extract_tabular_units(
                         ),
                     )
                 )
+    if document is not None:
+        rejected = _rejected_terms(document)
+        if rejected:
+            units = [
+                unit for unit in units if normalize_term(unit.label) not in rejected
+            ]
     return units

@@ -56,7 +56,38 @@ def describe(event_type: str, payload: dict | None = None) -> str:
         if rows:
             detail.append(f"{rows} registros")
         extra = f" ({', '.join(detail)})" if detail else ""
+        if name == "una tabla" and count > 1:
+            return f"ZENT detectó {count} tablas"
         return f"ZENT detectó la tabla {name}{extra}{suffix}"
+    if event_type == "SEMANTIC_RECONSTRUCTED":
+        raw_blocks = int(data.get("raw_blocks") or 0)
+        reconstructed = int(data.get("reconstructed") or 0)
+        if reconstructed:
+            return (
+                f"ZENT reconstruyó el significado de la fuente "
+                f"({reconstructed} unidades recompuestas de {raw_blocks} bloques)"
+            )
+        if raw_blocks:
+            return f"ZENT reconstruyó la estructura de {raw_blocks} bloques"
+        return "ZENT reconstruyó el significado de la fuente"
+    if event_type == "CONTINUATIONS_MERGED":
+        return (
+            f"ZENT reconstruyó {count} bloques que estaban divididos por el formato original"
+            if count > 1
+            else "ZENT reconstruyó un bloque dividido por el formato original"
+        )
+    if event_type == "FRAGMENTS_REJECTED":
+        return (
+            f"ZENT descartó {count} fragmentos incompletos"
+            if count > 1
+            else "ZENT descartó un fragmento incompleto"
+        )
+    if event_type == "SCHEMAS_INFERRED":
+        return (
+            f"ZENT reconoció la estructura de {count} tablas u hojas"
+            if count > 1
+            else "ZENT reconoció la estructura de una tabla u hoja"
+        )
     if event_type == "SEMANTIC_UNIT_CREATED":
         return f"ZENT creó {count} unidades semánticas" if count > 1 else "ZENT creó una unidad semántica"
     if event_type == "ENTITY_DISCOVERED":

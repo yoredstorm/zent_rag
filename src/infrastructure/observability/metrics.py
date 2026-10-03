@@ -601,6 +601,39 @@ knowledge_extraction_decisions_total = Counter(
     labelnames=["stage", "decision"],
 )
 
+# Semantic Reconstruction Layer (fuente heterogénea -> IR -> gate)
+knowledge_reconstruction_sources_total = Counter(
+    "knowledge_reconstruction_sources_total",
+    "Fuentes reconstruidas semánticamente por tipo y estado",
+    labelnames=["source_kind", "status"],
+)
+knowledge_reconstruction_seconds = Histogram(
+    "knowledge_reconstruction_seconds",
+    "Duración de la Semantic Reconstruction por fuente",
+    labelnames=["source_kind"],
+    buckets=_DU_BUCKETS,
+)
+knowledge_reconstruction_units_total = Counter(
+    "knowledge_reconstruction_units_total",
+    "Unidades semánticas por veredicto del gate",
+    labelnames=["status"],
+)
+knowledge_reconstruction_continuations_total = Counter(
+    "knowledge_reconstruction_continuations_total",
+    "Continuaciones detectadas (merged) y ambiguas",
+    labelnames=["kind"],
+)
+knowledge_reconstruction_fragments_total = Counter(
+    "knowledge_reconstruction_fragments_total",
+    "Fragmentos clasificados por el Fragment Detector",
+    labelnames=["status"],
+)
+knowledge_reconstruction_llm_calls_total = Counter(
+    "knowledge_reconstruction_llm_calls_total",
+    "Llamadas de escalamiento LLM (call) y reparaciones aplicadas (repair)",
+    labelnames=["outcome"],
+)
+
 
 # Decision Engine — low-cardinality labels only (no org/capability id).
 zent_decision_requests_total = Counter(

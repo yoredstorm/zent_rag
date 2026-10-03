@@ -18,7 +18,11 @@ evidencia y conflictos.
 RAW SOURCE
   -> Parsed Source            src/knowledge/structure/     (PDF, DOCX, HTML, XLSX, CSV, texto)
   -> Structural Model         src/core/domain/knowledge_v2 (StructuredDocument: pages/blocks/sections/tables)
-  -> Semantic Reconstruction  src/knowledge/understanding/reconstruct.py (wrap + dehyphenation)
+  -> Source Adapter           src/knowledge/reconstruction/adapters/ (PDF, DOCX, texto, Excel, CSV, JSON, XML, DB, API, eventos)
+  -> Raw Extraction
+  -> Semantic Reconstruction src/knowledge/reconstruction/ (continuidad, fragment detector, gate)
+  -> Semantic IR              metadata["semantic_reconstruction"] (unidades, tablas, nodos, provenance)
+  -> Semantic Quality Gate    VALID/RECONSTRUCTED -> compilador; resto -> INGESTION_QUALITY
   -> Document Understanding   src/knowledge/understanding/ (layout, tablas, literales, semánticas, roles)
   -> Semantic Units           src/knowledge/compiler/extract.py
   -> Entities (+alias)        src/knowledge/compiler/entities.py
@@ -32,6 +36,11 @@ RAW SOURCE
   -> Evidence Links           evidence_ledger
   -> Canonical Knowledge      knowledge_model (assertions/edges/conflicts + /knowledge/*)
 ```
+
+La Semantic Reconstruction Layer es obligatoria y está documentada en
+`semantic-reconstruction-layer.md`: ningún documento entra al Knowledge
+Compiler sin pasar por su gate (`KnowledgeCompiler.build` llama a
+`ensure_reconstruction`).
 
 El compilador corre al terminar cada ingesta
 (`KnowledgeIngestionEngine._compile`), sin intervención humana. Recompilar es

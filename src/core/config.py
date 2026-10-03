@@ -667,6 +667,28 @@ class Settings(BaseSettings):
             "si el texto de esa unidad supera este presupuesto."
         ),
     )
+    SEMANTIC_RECONSTRUCTION_LLM_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Escala ambigüedad semántica real al LLM durante Semantic "
+            "Reconstruction. Deterministas y heurísticas corren siempre primero."
+        ),
+    )
+    SEMANTIC_RECONSTRUCTION_LLM_MODEL: str = Field(
+        default="",
+        description=(
+            "Modelo para desambiguar reconstrucción (vacío = modelo por defecto)."
+        ),
+    )
+    SEMANTIC_RECONSTRUCTION_LLM_MAX_CALLS: int = Field(
+        default=8,
+        ge=0,
+        le=64,
+        description=(
+            "Máximo de decisiones ambiguas consultadas al LLM por fuente. "
+            "El resto queda como INGESTION_QUALITY."
+        ),
+    )
     TABLE_MERGE_MIN_CONFIDENCE: float = Field(
         default=0.65,
         description=(

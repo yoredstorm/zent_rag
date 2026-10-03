@@ -332,6 +332,7 @@ class KnowledgeIngestionEngine:
         compiler: object | None = None,
         session_service: object | None = None,
         system_emitter: object | None = None,
+        reconstruction_provider: object | None = None,
     ) -> None:
         self._jobs = job_repo
         self._state = sync_state_repo
@@ -364,6 +365,9 @@ class KnowledgeIngestionEngine:
         # Independiente del observer de sesión y opcional: sin emisor, el
         # pipeline del compilador mantiene su comportamiento actual.
         self._system_emitter = system_emitter
+        # Semantic Reconstruction Layer: proveedor LLM opcional SOLO para
+        # ambigüedad semántica real (deterministas primero).
+        self._reconstruction_provider = reconstruction_provider
         self.documents_parsed = 0
         self.documents_failed = 0
         self.compilations_failed = 0
@@ -685,7 +689,7 @@ class KnowledgeIngestionEngine:
             record, job=job, source=source, external_id=external_id, filename=filename
         )
         document = await self._apply_document_understanding(
-            job, document, record.raw_data or b"", filename=filename
+            job, document, record.raw_data or b"", filename=filename, observer=observer
         )
         document.check_consistency()
 
@@ -966,11 +970,13 @@ class KnowledgeIngestionEngine:
                 )
 
     async def _apply_document_understanding(
-        self, job, document, raw_data: bytes, *, filename: str
+        self, job, document, raw_data: bytes, *, filename: str, observer=None
     ):
         """Entiende el documento antes de persistir, indexar y compilar.
 
         Determinista: OCR y modelo son providers opcionales (off por defecto).
+        Semantic Reconstruction es obligatoria y corre dentro del engine de
+        understanding; el LLM solo escala ambigüedad real si hay provider.
         """
         try:
             await self._jobs.update_job(job.id, progress=40)
@@ -982,6 +988,8 @@ class KnowledgeIngestionEngine:
             observe_understanding,
         )
 
+        if observer is not None:
+            await observer.set_stage(LearningStage.UNDERSTANDING.value)
         settings = _document_understanding_settings()
         understood = apply_understanding(
             document,
@@ -991,12 +999,102 @@ class KnowledgeIngestionEngine:
                 getattr(settings, "DOCUMENT_UNDERSTANDING_TABLES", True)
             ),
         )
+        understood = await self._escalate_reconstruction(understood, observer)
         try:
             await self._jobs.update_job(job.id, progress=70)
         except Exception:  # noqa: BLE001
             pass
         observe_understanding(job.organization_id, understood)
+        from src.knowledge.reconstruction import live_learning_messages, observe_reconstruction
+
+        observe_reconstruction(understood)
+        if observer is not None:
+            for message in live_learning_messages(understood):
+                await observer.event(
+                    message["event_type"],
+                    payload=message.get("payload"),
+                    message=message.get("message"),
+                )
         return understood
+
+    async def _escalate_reconstruction(self, document, observer=None):
+        """Escalamiento LLM de decisiones ambiguas. Best-effort."""
+        provider = self._reconstruction_provider
+        if provider is None:
+            return document
+        try:
+            from src.knowledge.reconstruction import (
+                ReconstructionUsage,
+                escalate_reconstruction,
+            )
+
+            settings = _document_understanding_settings()
+            usage = ReconstructionUsage(
+                model=str(getattr(settings, "SEMANTIC_RECONSTRUCTION_LLM_MODEL", "") or "") or None
+            )
+            document, usage = await escalate_reconstruction(
+                document,
+                provider,
+                usage=usage,
+                max_calls=int(
+                    getattr(settings, "SEMANTIC_RECONSTRUCTION_LLM_MAX_CALLS", 8) or 8
+                ),
+            )
+            if usage.calls:
+                await self._record_reconstruction_usage(document, usage)
+            if usage.calls and observer is not None:
+                await observer.event(
+                    "SEMANTIC_RECONSTRUCTED",
+                    payload={
+                        "llm_assisted": usage.repairs,
+                        "llm_calls": usage.calls,
+                        "llm_rejected": usage.rejected,
+                        "tokens": usage.total_tokens,
+                    },
+                    message="ZENT consultó el modelo solo para desambiguar fragmentos dudosos.",
+                )
+            return document
+        except Exception as exc:  # noqa: BLE001 — nunca frena la ingesta
+            logger.warning(
+                "Semantic reconstruction escalation failed",
+                document_id=str(getattr(document, "id", "")),
+                error=str(exc)[:300],
+            )
+            return document
+
+    async def _record_reconstruction_usage(self, document, usage) -> None:
+        """Costo real del escalamiento LLM (tokens + USD) en usage tracking."""
+        if self._usage_tracker is None or usage.calls <= 0:
+            return
+        try:
+            from src.platform.billing.pricing import estimate_cost
+
+            costo = float(
+                await estimate_cost(
+                    usage.model or "",
+                    usage.prompt_tokens,
+                    usage.completion_tokens,
+                )
+            )
+            await self._usage_tracker.record_llm_tokens(
+                document.organization_id,
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+                cost_usd=costo,
+                model=usage.model,
+                purpose="knowledge_reconstruction",
+                workspace_id=getattr(document, "workspace_id", None),
+                source_id=getattr(document, "source_id", None),
+                metadata={
+                    "calls": usage.calls,
+                    "repairs": usage.repairs,
+                    "rejected": usage.rejected,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — el metering nunca rompe la ingesta
+            logger.debug(
+                "reconstruction usage not recorded", error=str(exc)[:160]
+            )
 
     @staticmethod
     def _chunking_policy_key(config) -> str:

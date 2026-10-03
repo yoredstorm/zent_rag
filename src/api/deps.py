@@ -445,6 +445,17 @@ def get_knowledge_engine():
                 max_sections=settings.KNOWLEDGE_SUMMARY_MAX_SECTIONS,
             ),
         )
+        reconstruction_provider = None
+        if getattr(settings, "SEMANTIC_RECONSTRUCTION_LLM_ENABLED", False):
+            try:
+                from src.knowledge.reconstruction import LLMReconstructionProvider
+
+                reconstruction_provider = LLMReconstructionProvider(
+                    get_llm_provider(),
+                    model=settings.SEMANTIC_RECONSTRUCTION_LLM_MODEL or None,
+                )
+            except Exception:  # noqa: BLE001 — sin provider, solo determinista
+                reconstruction_provider = None
 
         _knowledge_engine = KnowledgeIngestionEngine(
             job_repo=get_job_repo(),
@@ -461,6 +472,7 @@ def get_knowledge_engine():
             company_discovery=_company_discovery_hook(settings),
             session_service=get_knowledge_session_service(),
             system_emitter=_knowledge_system_emitter(),
+            reconstruction_provider=reconstruction_provider,
         )
     return _knowledge_engine
 

@@ -46,7 +46,7 @@ la fuente `Rec2_Rules_dapp_C.pdf`:
 RAW SOURCE
   -> Parsed Source          pdf_parser: celdas reconstruidas desde palabras completas
   -> Structural Model       StructuredDocument
-  -> Semantic Reconstruction reflow_wrapped_blocks (wrap + dehyphenation)
+  -> Semantic Reconstruction src/knowledge/reconstruction/ (continuidad + fragment detector + gate; profundiza el reflow local)
   -> Document Understanding layout, tablas, literales, roles
   -> Semantic Units         extract.py + gate de calidad por etiqueta
   -> Fragment Quality       quality/fragments.py (determinista)

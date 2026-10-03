@@ -29,6 +29,10 @@ const MAX_EVENTS = 4000;
 // tipo de evento -> contador crudo (espejo de backend _EVENT_METRICS).
 const EVENT_METRIC: Record<string, string> = {
   SEMANTIC_UNIT_CREATED: "semantic_units",
+  SEMANTIC_RECONSTRUCTED: "reconstruction_sources",
+  CONTINUATIONS_MERGED: "merged_continuations",
+  FRAGMENTS_REJECTED: "fragments_rejected",
+  SCHEMAS_INFERRED: "schemas_inferred",
   ENTITY_DISCOVERED: "entities_new",
   ENTITY_MATCHED: "entities_enriched",
   ENTITY_MERGED: "merges",
