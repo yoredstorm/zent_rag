@@ -4,10 +4,14 @@ import {
   ClockCounterClockwise,
   Database,
   DotsThreeVertical,
+  DownloadSimple,
   Key,
+  LockKey,
+  PencilSimple,
   Receipt,
   Robot,
   SignOut,
+  Trash,
   UserMinus,
   UserPlus,
   UserSwitch,
@@ -15,7 +19,7 @@ import {
   WarningOctagon,
 } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { platformApi } from "../../api";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { Timeline, type TimelineItem } from "../../components/Timeline";
@@ -32,11 +36,15 @@ import {
   MetricGrid,
   Menu,
   MenuItem,
+  MenuSeparator,
+  Modal,
   PageHeader,
   Panel,
   PanelHeader,
+  PasswordInput,
   RecentActivity,
   RoleBadge,
+  Select,
   SkeletonBlock,
   StatusBadge,
   Tabs,
@@ -45,6 +53,7 @@ import {
   TabsTrigger,
   TenantHealthBadge,
   menuItemClass,
+  menuSeparatorClass,
   type Column,
 } from "../../components/ui";
 import { usePlatformAuth } from "../../platformAuth";
@@ -106,6 +115,41 @@ type TenantBilling = {
 type TenantKey = { id: string; name: string; prefix: string; scopes: string[]; is_active: boolean; last_used_at: string | null; expires_at: string | null; created_at: string | null };
 type AuditEntry = { actor_user_id: string | null; action: string; resource_type: string; resource_id: string | null; created_at: string | null; metadata: Record<string, unknown> };
 
+type PlanOption = {
+  id: string;
+  name: string;
+  display_name: string | null;
+  description: string | null;
+  is_trial: boolean;
+  price_monthly_cents: number | null;
+};
+
+type DeletePreview = {
+  organization: {
+    id: string;
+    name: string;
+    company_name: string | null;
+    email: string | null;
+    status: string;
+    created_at: string | null;
+    has_platform_admin: boolean;
+    protected: boolean;
+    protected_reason: string | null;
+  } | null;
+  tables: Record<string, number>;
+  tables_total: number;
+  truncated: boolean;
+  total_rows: number;
+  users: number;
+  memberships: number;
+  subscriptions: number;
+  qdrant_points: number | null;
+  managed_databases: string[];
+  managed_roles: string[];
+  uploads_bytes: number;
+  dsr_artifacts: number;
+};
+
 const TABS = ["Overview", "Timeline", "Users", "Agents", "Data Sources", "Costs", "Billing", "Security", "Audit"] as const;
 type Tab = (typeof TABS)[number];
 
@@ -113,6 +157,7 @@ const ACTIONS = ["pause", "suspend", "cancel", "reset"] as const;
 
 export default function AdminCustomerDetailPage() {
   const { orgId } = useParams();
+  const navigate = useNavigate();
   const { session } = usePlatformAuth();
   const [tab, setTab] = useState<Tab>("Overview");
   const [data, setData] = useState<Detail | null>(null);
@@ -137,10 +182,24 @@ export default function AdminCustomerDetailPage() {
     | { kind: "activate"; user: TenantUser }
     | { kind: "revoke-sessions"; user: TenantUser }
     | { kind: "password-reset"; user: TenantUser }
+    | { kind: "set-password"; user: TenantUser }
     | { kind: "impersonate"; user: TenantUser }
     | null
   >(null);
   const [resetToken, setResetToken] = useState<string | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [newPassword2, setNewPassword2] = useState("");
+  const [planOpen, setPlanOpen] = useState(false);
+  const [plans, setPlans] = useState<PlanOption[]>([]);
+  const [planName, setPlanName] = useState("");
+  const [planInterval, setPlanInterval] = useState<"monthly" | "annual">("monthly");
+  const [contactOpen, setContactOpen] = useState(false);
+  const [contactName, setContactName] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deletePreview, setDeletePreview] = useState<DeletePreview | null>(null);
+  const [deleteTyped, setDeleteTyped] = useState("");
+  const [deleteError, setDeleteError] = useState("");
 
   async function loadBase() {
     if (!session || !orgId) return;
@@ -333,6 +392,24 @@ export default function AdminCustomerDetailPage() {
           { method: "POST", token: session.token, body: "{}" }
         );
         setResetToken(out.reset_token);
+      } else if (userAction.kind === "set-password") {
+        if (newPassword.length < 8) {
+          throw new Error("La contraseña debe tener al menos 8 caracteres.");
+        }
+        if (newPassword !== newPassword2) {
+          throw new Error("Las contraseñas no coinciden.");
+        }
+        await platformApi(
+          `/api/v1/platform/organizations/${orgId}/users/${userAction.user.id}/password`,
+          {
+            method: "POST",
+            token: session.token,
+            body: JSON.stringify({ password: newPassword, revoke_sessions: true }),
+          }
+        );
+        setNewPassword("");
+        setNewPassword2("");
+        await loadTab("Users");
       } else if (userAction.kind === "impersonate") {
         setImpersonateConfirm(true);
         return;
@@ -383,11 +460,145 @@ export default function AdminCustomerDetailPage() {
     }
   }
 
+  async function openPlanDialog() {
+    if (!session || !orgId) return;
+    setPlanOpen(true);
+    setError("");
+    setPlanName(data?.plan || "");
+    if (plans.length === 0) {
+      try {
+        const out = await platformApi<{ plans: PlanOption[] }>("/api/v1/platform/plans", {
+          token: session.token,
+        });
+        setPlans(out.plans || []);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "No se pudieron cargar los planes");
+      }
+    }
+  }
+
+  async function savePlan() {
+    if (!session || !orgId || !planName) return;
+    setBusy("plan");
+    setError("");
+    try {
+      await platformApi(`/api/v1/platform/organizations/${orgId}/plan`, {
+        method: "POST",
+        token: session.token,
+        body: JSON.stringify({ plan_name: planName, billing_interval: planInterval }),
+      });
+      setPlanOpen(false);
+      await loadBase();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo cambiar el plan");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  function openContactDialog() {
+    setContactName(data?.company_name || data?.name || "");
+    setContactEmail(data?.email || "");
+    setError("");
+    setContactOpen(true);
+  }
+
+  async function saveContact() {
+    if (!session || !orgId) return;
+    setBusy("contact");
+    setError("");
+    try {
+      await platformApi(`/api/v1/platform/organizations/${orgId}`, {
+        method: "PATCH",
+        token: session.token,
+        body: JSON.stringify({ company_name: contactName, email: contactEmail }),
+      });
+      setContactOpen(false);
+      await loadBase();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo actualizar el contacto");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function openDeleteDialog() {
+    if (!session || !orgId) return;
+    setDeleteOpen(true);
+    setDeletePreview(null);
+    setDeleteTyped("");
+    setDeleteError("");
+    try {
+      const out = await platformApi<DeletePreview>(
+        `/api/v1/platform/organizations/${orgId}/deletion-preview`,
+        { token: session.token }
+      );
+      setDeletePreview(out);
+      if (out.organization?.protected) {
+        setDeleteError(
+          out.organization.protected_reason === "own_organization"
+            ? "No puedes eliminar tu propia organización."
+            : "La organización tiene un platform admin como miembro; cámbialo de tenant antes de eliminarla."
+        );
+      }
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "No se pudo cargar el preview de eliminación");
+    }
+  }
+
+  async function deleteTenant() {
+    if (!session || !orgId) return;
+    setBusy("delete");
+    setDeleteError("");
+    try {
+      await platformApi(`/api/v1/platform/organizations/${orgId}`, {
+        method: "DELETE",
+        token: session.token,
+        body: JSON.stringify({ confirmation: deleteExpected }),
+      });
+      navigate("/control-center/tenants");
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "La eliminación falló");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function exportTenant() {
+    if (!session || !orgId) return;
+    setBusy("export");
+    setError("");
+    try {
+      const out = await platformApi<Record<string, unknown>>(
+        `/api/v1/platform/organizations/${orgId}/export`,
+        { token: session.token }
+      );
+      const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `cliente-${orgId}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo exportar el cliente");
+    } finally {
+      setBusy("");
+    }
+  }
+
   const userColumns: Column<TenantUser>[] = [
     {
       key: "email",
       header: "Email",
-      render: (u) => <span className="text-text">{u.email || u.id}</span>,
+      render: (u) => (
+        <span className="inline-flex items-center gap-1.5 text-text">
+          {u.email || u.id}
+          {(u.roles.includes("owner") || u.roles.includes("admin")) && (
+            <Badge tone="ok">Principal</Badge>
+          )}
+        </span>
+      ),
     },
     {
       key: "roles",
@@ -543,6 +754,19 @@ export default function AdminCustomerDetailPage() {
 
   const riskyFactors = (health?.factors ?? []).filter((f) => f.status !== "ok");
   const company = data?.company_name || data?.name || "Tenant";
+  const principalRank = (u: TenantUser) =>
+    u.roles.includes("owner") ? 0 : u.roles.includes("admin") ? 1 : 2;
+  const sortedUsers = [...users].sort(
+    (a, b) =>
+      principalRank(a) - principalRank(b) ||
+      (a.email || "").localeCompare(b.email || "")
+  );
+  const deleteExpected = (
+    deletePreview?.organization?.company_name ||
+    deletePreview?.organization?.name ||
+    ""
+  ).trim();
+  const deleteBlocked = !deletePreview || !!deletePreview.organization?.protected;
 
   return (
     <div>
@@ -674,6 +898,22 @@ export default function AdminCustomerDetailPage() {
                     Impersonar
                     <Badge tone="warn">privilegiada</Badge>
                   </Button>
+                  <Button variant="secondary" disabled={busy !== ""} onClick={() => void openPlanDialog()}>
+                    Cambiar plan
+                  </Button>
+                  <Button variant="secondary" disabled={busy !== ""} onClick={openContactDialog}>
+                    <PencilSimple size={15} aria-hidden />
+                    Editar contacto
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    className="border border-border"
+                    disabled={busy !== ""}
+                    onClick={() => void exportTenant()}
+                  >
+                    <DownloadSimple size={15} aria-hidden />
+                    Exportar
+                  </Button>
                   <Menu
                     label="Acciones del tenant"
                     trigger={
@@ -692,6 +932,14 @@ export default function AdminCustomerDetailPage() {
                         {a === "reset" ? "Reset usage" : a[0].toUpperCase() + a.slice(1)}
                       </MenuItem>
                     ))}
+                    <MenuSeparator className={menuSeparatorClass} />
+                    <MenuItem
+                      className={menuItemClass}
+                      onSelect={() => void openDeleteDialog()}
+                    >
+                      <Trash size={14} className="text-danger" aria-hidden />
+                      Eliminar cliente
+                    </MenuItem>
                   </Menu>
                 </div>
               </Panel>
@@ -715,7 +963,7 @@ export default function AdminCustomerDetailPage() {
         <TabsContent value="Users">
           <DataTable
             columns={userColumns}
-            rows={users}
+            rows={sortedUsers}
             rowKey={(u) => u.id}
             caption="Usuarios del tenant"
             stickyHeader
@@ -746,6 +994,13 @@ export default function AdminCustomerDetailPage() {
                 >
                   <Key size={14} aria-hidden />
                   Reset de contraseña
+                </MenuItem>
+                <MenuItem
+                  className={menuItemClass}
+                  onSelect={() => setUserAction({ kind: "set-password", user: u })}
+                >
+                  <LockKey size={14} aria-hidden />
+                  Definir contraseña
                 </MenuItem>
                 {u.disabled_at ? (
                   <MenuItem
@@ -1002,6 +1257,28 @@ export default function AdminCustomerDetailPage() {
             {userAction?.kind === "revoke-sessions" && (
               <p>Todas las sesiones activas del usuario se revocan. Deberá iniciar sesión de nuevo.</p>
             )}
+            {userAction?.kind === "set-password" && (
+              <div className="space-y-3">
+                <p>
+                  Se define la contraseña directamente (sin email). Sus sesiones activas se cierran al
+                  guardar.
+                </p>
+                <Field label="Contraseña nueva" required>
+                  <PasswordInput
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </Field>
+                <Field label="Repetir contraseña" required>
+                  <PasswordInput
+                    value={newPassword2}
+                    onChange={(e) => setNewPassword2(e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </Field>
+              </div>
+            )}
             {userAction?.kind === "password-reset" && (
               <p>
                 Se genera un token de reset válido por 1 hora. Todas sus sesiones se cerrarán al
@@ -1022,7 +1299,9 @@ export default function AdminCustomerDetailPage() {
               ? "Reactivar"
               : userAction?.kind === "revoke-sessions"
                 ? "Cerrar sesiones"
-                : "Generar token"
+                : userAction?.kind === "set-password"
+                  ? "Definir contraseña"
+                  : "Generar token"
         }
         tone={userAction?.kind === "suspend" || userAction?.kind === "revoke-sessions" ? "danger" : "default"}
         busy={busy === userAction?.kind}
@@ -1030,8 +1309,166 @@ export default function AdminCustomerDetailPage() {
         onCancel={() => {
           setUserAction(null);
           setResetToken(null);
+          setNewPassword("");
+          setNewPassword2("");
         }}
       />
+
+      <ConfirmDialog
+        open={planOpen}
+        title="Cambiar plan"
+        body={
+          <div className="space-y-3">
+            <p>
+              Plan actual: <strong className="text-text">{data?.plan || "sin plan"}</strong>. El cambio
+              aplica de inmediato (sin cobro; la pasarela se gestiona aparte).
+            </p>
+            <Field label="Nuevo plan" required>
+              <Select
+                value={planName}
+                onChange={(e) => setPlanName(e.target.value)}
+                placeholder="Selecciona un plan"
+              >
+                {plans.map((p) => (
+                  <option key={p.id} value={p.name}>
+                    {p.display_name || p.name}
+                    {p.price_monthly_cents
+                      ? ` — ${fmtCurrencyCents(p.price_monthly_cents, 0)}/mes`
+                      : ""}
+                    {p.is_trial ? " (trial)" : ""}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Ciclo de facturación">
+              <Select
+                value={planInterval}
+                onChange={(e) => setPlanInterval(e.target.value as "monthly" | "annual")}
+              >
+                <option value="monthly">Mensual</option>
+                <option value="annual">Anual</option>
+              </Select>
+            </Field>
+          </div>
+        }
+        confirmLabel="Aplicar plan"
+        tone="default"
+        busy={busy === "plan"}
+        onConfirm={() => void savePlan()}
+        onCancel={() => setPlanOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={contactOpen}
+        title="Editar contacto"
+        body={
+          <div className="space-y-3">
+            <Field label="Nombre de la empresa">
+              <Input
+                value={contactName}
+                onChange={(e) => setContactName(e.target.value)}
+                placeholder="Acme SAC"
+              />
+            </Field>
+            <Field label="Email de contacto">
+              <Input
+                type="email"
+                value={contactEmail}
+                onChange={(e) => setContactEmail(e.target.value)}
+                placeholder="contacto@acme.com"
+              />
+            </Field>
+          </div>
+        }
+        confirmLabel="Guardar"
+        tone="default"
+        busy={busy === "contact"}
+        onConfirm={() => void saveContact()}
+        onCancel={() => setContactOpen(false)}
+      />
+
+      <Modal
+        open={deleteOpen}
+        onOpenChange={(open) => {
+          setDeleteOpen(open);
+          if (!open) setDeleteTyped("");
+        }}
+        title="Eliminar cliente (hard delete)"
+        description="Se borra TODO: usuarios, membresías, datos, facturación, vectores, archivos y bases gestionadas. Irreversible."
+        size="md"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setDeleteOpen(false)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="danger"
+              disabled={
+                deleteBlocked || deleteTyped.trim() !== deleteExpected || busy === "delete"
+              }
+              onClick={() => void deleteTenant()}
+            >
+              {busy === "delete" ? "Eliminando…" : "Eliminar cliente"}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-[13px]">
+          <p>
+            Vas a eliminar{" "}
+            <strong className="text-text">{deleteExpected || "este cliente"}</strong>. Esta acción no se
+            puede deshacer; solo queda el registro de auditoría.
+          </p>
+          {!deletePreview && !deleteError && <SkeletonBlock rows={3} />}
+          {deletePreview && (
+            <ul className="space-y-1 rounded-sm border border-border bg-soft p-3 text-[12px]">
+              <li>
+                Filas a borrar: <span className="mono text-text">{deletePreview.total_rows}</span> en{" "}
+                {deletePreview.tables_total} tablas
+              </li>
+              <li>
+                Usuarios: <span className="mono text-text">{deletePreview.users}</span> · Membresías:{" "}
+                <span className="mono text-text">{deletePreview.memberships}</span> · Suscripciones:{" "}
+                <span className="mono text-text">{deletePreview.subscriptions}</span>
+              </li>
+              <li>
+                Vectores (Qdrant):{" "}
+                <span className="mono text-text">{deletePreview.qdrant_points ?? "—"}</span>
+              </li>
+              <li>
+                Uploads: <span className="mono text-text">{formatBytes(deletePreview.uploads_bytes)}</span>{" "}
+                · Artefactos DSR: <span className="mono text-text">{deletePreview.dsr_artifacts}</span>
+              </li>
+              <li>
+                Bases gestionadas:{" "}
+                <span className="mono text-text">
+                  {deletePreview.managed_databases.length || "ninguna"}
+                </span>{" "}
+                · Roles:{" "}
+                <span className="mono text-text">{deletePreview.managed_roles.length || "ninguno"}</span>
+              </li>
+            </ul>
+          )}
+          {deleteError && <p className="text-danger">{deleteError}</p>}
+          {deletePreview && !deletePreview.organization?.protected && (
+            <Field label={`Escribe "${deleteExpected}" para confirmar`} required>
+              <Input
+                value={deleteTyped}
+                onChange={(e) => setDeleteTyped(e.target.value)}
+                autoComplete="off"
+              />
+            </Field>
+          )}
+        </div>
+      </Modal>
     </div>
   );
+}
+
+function formatBytes(bytes: number): string {
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / 1024 ** index;
+  return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 }
