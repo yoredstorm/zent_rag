@@ -186,6 +186,55 @@ def test_representation_builders() -> None:
     assert semantic.version.startswith("embedding-rep-1:semantic")
 
 
+def test_semantic_embedding_includes_distant_definition() -> None:
+    """Fase 14: la definición que vive en OTRA ventana entra al embedding del
+    chunk que depende de ella (vía vecindad semántica), sin tocar evidencia."""
+    rule_id = uuid4()
+    definition_id = uuid4()
+    nodes = [
+        {
+            "id": str(rule_id),
+            "node_key": "Rule:rule:fare",
+            "node_type": "Rule",
+            "label": "Fare rule",
+            "text": "The fare must match &&&F",
+            "unit_key": "rule:fare",
+            "block_ids": ["b1"],
+            "windows": [10],
+            "attributes": {},
+        },
+        {
+            "id": str(definition_id),
+            "node_key": "Definition:definition:fclas",
+            "node_type": "Definition",
+            "label": "FCLAS",
+            "text": "fare class field",
+            "unit_key": "definition:fclas",
+            "block_ids": ["b9"],
+            "windows": [1],
+            "attributes": {},
+        },
+    ]
+    edges = [
+        {
+            "id": str(uuid4()),
+            "relation_type": "DEPENDS_ON",
+            "subject_id": str(rule_id),
+            "object_id": str(definition_id),
+            "windows": [1, 10],
+        }
+    ]
+    fabric = build_retrieval_context(nodes, edges, mode="shadow")
+    planner = EmbeddingTextPlanner(representation="semantic", fabric_context=fabric)
+    chunk = _chunk(content="The fare must match &&&F", block_ids=("b1",))
+    text = planner.plan(chunk, "section text")
+    assert "Semantic context:" in text
+    assert "FCLAS" in text
+    assert "fare class field" in text
+    # La evidencia cruda no se modifica.
+    assert chunk.content == "The fare must match &&&F"
+
+
 # ---------------------------------------------------------------------------
 # Late chunking
 # ---------------------------------------------------------------------------

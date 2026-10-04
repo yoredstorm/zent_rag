@@ -141,6 +141,22 @@ def _observe_semantics(*, organization_id, outcome) -> None:
         return
 
 
+def _checkpoint(manifest: SourceIngestionManifest, stage: str, payload: dict):
+    """Fase 2: checkpoint por etapa (physical/semantic/stitching/regional/global).
+
+    Se persiste en el manifiesto; un retry reanuda desde el último checkpoint
+    real sin reprocesar lo completo.
+    """
+    checkpoints = dict(manifest.details.get("checkpoints") or {})
+    checkpoints[str(stage)] = {
+        **dict(payload or {}),
+        "at": datetime.now(timezone.utc).isoformat(),
+    }
+    return manifest_with(
+        manifest, details={**manifest.details, "checkpoints": checkpoints}
+    )
+
+
 def _observe_fabric(*, organization_id, projection) -> None:
     """Métricas best-effort de nodos del fabric por tipo."""
     try:
@@ -415,6 +431,16 @@ class SemanticIngestionService:
             manifest = set_stage(
                 manifest, IngestionStage.SEMANTIC_WINDOWS, "planned"
             )
+        manifest = _checkpoint(
+            manifest,
+            "physical",
+            {
+                "document_id": str(document.id),
+                "structural_units": len(blocks),
+                "estimated_tokens": estimated,
+                "windows_total": manifest.windows_total,
+            },
+        )
         await self._save(manifest, external_id=document.external_id)
         return plan
 
@@ -517,6 +543,19 @@ class SemanticIngestionService:
         )
         manifest = set_stage(
             manifest, IngestionStage.SEMANTIC_WINDOWS, stage_status
+        )
+        manifest = _checkpoint(
+            manifest,
+            "semantic",
+            {
+                "windows_processed": outcome.processed + outcome.skipped,
+                "windows_total": plan.window_count,
+                "failed": outcome.failed,
+                "last_window": (
+                    plan.windows[-1].window_index if plan.windows else -1
+                ),
+                "threads_open": outcome.threads_open,
+            },
         )
         await self._save(manifest, external_id=document.external_id)
         _observe_semantics(
@@ -654,6 +693,39 @@ class SemanticIngestionService:
             "global": global_model.fingerprint,
             "fabric": projection_fingerprint(projection),
         }
+        manifest = _checkpoint(
+            manifest,
+            "stitching",
+            {
+                "units": len(stitch.units),
+                "relations": len(stitch.relations),
+                "threads_closed": stitch.threads_closed,
+                "fingerprint": stage_fingerprints["stitch"],
+            },
+        )
+        manifest = _checkpoint(
+            manifest,
+            "regional",
+            {
+                "regions": len(regional_models),
+                "fingerprint": stage_fingerprints["regional"],
+            },
+        )
+        manifest = _checkpoint(
+            manifest,
+            "global",
+            {"fingerprint": stage_fingerprints["global"]},
+        )
+        manifest = _checkpoint(
+            manifest,
+            "fabric",
+            {
+                "nodes": len(projection.nodes),
+                "edges": len(projection.edges),
+                "identity_candidates": len(projection.identity_candidates),
+                "fingerprint": stage_fingerprints["fabric"],
+            },
+        )
         manifest = manifest_with(
             manifest,
             stitching_complete=complete,

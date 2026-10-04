@@ -98,6 +98,59 @@ def test_missing_dependency_is_reported() -> None:
     assert graph.missing_by_type("Definition") == ("FCLAS",)
 
 
+def test_runtime_inputs_and_optional_context_are_not_missing() -> None:
+    """Fase 16: input del usuario y contexto opcional no son evidencia faltante."""
+    graph = build_requirement_graph(
+        question="¿FCLAS &&&F acepta QNNF0SME?",
+        requirements=[],
+        chunks=[],
+        runtime_inputs=["QNNF0SME"],
+        optional_context=["nota de contexto"],
+    )
+    types = {node.node_type for node in graph.nodes}
+    assert "RuntimeInput" in types
+    assert "OptionalContext" in types
+    assert graph.missing == ()
+    public = graph.to_public_dict()
+    assert public["missing_count"] == 0
+
+
+def test_coverage_counts_requirements_definitions_rules_exceptions() -> None:
+    """Fase 19: cobertura por tipo, no top-k."""
+    chunks = [
+        _chunk(
+            {
+                "chunk_id": "c1",
+                "rule_ids": ["r1"],
+                "semantic_neighborhood": [
+                    {
+                        "node_id": "d1",
+                        "node_type": "Definition",
+                        "label": "FCLAS",
+                        "relation": "DEPENDS_ON",
+                    },
+                    {
+                        "node_id": "e1",
+                        "node_type": "Exception",
+                        "label": "unless carrier",
+                        "relation": "HAS_EXCEPTION",
+                    },
+                ],
+            }
+        )
+    ]
+    graph = build_requirement_graph(question="q", requirements=[], chunks=chunks)
+    coverage = graph.stats["coverage"]
+    assert coverage["rules_total"] == 1
+    assert coverage["rules_satisfied"] == 1
+    assert coverage["definitions_total"] == 1
+    assert coverage["definitions_satisfied"] == 0
+    assert coverage["exceptions_total"] == 1
+    assert coverage["exceptions_satisfied"] == 0
+    assert coverage["conflicts"] == 0
+    assert graph.to_public_dict()["coverage"]["rules_satisfied"] == 1
+
+
 def test_graph_fingerprint_is_deterministic() -> None:
     chunks = [_chunk({"chunk_id": "c1", "symbol_ids": ["s1"]})]
     first = build_requirement_graph(

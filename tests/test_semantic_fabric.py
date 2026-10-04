@@ -181,6 +181,36 @@ async def test_fabric_projects_mission_vocabulary() -> None:
 
 
 @pytest.mark.asyncio
+async def test_provenance_traversal_node_to_source_range() -> None:
+    """Fase 12: Fabric node -> semantic unit -> block -> source range."""
+    document = _understood("# Manual\n\nFCLAS - fare class definition.")
+    projection = await _fabric(document, _plan(document))
+    definition = next(
+        node for node in projection.nodes if node.node_type == "Definition"
+    )
+    assert definition.unit_key
+    assert definition.block_ids
+
+    blocks = {str(block.id): block for block in document.blocks}
+    source_block = blocks[definition.block_ids[0]]
+    assert source_block.char_range is not None
+    assert source_block.char_range.end > source_block.char_range.start
+
+    evidence = next(
+        node
+        for node in projection.nodes
+        if node.node_type == "Evidence"
+        and node.block_ids == (definition.block_ids[0],)
+    )
+    assert any(
+        edge.relation_type == "DERIVED_FROM"
+        and edge.subject_id == definition.id
+        and edge.object_id == evidence.id
+        for edge in projection.edges
+    )
+
+
+@pytest.mark.asyncio
 async def test_fabric_identity_candidates_cross_source_without_merge() -> None:
     document_a = _understood(
         "# Manual\n\nFCLAS - fare class definition.\n\nValidate &&&F before use."

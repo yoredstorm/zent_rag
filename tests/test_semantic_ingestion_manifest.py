@@ -627,6 +627,7 @@ async def test_engine_writes_manifest_and_skips_unchanged_source(semantic_contex
     assert fabric_payloads
     assert any(payload.get("fabric_node_ids") for payload in fabric_payloads)
     assert any(payload.get("fabric_labels") for payload in fabric_payloads)
+    assert any(payload.get("semantic_unit_ids") for payload in fabric_payloads)
     assert any(
         payload.get("embedding_representation") == "content"
         for payload in fabric_payloads
@@ -647,6 +648,18 @@ async def test_engine_writes_manifest_and_skips_unchanged_source(semantic_contex
     stage_fp = manifest.details.get("stage_fingerprints") or {}
     assert {"windows", "stitch", "regional", "global", "fabric"} <= set(stage_fp)
     assert all(stage_fp.values())
+
+    # Fase 2: checkpoints persistidos por etapa.
+    checkpoints = manifest.details.get("checkpoints") or {}
+    assert {
+        "physical",
+        "semantic",
+        "stitching",
+        "regional",
+        "global",
+        "fabric",
+    } <= set(checkpoints)
+    assert checkpoints["semantic"]["windows_processed"] == manifest.windows_processed
 
     upserts_before = len(engine._vectors.upserted)
     documents_before = len(structured_repo.documents)

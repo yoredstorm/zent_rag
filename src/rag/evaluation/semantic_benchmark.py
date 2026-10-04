@@ -44,6 +44,26 @@ class SemanticBenchCase:
 
 
 @dataclass(frozen=True, kw_only=True)
+class PromotionThresholds:
+    """Fase 33: umbrales objetivos de promoción (no basta "parece mejor")."""
+
+    min_cases: int = 1
+    min_knowledge_gain: float = 0.0
+    max_context_tokens_ratio: float = 1.5
+    max_latency_ratio: float = 1.5
+    max_cost_ratio: float = 2.0
+
+    def to_dict(self) -> dict:
+        return {
+            "min_cases": int(self.min_cases),
+            "min_knowledge_gain": float(self.min_knowledge_gain),
+            "max_context_tokens_ratio": float(self.max_context_tokens_ratio),
+            "max_latency_ratio": float(self.max_latency_ratio),
+            "max_cost_ratio": float(self.max_cost_ratio),
+        }
+
+
+@dataclass(frozen=True, kw_only=True)
 class ModeObservation:
     """Lo que un modo produjo para un caso (real o precomputado)."""
 
@@ -181,8 +201,10 @@ def compare_semantic_modes(
     *,
     baseline: dict[str, ModeObservation],
     candidate: dict[str, ModeObservation],
+    thresholds: PromotionThresholds | None = None,
 ) -> dict:
     """Compara los dos modos caso por caso y agrega métricas honestas."""
+    limits = thresholds or PromotionThresholds()
     per_case: list[dict] = []
     baseline_rows: list[dict] = []
     candidate_rows: list[dict] = []
@@ -232,7 +254,8 @@ def compare_semantic_modes(
                 "cost_usd",
             )
         },
-        "promotion_ready": _promotion_ready(summary_base, summary_cand),
+        "promotion_ready": _promotion_ready(summary_base, summary_cand, limits),
+        "thresholds": limits.to_dict(),
         "per_case": per_case,
     }
 
@@ -273,8 +296,16 @@ def _aggregate(rows: list[dict]) -> dict:
     }
 
 
-def _promotion_ready(baseline: dict, candidate: dict) -> bool:
-    """Mejora medible en conocimiento, sin empeorar costo/latencia a lo loco."""
+def _promotion_ready(
+    baseline: dict,
+    candidate: dict,
+    thresholds: PromotionThresholds | None = None,
+) -> bool:
+    """Mejora medible de conocimiento con costo/latencia dentro de umbrales."""
+    limits = thresholds or PromotionThresholds()
+    if int(candidate.get("cases") or 0) < max(1, int(limits.min_cases)):
+        return False
+
     def gain(key: str) -> float | None:
         base, cand = baseline.get(key), candidate.get(key)
         if base is None or cand is None:
@@ -287,18 +318,26 @@ def _promotion_ready(baseline: dict, candidate: dict) -> bool:
         gain("evidence_recall"),
         gain("answer_correctness"),
     ]
-    positive = [value for value in knowledge_gains if value is not None and value > 0]
+    positive = [
+        value
+        for value in knowledge_gains
+        if value is not None and value > float(limits.min_knowledge_gain)
+    ]
     if not positive:
         return False
-    tokens_gain = gain("context_tokens")
-    latency_gain = gain("latency_ms")
-    if tokens_gain is not None and tokens_gain > 0.5 * max(
-        1.0, float(baseline.get("context_tokens") or 0.0)
-    ):
+
+    def within_ratio(key: str, max_ratio: float) -> bool:
+        base = baseline.get(key)
+        cand = candidate.get(key)
+        if base is None or cand is None or float(base) <= 0:
+            return True
+        return (float(cand) / float(base)) <= max(1.0, float(max_ratio))
+
+    if not within_ratio("context_tokens", limits.max_context_tokens_ratio):
         return False
-    if latency_gain is not None and latency_gain > 0.5 * max(
-        1.0, float(baseline.get("latency_ms") or 0.0)
-    ):
+    if not within_ratio("latency_ms", limits.max_latency_ratio):
+        return False
+    if not within_ratio("cost_usd", limits.max_cost_ratio):
         return False
     return True
 
@@ -341,6 +380,7 @@ def report_to_json(report: dict) -> str:
 __all__ = [
     "BENCHMARK_VERSION",
     "ModeObservation",
+    "PromotionThresholds",
     "SemanticBenchCase",
     "compare_semantic_modes",
     "load_benchmark_cases",

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from src.rag.evaluation.semantic_benchmark import (
     ModeObservation,
+    PromotionThresholds,
     compare_semantic_modes,
     load_benchmark_cases,
     render_benchmark_report,
@@ -118,6 +119,53 @@ def test_missing_expectations_are_none_not_zero() -> None:
     assert report["baseline"]["evidence_recall"] is None
     assert report["baseline"]["citation_precision"] is None
     assert report["baseline"]["abstention_precision"] is None
+
+
+def test_promotion_thresholds_are_objective() -> None:
+    """Fase 33: no se promueve por "parece mejor"; umbrales explícitos."""
+    cases = _cases()
+    baseline = {
+        "c1": ModeObservation(
+            mode="baseline",
+            retrieved_evidence=("e1",),
+            citations=("c1",),
+            context_tokens=1000,
+            latency_ms=40.0,
+            cost_usd=0.001,
+        )
+    }
+    candidate = {
+        "c1": ModeObservation(
+            mode="candidate",
+            retrieved_evidence=("e1", "e2"),
+            retrieved_dependencies=("d1",),
+            citations=("c1", "c2"),
+            context_tokens=1300,
+            latency_ms=130.0,
+            cost_usd=0.0012,
+        )
+    }
+    default = compare_semantic_modes(
+        cases, baseline=baseline, candidate=candidate
+    )
+    assert default["promotion_ready"] is False  # latencia 3.25x > 1.5x
+
+    relaxed = compare_semantic_modes(
+        cases,
+        baseline=baseline,
+        candidate=candidate,
+        thresholds=PromotionThresholds(max_latency_ratio=4.0),
+    )
+    assert relaxed["promotion_ready"] is True
+    assert relaxed["thresholds"]["max_latency_ratio"] == 4.0
+
+    strict_cases = compare_semantic_modes(
+        cases,
+        baseline=baseline,
+        candidate=candidate,
+        thresholds=PromotionThresholds(min_cases=5, max_latency_ratio=4.0),
+    )
+    assert strict_cases["promotion_ready"] is False
 
 
 def test_summarize_mode_aggregates() -> None:

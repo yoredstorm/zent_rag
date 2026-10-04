@@ -52,6 +52,9 @@ class RequirementNodeType(StrEnum):
     EXCEPTION = "Exception"
     CONDITION = "Condition"
     EVIDENCE = "Evidence"
+    #: Fase 16: clasificación de la pregunta.
+    RUNTIME_INPUT = "RuntimeInput"
+    OPTIONAL_CONTEXT = "OptionalContext"
 
 
 class RequirementStatus(StrEnum):
@@ -128,6 +131,7 @@ class QueryRequirementGraph:
             "missing": list(self.missing[:24]),
             "missing_count": len(self.missing),
             "dependency_coverage": self.stats.get("dependency_coverage"),
+            "coverage": dict(self.stats.get("coverage") or {}),
             "by_status": self.stats.get("by_status", {}),
             "by_type": self.stats.get("by_type", {}),
             "top_missing": [
@@ -152,14 +156,51 @@ def build_requirement_graph(
     requirements: list | tuple = (),
     chunks: list | tuple = (),
     evidence_state: object | None = None,
+    runtime_inputs: list | tuple = (),
+    optional_context: list | tuple = (),
     max_nodes: int = 96,
     max_edges: int = 256,
 ) -> QueryRequirementGraph:
-    """Construye el grafo de requisitos desde requirements + payload fabric."""
+    """Construye el grafo de requisitos desde requirements + payload fabric.
+
+    `runtime_inputs` son valores del usuario que NO deben buscarse en fuentes
+    (§65): se clasifican como RuntimeInput y jamás cuentan como missing.
+    `optional_context` es contexto auxiliar, tampoco exigible.
+    """
     nodes: dict[str, RequirementNode] = {}
     edges: list[tuple[str, str, str]] = []
     edge_seen: set[tuple[str, str, str]] = set()
-    missing: list[str] = []
+    missing_external: list[str] = []
+
+    # Fase 16: clasificación de la pregunta (input vs contexto vs conocimiento).
+    for value in runtime_inputs or ():
+        label = str(value or "").strip()
+        if not label:
+            continue
+        node_id = f"runtime:{label[:80]}"
+        add_node = RequirementNode(
+            id=node_id,
+            node_type=RequirementNodeType.RUNTIME_INPUT.value,
+            label=label,
+            status=RequirementStatus.FOUND.value,
+            key=node_id,
+        )
+        nodes.setdefault(node_id, add_node)
+    for value in optional_context or ():
+        label = str(value or "").strip()
+        if not label:
+            continue
+        node_id = f"optional:{label[:80]}"
+        nodes.setdefault(
+            node_id,
+            RequirementNode(
+                id=node_id,
+                node_type=RequirementNodeType.OPTIONAL_CONTEXT.value,
+                label=label,
+                status=RequirementStatus.FOUND.value,
+                key=node_id,
+            ),
+        )
 
     def add_node(node: RequirementNode) -> None:
         existing = nodes.get(node.id)
@@ -205,8 +246,6 @@ def build_requirement_graph(
                 key=node_id,
             )
         )
-        if status == RequirementStatus.MISSING.value:
-            missing.append(description)
 
     # 2. Nodos del fabric presentes en los chunks recuperados (FOUND).
     chunk_node_ids: dict[str, set[str]] = {}
@@ -268,8 +307,6 @@ def build_requirement_graph(
             for source_id in present:
                 if relation in DEPENDENCY_RELATIONS:
                     add_edge(source_id, relation, neighbor_id)
-            if not neighbor_present:
-                missing.append(label)
 
     # 4. Evidence state: faltantes documentables reales (autoridad única).
     if evidence_state is not None and hasattr(
@@ -279,11 +316,19 @@ def build_requirement_graph(
             for label in evidence_state.missing_documentable_evidence():
                 text = str(label or "")
                 if text:
-                    missing.append(text)
+                    missing_external.append(text)
         except Exception:  # noqa: BLE001 — el grafo nunca frena el retrieval
             pass
 
     node_list = list(nodes.values())[:max_nodes]
+    # Missing se calcula al FINAL desde el estado real de los nodos: una
+    # dependencia vista como MISSING y resuelta por un chunk posterior no se
+    # reporta como faltante.
+    missing = [
+        node.label
+        for node in node_list
+        if node.status == RequirementStatus.MISSING.value
+    ] + missing_external
     by_status: dict[str, int] = {}
     by_type: dict[str, int] = {}
     for node in node_list:
@@ -304,6 +349,37 @@ def build_requirement_graph(
         else None
     )
     unique_missing = list(dict.fromkeys(missing))
+
+    def type_counts(node_type: str) -> tuple[int, int]:
+        items = [node for node in node_list if node.node_type == node_type]
+        total = len(items)
+        satisfied = sum(
+            1 for node in items if node.status == RequirementStatus.FOUND.value
+        )
+        return total, satisfied
+
+    definitions_total, definitions_satisfied = type_counts("Definition")
+    rules_total, rules_satisfied = type_counts("Rule")
+    exceptions_total, exceptions_satisfied = type_counts("Exception")
+    coverage = {
+        "requirements_total": len(node_list),
+        "requirements_satisfied": sum(
+            1
+            for node in node_list
+            if node.status == RequirementStatus.FOUND.value
+        ),
+        "definitions_total": definitions_total,
+        "definitions_satisfied": definitions_satisfied,
+        "rules_total": rules_total,
+        "rules_satisfied": rules_satisfied,
+        "exceptions_total": exceptions_total,
+        "exceptions_satisfied": exceptions_satisfied,
+        "conflicts": sum(
+            1
+            for node in node_list
+            if node.status == RequirementStatus.CONFLICTING.value
+        ),
+    }
     return QueryRequirementGraph(
         question=question[:400],
         nodes=tuple(node_list),
@@ -314,6 +390,7 @@ def build_requirement_graph(
             "by_type": by_type,
             "dependency_edges": len(dependency_edges),
             "dependency_coverage": dependency_coverage,
+            "coverage": coverage,
         },
     )
 

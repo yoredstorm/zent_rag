@@ -27,6 +27,8 @@ class EvidenceSnapshot:
     entities: frozenset[str] = frozenset()
     requirements_found: frozenset[str] = frozenset()
     requirement_needles: frozenset[str] = frozenset()
+    #: Fase 20: nodos del Semantic Fabric presentes en la evidencia.
+    nodes: frozenset[str] = frozenset()
     coverage: float = 0.0
     anchor_coverage: float = 0.0
     confidence: float = 0.0
@@ -45,6 +47,7 @@ class InformationGain:
     new_anchors: int = 0
     new_entities: int = 0
     new_requirements: int = 0
+    new_nodes: int = 0
     coverage_before: float = 0.0
     coverage_after: float = 0.0
     requirement_coverage_delta: float = 0.0
@@ -70,6 +73,7 @@ class InformationGain:
             "new_anchors": self.new_anchors,
             "new_entities": self.new_entities,
             "new_requirements": self.new_requirements,
+            "new_nodes": self.new_nodes,
             "coverage_before": round(self.coverage_before, 4),
             "coverage_after": round(self.coverage_after, 4),
             "requirement_coverage_delta": round(self.requirement_coverage_delta, 4),
@@ -96,12 +100,20 @@ def snapshot(
     tokens: set[str] = set()
     documents: set[str] = set()
     sections: set[str] = set()
+    nodes: set[str] = set()
     joined_parts: list[str] = []
     for item in items or ():
         content = html.unescape(str(getattr(item, "content", "") or ""))
         joined_parts.append(content.lower())
         tokens.update(_TOKEN_RE.findall(content.lower()))
         metadata = getattr(item, "metadata", None) or {}
+        node_values = metadata.get("fabric_node_ids") or ()
+        if isinstance(node_values, str):
+            node_values = [node_values]
+        for value in node_values:
+            text = str(value or "")
+            if text:
+                nodes.add(text)
         document = str(
             getattr(item, "source_id", None)
             or metadata.get("source_id")
@@ -162,6 +174,7 @@ def snapshot(
         entities=frozenset(entity_values),
         requirements_found=frozenset(found_requirements),
         requirement_needles=frozenset(needles),
+        nodes=frozenset(nodes),
         coverage=coverage_value,
         anchor_coverage=anchor_coverage,
         confidence=float(confidence or 0.0),
@@ -186,6 +199,7 @@ def compute_information_gain(
     new_anchors = len(after.anchors - before.anchors)
     new_entities = len(after.entities - before.entities)
     new_requirements = len(after.requirements_found - before.requirements_found)
+    new_nodes = len(after.nodes - before.nodes)
     coverage_delta = max(0.0, after.coverage - before.coverage)
     anchor_coverage_delta = max(0.0, after.anchor_coverage - before.anchor_coverage)
     confidence_delta = after.confidence - before.confidence
@@ -214,6 +228,7 @@ def compute_information_gain(
         new_anchors=new_anchors,
         new_entities=new_entities,
         new_requirements=new_requirements,
+        new_nodes=new_nodes,
         coverage_before=before.coverage,
         coverage_after=after.coverage,
         requirement_coverage_delta=coverage_delta,

@@ -72,3 +72,38 @@ def test_stitch_fingerprint_is_deterministic() -> None:
     second = stitch_fingerprint(outcome)
     assert first == second
     assert isinstance(outcome, StitchOutcome)
+
+
+def test_fingerprint_includes_semantic_pipeline_versions() -> None:
+    """Fase 29: window/state/stitcher/regional/global entran al fingerprint."""
+    from uuid import uuid4
+
+    from src.knowledge.representation import change_reason, descriptor_for_document
+    from src.knowledge.structure.text_parser import TextParser
+    from src.knowledge.understanding.engine import apply_understanding
+
+    parsed = TextParser().parse(
+        b"# Manual\n\nFCLAS - fare class definition.",
+        organization_id=uuid4(),
+        external_id="fp.md",
+        source_id=uuid4(),
+        source_name="fp.md",
+    )
+    document = apply_understanding(parsed, filename="fp.md")
+    payload = descriptor_for_document(document).to_payload()
+    for key in (
+        "semantic_window_policy",
+        "semantic_state",
+        "stitcher",
+        "regional_model",
+        "global_model",
+        "fabric_representation_version",
+    ):
+        assert payload.get(key), f"falta {key} en el fingerprint"
+
+    previous = dict(payload)
+    previous["stitcher"] = "semantic-stitch-0"
+    assert (
+        change_reason(previous, payload, content_changed=False)
+        == "semantic_pipeline_changed"
+    )

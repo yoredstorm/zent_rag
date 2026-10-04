@@ -94,6 +94,7 @@ REASON_TO_ARTIFACT: dict[str, ArtifactKind] = {
     "parent_representation_changed": ArtifactKind.RETRIEVAL_REPRESENTATION,
     "compiler_changed": ArtifactKind.COMPILATION,
     "fabric_changed": ArtifactKind.FABRIC,
+    "semantic_pipeline_changed": ArtifactKind.RETRIEVAL_REPRESENTATION,
     "semantic_windows_changed": ArtifactKind.SEMANTIC_WINDOWS,
     "stitch_changed": ArtifactKind.STITCH,
     "regional_changed": ArtifactKind.REGIONAL,

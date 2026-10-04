@@ -18,6 +18,7 @@
 # =============================================================================
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass, field
 from hashlib import sha256
@@ -203,6 +204,7 @@ class SemanticStitcher:
     ) -> StitchOutcome:
         document_id = getattr(document, "id", None)
         units = self._build_units(results)
+        units = self._stitch_continuations(results, units)
         relations: dict[str, StitchRelation] = {}
         duplicates = contradictions = supersessions = 0
 
@@ -287,6 +289,78 @@ class SemanticStitcher:
                     attributes={**existing.attributes, **item.attributes},
                 )
         return dict(sorted(merged.items()))
+
+    # ------------------------------------------------------------------
+    # Fase 7: continuation stitching
+    # ------------------------------------------------------------------
+    def _stitch_continuations(
+        self, results: list[SemanticWindowResult], units: dict[str, StitchedUnit]
+    ) -> dict[str, StitchedUnit]:
+        """Cose una continuación abierta con el primer item textual siguiente.
+
+        La unidad resultante conserva el texto continuado y los block_ids de
+        AMBAS ventanas; los resultados de ventana (evidencia) quedan intactos.
+        """
+        by_window = {result.window_index: result for result in results}
+        for result in sorted(results, key=lambda item: item.window_index):
+            next_result = by_window.get(result.window_index + 1)
+            if next_result is None or not result.continuation_candidates:
+                continue
+            continuation = result.continuation_candidates[-1]
+            target = next(
+                (
+                    item
+                    for item in next_result.items
+                    if item.kind
+                    in {
+                        "definition",
+                        "claim",
+                        "rule",
+                        "note",
+                        "procedure",
+                        "condition",
+                        "exception",
+                    }
+                ),
+                None,
+            )
+            if target is None:
+                continue
+            unit_key = _unit_key(target)
+            existing = units.get(unit_key)
+            if existing is None:
+                continue
+            merged_text = " ".join(
+                part
+                for part in (continuation.text.strip(), existing.text.strip())
+                if part
+            ).strip()
+            if not merged_text or merged_text == existing.text:
+                continue
+            units[unit_key] = dataclasses.replace(
+                existing,
+                text=merged_text,
+                block_ids=tuple(
+                    dict.fromkeys((*continuation.block_ids, *existing.block_ids))
+                ),
+                source_windows=tuple(
+                    sorted(
+                        {
+                            *existing.source_windows,
+                            int(result.window_index),
+                        }
+                    )
+                ),
+                merged_from=tuple(
+                    dict.fromkeys((*existing.merged_from, continuation.key))
+                ),
+                attributes={
+                    **existing.attributes,
+                    "continuation_stitched": True,
+                    "continuation_key": continuation.key,
+                },
+            )
+        return units
 
     # ------------------------------------------------------------------
     # Relaciones

@@ -57,6 +57,53 @@ def _stitch(results, threads=()):
     )
 
 
+def test_continuation_stitching_keeps_evidence_separate() -> None:
+    """Fase 7: 'The ampersand represents' + 'one alphanumeric character.' = una
+    unidad semántica; la evidencia cruda de cada ventana queda intacta."""
+    document_id = uuid4()
+    organization_id = uuid4()
+    window_a = _result(
+        0,
+        document_id,
+        organization_id,
+        [
+            WindowItem(
+                kind="continuation",
+                key="continuation:0:ampersand",
+                label="The ampersand represents",
+                text="The ampersand represents",
+                confidence=0.6,
+                block_ids=("b1",),
+                attributes={"target_hint": "next_window"},
+            )
+        ],
+    )
+    window_b = _result(
+        1,
+        document_id,
+        organization_id,
+        [
+            WindowItem(
+                kind="definition",
+                key="definition:&",
+                label="&",
+                text="one alphanumeric character.",
+                confidence=0.8,
+                block_ids=("b2",),
+            )
+        ],
+    )
+    outcome = _stitch([window_a, window_b])
+    unit = next(unit for unit in outcome.units if unit.unit_key == "definition:&")
+    assert unit.text == "The ampersand represents one alphanumeric character."
+    assert set(unit.block_ids) == {"b1", "b2"}
+    assert unit.attributes.get("continuation_stitched") is True
+    assert set(unit.source_windows) == {0, 1}
+    # La evidencia original permanece separada (un block por ventana).
+    assert window_a.items[0].block_ids == ("b1",)
+    assert window_b.items[0].block_ids == ("b2",)
+
+
 def test_stitcher_builds_units_and_core_relations() -> None:
     document_id = uuid4()
     organization_id = uuid4()

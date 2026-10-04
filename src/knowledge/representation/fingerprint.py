@@ -61,6 +61,7 @@ REINDEX_REASONS = (
     "compiler_changed",
     "fabric_changed",
     "embedding_representation_changed",
+    "semantic_pipeline_changed",
     "missing_index",
     "manual",
     "nutrition_action",
@@ -82,6 +83,11 @@ _REASON_CHECKS: tuple[tuple[str, str], ...] = (
     ("parent_representation_version", "parent_representation_changed"),
     ("compiler_representation_version", "compiler_changed"),
     ("fabric_representation_version", "fabric_changed"),
+    ("semantic_window_policy", "semantic_pipeline_changed"),
+    ("semantic_state", "semantic_pipeline_changed"),
+    ("stitcher", "semantic_pipeline_changed"),
+    ("regional_model", "semantic_pipeline_changed"),
+    ("global_model", "semantic_pipeline_changed"),
     ("embedding_representation", "embedding_representation_changed"),
     ("embedding_representation_version", "embedding_representation_changed"),
     ("content_representation_version", "contextualization_changed"),
@@ -119,6 +125,13 @@ class RepresentationDescriptor:
     embedding_dimensions: int = 0
     parent_representation_version: str = PARENT_REPRESENTATION_VERSION
     fabric_representation_version: str = FABRIC_REPRESENTATION_VERSION
+    #: Fase 29: versiones de la pipeline semántica (ventana/estado/stitch/
+    #: regional/global). Un cambio invalida representación y reindexa.
+    semantic_window_policy: str = ""
+    semantic_state: str = ""
+    stitcher: str = ""
+    regional_model: str = ""
+    global_model: str = ""
     embedding_representation: str = "content"
     embedding_representation_version: str = EMBEDDING_REPRESENTATION_VERSION
     schema_version: str = REPRESENTATION_SCHEMA_VERSION
@@ -157,6 +170,7 @@ def descriptor_for_document(
     understanding = document.metadata.get("understanding") or {}
     reconstruction = document.metadata.get("semantic_reconstruction") or {}
     enrichment = document.metadata.get("enrichment") or {}
+    semantic = _semantic_pipeline_versions()
     return RepresentationDescriptor(
         content_hash=str(document.content_hash or ""),
         parser_version=str(
@@ -175,10 +189,25 @@ def descriptor_for_document(
             or ""
         ),
         chunking_version=str(understanding.get("chunking_version") or ""),
+        semantic_window_policy=str(semantic.get("window_plan_version") or ""),
+        semantic_state=str(semantic.get("state_version") or ""),
+        stitcher=str(semantic.get("stitch_version") or ""),
+        regional_model=str(semantic.get("regional_version") or ""),
+        global_model=str(semantic.get("global_version") or ""),
         embedding_provider=str(embedding_provider or ""),
         embedding_model=str(embedding_model or ""),
         embedding_dimensions=int(embedding_dimensions or 0),
     )
+
+
+def _semantic_pipeline_versions() -> dict:
+    """Versiones de la pipeline semántica (lazy: evita ciclo de imports)."""
+    try:
+        from src.knowledge.semantic.service import semantic_versions
+
+        return dict(semantic_versions())
+    except Exception:  # noqa: BLE001 — sin semantic, fingerprint estable
+        return {}
 
 
 def representation_decision(

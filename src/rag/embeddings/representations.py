@@ -103,14 +103,55 @@ class EmbeddingTextPlanner:
     def _semantic_context(self, block_ids) -> str:
         parts: list[str] = []
         labels = self._labels(block_ids)
+        neighbor_labels, neighbor_definitions = self._neighbor_context(block_ids)
+        for label in neighbor_labels:
+            if label not in labels:
+                labels.append(label)
         if labels:
             parts.append(", ".join(labels))
         definitions = self._definitions(block_ids)
+        for text in neighbor_definitions:
+            if text not in definitions:
+                definitions.append(text)
         if definitions:
             parts.append("; ".join(definitions))
         if not parts:
             return ""
         return "Semantic context: " + ". ".join(parts)
+
+    def _neighbor_context(self, block_ids) -> tuple[list[str], list[str]]:
+        """Fase 14: definiciones DISTANTES vía vecindad semántica del fabric.
+
+        Un chunk que usa un símbolo/regla depende de una definición que vive en
+        otra ventana: su label/definición entra al embedding contextual aunque
+        el bloque no esté en el chunk. La evidencia cruda no se toca.
+        """
+        if self._fabric is None or not getattr(self._fabric, "enabled", False):
+            return [], []
+        try:
+            fields = self._fabric.chunk_fields(block_ids) or {}
+        except Exception:  # noqa: BLE001 — contexto opcional
+            return [], []
+        labels: list[str] = []
+        definitions: list[str] = []
+        for entry in fields.get("semantic_neighborhood") or ():
+            node_id = str(entry.get("node_id") or "")
+            node = self._fabric.node_by_id.get(node_id) if node_id else None
+            label = str(
+                entry.get("label") or (node or {}).get("label") or ""
+            ).strip()
+            if label and label not in labels:
+                labels.append(label)
+            if node is not None and node.get("node_type") == "Definition":
+                text = str(node.get("text") or "").strip()
+                if text and text not in definitions:
+                    definitions.append(text[:160])
+            if (
+                len(labels) >= self._max_labels
+                and len(definitions) >= self._max_definitions
+            ):
+                break
+        return labels, definitions
 
     def _nodes_for(self, block_ids) -> list[dict]:
         if self._fabric is None or not getattr(self._fabric, "enabled", False):

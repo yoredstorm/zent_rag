@@ -288,6 +288,7 @@ class AdaptiveLongContextEngine:
                 question=raw,
                 requirements=requirements,
                 chunks=packed.chunks,
+                runtime_inputs=list(views.examples),
             )
             compiled = compile_context(
                 question=raw,
@@ -511,6 +512,7 @@ class AdaptiveLongContextEngine:
             question=raw,
             requirements=requirements,
             chunks=final.chunks,
+            runtime_inputs=list(views.examples),
         )
         compiled = compile_context(
             question=raw,

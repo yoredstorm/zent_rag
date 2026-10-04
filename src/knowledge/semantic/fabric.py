@@ -792,6 +792,7 @@ class FabricRetrievalContext:
         node_ids = {str(node["id"]) for node in nodes}
         by_type: dict[str, list[str]] = {}
         labels: list[str] = []
+        unit_keys: list[str] = []
         for node in nodes:
             node_type = str(node.get("node_type") or "")
             if node_type == "Evidence":
@@ -799,6 +800,9 @@ class FabricRetrievalContext:
             by_type.setdefault(node_type, [])
             if node["id"] not in by_type[node_type]:
                 by_type[node_type].append(str(node["id"]))
+            unit_key = str(node.get("unit_key") or "")
+            if unit_key and unit_key not in unit_keys:
+                unit_keys.append(unit_key)
             label = str(node.get("label") or "").strip()
             if label and label not in labels:
                 labels.append(label)
@@ -849,6 +853,7 @@ class FabricRetrievalContext:
             "fabric_version": self.version,
             "fabric_mode": self.mode,
             "fabric_node_ids": [str(node["id"]) for node in nodes][:max_ids],
+            "semantic_unit_ids": unit_keys[:max_ids],
             "fabric_node_types": sorted(by_type),
             "fabric_labels": labels[:max_labels],
         }

@@ -73,6 +73,7 @@ def test_build_retrieval_context_maps_ids_and_neighborhood() -> None:
     fields = context.chunk_fields(["b1"])
     assert str(rule_id) in fields["rule_ids"]
     assert str(symbol_id) in fields["symbol_ids"]
+    assert "rule:fare" in fields["semantic_unit_ids"]
     assert fields["fabric_dependency_ids"]
     assert fields["semantic_neighborhood"]
     assert fields["fabric_version"] == FABRIC_REPRESENTATION_VERSION
