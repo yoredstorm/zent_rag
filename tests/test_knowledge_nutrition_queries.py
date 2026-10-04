@@ -181,6 +181,20 @@ async def test_five_queries_find_evidence_and_failure_creates_nutrition_action()
                 )
         assert not failures, failures
 
+        # Recall de contenido puro: "accepted" vive en el texto real, no en la
+        # representación derivada. El sparse debe conservarlo (no reemplazarlo).
+        content_ctx = await store.search_sparse(
+            organization.id,
+            "accepted",
+            top_k=5,
+            score_threshold=0.0,
+            role="admin",
+            source_ids=[source.id],
+        )
+        assert content_ctx.chunks, (
+            "el sparse debe indexar el contenido real además de los derivados"
+        )
+
         # PASS 2 real: los ids canónicos viven DENTRO de metadata (contrato de
         # retrieval), no en claves top-level invisibles.
         pass2_visible = False

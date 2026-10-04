@@ -369,6 +369,12 @@ async def test_nutrition_pipeline_end_to_end_and_fingerprint_skip(context) -> No
     assert all(p[3].get("retrieval_representation_version") for p in child_points)
     assert engine._vectors.sparse_texts, "el sparse debe usar la representación de retrieval"
     assert any("Questions:" in text or "Identifiers:" in text for text in engine._vectors.sparse_texts)
+    # El sparse conserva el CONTENIDO real además de la señal derivada.
+    assert any("CAT31" in text for text in engine._vectors.sparse_texts)
+    assert any(
+        text.count("Category 31") >= 1 and "Questions:" in text
+        for text in engine._vectors.sparse_texts
+    )
 
     # PASS 2: ids canónicos actualizados en payload sin re-embedding.
     assert engine._vectors.payload_updates, "el PASS 2 debe actualizar payloads"

@@ -2117,7 +2117,10 @@ class KnowledgeIngestionEngine:
                 continue
             representations[chunk.id] = {
                 "embed": content_rep.text,
-                "sparse": retrieval_rep.text or chunk.content,
+                # El sparse NO reemplaza el contenido: la representación de
+                # retrieval AGREGA aliases/conceptos/preguntas al texto real.
+                # Reemplazarlo perdía recall lexical de términos de contenido.
+                "sparse": f"{chunk.content}\n{retrieval_rep.text}".strip(),
                 "payload": {
                     **content_rep.to_payload(),
                     **retrieval_rep.to_payload(),

@@ -142,6 +142,12 @@ async def test_engine_skips_reembed_when_content_unchanged() -> None:
     )
     assert doc.section_count > 0
 
+    # Matriz de decisión (§7): contenido sin cambios SOLO se salta cuando el
+    # fingerprint de representación vigente es idéntico al ya indexado. Sin
+    # índice previo la decisión es CREATE (repara índice faltante).
+    fingerprint = "f" * 64
+    doc.metadata["retrieval_fingerprint"] = {"fingerprint": fingerprint}
+
     embedder = _NeverEmbed()
     tracker = _NoopTracker()
     engine = KnowledgeIngestionEngine(
@@ -156,8 +162,9 @@ async def test_engine_skips_reembed_when_content_unchanged() -> None:
     )
     job = SimpleNamespace(organization_id=uuid4(), knowledge_base_id=None)
     source = SimpleNamespace(id=uuid4(), workspace_id=None)
-    await engine._index_chunks(  # noqa: SLF001
-        job, source, doc, change_kind="unchanged"
+    result = await engine._index_chunks(  # noqa: SLF001
+        job, source, doc, change_kind="unchanged", previous_fingerprint=fingerprint
     )
+    assert result == 0
     assert embedder.calls == 0
     assert tracker.calls == 0
