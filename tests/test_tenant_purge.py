@@ -45,7 +45,10 @@ async def _create_org_with_data(name: str) -> dict:
             {"oid": org_id, "uid": user_id, "rid": UUID(_OWNER_ROLE_ID)},
         )
         await session.execute(
-            text("INSERT INTO workspaces (organization_id, name, slug, kind) VALUES (:oid, :name, :slug, 'default')"),
+            text(
+                "INSERT INTO workspaces (organization_id, name, slug, kind) "
+                "VALUES (:oid, :name, :slug, 'business')"
+            ),
             {"oid": org_id, "name": name, "slug": f"purge-{uuid4().hex[:10]}"},
         )
         await session.commit()

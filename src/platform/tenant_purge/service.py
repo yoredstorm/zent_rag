@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import re
 import shutil
+from contextlib import contextmanager
 from pathlib import Path
 from uuid import UUID
 
@@ -212,10 +213,36 @@ class TenantPurgeService:
         try:
             from src.infrastructure.qdrant.vector_store import QdrantVectorStore
 
-            return await QdrantVectorStore().count_organization_points(organization_id)
+            with self._system_tenant_scope(organization_id):
+                return await QdrantVectorStore().count_organization_points(organization_id)
         except Exception as exc:  # noqa: BLE001 - inventario best-effort
             logger.warning("tenant purge qdrant count failed", error=str(exc)[:160])
             return None
+
+    @contextmanager
+    def _system_tenant_scope(self, organization_id: UUID):
+        """Identidad system de la org objetivo para almacenes con guard tenant.
+
+        La purga corre bajo una sesión de plataforma (tenant_id='platform');
+        Qdrant exige que el organization_id operado coincida con el contexto.
+        Se publica temporalmente el contexto system de la org y se restaura.
+        """
+        from src.platform.tenants.context import (
+            clear_tenant_context,
+            get_tenant_context,
+            set_tenant_context,
+            system_context,
+        )
+
+        previous = get_tenant_context()
+        set_tenant_context(system_context(organization_id))
+        try:
+            yield
+        finally:
+            if previous is None:
+                clear_tenant_context()
+            else:
+                set_tenant_context(previous)
 
     async def _external_inventory(self, organization_id: UUID) -> dict:
         managed = await self._managed_db_inventory(organization_id)
@@ -432,7 +459,7 @@ class TenantPurgeService:
                     FROM pg_constraint c
                     JOIN pg_attribute a
                       ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
-                    WHERE c.contype = 'f' AND c.confrelid = :parent::regclass
+                    WHERE c.contype = 'f' AND c.confrelid = CAST(:parent AS regclass)
                       AND a.attnum = ANY(c.conkey)
                     ORDER BY 1, 2
                     """
@@ -568,7 +595,8 @@ class TenantPurgeService:
         try:
             from src.infrastructure.qdrant.vector_store import QdrantVectorStore
 
-            await QdrantVectorStore().delete_by_organization(organization_id)
+            with self._system_tenant_scope(organization_id):
+                await QdrantVectorStore().delete_by_organization(organization_id)
         except Exception as exc:  # noqa: BLE001
             failures.append({"target": "qdrant", "error": str(exc)[:180]})
             logger.warning("tenant purge qdrant failed", error=str(exc)[:200])
