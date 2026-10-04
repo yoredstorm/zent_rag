@@ -728,6 +728,9 @@ def create_app(*, metrics_enabled: bool | None = None, tracing_enabled: bool | N
     from src.api.routes.knowledge_workspaces import router as knowledge_workspaces_router
 
     new_app.include_router(knowledge_workspaces_router)
+    from src.api.routes.knowledge_nutrition import router as knowledge_nutrition_router
+
+    new_app.include_router(knowledge_nutrition_router)
 
     from src.api.routes.cognitive import router as cognitive_router
 

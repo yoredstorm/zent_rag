@@ -25,10 +25,23 @@ class KnowledgeEventType(StrEnum):
     SOURCE_SUPERSEDED = "source_superseded"
     KNOWLEDGE_GAP_DETECTED = "knowledge_gap_detected"
     HIGH_IMPACT_CHANGE = "high_impact_change"
+    # Knowledge Nutrition (§25): el enrichment y la aceptación de retrieval son
+    # eventos informativos; las acciones de nutrición informan revisión.
+    SEMANTIC_ENRICHED = "semantic_enriched"
+    RETRIEVAL_ACCEPTANCE_FAILED = "retrieval_acceptance_failed"
+    RETRIEVAL_REPRESENTATION_UPDATED = "retrieval_representation_updated"
+    KNOWLEDGE_REINDEXED = "knowledge_reindexed"
+    KNOWLEDGE_NUTRITION_REQUIRED = "knowledge_nutrition_required"
 
 
 _SIN_REVISION = frozenset(
-    {KnowledgeEventType.NEW_ENTITY, KnowledgeEventType.NEW_RULE}
+    {
+        KnowledgeEventType.NEW_ENTITY,
+        KnowledgeEventType.NEW_RULE,
+        KnowledgeEventType.SEMANTIC_ENRICHED,
+        KnowledgeEventType.RETRIEVAL_REPRESENTATION_UPDATED,
+        KnowledgeEventType.KNOWLEDGE_REINDEXED,
+    }
 )
 
 

@@ -939,6 +939,91 @@ zent_adaptive_fallback_total = Counter(
     labelnames=["reason"],
 )
 
+# -----------------------------------------------------------------------------
+# Knowledge Nutrition — enrichment, representación, acceptance y nutrición
+# -----------------------------------------------------------------------------
+# Regla de cardinalidad: NUNCA document_id/source_id como label. Solo
+# organization_id (contrato ya existente del pipeline) y etiquetas acotadas.
+knowledge_enrichment_units_total = Counter(
+    "knowledge_enrichment_units_total",
+    "Unidades de conocimiento enriquecidas",
+    labelnames=["organization_id", "kind"],
+)
+knowledge_enrichment_aliases_total = Counter(
+    "knowledge_enrichment_aliases_total",
+    "Aliases de retrieval generados por enrichment",
+    labelnames=["organization_id"],
+)
+knowledge_enrichment_questions_total = Counter(
+    "knowledge_enrichment_questions_total",
+    "Preguntas sintéticas de retrieval generadas",
+    labelnames=["organization_id"],
+)
+knowledge_enrichment_seconds = Histogram(
+    "knowledge_enrichment_seconds",
+    "Latencia del Semantic Enrichment (segundos)",
+    labelnames=["organization_id"],
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+)
+knowledge_enrichment_rejected_total = Counter(
+    "knowledge_enrichment_rejected_total",
+    "Items de enrichment rechazados por el quality gate",
+    labelnames=["organization_id", "reason"],
+)
+knowledge_representation_rebuilds_total = Counter(
+    "knowledge_representation_rebuilds_total",
+    "Reconstrucciones de representación de retrieval",
+    labelnames=["organization_id", "reason"],
+)
+knowledge_retrieval_acceptance_runs_total = Counter(
+    "knowledge_retrieval_acceptance_runs_total",
+    "Corridas del Retrieval Acceptance Gate",
+    labelnames=["organization_id", "outcome"],
+)
+knowledge_retrieval_acceptance_recall = Histogram(
+    "knowledge_retrieval_acceptance_recall",
+    "Recall@k del acceptance gate",
+    labelnames=["organization_id", "k"],
+    buckets=(0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+)
+knowledge_retrieval_acceptance_failures_total = Counter(
+    "knowledge_retrieval_acceptance_failures_total",
+    "Probes fallidos por tipo de query",
+    labelnames=["organization_id", "query_type"],
+)
+knowledge_nutrition_actions_total = Counter(
+    "knowledge_nutrition_actions_total",
+    "Acciones de Knowledge Nutrition",
+    labelnames=["organization_id", "action_type"],
+)
+knowledge_nutrition_score = Histogram(
+    "knowledge_nutrition_score",
+    "Knowledge Nutrition Score por dimensión",
+    labelnames=["organization_id", "scope"],
+    buckets=(0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+)
+knowledge_reindex_reason_total = Counter(
+    "knowledge_reindex_reason_total",
+    "Re-indexaciones por razón (fingerprint, policy, modelo)",
+    labelnames=["organization_id", "reason"],
+)
+knowledge_embedding_batch_seconds = Histogram(
+    "knowledge_embedding_batch_seconds",
+    "Duración de cada batch de embeddings de ingesta",
+    labelnames=["organization_id"],
+    buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0),
+)
+knowledge_embedding_chunks_total = Counter(
+    "knowledge_embedding_chunks_total",
+    "Chunks embebidos por la ingesta (throughput observable)",
+    labelnames=["organization_id"],
+)
+knowledge_retrieval_probes_total = Counter(
+    "knowledge_retrieval_probes_total",
+    "Probes de retrieval generados/evaluados",
+    labelnames=["organization_id", "query_type", "status"],
+)
+
 
 def setup_metrics(app: FastAPI) -> Instrumentator:
     """Configura y expone /metrics para Prometheus scraping.

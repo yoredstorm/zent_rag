@@ -43,7 +43,12 @@ from src.knowledge.tabular.relations import discover_relations
 from src.knowledge.tabular.schema import (
     classify_value,
     header_aliases,
+    infer_format,
     infer_semantic_type,
+    infer_units,
+    infer_value_pattern,
+    is_candidate_key,
+    likely_foreign_key,
     normalize_name,
     profile_values,
 )
@@ -222,6 +227,8 @@ def _build_table(
             original_name,
             value_type=profile.inferred_type,
             max_length=profile.max_length,
+            samples=profile.samples,
+            unique_ratio=profile.unique_ratio,
         )
         inferred_type = profile.inferred_type
         type_confidence = profile.type_confidence
@@ -242,6 +249,27 @@ def _build_table(
             inferred_type = TabularValueType.CODE
             type_confidence = max(type_confidence, semantic_confidence * 0.9)
         column_aliases = tuple(dict.fromkeys(aliases + header_aliases(original_name)))
+        # Semantic Column Profiling (§17): formato, patrón, unidades, clave
+        # candidata y señal de FK. Nada se inventa: None = no medido.
+        detected_format, format_confidence = infer_format(
+            profile.samples,
+            value_type=inferred_type,
+            semantic_type=semantic_type,
+        )
+        value_pattern = infer_value_pattern(profile.samples)
+        detected_unit, unit_confidence = infer_units(profile.samples)
+        candidate_key = is_candidate_key(
+            non_empty=profile.non_empty,
+            unique_ratio=profile.unique_ratio,
+            nullable=profile.null_ratio > 0,
+            semantic_type=semantic_type,
+        )
+        foreign_key, fk_confidence = likely_foreign_key(
+            original_name,
+            semantic_type,
+            candidate_key=candidate_key,
+            unique_ratio=profile.unique_ratio,
+        )
         columns.append(
             TabularColumn(
                 id=make_column_id(identifier, physical_column),
@@ -270,6 +298,15 @@ def _build_table(
                     "synthetic_name": not bool(original_name),
                     "header_depth": len(labels),
                     "deduplicated_name": normalized != base_normalized,
+                    "format": detected_format,
+                    "format_confidence": format_confidence,
+                    "value_pattern": value_pattern,
+                    "units": detected_unit,
+                    "units_confidence": unit_confidence,
+                    "candidate_key": candidate_key,
+                    "likely_foreign_key": foreign_key,
+                    "fk_confidence": fk_confidence,
+                    "examples_bounded": list(profile.samples[:8]),
                 },
             )
         )

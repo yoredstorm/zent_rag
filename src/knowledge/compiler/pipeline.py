@@ -183,6 +183,7 @@ class KnowledgeCompiler:
         persist: bool = True,
         observer: "Callable[[str, dict], Awaitable[None]] | None" = None,
         system_emitter: "SystemEventEmitter | None" = None,
+        precomputed: CompilationResult | None = None,
     ) -> CompilationResult:
         """Compila y persiste. En modo offline solo devuelve el resultado.
 
@@ -193,9 +194,13 @@ class KnowledgeCompiler:
         ``system_emitter`` (opcional, C8) recibe eventos de dominio
         (NEW_ENTITY, NEW_RULE, RULE_CHANGED, CONFLICT_DETECTED) derivados de
         esas mismas señales. Es best-effort: nunca altera el flujo.
+
+        ``precomputed`` (Knowledge Nutrition): la vista pura ya calculada por
+        la ingesta para anotar el índice. Evita re-ejecutar el build y no
+        cambia la semántica de persistencia.
         """
         started = time.perf_counter()
-        result = self.build(document)
+        result = precomputed if precomputed is not None else self.build(document)
         if not persist:
             return result
 
@@ -567,6 +572,7 @@ class KnowledgeCompiler:
                 evidence_written += 1 if written else 0
 
         rules_written = 0
+        canonical_rule_ids: dict[str, str] = {}
         existing_rule_keys: dict[str, str] = {}
         if system_emitter is not None:
             try:
@@ -584,6 +590,8 @@ class KnowledgeCompiler:
                 document_id=document_id,
             )
             rules_written += 1
+            if rule.rule_key:
+                canonical_rule_ids[str(rule.rule_key)] = str(rule_id)
             if rule_status == "created":
                 counters["rules"] += 1
                 await self._observe(
@@ -796,6 +804,13 @@ class KnowledgeCompiler:
             "rules": rules_written,
             "conflicts": conflicts_written,
             "evidence": evidence_written,
+            # PASS 2 compiler-aware: ids canónicos para actualizar el payload
+            # del índice sin re-embedding (acotado, tenant-scoped).
+            "canonical_entity_ids": {
+                name: str(object_id)
+                for name, object_id in list(alias_ids.items())[:100]
+            },
+            "canonical_rule_ids": dict(list(canonical_rule_ids.items())[:100]),
             **counters,
         }
 

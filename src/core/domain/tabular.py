@@ -75,6 +75,8 @@ class TabularSemanticType(StrEnum):
     CATEGORY = "category"
     REFERENCE = "reference"
     FREE_TEXT = "free_text"
+    EMAIL = "email"
+    URL = "url"
     UNKNOWN = "unknown"
 
 

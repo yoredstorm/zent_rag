@@ -610,6 +610,7 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         knowledge_base_id: UUID | None = None,
         sparse_vectors: list[dict[str, float]] | None = None,
         workspace_id: UUID | None = None,
+        sparse_texts: list[str] | None = None,
     ) -> None:
         if not points:
             return
@@ -619,6 +620,8 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
 
         if sparse_vectors is not None and len(sparse_vectors) != len(points):
             raise ValueError("sparse_vectors length must match points length")
+        if sparse_texts is not None and len(sparse_texts) != len(points):
+            raise ValueError("sparse_texts length must match points length")
 
         async with _upsert_semaphore():
             client = await _get_client()
@@ -651,11 +654,15 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
                     ),
                 }
                 if _collection_has_named_vectors:
-                    tf = (
-                        sparse_vectors[i]
-                        if sparse_vectors is not None
-                        else encode_sparse(content)
-                    )
+                    if sparse_vectors is not None:
+                        tf = sparse_vectors[i]
+                    else:
+                        sparse_source = (
+                            sparse_texts[i]
+                            if sparse_texts is not None and sparse_texts[i]
+                            else content
+                        )
+                        tf = encode_sparse(sparse_source)
                     indices, values = to_sparse_payload(tf)
                     vector: object = {
                         "dense": embedding,
@@ -683,6 +690,137 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
                 )
 
             await _retry_on_transient_error(_do_upsert, reset_client=True)
+
+    async def update_document_payload(
+        self,
+        organization_id: UUID,
+        document_id: UUID,
+        payload: dict,
+    ) -> None:
+        """PASS 2 compiler-aware: metadata de un documento sin re-embedding.
+
+        Qdrant `set_payload` solo fusiona claves top-level; el contrato de
+        retrieval expone `payload["metadata"]`. Por eso se hace scroll scoped
+        (organización + documento), se fusiona el patch dentro de `metadata` y
+        se re-escribe SOLO ese punto. Filtro doble: nunca toca otro tenant ni
+        otro documento.
+        """
+        if not payload:
+            return
+        if organization_id is None:
+            raise ValueError(
+                "update_document_payload() requires organization_id (tenant isolation)"
+            )
+        organization_id = bind_organization_id(organization_id)
+        client = await _get_client()
+        await self._ensure_collection()
+
+        tenant_filter = qdrant_models.Filter(
+            must=[
+                qdrant_models.FieldCondition(
+                    key="organization_id",
+                    match=qdrant_models.MatchValue(value=str(organization_id)),
+                ),
+                qdrant_models.FieldCondition(
+                    key="metadata.document_id",
+                    match=qdrant_models.MatchValue(value=str(document_id)),
+                ),
+            ]
+        )
+
+        async def _do_update() -> None:
+            c = await _get_client()
+            offset = None
+            while True:
+                points, offset = await c.scroll(
+                    collection_name=RAG_DOCUMENTS_COLLECTION,
+                    scroll_filter=tenant_filter,
+                    limit=128,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                operations = []
+                for point in points:
+                    existing = dict((point.payload or {}).get("metadata") or {})
+                    existing.update(payload)
+                    operations.append(
+                        qdrant_models.SetPayloadOperation(
+                            set_payload=qdrant_models.SetPayload(
+                                payload={"metadata": existing},
+                                points=[point.id],
+                            )
+                        )
+                    )
+                if not operations:
+                    break
+                batch_update = getattr(c, "batch_update_points", None)
+                if callable(batch_update):
+                    # Un round-trip por página en vez de uno por punto.
+                    await batch_update(
+                        collection_name=RAG_DOCUMENTS_COLLECTION,
+                        update_operations=operations,
+                        wait=True,
+                    )
+                else:  # pragma: no cover - clientes viejos sin batch
+                    for operation in operations:
+                        await c.set_payload(
+                            collection_name=RAG_DOCUMENTS_COLLECTION,
+                            payload=operation.set_payload.payload,
+                            points=operation.set_payload.points,
+                            wait=True,
+                        )
+                if offset is None:
+                    break
+
+        await _retry_on_transient_error(_do_update, reset_client=True)
+
+    async def count_document_points(
+        self,
+        organization_id: UUID,
+        *,
+        source_id: UUID | None = None,
+        document_id: UUID | None = None,
+    ) -> int:
+        """Cuenta puntos V2 (v2_doc) scoped por organización/source/document."""
+        if organization_id is None:
+            raise ValueError(
+                "count_document_points() requires organization_id (tenant isolation)"
+            )
+        organization_id = bind_organization_id(organization_id)
+        client = await _get_client()
+        await self._ensure_collection()
+
+        must = [
+            qdrant_models.FieldCondition(
+                key="organization_id",
+                match=qdrant_models.MatchValue(value=str(organization_id)),
+            ),
+            qdrant_models.FieldCondition(
+                key="metadata.v2_doc",
+                match=qdrant_models.MatchValue(value="true"),
+            ),
+        ]
+        if source_id is not None:
+            must.append(
+                qdrant_models.FieldCondition(
+                    key="metadata.source_id",
+                    match=qdrant_models.MatchValue(value=str(source_id)),
+                )
+            )
+        if document_id is not None:
+            must.append(
+                qdrant_models.FieldCondition(
+                    key="metadata.document_id",
+                    match=qdrant_models.MatchValue(value=str(document_id)),
+                )
+            )
+        result = await client.count(
+            collection_name=RAG_DOCUMENTS_COLLECTION,
+            count_filter=qdrant_models.Filter(must=must),  # type: ignore[arg-type]
+            exact=True,
+        )
+        return int(result.count or 0)
 
     async def delete_by_organization(self, organization_id: UUID) -> None:
         """Elimina todos los vectores de una organización por filtro de payload."""

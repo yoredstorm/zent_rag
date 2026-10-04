@@ -56,13 +56,47 @@ class VectorStore(ABC):
         knowledge_base_id: UUID | None = None,
         sparse_vectors: list[dict[str, float]] | None = None,
         workspace_id: UUID | None = None,
+        sparse_texts: list[str] | None = None,
     ) -> None:
         """Inserta puntos densos; opcionalmente sus vectores sparse (BM25).
 
         `sparse_vectors` debe tener la misma longitud que `points`. Un
         adaptador sin soporte lexical puede ignorarlos, pero el adaptador
         por defecto (Qdrant) los persiste como vectores nombrados `sparse`.
+
+        `sparse_texts` (Knowledge Nutrition): texto del que se deriva el sparse
+        cuando no se provee `sparse_vectors`. Permite que la representación de
+        retrieval (aliases/conceptos/preguntas) alimente la pata lexical sin
+        contaminar el contenido de evidencia. Debe tener la misma longitud.
         """
+
+    async def update_document_payload(
+        self,
+        organization_id: UUID,
+        document_id: UUID,
+        payload: dict,
+    ) -> None:
+        """Actualiza metadata de TODOS los puntos de un documento (sin re-embed).
+
+        Es la vía del PASS 2 compiler-aware: el índice recibe ids canónicos
+        cuando el compilador ya persistió, sin recomputar vectores. El patch se
+        fusiona DENTRO de `metadata` (contrato de retrieval). Default sin
+        soporte. Scoped estricto por organization_id + document_id.
+        """
+        return None
+
+    async def count_document_points(
+        self,
+        organization_id: UUID,
+        *,
+        source_id: UUID | None = None,
+        document_id: UUID | None = None,
+    ) -> int:
+        """Cuenta puntos V2 de la organización (para estimaciones de backfill).
+
+        Default sin soporte. Scoped estricto por organization_id.
+        """
+        return 0
 
     @abstractmethod
     async def delete_by_organization(self, organization_id: UUID) -> None: ...

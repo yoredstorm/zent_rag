@@ -20,7 +20,10 @@
 # =============================================================================
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import hashlib
+import time
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid5
 
@@ -56,8 +59,7 @@ logger = get_logger(__name__)
 _CHUNK_NS = UUID("c7a2e5d9-4b3f-4a1c-9d8e-6f5b2a4e8c10")
 
 _CHECKPOINT_EVERY = 10  # records entre updates de progreso
-_EMBED_BATCH = 32  # chunks por llamada de embedding
-
+_EMBED_BATCH = 32  # fallback si settings no está disponible
 
 RATE_LIMIT_BACKOFF_BASE_SECONDS = 60
 RATE_LIMIT_BACKOFF_CAP_SECONDS = 900
@@ -187,6 +189,48 @@ def _validate_metadata(
     return cleaned, None
 
 
+def _observe_embedding_throughput(
+    organization_id, chunks: int, seconds: float
+) -> None:
+    """Throughput de embeddings: métrica + log (nunca frena la ingesta)."""
+    chunks = max(0, int(chunks))
+    seconds = max(0.0, float(seconds))
+    try:
+        logger.info(
+            "Knowledge embedding batch",
+            chunks=chunks,
+            seconds=round(seconds, 3),
+            chunks_per_second=(
+                round(chunks / seconds, 2) if seconds > 0 and chunks else None
+            ),
+        )
+        from src.infrastructure.observability.metrics import (
+            knowledge_embedding_batch_seconds,
+            knowledge_embedding_chunks_total,
+        )
+
+        org = str(organization_id)
+        knowledge_embedding_batch_seconds.labels(organization_id=org).observe(seconds)
+        knowledge_embedding_chunks_total.labels(organization_id=org).inc(chunks)
+    except Exception:  # noqa: BLE001
+        return
+
+
+def _stored_metadata(previous_document) -> dict | None:
+    """Metadata del documento previo (dict o JSONB serializado)."""
+    if not isinstance(previous_document, dict):
+        return None
+    metadata = previous_document.get("metadata")
+    if isinstance(metadata, str):
+        import json
+
+        try:
+            metadata = json.loads(metadata)
+        except (TypeError, ValueError):
+            return None
+    return metadata if isinstance(metadata, dict) else None
+
+
 def _document_understanding_settings():
     try:
         from src.core.config import get_settings
@@ -276,7 +320,9 @@ class KnowledgeIngestionEngine:
                 prompt_tokens=int(prompt_tokens),
                 completion_tokens=int(completion_tokens),
                 total_tokens=int(tokens),
-                embedding_tokens=int(tokens) if kind == "embedding" else 0,
+                embedding_tokens=(
+                    int(tokens) if kind in ("embedding", "acceptance") else 0
+                ),
                 estimated_cost=float(cost_usd),
                 cost_tags={
                     "origin": "knowledge_ingest",
@@ -301,6 +347,10 @@ class KnowledgeIngestionEngine:
         Un chunk padre puede tener decenas de miles de caracteres (una sección
         entera de un manual) y eso excede el límite del modelo de embeddings: el
         provider devuelve 400 y se cae TODO el pipeline V2 del documento.
+
+        Desde Knowledge Nutrition los parents ya NO dependen de este recorte:
+        se embeben con una representación semántica compuesta. Este tope queda
+        como red de seguridad para children/representaciones.
         """
         try:
             from src.core.config import get_settings
@@ -311,6 +361,155 @@ class KnowledgeIngestionEngine:
         if tope <= 0:
             return texts
         return [texto[:tope] for texto in texts]
+
+    # ------------------------------------------------------------------
+    # Knowledge Nutrition (§4-§8): enrichment, representación y fingerprint
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _embed_batch_config() -> tuple[int, int]:
+        """(batch_size, concurrency) reales de settings, con fallback seguro."""
+        try:
+            from src.core.config import get_settings
+
+            batch, concurrency, _tables = get_settings().ingestion_concurrency()
+            return max(1, int(batch)), max(1, int(concurrency))
+        except Exception:  # noqa: BLE001
+            return _EMBED_BATCH, 1
+
+    @staticmethod
+    def _enrichment_enabled() -> bool:
+        try:
+            from src.core.config import get_settings
+
+            return bool(getattr(get_settings(), "KNOWLEDGE_ENRICHMENT_ENABLED", True))
+        except Exception:  # noqa: BLE001
+            return True
+
+    @staticmethod
+    def _parent_representation_enabled() -> bool:
+        try:
+            from src.core.config import get_settings
+
+            return bool(
+                getattr(get_settings(), "KNOWLEDGE_PARENT_REPRESENTATION_ENABLED", True)
+            )
+        except Exception:  # noqa: BLE001
+            return True
+
+    def _apply_enrichment(self, document):
+        """StructuredDocument entendido -> metadata["enrichment"] derivada.
+
+        Fail-soft: si el enrichment falla, el documento sigue su camino normal.
+        """
+        if not self._enrichment_enabled():
+            return document, None
+        try:
+            from src.knowledge.enrichment import enrich_document
+
+            result = enrich_document(document)
+            payload = result.payload()
+            metadata = {**document.metadata, "enrichment": payload}
+            return dataclasses.replace(document, metadata=metadata), result
+        except Exception as exc:  # noqa: BLE001 — el enrichment nunca frena la ingesta
+            logger.warning(
+                "Semantic enrichment failed",
+                document_id=str(getattr(document, "id", "")),
+                error=str(exc)[:300],
+            )
+            return document, None
+
+    def _representation_descriptor(self, document):
+        """Descriptor auditable del fingerprint de representación."""
+        from src.knowledge.representation import descriptor_for_document
+
+        settings = _document_understanding_settings()
+        model = str(getattr(settings, "EMBEDDING_MODEL", "") or "")
+        provider = model.split("/", 1)[0] if "/" in model else ""
+        return descriptor_for_document(
+            document,
+            embedding_provider=provider,
+            embedding_model=model,
+            embedding_dimensions=int(getattr(settings, "VECTOR_DIMENSION", 0) or 0),
+        )
+
+    @staticmethod
+    def _stored_fingerprint(previous_document) -> str | None:
+        metadata = _stored_metadata(previous_document)
+        if not isinstance(metadata, dict):
+            return None
+        from src.knowledge.representation import INDEXED_FINGERPRINT_KEY
+
+        value = metadata.get(INDEXED_FINGERPRINT_KEY)
+        return str(value) if value else None
+
+    @staticmethod
+    def _stored_descriptor(previous_document) -> dict | None:
+        metadata = _stored_metadata(previous_document)
+        if not isinstance(metadata, dict):
+            return None
+        from src.knowledge.representation import INDEXED_DESCRIPTOR_KEY
+
+        value = metadata.get(INDEXED_DESCRIPTOR_KEY)
+        return dict(value) if isinstance(value, dict) else None
+
+    @staticmethod
+    def _invalidated_by(previous_document) -> str | None:
+        metadata = _stored_metadata(previous_document)
+        if not isinstance(metadata, dict):
+            return None
+        from src.knowledge.representation import INVALIDATED_BY_KEY
+
+        value = metadata.get(INVALIDATED_BY_KEY)
+        return str(value) if value else None
+
+    async def _previous_document(self, document):
+        """Metadata previa del structured document (para fingerprint). Fail-soft."""
+        repo = self._structured
+        if repo is None:
+            return None
+        getter = getattr(repo, "get_document", None)
+        if not callable(getter):
+            return None
+        try:
+            return await getter(document.organization_id, document.id)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "previous structured document lookup failed",
+                document_id=str(document.id),
+                error=str(exc)[:160],
+            )
+            return None
+
+    async def _persist_indexed_fingerprint(
+        self,
+        document,
+        fingerprint: str,
+        reason: str,
+        descriptor: dict | None = None,
+    ) -> None:
+        repo = self._structured
+        setter = getattr(repo, "set_runtime_metadata", None) if repo is not None else None
+        if not callable(setter):
+            return
+        try:
+            from src.knowledge.representation import (
+                INDEXED_DESCRIPTOR_KEY,
+                INDEXED_FINGERPRINT_KEY,
+            )
+
+            values: dict = {
+                INDEXED_FINGERPRINT_KEY: fingerprint,
+                "last_index_reason": reason,
+            }
+            if descriptor:
+                values[INDEXED_DESCRIPTOR_KEY] = descriptor
+            await setter(document.organization_id, document.id, values)
+        except Exception as exc:  # noqa: BLE001 — la persistencia es best-effort
+            logger.debug(
+                "indexed fingerprint persist skipped",
+                document_id=str(document.id),
+                error=str(exc)[:160],
+            )
 
     def __init__(
         self,
@@ -392,9 +591,12 @@ class KnowledgeIngestionEngine:
 
         observer = await self._observer_for(job)
         try:
-            await self._run(job, observer)
+            processed, failed = await self._run(job, observer)
             if job.source_id:
-                await _set_source_status(job.organization_id, job.source_id, "indexed")
+                # Cero procesados con fallos NO es una fuente indexada: estado
+                # de error visible; el job conserva contadores para auditoría.
+                status = "error" if (processed == 0 and failed > 0) else "indexed"
+                await _set_source_status(job.organization_id, job.source_id, status)
             await self._finish_observer(observer, success=True)
         except Exception as exc:
             await self._handle_failure(job_id, job, exc, observer)
@@ -481,7 +683,7 @@ class KnowledgeIngestionEngine:
     # ------------------------------------------------------------------
     # Flujo principal
     # ------------------------------------------------------------------
-    async def _run(self, job: IngestionJob, observer=None) -> None:
+    async def _run(self, job: IngestionJob, observer=None) -> tuple[int, int]:
         source = await self._sources.get_source(job.organization_id, job.source_id) if job.source_id else None
         if source is None:
             raise ConnectorError(f"Source {job.source_id} not found for this organization")
@@ -504,6 +706,7 @@ class KnowledgeIngestionEngine:
 
         if connector.self_contained:
             outcome = await connector.sync(cursor)
+            processed, failed = outcome.records_processed, outcome.records_failed
             await self._jobs.update_job(
                 job.id,
                 records_processed=job.records_processed + outcome.records_processed,
@@ -532,7 +735,9 @@ class KnowledgeIngestionEngine:
                 for error in outcome.errors[:3]:
                     await observer.warning(str(error)[:300])
         else:
-            await self._run_record_mode(job, source, connector, kb, cursor, observer)
+            processed, failed = await self._run_record_mode(
+                job, source, connector, kb, cursor, observer
+            )
 
         await self._jobs.update_job(
             job.id,
@@ -540,6 +745,7 @@ class KnowledgeIngestionEngine:
             progress=100,
             completed_at=datetime.now(timezone.utc),
         )
+        return processed, failed
 
     async def _run_record_mode(self, job, source, connector, kb, cursor, observer=None) -> None:
         if self._structured is None:
@@ -632,11 +838,20 @@ class KnowledgeIngestionEngine:
                     f"{records_failed} registros no pudieron convertirse en conocimiento",
                     payload={"records_failed": records_failed},
                 )
+        # Un job con registros fallidos no se declara éxito de fuente: si nada
+        # se procesó, la fuente queda en error (visible) y el próximo sync
+        # reintenta. El job conserva los contadores para auditoría.
+        source_success = not (records_processed == 0 and records_failed > 0)
         await self._state.save_state(
             source.id,
             cursor=final_cursor or cursor,
+            error=(
+                f"{records_failed} records failed to become knowledge"
+                if not source_success
+                else None
+            ),
             processed_count=records_processed,
-            success=True,
+            success=source_success,
         )
         await self._jobs.update_job(
             job.id,
@@ -644,6 +859,7 @@ class KnowledgeIngestionEngine:
             records_failed=records_failed,
             progress=100,
         )
+        return records_processed, records_failed
 
     # ------------------------------------------------------------------
     # Camino único: source -> StructuredDocument -> knowledge
@@ -718,7 +934,24 @@ class KnowledgeIngestionEngine:
         document = await self._apply_document_understanding(
             job, document, record.raw_data or b"", filename=filename, observer=observer
         )
+        # Knowledge Nutrition (§4-§8): enrichment determinista + fingerprint de
+        # representación ANTES de persistir. Ambos quedan auditables en metadata.
+        document, enrichment = self._apply_enrichment(document)
+        descriptor = self._representation_descriptor(document)
+        document = dataclasses.replace(
+            document,
+            metadata={
+                **document.metadata,
+                "retrieval_fingerprint": descriptor.to_payload(),
+            },
+        )
         document.check_consistency()
+        previous_document = await self._previous_document(document)
+        previous_fingerprint = self._stored_fingerprint(previous_document)
+        previous_descriptor = self._stored_descriptor(previous_document)
+        invalidated_by = (
+            self._invalidated_by(previous_document) if previous_descriptor is None else None
+        )
 
         if observer is not None:
             await observer.metric("pages", len(document.pages))
@@ -779,6 +1012,10 @@ class KnowledgeIngestionEngine:
         tabular_diff = await self._persist_tabular(
             job, source, document, change_kind=change_kind, observer=observer
         )
+        # Vista pura del compilador ANTES de indexar: entidades/reglas candidatas
+        # entran como metadata del índice sin violar transacciones (la
+        # persistencia canónica sigue después, reutilizando este resultado).
+        compiled_view = self._compiler_view(document)
         index_result = await self._index_chunks(
             job,
             source,
@@ -786,6 +1023,11 @@ class KnowledgeIngestionEngine:
             change_kind=change_kind,
             acl=_acl_payload(record.metadata),
             tabular_diff=tabular_diff,
+            enrichment=enrichment,
+            compiled=compiled_view,
+            previous_fingerprint=previous_fingerprint,
+            previous_descriptor=previous_descriptor,
+            invalidated_by=invalidated_by,
         )
         if observer is not None:
             if index_result:
@@ -795,6 +1037,22 @@ class KnowledgeIngestionEngine:
                 )
             if self._sessions is not None:
                 await self._sessions.on_source_available(observer)
+        if enrichment is not None:
+            await self._emit_system(
+                KnowledgeEventType.SEMANTIC_ENRICHED,
+                organization_id=document.organization_id,
+                payload={
+                    "concepts": enrichment.statistics.concepts,
+                    "aliases": enrichment.statistics.retrieval_aliases,
+                    "questions": enrichment.statistics.synthetic_questions,
+                    "identifiers": enrichment.statistics.identifiers,
+                    "source_coverage": enrichment.quality.source_coverage,
+                    "enrichment_version": enrichment.enrichment_version,
+                },
+                confidence=enrichment.quality.average_confidence,
+                source_id=document.source_id,
+                document_id=document.id,
+            )
         if index_result and self._tabular is not None and document.tabular is not None:
             try:
                 policy = self._chunking_policy_key(self._tabular_chunking_config())
@@ -817,10 +1075,17 @@ class KnowledgeIngestionEngine:
                     error=str(exc)[:200],
                 )
         await self._summarize(document, change_kind=change_kind)
+        # Retrieval Acceptance Gate (§11-§12): post-index, antes de publicar.
+        acceptance = await self._run_acceptance(job, document, enrichment)
+        # Nutrition Score (§16): dimensiones medidas desde artefactos reales.
+        await self._record_nutrition(document, enrichment, compiled_view, acceptance)
         await self._maybe_discover_company(
             job, source, document, change_kind=change_kind
         )
-        await self._compile(job, source, document, observer)
+        compile_result = await self._compile(
+            job, source, document, observer, precomputed=compiled_view
+        )
+        await self._update_payload_after_compile(document, compile_result)
         self.documents_parsed += 1
 
     # ------------------------------------------------------------------
@@ -936,7 +1201,231 @@ class KnowledgeIngestionEngine:
             **parse_kwargs,
         )
 
-    async def _compile(self, job, source, document, observer=None) -> None:
+    def _compiler_view(self, document):
+        """Vista pura del compilador (sin I/O) para metadata del índice.
+
+        Fail-soft: si el build falla, se indexa sin metadata compilada; la
+        persistencia canónica posterior reportará el fallo por su canal.
+        """
+        if self._compiler is None:
+            return None
+        try:
+            return self._compiler.build(document)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Knowledge compiler view failed",
+                document_id=str(getattr(document, "id", "")),
+                error=str(exc)[:250],
+            )
+            return None
+
+    async def _run_acceptance(self, job, document, enrichment):
+        """Post-index: prueba que el conocimiento ingerido es recuperable."""
+        if enrichment is None:
+            return None
+        mode = "warn"
+        try:
+            from src.core.config import get_settings
+
+            mode = str(
+                getattr(get_settings(), "KNOWLEDGE_RETRIEVAL_ACCEPTANCE_MODE", "warn")
+                or "warn"
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        if mode == "off":
+            return None
+        try:
+            from src.knowledge.acceptance import run_acceptance_gate
+
+            result = await run_acceptance_gate(
+                document=document,
+                enrichment=enrichment,
+                embedder=self._embeddings,
+                vector_store=self._vectors,
+                mode=mode,
+            )
+        except Exception as exc:  # noqa: BLE001 — la ingesta nunca se cae
+            logger.warning(
+                "Retrieval acceptance gate failed",
+                document_id=str(document.id),
+                error=str(exc)[:300],
+            )
+            return None
+        report = result.report
+        if report is not None and report.gate_state == "FAIL":
+            await self._emit_system(
+                KnowledgeEventType.RETRIEVAL_ACCEPTANCE_FAILED,
+                organization_id=document.organization_id,
+                payload={
+                    "mode": report.mode,
+                    "state": report.gate_state,
+                    "recall_at_5": report.recall_at_5,
+                    "mrr": report.mrr,
+                    "probes_total": report.probes_total,
+                    "probes_failed": report.probes_failed,
+                    "failed_types": sorted(
+                        {outcome.query_type for outcome in report.failed_probes}
+                    ),
+                },
+                confidence=report.recall_at_5,
+                requires_review=bool(report.mode == "quarantine"),
+                source_id=document.source_id,
+                document_id=document.id,
+            )
+            if result.quarantined:
+                await self._emit_system(
+                    KnowledgeEventType.KNOWLEDGE_NUTRITION_REQUIRED,
+                    organization_id=document.organization_id,
+                    payload={
+                        "reason": "retrieval_acceptance_below_threshold",
+                        "recall_at_5": report.recall_at_5,
+                        "min_recall_at_5": report.min_recall_at_5,
+                    },
+                    confidence=report.recall_at_5,
+                    requires_review=True,
+                    source_id=document.source_id,
+                    document_id=document.id,
+                )
+                await self._persist_indexed_fingerprint(
+                    document,
+                    str((document.metadata.get("retrieval_fingerprint") or {}).get("fingerprint") or ""),
+                    "quarantine_retrieval_acceptance",
+                )
+        await self._record_acceptance_cost(job, document, result)
+        return result
+
+    async def _record_acceptance_cost(self, job, document, result) -> None:
+        """Costo real de los embeddings de queries del acceptance gate."""
+        tokens = int(getattr(result, "embedding_tokens", 0) or 0)
+        if tokens <= 0 or self._usage_tracker is None:
+            return
+        try:
+            costo = await self._embedding_cost(None, tokens)
+            await self._usage_tracker.record_embedding_tokens(
+                document.organization_id,
+                tokens,
+                cost_usd=costo,
+                workspace_id=document.workspace_id,
+                source_id=document.source_id,
+            )
+            self._observe_ingest("acceptance_embedding", tokens, costo)
+            await self._record_ingest_usage_event(
+                organization_id=document.organization_id,
+                job_id=job.id,
+                # "acceptance" (no "acceptance_embedding"): event_type tiene
+                # varchar(30) y el prefijo knowledge_ingest_ ya consume 17.
+                kind="acceptance",
+                tokens=tokens,
+                cost_usd=costo,
+                # Índice determinista por documento: un reintento no doble-cuenta.
+                index=900_000 + int(document.id.int % 99_999),
+                source_id=document.source_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — el metering nunca rompe
+            logger.debug("acceptance usage not recorded", error=str(exc)[:160])
+
+    async def _record_nutrition(self, document, enrichment, compiled, acceptance) -> None:
+        """Nutrition Score + demanda agregada: dimensiones medidas, nunca rellenadas."""
+        try:
+            from src.knowledge.acceptance import PostgresAcceptanceStore
+            from src.knowledge.nutrition import (
+                PostgresNutritionStore,
+                build_demand_model,
+                compute_nutrition_score,
+            )
+
+            report = acceptance.report if acceptance is not None else None
+            store = PostgresNutritionStore()
+            evaluations = await PostgresAcceptanceStore().list_evaluations(
+                document.organization_id, document_id=document.id, limit=20
+            )
+            actions = await store.list_actions(
+                document.organization_id, document_id=document.id, limit=100
+            )
+            if not evaluations and report is not None:
+                # Modo observe: la corrida no se persistió; se usa el report vivo.
+                evaluations = [report.to_dict()]
+            demand_model = build_demand_model(
+                evaluations,
+                actions,
+                organization_id=str(document.organization_id),
+                document_id=str(document.id),
+                workspace_id=(
+                    str(document.workspace_id) if document.workspace_id else None
+                ),
+                enrichment=enrichment,
+            )
+            score = compute_nutrition_score(
+                document,
+                enrichment=enrichment,
+                compiled=compiled,
+                acceptance=report,
+                demand_coverage=demand_model.coverage,
+            )
+            await store.save_state(
+                score,
+                organization_id=document.organization_id,
+                workspace_id=document.workspace_id,
+                source_id=document.source_id,
+                document_id=document.id,
+                demand_profile=demand_model.to_dict(),
+            )
+            try:
+                from src.infrastructure.observability.metrics import (
+                    knowledge_nutrition_score,
+                )
+
+                if score.nutrition_score is not None:
+                    knowledge_nutrition_score.labels(
+                        organization_id=str(document.organization_id),
+                        scope=score.scope,
+                    ).observe(float(score.nutrition_score))
+            except Exception:  # noqa: BLE001
+                pass
+        except Exception as exc:  # noqa: BLE001 — el score nunca frena la ingesta
+            logger.warning(
+                "Knowledge nutrition score failed",
+                document_id=str(getattr(document, "id", "")),
+                error=str(exc)[:250],
+            )
+
+    async def _update_payload_after_compile(self, document, compile_result) -> None:
+        """PASS 2 compiler-aware: ids canónicos al payload sin re-embedding.
+
+        El índice ya tenía la vista preliminar (candidatos). Cuando el
+        compilador persistió, se actualizan SOLO payloads de este documento
+        con los ids canónicos. Si el store no soporta update, no pasa nada.
+        """
+        if compile_result is None:
+            return
+        persisted = getattr(compile_result, "persisted", {}) or {}
+        entity_ids = persisted.get("canonical_entity_ids") or {}
+        rule_ids = persisted.get("canonical_rule_ids") or {}
+        if not entity_ids and not rule_ids:
+            return
+        updater = getattr(self._vectors, "update_document_payload", None)
+        if not callable(updater):
+            return
+        try:
+            await updater(
+                document.organization_id,
+                document.id,
+                {
+                    "compiled_status": str(persisted.get("status") or "completed"),
+                    "canonical_entity_ids": dict(list(entity_ids.items())[:64]),
+                    "canonical_rule_ids": dict(list(rule_ids.items())[:64]),
+                    "compiled_at": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 — PASS 2 nunca frena la ingesta
+            logger.warning(
+                "Knowledge payload update after compile failed",
+                document_id=str(document.id),
+                error=str(exc)[:250],
+            )
+
+    async def _compile(self, job, source, document, observer=None, *, precomputed=None) -> None:
         """Compila el documento a conocimiento canónico.
 
         La ingesta ya persistió el documento: un fallo del compilador se
@@ -963,6 +1452,7 @@ class KnowledgeIngestionEngine:
                     document,
                     workspace_id=source.workspace_id,
                     observer=compile_observer,
+                    precomputed=precomputed,
                 )
             else:
                 result = await self._compiler.compile_document(
@@ -970,6 +1460,7 @@ class KnowledgeIngestionEngine:
                     workspace_id=source.workspace_id,
                     observer=compile_observer,
                     system_emitter=self._system_emitter,
+                    precomputed=precomputed,
                 )
             logger.info(
                 "Knowledge compiled",
@@ -984,6 +1475,7 @@ class KnowledgeIngestionEngine:
                         payload={"document_id": str(document.id)},
                     )
                 await observer.set_stage(LearningStage.VERIFYING.value)
+            return result
         except Exception as exc:  # noqa: BLE001 — el conocimiento nunca tumba la ingesta
             self.compilations_failed += 1
             logger.warning(
@@ -996,6 +1488,7 @@ class KnowledgeIngestionEngine:
                     "ZENT no pudo consolidar el conocimiento de esta fuente",
                     payload={"document_id": str(document.id), "technical": str(exc)[:300]},
                 )
+            return None
 
     async def _apply_document_understanding(
         self, job, document, raw_data: bytes, *, filename: str, observer=None
@@ -1409,6 +1902,11 @@ class KnowledgeIngestionEngine:
         self, job, source, document, *, change_kind: str | None = None,
         acl: dict | None = None,
         tabular_diff: object | None = None,
+        enrichment=None,
+        compiled=None,
+        previous_fingerprint: str | None = None,
+        previous_descriptor: dict | None = None,
+        invalidated_by: str | None = None,
     ) -> bool | None:
         """Phase C: embebe los chunks V2 (children + parents) y los upserta.
 
@@ -1422,8 +1920,13 @@ class KnowledgeIngestionEngine:
         expansion (contexto de sección) con `v2_parent=true`; los candidates
         de retrieval siguen siendo solo children (`v2_chunk=true`).
 
-        Fingerprinting (§41): contenido sin cambios (change_kind=unchanged) →
-        chunks idénticos → se SKIPEA el re-embed y se registra la decisión.
+        Knowledge Nutrition (§6-§8):
+        - fingerprint de representación: contenido igual + representación igual
+          → SKIP; contenido igual + representación distinta → REINDEX.
+        - los parents se embeben con representación semántica compuesta, nunca
+          con `parent_text[:N]`.
+        - el payload lleva conceptos/aliases/identificadores/preguntas y la
+          vista compilada (candidatos), acotados y con ids.
 
         Knowledge Tabular V2: los documentos Excel/CSV usan TabularChunker y
         un pipeline de índice propio (point keys deterministas + borrado por
@@ -1431,7 +1934,8 @@ class KnowledgeIngestionEngine:
         """
         if document.tabular is not None:
             return await self._index_tabular_chunks(
-                job, source, document, tabular_diff=tabular_diff, acl=acl
+                job, source, document, tabular_diff=tabular_diff, acl=acl,
+                enrichment=enrichment, compiled=compiled,
             )
 
         from src.knowledge.structure import (
@@ -1449,13 +1953,79 @@ class KnowledgeIngestionEngine:
             annotate_chunks(document, chunks)
         if not chunks:
             return
-        if change_kind == "unchanged":
+
+        # Fingerprint de representación (§7/§21): contenido igual + representación
+        # igual → SKIP; contenido igual + representación distinta → REINDEX.
+        from src.knowledge.representation import (
+            PARENT_REPRESENTATION_VERSION,
+            RepresentationDecision,
+            change_reason,
+            representation_decision,
+        )
+
+        fingerprint_payload = document.metadata.get("retrieval_fingerprint") or {}
+        fingerprint = str(fingerprint_payload.get("fingerprint") or "")
+        decision = representation_decision(
+            previous_fingerprint,
+            fingerprint,
+            content_changed=change_kind != "unchanged",
+        )
+        if decision is RepresentationDecision.SKIP:
             logger.info(
-                "Knowledge V2 chunks skipped (content unchanged — fingerprint)",
+                "Knowledge V2 chunks skipped (content + representation unchanged)",
                 document_id=str(document.id),
                 chunks=len(chunks),
+                fingerprint=fingerprint[:16],
             )
-            return
+            return 0
+        reason_detail = change_reason(
+            previous_descriptor,
+            fingerprint_payload,
+            content_changed=change_kind != "unchanged",
+            invalidated_by=invalidated_by,
+        )
+        try:
+            from src.knowledge.enrichment.metrics import (
+                observe_reindex_reason,
+                observe_representation_rebuild,
+            )
+            from src.knowledge.representation import plan_for_reason
+
+            observe_reindex_reason(job.organization_id, reason_detail)
+            if decision is RepresentationDecision.REINDEX:
+                observe_representation_rebuild(job.organization_id, reason_detail)
+            plan = plan_for_reason(reason_detail)
+            if plan is not None:
+                logger.info(
+                    "Knowledge invalidation plan",
+                    document_id=str(document.id),
+                    reason=reason_detail,
+                    stale=[kind.value for kind in plan.stale],
+                    actions=list(plan.actions),
+                    requires_reembedding=plan.requires_reembedding,
+                )
+        except Exception:  # noqa: BLE001 — métricas nunca frenan
+            pass
+        if decision is RepresentationDecision.REINDEX:
+            await self._emit_system(
+                KnowledgeEventType.RETRIEVAL_REPRESENTATION_UPDATED,
+                organization_id=document.organization_id,
+                payload={
+                    "reason": reason_detail,
+                    "previous_fingerprint": (previous_fingerprint or "")[:16],
+                    "fingerprint": fingerprint[:16],
+                    "model": fingerprint_payload.get("embedding_model"),
+                },
+                source_id=document.source_id,
+                document_id=document.id,
+            )
+            await self._emit_system(
+                KnowledgeEventType.KNOWLEDGE_REINDEXED,
+                organization_id=document.organization_id,
+                payload={"reason": reason_detail, "chunks": len(chunks)},
+                source_id=document.source_id,
+                document_id=document.id,
+            )
 
         # F5: limpia puntos V2 previos del documento (re-ingesta con menos
         # chunks, secciones movidas o documento eliminado) antes de reindexar.
@@ -1465,13 +2035,112 @@ class KnowledgeIngestionEngine:
             section.id: section.section_path for section in document.sections
         }
         knowledge_base_id = job.knowledge_base_id
-        for start in range(0, len(chunks), _EMBED_BATCH):
-            batch_chunks = chunks[start : start + _EMBED_BATCH]
-            embeddings = await self._embeddings.embed(
-                self._embed_texts([c.content for c in batch_chunks])
+
+        # Representación semántica de parents (§6): compuesta, nunca truncada.
+        children_by_parent: dict[UUID, list] = {}
+        for chunk in chunks:
+            if chunk.parent_id is not None:
+                children_by_parent.setdefault(chunk.parent_id, []).append(chunk)
+        parent_representations: dict[UUID, object] = {}
+        max_parent_chars = 1800
+        try:
+            from src.core.config import get_settings
+
+            max_parent_chars = int(
+                getattr(
+                    get_settings(),
+                    "KNOWLEDGE_PARENT_REPRESENTATION_MAX_CHARS",
+                    1800,
+                )
+                or 1800
             )
+        except Exception:  # noqa: BLE001
+            pass
+        if self._parent_representation_enabled():
+            from src.knowledge.representation import build_parent_representation
+
+            for chunk in chunks:
+                if chunk.chunk_type is not _ChunkType.DOCUMENT_STRUCTURE:
+                    continue
+                try:
+                    parent_representations[chunk.id] = build_parent_representation(
+                        document,
+                        chunk,
+                        enrichment=enrichment,
+                        compiled=compiled,
+                        children=children_by_parent.get(chunk.id, []),
+                        max_chars=max_parent_chars,
+                    )
+                except Exception as exc:  # noqa: BLE001 — fallback al content
+                    logger.warning(
+                        "Parent semantic representation failed",
+                        document_id=str(document.id),
+                        error=str(exc)[:200],
+                    )
+
+        # Representaciones por chunk (Knowledge Nutrition §4/§6):
+        #   parent -> ParentSemanticRepresentation (compuesta)
+        #   child  -> content representation (dense) + retrieval representation
+        #             (sparse/metadata), nunca el texto crudo como única señal.
+        from src.knowledge.representation import RetrievalRepresentationBuilder
+
+        builder = RetrievalRepresentationBuilder()
+        representations: dict[UUID, dict] = {}
+        for chunk in chunks:
+            is_parent = chunk.chunk_type is _ChunkType.DOCUMENT_STRUCTURE
+            parent_rep = parent_representations.get(chunk.id) if is_parent else None
+            if parent_rep is not None:
+                representations[chunk.id] = {
+                    "embed": parent_rep.text,
+                    "sparse": parent_rep.text,
+                    "payload": {
+                        **parent_rep.to_payload(),
+                        "retrieval_representation_version": parent_rep.version,
+                    },
+                }
+                continue
+            try:
+                content_rep, retrieval_rep = builder.build(
+                    document, chunk, enrichment=enrichment, compiled=compiled
+                )
+            except Exception as exc:  # noqa: BLE001 — fallback al contenido real
+                logger.warning(
+                    "Retrieval representation failed",
+                    document_id=str(document.id),
+                    error=str(exc)[:200],
+                )
+                representations[chunk.id] = {
+                    "embed": chunk.content,
+                    "sparse": chunk.content,
+                    "payload": {},
+                }
+                continue
+            representations[chunk.id] = {
+                "embed": content_rep.text,
+                "sparse": retrieval_rep.text or chunk.content,
+                "payload": {
+                    **content_rep.to_payload(),
+                    **retrieval_rep.to_payload(),
+                },
+            }
+
+        batch_size, concurrency = self._embed_batch_config()
+
+        async def _embed_batch(start: int, batch_chunks) -> tuple[int, list, list, list]:
+            texts: list[str] = []
+            sparse_texts: list[str] = []
+            for chunk in batch_chunks:
+                representation = representations.get(chunk.id) or {}
+                texts.append(representation.get("embed") or chunk.content)
+                sparse_texts.append(representation.get("sparse") or chunk.content)
+            batch_started = time.perf_counter()
+            embeddings = await self._embeddings.embed(self._embed_texts(texts))
+            elapsed = time.perf_counter() - batch_started
             if embeddings and not isinstance(embeddings[0], list):
                 embeddings = [embeddings]
+            _observe_embedding_throughput(
+                job.organization_id, len(batch_chunks), elapsed
+            )
             if self._usage_tracker is not None:
                 try:
                     batch_tokens = sum(c.token_count for c in batch_chunks)
@@ -1490,7 +2159,7 @@ class KnowledgeIngestionEngine:
                         kind="embedding",
                         tokens=batch_tokens,
                         cost_usd=costo,
-                        index=start // _EMBED_BATCH,
+                        index=start // max(1, batch_size),
                         source_id=source.id,
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -1498,6 +2167,37 @@ class KnowledgeIngestionEngine:
                         "Knowledge V2 usage tracking failed",
                         error=str(exc)[:200],
                     )
+            return start, batch_chunks, embeddings, sparse_texts
+
+        semaphore = asyncio.Semaphore(max(1, concurrency))
+
+        async def _guarded_batch(start: int, batch_chunks):
+            async with semaphore:
+                return await _embed_batch(start, batch_chunks)
+
+        batches = [
+            (start, chunks[start : start + batch_size])
+            for start in range(0, len(chunks), batch_size)
+        ]
+        results = await asyncio.gather(
+            *(_guarded_batch(start, batch) for start, batch in batches),
+            return_exceptions=True,
+        )
+
+        indexed = 0
+        for result in results:
+            if isinstance(result, BaseException):
+                if is_rate_limit_error(result):
+                    # Saturación/cuota: el job reintenta con backoff largo.
+                    raise result
+                # Aislamiento de fallo parcial: un batch roto no tumba el resto.
+                logger.warning(
+                    "Knowledge V2 embedding batch failed (partial isolation)",
+                    document_id=str(document.id),
+                    error=str(result)[:300],
+                )
+                continue
+            _start, batch_chunks, embeddings, sparse_texts = result
             points: list[tuple[UUID, list[float], str, dict | None]] = []
             for chunk, vector in zip(batch_chunks, embeddings):
                 # Campos estructurales DENTRO de metadata (contrato del adapter:
@@ -1541,6 +2241,18 @@ class KnowledgeIngestionEngine:
                         str(document.metadata.get("filename") or "").strip() or None
                     ),
                     "title": str(document.title or "").strip() or None,
+                    # Knowledge Nutrition: representación + conocimiento derivado.
+                    "representation_fingerprint": fingerprint or None,
+                    "representation_decision": decision.value,
+                    "representation_version": PARENT_REPRESENTATION_VERSION,
+                    **(representations.get(chunk.id) or {}).get("payload", {}),
+                    **self._enrichment_index_fields(enrichment, chunk),
+                    **self._compiled_index_fields(compiled),
+                    **(
+                        parent_representations[chunk.id].to_payload()
+                        if is_parent and chunk.id in parent_representations
+                        else {}
+                    ),
                     **index_metadata(document, chunk),
                     **(acl or {}),
                 }
@@ -1556,7 +2268,112 @@ class KnowledgeIngestionEngine:
                 job.organization_id, points,
                 knowledge_base_id=knowledge_base_id,
                 workspace_id=source.workspace_id,
+                sparse_texts=sparse_texts,
             )
+            indexed += len(points)
+
+        if indexed <= 0 and chunks:
+            # Nada se indexó (provider caído, batches fallidos): el fingerprint
+            # NO se persiste. El próximo sync ve representación stale y reintenta.
+            logger.error(
+                "Knowledge V2 index produced no points",
+                document_id=str(document.id),
+                chunks=len(chunks),
+                reason=reason_detail,
+            )
+            raise ConnectorError(
+                "Embedding/index produced no points: retry required "
+                f"(document={document.id}, chunks={len(chunks)})"
+            )
+        if indexed < len(chunks):
+            # Aislamiento de fallo parcial: el documento queda parcialmente
+            # indexado, pero el fingerprint NO se marca como completo. El
+            # próximo sync re-materializa todo (upsert idempotente por point_id).
+            logger.warning(
+                "Knowledge V2 partial index (fingerprint not persisted)",
+                document_id=str(document.id),
+                indexed=indexed,
+                expected=len(chunks),
+                reason=reason_detail,
+            )
+            return indexed
+
+        await self._persist_indexed_fingerprint(
+            document,
+            fingerprint,
+            reason_detail,
+            descriptor=fingerprint_payload,
+        )
+        return indexed
+
+    @staticmethod
+    def _enrichment_index_fields(enrichment, chunk) -> dict:
+        """Metadata de enrichment acotada, filtrada por unidades del chunk."""
+        if enrichment is None:
+            return {}
+        block_ids = {str(value) for value in (chunk.metadata.get("block_ids") or ())}
+        unit_key = str(chunk.metadata.get("unit_id") or "")
+
+        def touches(units) -> bool:
+            if not units:
+                return False
+            if not block_ids and not unit_key:
+                return True
+            for value in units:
+                text = str(value or "")
+                if text and (text in block_ids or (unit_key and text == unit_key)):
+                    return True
+            return False
+
+        concepts = [item for item in enrichment.concepts if touches(item.source_unit_ids)][:8]
+        identifiers = [
+            item.value for item in enrichment.identifiers if touches(item.source_unit_ids)
+        ][:12]
+        aliases = [
+            item.value
+            for item in enrichment.retrieval_aliases
+            if touches(item.source_unit_ids)
+        ][:12]
+        questions = [
+            item.question
+            for item in enrichment.synthetic_questions
+            if touches(item.source_unit_ids)
+        ][:8]
+        return {
+            "enrichment_version": enrichment.enrichment_version,
+            "enrichment_derived": "true",
+            "enrichment_canonical": "false",
+            "concept_ids": [item.concept_id for item in concepts],
+            "concept_names": [item.canonical_name for item in concepts],
+            "semantic_types": sorted({item.semantic_type for item in concepts}),
+            "retrieval_aliases": aliases,
+            "retrieval_questions": questions,
+            "enrichment_identifiers": identifiers,
+        }
+
+    @staticmethod
+    def _compiled_index_fields(compiled) -> dict:
+        """Metadata de la vista compilada (candidatos), nunca conocimiento final."""
+        if compiled is None:
+            return {}
+        from src.knowledge.representation import COMPILER_REPRESENTATION_VERSION
+
+        entities = list(getattr(compiled, "entities", ()) or ())
+        rules = list(getattr(compiled, "rules", ()) or ())
+        return {
+            "compiler_representation_version": COMPILER_REPRESENTATION_VERSION,
+            "compiled_entity_keys": [item.natural_key for item in entities[:24]],
+            "compiled_entity_names": [item.name for item in entities[:24]],
+            "compiled_rule_keys": [
+                str(getattr(rule, "rule_key", ""))
+                for rule in rules[:24]
+                if getattr(rule, "rule_key", "")
+            ],
+            "compiled_fact_count": len(getattr(compiled, "facts", ()) or ()),
+            "compiled_relationship_count": len(
+                getattr(compiled, "relationships", ()) or ()
+            ),
+        }
 
     async def _index_tabular_chunks(
         self,
@@ -1566,6 +2383,8 @@ class KnowledgeIngestionEngine:
         *,
         tabular_diff: object | None = None,
         acl: dict | None = None,
+        enrichment=None,
+        compiled=None,
     ) -> bool:
         """Representación semántica tabular multinivel (niveles 0-5).
 
@@ -1653,8 +2472,9 @@ class KnowledgeIngestionEngine:
         knowledge_base_id = job.knowledge_base_id
         embedded = 0
         level_counts: dict[int, int] = {}
-        for start in range(0, len(chunks), _EMBED_BATCH):
-            batch_chunks = chunks[start : start + _EMBED_BATCH]
+        batch_size, _concurrency = self._embed_batch_config()
+        for start in range(0, len(chunks), batch_size):
+            batch_chunks = chunks[start : start + batch_size]
             embeddings = await self._embeddings.embed(
                 self._embed_texts([c.content for c in batch_chunks])
             )
@@ -1678,7 +2498,7 @@ class KnowledgeIngestionEngine:
                         kind="embedding",
                         tokens=batch_tokens,
                         cost_usd=costo,
-                        index=start // _EMBED_BATCH,
+                        index=start // max(1, batch_size),
                         source_id=source.id,
                     )
                 except Exception as exc:  # noqa: BLE001
@@ -1728,6 +2548,8 @@ class KnowledgeIngestionEngine:
                     "v2_parent": "true" if is_parent else "false",
                     "v2_doc": "true",
                     "v2_tabular": "true",
+                    **self._enrichment_index_fields(enrichment, chunk),
+                    **self._compiled_index_fields(compiled),
                     **(acl or {}),
                 }
                 points.append((point_id, list(vector), chunk.content, chunk_metadata))
@@ -1761,6 +2583,13 @@ class KnowledgeIngestionEngine:
             chunks=len(chunks),
             embedded=embedded,
             levels={str(level): count for level, count in sorted(level_counts.items())},
+        )
+        fingerprint_payload = document.metadata.get("retrieval_fingerprint") or {}
+        await self._persist_indexed_fingerprint(
+            document,
+            str(fingerprint_payload.get("fingerprint") or ""),
+            "tabular_indexed",
+            descriptor=fingerprint_payload,
         )
         return len(chunks)
 

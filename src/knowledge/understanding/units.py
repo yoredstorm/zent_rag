@@ -151,6 +151,7 @@ def build_retrieval_units(
                 children,
                 page_start=section.page_start,
                 page_end=section.page_end,
+                heading_block_ids=tuple(str(block_id) for block_id in section.block_ids),
             )
         )
         units.extend(children)
@@ -298,7 +299,16 @@ def _emit(
     content = "\n".join(block.text.strip() for block in blocks if block.text.strip())
     if not content:
         return []
-    ids = [str(block.id) for block in blocks]
+    # Provenance completa: un bloque reflow absorbió fragmentos (reflow_parts).
+    # La unidad los posee igual: sin esto, un identificador que vive en el
+    # fragmento absorbido no puede enlazarse a la evidencia indexada.
+    ids: list[str] = []
+    for block in blocks:
+        if str(block.id) not in ids:
+            ids.append(str(block.id))
+        for part in block.metadata.get("reflow_parts") or ():
+            if str(part) not in ids:
+                ids.append(str(part))
     pieces = _split_if_needed(content, budget, unit_type)
     made: list[RetrievalUnit] = []
     for part_index, piece in enumerate(pieces):
@@ -381,12 +391,13 @@ def _section_unit(
     *,
     page_start: int | None = None,
     page_end: int | None = None,
+    heading_block_ids: tuple[str, ...] = (),
 ) -> RetrievalUnit:
     body = "\n\n".join(child.content for child in children if child.content.strip())
     content = heading.strip()
     if body:
         content = f"{content}\n\n{body}" if content else body
-    ids: list[str] = []
+    ids: list[str] = [str(value) for value in heading_block_ids]
     literals: list[str] = []
     for child in children:
         for block_id in child.block_ids:

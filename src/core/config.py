@@ -1545,6 +1545,60 @@ class Settings(BaseSettings):
             "0 = sin tope."
         ),
     )
+    # -------------------------------------------------------------------------
+    # Knowledge Nutrition — enrichment, representación y acceptance
+    # -------------------------------------------------------------------------
+    KNOWLEDGE_ENRICHMENT_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Activa el Semantic Enrichment Layer (conceptos, aliases, acrónimos, "
+            "identificadores, preguntas sintéticas) durante la ingesta."
+        ),
+    )
+    KNOWLEDGE_ENRICHMENT_PROFILE_PACKS: str = Field(
+        default="",
+        description=(
+            "Módulos separados por coma que exponen PROFILE_PACKS (vocabulario de "
+            "dominio enchufable). Vacío = solo pack genérico."
+        ),
+    )
+    KNOWLEDGE_ENRICHMENT_MAX_CONCEPTS: int = Field(default=200, ge=1, le=5000)
+    KNOWLEDGE_ENRICHMENT_MAX_ALIASES: int = Field(default=400, ge=1, le=10000)
+    KNOWLEDGE_ENRICHMENT_MAX_IDENTIFIERS: int = Field(default=300, ge=1, le=10000)
+    KNOWLEDGE_ENRICHMENT_MAX_DOMAIN_TERMS: int = Field(default=200, ge=1, le=10000)
+    KNOWLEDGE_ENRICHMENT_MAX_TEMPORAL: int = Field(default=200, ge=1, le=10000)
+    KNOWLEDGE_ENRICHMENT_MAX_QUESTIONS: int = Field(default=120, ge=0, le=2000)
+    KNOWLEDGE_ENRICHMENT_MAX_RULES: int = Field(default=80, ge=0, le=2000)
+    KNOWLEDGE_PARENT_REPRESENTATION_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Embebe los parent chunks con una representación semántica compuesta "
+            "(título/sección/conceptos/aliases/identificadores) en vez de truncar "
+            "el texto del padre. El contenido real del padre queda en el payload."
+        ),
+    )
+    KNOWLEDGE_PARENT_REPRESENTATION_MAX_CHARS: int = Field(
+        default=1800,
+        ge=200,
+        le=20000,
+        description="Tope de la representación compuesta del padre (nunca del texto fuente).",
+    )
+    KNOWLEDGE_RETRIEVAL_ACCEPTANCE_MODE: str = Field(
+        default="warn",
+        pattern="^(off|observe|warn|quarantine)$",
+        description=(
+            "Modo del Retrieval Acceptance Gate post-index: off, observe, warn "
+            "(default) o quarantine (marca el documento como no publicado)."
+        ),
+    )
+    KNOWLEDGE_RETRIEVAL_ACCEPTANCE_MAX_PROBES: int = Field(
+        default=24, ge=1, le=500,
+        description="Máximo de probes de retrieval generados por documento.",
+    )
+    KNOWLEDGE_RETRIEVAL_ACCEPTANCE_MIN_RECALL: float = Field(
+        default=0.6, ge=0.0, le=1.0,
+        description="Recall@5 mínimo para aceptar el documento como retrievable.",
+    )
     KNOWLEDGE_SUMMARY_MAX_SECTIONS: int = Field(
         default=0,
         ge=0,

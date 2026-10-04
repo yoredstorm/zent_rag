@@ -11,6 +11,8 @@
 #   python -m src.scripts.knowledge_reprocess --org <uuid> --source <uuid> --purge
 #   python -m src.scripts.knowledge_reprocess --org <uuid> --requeue --limit 100
 #   python -m src.scripts.knowledge_reprocess --org <uuid> --purge --requeue
+#   python -m src.scripts.knowledge_reprocess --org <uuid> --invalidate-representation
+#   python -m src.scripts.knowledge_reprocess --org <uuid> --reevaluate [--document <uuid>]
 #
 # La purga respeta la provenance: solo elimina filas creadas por el Knowledge
 # Compiler (`metadata->>'compiled_by' = 'knowledge_compiler'`), salvo
@@ -191,6 +193,167 @@ async def requeue(organization_id: UUID, limit: int, dry_run: bool) -> int:
     return enqueued
 
 
+async def invalidate_representation(
+    organization_id: UUID, source_id: UUID | None, *, dry_run: bool
+) -> int:
+    """Limpia el fingerprint indexado para forzar re-materialización selectiva.
+
+    No purga evidencia ni conocimiento: el próximo sync ve representación stale
+    (content igual + fingerprint ausente → CREATE/REINDEX) y re-indexa solo lo
+    necesario.
+    """
+    session = await get_async_session()
+    where = (
+        "organization_id = :org "
+        "AND (metadata ? 'indexed_representation_fingerprint' "
+        "OR metadata ? 'indexed_representation_descriptor')"
+    )
+    params: dict = {"org": organization_id}
+    if source_id is not None:
+        where += " AND source_id = :source"
+        params["source"] = source_id
+    try:
+        if dry_run:
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT COUNT(*) AS total FROM structured_documents WHERE "  # noqa: S608
+                        + where  # where: fragmentos constantes
+                    ),
+                    params,
+                )
+            ).first()
+            return int(row.total or 0)
+        result = await session.execute(
+            text(
+                "UPDATE structured_documents SET metadata = (metadata - "  # noqa: S608
+                "'indexed_representation_fingerprint' - "
+                "'indexed_representation_descriptor') || "
+                "jsonb_build_object('representation_invalidated_by', 'manual'), "
+                "updated_at = now() WHERE " + where  # where: fragmentos constantes
+            ),
+            params,
+        )
+        await session.commit()
+        return int(result.rowcount or 0)
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+
+
+async def reevaluate(
+    organization_id: UUID,
+    document_id: UUID | None,
+    *,
+    limit: int,
+    dry_run: bool,
+) -> dict:
+    """Re-ejecuta acceptance con los probes persistidos (sin re-ingerir)."""
+    from src.api.deps import get_embedding_provider, get_vector_store
+    from src.knowledge.acceptance import (
+        PostgresAcceptanceStore,
+        evaluate_probes,
+        probe_from_row,
+    )
+
+    session = await get_async_session()
+    try:
+        where = ["organization_id = :org", "active = true"]
+        params: dict = {"org": organization_id, "limit": limit}
+        if document_id is not None:
+            where.append("document_id = :doc")
+            params["doc"] = document_id
+        rows = (
+            await session.execute(
+                text(
+                    "SELECT DISTINCT document_id FROM knowledge_retrieval_probes "  # noqa: S608
+                    "WHERE " + " AND ".join(where) + " LIMIT :limit"  # fragmentos constantes
+                ),
+                params,
+            )
+        ).fetchall()
+    finally:
+        await session.close()
+
+    store = PostgresAcceptanceStore()
+    summary: dict = {"documents": len(rows), "evaluated": 0, "accepted": 0, "failed": 0}
+    for row in rows:
+        doc_uuid = row.document_id
+        probe_rows = await store.list_probes(
+            organization_id, document_id=doc_uuid, active_only=True, limit=500
+        )
+        if not probe_rows:
+            continue
+        if dry_run:
+            _print(f"[DRY] reevaluate document={doc_uuid} probes={len(probe_rows)}")
+            continue
+        report = await evaluate_probes(
+            tuple(probe_from_row(item) for item in probe_rows),
+            embedder=get_embedding_provider(),
+            vector_store=get_vector_store(),
+            role="admin",
+        )
+        await store.save_evaluation(report)
+        await store.update_probe_results(report)
+        summary["evaluated"] += 1
+        if report.accepted:
+            summary["accepted"] += 1
+        else:
+            summary["failed"] += 1
+        _print(
+            f"[EVAL] document={doc_uuid} recall@5={report.recall_at_5} "
+            f"mrr={report.mrr} accepted={report.accepted}"
+        )
+    return summary
+
+
+#: Heurística declarada para estimaciones de backfill (tokens por chunk).
+ESTIMATED_TOKENS_PER_CHUNK = 180
+
+
+def estimate_reembedding(vectors: int, *, tokens_per_chunk: int = ESTIMATED_TOKENS_PER_CHUNK) -> dict:
+    """Estimación explícita (no promesa): vectores -> embeddings/tokens/costo.
+
+    El costo se completa en `_main` con el pricing real si está disponible.
+    """
+    vectors = max(0, int(vectors))
+    tokens = vectors * max(1, int(tokens_per_chunk))
+    return {
+        "vectors_affected": vectors,
+        "estimated_embeddings": vectors,
+        "estimated_tokens": tokens,
+        "tokens_per_chunk_assumption": int(tokens_per_chunk),
+    }
+
+
+async def _count_vectors(
+    organization_id: UUID, source_id: UUID | None
+) -> int | None:
+    """Cuenta vectores V2 reales (Qdrant) para estimar; None si no disponible."""
+    try:
+        from src.api.deps import get_vector_store
+
+        return await get_vector_store().count_document_points(
+            organization_id, source_id=source_id
+        )
+    except Exception as exc:  # noqa: BLE001 — la estimación nunca frena el CLI
+        _print(f"[WARN] no se pudo contar vectores: {str(exc)[:160]}")
+        return None
+
+
+async def _estimate_cost_usd(tokens: int) -> float | None:
+    try:
+        from src.core.config import get_settings
+        from src.platform.billing.pricing import estimate_cost
+
+        model = str(getattr(get_settings(), "EMBEDDING_MODEL", "") or "")
+        return float(await estimate_cost(model, 0, 0, embedding_tokens=tokens))
+    except Exception:  # noqa: BLE001 — sin pricing, estimación parcial
+        return None
+
+
 async def _main(args: argparse.Namespace) -> None:
     organization_id = UUID(args.org) if args.org else None
     source_id = UUID(args.source) if args.source else None
@@ -215,6 +378,42 @@ async def _main(args: argparse.Namespace) -> None:
             raise SystemExit("--requeue requiere --org")
         enqueued = await requeue(organization_id, args.limit, args.dry_run)
         _print(f"Fuentes encoladas: {enqueued} (dry_run={args.dry_run})")
+    if args.invalidate_representation:
+        if organization_id is None:
+            raise SystemExit("--invalidate-representation requiere --org")
+        touched = await invalidate_representation(
+            organization_id, source_id, dry_run=args.dry_run
+        )
+        _print(
+            f"Fingerprints de representación "
+            f"{'contados' if args.dry_run else 'invalidados'}: {touched} "
+            f"(dry_run={args.dry_run})"
+        )
+        from src.knowledge.representation import invalidation_plan
+
+        plan = invalidation_plan("manual")
+        _print(
+            "Plan de invalidación (manual): "
+            f"stale={[kind.value for kind in plan.stale]} "
+            f"acciones={list(plan.actions)} "
+            f"reembed={plan.requires_reembedding}"
+        )
+        if args.dry_run:
+            vectors = await _count_vectors(organization_id, source_id)
+            if vectors is not None:
+                estimates = estimate_reembedding(vectors)
+                cost = await _estimate_cost_usd(estimates["estimated_tokens"])
+                if cost is not None:
+                    estimates["estimated_cost_usd"] = round(cost, 6)
+                _print(f"Estimación: {estimates}")
+    if args.reevaluate:
+        if organization_id is None:
+            raise SystemExit("--reevaluate requiere --org")
+        document_id = UUID(args.document) if args.document else None
+        summary = await reevaluate(
+            organization_id, document_id, limit=args.limit, dry_run=args.dry_run
+        )
+        _print(f"Re-evaluación: {summary}")
 
 
 def main() -> None:
@@ -239,6 +438,20 @@ def main() -> None:
         help="Con --legacy-conflicts: limpia todas las organizaciones",
     )
     parser.add_argument("--limit", type=int, default=50, help="Máx. fuentes a reencolar")
+    parser.add_argument("--document", help="Document UUID (para --reevaluate)")
+    parser.add_argument(
+        "--invalidate-representation",
+        action="store_true",
+        help=(
+            "Limpia el fingerprint de representación indexado (el próximo sync "
+            "re-materializa e indexa sin purgar evidencia)"
+        ),
+    )
+    parser.add_argument(
+        "--reevaluate",
+        action="store_true",
+        help="Re-ejecuta acceptance con los probes persistidos (sin re-ingerir)",
+    )
     parser.add_argument("--dry-run", action="store_true", help="No escribe nada")
     args = parser.parse_args()
     if not args.org and not args.all_orgs:

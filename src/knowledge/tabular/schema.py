@@ -302,8 +302,16 @@ def infer_semantic_type(
     *,
     value_type: TabularValueType = TabularValueType.UNKNOWN,
     max_length: int = 0,
+    samples: tuple[str, ...] | list[str] | None = None,
+    unique_ratio: float | None = None,
 ) -> tuple[TabularSemanticType, float, tuple[str, ...]]:
-    """(semantic_type, confidence, aliases) determinista a partir del header."""
+    """(semantic_type, confidence, aliases) determinista a partir del header.
+
+    `samples`/`unique_ratio` (opcionales) habilitan heurísticas GENÉRICAS por
+    valor cuando el header no dice nada: email, url, porcentaje, money, código
+    corto de alta frecuencia, entero único candidato a identificador. Ningún
+    dominio concreto está hardcodeado.
+    """
     normalized = " " + normalize_name(header).replace("_", " ") + " "
     raw = " " + (header or "").strip().lower() + " "
     tokens = {token for token in normalize_name(header).split("_") if token}
@@ -337,6 +345,14 @@ def infer_semantic_type(
                 ):
                     confidence = min(0.95, confidence + 0.1)
                 return semantic, confidence, aliases
+    value_fallback = _value_semantic_fallback(
+        value_type=value_type,
+        max_length=max_length,
+        samples=samples,
+        unique_ratio=unique_ratio,
+    )
+    if value_fallback is not None:
+        return value_fallback
     if value_type in (TabularValueType.STRING, TabularValueType.MIXED) and max_length > 60:
         return TabularSemanticType.FREE_TEXT, 0.6, ("text", "notes")
     if value_type in (TabularValueType.DATE, TabularValueType.DATETIME):
@@ -344,6 +360,217 @@ def infer_semantic_type(
     if value_type in (TabularValueType.INTEGER, TabularValueType.FLOAT, TabularValueType.CURRENCY):
         return TabularSemanticType.UNKNOWN, 0.3, ()
     return TabularSemanticType.UNKNOWN, 0.2, ()
+
+
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[A-Za-z]{2,}$")
+_URL_RE = re.compile(r"^https?://\S+$", re.IGNORECASE)
+_PERCENT_RE = re.compile(r"^\d+(?:[.,]\d+)?\s*%$")
+_MONEY_RE = re.compile(
+    r"^(?:[$€£]\s*\d+(?:[.,]\d+)?|\d+(?:[.,]\d+)?\s*"
+    r"(?:USD|EUR|GBP|JPY|MXN|COP|BRL|CLP|ARS))$",
+    re.IGNORECASE,
+)
+_SHORT_CODE_RE = re.compile(r"^[A-Z]{2,3}$")
+
+
+def _value_semantic_fallback(
+    *,
+    value_type: TabularValueType,
+    max_length: int,
+    samples: tuple[str, ...] | list[str] | None,
+    unique_ratio: float | None,
+) -> tuple[TabularSemanticType, float, tuple[str, ...]] | None:
+    """Heurísticas por VALOR, sin vocabulario de dominio."""
+    values = [str(value).strip() for value in (samples or ()) if str(value).strip()][:64]
+    if not values:
+        return None
+    if all(_EMAIL_RE.match(value) for value in values):
+        return TabularSemanticType.EMAIL, 0.85, ("email",)
+    if all(_URL_RE.match(value) for value in values):
+        return TabularSemanticType.URL, 0.8, ("url",)
+    if all(_PERCENT_RE.match(value) for value in values):
+        return TabularSemanticType.PERCENTAGE, 0.75, ("percentage", "percent")
+    if all(_MONEY_RE.match(value) for value in values):
+        return TabularSemanticType.AMOUNT, 0.6, ("amount", "money")
+    if (
+        all(_SHORT_CODE_RE.match(value) for value in values)
+        and (unique_ratio is None or unique_ratio <= 0.8)
+    ):
+        # Código corto de alta frecuencia (AA/AM/AA): señal, no certeza.
+        return TabularSemanticType.CODE, 0.55, ("code",)
+    if (
+        value_type in (TabularValueType.INTEGER, TabularValueType.CODE)
+        and unique_ratio is not None
+        and unique_ratio >= 0.999
+        and max_length <= 12
+    ):
+        return TabularSemanticType.IDENTIFIER, 0.45, ("id", "identifier")
+    return None
+
+
+_FORMAT_YYYYMMDD = re.compile(r"^\d{8}$")
+_FORMAT_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_FORMAT_SLASH = re.compile(r"^\d{1,2}/\d{1,2}/\d{2,4}$")
+_FORMAT_DOTTED = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{2,4}$")
+_FORMAT_YYYY_MM = re.compile(r"^\d{4}/(0?[1-9]|1[0-2])$")
+_FORMAT_YM = re.compile(r"^(19|20)\d{2}(0[1-9]|1[0-2])$")
+_MASK_DIGIT = re.compile(r"\d")
+_MASK_ALPHA = re.compile(r"[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]")
+_UNIT_TOKEN = re.compile(
+    r"^(%|USD|EUR|GBP|JPY|MXN|COP|BRL|CLP|ARS|"
+    r"kg|g|mg|km|cm|mm|m2|m3|MB|GB|TB|KB|bytes?|B|"
+    r"d[ií]as?|horas?|min(?:utos?)?|seg(?:undos?)?)$",
+    re.IGNORECASE,
+)
+
+_FORMAT_CANDIDATES = (
+    ("YYYYMMDD", _FORMAT_YYYYMMDD),
+    ("YYYY-MM-DD", _FORMAT_ISO),
+    ("DD/MM/YYYY", _FORMAT_SLASH),
+    ("DD.MM.YYYY", _FORMAT_DOTTED),
+    ("YYYY/MM", _FORMAT_YYYY_MM),
+)
+
+
+def infer_format(
+    samples: tuple[str, ...] | list[str],
+    *,
+    value_type: TabularValueType = TabularValueType.UNKNOWN,
+    semantic_type: TabularSemanticType = TabularSemanticType.UNKNOWN,
+) -> tuple[str | None, float]:
+    """Formato determinista de una columna (YYYYMMDD, ISO, DD/MM/YYYY...).
+
+    Solo se decide cuando hay soporte suficiente (>=60% de los samples). Si las
+    fechas son ambiguas (01/02/2024) se marca DD/MM/YYYY con confianza baja:
+    la duda es información, no se decide por el usuario.
+    """
+    date_like = value_type in (TabularValueType.DATE, TabularValueType.DATETIME)
+    semantic_date = semantic_type is TabularSemanticType.DATE
+    candidates = [str(value).strip() for value in samples if str(value).strip()]
+    if not candidates:
+        return None, 0.0
+    for name, pattern in _FORMAT_CANDIDATES:
+        hits = sum(1 for value in candidates if pattern.match(value))
+        ratio = hits / len(candidates)
+        if ratio < 0.6:
+            continue
+        if name == "YYYYMMDD":
+            valid = sum(
+                1
+                for value in candidates
+                if pattern.match(value)
+                and 1 <= int(value[4:6]) <= 12
+                and 1 <= int(value[6:8]) <= 31
+            )
+            if valid / max(hits, 1) < 0.9:
+                continue
+        if name == "DD/MM/YYYY":
+            days = [int(value.split("/")[0]) for value in candidates if pattern.match(value)]
+            months = [int(value.split("/")[1]) for value in candidates if pattern.match(value)]
+            ambiguous = all(day <= 12 for day in days) and all(month <= 12 for month in months)
+            confidence = 0.55 if ambiguous else 0.85
+            return name, round(min(0.95, confidence * ratio + 0.1), 2)
+        if name == "DD.MM.YYYY":
+            return name, round(min(0.95, 0.6 * ratio + 0.15), 2)
+        return name, round(min(0.95, 0.8 * ratio + 0.1), 2)
+    if date_like or semantic_date:
+        return None, 0.0
+    return None, 0.0
+
+
+def infer_value_pattern(samples: tuple[str, ...] | list[str], *, min_support: float = 0.6) -> str | None:
+    """Máscara dominante de los valores: 'CAT31' -> 'AAA99', 'CXRCD' -> 'AAAAA'."""
+    values = [str(value).strip() for value in samples if str(value).strip()]
+    if not values:
+        return None
+    masks: dict[str, int] = {}
+    for value in values[:64]:
+        mask = _MASK_DIGIT.sub("9", _MASK_ALPHA.sub("A", value))[:32]
+        masks[mask] = masks.get(mask, 0) + 1
+    best, count = max(masks.items(), key=lambda item: item[1])
+    if count / len(values[:64]) < min_support:
+        return None
+    # Palabras sueltas en minúsculas = texto libre, no un patrón de código.
+    if best.isalpha() and all(value.islower() for value in values[:64]):
+        return None
+    return best
+
+
+def infer_units(samples: tuple[str, ...] | list[str]) -> tuple[str | None, float]:
+    """Unidad dominante detectada en los valores ('%', 'USD', 'días')."""
+    values = [str(value).strip() for value in samples if str(value).strip()]
+    if not values:
+        return None, 0.0
+    counts: dict[str, int] = {}
+    for value in values[:64]:
+        match = re.search(
+            r"(\d+(?:[.,]\d+)?)\s*([A-Za-z%]+)$|^([$€£])\s*\d",
+            value,
+        )
+        if match is None:
+            continue
+        unit = match.group(2) or match.group(3)
+        if unit and _UNIT_TOKEN.match(unit.strip()):
+            normalized = unit.strip().upper() if unit.isalpha() else unit.strip()
+            counts[normalized] = counts.get(normalized, 0) + 1
+    if not counts:
+        return None, 0.0
+    unit, count = max(counts.items(), key=lambda item: item[1])
+    ratio = count / len(values[:64])
+    if ratio < 0.5:
+        return None, 0.0
+    return unit, round(min(0.9, 0.5 + ratio / 2), 2)
+
+
+def is_candidate_key(
+    *,
+    non_empty: int,
+    unique_ratio: float,
+    nullable: bool,
+    semantic_type: TabularSemanticType = TabularSemanticType.UNKNOWN,
+) -> bool:
+    """Clave candidata: no nula, no vacía y 100% única."""
+    if non_empty <= 0 or nullable:
+        return False
+    return unique_ratio >= 0.999
+
+
+def likely_foreign_key(
+    name: str,
+    semantic_type: TabularSemanticType,
+    *,
+    candidate_key: bool,
+    unique_ratio: float,
+) -> tuple[bool, float]:
+    """Señal de FK por nombre + tipo + no-unicidad. Nunca un merge irreversible."""
+    if candidate_key:
+        return False, 0.0
+    normalized = normalize_name(name)
+    tokens = set(normalized.split("_")) if normalized else set()
+    name_signal = (
+        normalized.endswith("_id")
+        or normalized.startswith("id_")
+        or normalized.endswith("_code")
+        or normalized.endswith("_key")
+        or "ref" in tokens
+        or "parent" in tokens
+        or "lookup" in tokens
+    )
+    type_signal = semantic_type in (
+        TabularSemanticType.IDENTIFIER,
+        TabularSemanticType.REFERENCE,
+        TabularSemanticType.CODE,
+    )
+    if not name_signal and not type_signal:
+        return False, 0.0
+    confidence = 0.35
+    if name_signal:
+        confidence += 0.25
+    if type_signal:
+        confidence += 0.2
+    if unique_ratio < 0.95:
+        confidence += 0.1
+    return True, round(min(0.9, confidence), 2)
 
 
 def header_aliases(header: str) -> tuple[str, ...]:

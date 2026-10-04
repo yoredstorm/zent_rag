@@ -148,7 +148,8 @@ class FakeVectorStore:
         self.upserted.append(args)
 
     async def upsert_batch(
-        self, organization_id, points, knowledge_base_id=None, workspace_id=None
+        self, organization_id, points, knowledge_base_id=None, workspace_id=None,
+        sparse_texts=None,
     ) -> None:
         self.upserted.extend((organization_id, p, knowledge_base_id) for p in points)
 

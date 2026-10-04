@@ -111,7 +111,7 @@ class FakeVectorStore:
     async def upsert(self, organization_id: UUID, document_id: UUID, embedding: list[float], content: str, metadata: dict | None = None) -> None:
         self.points[document_id] = (embedding, content, metadata)
 
-    async def upsert_batch(self, organization_id: UUID, points: list) -> None:
+    async def upsert_batch(self, organization_id: UUID, points: list, **kwargs) -> None:
         for doc_id, emb, content, meta in points:
             self.points[doc_id] = (emb, content, meta)
 

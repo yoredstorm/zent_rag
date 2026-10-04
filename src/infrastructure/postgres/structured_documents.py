@@ -151,6 +151,38 @@ class PostgresStructuredDocumentRepository(StructuredDocumentRepository):
         finally:
             await session.close()
 
+    async def set_runtime_metadata(
+        self, organization_id: UUID, document_id: UUID, values: dict
+    ) -> None:
+        """Merge aditivo de metadata runtime (fingerprint indexado, nutrición).
+
+        `metadata || values`: nunca reemplaza la metadata del documento.
+        Scoped estricto por organization_id.
+        """
+        if not values:
+            return
+        session = await get_async_session()
+        try:
+            await session.execute(
+                text(
+                    "UPDATE structured_documents "
+                    "SET metadata = metadata || CAST(:values AS jsonb), "
+                    "updated_at = now() "
+                    "WHERE id = :did AND organization_id = :oid"
+                ),
+                {
+                    "values": json.dumps(values, default=str),
+                    "did": str(document_id),
+                    "oid": str(organization_id),
+                },
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
     async def _detect_change_kind(self, session, document: StructuredDocument) -> str:
         from src.core.domain.knowledge_v2 import DocumentChangeKind
 

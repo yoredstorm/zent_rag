@@ -61,3 +61,17 @@ class StructuredDocumentRepository(ABC):
         sobreescriben). Retorna cuántos documentos eliminó.
         """
         return 0
+
+    async def set_runtime_metadata(
+        self,
+        organization_id: UUID,
+        document_id: UUID,
+        values: dict,
+    ) -> None:
+        """Merge aditivo de metadata runtime (fingerprint indexado, estado).
+
+        Default sin soporte: adaptadores que persisten metadata JSONB lo
+        sobreescriben. Nunca reemplaza la metadata existente, solo la fusiona.
+        Scoped estricto por organization_id.
+        """
+        return None
