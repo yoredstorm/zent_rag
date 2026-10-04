@@ -56,7 +56,7 @@ class EmbeddingTextPlanner:
         self._representation = (
             str(
                 representation
-                or _setting("RAG_EMBEDDING_DENSE_REPRESENTATION", "content")
+                or _setting("EMBEDDING_DENSE_REPRESENTATION", "content")
                 or "content"
             )
             .strip()

@@ -685,7 +685,7 @@ async def test_engine_uses_semantic_representation_when_configured(
 
     monkeypatch.setattr(
         get_settings(),
-        "RAG_EMBEDDING_DENSE_REPRESENTATION",
+        "EMBEDDING_DENSE_REPRESENTATION",
         "semantic",
         raising=False,
     )

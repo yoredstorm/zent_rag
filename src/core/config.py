@@ -1745,7 +1745,7 @@ class Settings(BaseSettings):
             "en la pata sparse (nunca en dense ni en la evidencia)."
         ),
     )
-    RAG_EMBEDDING_DENSE_REPRESENTATION: str = Field(
+    EMBEDDING_DENSE_REPRESENTATION: str = Field(
         default="content",
         pattern="^(content|semantic|concept|question)$",
         description=(
@@ -1755,7 +1755,7 @@ class Settings(BaseSettings):
             "la representación invalida SOLO el embedding (reindex)."
         ),
     )
-    RAG_EMBEDDING_LATE_CHUNKING: str = Field(
+    EMBEDDING_LATE_CHUNKING: str = Field(
         default="auto",
         pattern="^(off|auto|on)$",
         description=(
@@ -1764,7 +1764,7 @@ class Settings(BaseSettings):
             "embed_late_chunking; si falla, contextual embedding. off = nunca."
         ),
     )
-    RAG_EMBEDDING_LATE_CHUNKING_MODELS: str = Field(
+    EMBEDDING_LATE_CHUNKING_MODELS: str = Field(
         default="",
         description=(
             "Modelos de embedding cuyo API soporta late chunking (coma). Vacío = "

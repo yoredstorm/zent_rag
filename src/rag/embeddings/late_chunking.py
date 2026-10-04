@@ -44,12 +44,12 @@ def _setting(name: str, default):
 
 
 def late_chunking_mode() -> str:
-    mode = str(_setting("RAG_EMBEDDING_LATE_CHUNKING", "auto") or "auto").strip().lower()
+    mode = str(_setting("EMBEDDING_LATE_CHUNKING", "auto") or "auto").strip().lower()
     return mode if mode in LATE_CHUNKING_MODES else "auto"
 
 
 def configured_late_chunking_models() -> set[str]:
-    raw = str(_setting("RAG_EMBEDDING_LATE_CHUNKING_MODELS", "") or "")
+    raw = str(_setting("EMBEDDING_LATE_CHUNKING_MODELS", "") or "")
     return {
         item.strip().lower()
         for item in raw.split(",")

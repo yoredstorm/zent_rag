@@ -139,10 +139,10 @@ def test_can_late_chunk_requires_real_provider_method() -> None:
 def test_late_chunking_settings_defaults(monkeypatch) -> None:
     from src.core.config import get_settings
 
-    monkeypatch.setattr(get_settings(), "RAG_EMBEDDING_LATE_CHUNKING", "off", raising=False)
+    monkeypatch.setattr(get_settings(), "EMBEDDING_LATE_CHUNKING", "off", raising=False)
     monkeypatch.setattr(
         get_settings(),
-        "RAG_EMBEDDING_LATE_CHUNKING_MODELS",
+        "EMBEDDING_LATE_CHUNKING_MODELS",
         "custom-embed, other-embed",
         raising=False,
     )
