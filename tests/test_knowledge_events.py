@@ -26,6 +26,7 @@ TIPOS_ESPERADOS = {
     # Knowledge Nutrition (§25): eventos informativos + acciones de nutrición.
     "semantic_enriched",
     "retrieval_acceptance_failed",
+    "retrieval_acceptance_v2",
     "retrieval_representation_updated",
     "knowledge_reindexed",
     "knowledge_nutrition_required",
@@ -36,6 +37,7 @@ SIN_REVISION = {
     "new_rule",
     # Informativos: no exigen revisión humana.
     "semantic_enriched",
+    "retrieval_acceptance_v2",
     "retrieval_representation_updated",
     "knowledge_reindexed",
 }

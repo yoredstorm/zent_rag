@@ -20,6 +20,15 @@ PROBE_TYPES = (
     "table_lookup",
     "temporal_question",
     "definition",
+    # Fase 14 (Retrieval Acceptance V2): probes derivados del Semantic Fabric.
+    "knowledge_definition",
+    "knowledge_rule",
+    "knowledge_exception",
+    "knowledge_symbol",
+    "knowledge_condition",
+    "knowledge_procedure",
+    "knowledge_claim",
+    "knowledge_dependency",
 )
 
 _PROBE_NS = UUID("3d8b2f41-7c6a-4e2d-9f10-5a6c7e8d9b21")

@@ -280,6 +280,46 @@ class PostgresAcceptanceStore:
         )
         return rows[0] if rows else None
 
+    async def update_knowledge_metrics(
+        self,
+        organization_id: UUID,
+        document_id: UUID,
+        metrics: dict,
+    ) -> bool:
+        """Fase 14: merge de métricas V2 en la última evaluación del documento.
+
+        Aditivo sobre el JSONB `metrics`; nunca borra lo ya medido.
+        """
+        if not metrics:
+            return False
+        session = await get_async_session()
+        try:
+            result = await session.execute(
+                text(
+                    """
+                    UPDATE knowledge_retrieval_evaluations
+                    SET metrics = metrics || CAST(:metrics AS jsonb)
+                    WHERE id = (
+                        SELECT id FROM knowledge_retrieval_evaluations
+                        WHERE organization_id = :oid AND document_id = :did
+                        ORDER BY created_at DESC LIMIT 1
+                    )
+                    """
+                ),
+                {
+                    "oid": str(organization_id),
+                    "did": str(document_id),
+                    "metrics": json.dumps(metrics, default=str),
+                },
+            )
+            await session.commit()
+            return bool(result.rowcount)
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
 
 def probe_from_row(row: dict) -> RetrievalProbe:
     """Fila persistida -> objeto de probe (re-ejecutable sin re-ingesta)."""

@@ -29,6 +29,7 @@ class KnowledgeEventType(StrEnum):
     # eventos informativos; las acciones de nutrición informan revisión.
     SEMANTIC_ENRICHED = "semantic_enriched"
     RETRIEVAL_ACCEPTANCE_FAILED = "retrieval_acceptance_failed"
+    RETRIEVAL_ACCEPTANCE_V2 = "retrieval_acceptance_v2"
     RETRIEVAL_REPRESENTATION_UPDATED = "retrieval_representation_updated"
     KNOWLEDGE_REINDEXED = "knowledge_reindexed"
     KNOWLEDGE_NUTRITION_REQUIRED = "knowledge_nutrition_required"
@@ -39,6 +40,7 @@ _SIN_REVISION = frozenset(
         KnowledgeEventType.NEW_ENTITY,
         KnowledgeEventType.NEW_RULE,
         KnowledgeEventType.SEMANTIC_ENRICHED,
+        KnowledgeEventType.RETRIEVAL_ACCEPTANCE_V2,
         KnowledgeEventType.RETRIEVAL_REPRESENTATION_UPDATED,
         KnowledgeEventType.KNOWLEDGE_REINDEXED,
     }
