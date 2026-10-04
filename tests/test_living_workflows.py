@@ -157,6 +157,7 @@ def test_knowledge_events_registered_in_catalog() -> None:
         # Knowledge Nutrition (§25).
         "knowledge.semantic_enriched",
         "knowledge.retrieval_acceptance_failed",
+        "knowledge.retrieval_acceptance_v2",
         "knowledge.retrieval_representation_updated",
         "knowledge.knowledge_reindexed",
         "knowledge.knowledge_nutrition_required",

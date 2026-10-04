@@ -334,6 +334,31 @@ _EVENTS: list[EventSchema] = [
         ],
     ),
     EventSchema(
+        id="knowledge.retrieval_acceptance_v2",
+        business_name="Aceptación de retrieval V2 (conocimiento)",
+        description=(
+            "Probes derivados del Semantic Fabric: mide si apareció el "
+            "conocimiento requerido (definiciones, reglas, excepciones, "
+            "símbolos y dependencias), no solo el chunk esperado."
+        ),
+        category="knowledge",
+        icon="check",
+        source_kind="internal_event",
+        fields=[
+            _field("probes", "Sondas", "number", 12),
+            _field("passed", "Aprobadas", "number", 10),
+            _field("evidence_recall", "Recall de evidencia", "number", 0.83),
+            _field("definition_recall", "Recall de definiciones", "number", 0.9),
+            _field("rule_recall", "Recall de reglas", "number", 0.8),
+            _field("exception_recall", "Recall de excepciones", "number", 0.75),
+            _field("symbol_recall", "Recall de símbolos", "number", 0.7),
+            _field("dependency_recall", "Recall de dependencias", "number", 0.66),
+            _field("semantic_coverage", "Cobertura semántica", "number", 0.8),
+            _field("orphans", "Huérfanos", "number", 2),
+            _field("version", "Versión", "text", "knowledge-acceptance-v2"),
+        ],
+    ),
+    EventSchema(
         id="knowledge.knowledge_nutrition_required",
         business_name="Un documento requiere nutrición de conocimiento",
         description=(
