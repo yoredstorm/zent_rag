@@ -810,6 +810,22 @@ knowledge_ingest_cost_usd = Counter(
     "Costo estimado (USD) de la ingesta de conocimiento",
     labelnames=["kind"],
 )
+# --- Ingesta semántica progresiva (Fases 1-17) --------------------------------
+knowledge_semantic_windows_total = Counter(
+    "knowledge_semantic_windows_total",
+    "Ventanas semánticas procesadas/omitidas/fallidas",
+    labelnames=["organization_id", "status"],  # processed | skipped | failed
+)
+knowledge_semantic_threads_total = Counter(
+    "knowledge_semantic_threads_total",
+    "SemanticThreads abiertos/resueltos por la ingesta",
+    labelnames=["organization_id", "status"],  # opened | resolved | ambiguous
+)
+knowledge_semantic_fabric_nodes_total = Counter(
+    "knowledge_semantic_fabric_nodes_total",
+    "Nodos proyectados al Semantic Fabric por tipo",
+    labelnames=["organization_id", "node_type"],
+)
 # --- Agent JEV Loop: juicio por paso + re-consultas dirigidas -----------------
 zent_agent_jev_action_total = Counter(
     "zent_agent_jev_action_total",
