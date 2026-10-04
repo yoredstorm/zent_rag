@@ -149,6 +149,7 @@ class TestStructuralExpansion:
             "section_neighborhood",
             "exact_anchors",
             "table_notes",
+            "fabric_activation",
             "same_document",
             "cross_document",
             "concepts",

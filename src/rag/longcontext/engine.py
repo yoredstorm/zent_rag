@@ -16,6 +16,10 @@ from typing import Any
 from src.core.domain.entities import RetrievalChunk, RetrievalContext
 from src.infrastructure.observability.logging_config import get_logger
 from src.rag.longcontext.budget import AdaptiveContextBudget, compute_context_budget
+from src.rag.longcontext.context_compiler import (
+    CompiledContext,
+    compile_context,
+)
 from src.rag.longcontext.coverage import (
     AnchorCoverage,
     anchor_coverage,
@@ -31,6 +35,10 @@ from src.rag.longcontext.expansion import (
 )
 from src.rag.longcontext.information import compute_information_gain, snapshot
 from src.rag.longcontext.packager import ContextPackager, PackResult
+from src.rag.longcontext.requirement_graph import (
+    QueryRequirementGraph,
+    build_requirement_graph,
+)
 from src.rag.longcontext.requirements import (
     EvidenceRequirement,
     RequirementCoverage,
@@ -109,6 +117,10 @@ class LongContextResult:
     views: QueryViews | None = None
     #: Crecimiento del contexto para la vista de debug (tokens reales).
     timeline: list[dict[str, Any]] = field(default_factory=list)
+    #: Fase 12: grafo de requisitos (qué conocimiento exige la pregunta).
+    requirement_graph: QueryRequirementGraph | None = None
+    #: Fase 13: contexto compilado estructurado (no chunks concatenados).
+    compiled_context: CompiledContext | None = None
 
     def to_public_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -128,6 +140,10 @@ class LongContextResult:
         }
         if self.views is not None:
             payload["query_views"] = self.views.to_public_dict()
+        if self.requirement_graph is not None:
+            payload["requirement_graph"] = self.requirement_graph.to_public_dict()
+        if self.compiled_context is not None:
+            payload["compiled_context"] = self.compiled_context.to_public_dict()
         if self.quality is not None and hasattr(self.quality, "to_public_dict"):
             payload["quality"] = self.quality.to_public_dict()
         return payload
@@ -268,6 +284,18 @@ class AdaptiveLongContextEngine:
                     "tier": tier_index,
                 }
             )
+            req_graph = build_requirement_graph(
+                question=raw,
+                requirements=requirements,
+                chunks=packed.chunks,
+            )
+            compiled = compile_context(
+                question=raw,
+                chunks=packed.chunks,
+                requirements=requirements,
+                requirement_graph=req_graph,
+                user_inputs=list(views.examples),
+            )
             return LongContextResult(
                 retrieved=RetrievalContext(
                     chunks=chunks,
@@ -285,6 +313,8 @@ class AdaptiveLongContextEngine:
                 shadow=shadow,
                 views=views,
                 timeline=timeline,
+                requirement_graph=req_graph,
+                compiled_context=compiled,
             )
 
         used_strategies: set[str] = set()
@@ -331,9 +361,11 @@ class AdaptiveLongContextEngine:
                         error=str(exc)[:200],
                     )
                     continue
-                known = {chunk.document_id for chunk in chunks}
+                known = {_chunk_identity(chunk) for chunk in chunks}
                 added_chunks = [
-                    chunk for chunk in expansion.chunks if chunk.document_id not in known
+                    chunk
+                    for chunk in expansion.chunks
+                    if _chunk_identity(chunk) not in known
                 ]
                 if not added_chunks:
                     continue
@@ -475,6 +507,18 @@ class AdaptiveLongContextEngine:
                 "tier": tier_index,
             }
         )
+        req_graph = build_requirement_graph(
+            question=raw,
+            requirements=requirements,
+            chunks=final.chunks,
+        )
+        compiled = compile_context(
+            question=raw,
+            chunks=final.chunks,
+            requirements=requirements,
+            requirement_graph=req_graph,
+            user_inputs=list(views.examples),
+        )
         return LongContextResult(
             retrieved=RetrievalContext(
                 chunks=chunks,
@@ -493,6 +537,8 @@ class AdaptiveLongContextEngine:
             shadow=shadow,
             views=views,
             timeline=timeline,
+            requirement_graph=req_graph,
+            compiled_context=compiled,
         )
 
     # ------------------------------------------------------------------
@@ -644,6 +690,15 @@ def _expansion_points(settings: LongContextSettings) -> int:
 def _expansion_ms(settings: LongContextSettings) -> float:
     value = float(getattr(settings, "expansion_max_ms", 0.0) or 0.0)
     return value if value > 0 else 2000.0
+
+
+def _chunk_identity(chunk) -> tuple[str, str]:
+    """Identidad real de chunk (documento + chunk_id/unit_id o contenido)."""
+    metadata = getattr(chunk, "metadata", None) or {}
+    identity = str(metadata.get("chunk_id") or metadata.get("unit_id") or "")
+    if not identity:
+        identity = (getattr(chunk, "content", "") or "")[:80]
+    return str(getattr(chunk, "document_id", "")), identity
 
 
 class _NullStore:

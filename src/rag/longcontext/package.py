@@ -29,6 +29,8 @@ class GenerationPackage:
     #: validadores consumen ESTO; no recalculan coverage por su cuenta.
     evidence: dict[str, Any] = field(default_factory=dict)
     stop_reason: str = ""
+    #: Fase 13: contexto compilado estructurado (secciones reales, no chunks).
+    compiled_context: dict[str, Any] = field(default_factory=dict)
 
     def to_public_dict(
         self,
@@ -53,6 +55,7 @@ class GenerationPackage:
             ),
             "stop_reason": self.stop_reason or None,
             "evidence": dict(self.evidence),
+            "compiled_context": dict(self.compiled_context),
         }
 
 
@@ -66,6 +69,7 @@ def build_generation_package(
     extra_missing: tuple[str, ...] = (),
     evidence_state: Any | None = None,
     stop_reason: str = "",
+    compiled_context: Any | None = None,
 ) -> GenerationPackage:
     """Arma el paquete final sin LLM: todo determinístico y trazable.
 
@@ -170,6 +174,11 @@ def build_generation_package(
         mode=mode,
         evidence=evidence_public,
         stop_reason=str(stop_reason or evidence_public.get("stop_reason") or ""),
+        compiled_context=(
+            compiled_context.to_public_dict()
+            if hasattr(compiled_context, "to_public_dict")
+            else dict(compiled_context or {})
+        ),
     )
 
 

@@ -549,11 +549,15 @@ def _mark(chunk: RetrievalChunk, retrieval: str) -> RetrievalChunk:
 
 def default_strategies(store: object, retrieve: RetrieveFn) -> list[ExpansionStrategy]:
     """Etapas en el orden recomendado: de lo más preciso a lo más amplio."""
+    # Import diferido: graph_activation depende de este módulo (evita ciclo).
+    from .graph_activation import FabricActivationExpansion
+
     return [
         ParentSectionExpansion(store),
         SectionNeighborhoodExpansion(store),
         ExactAnchorExpansion(store),
         TableNoteExpansion(store),
+        FabricActivationExpansion(store),
         SameDocumentExpansion(retrieve),
         CrossDocumentExpansion(retrieve),
         ConceptExpansion(retrieve),
