@@ -19,7 +19,9 @@ RETRIEVAL_REPRESENTATION_VERSION = "retrieval-rep-1"
 PARENT_REPRESENTATION_VERSION = "parent-semantic-1"
 
 # Codificación sparse: md5-32 + TF (ver infrastructure/qdrant/bm25.py).
-SPARSE_ENCODING_VERSION = "md5-32-tf-1"
+# v2: el texto sparse es contenido + representación de retrieval (conserva
+# recall lexical); v1 indexaba solo la representación derivada.
+SPARSE_ENCODING_VERSION = "md5-32-tf-2-content+retrieval"
 
 # Contextualización del chunk (prefijo de sección) aplicada antes de embeber.
 CONTEXTUALIZATION_VERSION = "section-prefix-1"
