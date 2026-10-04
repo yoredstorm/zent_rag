@@ -555,8 +555,36 @@ class LiteLLMProvider(LLMProvider, EmbeddingProvider):
             batch_size=len(texts),
             embedding_latency_ms=round(latency_ms, 2),
         )
-
         return embeddings[0] if is_single else embeddings
+
+    async def embed_late_chunking(
+        self, chunks: list[str], model: str | None = None
+    ) -> list[list[float]]:
+        """Late chunking REAL: un request con los chunks del MISMO documento.
+
+        El API (Jina-style) contextualiza cada chunk con el documento completo
+        cuando `late_chunking=true`. Solo se invoca si el registry declaró la
+        capacidad y este método existe; cualquier error lo maneja el caller
+        (fallback a contextual embedding). Nunca se simula.
+        """
+        texts = [str(chunk) for chunk in chunks or ()]
+        if not texts:
+            return []
+        settings = get_settings()
+        requested_model = model or settings.EMBEDDING_MODEL
+        kwargs = _get_llm_kwargs()
+        if requested_model.startswith("ollama/"):
+            kwargs.pop("api_base", None)
+            kwargs.pop("api_key", None)
+        response = await aembedding(
+            model=requested_model,
+            input=texts,
+            timeout=settings.LITELLM_TIMEOUT_SECONDS,
+            num_retries=0,
+            late_chunking=True,
+            **kwargs,
+        )
+        return [list(item["embedding"]) for item in response.data]  # type: ignore[union-attr]
 
     async def rerank(
         self,

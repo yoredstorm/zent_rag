@@ -532,6 +532,7 @@ class KnowledgeIngestionEngine:
         session_service: object | None = None,
         system_emitter: object | None = None,
         reconstruction_provider: object | None = None,
+        semantic_ingestion: object | None = None,
     ) -> None:
         self._jobs = job_repo
         self._state = sync_state_repo
@@ -567,6 +568,9 @@ class KnowledgeIngestionEngine:
         # Semantic Reconstruction Layer: proveedor LLM opcional SOLO para
         # ambigüedad semántica real (deterministas primero).
         self._reconstruction_provider = reconstruction_provider
+        # Progressive Semantic Ingestion (Fases 1-2): manifiesto de cobertura
+        # + planner de ventanas. Fail-soft: None = comportamiento actual.
+        self._semantic_ingestion = semantic_ingestion
         self.documents_parsed = 0
         self.documents_failed = 0
         self.compilations_failed = 0
@@ -782,6 +786,7 @@ class KnowledgeIngestionEngine:
                     external_id=record.external_id,
                     error=str(exc)[:400],
                 )
+                await self._semantic_record_failed(job, source, record, exc)
                 continue
             records_processed += 1
             if records_processed % _CHECKPOINT_EVERY == 0:
@@ -864,6 +869,34 @@ class KnowledgeIngestionEngine:
     # ------------------------------------------------------------------
     # Camino único: source -> StructuredDocument -> knowledge
     # ------------------------------------------------------------------
+    def _semantic_service(self):
+        """Servicio de ingesta semántica progresiva (None = deshabilitado)."""
+        service = self._semantic_ingestion
+        if service is None:
+            return None
+        try:
+            return service if getattr(service, "enabled", False) else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    async def _semantic_record_failed(self, job, source, record, exc) -> None:
+        """Marca el fallo real del record en el manifiesto (fail-soft)."""
+        service = self._semantic_service()
+        if service is None:
+            return
+        external_id = str(
+            record.metadata.get("document_external_id") or record.external_id
+        )
+        try:
+            await service.failed(
+                organization_id=job.organization_id,
+                source_id=source.id,
+                external_id=external_id,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        except Exception:  # noqa: BLE001 — jamás frena la ingesta
+            return
+
     async def _register_document(self, source, document, external_id: str) -> None:
         """Mantiene `source_documents` en sync con el árbol canónico.
 
@@ -919,6 +952,54 @@ class KnowledgeIngestionEngine:
             or record.metadata.get("original_filename")
             or external_id
         )
+        # Progressive Semantic Ingestion (Fase 1): manifiesto antes de parsear.
+        # En modo active, fuente sin cambios + pipeline vigente = SKIP real
+        # (no se vuelve a parsear, reconstruir ni embeber).
+        semantic = self._semantic_service()
+        if semantic is not None and not semantic.should_process(
+            organization_id=job.organization_id,
+            source_id=source.id,
+            external_id=external_id,
+        ):
+            # Canary: esta fuente no entra al pipeline semántico.
+            semantic = None
+        if semantic is not None:
+            try:
+                raw_bytes = (
+                    record.raw_data
+                    if record.raw_data is not None
+                    else (record.content or "").encode("utf-8")
+                )
+                if await semantic.begin(
+                    organization_id=job.organization_id,
+                    source_id=source.id,
+                    workspace_id=source.workspace_id,
+                    external_id=external_id,
+                    source_type=str(getattr(source, "type", "") or ""),
+                    raw_data=raw_bytes,
+                ):
+                    structured_external_ids.add(external_id)
+                    logger.info(
+                        "Knowledge ingestion resume skip",
+                        source_id=str(source.id),
+                        external_id=external_id,
+                    )
+                    if observer is not None:
+                        await observer.metric("ignored", 1)
+                        await observer.event(
+                            "DUPLICATE_DETECTED",
+                            payload={
+                                "name": filename,
+                                "reason": "fuente sin cambios: reanudación selectiva",
+                            },
+                        )
+                    return
+            except Exception as exc:  # noqa: BLE001 — el manifiesto nunca frena
+                logger.warning(
+                    "Semantic ingestion begin failed",
+                    external_id=external_id,
+                    error=str(exc)[:250],
+                )
         if observer is not None:
             await observer.set_stage(LearningStage.READING.value)
             await observer.event(
@@ -934,6 +1015,18 @@ class KnowledgeIngestionEngine:
         document = await self._apply_document_understanding(
             job, document, record.raw_data or b"", filename=filename, observer=observer
         )
+        # Fase 1-2: manifiesto (parsing completo) + plan de ventanas semánticas
+        # soft. Determinista, sin LLM; un fallo aquí no frena la ingesta.
+        window_plan = None
+        if semantic is not None:
+            try:
+                window_plan = await semantic.parsed(document)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Semantic ingestion plan failed",
+                    document_id=str(getattr(document, "id", "")),
+                    error=str(exc)[:250],
+                )
         # Knowledge Nutrition (§4-§8): enrichment determinista + fingerprint de
         # representación ANTES de persistir. Ambos quedan auditables en metadata.
         document, enrichment = self._apply_enrichment(document)
@@ -1016,6 +1109,36 @@ class KnowledgeIngestionEngine:
         # entran como metadata del índice sin violar transacciones (la
         # persistencia canónica sigue después, reutilizando este resultado).
         compiled_view = self._compiler_view(document)
+        # Fase 3: comprensión local por ventana + SemanticState. Determinista
+        # primero; LLM opcional. Checkpoint por ventana: una ventana fallida no
+        # invalida la fuente y el próximo sync reanuda solo las stale.
+        if semantic is not None:
+            try:
+                await semantic.process_windows(
+                    document,
+                    plan=window_plan,
+                    enrichment=enrichment,
+                    compiled=compiled_view,
+                    reset=str(change_kind or "") == "updated",
+                )
+            except Exception as exc:  # noqa: BLE001 — nunca frena la ingesta
+                logger.warning(
+                    "Semantic window processing failed",
+                    document_id=str(getattr(document, "id", "")),
+                    error=str(exc)[:300],
+                )
+        # Fase 9: contexto del fabric para enriquecer los retrieval units
+        # (ids por tipo + vecindad semántica). off/shadow/active.
+        fabric_ctx = None
+        if semantic is not None:
+            try:
+                fabric_ctx = await semantic.fabric_context(document)
+            except Exception as exc:  # noqa: BLE001 — nunca frena la ingesta
+                logger.warning(
+                    "Semantic fabric context failed",
+                    document_id=str(getattr(document, "id", "")),
+                    error=str(exc)[:250],
+                )
         index_result = await self._index_chunks(
             job,
             source,
@@ -1028,6 +1151,7 @@ class KnowledgeIngestionEngine:
             previous_fingerprint=previous_fingerprint,
             previous_descriptor=previous_descriptor,
             invalidated_by=invalidated_by,
+            fabric_context=fabric_ctx,
         )
         if observer is not None:
             if index_result:
@@ -1037,6 +1161,19 @@ class KnowledgeIngestionEngine:
                 )
             if self._sessions is not None:
                 await self._sessions.on_source_available(observer)
+        if semantic is not None:
+            try:
+                await semantic.indexed(
+                    document,
+                    indexed_units=int(index_result or 0),
+                    window_plan=window_plan,
+                )
+            except Exception as exc:  # noqa: BLE001 — nunca frena la ingesta
+                logger.warning(
+                    "Semantic ingestion indexed mark failed",
+                    document_id=str(getattr(document, "id", "")),
+                    error=str(exc)[:250],
+                )
         if enrichment is not None:
             await self._emit_system(
                 KnowledgeEventType.SEMANTIC_ENRICHED,
@@ -1086,6 +1223,17 @@ class KnowledgeIngestionEngine:
             job, source, document, observer, precomputed=compiled_view
         )
         await self._update_payload_after_compile(document, compile_result)
+        if semantic is not None:
+            try:
+                await semantic.finished(
+                    document, compiled=compile_result is not None
+                )
+            except Exception as exc:  # noqa: BLE001 — nunca frena la ingesta
+                logger.warning(
+                    "Semantic ingestion finish failed",
+                    document_id=str(getattr(document, "id", "")),
+                    error=str(exc)[:250],
+                )
         self.documents_parsed += 1
 
     # ------------------------------------------------------------------
@@ -1293,7 +1441,60 @@ class KnowledgeIngestionEngine:
                     "quarantine_retrieval_acceptance",
                 )
         await self._record_acceptance_cost(job, document, result)
+        await self._run_acceptance_v2(document)
         return result
+
+    async def _run_acceptance_v2(self, document) -> None:
+        """Fase 14: probes de conocimiento + métricas V2 (fail-soft)."""
+        service = self._semantic_service()
+        if service is None or not hasattr(service, "knowledge_probes"):
+            return
+        try:
+            built = await service.knowledge_probes(document)
+            if not built:
+                return
+            payloads, stats = built
+            from src.knowledge.acceptance import PostgresAcceptanceStore, evaluate_probes
+            from src.knowledge.semantic.acceptance_v2 import (
+                evaluate_knowledge_acceptance,
+                probe_payloads_to_objects,
+            )
+
+            probes = probe_payloads_to_objects(payloads)
+            if not probes:
+                return
+            report = await evaluate_probes(
+                tuple(probes),
+                embedder=self._embeddings,
+                vector_store=self._vectors,
+                role="admin",
+                top_k=5,
+                min_recall_at_5=0.5,
+                mode="observe",
+            )
+            metrics = evaluate_knowledge_acceptance(
+                list(report.outcomes), stats=stats
+            )
+            try:
+                await PostgresAcceptanceStore().update_knowledge_metrics(
+                    document.organization_id, document.id, metrics
+                )
+            except Exception:  # noqa: BLE001 — el merge es best-effort
+                pass
+            await self._emit_system(
+                KnowledgeEventType.RETRIEVAL_ACCEPTANCE_V2,
+                organization_id=document.organization_id,
+                payload=metrics,
+                confidence=metrics.get("evidence_recall"),
+                source_id=document.source_id,
+                document_id=document.id,
+            )
+        except Exception as exc:  # noqa: BLE001 — V2 nunca frena la ingesta
+            logger.warning(
+                "Retrieval acceptance V2 failed",
+                document_id=str(getattr(document, "id", "")),
+                error=str(exc)[:300],
+            )
 
     async def _record_acceptance_cost(self, job, document, result) -> None:
         """Costo real de los embeddings de queries del acceptance gate."""
@@ -1907,6 +2108,7 @@ class KnowledgeIngestionEngine:
         previous_fingerprint: str | None = None,
         previous_descriptor: dict | None = None,
         invalidated_by: str | None = None,
+        fabric_context: object | None = None,
     ) -> bool | None:
         """Phase C: embebe los chunks V2 (children + parents) y los upserta.
 
@@ -1936,6 +2138,7 @@ class KnowledgeIngestionEngine:
             return await self._index_tabular_chunks(
                 job, source, document, tabular_diff=tabular_diff, acl=acl,
                 enrichment=enrichment, compiled=compiled,
+                fabric_context=fabric_context,
             )
 
         from src.knowledge.structure import (
@@ -2084,6 +2287,18 @@ class KnowledgeIngestionEngine:
         #             (sparse/metadata), nunca el texto crudo como única señal.
         from src.knowledge.representation import RetrievalRepresentationBuilder
 
+        # Fase 10: representación densa configurable (content|semantic|concept|
+        # question). `content` mantiene el comportamiento actual.
+        from src.rag.embeddings import EmbeddingTextPlanner
+        from src.rag.embeddings.late_chunking import (
+            can_late_chunk,
+            embed_late_chunking_batches,
+            plan_late_chunking_batches,
+        )
+
+        embedding_planner = EmbeddingTextPlanner(
+            enrichment=enrichment, fabric_context=fabric_context
+        )
         builder = RetrievalRepresentationBuilder()
         representations: dict[UUID, dict] = {}
         for chunk in chunks:
@@ -2116,7 +2331,7 @@ class KnowledgeIngestionEngine:
                 }
                 continue
             representations[chunk.id] = {
-                "embed": content_rep.text,
+                "embed": embedding_planner.plan(chunk, content_rep.text),
                 # El sparse NO reemplaza el contenido: la representación de
                 # retrieval AGREGA aliases/conceptos/preguntas al texto real.
                 # Reemplazarlo perdía recall lexical de términos de contenido.
@@ -2124,23 +2339,81 @@ class KnowledgeIngestionEngine:
                 "payload": {
                     **content_rep.to_payload(),
                     **retrieval_rep.to_payload(),
+                    "embedding_representation": embedding_planner.representation,
+                    "embedding_representation_version": embedding_planner.version,
                 },
             }
+
+        # Fase 9 (active): los labels del fabric entran a la pata sparse,
+        # nunca al dense ni a la evidencia. shadow solo anota payload.
+        if (
+            fabric_context is not None
+            and getattr(fabric_context, "enabled", False)
+            and getattr(fabric_context, "mode", "shadow") == "active"
+        ):
+            for chunk in chunks:
+                representation = representations.get(chunk.id)
+                if not representation:
+                    continue
+                try:
+                    labels = fabric_context.sparse_labels(
+                        chunk.metadata.get("block_ids") or ()
+                    )
+                except Exception:  # noqa: BLE001 — enriquecimiento opcional
+                    labels = []
+                if labels:
+                    representation["sparse"] = (
+                        f"{representation.get('sparse') or chunk.content}\n"
+                        f"Semantic: {', '.join(labels)}"
+                    )
+
+        # Fase 10: late chunking REAL solo si el provider lo soporta (método
+        # `embed_late_chunking` + capacidad declarada del modelo). Si falla o
+        # no aplica, cada chunk usa su representación contextual.
+        late_vectors: dict = {}
+        if can_late_chunk(self._embeddings):
+            batches = plan_late_chunking_batches(chunks, representations)
+            if batches:
+                late_vectors = await embed_late_chunking_batches(
+                    self._embeddings, batches
+                )
+                if late_vectors:
+                    logger.info(
+                        "Late chunking applied",
+                        document_id=str(document.id),
+                        chunks=len(late_vectors),
+                        batches=len(batches),
+                    )
 
         batch_size, concurrency = self._embed_batch_config()
 
         async def _embed_batch(start: int, batch_chunks) -> tuple[int, list, list, list]:
-            texts: list[str] = []
+            pending = [
+                (index, chunk)
+                for index, chunk in enumerate(batch_chunks)
+                if chunk.id not in late_vectors
+            ]
             sparse_texts: list[str] = []
             for chunk in batch_chunks:
                 representation = representations.get(chunk.id) or {}
-                texts.append(representation.get("embed") or chunk.content)
                 sparse_texts.append(representation.get("sparse") or chunk.content)
+            texts = [
+                (representations.get(chunk.id) or {}).get("embed") or chunk.content
+                for _index, chunk in pending
+            ]
             batch_started = time.perf_counter()
-            embeddings = await self._embeddings.embed(self._embed_texts(texts))
-            elapsed = time.perf_counter() - batch_started
-            if embeddings and not isinstance(embeddings[0], list):
-                embeddings = [embeddings]
+            embeddings: list = []
+            if pending:
+                embeddings = await self._embeddings.embed(self._embed_texts(texts))
+                elapsed = time.perf_counter() - batch_started
+                if embeddings and not isinstance(embeddings[0], list):
+                    embeddings = [embeddings]
+            else:
+                elapsed = time.perf_counter() - batch_started
+            # Late chunking: vectores ya calculados por el provider real.
+            vectors: list = [late_vectors.get(chunk.id) for chunk in batch_chunks]
+            for (index, _chunk), vector in zip(pending, embeddings):
+                vectors[index] = list(vector)
             _observe_embedding_throughput(
                 job.organization_id, len(batch_chunks), elapsed
             )
@@ -2170,7 +2443,7 @@ class KnowledgeIngestionEngine:
                         "Knowledge V2 usage tracking failed",
                         error=str(exc)[:200],
                     )
-            return start, batch_chunks, embeddings, sparse_texts
+            return start, batch_chunks, vectors, sparse_texts
 
         semaphore = asyncio.Semaphore(max(1, concurrency))
 
@@ -2200,9 +2473,13 @@ class KnowledgeIngestionEngine:
                     error=str(result)[:300],
                 )
                 continue
-            _start, batch_chunks, embeddings, sparse_texts = result
+            _start, batch_chunks, vectors, sparse_texts = result
             points: list[tuple[UUID, list[float], str, dict | None]] = []
-            for chunk, vector in zip(batch_chunks, embeddings):
+            for chunk, vector in zip(batch_chunks, vectors):
+                if vector is None:
+                    # Vector faltante (batch roto o late chunking sin resultado):
+                    # el chunk no se indexa y el fingerprint no se marca completo.
+                    continue
                 # Campos estructurales DENTRO de metadata (contrato del adapter:
                 # RetrievalChunk.metadata = payload["metadata"]; ACL top-level
                 # la inyecta upsert_batch desde visibility/acl_*).
@@ -2257,6 +2534,15 @@ class KnowledgeIngestionEngine:
                         else {}
                     ),
                     **index_metadata(document, chunk),
+                    **(
+                        fabric_context.chunk_fields(
+                            chunk.metadata.get("block_ids") or (),
+                            unit_key=chunk.metadata.get("unit_id"),
+                        )
+                        if fabric_context is not None
+                        and getattr(fabric_context, "enabled", False)
+                        else {}
+                    ),
                     **(acl or {}),
                 }
                 points.append(
@@ -2388,6 +2674,7 @@ class KnowledgeIngestionEngine:
         acl: dict | None = None,
         enrichment=None,
         compiled=None,
+        fabric_context: object | None = None,
     ) -> bool:
         """Representación semántica tabular multinivel (niveles 0-5).
 
@@ -2551,6 +2838,15 @@ class KnowledgeIngestionEngine:
                     "v2_parent": "true" if is_parent else "false",
                     "v2_doc": "true",
                     "v2_tabular": "true",
+                    **(
+                        fabric_context.chunk_fields(
+                            chunk.metadata.get("block_ids") or (),
+                            unit_key=chunk.metadata.get("unit_id"),
+                        )
+                        if fabric_context is not None
+                        and getattr(fabric_context, "enabled", False)
+                        else {}
+                    ),
                     **self._enrichment_index_fields(enrichment, chunk),
                     **self._compiled_index_fields(compiled),
                     **(acl or {}),

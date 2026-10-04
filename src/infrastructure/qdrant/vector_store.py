@@ -1523,6 +1523,89 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         )
         return RetrievalContext(chunks=chunks, retrieval_latency_ms=latency_ms)
 
+    async def get_chunks_by_fabric_nodes(
+        self,
+        organization_id: UUID,
+        *,
+        node_ids: list[str] | None = None,
+        role: str = "admin",
+        user_id: UUID | None = None,
+        groups: list[str] | None = None,
+        limit: int = 60,
+    ) -> RetrievalContext:
+        """Chunks que contienen nodos del Semantic Fabric (graph-aware retrieval).
+
+        Una sola consulta `MatchAny` sobre `metadata.fabric_node_ids`, con
+        verificación post-hoc de tenant y visibilidad ACL (mismo contrato que
+        `get_neighborhood`). Sin node_ids devuelve vacío.
+        """
+        if organization_id is None:
+            raise ValueError(
+                "get_chunks_by_fabric_nodes() requires organization_id (tenant isolation)"
+            )
+        cleaned = [
+            str(value) for value in (node_ids or []) if str(value or "").strip()
+        ]
+        if not cleaned:
+            return RetrievalContext(chunks=[], retrieval_latency_ms=0.0)
+        organization_id = bind_organization_id(organization_id)
+        client = await _get_client()
+        await self._ensure_collection()
+        start = time.perf_counter()
+        points, _ = await _retry_on_transient_error(
+            client.scroll,
+            reset_client=True,
+            collection_name=RAG_DOCUMENTS_COLLECTION,
+            scroll_filter=qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(
+                        key="organization_id",
+                        match=qdrant_models.MatchValue(value=str(organization_id)),
+                    ),
+                    qdrant_models.FieldCondition(
+                        key="metadata.fabric_node_ids",
+                        match=qdrant_models.MatchAny(any=cleaned),
+                    ),
+                ]
+            ),
+            limit=max(1, int(limit)),
+            with_payload=True,
+            with_vectors=False,
+        )
+        latency_ms = (time.perf_counter() - start) * 1000
+        chunks: list[RetrievalChunk] = []
+        for point in points:
+            payload = point.payload or {}
+            if payload.get("organization_id") != str(organization_id):
+                logger.warning(
+                    "Cross-tenant fabric fetch blocked",
+                    point_id=str(point.id),
+                    requested_by=str(organization_id),
+                )
+                continue
+            if not payload_visible(payload, role=role, user_id=user_id, groups=groups):
+                continue
+            try:
+                document_id = UUID(str(point.id))
+            except (ValueError, TypeError, AttributeError):
+                continue
+            chunks.append(
+                RetrievalChunk(
+                    document_id=document_id,
+                    content=payload.get("content", ""),
+                    score=0.0,
+                    metadata=payload.get("metadata", {}),
+                )
+            )
+        logger.info(
+            "Fabric nodes fetched",
+            organization_id=str(organization_id),
+            nodes=len(cleaned),
+            returned=len(chunks),
+            latency_ms=round(latency_ms, 2),
+        )
+        return RetrievalContext(chunks=chunks, retrieval_latency_ms=latency_ms)
+
     async def _delete_with_filter(
         self, *, must: list, log_message: str, must_not: list | None = None
     ) -> None:

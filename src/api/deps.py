@@ -429,6 +429,10 @@ def get_knowledge_engine():
         from src.infrastructure.postgres.tabular import PostgresTabularRepository
         from src.knowledge.cost import KnowledgeUsageTracker
         from src.knowledge.engine.service import KnowledgeIngestionEngine
+        from src.knowledge.semantic import (
+            PostgresSemanticIngestionStore,
+            SemanticIngestionService,
+        )
         from src.knowledge.summarize.service import (
             DocumentSummarizer,
             SummarizerConfig,
@@ -457,6 +461,23 @@ def get_knowledge_engine():
             except Exception:  # noqa: BLE001 — sin provider, solo determinista
                 reconstruction_provider = None
 
+        semantic_llm = None
+        if getattr(settings, "KNOWLEDGE_SEMANTIC_WINDOW_LLM_ENABLED", False):
+            try:
+                from src.knowledge.semantic import LLMWindowProvider
+
+                semantic_llm = LLMWindowProvider(
+                    get_llm_provider(),
+                    model=(
+                        settings.KNOWLEDGE_SEMANTIC_WINDOW_LLM_MODEL
+                        or settings.KNOWLEDGE_SEMANTIC_INGESTION_MODEL
+                        or None
+                    ),
+                    max_items=settings.KNOWLEDGE_SEMANTIC_WINDOW_MAX_ITEMS,
+                )
+            except Exception:  # noqa: BLE001 — sin provider, solo determinista
+                semantic_llm = None
+
         _knowledge_engine = KnowledgeIngestionEngine(
             job_repo=get_job_repo(),
             sync_state_repo=get_sync_state_repo(),
@@ -473,6 +494,9 @@ def get_knowledge_engine():
             session_service=get_knowledge_session_service(),
             system_emitter=_knowledge_system_emitter(),
             reconstruction_provider=reconstruction_provider,
+            semantic_ingestion=SemanticIngestionService(
+                PostgresSemanticIngestionStore(), llm_provider=semantic_llm
+            ),
         )
     return _knowledge_engine
 

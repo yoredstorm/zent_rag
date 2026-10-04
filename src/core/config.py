@@ -1635,6 +1635,142 @@ class Settings(BaseSettings):
         le=100000,
         description="Caracteres de cada seccion que entran al prompt de resumen.",
     )
+    # --- Progressive Semantic Ingestion (Fases 1-2) -------------------------
+    KNOWLEDGE_SEMANTIC_INGESTION_MODE: str = Field(
+        default="off",
+        pattern="^(off|shadow|active|canary)$",
+        description=(
+            "Modo de la ingesta semántica progresiva: off = comportamiento actual; "
+            "shadow = persiste manifiesto de cobertura + plan de ventanas sin "
+            "alterar el flujo; active = además reanuda sin reprocesar cuando la "
+            "fuente y la versión del pipeline no cambiaron; canary = procesa solo "
+            "el porcentaje de fuentes indicado (hash determinista)."
+        ),
+    )
+    KNOWLEDGE_SEMANTIC_INGESTION_CANARY_PERCENTAGE: int = Field(
+        default=0, ge=0, le=100,
+        description=(
+            "Porcentaje de fuentes a procesar en modo canary (0 = ninguna, "
+            "100 = todas). La selección es determinista por org+source+external_id."
+        ),
+    )
+    KNOWLEDGE_SEMANTIC_INGESTION_PROFILE: str = Field(
+        default="balanced",
+        pattern="^(economy|balanced|quality|maximum_quality)$",
+        description=(
+            "Perfil de ventana semántica: economy|balanced|quality|maximum_quality. "
+            "Ajusta el tamaño objetivo de ventana; el hard limit siempre se deriva "
+            "de la capacidad real del modelo."
+        ),
+    )
+    KNOWLEDGE_SEMANTIC_INGESTION_MODEL: str = Field(
+        default="",
+        description=(
+            "Modelo cuya ventana de contexto gobierna el planner de ingesta. Vacío "
+            "= KNOWLEDGE_SUMMARY_MODEL o default del deployment (RAG_MODEL_DEFAULT_"
+            "CONTEXT_WINDOW). Nunca se hardcodea una ventana por proveedor."
+        ),
+    )
+    KNOWLEDGE_SEMANTIC_WINDOW_MIN_TOKENS: int = Field(
+        default=2000, ge=500, le=200000,
+        description="Piso del tamaño objetivo de una ventana semántica.",
+    )
+    KNOWLEDGE_SEMANTIC_WINDOW_MAX_TOKENS: int = Field(
+        default=0, ge=0, le=2000000,
+        description=(
+            "Techo duro configurable de la ventana de ingesta (0 = solo capability "
+            "del modelo). Se combina con min() sobre la ventana del modelo."
+        ),
+    )
+    KNOWLEDGE_SEMANTIC_WINDOW_HEADROOM_RATIO: float = Field(
+        default=0.20, ge=0.0, le=1.0,
+        description=(
+            "Headroom sobre el objetivo para preservar una unidad semántica "
+            "completa antes de cortar (límites SOFT)."
+        ),
+    )
+    KNOWLEDGE_SEMANTIC_WINDOW_OUTPUT_RESERVE: int = Field(
+        default=2048, ge=0, le=200000,
+        description="Reserva de tokens de salida del modelo al derivar el hard limit.",
+    )
+    KNOWLEDGE_SEMANTIC_WINDOW_SYSTEM_RESERVE: int = Field(
+        default=1500, ge=0, le=200000,
+        description="Reserva de tokens de sistema al derivar el hard limit.",
+    )
+    KNOWLEDGE_SEMANTIC_WINDOW_SAFETY_RESERVE: int = Field(
+        default=1000, ge=0, le=200000,
+        description="Reserva de seguridad al derivar el hard limit.",
+    )
+    KNOWLEDGE_SEMANTIC_WINDOW_LLM_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Escalamiento LLM opcional para la comprensión por ventana: solo "
+            "AGREGA items con quote literal verificado. Determinista primero."
+        ),
+    )
+    KNOWLEDGE_SEMANTIC_WINDOW_LLM_MODEL: str = Field(
+        default="",
+        description="Modelo del escalamiento LLM por ventana (vacío = modelo de ingesta).",
+    )
+    KNOWLEDGE_SEMANTIC_WINDOW_LLM_MAX_CALLS: int = Field(
+        default=24, ge=0, le=1000,
+        description="Tope de llamadas LLM por documento para comprensión por ventana.",
+    )
+    KNOWLEDGE_SEMANTIC_WINDOW_MAX_ITEMS: int = Field(
+        default=400, ge=10, le=5000,
+        description="Tope de items semánticos por ventana (deterministas + LLM).",
+    )
+    KNOWLEDGE_SEMANTIC_THREADS_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Activa los SemanticThreads durables (referencias/símbolos/"
+            "continuaciones/excepciones que se abren y resuelven entre ventanas). "
+            "Determinista; solo corre cuando la ingesta semántica no está off."
+        ),
+    )
+    KNOWLEDGE_SEMANTIC_THREAD_MAX_OPEN: int = Field(
+        default=512, ge=0, le=100000,
+        description=(
+            "Tope de threads abiertos por documento (0 = sin tope). Al excederse, "
+            "los más viejos pasan a UNRESOLVED con history auditable."
+        ),
+    )
+    KNOWLEDGE_SEMANTIC_FABRIC_UNITS_MODE: str = Field(
+        default="shadow",
+        pattern="^(off|shadow|active)$",
+        description=(
+            "Fase 9: enriquecimiento de retrieval units con el Semantic Fabric. "
+            "off = sin campos; shadow = ids/vecindad semántica en payload (los "
+            "retrievers actuales los ignoran); active = además labels del fabric "
+            "en la pata sparse (nunca en dense ni en la evidencia)."
+        ),
+    )
+    RAG_EMBEDDING_DENSE_REPRESENTATION: str = Field(
+        default="content",
+        pattern="^(content|semantic|concept|question)$",
+        description=(
+            "Fase 10: texto que se embebe (dense) por retrieval unit. content = "
+            "comportamiento actual; semantic = contextual embedding con el "
+            "Semantic Fabric; concept/question quedan para benchmark. Cambiar "
+            "la representación invalida SOLO el embedding (reindex)."
+        ),
+    )
+    RAG_EMBEDDING_LATE_CHUNKING: str = Field(
+        default="auto",
+        pattern="^(off|auto|on)$",
+        description=(
+            "Fase 10: late chunking REAL. auto = se usa solo si el registry "
+            "declaró la capacidad del modelo y el provider expone "
+            "embed_late_chunking; si falla, contextual embedding. off = nunca."
+        ),
+    )
+    RAG_EMBEDDING_LATE_CHUNKING_MODELS: str = Field(
+        default="",
+        description=(
+            "Modelos de embedding cuyo API soporta late chunking (coma). Vacío = "
+            "solo el mapa builtin conservador. Nunca se asume soporte."
+        ),
+    )
     RAG_RETRIEVAL_ENTITY_PIN: str = Field(
         default="on",
         description=(

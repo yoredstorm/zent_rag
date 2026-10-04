@@ -26,6 +26,8 @@ from .versions import (
     COMPILER_REPRESENTATION_VERSION,
     CONTENT_REPRESENTATION_VERSION,
     CONTEXTUALIZATION_VERSION,
+    EMBEDDING_REPRESENTATION_VERSION,
+    FABRIC_REPRESENTATION_VERSION,
     PARENT_REPRESENTATION_VERSION,
     REPRESENTATION_SCHEMA_VERSION,
     RETRIEVAL_REPRESENTATION_VERSION,
@@ -57,6 +59,8 @@ REINDEX_REASONS = (
     "sparse_changed",
     "parent_representation_changed",
     "compiler_changed",
+    "fabric_changed",
+    "embedding_representation_changed",
     "missing_index",
     "manual",
     "nutrition_action",
@@ -77,6 +81,9 @@ _REASON_CHECKS: tuple[tuple[str, str], ...] = (
     ("sparse_encoding_version", "sparse_changed"),
     ("parent_representation_version", "parent_representation_changed"),
     ("compiler_representation_version", "compiler_changed"),
+    ("fabric_representation_version", "fabric_changed"),
+    ("embedding_representation", "embedding_representation_changed"),
+    ("embedding_representation_version", "embedding_representation_changed"),
     ("content_representation_version", "contextualization_changed"),
     ("retrieval_representation_version", "contextualization_changed"),
 )
@@ -111,6 +118,9 @@ class RepresentationDescriptor:
     embedding_model: str = ""
     embedding_dimensions: int = 0
     parent_representation_version: str = PARENT_REPRESENTATION_VERSION
+    fabric_representation_version: str = FABRIC_REPRESENTATION_VERSION
+    embedding_representation: str = "content"
+    embedding_representation_version: str = EMBEDDING_REPRESENTATION_VERSION
     schema_version: str = REPRESENTATION_SCHEMA_VERSION
 
     def as_fields(self) -> dict[str, object]:

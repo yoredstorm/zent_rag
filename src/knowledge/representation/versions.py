@@ -29,3 +29,12 @@ CONTEXTUALIZATION_VERSION = "section-prefix-1"
 # Forma en que el conocimiento compilado (entidades, reglas, conceptos) entra
 # como metadata del índice. Cambia si cambia qué se anota o cómo.
 COMPILER_REPRESENTATION_VERSION = "compiler-rep-1"
+
+# Fase 9: enriquecimiento del retrieval unit con el Semantic Fabric
+# (node ids por tipo, dependency ids, semantic neighborhood). Cambiar esta
+# versión invalida la representación y re-indexa sin reprocesar la fuente.
+FABRIC_REPRESENTATION_VERSION = "fabric-units-1"
+
+# Fase 10: qué texto se embebe por retrieval unit (content/semantic/concept/
+# question) y su versión. Cambiarla invalida SOLO el embedding (reindex).
+EMBEDDING_REPRESENTATION_VERSION = "embedding-rep-1"

@@ -270,6 +270,17 @@ class EmbeddingProvider(ABC):
     @abstractmethod
     async def embed(self, text: str | list[str], model: str | None = None) -> list[float] | list[list[float]]: ...
 
+    async def embed_late_chunking(
+        self, chunks: list[str], model: str | None = None
+    ) -> list[list[float]]:
+        """Late chunking REAL (opcional).
+
+        Solo los providers cuyo API contextualiza cada chunk con el documento
+        completo lo implementan. El default NO soporta: el engine usa
+        contextual embedding y jamás lo llama "late chunking".
+        """
+        raise NotImplementedError("late chunking no soportado por este provider")
+
 
 class CacheProvider(ABC):
     """Puerto para caché (Redis)."""
