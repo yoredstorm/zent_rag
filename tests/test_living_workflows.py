@@ -142,7 +142,7 @@ def test_custom_event_falls_back_gracefully() -> None:
 
 
 def test_knowledge_events_registered_in_catalog() -> None:
-    """Los 7 eventos knowledge.<tipo> de C8 (W5) viven en el catálogo."""
+    """Todo evento knowledge.<tipo> (C8 + nutrition §25) vive en el catálogo."""
     from src.core.domain.knowledge_events import KnowledgeEventType
 
     expected = {f"knowledge.{tipo.value}" for tipo in KnowledgeEventType}
@@ -154,6 +154,12 @@ def test_knowledge_events_registered_in_catalog() -> None:
         "knowledge.source_superseded",
         "knowledge.knowledge_gap_detected",
         "knowledge.high_impact_change",
+        # Knowledge Nutrition (§25).
+        "knowledge.semantic_enriched",
+        "knowledge.retrieval_acceptance_failed",
+        "knowledge.retrieval_representation_updated",
+        "knowledge.knowledge_reindexed",
+        "knowledge.knowledge_nutrition_required",
     }
 
     catalog = {event.id: event for event in list_catalog("knowledge")}

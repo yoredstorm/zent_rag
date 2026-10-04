@@ -293,6 +293,96 @@ _EVENTS: list[EventSchema] = [
             _field("threshold", "Umbral", "number", 5),
         ],
     ),
+    # --- Knowledge Nutrition (§25) -----------------------------------------
+    EventSchema(
+        id="knowledge.semantic_enriched",
+        business_name="Se enriqueció semánticamente un documento",
+        description=(
+            "La fase de enriquecimiento agregó conceptos, alias y preguntas "
+            "sintéticas al documento ingerido."
+        ),
+        category="knowledge",
+        icon="plus",
+        source_kind="internal_event",
+        fields=[
+            _field("concepts", "Conceptos", "number", 12),
+            _field("aliases", "Alias de retrieval", "number", 8),
+            _field("questions", "Preguntas sintéticas", "number", 6),
+            _field("identifiers", "Identificadores", "number", 4),
+            _field("source_coverage", "Cobertura de fuente", "number", 0.93),
+            _field("enrichment_version", "Versión de enriquecimiento", "text", "enr-v2"),
+        ],
+    ),
+    EventSchema(
+        id="knowledge.retrieval_acceptance_failed",
+        business_name="Falló la aceptación de retrieval",
+        description=(
+            "El gate de aceptación midió recall@5 o MRR por debajo del umbral "
+            "para el documento ingerido."
+        ),
+        category="knowledge",
+        icon="zap",
+        source_kind="internal_event",
+        fields=[
+            _field("mode", "Modo", "text", "quarantine"),
+            _field("state", "Estado", "text", "FAIL"),
+            _field("recall_at_5", "Recall@5", "number", 0.42),
+            _field("mrr", "MRR", "number", 0.38),
+            _field("probes_total", "Sondas totales", "number", 10),
+            _field("probes_failed", "Sondas fallidas", "number", 4),
+            _field("failed_types", "Tipos con fallas", "text", "aggregate"),
+        ],
+    ),
+    EventSchema(
+        id="knowledge.knowledge_nutrition_required",
+        business_name="Un documento requiere nutrición de conocimiento",
+        description=(
+            "El documento quedó en cuarentena y necesita más contenido o "
+            "representación antes de ser confiable."
+        ),
+        category="knowledge",
+        icon="search",
+        source_kind="internal_event",
+        fields=[
+            _field(
+                "reason",
+                "Motivo",
+                "text",
+                "retrieval_acceptance_below_threshold",
+            ),
+            _field("recall_at_5", "Recall@5", "number", 0.42),
+            _field("min_recall_at_5", "Recall@5 mínimo", "number", 0.6),
+        ],
+    ),
+    EventSchema(
+        id="knowledge.retrieval_representation_updated",
+        business_name="Se actualizó la representación de retrieval",
+        description=(
+            "La representación derivada del documento cambió y requiere "
+            "reindexado."
+        ),
+        category="knowledge",
+        icon="refresh",
+        source_kind="internal_event",
+        fields=[
+            _field("reason", "Motivo", "text", "embedding_model_changed"),
+            _field("previous_fingerprint", "Huella anterior", "text", "a1b2c3d4"),
+            _field("fingerprint", "Huella nueva", "text", "e5f6a7b8"),
+            _field("model", "Modelo", "text", "bge-m3"),
+        ],
+    ),
+    EventSchema(
+        id="knowledge.knowledge_reindexed",
+        business_name="Se reindexó un documento",
+        description="El documento se reindexó con su representación vigente.",
+        category="knowledge",
+        icon="refresh",
+        source_kind="internal_event",
+        fields=[
+            _field("reason", "Motivo", "text", "representation_updated"),
+            _field("chunks", "Fragmentos", "number", 48),
+        ],
+    ),
     EventSchema(
         id="semantic.mapping.approved",
         business_name="Se aprobó un mapeo semántico",
