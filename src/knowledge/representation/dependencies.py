@@ -28,6 +28,11 @@ class ArtifactKind(StrEnum):
     PARSED_STRUCTURE = "PARSED_STRUCTURE"
     RECONSTRUCTION = "RECONSTRUCTION"
     ENRICHMENT = "ENRICHMENT"
+    SEMANTIC_WINDOWS = "SEMANTIC_WINDOWS"
+    STITCH = "STITCH"
+    REGIONAL = "REGIONAL"
+    GLOBAL = "GLOBAL"
+    FABRIC = "FABRIC"
     COMPILATION = "COMPILATION"
     RETRIEVAL_REPRESENTATION = "RETRIEVAL_REPRESENTATION"
     EMBEDDING = "EMBEDDING"
@@ -40,10 +45,18 @@ _DEPENDENCIES: dict[ArtifactKind, tuple[ArtifactKind, ...]] = {
     ArtifactKind.PARSED_STRUCTURE: (ArtifactKind.SOURCE,),
     ArtifactKind.RECONSTRUCTION: (ArtifactKind.PARSED_STRUCTURE,),
     ArtifactKind.ENRICHMENT: (ArtifactKind.RECONSTRUCTION,),
+    ArtifactKind.SEMANTIC_WINDOWS: (ArtifactKind.ENRICHMENT,),
+    ArtifactKind.STITCH: (ArtifactKind.SEMANTIC_WINDOWS,),
+    ArtifactKind.REGIONAL: (ArtifactKind.STITCH,),
+    ArtifactKind.GLOBAL: (ArtifactKind.REGIONAL,),
+    ArtifactKind.FABRIC: (ArtifactKind.GLOBAL,),
     ArtifactKind.COMPILATION: (ArtifactKind.ENRICHMENT,),
-    # La representación de retrieval se compone de enrichment; el conocimiento
-    # compilado entra como metadata/PASS 2 (refresh_payload), NO re-embebe.
-    ArtifactKind.RETRIEVAL_REPRESENTATION: (ArtifactKind.ENRICHMENT,),
+    # La representación de retrieval se compone de enrichment + fabric; el
+    # conocimiento compilado entra como metadata/PASS 2 (refresh_payload).
+    ArtifactKind.RETRIEVAL_REPRESENTATION: (
+        ArtifactKind.ENRICHMENT,
+        ArtifactKind.FABRIC,
+    ),
     ArtifactKind.EMBEDDING: (ArtifactKind.RETRIEVAL_REPRESENTATION,),
     ArtifactKind.RETRIEVAL_ACCEPTANCE: (ArtifactKind.EMBEDDING,),
 }
@@ -54,6 +67,11 @@ _ACTIONS: dict[ArtifactKind, tuple[str, ...]] = {
     ArtifactKind.PARSED_STRUCTURE: ("reparse",),
     ArtifactKind.RECONSTRUCTION: ("reconstruct",),
     ArtifactKind.ENRICHMENT: ("reenrich",),
+    ArtifactKind.SEMANTIC_WINDOWS: ("reprocess_windows",),
+    ArtifactKind.STITCH: ("restitch",),
+    ArtifactKind.REGIONAL: ("recompute_regions",),
+    ArtifactKind.GLOBAL: ("resynthesize",),
+    ArtifactKind.FABRIC: ("reproject",),
     ArtifactKind.COMPILATION: ("recompile", "refresh_payload"),
     ArtifactKind.RETRIEVAL_REPRESENTATION: ("reindex",),
     ArtifactKind.EMBEDDING: ("reindex",),
@@ -75,6 +93,12 @@ REASON_TO_ARTIFACT: dict[str, ArtifactKind] = {
     "sparse_changed": ArtifactKind.EMBEDDING,
     "parent_representation_changed": ArtifactKind.RETRIEVAL_REPRESENTATION,
     "compiler_changed": ArtifactKind.COMPILATION,
+    "fabric_changed": ArtifactKind.FABRIC,
+    "semantic_windows_changed": ArtifactKind.SEMANTIC_WINDOWS,
+    "stitch_changed": ArtifactKind.STITCH,
+    "regional_changed": ArtifactKind.REGIONAL,
+    "global_changed": ArtifactKind.GLOBAL,
+    "embedding_representation_changed": ArtifactKind.EMBEDDING,
     "missing_index": ArtifactKind.EMBEDDING,
     "manual": ArtifactKind.RETRIEVAL_REPRESENTATION,
     "nutrition_action": ArtifactKind.RETRIEVAL_REPRESENTATION,
