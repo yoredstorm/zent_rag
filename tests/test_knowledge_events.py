@@ -23,9 +23,22 @@ TIPOS_ESPERADOS = {
     "source_superseded",
     "knowledge_gap_detected",
     "high_impact_change",
+    # Knowledge Nutrition (§25): eventos informativos + acciones de nutrición.
+    "semantic_enriched",
+    "retrieval_acceptance_failed",
+    "retrieval_representation_updated",
+    "knowledge_reindexed",
+    "knowledge_nutrition_required",
 }
 
-SIN_REVISION = {"new_entity", "new_rule"}
+SIN_REVISION = {
+    "new_entity",
+    "new_rule",
+    # Informativos: no exigen revisión humana.
+    "semantic_enriched",
+    "retrieval_representation_updated",
+    "knowledge_reindexed",
+}
 
 
 def test_tipos_exactos_snake_case() -> None:
