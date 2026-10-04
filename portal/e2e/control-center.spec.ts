@@ -40,4 +40,24 @@ test.describe("Control Center — flujo smoke", () => {
     await page.getByRole("button", { name: "Cerrar sesión" }).click();
     await expect(page).toHaveURL(/\/control-center\/login/);
   });
+
+  test("switch de pantalla: Settings CC → portal como usuario → volver", async ({ page }) => {
+    await loginAsPlatform(page);
+    await page.goto("/control-center/settings");
+    await expect(
+      page.getByRole("heading", { name: "Cambio de pantalla (pruebas)" })
+    ).toBeVisible();
+
+    // Entra como usuario de la organización demo (preseleccionada).
+    await page.getByRole("button", { name: "Entrar como usuario" }).click();
+    await expect(page).toHaveURL(/\/$/, { timeout: 30_000 });
+    await expect(page.getByText(/Modo impersonación/)).toBeVisible({ timeout: 20_000 });
+
+    // Vuelta desde Configuración del portal.
+    await page.goto("/settings");
+    await expect(page.getByRole("heading", { name: "Control Center" })).toBeVisible();
+    await page.getByRole("button", { name: "Volver al Control Center" }).click();
+    await expect(page).toHaveURL(/\/control-center\/settings/, { timeout: 30_000 });
+    await expect(page.getByText(/Modo impersonación/)).toBeHidden({ timeout: 20_000 });
+  });
 });

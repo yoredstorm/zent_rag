@@ -1,17 +1,23 @@
 import { Cards, GearSix } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
-import { platformApi } from "../../api";
+import { loadSession, platformApi } from "../../api";
 import { usePlatformAuth } from "../../platformAuth";
+import { closeTenantSession, enterTenantSession } from "../../lib/impersonation";
 import {
   Badge,
+  Button,
   ButtonLink,
   ErrorInline,
+  Field,
+  Input,
   Metric,
   MetricGrid,
   PageHeader,
   Panel,
   PanelHeader,
+  Select,
   Skeleton,
+  SuccessInline,
   type Tone,
 } from "../../components/ui";
 
@@ -107,6 +113,8 @@ export default function Settings() {
               hint="requests por minuto"
             />
           </MetricGrid>
+
+          <ScreenSwitchPanel />
 
           <Panel>
             <PanelHeader
@@ -234,5 +242,229 @@ export default function Settings() {
         </>
       )}
     </div>
+  );
+}
+
+type OrgOption = {
+  id: string;
+  name: string;
+  company_name?: string | null;
+  plan?: string | null;
+};
+
+type OrgUserOption = {
+  id: string;
+  email: string | null;
+  roles: string[];
+};
+
+/** Organización demo del seed de desarrollo (si existe se preselecciona). */
+const PREFERRED_TEST_ORG_ID = "00000000-0000-0000-0000-000000000001";
+
+/**
+ * Cambio rápido de pantalla para pruebas: impersona un usuario del tenant
+ * elegido (endpoint auditable) y volverá desde Configuración del portal.
+ */
+function ScreenSwitchPanel() {
+  const { session } = usePlatformAuth();
+  const [orgs, setOrgs] = useState<OrgOption[]>([]);
+  const [orgId, setOrgId] = useState("");
+  const [users, setUsers] = useState<OrgUserOption[]>([]);
+  const [userId, setUserId] = useState("");
+  const [reason, setReason] = useState("Cambio de pantalla para pruebas");
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [portalName, setPortalName] = useState<string | null>(() => {
+    const current = loadSession();
+    return current?.token ? current.companyName || "sesión activa" : null;
+  });
+
+  useEffect(() => {
+    if (!session) return;
+    let cancelled = false;
+    platformApi<{ organizations: OrgOption[] }>("/api/v1/platform/organizations", {
+      token: session.token,
+    })
+      .then((data) => {
+        if (cancelled) return;
+        const list = data.organizations || [];
+        setOrgs(list);
+        setOrgId((current) => {
+          if (current) return current;
+          const preferred = list.find((org) => org.id === PREFERRED_TEST_ORG_ID);
+          return preferred?.id || list[0]?.id || "";
+        });
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setError(
+            e instanceof Error ? e.message : "No se pudieron cargar las organizaciones"
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
+  useEffect(() => {
+    if (!session || !orgId) return;
+    let cancelled = false;
+    platformApi<{ users: OrgUserOption[] }>(
+      `/api/v1/platform/organizations/${orgId}/users`,
+      { token: session.token }
+    )
+      .then((data) => {
+        if (!cancelled) setUsers(data.users || []);
+      })
+      .catch(() => {
+        if (!cancelled) setUsers([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [session, orgId]);
+
+  const selectedOrg = orgs.find((org) => org.id === orgId);
+
+  async function enterAsTenant() {
+    if (!session || !orgId) return;
+    const trimmed = reason.trim();
+    if (trimmed.length < 3) {
+      setError("El motivo necesita al menos 3 caracteres.");
+      return;
+    }
+    setBusy("enter");
+    setError("");
+    setNotice("");
+    try {
+      const out = await platformApi<{ access_token: string; expires_seconds?: number }>(
+        `/api/v1/platform/organizations/${orgId}/impersonate`,
+        {
+          method: "POST",
+          token: session.token,
+          body: JSON.stringify({
+            expires_seconds: 3600,
+            reason: trimmed,
+            user_id: userId || null,
+          }),
+        }
+      );
+      enterTenantSession({
+        token: out.access_token,
+        organizationId: orgId,
+        companyName: selectedOrg?.company_name || selectedOrg?.name || "Cliente",
+        reason: trimmed,
+        expiresSeconds: out.expires_seconds || 3600,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo entrar como usuario");
+      setBusy("");
+    }
+  }
+
+  async function closeClient() {
+    setBusy("close");
+    setError("");
+    setNotice("");
+    try {
+      await closeTenantSession();
+      setPortalName(null);
+      setNotice("Sesión de cliente cerrada.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo cerrar la sesión de cliente");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return (
+    <Panel>
+      <PanelHeader
+        title="Cambio de pantalla (pruebas)"
+        description="Entra al portal como usuario de un cliente y vuelve al Control Center al terminar. La sesión dura 1 hora y queda auditada."
+      />
+      <div className="panel-body flex flex-col gap-4">
+        <ErrorInline message={error} />
+        <SuccessInline message={notice} />
+        {portalName && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-sm border border-border-soft bg-control px-3 py-2 text-[13px]">
+            <span className="text-muted">
+              Sesión de cliente guardada:{" "}
+              <span className="font-medium text-text">{portalName}</span>
+            </span>
+            <span className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => window.location.assign("/")}
+              >
+                Abrir portal de clientes
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                loading={busy === "close"}
+                onClick={() => void closeClient()}
+              >
+                Cerrar sesión de cliente
+              </Button>
+            </span>
+          </div>
+        )}
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Organización">
+            <Select
+              value={orgId}
+              onChange={(e) => {
+                setOrgId(e.target.value);
+                setUserId("");
+              }}
+            >
+              {orgs.map((org) => (
+                <option key={org.id} value={org.id}>
+                  {org.company_name || org.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label="Usuario" hint="Por defecto se impersona al owner del tenant.">
+            <Select
+              value={userId}
+              onChange={(e) => setUserId(e.target.value)}
+              placeholder="Usuario por defecto"
+            >
+              {users.map((user) => (
+                <option key={user.id} value={user.id}>
+                  {user.email || user.id}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field
+            label="Motivo"
+            className="sm:col-span-2"
+            hint="Queda registrado en la auditoría de impersonación."
+          >
+            <Input
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              maxLength={500}
+            />
+          </Field>
+        </div>
+      </div>
+      <div className="panel-footer justify-end">
+        <Button
+          variant="primary"
+          loading={busy === "enter"}
+          disabled={!orgId}
+          onClick={() => void enterAsTenant()}
+        >
+          Entrar como usuario
+        </Button>
+      </div>
+    </Panel>
   );
 }

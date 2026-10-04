@@ -259,7 +259,11 @@ _platform_admin_schema_ready = False
 
 
 async def ensure_platform_admin_schema() -> None:
-    """Additive users.is_platform_admin + nullable organization_id for Control Center."""
+    """Additive users.is_platform_admin + membership rules for Control Center.
+
+    Un platform admin puede además pertenecer a una organización (mismo email
+    en ambas pantallas); los usuarios no-admin siguen requiriendo organización.
+    """
     global _platform_admin_schema_ready
     if _platform_admin_schema_ready:
         return
@@ -282,10 +286,7 @@ async def ensure_platform_admin_schema() -> None:
             text(
                 """
                 ALTER TABLE users ADD CONSTRAINT users_platform_admin_org_chk
-                    CHECK (
-                        (is_platform_admin = true AND organization_id IS NULL)
-                        OR (is_platform_admin = false AND organization_id IS NOT NULL)
-                    )
+                    CHECK (is_platform_admin = true OR organization_id IS NOT NULL)
                 """
             )
         )

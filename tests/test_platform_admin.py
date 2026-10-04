@@ -531,3 +531,67 @@ async def test_usage_reset_does_not_touch_other_org(
     assert counts["a"] == 0
     assert counts["b"] == 42
 
+
+@pytest.mark.asyncio
+async def test_dual_identity_user_can_login_both_spaces(
+    async_client: AsyncClient,
+) -> None:
+    """Un usuario tenant promovido a platform admin (migración 140) entra al
+    portal y al Control Center con el mismo email y password."""
+    import hashlib
+
+    from sqlalchemy import text
+
+    from src.infrastructure.postgres.relational_db import (
+        PostgresUserRepository,
+        ensure_platform_admin_schema,
+    )
+    from src.infrastructure.postgres.session import get_async_session
+
+    org = await _trial(async_client)
+    email = f"dual-{uuid4().hex[:8]}@zent.example"
+    password = "dual-identity-pass-1"
+
+    await ensure_platform_admin_schema()
+    session = await get_async_session()
+    try:
+        await session.execute(
+            text(
+                "INSERT INTO users (id, organization_id, external_id, email_hash, "
+                "role, email, password_hash, is_platform_admin) "
+                "VALUES (gen_random_uuid(), :oid, :ext, :eh, 'admin', :email, :ph, true)"
+            ),
+            {
+                "oid": UUID(org["organization_id"]),
+                "ext": f"dual-{uuid4().hex[:12]}",
+                "eh": hashlib.sha256(email.encode()).hexdigest(),
+                "email": email,
+                "ph": hash_password(password),
+            },
+        )
+        await session.commit()
+    finally:
+        await session.close()
+
+    # Portal (tenant): mismo email y password, organización presente.
+    portal = await async_client.post(
+        "/api/v1/auth/login", json={"email": email, "password": password}
+    )
+    assert portal.status_code == 200, portal.text
+    assert portal.json()["organization_id"] == org["organization_id"]
+
+    # Control Center (plataforma): el login asigna super_admin legacy.
+    platform = await async_client.post(
+        "/api/v1/auth/platform/login", json={"email": email, "password": password}
+    )
+    assert platform.status_code == 200, platform.text
+    token = platform.json()["access_token"]
+    me = await async_client.get(
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert me.status_code == 200, me.text
+    assert "super_admin" in me.json()["roles"]
+
+    user = await PostgresUserRepository().get_by_email(email)
+    assert user is not None and user.is_platform_admin
+

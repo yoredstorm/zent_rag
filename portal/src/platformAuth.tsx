@@ -10,9 +10,10 @@ import {
 import { platformApi } from "./api";
 import { AUTH_EXPIRED_EVENT } from "./lib/errors";
 
-const TOKEN_KEY = "rag_platform_token";
+export const PLATFORM_TOKEN_KEY = "rag_platform_token";
 const EMAIL_KEY = "rag_platform_email";
 export const IMPERSONATING_KEY = "rag_impersonating";
+const TOKEN_KEY = PLATFORM_TOKEN_KEY;
 
 export type PlatformSession = {
   token: string;

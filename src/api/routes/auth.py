@@ -279,7 +279,7 @@ async def forgot_password(body: ForgotPasswordRequest):
     payload = {"status": "accepted"}
     user_repo = PostgresUserRepository()
     user = await user_repo.get_by_email(body.email)
-    if user is not None and not user.is_platform_admin and user.organization_id:
+    if user is not None and user.organization_id is not None:
         token = await issue_reset_token(user.id)
         from src.platform.auth.password_reset import send_reset_email
 
@@ -325,7 +325,15 @@ async def login(body: LoginRequest, request: Request):
     password_ok = user is not None and verify_password(
         body.password, user.password_hash
     )
-    if user is not None and user.is_platform_admin and password_ok:
+    # Solo los platform admin SIN organización usan exclusivamente el Control
+    # Center. Identidad dual (admin + miembro de una organización): puede
+    # entrar al portal con el mismo email.
+    if (
+        user is not None
+        and user.is_platform_admin
+        and user.organization_id is None
+        and password_ok
+    ):
         raise HTTPException(
             status_code=403,
             detail={
@@ -333,12 +341,7 @@ async def login(body: LoginRequest, request: Request):
                 "message": "Este usuario es de Control Center. Entra en /admin/login",
             },
         )
-    if (
-        user is None
-        or user.is_platform_admin
-        or user.organization_id is None
-        or not password_ok
-    ):
+    if user is None or user.organization_id is None or not password_ok:
         await record_auth_failure(email_key, ip_key)
         raise HTTPException(
             status_code=401,

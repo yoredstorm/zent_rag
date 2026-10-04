@@ -5,9 +5,10 @@ import { Navigate, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ApiKeyCreatedModal } from "./components/ApiKeyCreatedModal";
 import { Topbar } from "./components/Topbar";
-import { api, clearSession, loadSession, SIGNUP_API_KEY_STORAGE } from "./api";
+import { SIGNUP_API_KEY_STORAGE } from "./api";
 import { useAuth } from "./auth";
 import { IMPERSONATING_KEY } from "./platformAuth";
+import { exitImpersonationToPlatform } from "./lib/impersonation";
 import { SyncBanner, SyncJobProvider } from "./syncJob";
 import { ToastProvider } from "./Toast";
 import { CommandPaletteRoot, openCommandPalette } from "./components/CommandPalette";
@@ -302,19 +303,7 @@ function ProtectedLayout() {
 
   async function exitImpersonation() {
     // FASE 09: revoca la sesión impersonada server-side y vuelve al Control Center.
-    const current = loadSession();
-    if (current?.token) {
-      await api("/api/v1/auth/impersonation/exit", {
-        method: "POST",
-        token: current.token,
-        organizationId: current.organizationId,
-      }).catch(() => undefined);
-    }
-    sessionStorage.removeItem(IMPERSONATING_KEY);
-    sessionStorage.removeItem("zent_impersonation_meta");
-    clearSession();
-    logout();
-    window.location.assign("/control-center/tenants");
+    await exitImpersonationToPlatform();
   }
 
   if (!ready) {

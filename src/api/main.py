@@ -472,6 +472,26 @@ async def _run_startup() -> None:
                         await session.close()
                     plat = await user_repo.get_by_email(plat_email)
                     logger.info("Dev platform admin created", email=plat_email)
+                if plat is not None and not plat.is_platform_admin:
+                    # Identidad dual: si el email ya existe como usuario tenant,
+                    # se promueve conservando su organización (migración 140).
+                    session = await get_async_session()
+                    try:
+                        await session.execute(
+                            text(
+                                "UPDATE users SET is_platform_admin = true "
+                                "WHERE id = :uid"
+                            ),
+                            {"uid": plat.id},
+                        )
+                        await session.commit()
+                    finally:
+                        await session.close()
+                    plat = await user_repo.get_by_email(plat_email)
+                    logger.info(
+                        "Dev platform admin promoted (keeps organization)",
+                        email=plat_email,
+                    )
                 if plat is not None and not plat.password_hash:
                     await user_repo.set_password(
                         plat.id,

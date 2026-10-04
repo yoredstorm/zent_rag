@@ -5,6 +5,11 @@ import { useAuth } from "../auth";
 import ResidencyPanel from "../components/ResidencyPanel";
 import { fmtNum } from "../lib/format";
 import {
+  exitImpersonationToPlatform,
+  hasPlatformSession,
+  isImpersonating,
+} from "../lib/impersonation";
+import {
   Badge,
   Button,
   ButtonLink,
@@ -208,7 +213,7 @@ export default function SettingsPage() {
               )}
             </Panel>
 
-            <aside className="lg:sticky lg:top-6">
+            <aside className="space-y-4 lg:sticky lg:top-6">
               <Panel>
                 <PanelHeader title="Contexto" description="Los cambios aplican a toda la organización." />
                 <div className="panel-body">
@@ -222,6 +227,7 @@ export default function SettingsPage() {
                   />
                 </div>
               </Panel>
+              <ControlCenterSwitchPanel />
             </aside>
           </div>
         </TabsContent>
@@ -633,6 +639,66 @@ function SelfPurgePanel() {
         loading={busy}
         onConfirm={() => void run()}
       />
+    </Panel>
+  );
+}
+
+/**
+ * Cambio de pantalla hacia el Control Center (modo pruebas).
+ * Si la sesión actual es impersonada, la revoca al volver; si hay sesión de
+ * plataforma guardada, navega directo; si no, ofrece el login de plataforma.
+ */
+function ControlCenterSwitchPanel() {
+  const [busy, setBusy] = useState(false);
+  const impersonating = isImpersonating();
+  const platformSession = hasPlatformSession();
+
+  async function backToControlCenter() {
+    setBusy(true);
+    await exitImpersonationToPlatform({ returnTo: "/control-center/settings" });
+  }
+
+  return (
+    <Panel>
+      <PanelHeader
+        title="Control Center"
+        description="Cambia entre el portal de cliente y la consola de plataforma."
+      />
+      <div className="panel-body flex flex-col items-start gap-3 text-[13px] leading-relaxed text-muted">
+        {impersonating ? (
+          <>
+            <p>
+              Estás operando como{" "}
+              <span className="font-medium text-text">{impersonating}</span>. Al volver se
+              cierra la sesión de usuario y regresas al Control Center.
+            </p>
+            <Button
+              variant="secondary"
+              loading={busy}
+              onClick={() => void backToControlCenter()}
+            >
+              Volver al Control Center
+            </Button>
+          </>
+        ) : platformSession ? (
+          <>
+            <p>Hay una sesión de plataforma activa en este navegador.</p>
+            <Button
+              variant="secondary"
+              onClick={() => window.location.assign("/control-center")}
+            >
+              Ir al Control Center
+            </Button>
+          </>
+        ) : (
+          <>
+            <p>Para la consola de plataforma inicia sesión con tu cuenta de administrador.</p>
+            <ButtonLink to="/control-center/login" variant="secondary">
+              Abrir Control Center
+            </ButtonLink>
+          </>
+        )}
+      </div>
     </Panel>
   );
 }

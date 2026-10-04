@@ -15,9 +15,8 @@ import {
   WarningOctagon,
 } from "@phosphor-icons/react";
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { platformApi } from "../../api";
-import { useAuth } from "../../auth";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
 import { Timeline, type TimelineItem } from "../../components/Timeline";
 import {
@@ -48,7 +47,8 @@ import {
   menuItemClass,
   type Column,
 } from "../../components/ui";
-import { IMPERSONATING_KEY, usePlatformAuth } from "../../platformAuth";
+import { usePlatformAuth } from "../../platformAuth";
+import { enterTenantSession } from "../../lib/impersonation";
 import { fmtCurrency, fmtCurrencyCents, fmtDate, fmtDateTime } from "../../lib/format";
 
 type FinopsOrg = {
@@ -113,9 +113,7 @@ const ACTIONS = ["pause", "suspend", "cancel", "reset"] as const;
 
 export default function AdminCustomerDetailPage() {
   const { orgId } = useParams();
-  const navigate = useNavigate();
   const { session } = usePlatformAuth();
-  const { applySession } = useAuth();
   const [tab, setTab] = useState<Tab>("Overview");
   const [data, setData] = useState<Detail | null>(null);
   const [finops, setFinops] = useState<FinopsOrg | null>(null);
@@ -369,23 +367,15 @@ export default function AdminCustomerDetailPage() {
           }),
         }
       );
-      applySession({
+      // Entra al portal como usuario; la recarga completa hidrata la sesión.
+      enterTenantSession({
         token: out.access_token,
         organizationId: orgId,
         companyName: data.company_name || data.name,
         email: data.email || undefined,
+        reason: impersonateReason.trim(),
+        expiresSeconds: out.expires_seconds || 3600,
       });
-      // Metadatos de la impersonación (no sensibles) para el banner.
-      sessionStorage.setItem(IMPERSONATING_KEY, data.company_name || data.name);
-      sessionStorage.setItem(
-        "zent_impersonation_meta",
-        JSON.stringify({
-          tenant: data.company_name || data.name,
-          reason: impersonateReason.trim(),
-          expiresAt: Math.floor(Date.now() / 1000) + (out.expires_seconds || 3600),
-        })
-      );
-      navigate("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo impersonar");
     } finally {
