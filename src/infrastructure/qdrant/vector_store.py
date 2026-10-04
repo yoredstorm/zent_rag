@@ -822,6 +822,29 @@ class QdrantVectorStore(VectorStore, LexicalStore, HybridStore):
         )
         return int(result.count or 0)
 
+    async def count_organization_points(self, organization_id: UUID) -> int:
+        """Cuenta TODOS los puntos de la organización (cualquier tipo de doc)."""
+        if organization_id is None:
+            raise ValueError(
+                "count_organization_points() requires organization_id (tenant isolation)"
+            )
+        organization_id = bind_organization_id(organization_id)
+        client = await _get_client()
+        await self._ensure_collection()
+        result = await client.count(
+            collection_name=RAG_DOCUMENTS_COLLECTION,
+            count_filter=qdrant_models.Filter(
+                must=[
+                    qdrant_models.FieldCondition(
+                        key="organization_id",
+                        match=qdrant_models.MatchValue(value=str(organization_id)),
+                    )
+                ]
+            ),  # type: ignore[arg-type]
+            exact=True,
+        )
+        return int(result.count or 0)
+
     async def delete_by_organization(self, organization_id: UUID) -> None:
         """Elimina todos los vectores de una organización por filtro de payload."""
         organization_id = bind_organization_id(organization_id)

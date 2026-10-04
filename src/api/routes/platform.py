@@ -7,7 +7,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import text
 
 from src.infrastructure.observability.logging_config import get_logger
@@ -135,6 +135,30 @@ class ImpersonateBody(BaseModel):
 
 class PlanBody(BaseModel):
     plan_name: str = Field(..., min_length=1, max_length=100)
+    # Solo se usa al asignar plan a un tenant sin suscripción.
+    billing_interval: Literal["monthly", "annual"] = "monthly"
+
+
+class DeleteOrganizationBody(BaseModel):
+    confirmation: str = Field(..., min_length=1, max_length=200)
+
+
+class SetUserPasswordBody(BaseModel):
+    password: str = Field(..., min_length=8, max_length=72)
+    revoke_sessions: bool = True
+
+    @field_validator("password")
+    @classmethod
+    def check_password_bytes(cls, v: str) -> str:
+        # bcrypt trunca a 72 bytes: mismo límite que auth.py.
+        if len(v.encode("utf-8")) > 72:
+            raise ValueError("Password must be at most 72 bytes")
+        return v
+
+
+class OrganizationContactBody(BaseModel):
+    company_name: str | None = Field(default=None, max_length=200)
+    email: str | None = Field(default=None, max_length=320)
 
 
 class EntitlementItem(BaseModel):
@@ -709,24 +733,281 @@ async def change_plan(org_id: str, body: PlanBody, request: Request):
     oid = _parse_org(org_id)
     billing_repo = PostgresBillingRepository()
     sub = await billing_repo.get_subscription_by_organization(oid)
-    if sub is None:
-        raise HTTPException(404, "Subscription not found")
     from src.infrastructure.postgres.relational_db import PostgresApiKeyRepository
     from src.platform.billing.service import BillingService
 
     svc = BillingService(billing_repo, PostgresApiKeyRepository())
-    try:
-        result = await svc.upgrade_plan(sub.id, body.plan_name)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
+    if sub is None:
+        # Tenants sin suscripción (p.ej. creados por pruebas): asignar plan
+        # directo, sin pasarela de pago.
+        plans = await billing_repo.get_plans(public_only=False)
+        plan = next((p for p in plans if p.name == body.plan_name), None)
+        if plan is None:
+            raise HTTPException(404, f"Plan {body.plan_name} not found")
+        try:
+            new_sub = await billing_repo.create_subscription(
+                organization_id=oid,
+                plan_id=plan.id,
+                interval=body.billing_interval,
+                trial_days=plan.trial_days if plan.is_trial else 0,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        from src.platform.billing.entitlements import record_subscription_event
+
+        await record_subscription_event(
+            subscription_id=new_sub.id,
+            organization_id=oid,
+            event_type="created",
+            to_plan_id=plan.id,
+            actor_user_id=ctx.user_id,
+        )
+        result = {
+            "assigned": True,
+            "plan_name": plan.name,
+            "billing_interval": body.billing_interval,
+            "subscription_id": str(new_sub.id),
+            "status": new_sub.status,
+        }
+        action = "platform.plan_assigned"
+    else:
+        try:
+            result = await svc.upgrade_plan(sub.id, body.plan_name)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        action = "platform.plan_change"
     await _audit().write_or_raise(
         ctx,
-        "platform.plan_change",
+        action,
         "organization",
         oid,
         organization_id=oid,
         ip_address=_client_ip(request),
         metadata={"plan_name": body.plan_name, "actor_user_id": str(ctx.user_id)},
+    )
+    return result
+
+
+@router.patch("/organizations/{org_id}")
+async def update_organization_contact(
+    org_id: str, body: OrganizationContactBody, request: Request
+):
+    ctx, oid = await _require_org_ctx(request, org_id, "tenant.write")
+    await _require_step_up(request)
+    updates: dict[str, str | None] = {}
+    if body.company_name is not None:
+        value = body.company_name.strip()
+        updates["company_name"] = value or None
+    if body.email is not None:
+        value = body.email.strip().lower()
+        updates["email"] = value or None
+    if not updates:
+        raise HTTPException(400, "No fields to update")
+    session = await get_async_session()
+    try:
+        assignments = ", ".join(f"{column} = :{column}" for column in updates)
+        await session.execute(
+            text(
+                f"UPDATE organizations SET {assignments} WHERE id = :oid"  # noqa: S608 — columnas de un set fijo
+            ),
+            {**updates, "oid": oid},
+        )
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+    await _audit().write_or_raise(
+        ctx,
+        "platform.organization_updated",
+        "organization",
+        oid,
+        organization_id=oid,
+        ip_address=_client_ip(request),
+        metadata={"fields": sorted(updates), "actor_user_id": str(ctx.user_id)},
+    )
+    return {"organization_id": str(oid), **updates}
+
+
+@router.get("/organizations/{org_id}/export", summary="Exportar ficha del cliente (JSON)")
+async def export_organization(org_id: str, request: Request):
+    oid = await _require_org(request, org_id, "tenant.read")
+    from datetime import datetime, timezone
+
+    session = await get_async_session()
+    try:
+        org = (
+            await session.execute(
+                text(
+                    "SELECT id, name, company_name, email, status, created_at "
+                    "FROM organizations WHERE id = :oid"
+                ),
+                {"oid": oid},
+            )
+        ).mappings().fetchone()
+        users = (
+            await session.execute(
+                text(
+                    "SELECT u.id, u.email, u.last_active_at, u.disabled_at, "
+                    "COALESCE(array_agg(r.name ORDER BY r.name) FILTER (WHERE r.name IS NOT NULL), '{}') AS roles "
+                    "FROM memberships m "
+                    "JOIN users u ON u.id = m.user_id "
+                    "JOIN roles r ON r.id = m.role_id "
+                    "WHERE m.organization_id = :oid "
+                    "GROUP BY u.id, u.email, u.last_active_at, u.disabled_at "
+                    "ORDER BY u.email LIMIT 200"
+                ),
+                {"oid": oid},
+            )
+        ).fetchall()
+        sub = (
+            await session.execute(
+                text(
+                    "SELECT s.id, s.status, s.billing_interval, s.current_period_start, "
+                    "s.current_period_end, s.trial_end, p.name AS plan "
+                    "FROM subscriptions s "
+                    "LEFT JOIN plans p ON p.id = s.plan_id "
+                    "WHERE s.organization_id = :oid "
+                    "ORDER BY s.created_at DESC LIMIT 1"
+                ),
+                {"oid": oid},
+            )
+        ).mappings().fetchone()
+        counts = (
+            await session.execute(
+                text(
+                    "SELECT "
+                    "(SELECT COUNT(*) FROM workspaces WHERE organization_id = :oid) AS workspaces, "
+                    "(SELECT COUNT(*) FROM agents WHERE organization_id = :oid) AS agents, "
+                    "(SELECT COUNT(*) FROM source_documents WHERE organization_id = :oid) AS sources"
+                ),
+                {"oid": oid},
+            )
+        ).mappings().fetchone()
+    finally:
+        await session.close()
+    return {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "organization": dict(org) if org else {"id": str(oid)},
+        "users": [
+            {
+                "id": str(row.id),
+                "email": row.email,
+                "roles": list(row.roles),
+                "last_active_at": _iso(row.last_active_at),
+                "disabled_at": _iso(row.disabled_at),
+            }
+            for row in users
+        ],
+        "subscription": (
+            {
+                "id": str(sub.id),
+                "status": sub.status,
+                "plan": sub.plan,
+                "billing_interval": sub.billing_interval,
+                "current_period_start": _iso(sub.current_period_start),
+                "current_period_end": _iso(sub.current_period_end),
+                "trial_end": _iso(sub.trial_end),
+            }
+            if sub
+            else None
+        ),
+        "counts": dict(counts) if counts else {},
+    }
+
+
+@router.get(
+    "/organizations/{org_id}/deletion-preview",
+    summary="Preview de eliminación total del tenant",
+)
+async def organization_deletion_preview(org_id: str, request: Request):
+    ctx = require_platform_permission(request, "tenant.delete")
+    oid = _parse_org(org_id)
+    org = await PostgresOrganizationRepository().get_by_id(oid)
+    if org is None:
+        raise HTTPException(404, "Organization not found")
+    from src.platform.tenant_purge.service import TenantPurgeService
+
+    preview = await TenantPurgeService().preview(oid)
+    summary = preview.get("organization")
+    if summary is not None and ctx.tenant_id is not None and ctx.tenant_id == oid:
+        summary["protected"] = True
+        summary["protected_reason"] = "own_organization"
+    return preview
+
+
+@router.delete("/organizations/{org_id}", summary="Eliminar tenant (hard delete)")
+async def delete_organization(
+    org_id: str, body: DeleteOrganizationBody, request: Request
+):
+    ctx = require_platform_permission(request, "tenant.delete")
+    await _require_step_up(request)
+    oid = _parse_org(org_id)
+    org = await PostgresOrganizationRepository().get_by_id(oid)
+    if org is None:
+        raise HTTPException(404, "Organization not found")
+    if ctx.tenant_id is not None and ctx.tenant_id == oid:
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": "own_organization",
+                "message": "No puedes eliminar tu propia organización.",
+            },
+        )
+    from src.platform.tenant_purge.service import (
+        TenantPurgeInProgressError,
+        TenantPurgeService,
+    )
+
+    svc = TenantPurgeService()
+    summary = await svc.organization_summary(oid)
+    if summary is not None and summary["protected"]:
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": "protected_tenant",
+                "message": (
+                    "La organización tiene un platform admin como miembro: "
+                    "elígelo en otro tenant antes de eliminarla."
+                ),
+            },
+        )
+    expected = (org.company_name or org.name or "").strip()
+    if body.confirmation.strip().casefold() != expected.casefold():
+        raise HTTPException(
+            400,
+            detail={
+                "error_code": "confirmation_mismatch",
+                "message": f"Escribe el nombre exacto de la organización para confirmar: {expected}",
+            },
+        )
+    try:
+        result = await svc.execute(oid)
+    except TenantPurgeInProgressError as exc:
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": "purge_in_progress",
+                "message": "Ya hay una eliminación en curso para esta organización.",
+            },
+        ) from exc
+    await _audit().write_or_raise(
+        ctx,
+        "platform.tenant_deleted",
+        "organization",
+        str(oid),
+        organization_id=ctx.tenant_id,
+        ip_address=_client_ip(request),
+        metadata={
+            "deleted_organization_id": str(oid),
+            "rows_deleted": result["before"]["total_rows"],
+            "tables": result["before"]["tables_total"],
+            "status": result["status"],
+            "failures": len(result["failures"]),
+            "qdrant_points": result["before"].get("qdrant_points"),
+            "actor_user_id": str(ctx.user_id),
+        },
     )
     return result
 
@@ -1307,6 +1588,38 @@ async def tenant_user_password_reset(org_id: str, user_id: str, request: Request
         metadata={"target_user_id": str(uid), "email": user.email},
     )
     return {"user_id": str(uid), **reset}
+
+
+@router.post(
+    "/organizations/{org_id}/users/{user_id}/password",
+    summary="Definir contraseña (usuario del tenant)",
+)
+async def set_tenant_user_password(
+    org_id: str, user_id: str, body: SetUserPasswordBody, request: Request
+):
+    ctx, oid = await _require_org_ctx(request, org_id, "tenant.write")
+    await _require_step_up(request)
+    from src.platform.auth.passwords import hash_password
+    from src.platform.auth.session import revoke_user_sessions
+
+    uid, user = await _tenant_member(oid, user_id)
+    await PostgresUserRepository().set_password(uid, hash_password(body.password))
+    if body.revoke_sessions:
+        await revoke_user_sessions(uid)
+    await _audit().write_or_raise(
+        ctx,
+        "platform.user_password_set",
+        "tenant_user",
+        uid,
+        organization_id=oid,
+        ip_address=_client_ip(request),
+        metadata={
+            "target_user_id": str(uid),
+            "email": user.email,
+            "sessions_revoked": body.revoke_sessions,
+        },
+    )
+    return {"user_id": str(uid), "sessions_revoked": body.revoke_sessions}
 
 
 @router.patch(
