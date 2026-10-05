@@ -532,7 +532,8 @@ def test_prompt_del_contrato_lleva_la_regla_de_grounding() -> None:
     )
     block = prompt_block(contract)
     assert GROUNDING_RULE in block
-    assert "nunca lo completes con conocimiento propio" in block
+    assert "Nunca completes con conocimiento propio" in block
+    assert "datos que aporta el usuario" in block
     # El ejemplo deja de ser una orden: es condicional a la evidencia.
     assert "si la evidencia trae un caso" in block
 

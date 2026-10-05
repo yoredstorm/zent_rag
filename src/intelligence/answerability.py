@@ -222,6 +222,7 @@ class AnswerabilityGate:
         missing_data_hints: list[str] | None = None,
         authoritative_source: str | None = None,
         reasoning: Any | None = None,
+        grounded_reasoning: Any | None = None,
     ) -> AnswerabilityDecision:
         """Evaluación de answerability, ahora consciente del razonamiento.
 
@@ -229,6 +230,12 @@ class AnswerabilityGate:
         `completion`, `workspace` y `reason_codes`). Si el análisis quedó
         incompleto, la decisión se degrada a CONTEXT_MISSING conservando los
         reason codes del dominio (SCHEMA_REQUIRED, INFERENCE_UNSUPPORTED, ...).
+
+        `grounded_reasoning` es el resultado del motor determinista: si deriva
+        una conclusión con premisas grounded, DATA_MISSING/CONTEXT_MISSING se
+        corrigen (el dato del usuario no es evidencia faltante); si falta una
+        premisa del dominio, el estado es UNANSWERABLE_MISSING_PREMISE con la
+        premisa nombrada.
         """
         decision = self._evaluate_core(
             signals,
@@ -239,7 +246,8 @@ class AnswerabilityGate:
             missing_data_hints=missing_data_hints,
             authoritative_source=authoritative_source,
         )
-        return apply_reasoning_signals(decision, reasoning)
+        decision = apply_reasoning_signals(decision, reasoning)
+        return apply_grounded_reasoning(decision, grounded_reasoning)
 
     def _evaluate_core(
         self,
@@ -533,3 +541,145 @@ class AnswerabilityGate:
                 "evidencia; requiere revisión humana."
             )
         return decision
+
+
+# -----------------------------------------------------------------------------
+# Grounded reasoning → Answerability (§21)
+# -----------------------------------------------------------------------------
+# Mapeo del estado del motor grounded al vocabulario del Answerability Gate.
+_GROUNDING_STATUS_MAP: dict[str, AnswerabilityStatus] = {
+    "ANSWERABLE_DERIVED": AnswerabilityStatus.ANSWERABLE_DERIVED,
+    "ANSWERABLE_DIRECT": AnswerabilityStatus.ANSWERABLE_DIRECT,
+    "ANSWERABLE_WITH_LIMITS": AnswerabilityStatus.ANSWERABLE_WITH_LIMITS,
+    "UNANSWERABLE_MISSING_PREMISE": AnswerabilityStatus.UNANSWERABLE_MISSING_PREMISE,
+    "UNANSWERABLE_CONFLICT": AnswerabilityStatus.SOURCE_CONFLICT,
+    "NOT_APPLICABLE": AnswerabilityStatus.ANSWERABLE,
+}
+
+
+def grounding_public(grounded_reasoning: Any | None) -> dict:
+    """Proyección pública del motor grounded (o {} si no aplica)."""
+    if grounded_reasoning is None:
+        return {}
+    if hasattr(grounded_reasoning, "to_public_dict"):
+        try:
+            payload = grounded_reasoning.to_public_dict()
+        except Exception:  # noqa: BLE001
+            return {}
+    elif isinstance(grounded_reasoning, dict):
+        payload = grounded_reasoning
+    else:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def answerability_from_grounding(
+    grounded_reasoning: Any | None,
+) -> AnswerabilityDecision | None:
+    """Convierte el resultado del motor grounded en una decisión formal."""
+    public = grounding_public(grounded_reasoning)
+    if not public:
+        return None
+    status = str(public.get("answerability") or "NOT_APPLICABLE")
+    mapped = _GROUNDING_STATUS_MAP.get(status, AnswerabilityStatus.ANSWERABLE)
+    missing_premises = [str(item) for item in public.get("missing_premises") or ()]
+    conflicts = [str(item) for item in public.get("conflicts") or ()]
+    derived = [
+        claim
+        for claim in (public.get("derivations") or {}).get("claims") or ()
+        if isinstance(claim, dict)
+        and str(claim.get("verification_status")) == "SUPPORTED"
+    ]
+    answerable = mapped in (
+        AnswerabilityStatus.ANSWERABLE,
+        AnswerabilityStatus.ANSWERABLE_DIRECT,
+        AnswerabilityStatus.ANSWERABLE_DERIVED,
+        AnswerabilityStatus.ANSWERABLE_WITH_LIMITS,
+    )
+    message = None
+    if mapped == AnswerabilityStatus.UNANSWERABLE_MISSING_PREMISE:
+        message = (
+            str(public.get("abstention_message") or "").strip()
+            or (
+                "No puedo determinarlo porque falta una premisa del dominio: "
+                + "; ".join(missing_premises[:4])
+                + "."
+                if missing_premises
+                else "No puedo determinarlo porque falta una premisa del dominio."
+            )
+        )
+    elif status == "UNANSWERABLE_CONFLICT":
+        message = (
+            "Las premisas disponibles entran en conflicto; no elijo una "
+            "arbitrariamente."
+        )
+    reason_codes: list[str] = []
+    if mapped == AnswerabilityStatus.ANSWERABLE_DERIVED:
+        reason_codes = ["DERIVED_FROM_GROUNDED_PREMISES"]
+    elif mapped == AnswerabilityStatus.UNANSWERABLE_MISSING_PREMISE:
+        reason_codes = ["MISSING_DOMAIN_PREMISE"]
+    elif status == "UNANSWERABLE_CONFLICT":
+        reason_codes = ["PREMISE_CONFLICT"]
+    return AnswerabilityDecision(
+        status=mapped,
+        answerable=answerable,
+        confidence_level=(
+            ConfidenceLevel.HIGH
+            if mapped == AnswerabilityStatus.ANSWERABLE_DERIVED
+            else ConfidenceLevel.LOW
+            if mapped == AnswerabilityStatus.ANSWERABLE_WITH_LIMITS
+            else ConfidenceLevel.INSUFFICIENT
+            if not answerable
+            else ConfidenceLevel.MEDIUM
+        ),
+        score=0.9 if mapped == AnswerabilityStatus.ANSWERABLE_DERIVED else 0.0,
+        reason_codes=reason_codes,
+        missing_context=missing_premises,
+        conflicting_sources=[{"premise": item} for item in conflicts],
+        evidence_ids=[
+            str(ref)
+            for claim in derived
+            for ref in claim.get("evidence_refs") or ()
+        ],
+        recommended_actions=(
+            ["Responder con el resultado derivado y citar las premisas"]
+            if mapped == AnswerabilityStatus.ANSWERABLE_DERIVED
+            else ["Nombrar exactamente la premisa faltante"]
+            if mapped == AnswerabilityStatus.UNANSWERABLE_MISSING_PREMISE
+            else []
+        ),
+        message=message,
+    )
+
+
+def apply_grounded_reasoning(
+    decision: AnswerabilityDecision, grounded_reasoning: Any | None
+) -> AnswerabilityDecision:
+    """Corrige decisiones de datos con la lectura grounded del run.
+
+    Un `DATA_MISSING`/`CONTEXT_MISSING` de la vía clásica no puede sobrevivir
+    cuando el motor grounded ya derivó el resultado de premisas respaldadas, ni
+    cuando el único faltante es una premisa del dominio.
+    """
+    grounded = answerability_from_grounding(grounded_reasoning)
+    if grounded is None:
+        return decision
+    status = str(grounding_public(grounded_reasoning).get("answerability") or "")
+    if decision.status in (
+        AnswerabilityStatus.ACCESS_BLOCKED,
+        AnswerabilityStatus.EXECUTION_FAILED,
+        AnswerabilityStatus.CLARIFICATION_REQUIRED,
+        AnswerabilityStatus.AMBIGUOUS,
+    ):
+        return decision
+    if status == "ANSWERABLE_DERIVED" and decision.status in (
+        AnswerabilityStatus.DATA_MISSING,
+        AnswerabilityStatus.CONTEXT_MISSING,
+        AnswerabilityStatus.HUMAN_REVIEW_REQUIRED,
+    ):
+        return grounded
+    if status == "UNANSWERABLE_MISSING_PREMISE":
+        return grounded
+    if status == "UNANSWERABLE_CONFLICT" and decision.status != AnswerabilityStatus.SOURCE_CONFLICT:
+        return grounded
+    return decision

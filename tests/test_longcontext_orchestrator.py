@@ -270,18 +270,28 @@ async def test_anchor_roles_step_separates_user_example(
         None,
     )
     assert anchor_step is not None, "Ver flujo debe publicar anchor_roles"
-    assert anchor_step["rule_evidence"] == "complete"
-    # FCLAS (field) + &&&F (rule) + record 2 (entidad) documentables.
-    assert anchor_step["documentable_requested"] == 3
-    assert anchor_step["documentable_found"] == 3
+    # La evidencia trae el literal &&&F pero NO define su gramática: la
+    # semántica del patrón queda incompleta y así se declara.
+    assert anchor_step["rule_evidence"] == "incomplete"
+    assert anchor_step["pattern_evidence"] == "incomplete"
+    assert "definition:symbol:&" in anchor_step["pattern_missing_premises"]
+    # FCLAS (field) + record 2 (entidad) documentables; &&&F es runtime pattern
+    # (no exige match literal, exige semántica).
+    assert anchor_step["documentable_requested"] == 2
+    assert anchor_step["documentable_found"] == 2
     field_values = {entry["value"] for entry in anchor_step["fields"]}
-    rule_values = {entry["value"] for entry in anchor_step["rules"]}
+    runtime_values = {entry["value"] for entry in anchor_step["runtime_patterns"]}
     assert "FCLAS" in field_values
-    assert "&&&F" in rule_values
+    assert "&&&F" in runtime_values
+    assert all(
+        entry["requires_source_match"] is False
+        for entry in anchor_step["runtime_patterns"]
+    )
     example = anchor_step["examples"][0]
     assert example["value"] == "QNNF0SME"
     assert example["requires_source_match"] is False
     assert "USER EXAMPLE QNNF0SME" in anchor_step["detail"]
+    assert "RUNTIME PATTERN &&&F" in anchor_step["detail"]
 
 
 @pytest.mark.asyncio

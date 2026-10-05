@@ -481,6 +481,7 @@ async def judge_answer(
     retrieval_rounds_left: int = 0,
     evidence_budget_chars: int = DEFAULT_BUDGET_CHARS,
     presentation_enabled: bool | None = None,
+    grounded_reasoning: Any | None = None,
 ) -> AnswerGateResult:
     """Evalua el borrador. Nunca lanza: ante error devuelve skipped.
 
@@ -518,6 +519,21 @@ async def judge_answer(
         StateSection("user_request", 3, (user_request or "")[:4000]),
         StateSection("agent_instructions", 4, agent_instructions),
     ]
+    grounding_public: dict[str, Any] = {}
+    if grounded_reasoning is not None:
+        try:
+            from src.intelligence.answerability import grounding_public as _public
+
+            grounding_public = _public(grounded_reasoning)
+        except Exception:  # noqa: BLE001
+            grounding_public = {}
+    if grounding_public:
+        from src.rag.longcontext.package import render_grounding_block
+
+        grounding_text = render_grounding_block(grounding_public)
+        if grounding_text:
+            sections.append(StateSection("grounded_reasoning", 2, grounding_text[:4000]))
+    derived_ok = str(grounding_public.get("answerability") or "") == "ANSWERABLE_DERIVED"
     if selection is not None and selection.items:
         sections.insert(2, StateSection("evidence_index", 2, evidence_index_block(selection)))
     if items:
@@ -600,9 +616,12 @@ async def judge_answer(
     if evidence_provided:
         # Señal canónica: sin faltantes documentables (los EXAMPLE_VALUE no
         # entran; assess_sufficiency los excluye por rol). `exact_entity_match`
-        # ya NO decide relevancia por sí solo.
+        # ya NO decide relevancia por sí solo. Una derivación grounded con
+        # premisas respaldadas también vuelve relevante la evidencia: la
+        # conclusión no necesita estar escrita en la fuente.
         relevant = (
-            sufficiency.evidence_complete
+            derived_ok
+            or sufficiency.evidence_complete
             or (sufficiency.entity_coverage or 0.0) > 0.0
             or (not sufficiency.entities_asked and sufficiency.supporting_chunks > 0)
         )

@@ -22,7 +22,11 @@ _COMPANY_CONTEXT_KEY = "company_context"
 DEFAULT_ANSWER_RULE = (
     "8. After a tool observation that contains documents or facts, respond with\n"
     '   {{"answer": "..."}}. Do not call the same tool with the same arguments again.\n'
-    "   Search again only if the observation is (no results) or an error."
+    "   Search again only if the observation is (no results) or an error.\n"
+    "   User-provided values (codes, amounts, dates) are valid scenario data: apply\n"
+    "   them against documented rules; do not search them as evidence. Results derived\n"
+    "   from grounded premises by a deterministic operation are valid even if the\n"
+    "   result is not written verbatim in the documents."
 )
 
 #: Regla para razonamiento complejo: no se responde con evidencia parcial.
@@ -36,7 +40,8 @@ ANALYSIS_ANSWER_RULE = (
     "   exactly which evidence is missing to conclude.\n"
     "   Never answer with a plausible conclusion built on partial evidence, and never\n"
     "   invent record layouts, field positions or rule semantics that no observation\n"
-    "   provides."
+    "   provides. A missing DOMAIN PREMISE must be named as such; a user-provided\n"
+    "   value is never a missing premise."
 )
 
 

@@ -678,6 +678,10 @@ class EvidenceSufficiency:
     missing_anchors: tuple[str, ...] = ()
     #: Valores de ejemplo del usuario: input a evaluar, NO exigen match.
     examples_asked: tuple[str, ...] = ()
+    #: Instancias de patrón del runtime: la instancia no exige match literal.
+    runtime_patterns_asked: tuple[str, ...] = ()
+    #: Premisas del dominio que faltan (semántica de símbolos, matching, etc.).
+    missing_premises: tuple[str, ...] = ()
     top_score: float = 0.0
     conflicting_chunks: int | None = None
 
@@ -718,6 +722,11 @@ class EvidenceSufficiency:
         if self.examples_asked:
             payload["examples_asked"] = list(self.examples_asked)[:6]
             payload["examples_requires_source_match"] = False
+        if self.runtime_patterns_asked:
+            payload["runtime_patterns_asked"] = list(self.runtime_patterns_asked)[:6]
+            payload["runtime_patterns_requires_literal_match"] = False
+        if self.missing_premises:
+            payload["missing_premises"] = list(self.missing_premises)[:6]
         if self.conflicting_chunks is not None:
             payload["conflicting_chunks"] = self.conflicting_chunks
         return payload
@@ -753,20 +762,55 @@ def assess_sufficiency(
     entities = _asked_entities(question)
     anchors_all = _asked_anchors(question)
     # Roles: sólo los anchors documentables exigen match. Los valores de ejemplo
-    # del usuario («¿acepta QNNF0SME?») son input a evaluar con la regla.
+    # del usuario («¿acepta QNNF0SME?») son input a evaluar con la regla; las
+    # instancias de patrón exigen su SEMÁNTICA documentada, no su literalidad.
     examples_asked: tuple[str, ...] = ()
+    runtime_patterns_asked: tuple[str, ...] = ()
     anchors: list[Any] = []
+    missing_premises: list[str] = []
     try:
-        from src.rag.longcontext.roles import assign_roles, is_documentable
+        from src.rag.longcontext.roles import AnchorRole, assign_roles, is_documentable
 
         anchors_rel = assign_roles(question, anchors_all)
         for anchor in anchors_rel:
-            if is_documentable(str(getattr(anchor, "role", ""))):
+            role = str(getattr(anchor, "role", ""))
+            if role == AnchorRole.RUNTIME_PATTERN.value:
+                runtime_patterns_asked = (
+                    *runtime_patterns_asked,
+                    str(getattr(anchor, "value", "")),
+                )
+                continue
+            if is_documentable(role):
                 anchors.append(anchor)
             else:
                 examples_asked = (*examples_asked, str(getattr(anchor, "value", "")))
     except Exception:  # noqa: BLE001 — sin roles, comportamiento histórico
         anchors = list(anchors_all)
+    pattern_semantics: Any | None = None
+    try:
+        from src.rag.longcontext.pattern import (
+            analyze_pattern_instance,
+            extract_pattern_semantics,
+            missing_pattern_premises,
+        )
+
+        mask_anchors = [
+            anchor
+            for anchor in anchors
+            if str(getattr(anchor, "kind", "")) == "mascara"
+        ]
+        if runtime_patterns_asked or mask_anchors:
+            pattern_semantics = extract_pattern_semantics(list(items))
+            for pattern_value in runtime_patterns_asked:
+                missing_premises.extend(
+                    missing_pattern_premises(
+                        analyze_pattern_instance(pattern_value),
+                        pattern_semantics,
+                        value_length=None,
+                    )
+                )
+    except Exception:  # noqa: BLE001
+        pattern_semantics = None
     if not entities and not anchors:
         return EvidenceSufficiency(
             has_evidence=True,
@@ -775,6 +819,8 @@ def assess_sufficiency(
             reason="no_entities_asked",
             top_score=top_score,
             examples_asked=examples_asked,
+            runtime_patterns_asked=runtime_patterns_asked,
+            missing_premises=tuple(dict.fromkeys(missing_premises)),
         )
     joined = "\n".join(_coverage_text(item) for item in items)
     asked = tuple(entity.label for entity in entities)
@@ -783,14 +829,44 @@ def assess_sufficiency(
     coverage = len(covered) / len(asked) if asked else None
     exact = not missing
     anchors_asked = tuple(anchor.label for anchor in anchors)
+
+    def _anchor_covered_semantically(anchor: Any) -> bool:
+        """Una máscara documentable se acredita por su gramática documentada."""
+        if str(getattr(anchor, "kind", "")) != "mascara":
+            return False
+        if pattern_semantics is None:
+            return False
+        from src.rag.longcontext.pattern import (
+            analyze_pattern_instance,
+            missing_pattern_premises,
+        )
+
+        return not missing_pattern_premises(
+            analyze_pattern_instance(str(getattr(anchor, "value", ""))),
+            pattern_semantics,
+            value_length=None,
+        )
+
     anchors_covered = tuple(
-        anchor.label for anchor in anchors if anchor_covered(anchor, joined)
+        anchor.label
+        for anchor in anchors
+        if anchor_covered(anchor, joined) or _anchor_covered_semantically(anchor)
     )
     missing_anchors = tuple(
         label for label in anchors_asked if label not in anchors_covered
     )
+    missing_premises_tuple = tuple(dict.fromkeys(missing_premises))
 
-    if missing_anchors and not missing:
+    if missing_premises_tuple:
+        # Falta una PREMISA del dominio (semántica del símbolo, matching): no es
+        # un problema de recuperar más ni de «el dato no aparece».
+        action = (
+            ACTION_RETRIEVE_MORE
+            if retrieval_rounds_left > 0
+            else ACTION_ABSTAIN
+        )
+        reason = "missing_domain_premise"
+    elif missing_anchors and not missing:
         # Lo nombrado que falta es el anchor: el pin puede ir a buscarlo.
         action = (
             ACTION_RETRIEVE_MORE
@@ -826,6 +902,8 @@ def assess_sufficiency(
         anchors_covered=anchors_covered,
         missing_anchors=missing_anchors,
         examples_asked=examples_asked,
+        runtime_patterns_asked=runtime_patterns_asked,
+        missing_premises=missing_premises_tuple,
         top_score=top_score,
     )
 

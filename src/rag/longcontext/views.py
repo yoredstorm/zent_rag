@@ -35,6 +35,12 @@ class QueryViews:
     anchors: tuple[Anchor, ...] = ()
     entities: tuple[Any, ...] = ()
     examples: tuple[str, ...] = ()
+    #: Instancias de patrón que llegan del escenario («me viene &&&F»): su
+    #: instancia no exige match literal; sus semánticas sí.
+    runtime_patterns: tuple[str, ...] = ()
+    #: Interpretación semántica de la consulta (roles contextuales).
+    semantic_objects: tuple[Any, ...] = ()
+    intent: str = ""
 
     @property
     def has_technical_anchors(self) -> bool:
@@ -63,18 +69,29 @@ class QueryViews:
             if hint:
                 item["semantic_hint"] = hint
             anchors_payload.append(item)
-        return {
+        payload: dict[str, Any] = {
             "semantic_query": self.semantic,
             "lexical_terms": list(self.lexical_terms),
             "exact_terms": list(self.exact_terms),
             "anchors": anchors_payload,
             "examples": list(self.examples),
+            "runtime_patterns": list(self.runtime_patterns),
             "entities": [
                 entity.to_public_dict()
                 for entity in self.entities
                 if hasattr(entity, "to_public_dict")
             ],
         }
+        if self.semantic_objects:
+            payload["semantics"] = {
+                "intent": self.intent,
+                "objects": [
+                    obj.to_public_dict()
+                    for obj in self.semantic_objects
+                    if hasattr(obj, "to_public_dict")
+                ],
+            }
+        return payload
 
 
 def build_query_views(
@@ -103,14 +120,20 @@ def build_query_views(
     examples: list[str] = []
     lexical: list[str] = []
     exact: list[str] = []
+    runtime_patterns: list[str] = []
     for anchor in resolved:
         value = str(anchor.value or "").strip()
         if not value:
             continue
         role = str(getattr(anchor, "role", "") or "")
-        if role == AnchorRole.EXAMPLE_VALUE.value:
+        if role in (
+            AnchorRole.EXAMPLE_VALUE.value,
+            AnchorRole.RUNTIME_VALUE.value,
+        ):
             if value not in examples:
                 examples.append(value)
+        if role == AnchorRole.RUNTIME_PATTERN.value and value not in runtime_patterns:
+            runtime_patterns.append(value)
         if value not in lexical:
             lexical.append(value)
         for term in getattr(anchor, "expansion_terms", ()) or ():
@@ -137,6 +160,15 @@ def build_query_views(
         pass
 
     semantic = _semantic_text(raw, resolved)
+    try:
+        from src.intelligence.query_semantics import classify_query_semantics
+
+        semantics = classify_query_semantics(raw, resolved, resolved_entities)
+        semantic_objects = semantics.objects
+        intent = semantics.intent
+    except Exception:  # noqa: BLE001
+        semantic_objects = ()
+        intent = ""
     return QueryViews(
         raw=raw,
         semantic=semantic,
@@ -145,6 +177,9 @@ def build_query_views(
         anchors=tuple(resolved),
         entities=tuple(resolved_entities),
         examples=tuple(examples),
+        runtime_patterns=tuple(runtime_patterns),
+        semantic_objects=tuple(semantic_objects),
+        intent=intent,
     )
 
 
@@ -184,8 +219,9 @@ def summarize_views_for_flow(
 ) -> dict[str, Any] | None:
     """Resumen humano para «Ver flujo»: qué se pidió, qué se encontró.
 
-    Separa FIELD/RULE/REFERENCE (documentables) de USER EXAMPLE (no exige
-    match en fuentes). `rule_evidence` resume si la regla está completa.
+    Separa FIELD/RULE/REFERENCE (documentables) de USER EXAMPLE y RUNTIME
+    PATTERN (no exigen match literal; el patrón exige SEMÁNTICA documentada).
+    `rule_evidence` resume si la regla y la gramática están completas.
     """
     if not isinstance(views_public, dict):
         return None
@@ -197,6 +233,7 @@ def summarize_views_for_flow(
     references: list[dict[str, Any]] = []
     entities: list[dict[str, Any]] = []
     examples: list[dict[str, Any]] = []
+    runtime_patterns: list[dict[str, Any]] = []
     documentable = 0
     documentable_found = 0
 
@@ -223,13 +260,26 @@ def summarize_views_for_flow(
             fields.append(record)
             documentable += 1
             documentable_found += int(found)
-        elif role == AnchorRole.EXAMPLE_VALUE.value:
+        elif role in (
+            AnchorRole.EXAMPLE_VALUE.value,
+            AnchorRole.RUNTIME_VALUE.value,
+        ):
             examples.append(
                 {
                     "value": entry.get("value"),
                     "role": role,
                     "found_in_evidence": found,
                     "requires_source_match": False,
+                }
+            )
+        elif role == AnchorRole.RUNTIME_PATTERN.value:
+            runtime_patterns.append(
+                {
+                    "value": entry.get("value"),
+                    "role": role,
+                    "found_in_evidence": found,
+                    "requires_source_match": False,
+                    "requires_semantics": True,
                 }
             )
         else:
@@ -246,13 +296,43 @@ def summarize_views_for_flow(
         documentable += 1
         documentable_found += int(found)
 
-    if documentable == 0 and not examples:
+    # Semántica de los patrones de runtime: la instancia no exige match; su
+    # gramática sí. Se evalúa contra la MISMA evidencia del resumen.
+    pattern_evidence = "not_applicable"
+    pattern_missing: list[str] = []
+    if runtime_patterns:
+        try:
+            from src.rag.longcontext.pattern import (
+                analyze_pattern_instance,
+                extract_pattern_semantics,
+                missing_pattern_premises,
+            )
+
+            semantics = extract_pattern_semantics(list(evidence_texts or ()))
+            for record in runtime_patterns:
+                pattern_missing.extend(
+                    missing_pattern_premises(
+                        analyze_pattern_instance(str(record["value"])),
+                        semantics,
+                        value_length=None,
+                    )
+                )
+        except Exception:  # noqa: BLE001 — el resumen nunca rompe el run
+            pattern_missing = []
+        pattern_missing = list(dict.fromkeys(pattern_missing))
+        pattern_evidence = "complete" if not pattern_missing else "incomplete"
+
+    if documentable == 0 and not examples and not runtime_patterns:
         return None
 
     rule_evidence = (
         "not_applicable"
-        if documentable == 0
-        else ("complete" if documentable_found == documentable else "incomplete")
+        if documentable == 0 and not runtime_patterns
+        else (
+            "complete"
+            if documentable_found == documentable and pattern_evidence != "incomplete"
+            else "incomplete"
+        )
     )
     parts: list[str] = []
     for record in fields:
@@ -275,6 +355,12 @@ def summarize_views_for_flow(
         parts.append(
             f"USER EXAMPLE {record['value']} (no requiere match en fuentes)"
         )
+    for record in runtime_patterns:
+        parts.append(
+            f"RUNTIME PATTERN {record['value']} "
+            f"(semántica: {'COMPLETE' if pattern_evidence == 'complete' else 'INCOMPLETE'}"
+            f" · no requiere match literal)"
+        )
     parts.append(
         "RULE EVIDENCE "
         + (
@@ -291,10 +377,19 @@ def summarize_views_for_flow(
         "references": references,
         "entities": entities,
         "examples": examples,
+        "runtime_patterns": runtime_patterns,
+        "pattern_evidence": pattern_evidence,
+        "pattern_missing_premises": pattern_missing,
         "rule_evidence": rule_evidence,
         "documentable_requested": documentable,
         "documentable_found": documentable_found,
-        "application": "LLM reasoning" if examples else "",
+        "application": (
+            "deterministic POSITIONAL_MATCH"
+            if runtime_patterns and pattern_evidence == "complete"
+            else "LLM reasoning"
+            if examples
+            else ""
+        ),
     }
 
 

@@ -40,9 +40,9 @@ _SIGLA_STOPWORDS = frozenset(
         "UI", "UX", "OK", "TODO", "NOTA",
     }
 )
-#: Máscara con comodines: &&&F, *F*, F%. Un `?` de prosa («¿qué?») no cuenta.
-_MASK_CHARS = "&*?%#"
-_MASK_RUN_RE = re.compile(r"[A-Za-z0-9&*?%#]{2,16}")
+#: Máscara con comodines: &&&F, *F*, F%, AAA-###. Un `?` de prosa («¿qué?») no cuenta.
+_MASK_CHARS = "&*?%#@!~^"
+_MASK_RUN_RE = re.compile(r"[A-Za-z0-9&*?%#@!~^][A-Za-z0-9&*?%#@!~^_-]{1,15}")
 #: Rango con barra: 64/67.
 _SLASH_RANGE_RE = re.compile(r"\b(\d{1,4})\s*/\s*(\d{1,4})\b")
 #: Código corto palabra+dígitos pegados: CAT31, Byte105. La parte alfabética
@@ -171,7 +171,12 @@ def _ensure_modules_loaded() -> None:
 
 
 def _dedupe(anchors: list[Anchor]) -> list[Anchor]:
-    """Sin repetir valor: el provider (semántico) gana sobre el genérico."""
+    """Sin repetir valor: el provider (semántico) gana sobre el genérico.
+
+    Además descarta sub-tokens contenidos en un anchor más largo («ABC» dentro
+    de «ABC-123», «AAA» dentro de «AAA-###»): un fragmento del token no es una
+    premisa documental distinta.
+    """
     found: list[Anchor] = []
     seen: set[str] = set()
     for anchor in anchors:
@@ -180,7 +185,14 @@ def _dedupe(anchors: list[Anchor]) -> list[Anchor]:
             continue
         seen.add(key)
         found.append(anchor)
-    return found
+    if len(found) < 2:
+        return found
+    values = [anchor.value.strip().lower() for anchor in found]
+    return [
+        anchor
+        for anchor, key in zip(found, values)
+        if not any(key != other and key in other for other in values)
+    ]
 
 
 def _codigo(value: str) -> Anchor:
@@ -249,7 +261,13 @@ def _es_mascara(token: str) -> bool:
     sigla con signo de pregunta, no una máscara.
     """
     comodines = sum(1 for char in token if char in _MASK_CHARS)
-    if not comodines or not any(char.isalnum() for char in token):
+    if not comodines:
+        return False
+    if comodines >= 2:
+        # Una corrida de 2+ comodines es un patrón aunque no tenga alfanuméricos
+        # («????», «&&»): no es prosa.
+        return True
+    if not any(char.isalnum() for char in token):
         return False
     if token.endswith("?") and comodines == 1:
         return False
@@ -266,12 +284,20 @@ def _siglas(text: str) -> list[Anchor]:
     ]
 
 
+def _clean_mask_token(token: str) -> str:
+    """Quita el `?` de cierre de oración pegado a la máscara («&&&F?»)."""
+    while len(token) > 1 and token.endswith("?") and token[-2].isalnum():
+        token = token[:-1]
+    return token
+
+
 def _mascaras(text: str) -> list[Anchor]:
-    return [
-        _mascara(match.group(0))
-        for match in _MASK_RUN_RE.finditer(text)
-        if _es_mascara(match.group(0))
-    ]
+    found: list[Anchor] = []
+    for match in _MASK_RUN_RE.finditer(text):
+        token = _clean_mask_token(match.group(0))
+        if token and _es_mascara(token):
+            found.append(_mascara(token))
+    return found
 
 
 def _opaque_anchors(question: str) -> list[Anchor]:

@@ -1040,6 +1040,42 @@ knowledge_retrieval_probes_total = Counter(
     labelnames=["organization_id", "query_type", "status"],
 )
 
+# --- Grounding contract + razonamiento grounded (§51) ----------------------
+# La métrica más importante es over-abstention: ZENT se negaba a responder
+# cuando podía derivar de premisas grounded + datos del usuario.
+grounding_query_role_total = Counter(
+    "grounding_query_role_total",
+    "Roles semánticos clasificados en la consulta",
+    labelnames=["role"],
+)
+grounding_answerability_total = Counter(
+    "grounding_answerability_total",
+    "Answerability del motor grounded (ANSWERABLE_DERIVED, UNANSWERABLE_*, ...)",
+    labelnames=["answerability"],
+)
+grounding_derived_claims_total = Counter(
+    "grounding_derived_claims_total",
+    "Claims derivados por operación y estado de verificación",
+    labelnames=["operation", "verification_status"],
+)
+grounding_runtime_input_false_missing_total = Counter(
+    "grounding_runtime_input_false_missing_total",
+    "Datos del usuario declarados como evidencia faltante (debe ser 0)",
+)
+grounding_over_abstention_total = Counter(
+    "grounding_over_abstention_total",
+    "Abstenciones cuando existía derivación posible",
+)
+grounding_under_abstention_total = Counter(
+    "grounding_under_abstention_total",
+    "Derivaciones cuando faltaba una premisa del dominio (alucinación)",
+)
+grounding_missing_premise_total = Counter(
+    "grounding_missing_premise_total",
+    "Premisas del dominio faltantes, por tipo",
+    labelnames=["premise"],
+)
+
 
 def setup_metrics(app: FastAPI) -> Instrumentator:
     """Configura y expone /metrics para Prometheus scraping.

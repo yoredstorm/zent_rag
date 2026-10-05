@@ -41,6 +41,12 @@ class AnchorCoverage:
     rule_found: int = 0
     field_requested: int = 0
     field_found: int = 0
+    #: Instancias de patrón del runtime: la instancia no exige match; su
+    #: gramática se exige como premisa (requirements kind=pattern_semantics).
+    runtime_patterns: tuple[str, ...] = ()
+    runtime_patterns_found: tuple[str, ...] = ()
+    #: Dato del escenario: aceptado siempre, separado de la cobertura documental.
+    runtime_values: tuple[str, ...] = ()
 
     def to_public_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -60,6 +66,15 @@ class AnchorCoverage:
             payload["examples"] = list(self.examples)
             payload["examples_found_in_evidence"] = list(self.examples_found)
             payload["examples_requires_source_match"] = False
+        if self.runtime_patterns:
+            payload["runtime_patterns"] = list(self.runtime_patterns)
+            payload["runtime_patterns_found_in_evidence"] = list(
+                self.runtime_patterns_found
+            )
+            payload["runtime_patterns_requires_literal_match"] = False
+        if self.runtime_values:
+            payload["runtime_values"] = list(self.runtime_values)
+            payload["runtime_values_requires_source_match"] = False
         return payload
 
 
@@ -92,12 +107,27 @@ def anchor_coverage(
     missing_values: list[str] = []
     examples: list[str] = []
     examples_found: list[str] = []
+    runtime_patterns: list[str] = []
+    runtime_patterns_found: list[str] = []
+    runtime_values: list[str] = []
     rule_requested = rule_found = field_requested = field_found = 0
     exact = True
     documentable = 0
     for anchor in resolved:
         value = str(getattr(anchor, "value", "") or "")
         role = str(getattr(anchor, "role", "") or "")
+        if role == AnchorRole.RUNTIME_PATTERN.value:
+            # La instancia de patrón no exige presencia literal en fuentes.
+            runtime_patterns.append(value)
+            needles = [
+                str(needle).lower() for needle in getattr(anchor, "needles", ()) if needle
+            ]
+            if needles and any(needle in lowered for needle in needles):
+                runtime_patterns_found.append(value)
+            continue
+        if role == AnchorRole.RUNTIME_VALUE.value:
+            runtime_values.append(value)
+            continue
         if role == AnchorRole.EXAMPLE_VALUE.value:
             examples.append(value)
             needles = [
@@ -142,6 +172,9 @@ def anchor_coverage(
         rule_found=rule_found,
         field_requested=field_requested,
         field_found=field_found,
+        runtime_patterns=tuple(runtime_patterns),
+        runtime_patterns_found=tuple(runtime_patterns_found),
+        runtime_values=tuple(runtime_values),
     )
 
 
@@ -212,12 +245,20 @@ class EvidenceState:
     question: str
     documentable_anchors: tuple[Any, ...] = ()
     example_values: tuple[Any, ...] = ()
+    #: Instancias de patrón del runtime («me viene &&&F»): instancia no literal,
+    #: semántica documentada sí.
+    runtime_patterns: tuple[Any, ...] = ()
+    #: Valores de runtime que no son ejemplos ni patrones.
+    runtime_values: tuple[Any, ...] = ()
     entities: tuple[Any, ...] = ()
     anchor_coverage: AnchorCoverage | None = None
     requirements: RequirementCoverage | None = None
     missing_anchors: tuple[str, ...] = ()
     missing_entities: tuple[str, ...] = ()
     missing_requirements: tuple[str, ...] = ()
+    #: Premisas del dominio que faltan (semántica de símbolos, matching, etc.):
+    #: se nombran como premisas, nunca como «el valor del usuario no aparece».
+    missing_premises: tuple[str, ...] = ()
     conflicts: tuple[str, ...] = ()
     #: Entidades que SÍ aparecieron (para el bloque canónico del prompt).
     entities_found: tuple[str, ...] = ()
@@ -247,30 +288,54 @@ class EvidenceState:
         )
 
     @property
+    def domain_requirement_coverage(self) -> float:
+        """Cobertura de PREMISAS del dominio (separada del dato del usuario)."""
+        if self.requirements is not None and self.requirements.requested:
+            return self.requirements.domain_requirement_coverage
+        if self.anchor_coverage is not None:
+            return self.anchor_coverage.coverage
+        return 0.0
+
+    @property
+    def runtime_input_coverage(self) -> float:
+        """Cobertura del ESCENARIO: el dato del usuario se acepta, no se busca."""
+        if self.requirements is not None and self.requirements.runtime_requirements:
+            return self.requirements.runtime_input_coverage
+        if self.example_values or self.runtime_values or self.runtime_patterns:
+            return 1.0
+        return 0.0
+
+    @property
     def evidence_complete(self) -> bool:
         return not (self.missing_documentable_evidence or self.conflicts)
 
     @property
     def coverage(self) -> float:
-        if self.requirements is not None and self.requirements.requested:
-            return self.requirements.coverage
-        if self.anchor_coverage is not None:
-            return self.anchor_coverage.coverage
-        return 0.0
+        return self.domain_requirement_coverage
 
     def to_public_dict(self) -> dict[str, Any]:
         found_anchors = set(self.anchor_coverage.found_values) if self.anchor_coverage else set()
         found_examples = set(self.anchor_coverage.examples_found) if self.anchor_coverage else set()
+        runtime_pattern_values = {
+            str(getattr(anchor, "value", "")) for anchor in self.runtime_patterns
+        }
         anchors_payload: list[dict[str, Any]] = []
-        for anchor in (*self.documentable_anchors, *self.example_values):
+        for anchor in (
+            *self.documentable_anchors,
+            *self.example_values,
+            *self.runtime_patterns,
+            *self.runtime_values,
+        ):
             role = str(getattr(anchor, "role", "") or "")
             value = str(getattr(anchor, "value", ""))
+            runtime = role in ("example_value", "runtime_pattern", "runtime_value")
             anchors_payload.append(
                 {
                     "value": value,
                     "role": role,
                     "found": value in (found_examples if role == "example_value" else found_anchors),
-                    "requires_source_match": role != "example_value",
+                    "requires_source_match": not runtime,
+                    "requires_semantics": role == "runtime_pattern",
                 }
             )
         payload: dict[str, Any] = {
@@ -283,7 +348,14 @@ class EvidenceState:
             "example_values": [
                 str(getattr(anchor, "value", "")) for anchor in self.example_values
             ],
+            "runtime_patterns": [
+                str(getattr(anchor, "value", "")) for anchor in self.runtime_patterns
+            ],
+            "runtime_values": [
+                str(getattr(anchor, "value", "")) for anchor in self.runtime_values
+            ],
             "examples_requires_source_match": False,
+            "runtime_values_requires_source_match": False,
             "entities": [
                 str(getattr(entity, "label", entity)) for entity in self.entities
             ],
@@ -291,11 +363,14 @@ class EvidenceState:
             "missing_anchors": list(self.missing_anchors),
             "missing_entities": list(self.missing_entities),
             "missing_requirements": list(self.missing_requirements),
+            "missing_premises": list(self.missing_premises),
             "missing_documentable_evidence": list(self.missing_documentable_evidence),
             "conflicts": list(self.conflicts),
             "complete": self.evidence_complete,
             "evidence_complete": self.evidence_complete,
             "coverage": round(self.coverage, 4),
+            "domain_requirement_coverage": round(self.domain_requirement_coverage, 4),
+            "runtime_input_coverage": round(self.runtime_input_coverage, 4),
             "stop_reason": self.stop_reason or None,
             "retrieval_available": self.retrieval_available,
             "generation_mode": self.generation_mode,
@@ -365,19 +440,38 @@ def build_evidence_state(
         if entities is not None
         else list(getattr(views, "entities", ()) or ())
     )
-    from src.rag.longcontext.roles import AnchorRole, assign_roles
+    from src.rag.longcontext.roles import AnchorRole, assign_roles, is_documentable
 
     resolved_anchors = assign_roles(question, resolved_anchors)
     documentable = [
         anchor
         for anchor in resolved_anchors
-        if str(getattr(anchor, "role", "")) != AnchorRole.EXAMPLE_VALUE.value
+        if is_documentable(str(getattr(anchor, "role", "")))
     ]
     examples = [
         anchor
         for anchor in resolved_anchors
         if str(getattr(anchor, "role", "")) == AnchorRole.EXAMPLE_VALUE.value
     ]
+    runtime_patterns = [
+        anchor
+        for anchor in resolved_anchors
+        if str(getattr(anchor, "role", "")) == AnchorRole.RUNTIME_PATTERN.value
+    ]
+    runtime_values = [
+        anchor
+        for anchor in resolved_anchors
+        if str(getattr(anchor, "role", ""))
+        in (AnchorRole.RUNTIME_VALUE.value, AnchorRole.OPTIONAL_CONTEXT.value)
+    ]
+    # El valor del escenario que se aplica contra un patrón/rango: primer valor
+    # de runtime no-paramétrico disponible (el patrón se evalúa aparte).
+    runtime_value = ""
+    for anchor in (*examples, *runtime_values):
+        candidate = str(getattr(anchor, "value", "") or "")
+        if candidate:
+            runtime_value = candidate
+            break
 
     anchor_cov = anchor_coverage(resolved_anchors, evidence_items)
     requirements = build_requirements(
@@ -385,6 +479,7 @@ def build_evidence_state(
         resolved_anchors,
         resolved_entities,
         examples=[str(getattr(anchor, "value", "")) for anchor in examples],
+        runtime_value=runtime_value,
     )
     requirement_cov = evaluate_requirements(requirements, evidence_items)
 
@@ -408,6 +503,37 @@ def build_evidence_state(
     missing_requirements = tuple(
         requirement.description for requirement in requirement_cov.unanswered
     )
+    # Premisas del dominio faltantes: claves semánticas (definition:symbol:&,
+    # matching_policy, length_semantics...). NUNCA el valor del usuario ni la
+    # instancia del patrón como exigencia literal.
+    missing_premises_list: list[str] = []
+    _pattern_semantics_for_missing = None
+    for requirement in requirement_cov.unanswered:
+        if requirement.kind == "pattern_semantics":
+            from src.rag.longcontext.pattern import (
+                analyze_pattern_instance,
+                extract_pattern_semantics,
+                missing_pattern_premises,
+            )
+
+            if _pattern_semantics_for_missing is None:
+                _pattern_semantics_for_missing = extract_pattern_semantics(
+                    evidence_items
+                )
+            missing_premises_list.extend(
+                missing_pattern_premises(
+                    analyze_pattern_instance(requirement.pattern),
+                    _pattern_semantics_for_missing,
+                    value_length=(
+                        len(requirement.value) if requirement.value else None
+                    ),
+                )
+            )
+        elif requirement.kind == "pattern_policy":
+            key = requirement.description.rsplit(": ", 1)[-1]
+            if key:
+                missing_premises_list.append(key)
+    missing_premises = tuple(dict.fromkeys(missing_premises_list))
     entities_found = tuple(
         requirement.needles[0] if requirement.needles else requirement.description
         for requirement in requirement_cov.requirements
@@ -423,12 +549,15 @@ def build_evidence_state(
         question=question,
         documentable_anchors=tuple(documentable),
         example_values=tuple(examples),
+        runtime_patterns=tuple(runtime_patterns),
+        runtime_values=tuple(runtime_values),
         entities=tuple(resolved_entities),
         anchor_coverage=anchor_cov,
         requirements=requirement_cov,
         missing_anchors=missing_anchors,
         missing_entities=missing_entities,
         missing_requirements=missing_requirements,
+        missing_premises=missing_premises,
         conflicts=tuple(conflicts),
         entities_found=entities_found,
         quality=quality,

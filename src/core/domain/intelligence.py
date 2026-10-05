@@ -17,9 +17,21 @@ from uuid import UUID, uuid4
 
 
 class AnswerabilityStatus(StrEnum):
-    """Estados formales de answerability (Zent nunca se siente obligado a responder)."""
+    """Estados formales de answerability (Zent nunca se siente obligado a responder).
+
+    Además de los históricos, los estados conscientes de razonamiento grounded:
+    ANSWERABLE_DIRECT (respuesta en la fuente), ANSWERABLE_DERIVED (premisas
+    grounded + operación válida), ANSWERABLE_WITH_LIMITS, UNANSWERABLE_MISSING_PREMISE
+    (falta una premisa del dominio, nunca un dato del usuario) y
+    UNANSWERABLE_CONFLICT.
+    """
 
     ANSWERABLE = "ANSWERABLE"
+    ANSWERABLE_DIRECT = "ANSWERABLE_DIRECT"
+    ANSWERABLE_DERIVED = "ANSWERABLE_DERIVED"
+    ANSWERABLE_WITH_LIMITS = "ANSWERABLE_WITH_LIMITS"
+    UNANSWERABLE_MISSING_PREMISE = "UNANSWERABLE_MISSING_PREMISE"
+    UNANSWERABLE_CONFLICT = "UNANSWERABLE_CONFLICT"
     CLARIFICATION_REQUIRED = "CLARIFICATION_REQUIRED"
     CONTEXT_MISSING = "CONTEXT_MISSING"
     DATA_MISSING = "DATA_MISSING"

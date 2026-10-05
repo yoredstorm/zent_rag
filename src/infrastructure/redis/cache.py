@@ -92,6 +92,11 @@ async def close_redis_connection() -> None:
     _redis_loop = None
 
 
+#: Versión de la política semántica/grounding: invalida respuestas cacheadas
+#: del contrato viejo («no aparece en el documento»).
+_RESPONSE_SEMANTICS_POLICY_VERSION = "grounding-contract-1"
+
+
 class RedisCache(CacheProvider):
     """Implementación de CacheProvider usando Redis."""
 
@@ -107,8 +112,15 @@ class RedisCache(CacheProvider):
 
         Incluye el rol: una respuesta admin (agregados, chunks no públicos)
         no debe servirse a un customer y viceversa.
+
+        Incluye la versión de la política de grounding/semántica: una respuesta
+        negativa («no aparece en el documento») generada por el contrato viejo
+        NO puede sobrevivir a un cambio de semántica de la consulta.
         """
-        raw = f"{organization_id}:{query}:{model}:{role}"
+        raw = (
+            f"{organization_id}:{query}:{model}:{role}:"
+            f"{_RESPONSE_SEMANTICS_POLICY_VERSION}"
+        )
         return hashlib.sha256(raw.encode()).hexdigest()[:32]
 
     async def get(self, key: str) -> str | None:

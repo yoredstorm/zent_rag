@@ -31,6 +31,18 @@ class GenerationPackage:
     stop_reason: str = ""
     #: Fase 13: contexto compilado estructurado (secciones reales, no chunks).
     compiled_context: dict[str, Any] = field(default_factory=dict)
+    # --- Contrato de grounding y razonamiento derivado (§46) ----------------
+    grounding_mode: str = ""
+    grounding: dict[str, Any] = field(default_factory=dict)
+    semantics: dict[str, Any] = field(default_factory=dict)
+    runtime_inputs: tuple[str, ...] = ()
+    runtime_patterns: tuple[str, ...] = ()
+    domain_premises: tuple[dict[str, Any], ...] = ()
+    derived_claims: tuple[dict[str, Any], ...] = ()
+    allowed_operations: tuple[str, ...] = ()
+    missing_premises: tuple[str, ...] = ()
+    answerability: str = ""
+    derivation: dict[str, Any] = field(default_factory=dict)
 
     def to_public_dict(
         self,
@@ -56,6 +68,18 @@ class GenerationPackage:
             "stop_reason": self.stop_reason or None,
             "evidence": dict(self.evidence),
             "compiled_context": dict(self.compiled_context),
+            "grounding_mode": self.grounding_mode or None,
+            "grounding": dict(self.grounding),
+            "semantics": dict(self.semantics),
+            "runtime_inputs": list(self.runtime_inputs)[:8],
+            "runtime_patterns": list(self.runtime_patterns)[:8],
+            "runtime_patterns_requires_literal_match": False,
+            "domain_premises": [dict(item) for item in self.domain_premises[:8]],
+            "derived_claims": [dict(item) for item in self.derived_claims[:6]],
+            "allowed_operations": list(self.allowed_operations)[:12],
+            "missing_premises": list(self.missing_premises)[:8],
+            "answerability": self.answerability or None,
+            "derivation": dict(self.derivation),
         }
 
 
@@ -70,12 +94,17 @@ def build_generation_package(
     evidence_state: Any | None = None,
     stop_reason: str = "",
     compiled_context: Any | None = None,
+    grounded_reasoning: Any | None = None,
 ) -> GenerationPackage:
     """Arma el paquete final sin LLM: todo determinístico y trazable.
 
     Si llega `evidence_state` (EvidenceState canónico), `missing_evidence` y el
     modo salen EXCLUSIVAMENTE de ahí. Los consumidores posteriores no pueden
     volver a decidir qué falta.
+
+    Si llega `grounded_reasoning` (motor de razonamiento grounded), el paquete
+    transporta: modo de grounding, premisas del dominio, datos de runtime,
+    claims derivados, operaciones permitidas y premisas faltantes.
     """
     examples: tuple[str, ...] = ()
     exact_anchors: tuple[str, ...] = ()
@@ -161,6 +190,49 @@ def build_generation_package(
     ready = bool(evidence_public.get("evidence_complete")) if evidence_public else (
         not missing_evidence
     )
+
+    # --- Contrato de grounding + razonamiento derivado (§46) ----------------
+    grounding_public: dict[str, Any] = {}
+    if grounded_reasoning is not None:
+        try:
+            grounding_public = (
+                grounded_reasoning.to_public_dict()
+                if hasattr(grounded_reasoning, "to_public_dict")
+                else dict(grounded_reasoning)
+            )
+        except Exception:  # noqa: BLE001 — el paquete nunca se rompe por esto
+            grounding_public = {}
+    grounding_contract = (
+        grounding_public.get("grounding")
+        if isinstance(grounding_public.get("grounding"), dict)
+        else {}
+    )
+    derivations_public = (
+        grounding_public.get("derivations")
+        if isinstance(grounding_public.get("derivations"), dict)
+        else {}
+    )
+    runtime_inputs = tuple(
+        str(value) for value in grounding_public.get("runtime_inputs") or ()
+    )
+    runtime_patterns = tuple(
+        str(value) for value in grounding_public.get("runtime_patterns") or ()
+    )
+    missing_premises = tuple(
+        str(value) for value in grounding_public.get("missing_premises") or ()
+    )
+    derived_claims = tuple(
+        dict(item) for item in derivations_public.get("claims") or () if isinstance(item, dict)
+    )
+    domain_premises = tuple(
+        dict(item) for item in grounding_public.get("premises") or () if isinstance(item, dict)
+    )
+    allowed_operations = tuple(
+        str(value) for value in grounding_contract.get("allowed_operations") or ()
+    )
+    if not examples and runtime_inputs:
+        examples = runtime_inputs
+    ready = bool(ready and not missing_premises)
     return GenerationPackage(
         question=str(question or ""),
         examples=examples,
@@ -179,6 +251,21 @@ def build_generation_package(
             if hasattr(compiled_context, "to_public_dict")
             else dict(compiled_context or {})
         ),
+        grounding_mode=str(grounding_contract.get("mode") or ""),
+        grounding=dict(grounding_contract),
+        semantics=(
+            dict(grounding_public.get("semantics") or {})
+            if isinstance(grounding_public.get("semantics"), dict)
+            else {}
+        ),
+        runtime_inputs=runtime_inputs,
+        runtime_patterns=runtime_patterns,
+        domain_premises=domain_premises,
+        derived_claims=derived_claims,
+        allowed_operations=allowed_operations,
+        missing_premises=missing_premises,
+        answerability=str(grounding_public.get("answerability") or ""),
+        derivation=dict(derivations_public),
     )
 
 
@@ -186,7 +273,8 @@ def render_evidence_state_block(payload: dict[str, Any] | None) -> str:
     """Bloque canónico para el prompt: UNA decisión, sin instrucciones dobles.
 
     Acepta el público del paquete (`{"evidence": {...}}`) o el del estado.
-    Nunca declara missing un EXAMPLE_VALUE: sólo `missing_documentable_evidence`.
+    Nunca declara missing un EXAMPLE_VALUE ni una instancia de patrón: sólo
+    `missing_documentable_evidence` y `missing_premises`.
     """
     if not isinstance(payload, dict):
         return ""
@@ -200,6 +288,8 @@ def render_evidence_state_block(payload: dict[str, Any] | None) -> str:
         "reference": "Reference",
         "entity": "Entity",
         "example_value": "User input",
+        "runtime_pattern": "Runtime pattern",
+        "runtime_value": "User input",
     }
     lines = [
         "## EVIDENCE STATE (autoridad canónica del evidence engine; coverage legacy deshabilitado)"
@@ -210,19 +300,32 @@ def render_evidence_state_block(payload: dict[str, Any] | None) -> str:
         value = str(anchor.get("value") or "")
         if role == "example_value":
             status = "EXAMPLE VALUE · source match required: NO"
+        elif role == "runtime_pattern":
+            status = "RUNTIME PATTERN · literal match required: NO · documented semantics required: YES"
+        elif role == "runtime_value":
+            status = "USER INPUT · source match required: NO"
         else:
             status = "FOUND" if anchor.get("found") else "MISSING"
         lines.append(f"{label}: {value} -> {status}")
     for entity in (evidence.get("entities_found") or [])[:6]:
         lines.append(f"Entity: {entity} -> FOUND")
-    coverage = evidence.get("coverage")
-    if isinstance(coverage, (int, float)):
-        lines.append(f"Requirement coverage: {round(float(coverage) * 100)}%")
+    domain_coverage = evidence.get("domain_requirement_coverage")
+    runtime_coverage = evidence.get("runtime_input_coverage")
+    if isinstance(domain_coverage, (int, float)):
+        lines.append(f"Domain requirement coverage: {round(float(domain_coverage) * 100)}%")
+    if isinstance(runtime_coverage, (int, float)):
+        lines.append(f"Runtime input coverage: {round(float(runtime_coverage) * 100)}%")
     missing = list(evidence.get("missing_documentable_evidence") or ())
     lines.append(
         "Missing documentable evidence: "
         + (", ".join(str(item) for item in missing[:8]) if missing else "none")
     )
+    missing_premises = list(evidence.get("missing_premises") or ())
+    if missing_premises:
+        lines.append(
+            "Missing domain premises: "
+            + ", ".join(str(item) for item in missing_premises[:8])
+        )
     conflicts = list(evidence.get("conflicts") or ())
     lines.append(
         "Contradictions: " + (", ".join(str(item) for item in conflicts[:6]) if conflicts else "none")
@@ -230,6 +333,98 @@ def render_evidence_state_block(payload: dict[str, Any] | None) -> str:
     lines.append(
         f"Generation mode: {str(evidence.get('generation_mode') or '').upper() or 'GENERATE'}"
     )
+    return "\n".join(lines)
+
+
+#: Instrucciones del contrato de grounding para el generador (§47).
+GROUNDING_PROMPT_INSTRUCTIONS = (
+    "USER-PROVIDED VALUES are valid scenario data: apply them against the "
+    "grounded rules; do NOT search them as source evidence.",
+    "DOMAIN-SPECIFIC FACTS AND RULES must be supported by retrieved evidence.",
+    "DETERMINISTIC OPERATIONS on grounded premises and user inputs are allowed.",
+    "DERIVED CONCLUSIONS are valid when their premises are grounded and the "
+    "derivation is stated; the conclusion itself does not need to appear in sources.",
+    "GENERAL MODEL KNOWLEDGE must not silently fill missing domain semantics; "
+    "if a DOMAIN PREMISE is missing, state exactly which one.",
+)
+
+
+def render_grounding_block(payload: dict[str, Any] | None) -> str:
+    """Bloque de razonamiento grounded para el prompt (resultado primero)."""
+    if not isinstance(payload, dict):
+        return ""
+    grounding = payload.get("grounding") if isinstance(payload.get("grounding"), dict) else {}
+    derivations = (
+        payload.get("derivations")
+        if isinstance(payload.get("derivations"), dict)
+        else payload.get("derivation")
+        if isinstance(payload.get("derivation"), dict)
+        else {}
+    )
+    claims = [
+        item
+        for item in (
+            payload.get("derived_claims") or derivations.get("claims") or []
+        )
+        if isinstance(item, dict)
+    ]
+    runtime_inputs = [str(item) for item in payload.get("runtime_inputs") or ()]
+    runtime_patterns = [str(item) for item in payload.get("runtime_patterns") or ()]
+    missing_premises = [str(item) for item in payload.get("missing_premises") or ()]
+    answerability = str(payload.get("answerability") or "")
+    semantics = payload.get("semantics") if isinstance(payload.get("semantics"), dict) else {}
+    mode = str(grounding.get("mode") or payload.get("grounding_mode") or "")
+    if not any((claims, runtime_inputs, runtime_patterns, missing_premises, mode)):
+        return ""
+    lines = ["## GROUNDED REASONING (contrato de grounding; autoridad canónica)"]
+    if mode:
+        lines.append(f"Grounding mode: {mode.upper()}")
+    intent = str(semantics.get("intent") or "")
+    if intent:
+        lines.append(f"Query intent: {intent}")
+    if runtime_inputs:
+        lines.append(
+            "Runtime inputs (valid scenario data; do NOT search as source evidence): "
+            + ", ".join(runtime_inputs[:6])
+        )
+    if runtime_patterns:
+        lines.append(
+            "Runtime patterns (instance needs documented semantics, NOT literal presence): "
+            + ", ".join(runtime_patterns[:6])
+        )
+    supported = [claim for claim in claims if str(claim.get("verification_status")) == "SUPPORTED"]
+    for claim in supported[:4]:
+        statement = str(claim.get("statement") or "")
+        result = claim.get("result")
+        operation = str(claim.get("operation") or "")
+        lines.append(f"DERIVED RESULT ({operation}): {statement} -> {result}")
+        refs = [str(ref) for ref in claim.get("evidence_refs") or () if ref]
+        if refs:
+            lines.append("  premises cited: " + ", ".join(refs[:6]))
+    unsupported = [
+        claim
+        for claim in claims
+        if str(claim.get("verification_status")) not in ("SUPPORTED",)
+    ]
+    for claim in unsupported[:2]:
+        lines.append(
+            "UNVERIFIED CLAIM (do not assert): "
+            + str(claim.get("statement") or "")[:160]
+        )
+    if missing_premises:
+        lines.append(
+            "MISSING DOMAIN PREMISES (state exactly this; do not fill from model knowledge): "
+            + ", ".join(missing_premises[:6])
+        )
+    if answerability:
+        lines.append(f"Answerability: {answerability}")
+    for instruction in GROUNDING_PROMPT_INSTRUCTIONS:
+        lines.append(f"- {instruction}")
+    if supported:
+        lines.append(
+            "- RESULT FIRST: start with the derived result (YES/NO/MATCH/NO_MATCH/value); "
+            "explain it afterwards citing the grounded premises."
+        )
     return "\n".join(lines)
 
 
@@ -267,9 +462,11 @@ def allow_model_escalation(uncertainty: str) -> bool:
 
 
 __all__ = [
+    "GROUNDING_PROMPT_INSTRUCTIONS",
     "GenerationPackage",
     "allow_model_escalation",
     "build_generation_package",
     "render_evidence_state_block",
+    "render_grounding_block",
     "validate_doc_citations",
 ]

@@ -75,7 +75,9 @@ _TASK_BLUEPRINTS: dict[ComplexityLevel, tuple[_TaskBlueprint, ...]] = {
             "synthesize",
             "synthesizer",
             ("analyze_sources",),
-            "Sintetizar únicamente con la evidencia recolectada.",
+            "Sintetizar con la evidencia recolectada como respaldo del dominio; "
+            "los datos del usuario y las derivaciones deterministas sobre premisas "
+            "respaldadas son válidos.",
         ),
     ),
     ComplexityLevel.L3_MULTI_SOURCE: (

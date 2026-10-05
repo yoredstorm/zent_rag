@@ -300,10 +300,16 @@ _SECTION_TEXT: dict[str, str] = {
 
 #: Regla que no se negocia: sin esto, pedir forma invita a inventar contenido.
 GROUNDING_RULE = (
-    "- regla dura: solo puedes afirmar lo que la evidencia sostiene. Si un aspecto del "
-    "orden de la información no está en la evidencia, omitelo y declaralo en los límites; "
-    "nunca lo completes con conocimiento propio ni inventes cifras, porcentajes, nombres "
-    "de categorías, campos, registros ni ejemplos"
+    "- regla dura de grounding: las premisas del dominio (hechos y reglas) deben estar "
+    "respaldadas por la evidencia. Los datos que aporta el usuario (códigos, valores, fechas, "
+    "montos) son escenario válido: aplicalos sobre las reglas documentadas y no exijas que "
+    "aparezcan en las fuentes. Las operaciones deterministas (aritmética, comparación, lógica, "
+    "aplicación de patrones documentados) y las conclusiones derivadas de premisas respaldadas "
+    "son válidas aunque el resultado no esté escrito literalmente. Nunca completes con "
+    "conocimiento propio la semántica específica del dominio (qué significa un código "
+    "propietario, qué exige una cláusula, qué representa un símbolo); si falta una premisa, "
+    "nombrala exactamente. Tampoco inventes cifras, porcentajes, nombres de categorías, campos "
+    "ni registros"
 )
 
 

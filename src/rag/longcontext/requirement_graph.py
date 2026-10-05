@@ -54,6 +54,8 @@ class RequirementNodeType(StrEnum):
     EVIDENCE = "Evidence"
     #: Fase 16: clasificación de la pregunta.
     RUNTIME_INPUT = "RuntimeInput"
+    #: Instancia de patrón aportada en runtime: exige semántica, no literalidad.
+    RUNTIME_PATTERN = "RuntimePattern"
     OPTIONAL_CONTEXT = "OptionalContext"
 
 
@@ -157,6 +159,7 @@ def build_requirement_graph(
     chunks: list | tuple = (),
     evidence_state: object | None = None,
     runtime_inputs: list | tuple = (),
+    runtime_patterns: list | tuple = (),
     optional_context: list | tuple = (),
     max_nodes: int = 96,
     max_edges: int = 256,
@@ -165,7 +168,9 @@ def build_requirement_graph(
 
     `runtime_inputs` son valores del usuario que NO deben buscarse en fuentes
     (§65): se clasifican como RuntimeInput y jamás cuentan como missing.
-    `optional_context` es contexto auxiliar, tampoco exigible.
+    `runtime_patterns` son instancias de patrón: exigen SEMÁNTICA (nodos
+    Definition/Symbol) y nunca presencia literal. `optional_context` es contexto
+    auxiliar, tampoco exigible.
     """
     nodes: dict[str, RequirementNode] = {}
     edges: list[tuple[str, str, str]] = []
@@ -186,6 +191,21 @@ def build_requirement_graph(
             key=node_id,
         )
         nodes.setdefault(node_id, add_node)
+    for value in runtime_patterns or ():
+        label = str(value or "").strip()
+        if not label:
+            continue
+        node_id = f"runtime-pattern:{label[:80]}"
+        nodes.setdefault(
+            node_id,
+            RequirementNode(
+                id=node_id,
+                node_type=RequirementNodeType.RUNTIME_PATTERN.value,
+                label=label,
+                status=RequirementStatus.FOUND.value,
+                key=node_id,
+            ),
+        )
     for value in optional_context or ():
         label = str(value or "").strip()
         if not label:
@@ -309,16 +329,66 @@ def build_requirement_graph(
                     add_edge(source_id, relation, neighbor_id)
 
     # 4. Evidence state: faltantes documentables reales (autoridad única).
-    if evidence_state is not None and hasattr(
-        evidence_state, "missing_documentable_evidence"
-    ):
+    if evidence_state is not None:
+        public_state: dict = {}
         try:
-            for label in evidence_state.missing_documentable_evidence():
-                text = str(label or "")
-                if text:
-                    missing_external.append(text)
+            public_state = (
+                evidence_state.to_public_dict()
+                if hasattr(evidence_state, "to_public_dict")
+                else dict(evidence_state)
+            )
         except Exception:  # noqa: BLE001 — el grafo nunca frena el retrieval
-            pass
+            public_state = {}
+        for value in public_state.get("runtime_patterns") or ():
+            label = str(value or "").strip()
+            if label:
+                node_id = f"runtime-pattern:{label[:80]}"
+                nodes.setdefault(
+                    node_id,
+                    RequirementNode(
+                        id=node_id,
+                        node_type=RequirementNodeType.RUNTIME_PATTERN.value,
+                        label=label,
+                        status=RequirementStatus.FOUND.value,
+                        key=node_id,
+                    ),
+                )
+        for value in public_state.get("runtime_values") or ():
+            label = str(value or "").strip()
+            if label:
+                node_id = f"runtime:{label[:80]}"
+                nodes.setdefault(
+                    node_id,
+                    RequirementNode(
+                        id=node_id,
+                        node_type=RequirementNodeType.RUNTIME_INPUT.value,
+                        label=label,
+                        status=RequirementStatus.FOUND.value,
+                        key=node_id,
+                    ),
+                )
+        for premise in public_state.get("missing_premises") or ():
+            text = str(premise or "")
+            if text:
+                node_id = f"missing-premise:{text[:80]}"
+                nodes.setdefault(
+                    node_id,
+                    RequirementNode(
+                        id=node_id,
+                        node_type=RequirementNodeType.EVIDENCE.value,
+                        label=text,
+                        status=RequirementStatus.MISSING.value,
+                        key=node_id,
+                    ),
+                )
+        if hasattr(evidence_state, "missing_documentable_evidence"):
+            try:
+                for label in evidence_state.missing_documentable_evidence():
+                    text = str(label or "")
+                    if text:
+                        missing_external.append(text)
+            except Exception:  # noqa: BLE001 — el grafo nunca frena el retrieval
+                pass
 
     node_list = list(nodes.values())[:max_nodes]
     # Missing se calcula al FINAL desde el estado real de los nodos: una

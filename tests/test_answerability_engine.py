@@ -66,8 +66,9 @@ def _understanding(**kwargs) -> QueryUnderstanding:
 
 
 class TestAnswerabilityStates:
-    def test_ten_formal_states_exist(self) -> None:
+    def test_formal_states_exist(self) -> None:
         expected = {
+            # Históricos (compatibilidad).
             "ANSWERABLE",
             "CLARIFICATION_REQUIRED",
             "CONTEXT_MISSING",
@@ -78,6 +79,12 @@ class TestAnswerabilityStates:
             "SOURCE_CONFLICT",
             "EXECUTION_FAILED",
             "HUMAN_REVIEW_REQUIRED",
+            # Conscientes de razonamiento grounded (§21).
+            "ANSWERABLE_DIRECT",
+            "ANSWERABLE_DERIVED",
+            "ANSWERABLE_WITH_LIMITS",
+            "UNANSWERABLE_MISSING_PREMISE",
+            "UNANSWERABLE_CONFLICT",
         }
         assert {s.value for s in AnswerabilityStatus} == expected
 

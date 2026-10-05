@@ -385,6 +385,35 @@ class Settings(BaseSettings):
         default=10, ge=1, le=40, description="Pasos máximos del plan de razonamiento."
     )
     # -------------------------------------------------------------------------
+    # Grounding contract + operaciones deterministas (razonamiento grounded)
+    # -------------------------------------------------------------------------
+    RAG_GROUNDING_MODE: str = Field(
+        default="grounded_reasoning",
+        pattern="^(strict_source|strict|grounded_reasoning|grounded|hybrid_knowledge|hybrid)$",
+        description=(
+            "Política de grounding: strict_source (compliance: sólo fuente), "
+            "grounded_reasoning (recomendado: fuente + datos del usuario + "
+            "operaciones deterministas + derivaciones), hybrid_knowledge "
+            "(además conocimiento general diferenciado internamente)."
+        ),
+    )
+    RAG_QUERY_SEMANTICS_LLM_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Clasificador LLM opcional para consultas ambiguas: UNA llamada "
+            "estructurada (JSON) sólo si el clasificador determinista queda bajo "
+            "el umbral. Nunca una llamada por consulta."
+        ),
+    )
+    RAG_DETERMINISTIC_OPERATIONS_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Registry de operaciones deterministas (aritmética, comparación, "
+            "posición de patrones, rangos, enums, fechas, unidades, fórmulas). "
+            "Nunca ejecuta Python arbitrario."
+        ),
+    )
+    # -------------------------------------------------------------------------
     # Company Discovery Engine (Fase 5B)
     # -------------------------------------------------------------------------
     RAG_COMPANY_DISCOVERY_ENABLED: bool = Field(

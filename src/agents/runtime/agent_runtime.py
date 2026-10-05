@@ -72,7 +72,12 @@ Rules:
 - Write ONLY the final text for the user (Markdown allowed). No JSON, no wrappers,
   no labels like "answer:" or "direct_answer:".
 - Do not call tools.
-- Only assert what the observations support; if something is missing, say so.
+- Domain facts and rules must be supported by the observations. User-provided
+  values are valid scenario data: apply them against documented rules; do not
+  treat them as missing evidence. Deterministic results derived from grounded
+  premises are valid even if not written verbatim.
+- If a domain premise is missing, state exactly which one; never fill it with
+  model knowledge.
 
 USER QUESTION: {question}
 
@@ -2435,6 +2440,20 @@ class AgentRuntime:
             try:
                 active = selection if selection is not None else _refresh_selection()
                 evidence_provided = not registry.is_empty()
+                grounded_reasoning = None
+                try:
+                    from src.intelligence.reasoning.grounded_engine import (
+                        reason_over_evidence,
+                    )
+
+                    grounded_reasoning = reason_over_evidence(
+                        question=request.message,
+                        evidence_items=(
+                            list(active.items) if evidence_provided else []
+                        ),
+                    )
+                except Exception:  # noqa: BLE001 — el motor nunca rompe el gate
+                    grounded_reasoning = None
                 return await judge_answer(
                     engine=get_decision_engine(),
                     mode=answer_mode,
@@ -2453,6 +2472,7 @@ class AgentRuntime:
                     revise_at=settings.RUNTIME_JEV_ANSWER_REVISE,
                     retrieval_rounds_left=max(0, max_retrieval_rounds - retrieval_rounds),
                     evidence_budget_chars=evidence_budget,
+                    grounded_reasoning=grounded_reasoning,
                     context=JudgmentContext(
                         phase=PHASE_ANSWER_GATE,
                         organization_id=request.agent.organization_id,

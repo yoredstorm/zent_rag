@@ -39,6 +39,16 @@ _NOTE_HINT_RE = re.compile(
 )
 _FORMULA_HINT_RE = re.compile(r"\b(f[oó]rmula|formula|ecuaci[oó]n|equation)\b", re.IGNORECASE)
 
+#: Cláusulas que son el PEDIDO de la pregunta, no una premisa documental.
+_ASK_TOKENS: frozenset[str] = frozenset(
+    {
+        "cumple", "cumplir", "cumpliria", "cumpliría", "aplica", "aplicar",
+        "funciona", "funcionaria", "funcionaría", "sirve", "valida", "validar",
+        "corresponde", "pasa", "ocurre", "match", "matches", "applies", "apply",
+        "works", "eligible", "valido", "válido", "califica",
+    }
+)
+
 
 class RequirementState(StrEnum):
     FOUND = "found"
@@ -61,6 +71,10 @@ class EvidenceRequirement:
     soft: bool = False
     state: str = RequirementState.MISSING.value
     evidence_ids: tuple[str, ...] = ()
+    #: Instancia de patrón (kind="pattern_semantics") y valor de runtime a evaluar.
+    pattern: str = ""
+    value: str = ""
+    symbols: tuple[str, ...] = ()
 
     @property
     def documentable(self) -> bool:
@@ -70,6 +84,16 @@ class EvidenceRequirement:
         if self.role in ("example_value", "example"):
             return False
         return self.weight > 0.0
+
+    @property
+    def runtime_data(self) -> bool:
+        """Dato del escenario: nunca cuenta como faltante documental."""
+        return self.kind in ("example", "runtime_value") or self.role in (
+            "example_value",
+            "example",
+            "runtime_value",
+            "runtime_parameter",
+        )
 
     def to_public_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -86,6 +110,10 @@ class EvidenceRequirement:
             payload["soft"] = True
         if not self.documentable:
             payload["requires_source_match"] = False
+        if self.pattern:
+            payload["pattern"] = self.pattern
+        if self.symbols:
+            payload["symbols"] = list(self.symbols)
         return payload
 
 
@@ -110,6 +138,44 @@ class RequirementCoverage:
     @property
     def documentable_requested(self) -> int:
         return sum(1 for requirement in self.requirements if requirement.documentable)
+
+    @property
+    def domain_requirements(self) -> tuple[EvidenceRequirement, ...]:
+        """Requisitos del DOMINIO (premisas): los únicos que pueden faltar."""
+        return tuple(
+            requirement
+            for requirement in self.requirements
+            if requirement.documentable
+        )
+
+    @property
+    def runtime_requirements(self) -> tuple[EvidenceRequirement, ...]:
+        """Datos del escenario: aceptados por definición, nunca 'faltantes'."""
+        return tuple(
+            requirement
+            for requirement in self.requirements
+            if requirement.runtime_data
+        )
+
+    @property
+    def domain_requirement_coverage(self) -> float:
+        """Cobertura de premisas del dominio (sin datos de runtime)."""
+        domain = self.domain_requirements
+        if not domain:
+            return 0.0
+        total = sum(max(0.0, requirement.weight) for requirement in domain)
+        earned = 0.0
+        for requirement in domain:
+            if requirement.state == RequirementState.FOUND.value:
+                earned += max(0.0, requirement.weight)
+            elif requirement.state == RequirementState.PARTIAL.value:
+                earned += max(0.0, requirement.weight) * 0.5
+        return earned / total if total else 0.0
+
+    @property
+    def runtime_input_coverage(self) -> float:
+        """El dato del usuario se acepta: 1.0 con o sin match en fuentes."""
+        return 1.0 if self.runtime_requirements else 0.0
 
     @property
     def unanswered(self) -> tuple[EvidenceRequirement, ...]:
@@ -155,6 +221,15 @@ class RequirementCoverage:
             payload["examples"] = list(self.examples)
             payload["examples_requires_source_match"] = False
             payload["examples_found_in_evidence"] = list(self.examples_found)
+        payload["domain_requirement_coverage"] = round(
+            self.domain_requirement_coverage, 4
+        )
+        payload["runtime_input_coverage"] = round(self.runtime_input_coverage, 4)
+        runtime = self.runtime_requirements
+        if runtime:
+            payload["runtime_data"] = [
+                requirement.to_public_dict() for requirement in runtime[:8]
+            ]
         return payload
 
 
@@ -164,6 +239,7 @@ def build_requirements(
     entities: list[Any] | tuple[Any, ...] = (),
     *,
     examples: list[str] | tuple[str, ...] = (),
+    runtime_value: str = "",
     max_clauses: int = 6,
 ) -> list[EvidenceRequirement]:
     """Descompone la pregunta en requerimientos evaluables, sin dominio.
@@ -171,6 +247,9 @@ def build_requirements(
     Los tokens que son VALOR DEL USUARIO (rol example_value) se registran como
     `example`: viajan a la búsqueda, pero no exigen aparecer en las fuentes.
     La documentación debe probar la regla y el campo, no el ejemplo concreto.
+
+    Una INSTANCIA DE PATRÓN (rol runtime_pattern) exige la SEMÁNTICA documentada
+    de sus símbolos (kind="pattern_semantics"), no su presencia literal.
     """
     from src.rag.longcontext.roles import AnchorRole, assign_roles
 
@@ -185,13 +264,17 @@ def build_requirements(
         seen.add(key)
         requirements.append(requirement)
 
+    runtime_needles: list[str] = []
     for anchor in assign_roles(text, list(anchors or ())):
         value = str(getattr(anchor, "value", "") or "").strip()
         if not value:
             continue
         role = str(getattr(anchor, "role", "") or "")
         kind = str(getattr(anchor, "kind", ""))
-        if role == AnchorRole.EXAMPLE_VALUE.value:
+        if role in (
+            AnchorRole.EXAMPLE_VALUE.value,
+            AnchorRole.RUNTIME_VALUE.value,
+        ):
             _add(
                 EvidenceRequirement(
                     id=f"example:{value.lower()}",
@@ -207,6 +290,58 @@ def build_requirements(
                 )
             )
             continue
+        if role == AnchorRole.RUNTIME_PATTERN.value:
+            from src.intelligence.query_semantics import pattern_semantic_requirements
+
+            runtime_needles.append(value.lower())
+            symbols = tuple(
+                dict.fromkeys(
+                    char
+                    for char in value
+                    if char in "&*?%#$@!~^"
+                )
+            )
+            _add(
+                EvidenceRequirement(
+                    id=f"pattern:{value.lower()}",
+                    kind="pattern_semantics",
+                    description=(
+                        f"semántica documentada del patrón {value}"
+                        + (
+                            f" (símbolos: {' '.join(symbols)})"
+                            if symbols
+                            else ""
+                        )
+                    ),
+                    needles=(value,),
+                    weight=1.0,
+                    role=role,
+                    pattern=value,
+                    value=runtime_value,
+                    symbols=symbols,
+                    hint="pattern",
+                )
+            )
+            # La semántica derivada completa (matching, longitud, literales)
+            # viaja como requisitos suaves: informan la cobertura, no duplican.
+            for semantic in pattern_semantic_requirements(value):
+                if semantic.startswith("symbol:") or semantic.startswith("definition:"):
+                    continue
+                _add(
+                    EvidenceRequirement(
+                        id=f"pattern-sem:{value.lower()}:{semantic}",
+                        kind="pattern_policy",
+                        description=f"política documentada: {semantic}",
+                        weight=0.4,
+                        role=role,
+                        pattern=value,
+                        value=runtime_value,
+                        symbols=symbols,
+                        hint="pattern",
+                        soft=True,
+                    )
+                )
+            continue
         weight = 1.2 if kind in ("mascara", "rango") else (1.0 if kind == "sigla" else 1.0)
         _add(
             EvidenceRequirement(
@@ -219,6 +354,16 @@ def build_requirements(
                 or (value,),
                 weight=weight,
                 role=role,
+                # Una máscara puede acreditarse por su gramática documentada
+                # aunque la instancia concreta no aparezca: la semántica alcanza.
+                hint="pattern" if kind == "mascara" else "",
+                pattern=value if kind == "mascara" else "",
+                value=runtime_value if kind == "mascara" else "",
+                symbols=(
+                    tuple(dict.fromkeys(char for char in value if char in "&*?%#$@!~^"))
+                    if kind == "mascara"
+                    else ()
+                ),
             )
         )
 
@@ -259,15 +404,21 @@ def build_requirements(
         tokens = _clause_tokens(clause)
         if not tokens:
             continue
+        # «¿cumple?» es el PEDIDO de la pregunta, no una premisa documental.
+        if all(token in _ASK_TOKENS for token in tokens):
+            continue
         clause_lower = clause.lower()
         contains_example = any(
             str(example or "").strip().lower()
             and str(example).strip().lower() in clause_lower
             for example in (examples or ())
         )
-        # Prosa larga o cláusula con el valor del usuario: informa la cobertura
-        # pero no bloquea. Cláusula corta y técnica: dura.
-        soft = contains_example or len(tokens) > 5
+        contains_runtime = any(
+            needle and needle in clause_lower for needle in runtime_needles
+        )
+        # Prosa larga, valor del usuario o instancia de patrón: informa la
+        # cobertura pero no bloquea. Cláusula corta y técnica: dura.
+        soft = contains_example or contains_runtime or len(tokens) > 5
         _add(
             EvidenceRequirement(
                 id=f"clause:{index}:{' '.join(tokens[:3]).lower()}",
@@ -312,6 +463,16 @@ def evaluate_requirements(
     ]
     joined = "\n".join(texts)
     conflicting = {needle.lower() for needle in (conflicting_needles or set())}
+    pattern_semantics = None
+    requirement_list = list(requirements or ())
+    if any(
+        requirement.kind in ("pattern_semantics", "pattern_policy")
+        or requirement.hint == "pattern"
+        for requirement in requirement_list
+    ):
+        from src.rag.longcontext.pattern import extract_pattern_semantics
+
+        pattern_semantics = extract_pattern_semantics(list(items or ()))
 
     found = partial = missing = conflicts = 0
     weighted_total = 0.0
@@ -320,8 +481,10 @@ def evaluate_requirements(
     hard_all_found = True
     examples: list[str] = []
     examples_found: list[str] = []
-    for requirement in requirements or ():
-        state = _state_for(requirement, joined, items, conflicting)
+    for requirement in requirement_list:
+        state = _state_for(
+            requirement, joined, items, conflicting, pattern_semantics
+        )
         requirement.state = state
         if not requirement.documentable:
             # Ejemplo del usuario: se reporta si apareció, pero no exige match
@@ -366,10 +529,13 @@ def _state_for(
     joined: str,
     items: list[Any] | tuple[Any, ...],
     conflicting: set[str],
+    pattern_semantics: Any | None = None,
 ) -> str:
     needles = [str(needle).strip().lower() for needle in requirement.needles if needle]
     if needles and any(needle in conflicting for needle in needles):
         return RequirementState.CONFLICTING.value
+    if requirement.kind in ("pattern_semantics", "pattern_policy"):
+        return _pattern_state(requirement, items, pattern_semantics)
     if requirement.kind == "structural":
         return (
             RequirementState.FOUND.value
@@ -389,11 +555,13 @@ def _state_for(
     if requirement.kind == "anchor":
         # Los needles de un anchor son formas del MISMO token (valor original,
         # minúscula, rango con barra): encontrar cualquiera lo cubre.
-        return (
-            RequirementState.FOUND.value
-            if any(needle in joined for needle in needles)
-            else RequirementState.MISSING.value
-        )
+        if any(needle in joined for needle in needles):
+            return RequirementState.FOUND.value
+        # Una máscara puede acreditarse por su GRAMÁTICA documentada aunque la
+        # instancia concreta no exista en las fuentes (GROUNDING != COPY).
+        if requirement.hint == "pattern" and requirement.pattern:
+            return _pattern_state(requirement, items, pattern_semantics)
+        return RequirementState.MISSING.value
     present = sum(1 for needle in needles if needle and needle in joined)
     ratio = present / len(needles)
     if requirement.kind == "clause":
@@ -405,6 +573,64 @@ def _state_for(
     if present == len(needles):
         return RequirementState.FOUND.value
     if present > 0:
+        return RequirementState.PARTIAL.value
+    return RequirementState.MISSING.value
+
+
+def _pattern_state(
+    requirement: EvidenceRequirement,
+    items: list[Any] | tuple[Any, ...],
+    pattern_semantics: Any | None,
+) -> str:
+    """Evalúa un requisito de patrón: la instancia no exige match; su gramática sí."""
+    from src.rag.longcontext.pattern import (
+        analyze_pattern_instance,
+        extract_pattern_semantics,
+        missing_pattern_premises,
+    )
+
+    semantics = pattern_semantics
+    if semantics is None:
+        semantics = extract_pattern_semantics(list(items or ()))
+    joined = "\n".join(
+        str(getattr(item, "content", "") or "").lower() for item in (items or ())
+    )
+    if requirement.kind == "pattern_policy":
+        key = requirement.description.rsplit(": ", 1)[-1]
+        if key == "matching_policy":
+            found = semantics.matching_policy_known()
+        elif key == "positional_semantics":
+            found = bool(semantics.positional)
+        elif key == "literal_semantics":
+            found = bool(semantics.literal)
+        elif key == "length_semantics":
+            found = bool(semantics.length_sensitive or semantics.anchor_side)
+        else:
+            found = False
+        return RequirementState.FOUND.value if found else RequirementState.MISSING.value
+
+    pattern = requirement.pattern or (requirement.needles[0] if requirement.needles else "")
+    if not pattern:
+        return RequirementState.MISSING.value
+    instance = analyze_pattern_instance(str(pattern))
+    missing = missing_pattern_premises(
+        instance,
+        semantics,
+        value_length=len(requirement.value) if requirement.value else None,
+    )
+    if not missing:
+        return RequirementState.FOUND.value
+    # La instancia documentada literalmente («La máscara &&&F exige…») acredita
+    # la premisa del patrón aunque no exista una definición genérica del
+    # símbolo: la evidencia explica ESA máscara. La derivación de un valor
+    # concreto seguirá exigiendo la gramática (el motor grounded la evalúa).
+    needles = [str(needle).strip().lower() for needle in requirement.needles if needle]
+    if needles and any(needle in joined for needle in needles):
+        return RequirementState.FOUND.value
+    defined = sum(
+        1 for symbol in instance.symbols if semantics.definition_for(symbol) is not None
+    )
+    if defined and defined < len(instance.symbols):
         return RequirementState.PARTIAL.value
     return RequirementState.MISSING.value
 

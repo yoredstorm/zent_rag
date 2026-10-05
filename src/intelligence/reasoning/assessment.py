@@ -519,6 +519,24 @@ class InferenceVerifier:
             rationale="Premisas respaldadas y regla aplicable identificada",
         )
 
+    def verify_derived_claim(
+        self,
+        claim: object,
+        *,
+        conflicts: tuple[str, ...] = (),
+    ) -> object:
+        """Puente al verificador grounded: ¿C se sigue de premisas + inputs?
+
+        No pregunta «¿la fuente contiene C?» sino si las premisas del dominio
+        están respaldadas y la operación es válida en el modo de grounding.
+        """
+        from src.core.domain.grounding import GroundingContract
+        from src.intelligence.reasoning.derivation import (
+            verify_derived_claim as _verify,
+        )
+
+        return _verify(claim, GroundingContract(), conflicts=conflicts)
+
 
 # ---------------------------------------------------------------------------
 # Analysis completion gate (§31)
