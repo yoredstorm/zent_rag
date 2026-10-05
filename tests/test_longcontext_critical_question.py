@@ -5,13 +5,13 @@
 #   "consulta si me viene en el record 2 esto en FCLAS &&&F quiere decir que el
 #    farebasis debe ser de ese tamaño? en el boleto viene asi QNNF0SME cumplira?"
 #
-# Esperado:
+# Esperado (contrato de grounding):
 #   Record 2  -> entidad contextual (documentable)
 #   FCLAS     -> field anchor (documentable)
-#   &&&F      -> rule anchor (documentable)
+#   &&&F      -> runtime pattern (exige SEMÁNTICA documentada, no literalidad)
 #   QNNF0SME  -> user example (NO exige match en fuentes)
-# El pipeline completa la evidencia con la REGLA y deja QNNF0SME como input
-# para que el generador la evalúe aplicando esa regla.
+# El pipeline completa la evidencia con la GRAMÁTICA y deja QNNF0SME como input
+# para que el motor evalúe el patrón contra ese valor.
 # =============================================================================
 from __future__ import annotations
 
@@ -40,7 +40,8 @@ ORG = UUID("11111111-1111-1111-1111-111111111111")
 RULE_EVIDENCE = (
     "Record 2: FCLAS indica la clase tarifaria del fare basis. La máscara &&&F "
     "exige que el fare basis tenga la longitud indicada: los caracteres "
-    "posteriores a && restringen el tamaño y la posición."
+    "posteriores a && restringen el tamaño y la posición. El símbolo & "
+    "representa una posición alfanumérica; el matching es posicional."
 )
 
 
@@ -62,9 +63,10 @@ class TestCriticalQuestionAnalysis:
             for anchor in views.anchors
         }
         assert roles["FCLAS"] == AnchorRole.FIELD_ANCHOR.value
-        assert roles["&&&F"] == AnchorRole.RULE_ANCHOR.value
+        assert roles["&&&F"] == AnchorRole.RUNTIME_PATTERN.value
         assert roles["QNNF0SME"] == AnchorRole.EXAMPLE_VALUE.value
         assert views.examples == ("QNNF0SME",)
+        assert views.runtime_patterns == ("&&&F",)
 
     def test_contextual_entity_record_2(self) -> None:
         labels = [entity.label for entity in _views().entities]
@@ -100,12 +102,14 @@ class TestCriticalQuestionAnalysis:
     def test_anchor_coverage_is_role_aware(self) -> None:
         views = _views()
         cov = anchor_coverage(list(views.anchors), [_chunk(RULE_EVIDENCE)])
-        # FCLAS + &&&F documentables; QNNF0SME no entra en el denominador.
-        assert cov.requested == 2
-        assert cov.found == 2
+        # FCLAS documentable; &&&F es runtime pattern (no exige literal);
+        # QNNF0SME no entra en el denominador.
+        assert cov.requested == 1
+        assert cov.found == 1
         assert cov.coverage == 1.0
-        assert cov.rule_found == 1
+        assert cov.rule_found == 0
         assert cov.field_found == 1
+        assert cov.runtime_patterns == ("&&&F",)
         assert cov.examples == ("QNNF0SME",)
 
     def test_field_missing_does_block(self) -> None:
