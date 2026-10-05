@@ -1049,7 +1049,9 @@ class Settings(BaseSettings):
     RAG_JEV_PREFLIGHT_MODE: Literal["off", "shadow", "on", "canary"] = Field(
         default="off",
         validation_alias=AliasChoices(
-            "RAG_JEV_PREFLIGHT_MODE", "JEV_PREFLIGHT_MODE"
+            "RAG_JEV_PREFLIGHT_MODE",
+            "JEV_PREFLIGHT_MODE",
+            "RAG_RAG_JEV_PREFLIGHT_MODE",
         ),
         description=(
             "off = sin juicio previo (comportamiento previo). "
