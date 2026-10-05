@@ -13,11 +13,12 @@
 #   RAG_CORS_ALLOWED_ORIGINS        # explicit https origins, never *
 #   RAG_EMBEDDING_MODEL             # hosted, e.g. openai/baai/bge-m3
 #   RAG_EMBEDDING_FALLBACK_API_KEY  # optional: DeepInfra fallback (same dims)
-#   RAG_METRICS_TOKEN
+#   METRICS_TOKEN
 #   REDIS_PASSWORD
 #   QDRANT_API_KEY
-
-version: "3.9"
+#
+# .env se carga como env_file cuando existe (required: false); las variables
+# del host o del orquestador siempre ganan sobre el archivo.
 
 x-prod-env: &prod-env
   TZ: ${TZ:-UTC}
@@ -49,7 +50,7 @@ x-prod-env: &prod-env
   RAG_RAG_ADMIN_ENABLED: "false"
   RAG_SEED_DEMO_DATA: "false"
   RAG_MANAGED_DB_PROVIDER: ${RAG_MANAGED_DB_PROVIDER:-local}
-  RAG_METRICS_TOKEN: ${RAG_METRICS_TOKEN:?set RAG_METRICS_TOKEN}
+  RAG_METRICS_TOKEN: ${METRICS_TOKEN:?set METRICS_TOKEN}
   RAG_UPLOAD_DIR: /app/uploads
   # Subida de archivos: 25 MB por archivo; el body HTTP lleva aire (32 MB).
   RAG_MAX_BODY_BYTES: ${RAG_MAX_BODY_BYTES:-33554432}
@@ -123,7 +124,7 @@ x-prod-env: &prod-env
   RAG_DECISION_CLAIMS_LEDGER: ${RAG_DECISION_CLAIMS_LEDGER:-true}
   RAG_DECISION_JUDGMENT_CACHE_TTL_SECONDS: ${RAG_DECISION_JUDGMENT_CACHE_TTL_SECONDS:-120}
   # JEV Preflight (docs/architecture/jev-preflight.md). Default off: sin juicio previo.
-  RAG_RAG_JEV_PREFLIGHT_MODE: ${RAG_RAG_JEV_PREFLIGHT_MODE:-off}
+  RAG_JEV_PREFLIGHT_MODE: ${RAG_JEV_PREFLIGHT_MODE:-off}
   RAG_RAG_JEV_PREFLIGHT_CANARY_PERCENTAGE: ${RAG_RAG_JEV_PREFLIGHT_CANARY_PERCENTAGE:-0}
   RAG_RAG_JEV_PREFLIGHT_ENFORCE: ${RAG_RAG_JEV_PREFLIGHT_ENFORCE:-true}
   RAG_RAG_JEV_PREFLIGHT_STRICT_THRESHOLDS: ${RAG_RAG_JEV_PREFLIGHT_STRICT_THRESHOLDS:-0.75}
@@ -164,9 +165,9 @@ x-prod-env: &prod-env
   RAG_RAG_RESPONSE_INTELLIGENCE_CANARY_PERCENTAGE: ${RAG_RAG_RESPONSE_INTELLIGENCE_CANARY_PERCENTAGE:-0}
   RAG_RAG_RESPONSE_PRESENTATION_GATE: ${RAG_RAG_RESPONSE_PRESENTATION_GATE:-true}
   # Agent JEV Loop: una llamada JEV por paso; el veredicto manda (con re-busqueda).
-  RUNTIME_AGENT_JEV_LOOP: ${RUNTIME_AGENT_JEV_LOOP:-on}
-  RUNTIME_AGENT_JEV_LOOP_CANARY_PERCENTAGE: ${RUNTIME_AGENT_JEV_LOOP_CANARY_PERCENTAGE:-0}
-  RUNTIME_AGENT_MAX_RETRIEVAL_ROUNDS: ${RUNTIME_AGENT_MAX_RETRIEVAL_ROUNDS:-2}
+  RAG_RUNTIME_AGENT_JEV_LOOP: ${RAG_RUNTIME_AGENT_JEV_LOOP:-on}
+  RAG_RUNTIME_AGENT_JEV_LOOP_CANARY_PERCENTAGE: ${RAG_RUNTIME_AGENT_JEV_LOOP_CANARY_PERCENTAGE:-0}
+  RAG_RUNTIME_AGENT_MAX_RETRIEVAL_ROUNDS: ${RAG_RUNTIME_AGENT_MAX_RETRIEVAL_ROUNDS:-2}
   # Judgment Fabric (ADR judgment-fabric.md). Default off: target explícito.
   RAG_DECISION_TARGET_SELECTION: ${RAG_DECISION_TARGET_SELECTION:-off}
   RAG_DECISION_RISK_MAX_SELECTABLE: ${RAG_DECISION_RISK_MAX_SELECTABLE:-high}
@@ -239,19 +240,25 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
+    env_file:
+      - path: .env
+        required: false
     environment:
       <<: *prod-env
     volumes:
       - uploads_data:/app/uploads
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${API_PORT:-8000}:8000"
+      - "127.0.0.1:${RAG_API_PORT:-8000}:8000"
 
   ingestion-worker:
     build:
       context: .
       dockerfile: Dockerfile.api
     command: ["python", "worker_entry.py"]
+    env_file:
+      - path: .env
+        required: false
     environment:
       <<: *prod-env
     volumes:
