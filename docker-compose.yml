@@ -5,11 +5,9 @@
 # Observabilidad (PLG): Prometheus + Loki + Promtail + Grafana
 # =============================================================================
 
-version: "3.9"
-
 x-common-env: &common-env
   TZ: ${TZ:-America/Lima}
-  RAG_ENVIRONMENT: ${ENVIRONMENT:-development}
+  RAG_ENVIRONMENT: ${RAG_ENVIRONMENT:-development}
   # Cada alta arranca vacía. El flag solo gobierna el seed SQL de desarrollo
   # en un volumen nuevo. El alta no copia datasets demo.
   RAG_SEED_DEMO_DATA: ${RAG_SEED_DEMO_DATA:-false}
@@ -17,12 +15,12 @@ x-common-env: &common-env
   # Pydantic Settings usa prefijo RAG_ (ver src/config.py)
   RAG_POSTGRES_HOST: postgres
   RAG_POSTGRES_PORT: "5432"
-  RAG_POSTGRES_USER: ${POSTGRES_USER:-rag_user}
-  RAG_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
-  RAG_POSTGRES_DB: ${POSTGRES_DB:-rag_platform}
+  RAG_POSTGRES_USER: ${RAG_POSTGRES_USER:-rag_user}
+  RAG_POSTGRES_PASSWORD: ${RAG_POSTGRES_PASSWORD:-changeme_in_production}
+  RAG_POSTGRES_DB: ${RAG_POSTGRES_DB:-rag_platform}
   # Read-only role para el SQL Expert (Text-to-SQL Engine)
   RAG_POSTGRES_READONLY_USER: rag_reader
-  RAG_POSTGRES_READONLY_PASSWORD: ${POSTGRES_READONLY_PASSWORD:-readonly_change_me}
+  RAG_POSTGRES_READONLY_PASSWORD: ${RAG_POSTGRES_READONLY_PASSWORD:-readonly_change_me}
   RAG_QDRANT_HOST: qdrant
   RAG_QDRANT_PORT: "6333"
   RAG_QDRANT_API_KEY: ${QDRANT_API_KEY:-dev-qdrant-key-change-me}
@@ -147,7 +145,7 @@ x-common-env: &common-env
   RAG_INGEST_EMBED_CONCURRENCY: ${RAG_INGEST_EMBED_CONCURRENCY:-8}
   RAG_INGEST_TABLE_CONCURRENCY: ${RAG_INGEST_TABLE_CONCURRENCY:-3}
   RAG_INGEST_UPSERT_BATCH_SIZE: ${RAG_INGEST_UPSERT_BATCH_SIZE:-100}
-  RAG_INGEST_SKIP_TABLES: ${RAG_INGEST_SKIP_TABLES-sales,product_reviews,inventory}
+  RAG_INGEST_SKIP_TABLES: ${RAG_INGEST_SKIP_TABLES:-sales,product_reviews,inventory}
   RAG_INGEST_MAX_ROWS_PER_TABLE: ${RAG_INGEST_MAX_ROWS_PER_TABLE:-0}
   RAG_QDRANT_TIMEOUT_SECONDS: ${RAG_QDRANT_TIMEOUT_SECONDS:-60}
   RAG_QDRANT_UPSERT_CONCURRENCY: ${RAG_QDRANT_UPSERT_CONCURRENCY:-2}
@@ -158,9 +156,9 @@ x-common-env: &common-env
   RAG_PORTAL_DEV_PASSWORD: ${RAG_PORTAL_DEV_PASSWORD:-demo-password-change-me}
   RAG_PORTAL_DEV_EMAIL: ${RAG_PORTAL_DEV_EMAIL:-demo@zenttech.com}
   RAG_PLATFORM_ADMIN_EMAIL: ${RAG_PLATFORM_ADMIN_EMAIL:-admin@zent.dev}
-  RAG_VAULT_ADDR: ${VAULT_ADDR:-}
-  RAG_VAULT_TOKEN: ${VAULT_TOKEN:-}
-  RAG_LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  RAG_VAULT_ADDR: ${RAG_VAULT_ADDR:-}
+  RAG_VAULT_TOKEN: ${RAG_VAULT_TOKEN:-}
+  RAG_LOG_LEVEL: ${RAG_LOG_LEVEL:-INFO}
   # Phase 31C — customer DBs on the same cluster. Adapters rds/neon: NotImplementedError.
   RAG_MANAGED_DB_PROVIDER: ${RAG_MANAGED_DB_PROVIDER:-local}
   RAG_DEMO_SQL_SCHEMAS: ${RAG_DEMO_SQL_SCHEMAS:-}
@@ -169,7 +167,7 @@ x-common-env: &common-env
   RAG_RATE_LIMIT_PER_MINUTE: ${RAG_RATE_LIMIT_PER_MINUTE:-3000}
   RAG_RATE_LIMIT_PER_ORGANIZATION_MINUTE: ${RAG_RATE_LIMIT_PER_ORGANIZATION_MINUTE:-30000}
   RAG_RATE_LIMIT_PUBLIC_PER_MINUTE: ${RAG_RATE_LIMIT_PUBLIC_PER_MINUTE:-120}
-  RAG_TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+  RAG_TRUSTED_PROXIES: ${RAG_TRUSTED_PROXIES:-}
   RAG_UPLOAD_DIR: /app/uploads
   # Embeddings locales (Ollama) DESACTIVADOS: se usa Novita AI (hosted).
   # Reactivar junto con el servicio `ollama` y RAG_EMBEDDING_MODEL=ollama/bge-m3.
@@ -309,7 +307,9 @@ x-common-env: &common-env
   # Los nombres deben ser RAG_ + nombre exacto del campo en Settings
   # (env_prefix="RAG_"): un nombre sin el prefijo se ignora en silencio.
   # =========================================================================
-  RAG_RAG_JEV_PREFLIGHT_MODE: ${RAG_RAG_JEV_PREFLIGHT_MODE:-off}
+  # Forma simple (la del .env); la doble RAG_RAG_JEV_PREFLIGHT_MODE tambien
+  # funciona como alias en Settings, pero aqui manda esta.
+  RAG_JEV_PREFLIGHT_MODE: ${RAG_JEV_PREFLIGHT_MODE:-off}
   RAG_RAG_JEV_PREFLIGHT_CANARY_PERCENTAGE: ${RAG_RAG_JEV_PREFLIGHT_CANARY_PERCENTAGE:-0}
   RAG_RAG_JEV_PREFLIGHT_ENFORCE: ${RAG_RAG_JEV_PREFLIGHT_ENFORCE:-true}
   RAG_RAG_JEV_PREFLIGHT_STRICT_THRESHOLDS: ${RAG_RAG_JEV_PREFLIGHT_STRICT_THRESHOLDS:-0.75}
@@ -361,10 +361,13 @@ services:
       dockerfile: Dockerfile.api
     container_name: rag-api
     ports:
-      - "${API_PORT:-8000}:8000"
+      - "${RAG_API_PORT:-8000}:8000"
     volumes:
       # Archivos subidos (Knowledge Platform) — persistentes entre deploys
       - uploads_data:/app/uploads
+    # Todo el .env entra al contenedor; `environment` pisa los hosts internos.
+    env_file:
+      - .env
     environment:
       <<: *common-env
       # SDK in-container (docker compose exec api …). Desde el host usa localhost.
@@ -418,6 +421,8 @@ services:
     # Image HEALTHCHECK hits /health (API); worker has no HTTP server.
     healthcheck:
       disable: true
+    env_file:
+      - .env
     environment:
       <<: *common-env
     depends_on:
@@ -476,10 +481,10 @@ services:
       # Solo loopback del host: Postgres NO debe quedar expuesto a la red.
       - "127.0.0.1:${POSTGRES_EXPOSE_PORT:-5432}:5432"
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-rag_user}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
-      POSTGRES_DB: ${POSTGRES_DB:-rag_platform}
-      POSTGRES_READONLY_PASSWORD: ${POSTGRES_READONLY_PASSWORD:-readonly_change_me}
+      POSTGRES_USER: ${RAG_POSTGRES_USER:-rag_user}
+      POSTGRES_PASSWORD: ${RAG_POSTGRES_PASSWORD:-changeme_in_production}
+      POSTGRES_DB: ${RAG_POSTGRES_DB:-rag_platform}
+      POSTGRES_READONLY_PASSWORD: ${RAG_POSTGRES_READONLY_PASSWORD:-readonly_change_me}
       # Seeds demo (token admin dev) SOLO si se pide expl�citamente
       RAG_SEED_DEMO_DATA: ${RAG_SEED_DEMO_DATA:-false}
     volumes:
@@ -496,7 +501,7 @@ services:
       #   docker exec rag-postgres bash /docker-entrypoint-initdb.d/80-managed-db-privileges.sh
       - ./src/infrastructure/db_init:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rag_user} -d ${POSTGRES_DB:-rag_platform}"]
+      test: ["CMD-SHELL", "pg_isready -U ${RAG_POSTGRES_USER:-rag_user} -d ${RAG_POSTGRES_DB:-rag_platform}"]
       interval: 5s
       timeout: 3s
       retries: 5
