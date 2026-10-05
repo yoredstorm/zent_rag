@@ -33,6 +33,8 @@ from src.intelligence.query_semantics import (
     QuerySemantics,
     classify_query_semantics,
     detect_query_intent,
+    intent_category,
+    role_category,
 )
 from src.intelligence.reasoning.derivation import (
     DerivationGraph,
@@ -54,6 +56,9 @@ ANSWERABLE_WITH_LIMITS = "ANSWERABLE_WITH_LIMITS"
 UNANSWERABLE_MISSING_PREMISE = "UNANSWERABLE_MISSING_PREMISE"
 UNANSWERABLE_CONFLICT = "UNANSWERABLE_CONFLICT"
 NOT_APPLICABLE = "NOT_APPLICABLE"
+#: Fallo OPERATIVO de retrieval (embeddings caídos, timeout, 429). No es
+#: "no hay evidencia" ni NO_MATCH/FALSE: la búsqueda no llegó a ejecutarse.
+RETRIEVAL_UNAVAILABLE = "RETRIEVAL_UNAVAILABLE"
 
 _OPERATIONS_BY_INTENT: Mapping[str, tuple[str, ...]] = {
     "APPLY_RULE": ("POSITIONAL_MATCH", "ENUM_CHECK", "RANGE_CHECK", "SET_MEMBERSHIP"),
@@ -140,6 +145,8 @@ class GroundedReasoningResult:
     answerability: str = NOT_APPLICABLE
     abstention_message: str = ""
     decided_by: str = "deterministic"
+    canonical_rules: tuple[Any, ...] = ()
+    rule_evaluations: tuple[Any, ...] = ()
     version: str = GROUNDED_ENGINE_VERSION
 
     @property
@@ -152,11 +159,13 @@ class GroundedReasoningResult:
             "answerability": self.answerability,
             "decided_by": self.decided_by,
             "intent": self.semantics.intent,
+            "intent_category": intent_category(self.semantics.intent),
             "semantics": self.semantics.to_public_dict(),
             "query_semantics": [
                 {
                     "value": obj.value,
                     "role": obj.semantic_role.lower(),
+                    "role_category": role_category(obj.semantic_role),
                     "evidence_required": bool(obj.evidence_required),
                 }
                 for obj in self.semantics.objects[:16]
@@ -183,6 +192,22 @@ class GroundedReasoningResult:
             payload["abstention_message"] = self.abstention_message[:400]
         if self.conflicts:
             payload["conflicts"] = list(self.conflicts[:6])
+        # Observabilidad «Ver flujo»: regla compilada -> premisas -> operación
+        # determinista -> resultado. Nunca cadena de pensamiento.
+        if self.canonical_rules:
+            payload["canonical_rules_used"] = [
+                rule.to_public_dict()
+                if hasattr(rule, "to_public_dict")
+                else {"rule_id": str(getattr(rule, "rule_id", ""))}
+                for rule in self.canonical_rules[:6]
+            ]
+        if self.rule_evaluations:
+            payload["canonical_rule_flow"] = [
+                evaluation.to_public_dict()
+                if hasattr(evaluation, "to_public_dict")
+                else {"rule_id": str(getattr(evaluation, "rule_id", ""))}
+                for evaluation in self.rule_evaluations[:6]
+            ]
         return payload
 
 
@@ -826,14 +851,81 @@ def _string_policy(items: Sequence[Any]) -> str:
     return _string_policy_premise(items)[0]
 
 
+def _canonical_rules_from_items(items: Sequence[Any]) -> list[Any]:
+    """Reglas compiladas adjuntas a la evidencia recuperada.
+
+    El retrieval puede adjuntar `metadata['canonical_rules']` (payload del
+    Semantic Rule Compiler) o `canonical_rule_ids`. Si no vienen, la rama
+    determinista por reglas no aplica y se conserva el comportamiento previo.
+    """
+    from src.knowledge.rule_compiler.model import CanonicalRule
+
+    rules: list[Any] = []
+    seen: set[str] = set()
+    for item in items or ():
+        metadata = getattr(item, "metadata", None) or {}
+        payloads = metadata.get("canonical_rules") or ()
+        if not payloads and isinstance(metadata.get("rule_semantics"), dict):
+            payloads = [metadata.get("rule_semantics")]
+        for payload in payloads:
+            if not isinstance(payload, dict):
+                continue
+            rule_id = str(payload.get("rule_id") or "")
+            if rule_id and rule_id in seen:
+                continue
+            try:
+                rule = CanonicalRule.from_dict(payload)
+            except Exception:  # noqa: BLE001, S112 — payload ajeno nunca rompe el motor
+                continue
+            if rule.rule_id:
+                seen.add(rule.rule_id)
+            rules.append(rule)
+    return rules
+
+
+def retrieval_unavailable_result(
+    question: str,
+    *,
+    reason: str = "",
+    semantics: QuerySemantics | None = None,
+    contract: GroundingContract | None = None,
+) -> GroundedReasoningResult:
+    """Fallo operativo de búsqueda: NUNCA responder de memoria.
+
+    Devuelve un estado diferenciado (RETRIEVAL_UNAVAILABLE) que no es
+    INSUFFICIENT_EVIDENCE ni NO_MATCH/FALSE.
+    """
+    return GroundedReasoningResult(
+        question=str(question or ""),
+        semantics=semantics or classify_query_semantics(question),
+        contract=contract
+        or GroundingContract(
+            mode=resolve_grounding_mode(),
+            allowed_operations=tuple(_OPERATIONS_BY_INTENT.get("APPLY_RULE", ())),
+        ),
+        answerability=RETRIEVAL_UNAVAILABLE,
+        abstention_message=(
+            "RETRIEVAL_UNAVAILABLE"
+            + (f": {reason.strip()[:200]}" if reason else "")
+        ),
+        decided_by="operational",
+    )
+
+
 def reason_over_evidence(
     *,
     question: str,
     evidence_items: Sequence[Any] = (),
     contract: GroundingContract | None = None,
     operations: OperationRegistry | None = None,
+    canonical_rules: Sequence[Any] | None = None,
 ) -> GroundedReasoningResult:
-    """Motor determinista: semántica → premisas → derivación → answerability."""
+    """Motor determinista: semántica → premisas → derivación → answerability.
+
+    Si hay CanonicalRule compiladas (parámetro o metadata de la evidencia), la
+    regla DECIDE y el código ejecuta la operación; el LLM solo explica. Sin
+    reglas compiladas se conserva el camino histórico.
+    """
     items = list(evidence_items or ())
     resolved_contract = contract or GroundingContract(
         mode=resolve_grounding_mode(),
@@ -880,9 +972,113 @@ def reason_over_evidence(
     _range_intents = ("VALIDATE", "COMPARE", "APPLY_RULE", "LOOKUP")
 
     # ------------------------------------------------------------------
+    # 0. Regla canónica compilada: el código decide, el LLM explica.
+    #    Prioridad sobre heurísticas: si el conocimiento ya está compilado y
+    #    verificado, NO se reinterpreta por regex en cada pregunta.
+    # ------------------------------------------------------------------
+    compiled_rules = list(canonical_rules or ())
+    if not compiled_rules:
+        compiled_rules = _canonical_rules_from_items(items)
+    # Cobertura de excepciones: si la evidencia recuperada declara nodos de
+    # excepción (fabric) y la regla compilada no las tiene, la cobertura queda
+    # INCOMPLETA: no se afirma una conclusión sin la excepción.
+    exception_evidence_expected = any(
+        bool((getattr(item, "metadata", None) or {}).get("exception_ids"))
+        for item in items
+    )
+    rule_evaluations: list[Any] = []
+    if compiled_rules:
+        from src.knowledge.rule_compiler.evaluate import (
+            RuleEvaluationStatus,
+            evaluate_rule,
+            rule_premises,
+        )
+        from src.knowledge.rule_compiler.merge import merge_distributed_rules
+
+        # Regla distribuida: símbolo + matching + longitud viven en reglas
+        # separadas; se unen SOLO si son compatibles. Conflicto -> no se une.
+        compiled_rules = merge_distributed_rules(compiled_rules)
+
+        runtime_values: dict[str, Any] = dict(params)
+        if runtime_inputs:
+            runtime_values.setdefault("value", runtime_inputs[0])
+        else:
+            first_value = _first_runtime_value(semantics)
+            if first_value:
+                runtime_values.setdefault("value", first_value)
+        if runtime_patterns:
+            runtime_values.setdefault("pattern", runtime_patterns[0])
+        for rule in compiled_rules:
+            if getattr(rule, "conflicts_with", ()) or str(
+                getattr(rule, "verification_state", "")
+            ) == "CONFLICTING":
+                conflicts.append(f"rule_conflict:{getattr(rule, 'rule_id', '')}")
+            if exception_evidence_expected and not getattr(rule, "exceptions", ()):
+                missing.append(
+                    f"exception_evidence:{getattr(rule, 'rule_id', '')}"
+                )
+                continue
+            evaluation = evaluate_rule(rule, runtime_values)
+            rule_evaluations.append(evaluation)
+            if evaluation.status == RuleEvaluationStatus.UNDETERMINED.value:
+                missing.extend(
+                    evaluation.missing_premises
+                    or [f"rule:{getattr(rule, 'rule_id', '')}"]
+                )
+                continue
+            if evaluation.status == RuleEvaluationStatus.NOT_APPLICABLE.value:
+                continue
+            outcome = OperationResult(
+                operation=evaluation.operation or "RULE_EVALUATION",
+                status=OperationStatus.OK.value,
+                value=evaluation.result,
+                explanation=evaluation.reason,
+                inputs=tuple(str(key) for key in sorted(runtime_values))[:8],
+            )
+            rule_label = getattr(rule, "subject", "") or getattr(rule, "rule_id", "")
+            if evaluation.status == RuleEvaluationStatus.MATCH.value:
+                statement = f"la regla compilada «{rule_label}» se cumple"
+            else:
+                statement = f"la regla compilada «{rule_label}» no se cumple"
+            rule_conflicts = (
+                [f"rule_conflict:{getattr(rule, 'rule_id', '')}"]
+                if getattr(rule, "conflicts_with", ())
+                else []
+            )
+            premises.extend(rule_premises(rule))
+            claims.append(
+                claim_from_operation(
+                    statement=statement,
+                    operation=outcome,
+                    premises=tuple(rule_premises(rule)),
+                    user_inputs=tuple(
+                        f"{key}={value}" for key, value in sorted(runtime_values.items())
+                    )[:8],
+                    evidence_refs=evaluation.evidence_refs,
+                    contract=resolved_contract,
+                    claim_type=GroundingCategory.DERIVED_CLAIM.value,
+                    confidence=float(getattr(rule, "confidence", 0.8) or 0.8),
+                    missing_premises=evaluation.missing_premises,
+                    conflicts=rule_conflicts,
+                    canonical_rule_ids=[getattr(rule, "rule_id", "")],
+                    deterministic=evaluation.status
+                    in (
+                        RuleEvaluationStatus.MATCH.value,
+                        RuleEvaluationStatus.NO_MATCH.value,
+                    ),
+                    unresolved_requirements=evaluation.missing_premises,
+                )
+            )
+            operations_used.append(evaluation.operation or "RULE_EVALUATION")
+
+    # ------------------------------------------------------------------
     # 1. Patrón de runtime: la instancia no exige match literal; su gramática sí.
     # ------------------------------------------------------------------
-    if runtime_patterns and intent in _pattern_intents:
+    if compiled_rules:
+        # El conocimiento compilado ya decidió (o declaró premisas faltantes).
+        # No se reinterpreta el documento con heurísticas por regex.
+        pass
+    elif runtime_patterns and intent in _pattern_intents:
         from src.rag.longcontext.pattern import (
             WILDCARD_SYMBOLS,
             analyze_pattern_instance,
@@ -1381,6 +1577,8 @@ def reason_over_evidence(
         abstention_message=(
             missing_premise_message(missing) if answerability == UNANSWERABLE_MISSING_PREMISE else ""
         ),
+        canonical_rules=tuple(compiled_rules),
+        rule_evaluations=tuple(rule_evaluations),
     )
 
 
@@ -1433,10 +1631,12 @@ __all__ = [
     "GROUNDED_ENGINE_VERSION",
     "GroundedReasoningResult",
     "NOT_APPLICABLE",
+    "RETRIEVAL_UNAVAILABLE",
     "UNANSWERABLE_CONFLICT",
     "UNANSWERABLE_MISSING_PREMISE",
     "extract_formula_premises",
     "missing_premise_message",
     "observe_grounded_result",
     "reason_over_evidence",
+    "retrieval_unavailable_result",
 ]

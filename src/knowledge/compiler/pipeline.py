@@ -39,6 +39,7 @@ from src.knowledge.compiler.model import (
     FactCandidate,
     QualityIssue,
     RelationshipCandidate,
+    RuleCandidate,
     SourceLocator,
     TemporalScope,
     normalize_term,
@@ -122,6 +123,33 @@ class KnowledgeCompiler:
         )
 
         rules = rule_engine.extract_rules(document, temporal=scope)
+        # Semantic Rule Compiler: convierte candidatos normativos en reglas
+        # canónicas con propiedades verificadas y provenance por propiedad.
+        # Determinista; no reemplaza la detección existente, la profundiza.
+        from src.knowledge.rule_compiler import SemanticRuleCompiler
+
+        semantic_compilation = SemanticRuleCompiler().compile(
+            document_id=str(document.id or ""),
+            document_title=document.title or "",
+            organization_id=str(document.organization_id),
+            units=units,
+            rule_candidates=rules,
+        )
+        canonical_by_statement = {
+            " ".join(rule.statement.lower().split())[:400]: rule
+            for rule in semantic_compilation.canonical_rules
+        }
+        for rule in rules:
+            canonical = canonical_by_statement.get(
+                " ".join(rule.statement.lower().split())[:400]
+            )
+            if canonical is None:
+                continue
+            rule.rule_kind = canonical.kind
+            rule.verification_state = canonical.verification_state
+            rule.semantics = canonical.to_public_dict()
+            rule.provenance = [item.to_dict() for item in canonical.provenance[:16]]
+            rule.canonical_rule_id = canonical.rule_id
         conflict_list = conflict_engine.detect_conflicts(fact_list)
 
         quality_issues = [
@@ -163,6 +191,7 @@ class KnowledgeCompiler:
             facts=fact_list,
             relationships=relationships,
             rules=rules,
+            canonical_rules=semantic_compilation.canonical_rules,
             conflicts=conflict_list,
             merges=merges,
             quality_issues=quality_issues,
@@ -171,7 +200,8 @@ class KnowledgeCompiler:
                 len(entity.evidence) for entity in consolidated
             )
             + sum(len(fact.evidence) for fact in fact_list)
-            + sum(len(rule.evidence) for rule in rules),
+            + sum(len(rule.evidence) for rule in rules)
+            + sum(len(rule.provenance) for rule in semantic_compilation.canonical_rules),
         )
 
     # --------------------------------------------------------------- fase I/O
@@ -266,6 +296,9 @@ class KnowledgeCompiler:
             "relationships": 0,
             "relationships_related": 0,
             "rules": 0,
+            "canonical_rules": 0,
+            "canonical_rule_conflicts": 0,
+            "fabric_rule_nodes": 0,
             "conflicts": 0,
             "conflicts_auto_resolved": 0,
             "duplicates": 0,
@@ -573,6 +606,7 @@ class KnowledgeCompiler:
 
         rules_written = 0
         canonical_rule_ids: dict[str, str] = {}
+        canonical_rule_objects: dict[str, str] = {}
         existing_rule_keys: dict[str, str] = {}
         if system_emitter is not None:
             try:
@@ -592,6 +626,8 @@ class KnowledgeCompiler:
             rules_written += 1
             if rule.rule_key:
                 canonical_rule_ids[str(rule.rule_key)] = str(rule_id)
+                if rule.canonical_rule_id:
+                    canonical_rule_objects[rule.canonical_rule_id] = str(rule_id)
             if rule_status == "created":
                 counters["rules"] += 1
                 await self._observe(
@@ -646,6 +682,64 @@ class KnowledgeCompiler:
                 )
                 evidence_written += 1 if written else 0
 
+        # Reglas canónicas sin candidato 1:1 (p. ej. "only if"): se persisten
+        # como objetos canónicos con su semántica verificada y su provenance.
+        for canonical in result.canonical_rules:
+            canonical_id = str(getattr(canonical, "rule_id", "") or "")
+            if not canonical_id or canonical_id in canonical_rule_objects:
+                continue
+            wrapper = _rule_candidate_from_canonical(canonical)
+            rule_id, _rule_status = await store.upsert_rule(
+                organization_id,
+                wrapper,
+                source_id=source_id,
+                workspace_id=workspace_id,
+                document_id=document_id,
+            )
+            canonical_rule_ids[str(wrapper.rule_key)] = str(rule_id)
+            canonical_rule_objects[canonical_id] = str(rule_id)
+            counters["canonical_rules"] += 1
+            for evidence in wrapper.evidence[:6]:
+                written = await store.add_evidence(
+                    organization_id,
+                    evidence,
+                    canonical_id=rule_id,
+                    workspace_id=workspace_id,
+                )
+                evidence_written += 1 if written else 0
+            await self._observe(
+                observer,
+                "CANONICAL_RULE_COMPILED",
+                canonical.to_public_dict()
+                if hasattr(canonical, "to_public_dict")
+                else {"rule_id": canonical_id},
+            )
+
+        counters["canonical_rule_conflicts"] = sum(
+            1 for rule in result.canonical_rules if getattr(rule, "conflicts_with", ())
+        )
+        # Proyección de reglas canónicas al Semantic Fabric (best-effort).
+        attach_rule_projection = getattr(store, "attach_rule_projection", None)
+        if callable(attach_rule_projection) and result.canonical_rules:
+            try:
+                from src.knowledge.rule_compiler import project_rules_to_fabric
+
+                projection = project_rules_to_fabric(
+                    result.canonical_rules,
+                    document_id=str(document_id or ""),
+                    source_id=str(source_id or ""),
+                )
+                counters["fabric_rule_nodes"] = await attach_rule_projection(
+                    organization_id,
+                    projection,
+                    workspace_id=workspace_id,
+                    source_id=source_id,
+                    document_id=document_id,
+                )
+            except Exception as exc:  # noqa: BLE001 — el fabric no frena la ingesta
+                logger.warning(
+                    "Rule fabric projection skipped", error=str(exc)[:200]
+                )
         conflicts_written = 0
         for conflict in result.conflicts:
             subject_id = alias_ids.get(normalize_term(conflict.subject))
@@ -782,6 +876,8 @@ class KnowledgeCompiler:
                 "assertions": assertions_written,
                 "edges": edges_written,
                 "rules": rules_written,
+                "canonical_rules": counters.get("canonical_rules", 0),
+                "fabric_rule_nodes": counters.get("fabric_rule_nodes", 0),
                 "conflicts": conflicts_written,
                 "quality_issues": counters["quality_issues"],
                 "evidence": evidence_written,
@@ -811,6 +907,7 @@ class KnowledgeCompiler:
                 for name, object_id in list(alias_ids.items())[:100]
             },
             "canonical_rule_ids": dict(list(canonical_rule_ids.items())[:100]),
+            "canonical_rule_objects": dict(list(canonical_rule_objects.items())[:100]),
             **counters,
         }
 
@@ -948,6 +1045,81 @@ class KnowledgeCompiler:
 
 def _entity_key(entity_type: str, name: str) -> str:
     return f"{entity_type}:{normalize_term(name)}"
+
+
+_MODALITY_TO_COMPILER: dict[str, str] = {
+    "MUST": "must",
+    "REQUIRED": "must",
+    "MUST_NOT": "must_not",
+    "SHOULD_NOT": "must_not",
+    "CONSTRAINT": "constraint",
+    "SHOULD": "should",
+    "MAY": "may",
+    "OPTIONAL": "should",
+    "NONE": "must",
+}
+
+
+def _uuid_or_none(value) -> UUID | None:
+    if not value:
+        return None
+    try:
+        return UUID(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _rule_candidate_from_canonical(canonical) -> RuleCandidate:
+    """CanonicalRule -> RuleCandidate para persistencia (misma tabla/objeto).
+
+    La semántica viaja en ``semantics``; la provenance por propiedad se copia
+    a evidencia física localizable.
+    """
+    evidence: list[EvidenceRef] = []
+    for item in list(getattr(canonical, "provenance", ()) or ())[:8]:
+        locator_data = dict(getattr(item, "locator", {}) or {})
+        evidence.append(
+            EvidenceRef(
+                locator=SourceLocator(
+                    source_id=_uuid_or_none(locator_data.get("source_id")),
+                    document_id=_uuid_or_none(locator_data.get("document_id")),
+                    document_title=str(locator_data.get("document_title") or ""),
+                    block_id=_uuid_or_none(locator_data.get("block_id")),
+                    page=locator_data.get("page"),
+                    section_path=tuple(locator_data.get("section_path") or ()),
+                    table_reference=locator_data.get("table_reference"),
+                    row_reference=locator_data.get("row_reference"),
+                    cell_reference=locator_data.get("cell_reference"),
+                    database_reference=locator_data.get("database_reference"),
+                ),
+                evidence_type=EvidenceType.DOCUMENT.value,
+                excerpt=str(getattr(item, "excerpt", "") or canonical.statement)[:400],
+                method=str(getattr(item, "method", "deterministic") or "deterministic"),
+                confidence=float(getattr(item, "strength", 0.7) or 0.7),
+            )
+        )
+    modality = _MODALITY_TO_COMPILER.get(str(getattr(canonical, "modality", "MUST")), "must")
+    rule_key = str(getattr(canonical, "rule_id", "") or "").split("rule:", 1)[-1][:24]
+    return RuleCandidate(
+        subject=str(getattr(canonical, "subject", "") or "")[:200],
+        statement=str(getattr(canonical, "statement", "") or "")[:2000],
+        rule_key=rule_key,
+        rule_type="constraint" if modality == "constraint" else "business_rule",
+        modality=modality,
+        confidence=float(getattr(canonical, "confidence", 0.7) or 0.7),
+        evidence=evidence,
+        rule_kind=str(getattr(canonical, "kind", "") or ""),
+        semantics=canonical.to_public_dict()
+        if hasattr(canonical, "to_public_dict")
+        else {},
+        verification_state=str(getattr(canonical, "verification_state", "") or ""),
+        canonical_rule_id=str(getattr(canonical, "rule_id", "") or ""),
+        provenance=[
+            item.to_dict()
+            for item in list(getattr(canonical, "provenance", ()) or ())[:16]
+            if hasattr(item, "to_dict")
+        ],
+    )
 
 
 def _entity_is_known(entity: EntityCandidate, aliases: dict[str, str]) -> bool:

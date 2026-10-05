@@ -20,7 +20,14 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Iterable, Sequence
 
-PATTERN_VERSION = "pattern-grammar-1"
+from src.core.domain.rule_semantics import (
+    BoundaryKind,
+    LengthPolicy,
+    classify_length_policy,
+    numeric_length_policy,
+)
+
+PATTERN_VERSION = "pattern-grammar-2"
 
 #: Alfabeto de comodines soportado (ampliable por alias documental).
 WILDCARD_SYMBOLS: tuple[str, ...] = ("&", "*", "?", "%", "#", "$", "@", "!", "~", "^")
@@ -83,13 +90,6 @@ _LITERAL_RE = re.compile(
     r"must\s+match|debe\s+coincidir|coincidencia\s+exacta)",
     re.IGNORECASE,
 )
-_LENGTH_RE = re.compile(
-    r"(?:length|longitud|tama[nñ]o|same\s+number\s+of|"
-    r"cantidad\s+de\s+(?:posiciones|caracteres)|number\s+of\s+(?:positions|characters)|"
-    r"exactly\s+\d+\s+(?:characters|positions)|de\s+\d+\s+(?:posiciones|caracteres)|"
-    r"fixed\s+length|longitud\s+fija)",
-    re.IGNORECASE,
-)
 _PREFIX_RE = re.compile(
     r"(?:prefix|prefijo|at\s+the\s+(?:start|beginning)|al\s+(?:inicio|principio)|"
     r"from\s+the\s+start|desde\s+el\s+(?:inicio|principio)|leftmost|m[aá]s\s+a\s+la\s+izquierda)",
@@ -148,12 +148,21 @@ class SymbolDefinition:
 
 @dataclass(frozen=True, kw_only=True)
 class PatternSemantics:
-    """Gramática documentada extraída de la evidencia (sin LLM)."""
+    """Gramática documentada extraída de la evidencia (sin LLM).
+
+    ``length_policy`` reemplaza al booleano ``length_sensitive``. Mencionar
+    "length" NO establece política: sin marcador la política es UNKNOWN y el
+    motor devuelve UNDETERMINED. ``length_sensitive`` se conserva deprecado y
+    solo es True con evidencia explícita de igualdad/fixed/exact length.
+    """
 
     symbol_definitions: dict[str, SymbolDefinition] = field(default_factory=dict)
     positional: bool = False
     literal: bool = False
-    length_sensitive: bool = False
+    length_policy: str = LengthPolicy.UNKNOWN.value
+    length_value: int | None = None
+    length_upper: int | None = None
+    length_boundary: str = ""
     anchor_side: str = ""  # start | end | "" (no declarado)
     statements: tuple[str, ...] = ()
     version: str = PATTERN_VERSION
@@ -164,6 +173,15 @@ class PatternSemantics:
     def matching_policy_known(self) -> bool:
         return bool(self.positional or self.literal)
 
+    @property
+    def length_sensitive(self) -> bool:
+        """DEPRECADO. True solo con evidencia explícita de igualdad de largo."""
+        return self.length_policy == LengthPolicy.EXACT.value
+
+    @property
+    def length_policy_known(self) -> bool:
+        return self.length_policy not in ("", LengthPolicy.UNKNOWN.value)
+
     def to_public_dict(self) -> dict[str, Any]:
         return {
             "version": self.version,
@@ -173,6 +191,10 @@ class PatternSemantics:
             },
             "positional": self.positional,
             "literal": self.literal,
+            "length_policy": self.length_policy,
+            "length_value": self.length_value,
+            "length_upper": self.length_upper,
+            "length_boundary": self.length_boundary,
             "length_sensitive": self.length_sensitive,
             "anchor_side": self.anchor_side,
             "statements": list(self.statements[:6]),
@@ -360,24 +382,44 @@ def extract_pattern_semantics(
 
     positional = bool(_POSITIONAL_RE.search(joined))
     literal = bool(_LITERAL_RE.search(joined))
-    length_sensitive = bool(_LENGTH_RE.search(joined))
+    length_observation = classify_length_policy(joined)
+    length_policy = length_observation.policy
+    # Anclaje declarado (prefijo/sufijo): el operador de matching establece que
+    # el valor puede extenderse más allá del patrón en el lado opuesto.
+    if length_policy == LengthPolicy.UNKNOWN.value and (positional or literal):
+        if _PREFIX_RE.search(joined) or _SUFFIX_RE.search(joined):
+            length_policy = LengthPolicy.VALUE_MAY_BE_LONGER.value
     anchor_side = ""
     if _PREFIX_RE.search(joined):
         anchor_side = "start"
     if _SUFFIX_RE.search(joined):
         anchor_side = "end"
     statements: list[str] = []
-    for pattern in (_POSITIONAL_RE, _LITERAL_RE, _LENGTH_RE, _PREFIX_RE, _SUFFIX_RE):
+    for pattern in (
+        _POSITIONAL_RE,
+        _LITERAL_RE,
+        _PREFIX_RE,
+        _SUFFIX_RE,
+    ):
         for match in pattern.finditer(joined[:60_000]):
             snippet = joined[max(0, match.start() - 60) : match.end() + 60].strip()
             if snippet and snippet not in statements:
                 statements.append(snippet)
             break
+    if (
+        length_observation.matched_text
+        and length_observation.explicit
+        and length_observation.matched_text not in statements
+    ):
+        statements.insert(0, length_observation.matched_text)
     return PatternSemantics(
         symbol_definitions=definitions,
         positional=positional,
         literal=literal,
-        length_sensitive=length_sensitive,
+        length_policy=length_policy,
+        length_value=length_observation.value,
+        length_upper=length_observation.upper,
+        length_boundary=length_observation.boundary,
         anchor_side=anchor_side,
         statements=tuple(statements[:6]),
     )
@@ -447,8 +489,10 @@ def missing_pattern_premises(
 ) -> tuple[str, ...]:
     """Premisas del dominio que faltan para interpretar el patrón.
 
-    El símbolo concreto no es una premisa; su SIGNIFICADO sí. La longitud sólo
-    es premisa cuando el valor y el patrón tienen largos distintos.
+    El símbolo concreto no es una premisa; su SIGNIFICADO sí. La longitud es
+    premisa SOLO cuando el valor y el patrón tienen largos distintos y la
+    evidencia no establece política (ni anclaje). Una mención de "length" no
+    alcanza: la política queda UNKNOWN y se declara la premisa faltante.
     """
     instance = _instance_for(pattern, semantics)
     missing: list[str] = []
@@ -460,14 +504,52 @@ def missing_pattern_premises(
             missing.append(f"semantics:symbol:{symbol}")
     if not semantics.matching_policy_known():
         missing.append("matching_policy")
-    if (
-        value_length is not None
-        and value_length != instance.length
-        and not semantics.length_sensitive
-        and not semantics.anchor_side
-    ):
-        missing.append("length_semantics")
+    if value_length is not None and value_length != instance.length:
+        if not semantics.length_policy_known and not semantics.anchor_side:
+            missing.append("length_semantics")
+        elif numeric_length_policy(semantics.length_policy) and semantics.length_value is None:
+            missing.append("length_semantics")
     return tuple(dict.fromkeys(missing))
+
+
+def _length_failure(
+    value: str,
+    instance: PatternInstance,
+    semantics: PatternSemantics,
+) -> PositionalMatchResult | None:
+    """NO_MATCH por política numérica de longitud; None si el largo es válido."""
+    policy = semantics.length_policy
+    length = len(value)
+    low = semantics.length_value
+    high = semantics.length_upper
+    inclusive = semantics.length_boundary != BoundaryKind.EXCLUSIVE.value
+    violation = ""
+    if policy == LengthPolicy.MIN_LENGTH.value and low is not None:
+        if length < low or (length == low and not inclusive):
+            violation = f"{policy} {low}"
+    elif policy == LengthPolicy.MAX_LENGTH.value and low is not None:
+        if length > low or (length == low and not inclusive):
+            violation = f"{policy} {low}"
+    elif policy == LengthPolicy.RANGE.value and low is not None and high is not None:
+        if length < low or length > high:
+            violation = f"{policy} {low}..{high}"
+    if not violation:
+        return None
+    return PositionalMatchResult(
+        status=MatchStatus.NO_MATCH.value,
+        value=value,
+        pattern=instance.raw_value,
+        mismatches=(
+            {
+                "position": 0,
+                "expected": violation,
+                "got": f"length {length}",
+                "reason": "length_policy_violation",
+            },
+        ),
+        premises_used=(f"documented length policy: {violation}",),
+        reason="length_policy_violation",
+    )
 
 
 def positional_match(
@@ -483,8 +565,9 @@ def positional_match(
       - sin definición de un símbolo o sin política de matching → UNDETERMINED
         (jamás se inventa el significado del comodín);
       - largos distintos sin política documentada → UNDETERMINED;
-      - con política posicional/literal, el resultado MATCH/NO_MATCH se deriva
-        aunque ni el valor ni el patrón existan literalmente en las fuentes.
+      - política asimétrica: se respeta la dirección declarada (valor más
+        largo vs patrón más largo), sin convertirla en igualdad;
+      - límites numéricos (min/max/rango): se aplican tal como se declararon.
     """
     instance = _instance_for(pattern, semantics)
     text = str(value or "")
@@ -498,8 +581,8 @@ def positional_match(
         premises_used.append("matching is positional")
     if semantics.literal:
         premises_used.append("literal characters must match exactly")
-    if semantics.length_sensitive:
-        premises_used.append("the pattern and the value must have the same length")
+    if semantics.length_policy_known:
+        premises_used.append(f"documented length policy: {semantics.length_policy}")
     if semantics.anchor_side:
         premises_used.append(f"the pattern applies from the {semantics.anchor_side}")
 
@@ -564,10 +647,11 @@ def positional_match(
                 }
             )
 
+    policy = semantics.length_policy
     if len(text) == instance.length:
         for token in instance.tokens:
             _check_pair(token.index, token)
-    elif semantics.length_sensitive:
+    elif policy == LengthPolicy.EXACT.value:
         return PositionalMatchResult(
             status=MatchStatus.NO_MATCH.value,
             value=text,
@@ -584,12 +668,43 @@ def positional_match(
             reason="length_mismatch",
         )
     elif semantics.anchor_side == "end":
+        # El patrón aplica desde el final: el valor puede tener sobrante al
+        # inicio (sufijo). Posiciones fuera del valor no se exigen.
         offset = len(text) - instance.length
         for token in instance.tokens:
-            _check_pair(token.index + offset, token)
+            if token.index + offset >= 0:
+                _check_pair(token.index + offset, token)
+    elif policy in (
+        LengthPolicy.MIN_LENGTH.value,
+        LengthPolicy.MAX_LENGTH.value,
+        LengthPolicy.RANGE.value,
+    ):
+        failure = _length_failure(text, instance, semantics)
+        if failure is not None:
+            return failure
+        for token in instance.tokens:
+            if token.index < len(text):
+                _check_pair(token.index, token)
+    elif policy in (
+        LengthPolicy.VALUE_MAY_BE_LONGER.value,
+        LengthPolicy.PATTERN_MAY_BE_SHORTER.value,
+        LengthPolicy.UNCONSTRAINED.value,
+    ):
+        # El valor puede ser más largo que el patrón: se compara desde el
+        # inicio y el sobrante queda fuera del patrón (jamás se exige igualdad).
+        for token in instance.tokens:
+            _check_pair(token.index, token)
+    elif policy in (
+        LengthPolicy.VALUE_MAY_BE_SHORTER.value,
+        LengthPolicy.PATTERN_MAY_BE_LONGER.value,
+    ):
+        # El valor puede ser más corto: solo se exigen las posiciones presentes.
+        for token in instance.tokens:
+            if token.index < len(text):
+                _check_pair(token.index, token)
     else:
-        # start / no declarado pero política conocida: se aplica desde el inicio
-        # y el sobrante queda fuera del patrón (comportamiento prefijo).
+        # Política UNKNOWN con anclaje inicial declarado: comparación desde el
+        # inicio, sobrante fuera del patrón.
         for token in instance.tokens:
             _check_pair(token.index, token)
 

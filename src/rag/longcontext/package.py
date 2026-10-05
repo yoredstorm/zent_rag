@@ -348,6 +348,78 @@ GROUNDING_PROMPT_INSTRUCTIONS = (
     "if a DOMAIN PREMISE is missing, state exactly which one.",
 )
 
+#: Instrucciones específicas de resultados deterministas (no negociables).
+AUTHORITATIVE_RESULT_INSTRUCTIONS = (
+    "These results were computed by code from verified canonical rules and "
+    "SATISFIED premises. Explain them and cite their evidence.",
+    "DO NOT reinterpret, recompute or invert them (MATCH is not NO_MATCH).",
+    "DO NOT introduce a new premise that changes the result.",
+    "If you find an apparent contradiction between a result and its evidence, "
+    "do not choose one: mark INTERNAL_GROUNDING_CONFLICT and explain the "
+    "conflict.",
+)
+
+
+def render_authoritative_results(payload: dict[str, Any] | None) -> str:
+    """Bloque AUTHORITATIVE DERIVED RESULTS para el prompt final.
+
+    Solo claims deterministas y SUPPORTED: el generador puede explicarlos y
+    citarlos; no puede cambiarlos.
+    """
+    if not isinstance(payload, dict):
+        return ""
+    derivations = (
+        payload.get("derivations")
+        if isinstance(payload.get("derivations"), dict)
+        else payload.get("derivation")
+        if isinstance(payload.get("derivation"), dict)
+        else {}
+    )
+    claims = [
+        item
+        for item in (payload.get("derived_claims") or derivations.get("claims") or [])
+        if isinstance(item, dict)
+    ]
+    authoritative = [
+        claim
+        for claim in claims
+        if claim.get("deterministic")
+        and str(claim.get("verification_status") or "") == "SUPPORTED"
+    ]
+    if not authoritative:
+        return ""
+    lines = [
+        "## AUTHORITATIVE DERIVED RESULTS "
+        "(deterministic; explain and cite, never reinterpret)"
+    ]
+    for claim in authoritative[:6]:
+        result = claim.get("result")
+        statement = str(claim.get("statement") or "")[:240]
+        operation = str(claim.get("operation") or "")
+        rule_ids = [str(value) for value in claim.get("canonical_rule_ids") or () if value]
+        inputs = [str(value) for value in claim.get("user_inputs") or () if value]
+        refs = [str(value) for value in claim.get("evidence_refs") or () if value]
+        lines.append(f"- RESULT: {result} | operation: {operation} | {statement}")
+        if inputs:
+            lines.append("  runtime inputs: " + ", ".join(inputs[:5]))
+        if rule_ids:
+            lines.append("  canonical rules: " + ", ".join(rule_ids[:4]))
+        if refs:
+            lines.append("  evidence: " + ", ".join(refs[:6]))
+    unresolved = [
+        str(value)
+        for value in payload.get("missing_premises") or ()
+        if str(value or "").strip()
+    ]
+    if unresolved:
+        lines.append(
+            "UNRESOLVED REQUIREMENTS (state exactly these; never default): "
+            + ", ".join(unresolved[:6])
+        )
+    for instruction in AUTHORITATIVE_RESULT_INSTRUCTIONS:
+        lines.append(f"- {instruction}")
+    return "\n".join(lines)
+
 
 def render_grounding_block(payload: dict[str, Any] | None) -> str:
     """Bloque de razonamiento grounded para el prompt (resultado primero)."""
@@ -377,6 +449,10 @@ def render_grounding_block(payload: dict[str, Any] | None) -> str:
     if not any((claims, runtime_inputs, runtime_patterns, missing_premises, mode)):
         return ""
     lines = ["## GROUNDED REASONING (contrato de grounding; autoridad canónica)"]
+    authoritative_block = render_authoritative_results(payload)
+    if authoritative_block:
+        lines.append("")
+        lines.append(authoritative_block)
     if mode:
         lines.append(f"Grounding mode: {mode.upper()}")
     intent = str(semantics.get("intent") or "")
@@ -392,7 +468,12 @@ def render_grounding_block(payload: dict[str, Any] | None) -> str:
             "Runtime patterns (instance needs documented semantics, NOT literal presence): "
             + ", ".join(runtime_patterns[:6])
         )
-    supported = [claim for claim in claims if str(claim.get("verification_status")) == "SUPPORTED"]
+    supported = [
+        claim
+        for claim in claims
+        if str(claim.get("verification_status")) == "SUPPORTED"
+        and not claim.get("deterministic")
+    ]
     for claim in supported[:4]:
         statement = str(claim.get("statement") or "")
         result = claim.get("result")
@@ -462,10 +543,12 @@ def allow_model_escalation(uncertainty: str) -> bool:
 
 
 __all__ = [
+    "AUTHORITATIVE_RESULT_INSTRUCTIONS",
     "GROUNDING_PROMPT_INSTRUCTIONS",
     "GenerationPackage",
     "allow_model_escalation",
     "build_generation_package",
+    "render_authoritative_results",
     "render_evidence_state_block",
     "render_grounding_block",
     "validate_doc_citations",

@@ -214,3 +214,82 @@ class TestPositionalMatch:
         result = positional_match("ASDF", "&&&F", semantics)
         assert any("alphanumeric" in statement for statement in result.premises_used)
         assert "ASDF" not in " ".join(result.premises_used)
+
+
+class TestLengthPolicyMigration:
+    """Mencionar longitud NO fija política; length_sensitive solo con igualdad."""
+
+    def test_mere_length_mention_is_unknown(self) -> None:
+        semantics = extract_pattern_semantics(
+            [
+                _Item(
+                    "& represents one alphanumeric position. Matching is positional. "
+                    "The field length is described in the annex."
+                )
+            ]
+        )
+        assert semantics.length_policy == "UNKNOWN"
+        assert semantics.length_sensitive is False
+        result = positional_match("ASDFGRE", "&&&F", semantics)
+        assert result.status == MatchStatus.UNDETERMINED.value
+        assert "length_semantics" in result.missing_premises
+
+    def test_same_length_is_exact_only_with_evidence(self) -> None:
+        semantics = extract_pattern_semantics(
+            [
+                _Item(
+                    "& represents one alphanumeric position. Matching is positional. "
+                    "The pattern and the value must have the same length."
+                )
+            ]
+        )
+        assert semantics.length_policy == "EXACT"
+        assert semantics.length_sensitive is True
+
+    def test_value_may_be_longer_is_asymmetric(self) -> None:
+        semantics = extract_pattern_semantics(
+            [
+                _Item(
+                    "& represents one alphanumeric position. Matching is positional. "
+                    "The value may contain more characters than the pattern."
+                )
+            ]
+        )
+        assert semantics.length_policy == "VALUE_MAY_BE_LONGER"
+        assert semantics.length_sensitive is False
+        longer = positional_match("ASDFGRE", "&&&F", semantics)
+        assert longer.status == MatchStatus.MATCH.value
+        shorter = positional_match("ASD", "&&&F", semantics)
+        assert shorter.status == MatchStatus.NO_MATCH.value
+
+    def test_pattern_may_be_longer_is_asymmetric(self) -> None:
+        semantics = extract_pattern_semantics(
+            [
+                _Item(
+                    "& represents one alphanumeric position. Matching is positional. "
+                    "The pattern may contain more characters than the value."
+                )
+            ]
+        )
+        assert semantics.length_policy == "PATTERN_MAY_BE_LONGER"
+        result = positional_match("AS", "&&&F", semantics)
+        # El valor corto solo exige las posiciones presentes.
+        assert result.status == MatchStatus.MATCH.value
+
+    def test_numeric_length_policy_from_language(self) -> None:
+        semantics = extract_pattern_semantics(
+            [
+                _Item(
+                    "& represents one alphanumeric position. Matching is positional. "
+                    "At least 3 characters are required."
+                )
+            ]
+        )
+        assert semantics.length_policy == "MIN_LENGTH"
+        assert semantics.length_value == 3
+        assert positional_match("AS", "&&&F", semantics).status == (
+            MatchStatus.NO_MATCH.value
+        )
+        assert positional_match("ASDF", "&&&F", semantics).status == (
+            MatchStatus.MATCH.value
+        )

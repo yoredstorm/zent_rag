@@ -31,13 +31,18 @@ class OperationType(StrEnum):
     BOOLEAN = "BOOLEAN"
     SET_MEMBERSHIP = "SET_MEMBERSHIP"
     STRING_EQUALITY = "STRING_EQUALITY"
+    STRING_COMPARE = "STRING_COMPARE"
+    NUMERIC_COMPARE = "NUMERIC_COMPARE"
     POSITIONAL_MATCH = "POSITIONAL_MATCH"
     RANGE_CHECK = "RANGE_CHECK"
     ENUM_CHECK = "ENUM_CHECK"
     DATE_COMPARISON = "DATE_COMPARISON"
+    DATE_RANGE = "DATE_RANGE"
     DATE_ARITHMETIC = "DATE_ARITHMETIC"
     UNIT_CONVERSION = "UNIT_CONVERSION"
     FORMULA_EVALUATION = "FORMULA_EVALUATION"
+    BOOLEAN_RULE = "BOOLEAN_RULE"
+    SET_RELATION = "SET_RELATION"
 
 
 #: Operaciones que el motor determinista sabe ejecutar.
@@ -347,6 +352,131 @@ def run_string_equality(a: Any, b: Any, *, case_sensitive: bool = False) -> Oper
     )
 
 
+def run_string_compare(
+    a: Any,
+    b: Any,
+    *,
+    op: str = "eq",
+    case_sensitive: bool = False,
+) -> OperationResult:
+    """Comparación de strings con orden y sensibilidad a mayúsculas."""
+    operation = OperationType.STRING_COMPARE.value
+    left = str(a)
+    right = str(b)
+    if not case_sensitive:
+        left, right = left.lower(), right.lower()
+    handlers: dict[str, Callable[[Any, Any], bool]] = {
+        "eq": operator.eq,
+        "ne": operator.ne,
+        "lt": operator.lt,
+        "le": operator.le,
+        "gt": operator.gt,
+        "ge": operator.ge,
+    }
+    handler = handlers.get(str(op))
+    if handler is None:
+        return _error(operation, f"unknown string op: {op}")
+    result = bool(handler(left, right))
+    return OperationResult(
+        operation=operation,
+        status=OperationStatus.OK.value,
+        value=result,
+        explanation=f"'{left}' {str(op)} '{right}' is {result}",
+        inputs=(str(a), str(b)),
+    )
+
+
+def run_numeric_compare(
+    a: Any,
+    b: Any,
+    *,
+    op: str = "ge",
+) -> OperationResult:
+    """Comparación numérica estricta: no compara strings como números."""
+    operation = OperationType.NUMERIC_COMPARE.value
+    left, right = _coerce_number(a), _coerce_number(b)
+    if left is None or right is None:
+        return _error(operation, "non-numeric operand")
+    return run_comparison(left, right, op=op)
+
+
+def run_date_range(
+    value: Any,
+    *,
+    start: Any = None,
+    end: Any = None,
+    inclusive: bool = True,
+) -> OperationResult:
+    """Pertenencia a una ventana temporal [start, end]."""
+    operation = OperationType.DATE_RANGE.value
+    target = _parse_date(value)
+    if target is None:
+        return _error(operation, "unparseable date")
+    low = _parse_date(start) if start is not None else None
+    high = _parse_date(end) if end is not None else None
+    if start is not None and low is None:
+        return _error(operation, "unparseable range start")
+    if end is not None and high is None:
+        return _error(operation, "unparseable range end")
+    if inclusive:
+        result = (low is None or target >= low) and (high is None or target <= high)
+    else:
+        result = (low is None or target > low) and (high is None or target < high)
+    return OperationResult(
+        operation=operation,
+        status=OperationStatus.OK.value,
+        value=bool(result),
+        explanation=(
+            f"{target.isoformat()} in "
+            f"[{low.isoformat() if low else '-inf'}, {high.isoformat() if high else '+inf'}] "
+            f"inclusive={inclusive}"
+        ),
+        inputs=(str(value),),
+    )
+
+
+def run_set_relation(
+    a: Any,
+    b: Any,
+    *,
+    relation: str = "subset",
+) -> OperationResult:
+    """Relación entre conjuntos: subset | superset | disjoint | intersects | equal."""
+    operation = OperationType.SET_RELATION.value
+
+    def _as_set(value: Any) -> set[str] | None:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            return {part.strip() for part in value.split(",") if part.strip()}
+        try:
+            return {str(item).strip() for item in value}
+        except TypeError:
+            return None
+
+    left, right = _as_set(a), _as_set(b)
+    if left is None or right is None:
+        return _error(operation, "set operands not iterable")
+    handlers: dict[str, Callable[[set], bool]] = {
+        "subset": lambda: left <= right,
+        "superset": lambda: left >= right,
+        "disjoint": lambda: left.isdisjoint(right),
+        "intersects": lambda: bool(left & right),
+        "equal": lambda: left == right,
+    }
+    handler = handlers.get(str(relation))
+    if handler is None:
+        return _error(operation, f"unknown set relation: {relation}")
+    result = bool(handler())
+    return OperationResult(
+        operation=operation,
+        status=OperationStatus.OK.value,
+        value=result,
+        explanation=f"|A|={len(left)} |B|={len(right)} {relation} is {result}",
+        inputs=(str(a), str(b)),
+    )
+
+
 def run_range_check(
     value: Any,
     *,
@@ -519,7 +649,17 @@ def _parse_date(value: Any) -> date | None:
     if isinstance(value, date):
         return value
     text = str(value or "").strip()
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d", "%d.%m.%Y"):
+    for fmt in (
+        "%Y-%m-%d",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y/%m/%d",
+        "%d.%m.%Y",
+        "%d %B %Y",
+        "%d %b %Y",
+        "%B %d, %Y",
+        "%B %Y",
+    ):
         try:
             return datetime.strptime(text, fmt).date()
         except ValueError:
@@ -617,6 +757,43 @@ class OperationRegistry:
                 kwargs.get("b"),
                 case_sensitive=bool(kwargs.get("case_sensitive", False)),
             )
+        if name == OperationType.STRING_COMPARE.value:
+            return run_string_compare(
+                kwargs.get("a"),
+                kwargs.get("b"),
+                op=str(kwargs.get("op") or "eq"),
+                case_sensitive=bool(kwargs.get("case_sensitive", False)),
+            )
+        if name == OperationType.NUMERIC_COMPARE.value:
+            return run_numeric_compare(
+                kwargs.get("a"), kwargs.get("b"), op=str(kwargs.get("op") or "ge")
+            )
+        if name == OperationType.DATE_RANGE.value:
+            return run_date_range(
+                kwargs.get("value"),
+                start=kwargs.get("start"),
+                end=kwargs.get("end"),
+                inclusive=bool(kwargs.get("inclusive", True)),
+            )
+        if name == OperationType.BOOLEAN_RULE.value:
+            outcome = run_boolean(
+                str(kwargs.get("expression") or ""),
+                variables=kwargs.get("variables"),
+            )
+            return OperationResult(
+                operation=OperationType.BOOLEAN_RULE.value,
+                status=outcome.status,
+                value=outcome.value,
+                explanation=outcome.explanation,
+                inputs=outcome.inputs,
+                error=outcome.error,
+            )
+        if name == OperationType.SET_RELATION.value:
+            return run_set_relation(
+                kwargs.get("a"),
+                kwargs.get("b"),
+                relation=str(kwargs.get("relation") or "subset"),
+            )
         if name == OperationType.POSITIONAL_MATCH.value:
             return run_positional_match(
                 kwargs.get("value"), kwargs.get("pattern"), kwargs.get("semantics")
@@ -675,11 +852,15 @@ __all__ = [
     "run_comparison",
     "run_date_arithmetic",
     "run_date_comparison",
+    "run_date_range",
     "run_enum_check",
     "run_formula",
+    "run_numeric_compare",
     "run_positional_match",
     "run_range_check",
     "run_set_membership",
+    "run_set_relation",
+    "run_string_compare",
     "run_string_equality",
     "run_unit_conversion",
 ]

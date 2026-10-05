@@ -150,6 +150,12 @@ class TestRegistry:
             "DATE_ARITHMETIC",
             "UNIT_CONVERSION",
             "FORMULA_EVALUATION",
+            # Extensión del Semantic Rule Compiler (query-time determinista):
+            "STRING_COMPARE",
+            "NUMERIC_COMPARE",
+            "DATE_RANGE",
+            "BOOLEAN_RULE",
+            "SET_RELATION",
         }
         assert set(registry.available()) == expected
 

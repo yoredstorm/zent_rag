@@ -385,6 +385,9 @@ class RetrievalContext:
     chunks: list[RetrievalChunk] = field(default_factory=list)
     query_embedding: list[float] | None = None
     retrieval_latency_ms: float = 0.0
+    #: Latencia por etapa del retrieval (vector/lexical/fusión/exact/pin/rerank).
+    #: Instrumentación honesta: un timeout puede decir qué etapa dominaba.
+    stage_ms: dict = field(default_factory=dict)
 
     @property
     def total_chars(self) -> int:

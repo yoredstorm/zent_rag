@@ -71,11 +71,19 @@ class HybridRetriever(Retriever):
 
     async def retrieve(self, query: RetrievalQuery) -> RetrievalContext:
         start = time.perf_counter()
+        stage_ms: dict[str, float] = {}
         classification = classify_query(query.query)
         normalized = normalize_query(query.query)
 
         # La pata exacta corre en paralelo: no penaliza latencia del resto.
-        exact_task = asyncio.ensure_future(self._retrieve_exact_leg(query))
+        async def _timed_exact() -> list[Any]:
+            exact_start = time.perf_counter()
+            try:
+                return await self._retrieve_exact_leg(query)
+            finally:
+                stage_ms["exact_ms"] = (time.perf_counter() - exact_start) * 1000
+
+        exact_task = asyncio.ensure_future(_timed_exact())
 
         # SOURCE ROUTING: PASS A limitado a las fuentes preferidas. El fallback
         # global ocurre sólo si PASS A no trajo nada (o lo decide el engine
@@ -91,14 +99,16 @@ class HybridRetriever(Retriever):
         context: RetrievalContext
         server_fused = False
         route_fallback = False
+        dispatch_start = time.perf_counter()
         try:
-            context, server_fused = await self._dispatch(pass_query, normalized)
+            context, server_fused = await self._dispatch(pass_query, normalized, timing=stage_ms)
             if preferred and not context.chunks:
-                context, server_fused = await self._dispatch(query, normalized)
+                context, server_fused = await self._dispatch(query, normalized, timing=stage_ms)
                 route_fallback = True
         except Exception:
             exact_task.cancel()
             raise
+        stage_ms["dispatch_ms"] = (time.perf_counter() - dispatch_start) * 1000
 
         chunks = dedupe_chunks(context.chunks)
         chunks = apply_doc_type_priority(chunks, query.doc_type_priority)
@@ -119,10 +129,15 @@ class HybridRetriever(Retriever):
         # Pin por entidad: lo que la pregunta nombra (byte 105, categoría 31,
         # record 4, tabla 961) tiene que estar. Va después del umbral para que
         # el umbral no lo descarte y antes del rerank para que el reranker lo vea.
+        pin_start = time.perf_counter()
         chunks = await self._pin_asked_entities(query, chunks)
+        stage_ms["entity_pin_ms"] = (time.perf_counter() - pin_start) * 1000
+        parent_start = time.perf_counter()
         chunks = await self._expand_pinned_parents(query, chunks)
+        stage_ms["parent_expansion_ms"] = (time.perf_counter() - parent_start) * 1000
 
         if self._reranker is not None and chunks:
+            rerank_start = time.perf_counter()
             try:
                 reranked = await self._reranker.rerank(
                     query=query.query,
@@ -137,10 +152,15 @@ class HybridRetriever(Retriever):
                     error=str(exc),
                     organization_id=str(query.organization_id),
                 )
+            finally:
+                stage_ms["rerank_ms"] = (time.perf_counter() - rerank_start) * 1000
 
+        context_start = time.perf_counter()
         chunks = self._builder.fit_budget(
             chunks, max_context_tokens=query.context_token_budget
         )
+        stage_ms["context_build_ms"] = (time.perf_counter() - context_start) * 1000
+        stage_ms["retrieval_total_ms"] = (time.perf_counter() - start) * 1000
         elapsed_ms = (time.perf_counter() - start) * 1000
         logger.info(
             "Hybrid retrieval completed",
@@ -156,19 +176,30 @@ class HybridRetriever(Retriever):
             chunks=chunks,
             query_embedding=query.query_embedding,
             retrieval_latency_ms=context.retrieval_latency_ms,
+            stage_ms=dict(stage_ms),
         )
 
     async def _dispatch(
         self,
         query: RetrievalQuery,
         normalized: str,
+        *,
+        timing: dict[str, float] | None = None,
     ) -> tuple[RetrievalContext, bool]:
         if query.strategy == STRATEGY_HYBRID:
-            return await self._retrieve_hybrid(query, normalized)
+            return await self._retrieve_hybrid(query, normalized, timing=timing)
         if query.strategy == STRATEGY_LEXICAL:
-            return await self._retrieve_lexical(query, normalized), False
+            started = time.perf_counter()
+            context = await self._retrieve_lexical(query, normalized)
+            if timing is not None:
+                timing["lexical_ms"] = (time.perf_counter() - started) * 1000
+            return context, False
         if query.strategy == STRATEGY_VECTOR:
-            return await self._vector.retrieve(query), False
+            started = time.perf_counter()
+            context = await self._vector.retrieve(query)
+            if timing is not None:
+                timing["vector_ms"] = (time.perf_counter() - started) * 1000
+            return context, False
         raise ValueError(f"Unknown retrieval strategy: {query.strategy}")
 
     async def _retrieve_exact_leg(self, query: RetrievalQuery) -> list[Any]:
@@ -643,6 +674,8 @@ class HybridRetriever(Retriever):
         self,
         query: RetrievalQuery,
         normalized: str,
+        *,
+        timing: dict[str, float] | None = None,
     ) -> tuple[RetrievalContext, bool]:
         """Retorna (contexto, fusion_server_side).
 
@@ -651,11 +684,25 @@ class HybridRetriever(Retriever):
         server-side (un solo round-trip) queda como fallback cuando no hay
         pata lexical local; sus scores son RRF y el umbral coseno se omite.
         """
+
+        async def _timed(coro, key: str):
+            started = time.perf_counter()
+            try:
+                return await coro
+            finally:
+                if timing is not None:
+                    timing[key] = (time.perf_counter() - started) * 1000
+
         if self._lexical is not None:
-            vector_task = asyncio.ensure_future(self._vector.retrieve(query))
-            lexical_task = asyncio.ensure_future(self._lexical.retrieve(query))
+            vector_task = asyncio.ensure_future(
+                _timed(self._vector.retrieve(query), "vector_ms")
+            )
+            lexical_task = asyncio.ensure_future(
+                _timed(self._lexical.retrieve(query), "lexical_ms")
+            )
             vector_ctx, lexical_ctx = await asyncio.gather(vector_task, lexical_task)
 
+            fusion_started = time.perf_counter()
             if query.fusion == FUSION_RRF:
                 fused = rrf_fusion([vector_ctx.chunks, lexical_ctx.chunks], k=query.rrf_k)
             else:
@@ -663,6 +710,10 @@ class HybridRetriever(Retriever):
                     [vector_ctx.chunks, lexical_ctx.chunks],
                     weights=[1.0 - query.lexical_weight, query.lexical_weight],
                 )
+            if timing is not None:
+                timing["hybrid_fusion_ms"] = (
+                    time.perf_counter() - fusion_started
+                ) * 1000
             return (
                 RetrievalContext(
                     chunks=fused,
@@ -675,6 +726,7 @@ class HybridRetriever(Retriever):
 
         # Sin pata lexical local: fusión server-side si el adaptador la soporta.
         if self._hybrid_store is not None and query.query_embedding is not None:
+            started = time.perf_counter()
             ctx = await self._hybrid_store.search_hybrid(
                 organization_id=query.organization_id,
                 query_text=normalized,
@@ -690,6 +742,12 @@ class HybridRetriever(Retriever):
                 workspace_id=query.workspace_id,
                 source_ids=query.source_ids or None,
             )
+            if timing is not None:
+                timing["hybrid_fusion_ms"] = (time.perf_counter() - started) * 1000
             return ctx, True
 
-        return await self._vector.retrieve(query), False
+        started = time.perf_counter()
+        ctx = await self._vector.retrieve(query)
+        if timing is not None:
+            timing["vector_ms"] = (time.perf_counter() - started) * 1000
+        return ctx, False

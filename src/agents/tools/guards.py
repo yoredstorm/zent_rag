@@ -133,9 +133,29 @@ async def execute_tool_guarded(
             result.latency_ms = (time.perf_counter() - start) * 1000
         return result
     except asyncio.TimeoutError:
+        stage_ms = dict(getattr(tool, "last_stage_ms", None) or {})
+        dominant_stage = ""
+        dominant_ms = 0.0
+        if stage_ms:
+            dominant_stage, dominant_ms = max(
+                stage_ms.items(), key=lambda item: float(item[1] or 0.0)
+            )
+        detail = (
+            f" (dominant stage: {dominant_stage} {dominant_ms:.0f}ms)"
+            if dominant_stage
+            else ""
+        )
         return ToolResult(
-            error=f"Tool '{tool.name}' timed out after {tool.timeout_seconds:.0f}s",
+            error=(
+                f"Tool '{tool.name}' timed out after "
+                f"{tool.timeout_seconds:.0f}s{detail}"
+            ),
             latency_ms=(time.perf_counter() - start) * 1000,
+            meta={
+                "stage_ms": stage_ms,
+                "dominant_stage": dominant_stage or None,
+                "timeout_seconds": float(tool.timeout_seconds),
+            },
         )
     except Exception as exc:
         logger.warning(

@@ -132,7 +132,12 @@ class Premise:
 
 @dataclass(kw_only=True)
 class DerivedClaim:
-    """Conclusión derivada: premisas + operación + resultado + verificación."""
+    """Conclusión derivada: premisas + operación + resultado + verificación.
+
+    ``deterministic=True`` significa: el resultado lo decidió código a partir
+    de una CanonicalRule verificada y premisas SATISFIED. El generador puede
+    explicarlo, nunca cambiarlo ni invertirlo.
+    """
 
     statement: str
     claim_type: str = GroundingCategory.DERIVED_CLAIM.value
@@ -146,6 +151,10 @@ class DerivedClaim:
     origin: str = ClaimOrigin.DERIVED.value
     missing_premises: tuple[str, ...] = ()
     verification_note: str = ""
+    canonical_rule_ids: tuple[str, ...] = ()
+    deterministic: bool = False
+    unresolved_requirements: tuple[str, ...] = ()
+    conflicts: tuple[str, ...] = ()
     version: str = GROUNDING_VERSION
 
     @property
@@ -167,6 +176,10 @@ class DerivedClaim:
             "verification_status": self.verification_status,
             "missing_premises": list(self.missing_premises[:8]),
             "verification_note": self.verification_note[:240],
+            "canonical_rule_ids": list(self.canonical_rule_ids[:8]),
+            "deterministic": bool(self.deterministic),
+            "unresolved_requirements": list(self.unresolved_requirements[:8]),
+            "conflicts": list(self.conflicts[:8]),
         }
 
 

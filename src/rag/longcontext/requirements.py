@@ -604,7 +604,7 @@ def _pattern_state(
         elif key == "literal_semantics":
             found = bool(semantics.literal)
         elif key == "length_semantics":
-            found = bool(semantics.length_sensitive or semantics.anchor_side)
+            found = bool(semantics.length_policy_known or semantics.anchor_side)
         else:
             found = False
         return RequirementState.FOUND.value if found else RequirementState.MISSING.value

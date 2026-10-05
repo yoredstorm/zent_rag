@@ -20,7 +20,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from enum import StrEnum
+from typing import TYPE_CHECKING
 from uuid import UUID
+
+if TYPE_CHECKING:  # type-only: evita ciclos de import en runtime
+    from src.knowledge.rule_compiler.model import CanonicalRule
 
 
 def normalize_term(value: str) -> str:
@@ -411,7 +415,12 @@ class RelationshipCandidate:
 
 @dataclass(kw_only=True)
 class RuleCandidate:
-    """Regla o restricción de negocio detectable en una fuente."""
+    """Regla o restricción de negocio detectable en una fuente.
+
+    ``semantics`` transporta la forma canónica compilada (propiedades con
+    evidencia propia, verificación y premisas faltantes). El candidato sigue
+    siendo una PROPUESTA; la ejecución determinista vive en CanonicalRule.
+    """
 
     subject: str
     statement: str
@@ -421,6 +430,11 @@ class RuleCandidate:
     confidence: float = 0.7
     temporal: TemporalScope = field(default_factory=TemporalScope)
     evidence: list[EvidenceRef] = field(default_factory=list)
+    rule_kind: str = ""
+    semantics: dict = field(default_factory=dict)
+    verification_state: str = ""
+    canonical_rule_id: str = ""
+    provenance: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -432,6 +446,11 @@ class RuleCandidate:
             "confidence": round(self.confidence, 4),
             "temporal": self.temporal.to_dict(),
             "evidence_count": len(self.evidence),
+            "rule_kind": self.rule_kind,
+            "verification_state": self.verification_state,
+            "canonical_rule_id": self.canonical_rule_id,
+            "semantics": dict(self.semantics),
+            "provenance_count": len(self.provenance),
         }
 
 
@@ -614,6 +633,7 @@ class CompilationResult:
     facts: list[FactCandidate] = field(default_factory=list)
     relationships: list[RelationshipCandidate] = field(default_factory=list)
     rules: list[RuleCandidate] = field(default_factory=list)
+    canonical_rules: list["CanonicalRule"] = field(default_factory=list)
     conflicts: list[ConflictCandidate] = field(default_factory=list)
     merges: list[EntityMerge] = field(default_factory=list)
     quality_issues: list[QualityIssue] = field(default_factory=list)
@@ -649,6 +669,10 @@ class CompilationResult:
                 "facts": len(self.facts),
                 "relationships": len(self.relationships),
                 "rules": len(self.rules),
+                "canonical_rules": len(self.canonical_rules),
+                "canonical_rules_executable": sum(
+                    1 for rule in self.canonical_rules if getattr(rule, "executable", False)
+                ),
                 "conflicts": len(self.conflicts),
                 "conflicts_displayable": len(self.displayable_conflicts),
                 "quality_issues": len(self.quality_issues),

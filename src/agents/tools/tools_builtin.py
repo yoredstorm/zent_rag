@@ -120,6 +120,9 @@ class SearchKnowledgeTool(Tool):
         self._retriever = retriever
         self._embedder = embedder
         self._tabular_query = tabular_query
+        # Etapas de la última ejecución: el guard de timeout las lee para decir
+        # qué etapa dominaba (no se arregla performance subiendo el timeout).
+        self.last_stage_ms: dict[str, float] = {}
         # Timeout configurable (antes heredaba 10s del contrato base). Se
         # instrumenta la latencia por etapa para calibrarlo con datos reales.
         try:
@@ -496,6 +499,7 @@ class SearchKnowledgeTool(Tool):
             stage_ms["query_embedding_ms"] = (
                 time.perf_counter() - embedding_start
             ) * 1000
+            self.last_stage_ms = dict(stage_ms)
             retrieval_start = time.perf_counter()
             chunks = []
             import dataclasses
@@ -543,6 +547,7 @@ class SearchKnowledgeTool(Tool):
                     _build_query(source_ids, preferred=True)
                 )
                 chunks = list(part.chunks)
+                stage_ms.update(getattr(part, "stage_ms", None) or {})
             elif kb_ids:
                 for kb_id in kb_ids:
                     part: RetrievalContext = await self._retriever.retrieve(
@@ -551,7 +556,9 @@ class SearchKnowledgeTool(Tool):
                         )
                     )
                     chunks.extend(part.chunks)
+                    stage_ms.update(getattr(part, "stage_ms", None) or {})
             stage_ms["retrieve_ms"] = (time.perf_counter() - retrieval_start) * 1000
+            self.last_stage_ms = dict(stage_ms)
 
             # PASS B — fallback global SOLO si la evidencia de regla/campo no
             # apareció en las fuentes preferidas. Source routing antes de top_k.
@@ -563,6 +570,7 @@ class SearchKnowledgeTool(Tool):
                         _build_query(source_ids, preferred=False)
                     )
                     chunks = self._merge_chunks(chunks, list(part.chunks))
+                    stage_ms.update(getattr(part, "stage_ms", None) or {})
                 elif kb_ids:
                     for kb_id in kb_ids:
                         part = await self._retriever.retrieve(
@@ -572,12 +580,15 @@ class SearchKnowledgeTool(Tool):
                             )
                         )
                         chunks = self._merge_chunks(chunks, list(part.chunks))
+                        stage_ms.update(getattr(part, "stage_ms", None) or {})
                 stage_ms["global_fallback_ms"] = (
                     time.perf_counter() - fallback_start
                 ) * 1000
             chunks = self._drop_off_category_sources(chunks, query_text, nombres)
             chunks = self._reserve_coverage_chunks(chunks, views)
             chunks = chunks[:top_k]
+            stage_ms["tool_total_ms"] = (time.perf_counter() - start) * 1000
+            self.last_stage_ms = dict(stage_ms)
             stage_ms["total_ms"] = (time.perf_counter() - start) * 1000
             self._observe_stages(ctx.tenant_id, stage_ms)
             logger.info(

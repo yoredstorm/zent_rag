@@ -96,6 +96,10 @@ def _with_status(claim: DerivedClaim, status: str, *, note: str) -> DerivedClaim
         origin=claim.origin,
         missing_premises=claim.missing_premises,
         verification_note=note,
+        canonical_rule_ids=claim.canonical_rule_ids,
+        deterministic=claim.deterministic,
+        unresolved_requirements=claim.unresolved_requirements,
+        conflicts=claim.conflicts,
     )
 
 
@@ -158,6 +162,9 @@ def claim_from_operation(
     confidence: float = 0.85,
     missing_premises: Iterable[str] = (),
     conflicts: Iterable[str] = (),
+    canonical_rule_ids: Iterable[str] = (),
+    deterministic: bool = False,
+    unresolved_requirements: Iterable[str] = (),
 ) -> DerivedClaim:
     """Compone un DerivedClaim a partir de una operación determinista."""
     claim = DerivedClaim(
@@ -170,6 +177,14 @@ def claim_from_operation(
         evidence_refs=tuple(dict.fromkeys(str(ref) for ref in evidence_refs if ref)),
         confidence=float(confidence),
         missing_premises=tuple(dict.fromkeys(str(item) for item in missing_premises if item)),
+        canonical_rule_ids=tuple(
+            dict.fromkeys(str(item) for item in canonical_rule_ids if item)
+        ),
+        deterministic=bool(deterministic),
+        unresolved_requirements=tuple(
+            dict.fromkeys(str(item) for item in unresolved_requirements if item)
+        ),
+        conflicts=tuple(dict.fromkeys(str(item) for item in conflicts if item)),
     )
     return verify_derived_claim(claim, contract, conflicts=tuple(conflicts))
 

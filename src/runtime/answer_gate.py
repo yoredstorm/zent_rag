@@ -80,6 +80,58 @@ RETRIEVAL_UNAVAILABLE_ANSWER = (
     "tu información ni de la pregunta. Reintentá en unos minutos."
 )
 
+#: Estados diferenciados de respuesta cuando no hay conclusión generable.
+ANSWER_STATE_RETRIEVAL_UNAVAILABLE = "RETRIEVAL_UNAVAILABLE"
+ANSWER_STATE_INSUFFICIENT = "INSUFFICIENT_EVIDENCE"
+ANSWER_STATE_CONFLICTING = "CONFLICTING_EVIDENCE"
+ANSWER_STATE_UNDETERMINED = "UNDETERMINED_RULE"
+ANSWER_STATE_DERIVED = "DERIVED_RESULT"
+
+CONFLICTING_EVIDENCE_ANSWER = (
+    "Las fuentes recuperadas se contradicen entre sí para esta pregunta, así "
+    "que no hay una única conclusión respaldada. No elijo una alternativa en "
+    "silencio: revisá las fuentes o resolvé el conflicto de conocimiento."
+)
+
+
+def undetermined_answer(missing_premises) -> str:
+    missing = [str(value) for value in (missing_premises or ()) if str(value or "").strip()]
+    detail = ", ".join(missing[:4]) if missing else "una premisa del dominio"
+    return (
+        f"No puedo determinarlo porque falta {detail}. "
+        "La fuente no establece esa semántica; no la completo por defecto."
+    )
+
+
+def resolve_answer_state(
+    *,
+    is_knowledge_question: bool,
+    retrieval_failed: bool = False,
+    retrieval_reason: str = "",
+    evidence_count: int = 0,
+    missing_premises=(),
+    conflicts=(),
+    has_deterministic_result: bool = False,
+) -> tuple[str, str]:
+    """Estado + mensaje cuando la respuesta no puede generarse con fundamento.
+
+    Distingue fallo OPERATIVO (no se pudo buscar) de ausencia de evidencia,
+    conflicto de fuentes y premisa faltante. Código decide; nunca el LLM.
+    """
+    if has_deterministic_result:
+        return ANSWER_STATE_DERIVED, ""
+    if not is_knowledge_question:
+        return "", ""
+    if retrieval_failed and int(evidence_count or 0) == 0:
+        return ANSWER_STATE_RETRIEVAL_UNAVAILABLE, retrieval_unavailable_answer(retrieval_reason)
+    if conflicts:
+        return ANSWER_STATE_CONFLICTING, CONFLICTING_EVIDENCE_ANSWER
+    if missing_premises:
+        return ANSWER_STATE_UNDETERMINED, undetermined_answer(missing_premises)
+    if int(evidence_count or 0) == 0:
+        return ANSWER_STATE_INSUFFICIENT, INSUFFICIENT_ANSWER
+    return "", ""
+
 
 def retrieval_unavailable_answer(reason: str = "") -> str:
     """Abstención honesta: fallo operativo, no ausencia de evidencia."""
@@ -703,7 +755,13 @@ async def judge_answer(
 
 
 __all__ = [
+    "ANSWER_STATE_CONFLICTING",
+    "ANSWER_STATE_DERIVED",
+    "ANSWER_STATE_INSUFFICIENT",
+    "ANSWER_STATE_RETRIEVAL_UNAVAILABLE",
+    "ANSWER_STATE_UNDETERMINED",
     "ANSWER_WEIGHTS",
+    "CONFLICTING_EVIDENCE_ANSWER",
     "CONTENT_REVISION_REASONS",
     "GROUNDING_PARTIAL",
     "GROUNDING_SUPPORTED",
@@ -725,4 +783,6 @@ __all__ = [
     "presentation_needs_revision",
     "revision_feedback",
     "revision_reason",
+    "resolve_answer_state",
+    "undetermined_answer",
 ]

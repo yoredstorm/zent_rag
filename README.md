@@ -74,7 +74,7 @@ El cliente conecta sus fuentes (SQL, PDF, CSV/Excel, web, APIs, S3, Google Drive
 | Migraciones | 134 versiones Alembic en [`src/infrastructure/db_init/versions/`](src/infrastructure/db_init/versions/) |
 | Tests | 296 módulos · 2.747 definiciones de test (incluye arquitectura, aislamiento, e2e) |
 | Módulos de plataforma | ~70 subpaquetes en [`src/platform/`](src/platform/) |
-| ADRs y guías | 30 documentos en [`docs/architecture/`](docs/architecture/) |
+| ADRs y guías | 31 documentos en [`docs/architecture/`](docs/architecture/) |
 | SDKs | Python `zent` `1.0.0` · Node `zent-node` `1.0.0` |
 | MCP | 5 tools en `/mcp` con RBAC, cuota y rate limit por tool |
 | Observabilidad | Prometheus + Loki + Promtail + Grafana + OpenTelemetry |
@@ -658,6 +658,7 @@ El plan canónico vive en [`docs/platform/ZENT_PLATFORM_ROADMAP.md`](docs/platfo
 | [`docs/architecture/answer-experience.md`](docs/architecture/answer-experience.md) | Experiencia de lectura, capas y límites materiales |
 | [`docs/architecture/evidence-first-gate.md`](docs/architecture/evidence-first-gate.md) | Evidencia de primera clase, suficiencia y política del gate |
 | [`docs/architecture/knowledge-os.md`](docs/architecture/knowledge-os.md) | **Knowledge OS**: pipeline canónico, identidad, multi-representación y leyes del compilador |
+| [`docs/architecture/semantic-rule-compiler.md`](docs/architecture/semantic-rule-compiler.md) | **Semantic Rule Compiler**: reglas documentales canónicas, verificación, provenance por propiedad y ejecución determinista |
 | [`docs/architecture/knowledge-cognitive-os.md`](docs/architecture/knowledge-cognitive-os.md) | Knowledge Operating System cognitivo (migraciones 102–108) |
 | [`docs/architecture/workflow-architect.md`](docs/architecture/workflow-architect.md) | Workflows: intención de negocio → grafo → aprobación |
 | [`docs/architecture/company-intelligence.md`](docs/architecture/company-intelligence.md) | Company Graph y descubrimiento empresarial |

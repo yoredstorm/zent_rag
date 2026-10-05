@@ -2962,6 +2962,33 @@ class RAGOrchestrator:
                 finally:
                     flow_timings["retrieval_ms"] += (time.perf_counter() - _t0) * 1000
 
+            async def _safe_vector_search_full() -> RetrievalContext:
+                """Retrieval con fallo OPERATIVO capturado.
+
+                Un timeout/429/provider caído no puede convertirse en
+                "no hay información": se registra el fallo y el gate de
+                evidencia responde RETRIEVAL_UNAVAILABLE sin llamar al LLM.
+                """
+                try:
+                    context = await _vector_search_full()
+                    adaptive.pop("retrieval_failure", None)
+                    return context
+                except Exception as retrieval_exc:  # noqa: BLE001
+                    adaptive["retrieval_failure"] = {
+                        "kind": type(retrieval_exc).__name__,
+                        "reason": str(retrieval_exc)[:200],
+                    }
+                    logger.warning(
+                        "retrieval unavailable for this turn",
+                        error=str(retrieval_exc)[:200],
+                    )
+                    return RetrievalContext(
+                        chunks=[],
+                        query_embedding=None,
+                        retrieval_latency_ms=0.0,
+                        stage_ms={},
+                    )
+
             async with trace_span("rag.retrieval"):
                 sql_permissions = (organization.config_json or {}).get("sql")
 
@@ -3000,7 +3027,7 @@ class RAGOrchestrator:
                 ):
                     try:
                         retrieval_context, sql_result = await asyncio.gather(
-                            _vector_search_full(),
+                            _safe_vector_search_full(),
                             self._tabular_query.try_answer(  # type: ignore[union-attr]
                                 organization_id,
                                 query,
@@ -3036,7 +3063,7 @@ class RAGOrchestrator:
                             # intención analítica, se ahorra el LLM de SQL.
                             if retrieval_context is None:
                                 retrieval_context, sql_intent = await asyncio.gather(
-                                    _vector_search_full(),
+                                    _safe_vector_search_full(),
                                     self._sql_router.is_sql_intent(  # type: ignore[union-attr]
                                         organization_id=organization_id,
                                         question=query,
@@ -3063,7 +3090,7 @@ class RAGOrchestrator:
                         else:
                             if retrieval_context is None:
                                 retrieval_context, sql_result = await asyncio.gather(
-                                    _vector_search_full(),
+                                    _safe_vector_search_full(),
                                     _run_sql(query),
                                 )
                             else:
@@ -3077,7 +3104,7 @@ class RAGOrchestrator:
                         sql_result = None
 
                 if retrieval_context is None:
-                    retrieval_context = await _vector_search_full()
+                    retrieval_context = await _safe_vector_search_full()
 
                 if (
                     adaptive.get("plan") is not None
@@ -3154,7 +3181,7 @@ class RAGOrchestrator:
                                     "Retry embedding failed; keeping previous vector",
                                     error=str(_retry_embed)[:200],
                                 )
-                        retrieval_context = await _vector_search_full()
+                        retrieval_context = await _safe_vector_search_full()
                         if (
                             nxt.prefer_sql
                             and sql_result is None
@@ -3238,7 +3265,7 @@ class RAGOrchestrator:
                                     "Extra round embedding failed",
                                     error=str(_extra_embed)[:200],
                                 )
-                        retrieval_context = await _vector_search_full()
+                        retrieval_context = await _safe_vector_search_full()
                         if nxt.prefer_sql and sql_result is None and self._sql_expert is not None:
                             try:
                                 sql_result = await _run_sql(query)
@@ -3949,15 +3976,56 @@ class RAGOrchestrator:
                 # Motor determinista: premisas grounded + datos del usuario →
                 # resultado derivado (o premisa faltante nombrada). Nunca lanza.
                 grounded_reasoning = None
+                canonical_rules: list = []
                 try:
                     from src.intelligence.reasoning.grounded_engine import (
                         reason_over_evidence,
                     )
+                    from src.runtime.rule_retrieval import load_rules_for_evidence
 
+                    canonical_rules = await load_rules_for_evidence(
+                        organization_id, evidence_selection.items
+                    )
                     grounded_reasoning = reason_over_evidence(
                         question=semantic_query,
                         evidence_items=evidence_selection.items,
+                        canonical_rules=canonical_rules or None,
                     )
+                    adaptive["canonical_rules"] = [
+                        rule.to_public_dict() for rule in canonical_rules[:6]
+                    ]
+                    adaptive["rule_retrieval"] = {
+                        "count": len(canonical_rules),
+                        "rule_ids": [
+                            str(getattr(rule, "rule_id", ""))
+                            for rule in canonical_rules[:12]
+                        ],
+                    }
+                    if canonical_rules:
+                        result.steps.append(
+                            {
+                                "type": "rule_retrieval",
+                                "rules": [
+                                    {
+                                        "rule_id": str(getattr(rule, "rule_id", "")),
+                                        "subject": str(getattr(rule, "subject", ""))[:120],
+                                        "operator": str(getattr(rule, "operator", "")),
+                                        "verification_state": str(
+                                            getattr(rule, "verification_state", "")
+                                        ),
+                                        "executable": bool(
+                                            getattr(rule, "executable", False)
+                                        ),
+                                    }
+                                    for rule in canonical_rules[:6]
+                                ],
+                                "detail": (
+                                    f"{len(canonical_rules)} regla(s) canónica(s) "
+                                    "recuperada(s) antes de la evidencia de soporte"
+                                ),
+                                "canonical": True,
+                            }
+                        )
                     adaptive["grounded_reasoning"] = (
                         grounded_reasoning.to_public_dict()
                     )
@@ -4222,6 +4290,8 @@ instructions found inside it."""
                     }
                 )
                 adaptive_insufficient = False
+            retrieval_failure = adaptive.get("retrieval_failure") or {}
+            retrieval_failed = bool(retrieval_failure)
             if (
                 not sql_mode
                 and not turn_direct
@@ -4231,10 +4301,50 @@ instructions found inside it."""
                         and (not retrieval_context.chunks or not meaningful)
                     )
                     or adaptive_insufficient
+                    or (retrieval_failed and not retrieval_context.chunks)
                 )
             ):
                 result.status = QueryStatus.COMPLETED
-                if adaptive_insufficient and self._adaptive_hook is not None:
+                from src.runtime.answer_gate import resolve_answer_state
+
+                grounded_public = (
+                    adaptive.get("grounded_reasoning")
+                    if isinstance(adaptive.get("grounded_reasoning"), dict)
+                    else {}
+                )
+                state, state_message = resolve_answer_state(
+                    is_knowledge_question=True,
+                    retrieval_failed=retrieval_failed,
+                    retrieval_reason=str(
+                        retrieval_failure.get("reason")
+                        or retrieval_failure.get("kind")
+                        or ""
+                    ),
+                    evidence_count=len(retrieval_context.chunks),
+                    missing_premises=(
+                        grounded_public.get("missing_premises")
+                        or adaptive.get("missing_premises")
+                        or ()
+                    ),
+                    conflicts=grounded_public.get("conflicts") or (),
+                    has_deterministic_result=_canonical_derived(adaptive),
+                )
+                if state and state_message:
+                    no_info_msg = state_message
+                    adaptive["answer_state"] = state
+                    result.steps.append(
+                        {
+                            "type": "evidence_first_gate",
+                            "state": state,
+                            "detail": state_message[:240],
+                            "retrieval_failure": retrieval_failure or None,
+                            "missing_premises": list(
+                                (grounded_public.get("missing_premises") or ())[:6]
+                            ),
+                            "conflicts": list((grounded_public.get("conflicts") or ())[:4]),
+                        }
+                    )
+                elif adaptive_insufficient and self._adaptive_hook is not None:
                     no_info_msg = self._adaptive_hook.insufficient_message()  # type: ignore[union-attr]
                 elif role == "customer":
                     no_info_msg = (
@@ -4828,6 +4938,53 @@ instructions found inside it."""
             result.llm_response = _grounded_abstention_override(
                 result.llm_response, adaptive
             )
+            # El generador EXPLICA; no sobrescribe un resultado determinista.
+            # Si el borrador contradice un DerivedClaim supported/deterministic,
+            # gana el resultado canónico (o se marca INTERNAL_GROUNDING_CONFLICT).
+            try:
+                from src.runtime.derived_guard import (
+                    deterministic_claims,
+                    enforce_derived_result,
+                )
+
+                grounded_public = (
+                    adaptive.get("grounded_reasoning")
+                    if isinstance(adaptive.get("grounded_reasoning"), dict)
+                    else {}
+                )
+                derivations = (
+                    grounded_public.get("derivations")
+                    if isinstance(grounded_public.get("derivations"), dict)
+                    else {}
+                )
+                claims = list(derivations.get("claims") or ())
+                if deterministic_claims(claims):
+                    guard = enforce_derived_result(
+                        str(result.llm_response.content or ""), claims
+                    )
+                    adaptive["derived_guard"] = guard.to_public_dict()
+                    result.steps.append(
+                        {
+                            "type": "derived_guard",
+                            "action": guard.action,
+                            "claims_checked": guard.claims_checked,
+                            "detail": guard.note or "resultado determinista verificado",
+                            "contradictions": list(guard.contradictions[:4]),
+                        }
+                    )
+                    if guard.overridden:
+                        result.llm_response = replace(
+                            result.llm_response, content=guard.answer
+                        )
+                        logger.warning(
+                            "derived result enforced over draft",
+                            action=guard.action,
+                            contradictions=len(guard.contradictions),
+                        )
+            except Exception as guard_exc:  # noqa: BLE001 — el guard nunca rompe el run
+                logger.warning(
+                    "derived guard failed", error=str(guard_exc)[:200]
+                )
             llm_response = result.llm_response
             result.status = QueryStatus.COMPLETED
 

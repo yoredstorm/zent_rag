@@ -2229,6 +2229,9 @@ class AgentRuntime:
         retrieval_rounds = 0
         revision_used = False
         pending_step_judgment = None
+        # Claims deterministas vistos por el gate: el texto final no puede
+        # contradecirlos (el generador explica; no decide resultados).
+        gate_derived_claims: list = []
         # Evidencia ya vista: repetir una búsqueda que no aporta nada nuevo quema
         # el presupuesto sin mejorar la respuesta (y puede dejarla vacía).
         retrieved_refs: set[str] = set()
@@ -2357,6 +2360,34 @@ class AgentRuntime:
                 logger.warning("disclaimer strip failed", error=str(exc)[:150])
             return limpio
 
+        def _apply_derived_guard(text: str) -> str:
+            """El texto final no puede contradecir un claim determinista."""
+            if not gate_derived_claims:
+                return text
+            try:
+                from src.runtime.derived_guard import enforce_derived_result
+
+                guard = enforce_derived_result(text, gate_derived_claims)
+                result.steps.append(
+                    {
+                        "type": "derived_guard",
+                        "action": guard.action,
+                        "claims_checked": guard.claims_checked,
+                        "detail": guard.note or "resultado determinista verificado",
+                        "contradictions": list(guard.contradictions[:4]),
+                    }
+                )
+                if guard.overridden:
+                    logger.warning(
+                        "derived result enforced over draft",
+                        action=guard.action,
+                        contradictions=len(guard.contradictions),
+                    )
+                    return guard.answer
+            except Exception as exc:  # noqa: BLE001 — el guard no rompe el run
+                logger.warning("derived guard failed", error=str(exc)[:150])
+            return text
+
         def _refresh_selection():
             """Recalcula la selección de evidencia del run (misma para todos)."""
             nonlocal selection, sufficiency
@@ -2445,13 +2476,48 @@ class AgentRuntime:
                     from src.intelligence.reasoning.grounded_engine import (
                         reason_over_evidence,
                     )
+                    from src.runtime.rule_retrieval import load_rules_for_evidence
 
+                    canonical_rules = await load_rules_for_evidence(
+                        request.agent.organization_id,
+                        list(active.items) if evidence_provided else [],
+                    )
                     grounded_reasoning = reason_over_evidence(
                         question=request.message,
                         evidence_items=(
                             list(active.items) if evidence_provided else []
                         ),
+                        canonical_rules=canonical_rules or None,
                     )
+                    if grounded_reasoning is not None:
+                        gate_derived_claims[:] = list(
+                            grounded_reasoning.derivations.claims
+                        )
+                        if canonical_rules:
+                            result.steps.append(
+                                {
+                                    "type": "rule_retrieval",
+                                    "rules": [
+                                        {
+                                            "rule_id": str(
+                                                getattr(rule, "rule_id", "")
+                                            ),
+                                            "verification_state": str(
+                                                getattr(rule, "verification_state", "")
+                                            ),
+                                            "executable": bool(
+                                                getattr(rule, "executable", False)
+                                            ),
+                                        }
+                                        for rule in canonical_rules[:6]
+                                    ],
+                                    "detail": (
+                                        f"{len(canonical_rules)} regla(s) canónica(s) "
+                                        "aplicada(s) al gate"
+                                    ),
+                                    "canonical": True,
+                                }
+                            )
                 except Exception:  # noqa: BLE001 — el motor nunca rompe el gate
                     grounded_reasoning = None
                 return await judge_answer(
@@ -2881,6 +2947,8 @@ class AgentRuntime:
                 # Higiene de presentación con los títulos del run: markdown sin
                 # escapes y bloque de fuentes legible (no cambia contenido).
                 direct = _polish_answer(direct)
+                # Resultado determinista > borrador: el generador explica.
+                direct = _apply_derived_guard(direct)
                 if (
                     knowledge_agent
                     and tool_calls == 0

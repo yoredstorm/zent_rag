@@ -123,6 +123,42 @@ def is_documentable_semantic_role(role: str) -> bool:
     return str(role or "") in DOCUMENTABLE_SEMANTIC_ROLES
 
 
+#: Categorías canónicas del contrato query-time (observabilidad y contratos).
+QUERY_ROLE_CATEGORIES: dict[str, str] = {
+    QuerySemanticRole.DOMAIN_ENTITY.value: "DOMAIN_CONCEPT",
+    QuerySemanticRole.RULE_REQUIREMENT.value: "DOCUMENTABLE_RULE",
+    QuerySemanticRole.SOURCE_REQUIREMENT.value: "DOCUMENTABLE_RULE",
+    QuerySemanticRole.FIELD_REQUIREMENT.value: "DOMAIN_CONCEPT",
+    QuerySemanticRole.DEFINITION_REQUIREMENT.value: "DOMAIN_CONCEPT",
+    QuerySemanticRole.REFERENCE.value: "DOMAIN_CONCEPT",
+    QuerySemanticRole.USER_INPUT.value: "RUNTIME_INPUT",
+    QuerySemanticRole.USER_EXAMPLE.value: "RUNTIME_INPUT",
+    QuerySemanticRole.RUNTIME_VALUE.value: "RUNTIME_INPUT",
+    QuerySemanticRole.RUNTIME_PARAMETER.value: "RUNTIME_INPUT",
+    QuerySemanticRole.RUNTIME_PATTERN.value: "RUNTIME_PATTERN",
+}
+
+_INTENT_CATEGORIES: dict[str, str] = {
+    "APPLY_RULE": "OPERATION_REQUEST",
+    "VALIDATE": "OPERATION_REQUEST",
+    "COMPARE": "OPERATION_REQUEST",
+    "CALCULATE": "OPERATION_REQUEST",
+    "TRANSFORM": "OPERATION_REQUEST",
+    "LOOKUP": "OPERATION_REQUEST",
+    "INFER": "OPERATION_REQUEST",
+}
+
+
+def role_category(role: str) -> str:
+    """Rol interno -> categoría canónica del contrato query-time."""
+    return QUERY_ROLE_CATEGORIES.get(str(role or ""), "")
+
+
+def intent_category(intent: str) -> str:
+    """Intención -> categoría canónica (pedido de operación/salida)."""
+    return _INTENT_CATEGORIES.get(str(intent or "").upper(), "")
+
+
 def is_runtime_semantic_role(role: str) -> bool:
     return str(role or "") in RUNTIME_ROLES
 

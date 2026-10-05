@@ -663,8 +663,7 @@ class PostgresCompilerStore:
             await session.close()
 
     # ------------------------------------------------------------------ reglas
-    async def upsert_rule(
-        self,
+    async def upsert_rule(        self,
         organization_id: UUID,
         rule: RuleCandidate,
         *,
@@ -741,6 +740,13 @@ class PostgresCompilerStore:
                                 "rule_key": rule.rule_key,
                                 "document_id": str(document_id) if document_id else None,
                                 "compiled_by": "knowledge_compiler",
+                                # Semantic Rule Compiler: la semántica verificada
+                                # viaja con el objeto canónico (sin migración).
+                                "rule_kind": getattr(rule, "rule_kind", "") or None,
+                                "verification_state": getattr(rule, "verification_state", "") or None,
+                                "canonical_rule_id": getattr(rule, "canonical_rule_id", "") or None,
+                                "semantics": getattr(rule, "semantics", None) or None,
+                                "rule_provenance": getattr(rule, "provenance", None) or None,
                             }
                         ),
                     },
@@ -1054,6 +1060,150 @@ class PostgresCompilerStore:
             await session.commit()
         except Exception as exc:  # noqa: BLE001
             logger.warning("Knowledge counters refresh failed", error=str(exc)[:200])
+        finally:
+            await session.close()
+
+    # ------------------------------------------------------- reglas al fabric
+    async def attach_rule_projection(
+        self,
+        organization_id: UUID,
+        projection: dict,
+        *,
+        workspace_id: UUID | None,
+        source_id: UUID | None,
+        document_id: UUID | None,
+    ) -> int:
+        """Proyecta CanonicalRule al Semantic Fabric (nodos/aristas).
+
+        Determinista e idempotente: los ids son uuid5 estables; se reemplazan
+        SOLO los nodos/aristas de la proyección (nunca los del fabric de
+        semantic windows). Sin evidencia no hay nodo.
+        """
+        nodes = list(projection.get("nodes") or ())
+        edges = list(projection.get("edges") or ())
+        if not nodes and not edges and document_id is None:
+            return 0
+        node_ids = [str(node.get("id")) for node in nodes if node.get("id")]
+        edge_ids = [str(edge.get("id")) for edge in edges if edge.get("id")]
+        session = await get_async_session()
+        try:
+            if organization_id is not None and document_id is not None:
+                for edge_id in edge_ids:
+                    await session.execute(
+                        text(
+                            "DELETE FROM knowledge_fabric_edges "
+                            "WHERE organization_id = :org AND id = :id"
+                        ),
+                        {"org": organization_id, "id": edge_id},
+                    )
+                for node_id in node_ids:
+                    await session.execute(
+                        text(
+                            "DELETE FROM knowledge_fabric_nodes "
+                            "WHERE organization_id = :org AND id = :id"
+                        ),
+                        {"org": organization_id, "id": node_id},
+                    )
+            inserted = 0
+            for node in nodes:
+                await session.execute(
+                    text(
+                        """
+                        INSERT INTO knowledge_fabric_nodes (
+                            id, organization_id, workspace_id, source_id,
+                            document_id, node_key, node_type, label, text,
+                            confidence, scope, unit_key, block_ids, windows,
+                            attributes, version, created_at, updated_at
+                        ) VALUES (
+                            :id, :organization_id, :workspace_id, :source_id,
+                            :document_id, :node_key, :node_type, :label, :text,
+                            :confidence, :scope, :unit_key,
+                            CAST(:block_ids AS jsonb), CAST(:windows AS jsonb),
+                            CAST(:attributes AS jsonb), :version, now(), now()
+                        )
+                        ON CONFLICT (id) DO UPDATE SET
+                            label = EXCLUDED.label,
+                            text = EXCLUDED.text,
+                            confidence = EXCLUDED.confidence,
+                            attributes = EXCLUDED.attributes,
+                            updated_at = now()
+                        """
+                    ),
+                    {
+                        "id": str(node.get("id")),
+                        "organization_id": str(organization_id),
+                        "workspace_id": str(workspace_id) if workspace_id else None,
+                        "source_id": str(source_id) if source_id else None,
+                        "document_id": str(document_id) if document_id else None,
+                        "node_key": str(node.get("node_key") or "")[:400],
+                        "node_type": str(node.get("node_type") or "")[:30],
+                        "label": str(node.get("label") or "")[:300],
+                        "text": str(node.get("text") or "")[:4000],
+                        "confidence": float(node.get("confidence") or 0.7),
+                        "scope": str(node.get("scope") or "document")[:30],
+                        "unit_key": str(node.get("unit_key") or "")[:300],
+                        "block_ids": _json(list(node.get("block_ids") or ())),
+                        "windows": _json(list(node.get("windows") or ())),
+                        "attributes": _json(dict(node.get("attributes") or {})),
+                        "version": str(node.get("version") or "")[:60],
+                    },
+                )
+                inserted += 1
+            for edge in edges:
+                await session.execute(
+                    text(
+                        """
+                        INSERT INTO knowledge_fabric_edges (
+                            id, organization_id, workspace_id, source_id,
+                            document_id, edge_key, relation_type, subject_id,
+                            object_id, subject_key, object_key, confidence,
+                            method, evidence, windows, attributes, version,
+                            created_at, updated_at
+                        ) VALUES (
+                            :id, :organization_id, :workspace_id, :source_id,
+                            :document_id, :edge_key, :relation_type, :subject_id,
+                            :object_id, :subject_key, :object_key, :confidence,
+                            :method, CAST(:evidence AS jsonb), CAST(:windows AS jsonb),
+                            CAST(:attributes AS jsonb), :version, now(), now()
+                        )
+                        ON CONFLICT (id) DO UPDATE SET
+                            confidence = EXCLUDED.confidence,
+                            evidence = EXCLUDED.evidence,
+                            attributes = EXCLUDED.attributes,
+                            updated_at = now()
+                        """
+                    ),
+                    {
+                        "id": str(edge.get("id")),
+                        "organization_id": str(organization_id),
+                        "workspace_id": str(workspace_id) if workspace_id else None,
+                        "source_id": str(source_id) if source_id else None,
+                        "document_id": str(document_id) if document_id else None,
+                        "edge_key": str(edge.get("edge_key") or "")[:800],
+                        "relation_type": str(edge.get("relation_type") or "")[:40],
+                        "subject_id": str(edge.get("subject_id")),
+                        "object_id": str(edge.get("object_id")),
+                        "subject_key": str(edge.get("subject_key") or "")[:400],
+                        "object_key": str(edge.get("object_key") or "")[:400],
+                        "confidence": float(edge.get("confidence") or 0.7),
+                        "method": str(edge.get("method") or "deterministic")[:40],
+                        "evidence": _json(list(edge.get("evidence") or ())),
+                        "windows": _json(list(edge.get("windows") or ())),
+                        "attributes": _json(dict(edge.get("attributes") or {})),
+                        "version": str(edge.get("version") or "")[:60],
+                    },
+                )
+                inserted += 1
+            await session.commit()
+            return inserted
+        except Exception as exc:  # noqa: BLE001 — el fabric nunca frena la compilación
+            await session.rollback()
+            logger.warning(
+                "Rule fabric projection failed",
+                document_id=str(document_id) if document_id else None,
+                error=str(exc)[:200],
+            )
+            return 0
         finally:
             await session.close()
 
