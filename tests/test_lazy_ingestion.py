@@ -24,6 +24,12 @@ from src.core.ports.sql_expert import SqlQueryResult
 from src.platform.usage.lazy_activity import lazy_log_cache_key, lazy_rows_cache_key
 
 NO_INFO_ADMIN = "No tengo suficiente información"
+#: Abstención canónica del evidence-first gate cuando no hay evidencia.
+NO_INFO_CANONICAL = "No hay evidencia suficiente"
+
+
+def _no_info(content: str) -> bool:
+    return NO_INFO_ADMIN in content or NO_INFO_CANONICAL in content
 
 
 class FakeCache:
@@ -342,7 +348,7 @@ async def test_lazy_disabled_keeps_anti_hallucination_message(
     )
 
     assert result.llm_response is not None
-    assert NO_INFO_ADMIN in result.llm_response.content
+    assert _no_info(result.llm_response.content)
     assert result.llm_response.model == "none"
     assert lazy.calls == []
     assert llm.calls == []
@@ -502,7 +508,7 @@ async def test_lazy_fallback_indexes_and_retries_vector_search(enable_lazy) -> N
     assert lazy.calls[0]["query"] == query
     assert llm.calls
     assert result.llm_response is not None
-    assert NO_INFO_ADMIN not in result.llm_response.content
+    assert not _no_info(result.llm_response.content)
     assert "Paracetamol" in result.llm_response.content
     assert result.retrieval_context is not None
     assert result.retrieval_context.chunks
@@ -550,7 +556,7 @@ async def test_lazy_no_candidates_falls_back_to_no_info(enable_lazy) -> None:
     assert lazy.calls
     assert llm.calls == []
     assert result.llm_response is not None
-    assert NO_INFO_ADMIN in result.llm_response.content
+    assert _no_info(result.llm_response.content)
     assert result.error_message is None
     assert result.lazy_ingested is False
 
@@ -584,7 +590,7 @@ async def test_lazy_timeout_returns_no_info_without_raising(enable_lazy, monkeyp
     assert result.status.value == "completed"
     assert result.error_message is None
     assert result.llm_response is not None
-    assert NO_INFO_ADMIN in result.llm_response.content
+    assert _no_info(result.llm_response.content)
     assert llm.calls == []
     assert result.lazy_ingested is False
 
@@ -614,7 +620,7 @@ async def test_lazy_exception_does_not_break_request(enable_lazy) -> None:
 
     assert result.error_message is None
     assert result.llm_response is not None
-    assert NO_INFO_ADMIN in result.llm_response.content
+    assert _no_info(result.llm_response.content)
     assert result.lazy_ingested is False
 
 
@@ -860,7 +866,7 @@ async def test_lazy_rate_limited_after_max_triggers(
     assert len(lazy.calls) == 1  # rate limited: no segundo trigger
     assert second.lazy_ingested is False
     assert second.llm_response is not None
-    assert NO_INFO_ADMIN in second.llm_response.content
+    assert _no_info(second.llm_response.content)
 
 
 # -----------------------------------------------------------------------------

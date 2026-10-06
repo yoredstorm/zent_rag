@@ -5113,6 +5113,17 @@ instructions found inside it."""
                             else None
                         ),
                     )
+                    # Pasos acumulados por gates/motores del run (rule_retrieval,
+                    # derived_guard, evidence_first_gate, ...) entran a la traza
+                    # canónica antes de la historia.
+                    if result.steps:
+                        result.flow = {
+                            **result.flow,
+                            "steps": [
+                                *(result.flow.get("steps") or []),
+                                *result.steps,
+                            ],
+                        }
                     # Execution Story: eventos canónicos + razonamiento
                     # observado cuando el flag está activo (shadow u on).
                     result.flow = await _attach_reasoning_story(

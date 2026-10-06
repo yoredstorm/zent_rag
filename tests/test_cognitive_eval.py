@@ -465,7 +465,14 @@ def _build_insufficient_evidence(organization: Organization) -> ScenarioEnv:
 def _assert_insufficient_evidence(env: ScenarioEnv, result: Any) -> None:
     cognitive = result.flow["cognitive"]
     assert result.llm_response is not None
-    assert "No tengo suficiente información" in result.llm_response.content
+    # Abstención canónica del evidence-first gate (mensaje de estado), no el
+    # genérico legacy.
+    from src.runtime.answer_gate import INSUFFICIENT_ANSWER
+
+    assert (
+        INSUFFICIENT_ANSWER in result.llm_response.content
+        or "No tengo suficiente información" in result.llm_response.content
+    )
     assert cognitive["evidence"]["count"] == 0
     assert cognitive["verification"]["action"] in {"revise", "abstain"}
     assert cognitive["verification"]["unsupported"] >= 1

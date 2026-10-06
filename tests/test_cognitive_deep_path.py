@@ -433,7 +433,12 @@ async def test_active_sin_stream_previo_emite_contenido_completo(monkeypatch) ->
         on_delta=_on_delta,
     )
     joined = "".join(deltas)
-    assert "No tengo suficiente información" in joined
+    # Abstención canónica del evidence-first gate (mensaje específico de estado),
+    # no el genérico legacy. El contenido debe llegar completo sin stream.
+    from src.runtime.answer_gate import INSUFFICIENT_ANSWER
+
+    assert joined.strip()
+    assert INSUFFICIENT_ANSWER in joined or "No tengo suficiente información" in joined
 
 
 class FakeErrorExecutor(FakeCognitiveExecutor):
