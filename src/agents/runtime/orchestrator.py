@@ -3720,6 +3720,12 @@ class RAGOrchestrator:
                         adaptive["grounded_reasoning_pre"] = (
                             grounded_pre.to_public_dict()
                         )
+                        # El motor ya leyó la evidencia: la traza lo publica
+                        # también cuando la decisión clásica abstiene antes del
+                        # pipeline canónico.
+                        adaptive.setdefault(
+                            "grounded_reasoning", grounded_pre.to_public_dict()
+                        )
                     decision = apply_grounded_reasoning(decision, grounded_pre)
                 except Exception as _ground_err:  # noqa: BLE001
                     logger.warning(

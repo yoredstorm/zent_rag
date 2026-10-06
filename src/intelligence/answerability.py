@@ -598,8 +598,11 @@ def answerability_from_grounding(
     )
     message = None
     if mapped == AnswerabilityStatus.UNANSWERABLE_MISSING_PREMISE:
+        grounded_message = str(public.get("abstention_message") or "").strip()
+        if grounded_message and not grounded_message.lower().startswith("no puedo"):
+            grounded_message = f"No puedo determinarlo porque {grounded_message}."
         message = (
-            str(public.get("abstention_message") or "").strip()
+            grounded_message
             or (
                 "No puedo determinarlo porque falta una premisa del dominio: "
                 + "; ".join(missing_premises[:4])
