@@ -3790,39 +3790,24 @@ class RAGOrchestrator:
                 # el motor determinista sobre la evidencia recuperada manda. Si
                 # deriva con premisas grounded, la decisión se corrige; si falta
                 # una premisa del dominio, la abstención nombra ESA premisa.
-                try:
-                    from src.intelligence.answerability import (
-                        apply_grounded_reasoning,
-                    )
-                    from src.intelligence.reasoning.grounded_engine import (
-                        reason_over_evidence,
-                    )
-                    from src.runtime.rule_retrieval import (
-                        retrieve_canonical_rules,
-                    )
+                # Fases con telemetría (misma cadena que el pipeline canónico):
+                # rule_retrieval queda visible aunque grounding falle.
+                from src.runtime.deterministic_authority import (
+                    prepare_derived_authority,
+                    requires_deterministic_decision,
+                )
 
-                    # RULE-FIRST: la regla se busca por la semántica de la query,
-                    # no solo por los ids que traiga el chunk recuperado.
-                    rule_retrieval_pre = await retrieve_canonical_rules(
-                        organization_id,
-                        semantic_query,
-                        evidence_items=list(retrieval_context.chunks),
-                    )
-                    pre_rules = (
-                        rule_retrieval_pre.supported_rules
-                        or rule_retrieval_pre.candidate_rules
-                    )
-                    grounded_pre = reason_over_evidence(
-                        question=semantic_query,
-                        evidence_items=list(retrieval_context.chunks),
-                        canonical_rules=pre_rules or None,
-                    )
-                    if isinstance(adaptive, dict):
+                prep_pre = await prepare_derived_authority(
+                    organization_id=organization_id,
+                    question=semantic_query,
+                    evidence_items=list(retrieval_context.chunks),
+                )
+                result.steps.extend(prep_pre.steps)
+                grounded_pre = prep_pre.grounded_reasoning
+                if isinstance(adaptive, dict):
+                    if grounded_pre is not None:
                         adaptive["grounded_reasoning_pre"] = (
                             grounded_pre.to_public_dict()
-                        )
-                        adaptive.setdefault(
-                            "rule_retrieval", rule_retrieval_pre.to_public_dict()
                         )
                         # El motor ya leyó la evidencia: la traza lo publica
                         # también cuando la decisión clásica abstiene antes del
@@ -3830,11 +3815,31 @@ class RAGOrchestrator:
                         adaptive.setdefault(
                             "grounded_reasoning", grounded_pre.to_public_dict()
                         )
-                    decision = apply_grounded_reasoning(decision, grounded_pre)
-                except Exception as _ground_err:  # noqa: BLE001
-                    logger.warning(
-                        "grounded pre-check failed", error=str(_ground_err)[:200]
+                    if prep_pre.rule_retrieval is not None:
+                        adaptive.setdefault(
+                            "rule_retrieval", prep_pre.rule_retrieval.to_public_dict()
+                        )
+                if grounded_pre is not None:
+                    from src.intelligence.answerability import (
+                        apply_grounded_reasoning,
                     )
+
+                    decision = apply_grounded_reasoning(decision, grounded_pre)
+                # Consulta ejecutable sin autoridad determinista: la abstención
+                # temprana no puede terminar en una conclusión binaria libre.
+                pre_failure: dict = {}
+                if (
+                    requires_deterministic_decision(semantic_query)
+                    and not prep_pre.has_authority
+                ):
+                    pre_state, pre_message = prep_pre.answer_state()
+                    pre_failure = {
+                        "state": pre_state,
+                        "message": pre_message,
+                        "error_stage": prep_pre.error_stage,
+                        "error_code": prep_pre.error_code,
+                    }
+                    adaptive["answer_state"] = pre_state
                 summaries = []
                 for evidence in intelligence_evidences:
                     row = {
@@ -3853,6 +3858,10 @@ class RAGOrchestrator:
                 if not decision.answerable:
                     abstention = self._intelligence.build_abstention(decision)  # type: ignore[union-attr]
                     msg = AbstentionBuilder.to_llm_response(abstention)
+                    if pre_failure:
+                        # Estado no concluyente de la cadena determinista manda
+                        # sobre el texto genérico de la decisión clásica.
+                        msg = str(pre_failure.get("message") or msg)
                     return await self._finish_intelligence_abstention(
                         result,
                         decision,
@@ -3864,6 +3873,7 @@ class RAGOrchestrator:
                         plan=intelligence_plan,
                         budget=intelligence_budget,
                         abstention_message=msg,
+                        answer_state_override=str(pre_failure.get("state") or ""),
                     )
 
             # Guardar pregunta del usuario en historial (ya persistida al inicio)
@@ -5745,6 +5755,7 @@ instructions found inside it."""
         plan=None,
         budget=None,
         abstention_message: str | None = None,
+        answer_state_override: str = "",
     ) -> RAGQueryResult:
         """Finaliza una consulta con abstención estructurada (gate o planner).
 
@@ -5771,7 +5782,7 @@ instructions found inside it."""
         # (inteligencia/planner) también lo publica; nunca queda silenciosa.
         try:
             decision_status = str(getattr(decision.status, "value", decision.status) or "")
-            answer_state = {
+            answer_state = answer_state_override or {
                 "UNANSWERABLE_MISSING_PREMISE": "UNDETERMINED_RULE",
                 "SOURCE_CONFLICT": "CONFLICTING_EVIDENCE",
                 "DATA_MISSING": "INSUFFICIENT_EVIDENCE",
