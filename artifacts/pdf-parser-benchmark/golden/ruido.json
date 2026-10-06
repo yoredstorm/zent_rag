@@ -1,0 +1,108 @@
+{
+  "anchor_terms": [
+    "incidentes",
+    "credenciales",
+    "seguridad",
+    "horas"
+  ],
+  "objects": [
+    {
+      "id": "rule-reporte-1",
+      "semantic_type": "rule",
+      "meaning": "reportar incidentes en 8 horas",
+      "pages": [
+        1
+      ],
+      "section": "1. Controles",
+      "equivalents": [
+        "reportar incidentes",
+        "8 horas"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-reporte-2",
+      "semantic_type": "rule",
+      "meaning": "reportar incidentes en 16 horas",
+      "pages": [
+        2
+      ],
+      "section": "2. Controles",
+      "equivalents": [
+        "reportar incidentes",
+        "16 horas"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-reporte-3",
+      "semantic_type": "rule",
+      "meaning": "reportar incidentes en 24 horas",
+      "pages": [
+        3
+      ],
+      "section": "3. Controles",
+      "equivalents": [
+        "reportar incidentes",
+        "24 horas"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-credenciales",
+      "semantic_type": "rule",
+      "meaning": "credenciales must not compartirse por correo",
+      "pages": [
+        1
+      ],
+      "section": "1. Controles",
+      "equivalents": [
+        "credenciales",
+        "must not compartirse",
+        "correo"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-reporte",
+      "kind": "lookup",
+      "question": "¿En qué plazo se reportan incidentes en la página 2?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "rule-reporte-2"
+      ],
+      "expected_answer_contains": [
+        "16 horas"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    }
+  ],
+  "document": "ruido",
+  "letter": "J",
+  "kind": "ruido",
+  "title": "Headers/footers repetidos",
+  "notes": "Chrome repetido en todas las páginas.",
+  "status": "ready",
+  "pages": 3
+}

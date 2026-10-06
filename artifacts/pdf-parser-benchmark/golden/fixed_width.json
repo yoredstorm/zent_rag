@@ -1,0 +1,138 @@
+{
+  "anchor_terms": [
+    "Exception Time",
+    "Penalty Amount",
+    "Fare Class Length",
+    "bytes"
+  ],
+  "objects": [
+    {
+      "id": "range-exception-time",
+      "semantic_type": "range",
+      "meaning": "Exception Time ocupa bytes 64-67",
+      "pages": [
+        1
+      ],
+      "section": "1. Estructura de posiciones",
+      "equivalents": [
+        "Exception Time",
+        "64-67"
+      ],
+      "properties": {
+        "field": "Exception Time",
+        "range": "64-67"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "len-fare-class",
+      "semantic_type": "length_policy",
+      "meaning": "Fare Class Length mínimo 2 bytes",
+      "pages": [
+        1
+      ],
+      "section": "1. Estructura de posiciones",
+      "equivalents": [
+        "Fare Class Length",
+        "longitud mínima",
+        "2 bytes"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [
+        "length.policy"
+      ],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-exception-time",
+      "semantic_type": "rule",
+      "meaning": "Exception Time must ocupar exactamente 4 bytes entre 64 y 67",
+      "pages": [
+        1
+      ],
+      "section": "1. Estructura de posiciones",
+      "equivalents": [
+        "Exception Time",
+        "exactamente 4 bytes",
+        "64",
+        "67"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": true,
+      "required_premises": [
+        "length.policy",
+        "range.value"
+      ],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-rechazo",
+      "semantic_type": "rule",
+      "meaning": "registro fuera de posiciones must rechazar el archivo",
+      "pages": [
+        2
+      ],
+      "section": "2. Reglas de validación",
+      "equivalents": [
+        "rechazar el archivo",
+        "posiciones",
+        "must"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [
+        "condition.present"
+      ],
+      "allowed_formulations": []
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-range",
+      "kind": "lookup",
+      "question": "¿En qué bytes está Exception Time?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "range-exception-time"
+      ],
+      "expected_answer_contains": [
+        "64",
+        "67"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-apply-length",
+      "kind": "apply_rule",
+      "question": "¿Exception Time cumple la longitud exacta?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "rule-exception-time"
+      ],
+      "expected_answer_contains": [
+        "4 bytes"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    }
+  ],
+  "document": "fixed_width",
+  "letter": "H",
+  "kind": "fixed_width",
+  "title": "Layout fixed-width",
+  "notes": "Posiciones Bytes NN-NN y políticas de longitud.",
+  "status": "ready",
+  "pages": 2
+}

@@ -1,0 +1,38 @@
+%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 9 0 R /F2 10 0 R >> >> >> endobj
+4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 9 0 R /F2 10 0 R >> >> >> endobj
+5 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 8 0 R /Resources << /Font << /F1 9 0 R /F2 10 0 R >> >> >> endobj
+6 0 obj << /Length 190 >> stream
+BT /F2 15 Tf 72 730 Td (Reglas de Procesamiento de Transacciones) Tj ET
+BT /F2 13 Tf 72 700 Td (1. L\355mites) Tj ET
+BT /F1 11 Tf 72 670 Td (El sistema must rechazar la transacci\363n) Tj ET
+endstream endobj
+7 0 obj << /Length 186 >> stream
+BT /F1 11 Tf 72 730 Td (si el monto excede el l\355mite configurado, y must registrar el evento.) Tj ET
+BT /F1 11 Tf 72 700 Td (l\355mite configurado - 10000 EUR por operaci\363n.) Tj ET
+endstream endobj
+8 0 obj << /Length 163 >> stream
+BT /F2 13 Tf 72 730 Td (2. Excepciones) Tj ET
+BT /F1 11 Tf 72 700 Td (Salvo que el cliente tenga autorizaci\363n previa, la regla de rechazo aplica siempre.) Tj ET
+endstream endobj
+9 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> endobj
+10 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >> endobj
+xref
+0 11
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000127 00000 n 
+0000000264 00000 n 
+0000000401 00000 n 
+0000000538 00000 n 
+0000000779 00000 n 
+0000001016 00000 n 
+0000001230 00000 n 
+0000001327 00000 n 
+trailer << /Size 11 /Root 1 0 R >>
+startxref
+1430
+%%EOF

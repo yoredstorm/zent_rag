@@ -25,6 +25,9 @@ Thumbs.db
 # Docker / local overrides
 docker-compose.override.yml
 
+# Tool state (screenshots OpenChamber, etc.)
+.openchamber/
+
 # Runtime tenant data (exports, reports, backups, DSR, agent migrations)
 # Root only — portal/src/pages/onboarding/data is source code and must be tracked
 /data/

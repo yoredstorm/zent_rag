@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<title>Visual debug — procedimiento</title></head>
+<body style="font-family:system-ui,sans-serif;margin:24px">
+<h1>Procedimiento de alta</h1>
+<p><strong>Golden objects:</strong> 4 ·
+<strong>KnowledgeDiff:</strong> <code>{&quot;ADDED_CORRECT&quot;: 0, &quot;ADDED_FALSE&quot;: 0, &quot;MISSING&quot;: 0, &quot;CHANGED&quot;: 0, &quot;MORE_COMPLETE&quot;: 0, &quot;LESS_COMPLETE&quot;: 0, &quot;PROVENANCE_IMPROVED&quot;: 1, &quot;PROVENANCE_REGRESSED&quot;: 0}</code></p>
+<h3>Página 1</h3><div style='display:flex;gap:12px'><svg viewBox="0 0 612.0 792.0" width="300" height="388" style="border:1px solid #ddd;background:#fff"><text x="8" y="16" font-size="12" fill="#111">A: pdfplumber</text><rect x="72.0" y="49.3" width="249.8" height="193.0" fill="none" stroke="#b45309" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="135.3" width="309.4" height="11.0" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="157.3" width="306.3" height="11.0" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="179.3" width="263.5" height="11.0" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="203.3" width="291.6" height="11.0" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="231.3" width="325.9" height="11.0" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/></svg><svg viewBox="0 0 612.0 792.0" width="300" height="388" style="border:1px solid #ddd;background:#fff"><text x="8" y="16" font-size="12" fill="#111">B: opendataloader</text><rect x="72.0" y="46.6" width="249.8" height="19.0" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="79.5" width="52.8" height="15.5" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="133.8" width="309.4" height="80.7" fill="none" stroke="#047857" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="229.8" width="325.9" height="12.7" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/></svg></div><h3>Página 2</h3><div style='display:flex;gap:12px'><svg viewBox="0 0 612.0 792.0" width="300" height="388" style="border:1px solid #ddd;background:#fff"><text x="8" y="16" font-size="12" fill="#111">A: pdfplumber</text><rect x="72.0" y="51.7" width="98.3" height="13.0" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="83.3" width="418.8" height="11.0" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/></svg><svg viewBox="0 0 612.0 792.0" width="300" height="388" style="border:1px solid #ddd;background:#fff"><text x="8" y="16" font-size="12" fill="#111">B: opendataloader</text><rect x="72.0" y="49.5" width="98.3" height="15.5" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="81.8" width="418.8" height="12.7" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/></svg></div>
+<div style="display:flex;gap:24px;flex-wrap:wrap">
+<div style="flex:1;min-width:360px"><h2>A: pdfplumber</h2>
+<h3>Bloques</h3><ul><li><code>table</code> p1 <span>Procedimiento de Alta de | Cliente
+ | 
+1. Pasos | 
+ | 
+1. Validar la identidad del cliente con | documento
+ | 
+2. Regist</span></li><li><code>paragraph</code> p1 <span>1. Validar la identidad del cliente con documento oficial vigente.</span></li><li><code>paragraph</code> p1 <span>2. Registrar al cliente en el sistema con el estado inicial nuevo.</span></li><li><code>paragraph</code> p1 <span>3. Notificar al área comercial en un plazo de 24 horas.</span></li><li><code>paragraph</code> p1 <span>El analista must not registrar clientes sin identidad validada.</span></li><li><code>paragraph</code> p1 <span>Estados permitidos del cliente: nuevo, activo, suspendido, cerrado.</span></li><li><code>heading</code> p2 <span>2. Escalamiento</span></li><li><code>paragraph</code> p2 <span>Si el cliente no completa la validación en 48 horas, el caso must escalar al supervisor.</span></li></ul>
+<h3>Unidades</h3><ul><li><code>SECTION</code> <span>Escalamiento
+
+Si el cliente no completa la validación en 48 horas, el caso must escalar al supervisor.</span></li><li><code>PARAGRAPH_GROUP</code> <span>Si el cliente no completa la validación en 48 horas, el caso must escalar al supervisor.</span></li></ul>
+<h3>Reglas canónicas</h3><ul><li><code>SUPPORTED</code> <span>El analista must not registrar clientes sin identidad validada.</span></li><li><code>SUPPORTED</code> <span>Si el cliente no completa la validación en 48 horas, el caso must escalar al supervisor.</span></li><li><code>SUPPORTED</code> <span>| 1. Pasos | | 1. Validar la identidad del cliente con | documento | 2. Registrar al cliente en el sistema con | el estado | 3. Notificar al área comercial en u</span></li></ul></div>
+<div style="flex:1;min-width:360px"><h2>B: opendataloader</h2>
+<h3>Bloques</h3><ul><li><code>heading</code> p1 <span>Procedimiento de Alta de Cliente</span></li><li><code>heading</code> p1 <span>1. Pasos</span></li><li><code>list</code> p1 <span>1. Validar la identidad del cliente con documento oficial vigente.
+2. Registrar al cliente en el sistema con el estado i</span></li><li><code>paragraph</code> p1 <span>Estados permitidos del cliente: nuevo, activo, suspendido, cerrado.</span></li><li><code>heading</code> p2 <span>2. Escalamiento</span></li><li><code>paragraph</code> p2 <span>Si el cliente no completa la validación en 48 horas, el caso must escalar al supervisor.</span></li></ul>
+<h3>Unidades</h3><ul><li><code>SECTION</code> <span>Procedimiento de Alta de Cliente</span></li><li><code>SECTION</code> <span>Pasos
+
+1. Pasos
+
+1. Validar la identidad del cliente con documento oficial vigente.
+2. Registrar al cliente en el sistema con el estado inic</span></li><li><code>LIST</code> <span>1. Pasos</span></li><li><code>LIST</code> <span>1. Validar la identidad del cliente con documento oficial vigente.
+2. Registrar al cliente en el sistema con el estado inicial nuevo.
+3. Not</span></li><li><code>PARAGRAPH_GROUP</code> <span>Estados permitidos del cliente: nuevo, activo, suspendido, cerrado.</span></li><li><code>SECTION</code> <span>Escalamiento
+
+Si el cliente no completa la validación en 48 horas, el caso must escalar al supervisor.</span></li><li><code>PARAGRAPH_GROUP</code> <span>Si el cliente no completa la validación en 48 horas, el caso must escalar al supervisor.</span></li></ul>
+<h3>Reglas canónicas</h3><ul><li><code>SUPPORTED</code> <span>1. Validar la identidad del cliente con documento oficial vigente. 2. Registrar al cliente en el sistema con el estado inicial nuevo. 3. Notificar al área comer</span></li><li><code>SUPPORTED</code> <span>Si el cliente no completa la validación en 48 horas, el caso must escalar al supervisor.</span></li></ul></div>
+</div>
+</body></html>

@@ -1,0 +1,1262 @@
+{
+  "anchor_terms": [
+    "PA",
+    "torque",
+    "Nm",
+    "módulo",
+    "margen de seguridad"
+  ],
+  "objects": [
+    {
+      "id": "def-pa1",
+      "semantic_type": "definition",
+      "meaning": "PA1 es el torque nominal del módulo 1",
+      "pages": [
+        1
+      ],
+      "section": "1. Especificaciones del módulo 1",
+      "equivalents": [
+        "PA1",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA1",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa1",
+      "semantic_type": "rule",
+      "meaning": "PA1 no debe exceder 10 Nm antes de arrancar",
+      "pages": [
+        1
+      ],
+      "section": "1. Especificaciones del módulo 1",
+      "equivalents": [
+        "PA1",
+        "10 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA1",
+        "limit": "10 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa2",
+      "semantic_type": "definition",
+      "meaning": "PA2 es el torque nominal del módulo 2",
+      "pages": [
+        2
+      ],
+      "section": "2. Especificaciones del módulo 2",
+      "equivalents": [
+        "PA2",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA2",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa2",
+      "semantic_type": "rule",
+      "meaning": "PA2 no debe exceder 20 Nm antes de arrancar",
+      "pages": [
+        2
+      ],
+      "section": "2. Especificaciones del módulo 2",
+      "equivalents": [
+        "PA2",
+        "20 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA2",
+        "limit": "20 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa3",
+      "semantic_type": "definition",
+      "meaning": "PA3 es el torque nominal del módulo 3",
+      "pages": [
+        3
+      ],
+      "section": "3. Especificaciones del módulo 3",
+      "equivalents": [
+        "PA3",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA3",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa3",
+      "semantic_type": "rule",
+      "meaning": "PA3 no debe exceder 30 Nm antes de arrancar",
+      "pages": [
+        3
+      ],
+      "section": "3. Especificaciones del módulo 3",
+      "equivalents": [
+        "PA3",
+        "30 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA3",
+        "limit": "30 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa4",
+      "semantic_type": "definition",
+      "meaning": "PA4 es el torque nominal del módulo 4",
+      "pages": [
+        4
+      ],
+      "section": "4. Especificaciones del módulo 4",
+      "equivalents": [
+        "PA4",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA4",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa4",
+      "semantic_type": "rule",
+      "meaning": "PA4 no debe exceder 40 Nm antes de arrancar",
+      "pages": [
+        4
+      ],
+      "section": "4. Especificaciones del módulo 4",
+      "equivalents": [
+        "PA4",
+        "40 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA4",
+        "limit": "40 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "table-m4",
+      "semantic_type": "table_mapping",
+      "meaning": "tabla de componentes del módulo 4",
+      "pages": [
+        4
+      ],
+      "section": "4. Especificaciones del módulo 4",
+      "equivalents": [
+        "T401",
+        "Componente del módulo 4",
+        "T402"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa5",
+      "semantic_type": "definition",
+      "meaning": "PA5 es el torque nominal del módulo 5",
+      "pages": [
+        5
+      ],
+      "section": "5. Especificaciones del módulo 5",
+      "equivalents": [
+        "PA5",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA5",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa5",
+      "semantic_type": "rule",
+      "meaning": "PA5 no debe exceder 50 Nm antes de arrancar",
+      "pages": [
+        5
+      ],
+      "section": "5. Especificaciones del módulo 5",
+      "equivalents": [
+        "PA5",
+        "50 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA5",
+        "limit": "50 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa6",
+      "semantic_type": "definition",
+      "meaning": "PA6 es el torque nominal del módulo 6",
+      "pages": [
+        6
+      ],
+      "section": "6. Especificaciones del módulo 6",
+      "equivalents": [
+        "PA6",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA6",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa6",
+      "semantic_type": "rule",
+      "meaning": "PA6 no debe exceder 60 Nm antes de arrancar",
+      "pages": [
+        6
+      ],
+      "section": "6. Especificaciones del módulo 6",
+      "equivalents": [
+        "PA6",
+        "60 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA6",
+        "limit": "60 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa7",
+      "semantic_type": "definition",
+      "meaning": "PA7 es el torque nominal del módulo 7",
+      "pages": [
+        7
+      ],
+      "section": "7. Especificaciones del módulo 7",
+      "equivalents": [
+        "PA7",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA7",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa7",
+      "semantic_type": "rule",
+      "meaning": "PA7 no debe exceder 70 Nm antes de arrancar",
+      "pages": [
+        7
+      ],
+      "section": "7. Especificaciones del módulo 7",
+      "equivalents": [
+        "PA7",
+        "70 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA7",
+        "limit": "70 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa8",
+      "semantic_type": "definition",
+      "meaning": "PA8 es el torque nominal del módulo 8",
+      "pages": [
+        8
+      ],
+      "section": "8. Especificaciones del módulo 8",
+      "equivalents": [
+        "PA8",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA8",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa8",
+      "semantic_type": "rule",
+      "meaning": "PA8 no debe exceder 80 Nm antes de arrancar",
+      "pages": [
+        8
+      ],
+      "section": "8. Especificaciones del módulo 8",
+      "equivalents": [
+        "PA8",
+        "80 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA8",
+        "limit": "80 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "table-m8",
+      "semantic_type": "table_mapping",
+      "meaning": "tabla de componentes del módulo 8",
+      "pages": [
+        8
+      ],
+      "section": "8. Especificaciones del módulo 8",
+      "equivalents": [
+        "T801",
+        "Componente del módulo 8",
+        "T802"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa9",
+      "semantic_type": "definition",
+      "meaning": "PA9 es el torque nominal del módulo 9",
+      "pages": [
+        9
+      ],
+      "section": "9. Especificaciones del módulo 9",
+      "equivalents": [
+        "PA9",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA9",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa9",
+      "semantic_type": "rule",
+      "meaning": "PA9 no debe exceder 90 Nm antes de arrancar",
+      "pages": [
+        9
+      ],
+      "section": "9. Especificaciones del módulo 9",
+      "equivalents": [
+        "PA9",
+        "90 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA9",
+        "limit": "90 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa10",
+      "semantic_type": "definition",
+      "meaning": "PA10 es el torque nominal del módulo 10",
+      "pages": [
+        10
+      ],
+      "section": "10. Especificaciones del módulo 10",
+      "equivalents": [
+        "PA10",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA10",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa10",
+      "semantic_type": "rule",
+      "meaning": "PA10 no debe exceder 100 Nm antes de arrancar",
+      "pages": [
+        10
+      ],
+      "section": "10. Especificaciones del módulo 10",
+      "equivalents": [
+        "PA10",
+        "100 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA10",
+        "limit": "100 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa11",
+      "semantic_type": "definition",
+      "meaning": "PA11 es el torque nominal del módulo 11",
+      "pages": [
+        11
+      ],
+      "section": "11. Especificaciones del módulo 11",
+      "equivalents": [
+        "PA11",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA11",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa11",
+      "semantic_type": "rule",
+      "meaning": "PA11 no debe exceder 110 Nm antes de arrancar",
+      "pages": [
+        11
+      ],
+      "section": "11. Especificaciones del módulo 11",
+      "equivalents": [
+        "PA11",
+        "110 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA11",
+        "limit": "110 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa12",
+      "semantic_type": "definition",
+      "meaning": "PA12 es el torque nominal del módulo 12",
+      "pages": [
+        12
+      ],
+      "section": "12. Especificaciones del módulo 12",
+      "equivalents": [
+        "PA12",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA12",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa12",
+      "semantic_type": "rule",
+      "meaning": "PA12 no debe exceder 120 Nm antes de arrancar",
+      "pages": [
+        12
+      ],
+      "section": "12. Especificaciones del módulo 12",
+      "equivalents": [
+        "PA12",
+        "120 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA12",
+        "limit": "120 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "table-m12",
+      "semantic_type": "table_mapping",
+      "meaning": "tabla de componentes del módulo 12",
+      "pages": [
+        12
+      ],
+      "section": "12. Especificaciones del módulo 12",
+      "equivalents": [
+        "T1201",
+        "Componente del módulo 12",
+        "T1202"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa13",
+      "semantic_type": "definition",
+      "meaning": "PA13 es el torque nominal del módulo 13",
+      "pages": [
+        13
+      ],
+      "section": "13. Especificaciones del módulo 13",
+      "equivalents": [
+        "PA13",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA13",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa13",
+      "semantic_type": "rule",
+      "meaning": "PA13 no debe exceder 130 Nm antes de arrancar",
+      "pages": [
+        13
+      ],
+      "section": "13. Especificaciones del módulo 13",
+      "equivalents": [
+        "PA13",
+        "130 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA13",
+        "limit": "130 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa14",
+      "semantic_type": "definition",
+      "meaning": "PA14 es el torque nominal del módulo 14",
+      "pages": [
+        14
+      ],
+      "section": "14. Especificaciones del módulo 14",
+      "equivalents": [
+        "PA14",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA14",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa14",
+      "semantic_type": "rule",
+      "meaning": "PA14 no debe exceder 140 Nm antes de arrancar",
+      "pages": [
+        14
+      ],
+      "section": "14. Especificaciones del módulo 14",
+      "equivalents": [
+        "PA14",
+        "140 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA14",
+        "limit": "140 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa15",
+      "semantic_type": "definition",
+      "meaning": "PA15 es el torque nominal del módulo 15",
+      "pages": [
+        15
+      ],
+      "section": "15. Especificaciones del módulo 15",
+      "equivalents": [
+        "PA15",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA15",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa15",
+      "semantic_type": "rule",
+      "meaning": "PA15 no debe exceder 150 Nm antes de arrancar",
+      "pages": [
+        15
+      ],
+      "section": "15. Especificaciones del módulo 15",
+      "equivalents": [
+        "PA15",
+        "150 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA15",
+        "limit": "150 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa16",
+      "semantic_type": "definition",
+      "meaning": "PA16 es el torque nominal del módulo 16",
+      "pages": [
+        16
+      ],
+      "section": "16. Especificaciones del módulo 16",
+      "equivalents": [
+        "PA16",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA16",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa16",
+      "semantic_type": "rule",
+      "meaning": "PA16 no debe exceder 160 Nm antes de arrancar",
+      "pages": [
+        16
+      ],
+      "section": "16. Especificaciones del módulo 16",
+      "equivalents": [
+        "PA16",
+        "160 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA16",
+        "limit": "160 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "table-m16",
+      "semantic_type": "table_mapping",
+      "meaning": "tabla de componentes del módulo 16",
+      "pages": [
+        16
+      ],
+      "section": "16. Especificaciones del módulo 16",
+      "equivalents": [
+        "T1601",
+        "Componente del módulo 16",
+        "T1602"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa17",
+      "semantic_type": "definition",
+      "meaning": "PA17 es el torque nominal del módulo 17",
+      "pages": [
+        17
+      ],
+      "section": "17. Especificaciones del módulo 17",
+      "equivalents": [
+        "PA17",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA17",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa17",
+      "semantic_type": "rule",
+      "meaning": "PA17 no debe exceder 170 Nm antes de arrancar",
+      "pages": [
+        17
+      ],
+      "section": "17. Especificaciones del módulo 17",
+      "equivalents": [
+        "PA17",
+        "170 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA17",
+        "limit": "170 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa18",
+      "semantic_type": "definition",
+      "meaning": "PA18 es el torque nominal del módulo 18",
+      "pages": [
+        18
+      ],
+      "section": "18. Especificaciones del módulo 18",
+      "equivalents": [
+        "PA18",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA18",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa18",
+      "semantic_type": "rule",
+      "meaning": "PA18 no debe exceder 180 Nm antes de arrancar",
+      "pages": [
+        18
+      ],
+      "section": "18. Especificaciones del módulo 18",
+      "equivalents": [
+        "PA18",
+        "180 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA18",
+        "limit": "180 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa19",
+      "semantic_type": "definition",
+      "meaning": "PA19 es el torque nominal del módulo 19",
+      "pages": [
+        19
+      ],
+      "section": "19. Especificaciones del módulo 19",
+      "equivalents": [
+        "PA19",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA19",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa19",
+      "semantic_type": "rule",
+      "meaning": "PA19 no debe exceder 190 Nm antes de arrancar",
+      "pages": [
+        19
+      ],
+      "section": "19. Especificaciones del módulo 19",
+      "equivalents": [
+        "PA19",
+        "190 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA19",
+        "limit": "190 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa20",
+      "semantic_type": "definition",
+      "meaning": "PA20 es el torque nominal del módulo 20",
+      "pages": [
+        20
+      ],
+      "section": "20. Especificaciones del módulo 20",
+      "equivalents": [
+        "PA20",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA20",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa20",
+      "semantic_type": "rule",
+      "meaning": "PA20 no debe exceder 200 Nm antes de arrancar",
+      "pages": [
+        20
+      ],
+      "section": "20. Especificaciones del módulo 20",
+      "equivalents": [
+        "PA20",
+        "200 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA20",
+        "limit": "200 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "table-m20",
+      "semantic_type": "table_mapping",
+      "meaning": "tabla de componentes del módulo 20",
+      "pages": [
+        20
+      ],
+      "section": "20. Especificaciones del módulo 20",
+      "equivalents": [
+        "T2001",
+        "Componente del módulo 20",
+        "T2002"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa21",
+      "semantic_type": "definition",
+      "meaning": "PA21 es el torque nominal del módulo 21",
+      "pages": [
+        21
+      ],
+      "section": "21. Especificaciones del módulo 21",
+      "equivalents": [
+        "PA21",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA21",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa21",
+      "semantic_type": "rule",
+      "meaning": "PA21 no debe exceder 210 Nm antes de arrancar",
+      "pages": [
+        21
+      ],
+      "section": "21. Especificaciones del módulo 21",
+      "equivalents": [
+        "PA21",
+        "210 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA21",
+        "limit": "210 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa22",
+      "semantic_type": "definition",
+      "meaning": "PA22 es el torque nominal del módulo 22",
+      "pages": [
+        22
+      ],
+      "section": "22. Especificaciones del módulo 22",
+      "equivalents": [
+        "PA22",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA22",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa22",
+      "semantic_type": "rule",
+      "meaning": "PA22 no debe exceder 220 Nm antes de arrancar",
+      "pages": [
+        22
+      ],
+      "section": "22. Especificaciones del módulo 22",
+      "equivalents": [
+        "PA22",
+        "220 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA22",
+        "limit": "220 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa23",
+      "semantic_type": "definition",
+      "meaning": "PA23 es el torque nominal del módulo 23",
+      "pages": [
+        23
+      ],
+      "section": "23. Especificaciones del módulo 23",
+      "equivalents": [
+        "PA23",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA23",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa23",
+      "semantic_type": "rule",
+      "meaning": "PA23 no debe exceder 230 Nm antes de arrancar",
+      "pages": [
+        23
+      ],
+      "section": "23. Especificaciones del módulo 23",
+      "equivalents": [
+        "PA23",
+        "230 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA23",
+        "limit": "230 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-pa24",
+      "semantic_type": "definition",
+      "meaning": "PA24 es el torque nominal del módulo 24",
+      "pages": [
+        24
+      ],
+      "section": "24. Especificaciones del módulo 24",
+      "equivalents": [
+        "PA24",
+        "torque nominal"
+      ],
+      "properties": {
+        "term": "PA24",
+        "value": "torque nominal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-pa24",
+      "semantic_type": "rule",
+      "meaning": "PA24 no debe exceder 240 Nm antes de arrancar",
+      "pages": [
+        24
+      ],
+      "section": "24. Especificaciones del módulo 24",
+      "equivalents": [
+        "PA24",
+        "240 Nm",
+        "must"
+      ],
+      "properties": {
+        "subject": "PA24",
+        "limit": "240 Nm"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "table-m24",
+      "semantic_type": "table_mapping",
+      "meaning": "tabla de componentes del módulo 24",
+      "pages": [
+        24
+      ],
+      "section": "24. Especificaciones del módulo 24",
+      "equivalents": [
+        "T2401",
+        "Componente del módulo 24",
+        "T2402"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-def-1",
+      "kind": "definition",
+      "question": "¿Qué es PA1?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "def-pa1"
+      ],
+      "expected_answer_contains": [
+        "torque nominal"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-rule-1",
+      "kind": "validation",
+      "question": "¿Qué límite tiene PA1?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "rule-pa1"
+      ],
+      "expected_answer_contains": [
+        "10 Nm"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-def-2",
+      "kind": "definition",
+      "question": "¿Qué es PA2?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "def-pa2"
+      ],
+      "expected_answer_contains": [
+        "torque nominal"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-rule-2",
+      "kind": "validation",
+      "question": "¿Qué límite tiene PA2?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "rule-pa2"
+      ],
+      "expected_answer_contains": [
+        "20 Nm"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-def-3",
+      "kind": "definition",
+      "question": "¿Qué es PA3?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "def-pa3"
+      ],
+      "expected_answer_contains": [
+        "torque nominal"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-rule-3",
+      "kind": "validation",
+      "question": "¿Qué límite tiene PA3?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "rule-pa3"
+      ],
+      "expected_answer_contains": [
+        "30 Nm"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    }
+  ],
+  "document": "manual_tecnico_grande",
+  "letter": "A",
+  "kind": "manual",
+  "title": "Manual técnico grande",
+  "notes": "Definiciones y reglas por página; escalable a cientos de páginas.",
+  "status": "ready",
+  "pages": 24
+}

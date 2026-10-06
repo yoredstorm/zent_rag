@@ -1,0 +1,116 @@
+{
+  "anchor_terms": [
+    "transacción",
+    "límite configurado",
+    "evento",
+    "autorización previa"
+  ],
+  "objects": [
+    {
+      "id": "cross-rule-rechazo",
+      "semantic_type": "cross_page_rule",
+      "meaning": "rechazar transacción si monto excede límite configurado y registrar evento",
+      "pages": [
+        1,
+        2
+      ],
+      "section": "1. Límites",
+      "equivalents": [
+        "rechazar la transacción",
+        "excede el límite configurado",
+        "registrar el evento"
+      ],
+      "properties": {
+        "subject": "transacción",
+        "threshold": "10000 EUR"
+      },
+      "relations": [],
+      "executable": true,
+      "required_premises": [
+        "condition.present"
+      ],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-limite",
+      "semantic_type": "definition",
+      "meaning": "límite configurado es 10000 EUR por operación",
+      "pages": [
+        2
+      ],
+      "section": "1. Límites",
+      "equivalents": [
+        "límite configurado",
+        "10000 EUR"
+      ],
+      "properties": {
+        "term": "límite configurado",
+        "value": "10000 EUR"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "exc-autorizacion",
+      "semantic_type": "exception",
+      "meaning": "autorización previa exceptúa la regla de rechazo",
+      "pages": [
+        3
+      ],
+      "section": "2. Excepciones",
+      "equivalents": [
+        "autorización previa",
+        "rechazo"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-distributed",
+      "kind": "distributed_rule",
+      "question": "¿Cuándo se rechaza una transacción y qué se registra?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "cross-rule-rechazo"
+      ],
+      "expected_answer_contains": [
+        "rechazar",
+        "registrar el evento"
+      ],
+      "executable": false,
+      "cross_page": true,
+      "answerable": true
+    },
+    {
+      "id": "q-limit",
+      "kind": "lookup",
+      "question": "¿Cuál es el límite configurado?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "def-limite"
+      ],
+      "expected_answer_contains": [
+        "10000 EUR"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    }
+  ],
+  "document": "distribuidas",
+  "letter": "I",
+  "kind": "distribuidas",
+  "title": "Reglas distribuidas entre páginas",
+  "notes": "Regla partida entre página 1 y 2.",
+  "status": "ready",
+  "pages": 3
+}

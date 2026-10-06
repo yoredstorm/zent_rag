@@ -1,0 +1,42 @@
+%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 9 0 R /F2 10 0 R >> >> >> endobj
+4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 9 0 R /F2 10 0 R >> >> >> endobj
+5 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 8 0 R /Resources << /Font << /F1 9 0 R /F2 10 0 R >> >> >> endobj
+6 0 obj << /Length 582 >> stream
+BT /F2 16 Tf 72 730 Td (Pol\355tica de Aprobaci\363n de Gastos) Tj ET
+BT /F2 13 Tf 72 700 Td (1. Reglas generales) Tj ET
+BT /F1 11 Tf 72 670 Td (El \341rea financiera must aprobar todo gasto superior a 5000 EUR.) Tj ET
+BT /F1 11 Tf 72 648 Td (Si el gasto supera el umbral de aprobaci\363n, se requiere firma del director.) Tj ET
+BT /F1 11 Tf 72 626 Td (Quedan exceptuados los gastos de n\363mina y los impuestos.) Tj ET
+BT /F1 11 Tf 72 604 Td (umbral de aprobaci\363n - 5000 EUR.) Tj ET
+BT /F1 11 Tf 72 582 Td (La pol\355tica de gastos references al procedimiento de compras.) Tj ET
+endstream endobj
+7 0 obj << /Length 148 >> stream
+BT /F2 13 Tf 72 730 Td (2. Responsabilidades) Tj ET
+BT /F1 11 Tf 72 700 Td (El director financiero must revisar la pol\355tica cada 12 meses.) Tj ET
+endstream endobj
+8 0 obj << /Length 129 >> stream
+BT /F2 13 Tf 72 730 Td (3. Excepciones) Tj ET
+BT /F1 11 Tf 72 700 Td (El comit\351 must autorizar excepciones por escrito.) Tj ET
+endstream endobj
+9 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> endobj
+10 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >> endobj
+xref
+0 11
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000127 00000 n 
+0000000264 00000 n 
+0000000401 00000 n 
+0000000538 00000 n 
+0000001171 00000 n 
+0000001370 00000 n 
+0000001550 00000 n 
+0000001647 00000 n 
+trailer << /Size 11 /Root 1 0 R >>
+startxref
+1750
+%%EOF

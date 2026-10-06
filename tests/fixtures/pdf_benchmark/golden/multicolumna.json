@@ -1,0 +1,172 @@
+{
+  "anchor_terms": [
+    "KPI-A",
+    "KPI-B",
+    "desviación",
+    "responsable",
+    "tablero"
+  ],
+  "objects": [
+    {
+      "id": "def-kpi-a",
+      "semantic_type": "definition",
+      "meaning": "KPI-A es el promedio de ventas diarias",
+      "pages": [
+        1
+      ],
+      "section": null,
+      "equivalents": [
+        "KPI-A",
+        "promedio de ventas diarias"
+      ],
+      "properties": {
+        "term": "KPI-A",
+        "value": "promedio de ventas diarias"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-kpi-b",
+      "semantic_type": "definition",
+      "meaning": "KPI-B es la tasa de conversión mensual",
+      "pages": [
+        1
+      ],
+      "section": null,
+      "equivalents": [
+        "KPI-B",
+        "tasa de conversión mensual"
+      ],
+      "properties": {
+        "term": "KPI-B",
+        "value": "tasa de conversión mensual"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-kpi-a",
+      "semantic_type": "rule",
+      "meaning": "el responsable revisa KPI-A cada semana",
+      "pages": [
+        1
+      ],
+      "section": null,
+      "equivalents": [
+        "responsable",
+        "KPI-A",
+        "cada semana"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-kpi-b",
+      "semantic_type": "rule",
+      "meaning": "el equipo publica KPI-B antes del día 5",
+      "pages": [
+        1
+      ],
+      "section": null,
+      "equivalents": [
+        "equipo",
+        "KPI-B",
+        "día 5"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-desviacion",
+      "semantic_type": "definition",
+      "meaning": "desviación es la diferencia entre KPI-A y su meta",
+      "pages": [
+        2
+      ],
+      "section": null,
+      "equivalents": [
+        "desviación",
+        "KPI-A",
+        "meta"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-desviacion",
+      "semantic_type": "rule",
+      "meaning": "desviación > 10% escala el caso",
+      "pages": [
+        2
+      ],
+      "section": null,
+      "equivalents": [
+        "desviación",
+        "10%",
+        "escalar"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [
+        "condition.present"
+      ],
+      "allowed_formulations": []
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-def-kpi-a",
+      "kind": "definition",
+      "question": "¿Qué es KPI-A?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "def-kpi-a"
+      ],
+      "expected_answer_contains": [
+        "promedio de ventas"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-rule-desviacion",
+      "kind": "validation",
+      "question": "¿Qué pasa si la desviación supera el 10%?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "rule-desviacion"
+      ],
+      "expected_answer_contains": [
+        "escalar"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    }
+  ],
+  "document": "multicolumna",
+  "letter": "F",
+  "kind": "multicolumna",
+  "title": "Documento multi-columna",
+  "notes": "Dos columnas con definiciones y reglas.",
+  "status": "ready",
+  "pages": 2
+}

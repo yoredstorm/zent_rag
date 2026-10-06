@@ -1,0 +1,52 @@
+%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 7 0 R /F2 8 0 R >> >> >> endobj
+4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 7 0 R /F2 8 0 R >> >> >> endobj
+5 0 obj << /Length 1353 >> stream
+BT /F2 14 Tf 72 730 Td (DATA APPLICATION FOR RECORD 2 - CATEGORY CONTROL) Tj ET
+BT /F2 12 Tf 72 705 Td (Fare Family Match using Exclamation Point \(!\) or Ampersand \(&\)) Tj ET
+BT /F1 11 Tf 72 678 Td (The ! or & indicate a match to any alphanumeric character in that position of the fare class.) Tj ET
+BT /F1 11 Tf 72 656 Td (When using special characters ! or &, a fare class must contain at least the number of characters) Tj ET
+BT /F1 11 Tf 72 644 Td (referenced in the fare class field \(additional characters may follow\).) Tj ET
+BT /F1 11 Tf 72 616 Td (An & can be used to indicate a number or alpha in a specific position of the fare class.) Tj ET
+1.0 w 72 580.0 m 562.0 580.0 l S
+1.0 w 72 562.0 m 562.0 562.0 l S
+1.0 w 72 544.0 m 562.0 544.0 l S
+1.0 w 72 526.0 m 562.0 526.0 l S
+1.0 w 72 580 m 72 526.0 l S
+1.0 w 222.0 580 m 222.0 526.0 l S
+1.0 w 442.0 580 m 442.0 526.0 l S
+1.0 w 562.0 580 m 562.0 526.0 l S
+BT /F2 9.0 Tf 76.0 567.0 Td (Example) Tj ET
+BT /F2 9.0 Tf 226.0 567.0 Td (Pattern) Tj ET
+BT /F2 9.0 Tf 446.0 567.0 Td (Valid matches) Tj ET
+BT /F1 9.0 Tf 76.0 549.0 Td (Example 2) Tj ET
+BT /F1 9.0 Tf 226.0 549.0 Td (&&TEST) Tj ET
+BT /F1 9.0 Tf 446.0 549.0 Td (ABTEST, A1TEST, A1TESTA) Tj ET
+BT /F1 9.0 Tf 76.0 531.0 Td (Example 3) Tj ET
+BT /F1 9.0 Tf 226.0 531.0 Td (W&2M) Tj ET
+BT /F1 9.0 Tf 446.0 531.0 Td (WB2M, WC2M, WB2MXRT) Tj ET
+endstream endobj
+6 0 obj << /Length 296 >> stream
+BT /F2 13 Tf 72 730 Td (Positional rules) Tj ET
+BT /F1 11 Tf 72 700 Td (W&&2M cannot be used to match WA2M or W2M due to minimal fare class length being five characters.) Tj ET
+BT /F1 11 Tf 72 678 Td (The matched fare classes are at least six characters for patterns with three ampersands.) Tj ET
+endstream endobj
+7 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> endobj
+8 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >> endobj
+xref
+0 9
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000121 00000 n 
+0000000257 00000 n 
+0000000393 00000 n 
+0000001798 00000 n 
+0000002145 00000 n 
+0000002242 00000 n 
+trailer << /Size 9 /Root 1 0 R >>
+startxref
+2344
+%%EOF

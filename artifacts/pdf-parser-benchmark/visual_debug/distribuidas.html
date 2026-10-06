@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<title>Visual debug — distribuidas</title></head>
+<body style="font-family:system-ui,sans-serif;margin:24px">
+<h1>Reglas distribuidas entre páginas</h1>
+<p><strong>Golden objects:</strong> 3 ·
+<strong>KnowledgeDiff:</strong> <code>{&quot;ADDED_CORRECT&quot;: 0, &quot;ADDED_FALSE&quot;: 4, &quot;MISSING&quot;: 0, &quot;CHANGED&quot;: 0, &quot;MORE_COMPLETE&quot;: 0, &quot;LESS_COMPLETE&quot;: 0, &quot;PROVENANCE_IMPROVED&quot;: 0, &quot;PROVENANCE_REGRESSED&quot;: 0}</code></p>
+<h3>Página 1</h3><div style='display:flex;gap:12px'><svg viewBox="0 0 612.0 792.0" width="300" height="388" style="border:1px solid #ddd;background:#fff"><text x="8" y="16" font-size="12" fill="#111">A: pdfplumber</text><rect x="72.0" y="50.1" width="49.2" height="74.2" fill="none" stroke="#b45309" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="50.1" width="313.5" height="15.0" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="81.7" width="60.0" height="13.0" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="113.3" width="194.4" height="11.0" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/></svg><svg viewBox="0 0 612.0 792.0" width="300" height="388" style="border:1px solid #ddd;background:#fff"><text x="8" y="16" font-size="12" fill="#111">B: opendataloader</text><rect x="72.0" y="47.6" width="313.5" height="17.8" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="79.5" width="60.0" height="15.5" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="111.8" width="194.4" height="12.7" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/></svg></div><h3>Página 2</h3><div style='display:flex;gap:12px'><svg viewBox="0 0 612.0 792.0" width="300" height="388" style="border:1px solid #ddd;background:#fff"><text x="8" y="16" font-size="12" fill="#111">A: pdfplumber</text><rect x="72.0" y="53.3" width="325.9" height="11.0" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="83.3" width="226.8" height="11.0" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/></svg><svg viewBox="0 0 612.0 792.0" width="300" height="388" style="border:1px solid #ddd;background:#fff"><text x="8" y="16" font-size="12" fill="#111">B: opendataloader</text><rect x="72.0" y="51.8" width="325.9" height="12.7" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="81.8" width="226.8" height="12.7" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/></svg></div><h3>Página 3</h3><div style='display:flex;gap:12px'><svg viewBox="0 0 612.0 792.0" width="300" height="388" style="border:1px solid #ddd;background:#fff"><text x="8" y="16" font-size="12" fill="#111">A: pdfplumber</text><rect x="72.0" y="51.7" width="93.9" height="13.0" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="83.3" width="398.0" height="11.0" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/></svg><svg viewBox="0 0 612.0 792.0" width="300" height="388" style="border:1px solid #ddd;background:#fff"><text x="8" y="16" font-size="12" fill="#111">B: opendataloader</text><rect x="72.0" y="49.5" width="93.9" height="15.5" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="81.8" width="398.0" height="12.7" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/></svg></div>
+<div style="display:flex;gap:24px;flex-wrap:wrap">
+<div style="flex:1;min-width:360px"><h2>A: pdfplumber</h2>
+<h3>Bloques</h3><ul><li><code>table</code> p1 <span>Reglas
+1. Límites
+El sistema</span></li><li><code>heading</code> p1 <span>Reglas de Procesamiento de Transacciones</span></li><li><code>heading</code> p1 <span>1. Límites</span></li><li><code>paragraph</code> p1 <span>El sistema must rechazar la transacción</span></li><li><code>paragraph</code> p2 <span>si el monto excede el límite configurado, y must registrar el evento.</span></li><li><code>paragraph</code> p2 <span>límite configurado - 10000 EUR por operación.</span></li><li><code>heading</code> p3 <span>2. Excepciones</span></li><li><code>paragraph</code> p3 <span>Salvo que el cliente tenga autorización previa, la regla de rechazo aplica siempre.</span></li></ul>
+<h3>Unidades</h3><ul><li><code>SECTION</code> <span>Reglas de Procesamiento de Transacciones</span></li><li><code>SECTION</code> <span>Límites
+
+El sistema must rechazar la transacción
+si el monto excede el límite configurado, y must registrar el evento.
+límite configurado - </span></li><li><code>PARAGRAPH_GROUP</code> <span>El sistema must rechazar la transacción
+si el monto excede el límite configurado, y must registrar el evento.
+límite configurado - 10000 EUR</span></li><li><code>SECTION</code> <span>Excepciones
+
+Salvo que el cliente tenga autorización previa, la regla de rechazo aplica siempre.</span></li><li><code>PARAGRAPH_GROUP</code> <span>Salvo que el cliente tenga autorización previa, la regla de rechazo aplica siempre.</span></li></ul>
+<h3>Reglas canónicas</h3><ul><li><code>SUPPORTED</code> <span>El sistema must rechazar la transacción</span></li><li><code>SUPPORTED</code> <span>si el monto excede el límite configurado, y must registrar el evento.</span></li></ul></div>
+<div style="flex:1;min-width:360px"><h2>B: opendataloader</h2>
+<h3>Bloques</h3><ul><li><code>heading</code> p1 <span>Reglas de Procesamiento de Transacciones</span></li><li><code>heading</code> p1 <span>1. Límites</span></li><li><code>paragraph</code> p1 <span>El sistema must rechazar la transacción</span></li><li><code>paragraph</code> p2 <span>si el monto excede el límite configurado, y must registrar el evento.</span></li><li><code>paragraph</code> p2 <span>límite configurado - 10000 EUR por operación.</span></li><li><code>heading</code> p3 <span>2. Excepciones</span></li><li><code>paragraph</code> p3 <span>Salvo que el cliente tenga autorización previa, la regla de rechazo aplica siempre.</span></li></ul>
+<h3>Unidades</h3><ul><li><code>SECTION</code> <span>Reglas de Procesamiento de Transacciones</span></li><li><code>SECTION</code> <span>Límites
+
+El sistema must rechazar la transacción
+si el monto excede el límite configurado, y must registrar el evento.
+límite configurado - </span></li><li><code>PARAGRAPH_GROUP</code> <span>El sistema must rechazar la transacción
+si el monto excede el límite configurado, y must registrar el evento.
+límite configurado - 10000 EUR</span></li><li><code>SECTION</code> <span>Excepciones
+
+Salvo que el cliente tenga autorización previa, la regla de rechazo aplica siempre.</span></li><li><code>PARAGRAPH_GROUP</code> <span>Salvo que el cliente tenga autorización previa, la regla de rechazo aplica siempre.</span></li></ul>
+<h3>Reglas canónicas</h3><ul><li><code>SUPPORTED</code> <span>El sistema must rechazar la transacción</span></li><li><code>SUPPORTED</code> <span>si el monto excede el límite configurado, y must registrar el evento.</span></li></ul></div>
+</div>
+</body></html>

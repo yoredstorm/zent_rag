@@ -1,0 +1,111 @@
+{
+  "anchor_terms": [
+    "entidad",
+    "registro",
+    "sanción",
+    "31/12/2026"
+  ],
+  "objects": [
+    {
+      "id": "def-entidad",
+      "semantic_type": "definition",
+      "meaning": "entidad es persona jurídica o sucursal",
+      "pages": [
+        1
+      ],
+      "section": "3. Registro de entidades",
+      "equivalents": [
+        "entidad",
+        "persona jurídica",
+        "sucursal"
+      ],
+      "properties": {
+        "term": "entidad",
+        "value": "persona jurídica o sucursal"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-registro",
+      "semantic_type": "rule",
+      "meaning": "toda entidad must registrarse antes del 31/12/2026",
+      "pages": [
+        1
+      ],
+      "section": "3. Registro de entidades",
+      "equivalents": [
+        "entidad",
+        "registrarse",
+        "31/12/2026"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-sancion",
+      "semantic_type": "rule",
+      "meaning": "el incumplimiento must not quedar sin sanción",
+      "pages": [
+        1
+      ],
+      "section": "3. Registro de entidades",
+      "equivalents": [
+        "incumplimiento",
+        "sanción",
+        "must not"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-def-entidad",
+      "kind": "definition",
+      "question": "¿Qué es una entidad?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "def-entidad"
+      ],
+      "expected_answer_contains": [
+        "persona jurídica"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-plazo",
+      "kind": "lookup",
+      "question": "¿Cuál es el plazo de registro?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "rule-registro"
+      ],
+      "expected_answer_contains": [
+        "31/12/2026"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    }
+  ],
+  "document": "tagged",
+  "letter": "G",
+  "kind": "tagged",
+  "title": "PDF tagged",
+  "notes": "StructTreeRoot + ParentTree con MCIDs.",
+  "status": "ready",
+  "pages": 1
+}

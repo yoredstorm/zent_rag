@@ -1,0 +1,12 @@
+{
+  "anchor_terms": [],
+  "objects": [],
+  "queries": [],
+  "document": "escaneado",
+  "letter": "K",
+  "kind": "escaneado",
+  "title": "PDF escaneado",
+  "notes": "Pendiente: requiere hybrid/OCR. No se simula.",
+  "status": "pending_hybrid",
+  "pages": 1
+}

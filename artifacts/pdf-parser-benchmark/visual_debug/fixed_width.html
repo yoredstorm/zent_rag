@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<title>Visual debug — fixed_width</title></head>
+<body style="font-family:system-ui,sans-serif;margin:24px">
+<h1>Layout fixed-width</h1>
+<p><strong>Golden objects:</strong> 4 ·
+<strong>KnowledgeDiff:</strong> <code>{&quot;ADDED_CORRECT&quot;: 0, &quot;ADDED_FALSE&quot;: 0, &quot;MISSING&quot;: 1, &quot;CHANGED&quot;: 0, &quot;MORE_COMPLETE&quot;: 0, &quot;LESS_COMPLETE&quot;: 0, &quot;PROVENANCE_IMPROVED&quot;: 0, &quot;PROVENANCE_REGRESSED&quot;: 0}</code></p>
+<h3>Página 1</h3><div style='display:flex;gap:12px'><svg viewBox="0 0 612.0 792.0" width="300" height="388" style="border:1px solid #ddd;background:#fff"><text x="8" y="16" font-size="12" fill="#111">A: pdfplumber</text><rect x="72.0" y="50.1" width="105.0" height="196.2" fill="none" stroke="#b45309" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="50.1" width="259.2" height="15.0" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="81.7" width="169.8" height="13.0" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="113.3" width="154.1" height="71.0" fill="none" stroke="#b45309" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="213.3" width="435.3" height="11.0" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="235.3" width="352.8" height="11.0" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/></svg><svg viewBox="0 0 612.0 792.0" width="300" height="388" style="border:1px solid #ddd;background:#fff"><text x="8" y="16" font-size="12" fill="#111">B: opendataloader</text><rect x="72.0" y="47.6" width="259.2" height="17.8" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="79.5" width="169.8" height="15.5" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="111.8" width="154.1" height="72.7" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="211.8" width="435.3" height="34.7" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/></svg></div><h3>Página 2</h3><div style='display:flex;gap:12px'><svg viewBox="0 0 612.0 792.0" width="300" height="388" style="border:1px solid #ddd;background:#fff"><text x="8" y="16" font-size="12" fill="#111">A: pdfplumber</text><rect x="72.0" y="51.7" width="143.1" height="13.0" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="83.3" width="369.9" height="11.0" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/></svg><svg viewBox="0 0 612.0 792.0" width="300" height="388" style="border:1px solid #ddd;background:#fff"><text x="8" y="16" font-size="12" fill="#111">B: opendataloader</text><rect x="72.0" y="49.5" width="143.1" height="15.5" fill="none" stroke="#1d4ed8" stroke-width="0.8" opacity="0.7"/><rect x="72.0" y="81.8" width="369.9" height="12.7" fill="none" stroke="#374151" stroke-width="0.8" opacity="0.7"/></svg></div>
+<div style="display:flex;gap:24px;flex-wrap:wrap">
+<div style="flex:1;min-width:360px"><h2>A: pdfplumber</h2>
+<h3>Bloques</h3><ul><li><code>table</code> p1 <span>Especificación
+1. Estructura de
+Bytes 64-67 Exception
+Bytes 68-71 Penalty
+Bytes 72-73 Fare Class
+Bytes 74-75 Record
+El c</span></li><li><code>heading</code> p1 <span>Especificación de Registro de Datos</span></li><li><code>heading</code> p1 <span>1. Estructura de posiciones</span></li><li><code>table</code> p1 <span>Bytes 64-67 Exception Time
+Bytes 68-71 Penalty Amount
+Bytes 72-73 Fare Class Length
+Bytes 74-75 Record Type Code</span></li><li><code>paragraph</code> p1 <span>El campo Exception Time must ocupar exactamente 4 bytes entre las posiciones 64 y 67.</span></li><li><code>paragraph</code> p1 <span>El campo Fare Class Length must tener una longitud mínima de 2 bytes.</span></li><li><code>heading</code> p2 <span>2. Reglas de validación</span></li><li><code>paragraph</code> p2 <span>Si el registro no respeta las posiciones, el sistema must rechazar el archivo.</span></li></ul>
+<h3>Unidades</h3><ul><li><code>SECTION</code> <span>Especificación de Registro de Datos</span></li><li><code>SECTION</code> <span>Estructura de posiciones
+
+Bytes 64-67 Exception Time
+Bytes 68-71 Penalty Amount
+Bytes 72-73 Fare Class Length
+Bytes 74-75 Record Type Code
+
+</span></li><li><code>TABLE</code> <span>Bytes 64-67 Exception Time
+Bytes 68-71 Penalty Amount
+Bytes 72-73 Fare Class Length
+Bytes 74-75 Record Type Code</span></li><li><code>PARAGRAPH_GROUP</code> <span>El campo Exception Time must ocupar exactamente 4 bytes entre las posiciones 64 y 67.
+El campo Fare Class Length must tener una longitud mín</span></li><li><code>SECTION</code> <span>Reglas de validación
+
+Si el registro no respeta las posiciones, el sistema must rechazar el archivo.</span></li><li><code>PARAGRAPH_GROUP</code> <span>Si el registro no respeta las posiciones, el sistema must rechazar el archivo.</span></li></ul>
+<h3>Reglas canónicas</h3><ul><li><code>PARTIALLY_SUPPORTED</code> <span>El campo Exception Time must ocupar exactamente 4 bytes entre las posiciones 64 y 67.</span></li><li><code>PARTIALLY_SUPPORTED</code> <span>El campo Fare Class Length must tener una longitud mínima de 2 bytes.</span></li><li><code>SUPPORTED</code> <span>Si el registro no respeta las posiciones, el sistema must rechazar el archivo.</span></li></ul></div>
+<div style="flex:1;min-width:360px"><h2>B: opendataloader</h2>
+<h3>Bloques</h3><ul><li><code>heading</code> p1 <span>Especificación de Registro de Datos</span></li><li><code>heading</code> p1 <span>1. Estructura de posiciones</span></li><li><code>paragraph</code> p1 <span>Bytes 64-67 Exception Time Bytes 68-71 Penalty Amount Bytes 72-73 Fare Class Length Bytes 74-75 Record Type Code</span></li><li><code>paragraph</code> p1 <span>El campo Exception Time must ocupar exactamente 4 bytes entre las posiciones 64 y 67. El campo Fare Class Length must te</span></li><li><code>heading</code> p2 <span>2. Reglas de validación</span></li><li><code>paragraph</code> p2 <span>Si el registro no respeta las posiciones, el sistema must rechazar el archivo.</span></li></ul>
+<h3>Unidades</h3><ul><li><code>SECTION</code> <span>Especificación de Registro de Datos</span></li><li><code>SECTION</code> <span>Estructura de posiciones</span></li><li><code>SECTION</code> <span>Reglas de validación
+
+Si el registro no respeta las posiciones, el sistema must rechazar el archivo.</span></li><li><code>PARAGRAPH_GROUP</code> <span>Si el registro no respeta las posiciones, el sistema must rechazar el archivo.</span></li></ul>
+<h3>Reglas canónicas</h3><ul><li><code>PARTIALLY_SUPPORTED</code> <span>El campo Exception Time must ocupar exactamente 4 bytes entre las posiciones 64 y 67. El campo Fare Class Length must tener una longitud mínima de 2 bytes.</span></li><li><code>SUPPORTED</code> <span>Si el registro no respeta las posiciones, el sistema must rechazar el archivo.</span></li></ul></div>
+</div>
+</body></html>

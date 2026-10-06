@@ -1,0 +1,134 @@
+{
+  "anchor_terms": [
+    "interes",
+    "capital",
+    "tasa",
+    "descuento",
+    "precio"
+  ],
+  "objects": [
+    {
+      "id": "formula-interes",
+      "semantic_type": "formula",
+      "meaning": "interes = capital * tasa * tiempo",
+      "pages": [
+        1
+      ],
+      "section": "1. Fórmulas",
+      "equivalents": [
+        "interes",
+        "capital",
+        "tasa",
+        "tiempo"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": true,
+      "required_premises": [
+        "formula.expression"
+      ],
+      "allowed_formulations": []
+    },
+    {
+      "id": "formula-descuento",
+      "semantic_type": "formula",
+      "meaning": "descuento = precio * 0.9",
+      "pages": [
+        1
+      ],
+      "section": "1. Fórmulas",
+      "equivalents": [
+        "descuento",
+        "precio",
+        "0.9"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-tasa",
+      "semantic_type": "definition",
+      "meaning": "tasa es el interés mensual aplicable",
+      "pages": [
+        1
+      ],
+      "section": "1. Fórmulas",
+      "equivalents": [
+        "tasa",
+        "interés mensual"
+      ],
+      "properties": {
+        "term": "tasa",
+        "value": "interés mensual"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-aplicar-interes",
+      "semantic_type": "rule",
+      "meaning": "el analista must aplicar la fórmula de interés",
+      "pages": [
+        2
+      ],
+      "section": "2. Aplicación",
+      "equivalents": [
+        "analista",
+        "fórmula de interés"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-formula",
+      "kind": "calculation",
+      "question": "¿Cómo se calcula el interés?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "formula-interes"
+      ],
+      "expected_answer_contains": [
+        "capital",
+        "tasa",
+        "tiempo"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-def-tasa",
+      "kind": "definition",
+      "question": "¿Qué es la tasa?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "def-tasa"
+      ],
+      "expected_answer_contains": [
+        "interés mensual"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    }
+  ],
+  "document": "formulas",
+  "letter": "L",
+  "kind": "formulas",
+  "title": "Fórmulas",
+  "notes": "Fórmulas tipo cálculo y definiciones.",
+  "status": "ready",
+  "pages": 2
+}

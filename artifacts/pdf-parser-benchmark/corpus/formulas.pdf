@@ -1,0 +1,33 @@
+%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 7 0 R /F2 8 0 R >> >> >> endobj
+4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 7 0 R /F2 8 0 R >> >> >> endobj
+5 0 obj << /Length 304 >> stream
+BT /F2 15 Tf 72 730 Td (Modelo Financiero B\341sico) Tj ET
+BT /F2 13 Tf 72 700 Td (1. F\363rmulas) Tj ET
+BT /F1 12 Tf 72 670 Td (interes = capital * tasa * tiempo) Tj ET
+BT /F1 12 Tf 72 648 Td (descuento = precio * 0.9) Tj ET
+BT /F1 11 Tf 72 618 Td (tasa - inter\351s mensual aplicable al capital.) Tj ET
+endstream endobj
+6 0 obj << /Length 155 >> stream
+BT /F2 13 Tf 72 730 Td (2. Aplicaci\363n) Tj ET
+BT /F1 11 Tf 72 700 Td (El analista must aplicar la f\363rmula de inter\351s para cada operaci\363n.) Tj ET
+endstream endobj
+7 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> endobj
+8 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >> endobj
+xref
+0 9
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000121 00000 n 
+0000000257 00000 n 
+0000000393 00000 n 
+0000000748 00000 n 
+0000000954 00000 n 
+0000001051 00000 n 
+trailer << /Size 9 /Root 1 0 R >>
+startxref
+1153
+%%EOF

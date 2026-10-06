@@ -1,0 +1,180 @@
+{
+  "anchor_terms": [
+    "&",
+    "fare class",
+    "alphanumeric",
+    "position",
+    "characters"
+  ],
+  "objects": [
+    {
+      "id": "sym-ampersand",
+      "semantic_type": "symbol_definition",
+      "meaning": "& indica match a cualquier carácter alfanumérico en esa posición",
+      "pages": [
+        1
+      ],
+      "section": "Fare Family Match using Exclamation Point (!) or Ampersand (&)",
+      "equivalents": [
+        "&",
+        "alphanumeric character",
+        "in that position"
+      ],
+      "properties": {
+        "symbol": "&",
+        "meaning": "any alphanumeric in position"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "len-fare-class-min",
+      "semantic_type": "length_policy",
+      "meaning": "la fare class must contener al menos el número de caracteres referenciados (additional characters may follow)",
+      "pages": [
+        1
+      ],
+      "section": "Fare Family Match using Exclamation Point (!) or Ampersand (&)",
+      "equivalents": [
+        "at least the number of characters",
+        "additional characters may follow"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [
+        "length.policy"
+      ],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-positional-match",
+      "semantic_type": "rule",
+      "meaning": "& se usa para indicar número o alfa en una posición específica; el match es posicional",
+      "pages": [
+        1,
+        2
+      ],
+      "section": "Positional rules",
+      "equivalents": [
+        "specific position",
+        "positionally",
+        "match fare class characters"
+      ],
+      "properties": {
+        "operator": "POSITIONAL_MATCH",
+        "symbol": "&"
+      },
+      "relations": [],
+      "executable": true,
+      "required_premises": [
+        "symbol.definition",
+        "matching.operator",
+        "length.policy"
+      ],
+      "allowed_formulations": []
+    },
+    {
+      "id": "table-examples",
+      "semantic_type": "table_mapping",
+      "meaning": "ejemplos &&TEST, W&2M, W&&2M con matches válidos",
+      "pages": [
+        1,
+        2
+      ],
+      "section": null,
+      "equivalents": [
+        "&&TEST",
+        "ABTEST",
+        "W&2M",
+        "WB2M",
+        "W&&2M"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "cross-rule-ampersand-length",
+      "semantic_type": "cross_page_rule",
+      "meaning": "patrón con ampersands requiere longitud mínima y match posicional",
+      "pages": [
+        1,
+        2
+      ],
+      "section": null,
+      "equivalents": [
+        "minimal fare class length",
+        "positional rules"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-atpco-match",
+      "kind": "apply_rule",
+      "question": "¿ABCFGEGE cumple el patrón &&&F?",
+      "expected_status": "MATCH",
+      "values": {
+        "value": "ABCFGEGE",
+        "pattern": "&&&F"
+      },
+      "objects": [
+        "rule-positional-match"
+      ],
+      "expected_answer_contains": [],
+      "executable": true,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-atpco-length",
+      "kind": "validation",
+      "question": "¿Qué longitud mínima exige el patrón &&&F?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "len-fare-class-min"
+      ],
+      "expected_answer_contains": [
+        "at least",
+        "characters"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-atpco-symbol",
+      "kind": "definition",
+      "question": "¿Qué significa & en la fare class?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "sym-ampersand"
+      ],
+      "expected_answer_contains": [
+        "alphanumeric"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    }
+  ],
+  "document": "atpco",
+  "letter": "ATPCO",
+  "kind": "atpco",
+  "title": "ATPCO Record 2 (regresión)",
+  "notes": "Contenido fiel del fixture ampersand; diagnóstico de premisas.",
+  "status": "ready",
+  "pages": 2
+}

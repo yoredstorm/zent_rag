@@ -1,0 +1,35 @@
+%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 7 0 R /F2 8 0 R >> >> >> endobj
+4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 7 0 R /F2 8 0 R >> >> >> endobj
+5 0 obj << /Length 583 >> stream
+BT /F2 16 Tf 72 730 Td (Procedimiento de Alta de Cliente) Tj ET
+BT /F2 13 Tf 72 700 Td (1. Pasos) Tj ET
+BT /F1 11 Tf 72 648 Td (1. Validar la identidad del cliente con documento oficial vigente.) Tj ET
+BT /F1 11 Tf 72 626 Td (2. Registrar al cliente en el sistema con el estado inicial nuevo.) Tj ET
+BT /F1 11 Tf 72 604 Td (3. Notificar al \341rea comercial en un plazo de 24 horas.) Tj ET
+BT /F1 11 Tf 72 580 Td (El analista must not registrar clientes sin identidad validada.) Tj ET
+BT /F1 11 Tf 72 552 Td (Estados permitidos del cliente: nuevo, activo, suspendido, cerrado.) Tj ET
+endstream endobj
+6 0 obj << /Length 169 >> stream
+BT /F2 13 Tf 72 730 Td (2. Escalamiento) Tj ET
+BT /F1 11 Tf 72 700 Td (Si el cliente no completa la validaci\363n en 48 horas, el caso must escalar al supervisor.) Tj ET
+endstream endobj
+7 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> endobj
+8 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >> endobj
+xref
+0 9
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000121 00000 n 
+0000000257 00000 n 
+0000000393 00000 n 
+0000001027 00000 n 
+0000001247 00000 n 
+0000001344 00000 n 
+trailer << /Size 9 /Root 1 0 R >>
+startxref
+1446
+%%EOF

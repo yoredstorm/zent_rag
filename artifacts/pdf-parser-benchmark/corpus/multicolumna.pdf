@@ -1,0 +1,33 @@
+%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 5 0 R /Resources << /Font << /F1 7 0 R /F2 8 0 R >> >> >> endobj
+4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 7 0 R /F2 8 0 R >> >> >> endobj
+5 0 obj << /Length 376 >> stream
+BT /F2 16 Tf 72 730 Td (Informe de Indicadores Operativos) Tj ET
+BT /F1 11 Tf 72 700 Td (KPI-A - promedio de ventas diarias.) Tj ET
+BT /F1 11 Tf 320 700 Td (El responsable must revisar KPI-A cada semana.) Tj ET
+BT /F1 11 Tf 72 676 Td (KPI-B - tasa de conversi\363n mensual.) Tj ET
+BT /F1 11 Tf 320 676 Td (El equipo must publicar KPI-B en el tablero antes del d\355a 5.) Tj ET
+endstream endobj
+6 0 obj << /Length 184 >> stream
+BT /F1 11 Tf 72 730 Td (desviaci\363n - diferencia entre KPI-A y su meta.) Tj ET
+BT /F1 11 Tf 320 730 Td (Si la desviaci\363n supera el 10%, el responsable must escalar el caso.) Tj ET
+endstream endobj
+7 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> endobj
+8 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >> endobj
+xref
+0 9
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000121 00000 n 
+0000000257 00000 n 
+0000000393 00000 n 
+0000000820 00000 n 
+0000001055 00000 n 
+0000001152 00000 n 
+trailer << /Size 9 /Root 1 0 R >>
+startxref
+1254
+%%EOF

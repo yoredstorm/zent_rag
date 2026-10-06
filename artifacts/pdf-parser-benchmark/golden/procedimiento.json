@@ -1,0 +1,132 @@
+{
+  "anchor_terms": [
+    "cliente",
+    "identidad",
+    "estado",
+    "escalar",
+    "supervisor"
+  ],
+  "objects": [
+    {
+      "id": "enum-estados",
+      "semantic_type": "enumeration",
+      "meaning": "estados permitidos: nuevo, activo, suspendido, cerrado",
+      "pages": [
+        1
+      ],
+      "section": "1. Pasos",
+      "equivalents": [
+        "nuevo",
+        "activo",
+        "suspendido",
+        "cerrado"
+      ],
+      "properties": {
+        "values": "nuevo activo suspendido cerrado"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-identidad",
+      "semantic_type": "rule",
+      "meaning": "no registrar clientes sin identidad validada",
+      "pages": [
+        1
+      ],
+      "section": "1. Pasos",
+      "equivalents": [
+        "identidad validada",
+        "must not registrar"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-escalamiento",
+      "semantic_type": "rule",
+      "meaning": "validación > 48 horas escala al supervisor",
+      "pages": [
+        2
+      ],
+      "section": "2. Escalamiento",
+      "equivalents": [
+        "48 horas",
+        "escalar al supervisor"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [
+        "condition.present"
+      ],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-estado-inicial",
+      "semantic_type": "definition",
+      "meaning": "estado inicial del cliente registrado es nuevo",
+      "pages": [
+        1
+      ],
+      "section": "1. Pasos",
+      "equivalents": [
+        "estado inicial",
+        "nuevo"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-enum",
+      "kind": "lookup",
+      "question": "¿Qué estados están permitidos para el cliente?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "enum-estados"
+      ],
+      "expected_answer_contains": [
+        "nuevo",
+        "activo",
+        "suspendido"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-procedure",
+      "kind": "validation",
+      "question": "¿Qué debe hacer el analista antes de registrar?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "rule-identidad"
+      ],
+      "expected_answer_contains": [
+        "identidad"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    }
+  ],
+  "document": "procedimiento",
+  "letter": "D",
+  "kind": "procedimiento",
+  "title": "Procedimiento de alta",
+  "notes": "Pasos, enumeración y reglas.",
+  "status": "ready",
+  "pages": 2
+}

@@ -1,0 +1,252 @@
+{
+  "anchor_terms": [
+    "penalización",
+    "importe anual",
+    "informe mensual",
+    "preaviso",
+    "fuerza mayor"
+  ],
+  "objects": [
+    {
+      "id": "rule-penalizacion",
+      "semantic_type": "rule",
+      "meaning": "retraso > 30 días genera penalización del 2% del importe anual",
+      "pages": [
+        1
+      ],
+      "section": "7. Penalizaciones",
+      "equivalents": [
+        "retraso",
+        "30 días",
+        "penalización",
+        "2%",
+        "importe anual"
+      ],
+      "properties": {
+        "subject": "retraso",
+        "consequence": "penalización 2%"
+      },
+      "relations": [
+        "penalizacion -> importe_anual"
+      ],
+      "executable": false,
+      "required_premises": [
+        "condition.present"
+      ],
+      "allowed_formulations": []
+    },
+    {
+      "id": "exc-fuerza-mayor",
+      "semantic_type": "exception",
+      "meaning": "fuerza mayor exceptúa la penalización",
+      "pages": [
+        1
+      ],
+      "section": "7. Penalizaciones",
+      "equivalents": [
+        "fuerza mayor",
+        "no aplica"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "temp-vigencia",
+      "semantic_type": "temporal_constraint",
+      "meaning": "vigencia 2026-01-01 a 2026-12-31",
+      "pages": [
+        1
+      ],
+      "section": "7. Penalizaciones",
+      "equivalents": [
+        "2026-01-01",
+        "2026-12-31",
+        "Vigencia"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "formula-penalizacion",
+      "semantic_type": "formula",
+      "meaning": "penalizacion = 0.02 * importe_anual",
+      "pages": [
+        1
+      ],
+      "section": "7. Penalizaciones",
+      "equivalents": [
+        "penalizacion",
+        "0.02",
+        "importe_anual"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": true,
+      "required_premises": [
+        "formula.expression"
+      ],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-importe-anual",
+      "semantic_type": "definition",
+      "meaning": "importe anual es la suma de las facturas del período",
+      "pages": [
+        1
+      ],
+      "section": "7. Penalizaciones",
+      "equivalents": [
+        "importe anual",
+        "suma de las facturas"
+      ],
+      "properties": {
+        "term": "importe anual",
+        "value": "suma de las facturas"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "fact-penalizacion-pct",
+      "semantic_type": "fact",
+      "meaning": "la penalización es del 2% del importe anual",
+      "pages": [
+        1
+      ],
+      "section": "7. Penalizaciones",
+      "equivalents": [
+        "penalización",
+        "2%",
+        "importe anual"
+      ],
+      "properties": {
+        "predicate": "porcentaje",
+        "value": "2%"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-informe-mensual",
+      "semantic_type": "rule",
+      "meaning": "proveedor entrega informe mensual en 5 días hábiles",
+      "pages": [
+        2
+      ],
+      "section": "8. Obligaciones de las partes",
+      "equivalents": [
+        "informe mensual",
+        "5 días hábiles",
+        "must entregar"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-preaviso",
+      "semantic_type": "rule",
+      "meaning": "terminación requiere preaviso de 30 días",
+      "pages": [
+        3
+      ],
+      "section": "9. Terminación",
+      "equivalents": [
+        "preaviso",
+        "30 días",
+        "must not terminar"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-def-importe",
+      "kind": "definition",
+      "question": "¿Qué es el importe anual?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "def-importe-anual"
+      ],
+      "expected_answer_contains": [
+        "facturas"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-calc-penalizacion",
+      "kind": "calculation",
+      "question": "¿Cuál es la penalización para un importe anual de 1000?",
+      "expected_status": "MATCH",
+      "values": {
+        "importe_anual": 1000
+      },
+      "objects": [
+        "formula-penalizacion"
+      ],
+      "expected_answer_contains": [],
+      "executable": true,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-exception",
+      "kind": "exception",
+      "question": "¿Cuándo no aplica la penalización?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "exc-fuerza-mayor"
+      ],
+      "expected_answer_contains": [
+        "fuerza mayor"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-multi-hop",
+      "kind": "multi_hop",
+      "question": "¿Qué obligación de informe tiene el proveedor y en qué plazo?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "rule-informe-mensual"
+      ],
+      "expected_answer_contains": [
+        "informe mensual",
+        "5 días"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    }
+  ],
+  "document": "contrato",
+  "letter": "C",
+  "kind": "contrato",
+  "title": "Contrato de servicios",
+  "notes": "Regla, excepción, temporal, fórmula y definición.",
+  "status": "ready",
+  "pages": 3
+}

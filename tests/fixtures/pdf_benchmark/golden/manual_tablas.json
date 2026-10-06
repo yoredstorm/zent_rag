@@ -1,0 +1,189 @@
+{
+  "anchor_terms": [
+    "T",
+    "Componente",
+    "Máximo",
+    "Nm"
+  ],
+  "objects": [
+    {
+      "id": "table-cat1",
+      "semantic_type": "table_mapping",
+      "meaning": "códigos T101..03 con descripción y máximo",
+      "pages": [
+        1
+      ],
+      "section": "1. Tabla de componentes",
+      "equivalents": [
+        "T101",
+        "Componente 1A",
+        "T102",
+        "Componente 1B",
+        "T103"
+      ],
+      "properties": {
+        "headers": "Código Descripción Máximo"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "table-cat2",
+      "semantic_type": "table_mapping",
+      "meaning": "códigos T201..03 con descripción y máximo",
+      "pages": [
+        2
+      ],
+      "section": "2. Tabla de componentes",
+      "equivalents": [
+        "T201",
+        "Componente 2A",
+        "T202",
+        "Componente 2B",
+        "T203"
+      ],
+      "properties": {
+        "headers": "Código Descripción Máximo"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "table-cat3",
+      "semantic_type": "table_mapping",
+      "meaning": "códigos T301..03 con descripción y máximo",
+      "pages": [
+        3
+      ],
+      "section": "3. Tabla de componentes",
+      "equivalents": [
+        "T301",
+        "Componente 3A",
+        "T302",
+        "Componente 3B",
+        "T303"
+      ],
+      "properties": {
+        "headers": "Código Descripción Máximo"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "table-cat4",
+      "semantic_type": "table_mapping",
+      "meaning": "códigos T401..03 con descripción y máximo",
+      "pages": [
+        4
+      ],
+      "section": "4. Tabla de componentes",
+      "equivalents": [
+        "T401",
+        "Componente 4A",
+        "T402",
+        "Componente 4B",
+        "T403"
+      ],
+      "properties": {
+        "headers": "Código Descripción Máximo"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "table-cat5",
+      "semantic_type": "table_mapping",
+      "meaning": "códigos T501..03 con descripción y máximo",
+      "pages": [
+        5
+      ],
+      "section": "5. Tabla de componentes",
+      "equivalents": [
+        "T501",
+        "Componente 5A",
+        "T502",
+        "Componente 5B",
+        "T503"
+      ],
+      "properties": {
+        "headers": "Código Descripción Máximo"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "table-cat6",
+      "semantic_type": "table_mapping",
+      "meaning": "códigos T601..03 con descripción y máximo",
+      "pages": [
+        6
+      ],
+      "section": "6. Tabla de componentes",
+      "equivalents": [
+        "T601",
+        "Componente 6A",
+        "T602",
+        "Componente 6B",
+        "T603"
+      ],
+      "properties": {
+        "headers": "Código Descripción Máximo"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-table-2",
+      "kind": "table_lookup",
+      "question": "¿Cuál es el máximo del código T202?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "table-cat2"
+      ],
+      "expected_answer_contains": [
+        "30 Nm"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-table-3",
+      "kind": "table_lookup",
+      "question": "¿Cuál es el máximo del código T302?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "table-cat3"
+      ],
+      "expected_answer_contains": [
+        "45 Nm"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    }
+  ],
+  "document": "manual_tablas",
+  "letter": "B",
+  "kind": "tablas",
+  "title": "Manual con muchas tablas",
+  "notes": "Tablas con headers y filas en cada página.",
+  "status": "ready",
+  "pages": 6
+}

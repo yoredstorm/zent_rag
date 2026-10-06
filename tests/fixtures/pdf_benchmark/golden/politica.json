@@ -1,0 +1,204 @@
+{
+  "anchor_terms": [
+    "gasto",
+    "aprobación",
+    "umbral",
+    "nómina",
+    "director financiero"
+  ],
+  "objects": [
+    {
+      "id": "rule-aprobacion",
+      "semantic_type": "rule",
+      "meaning": "gastos > 5000 EUR requieren aprobación del área financiera",
+      "pages": [
+        1
+      ],
+      "section": "1. Reglas generales",
+      "equivalents": [
+        "5000 EUR",
+        "aprobar",
+        "gasto superior"
+      ],
+      "properties": {
+        "subject": "gasto",
+        "threshold": "5000 EUR"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [
+        "condition.present"
+      ],
+      "allowed_formulations": []
+    },
+    {
+      "id": "def-umbral",
+      "semantic_type": "definition",
+      "meaning": "umbral de aprobación es 5000 EUR",
+      "pages": [
+        1
+      ],
+      "section": "1. Reglas generales",
+      "equivalents": [
+        "umbral de aprobación",
+        "5000 EUR"
+      ],
+      "properties": {
+        "term": "umbral de aprobación",
+        "value": "5000 EUR"
+      },
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "exc-nomina",
+      "semantic_type": "exception",
+      "meaning": "nómina e impuestos exceptuados",
+      "pages": [
+        1
+      ],
+      "section": "1. Reglas generales",
+      "equivalents": [
+        "exceptuados",
+        "nómina",
+        "impuestos"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rel-politica-compras",
+      "semantic_type": "relationship",
+      "meaning": "política de gastos references procedimiento de compras",
+      "pages": [
+        1
+      ],
+      "section": "1. Reglas generales",
+      "equivalents": [
+        "política de gastos",
+        "procedimiento de compras"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-revision",
+      "semantic_type": "rule",
+      "meaning": "el director financiero revisa la política cada 12 meses",
+      "pages": [
+        2
+      ],
+      "section": "2. Responsabilidades",
+      "equivalents": [
+        "director financiero",
+        "12 meses",
+        "revisar"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    },
+    {
+      "id": "rule-excepciones",
+      "semantic_type": "rule",
+      "meaning": "el comité autoriza excepciones por escrito",
+      "pages": [
+        3
+      ],
+      "section": "3. Excepciones",
+      "equivalents": [
+        "comité",
+        "excepciones",
+        "por escrito"
+      ],
+      "properties": {},
+      "relations": [],
+      "executable": false,
+      "required_premises": [],
+      "allowed_formulations": []
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-threshold",
+      "kind": "definition",
+      "question": "¿Cuál es el umbral de aprobación?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "def-umbral"
+      ],
+      "expected_answer_contains": [
+        "5000 EUR"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-apply-threshold",
+      "kind": "apply_rule",
+      "question": "¿Un gasto de 6000 EUR requiere aprobación?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "rule-aprobacion"
+      ],
+      "expected_answer_contains": [
+        "aprobación"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-exception",
+      "kind": "exception",
+      "question": "¿Qué gastos quedan exceptuados?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "exc-nomina"
+      ],
+      "expected_answer_contains": [
+        "nómina"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    },
+    {
+      "id": "q-relationship",
+      "kind": "relationship",
+      "question": "¿A qué procedimiento referencia la política de gastos?",
+      "expected_status": null,
+      "values": null,
+      "objects": [
+        "rel-politica-compras"
+      ],
+      "expected_answer_contains": [
+        "compras"
+      ],
+      "executable": false,
+      "cross_page": false,
+      "answerable": true
+    }
+  ],
+  "document": "politica",
+  "letter": "E",
+  "kind": "politica",
+  "title": "Política empresarial",
+  "notes": "Condiciones, excepciones y relaciones.",
+  "status": "ready",
+  "pages": 3
+}

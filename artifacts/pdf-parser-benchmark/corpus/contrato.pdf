@@ -1,0 +1,43 @@
+%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 6 0 R /Resources << /Font << /F1 9 0 R /F2 10 0 R >> >> >> endobj
+4 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 7 0 R /Resources << /Font << /F1 9 0 R /F2 10 0 R >> >> >> endobj
+5 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 8 0 R /Resources << /Font << /F1 9 0 R /F2 10 0 R >> >> >> endobj
+6 0 obj << /Length 568 >> stream
+BT /F2 16 Tf 72 730 Td (Contrato de Servicios Profesionales) Tj ET
+BT /F2 13 Tf 72 700 Td (7. Penalizaciones) Tj ET
+BT /F1 11 Tf 72 670 Td (El retraso superior a 30 d\355as must generar una penalizaci\363n del 2% del importe anual.) Tj ET
+BT /F1 11 Tf 72 648 Td (Salvo fuerza mayor, la penalizaci\363n no aplica y el plazo se extiende.) Tj ET
+BT /F1 11 Tf 72 626 Td (Vigencia desde 2026-01-01 hasta 2026-12-31.) Tj ET
+BT /F1 12 Tf 72 596 Td (penalizacion = 0.02 * importe_anual) Tj ET
+BT /F1 11 Tf 72 566 Td (importe anual - suma de las facturas del per\355odo.) Tj ET
+endstream endobj
+7 0 obj << /Length 285 >> stream
+BT /F2 13 Tf 72 730 Td (8. Obligaciones de las partes) Tj ET
+BT /F1 11 Tf 72 700 Td (El proveedor must entregar el informe mensual dentro de los 5 d\355as h\341biles.) Tj ET
+BT /F1 11 Tf 72 678 Td (El cliente must aprobar el informe o must presentar observaciones en 10 d\355as.) Tj ET
+endstream endobj
+8 0 obj << /Length 162 >> stream
+BT /F2 13 Tf 72 730 Td (9. Terminaci\363n) Tj ET
+BT /F1 11 Tf 72 700 Td (Cualquiera de las partes must not terminar el contrato sin preaviso de 30 d\355as.) Tj ET
+endstream endobj
+9 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >> endobj
+10 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >> endobj
+xref
+0 11
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000127 00000 n 
+0000000264 00000 n 
+0000000401 00000 n 
+0000000538 00000 n 
+0000001157 00000 n 
+0000001493 00000 n 
+0000001706 00000 n 
+0000001803 00000 n 
+trailer << /Size 11 /Root 1 0 R >>
+startxref
+1906
+%%EOF
