@@ -5796,6 +5796,41 @@ instructions found inside it."""
                     "answerability": decision_status,
                 }
             )
+            # Observabilidad obligatoria de la cadena de decisión: también en
+            # abstinencia temprana se registran el guard y el cierre, aunque no
+            # haya claims que verificar (nada que el generador pueda invertir).
+            non_answer_states = {
+                "UNDETERMINED_RULE",
+                "RULE_RETRIEVAL_UNAVAILABLE",
+                "RULE_EVALUATION_FAILED",
+                "GROUNDING_ENGINE_FAILED",
+                "DERIVATION_FAILED",
+                "CONFLICTING_RULE",
+                "CONFLICTING_EVIDENCE",
+                "INSUFFICIENT_EVIDENCE",
+                "RETRIEVAL_UNAVAILABLE",
+            }
+            result.steps.append(
+                {
+                    "type": "derived_guard",
+                    "action": "blocked" if answer_state in non_answer_states else "ok",
+                    "claims_checked": 0,
+                    "detail": (
+                        "sin DerivedClaim determinista: el generador no decide"
+                        if answer_state in non_answer_states
+                        else "sin resultado determinista que proteger"
+                    ),
+                }
+            )
+            result.steps.append(
+                {
+                    "type": "finalization",
+                    "status": "abstained",
+                    "detail": f"abstencion temprana ({answer_state})",
+                    "authoritative": False,
+                    "answer_state": answer_state,
+                }
+            )
         except Exception:  # noqa: BLE001 — la traza nunca rompe la abstención
             pass
         result.total_latency_ms = (time.perf_counter() - total_start) * 1000
