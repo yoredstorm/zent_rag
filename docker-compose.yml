@@ -359,6 +359,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
+      target: api
     container_name: rag-api
     ports:
       - "${RAG_API_PORT:-8000}:8000"
@@ -412,6 +413,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
+      # Con JVM (OpenDataLoader PDF). La API default queda sin JVM.
+      target: worker
     container_name: rag-ingestion-worker
     # Migrations run in the API container only; worker just consumes the Redis queue.
     command: ["python", "worker_entry.py"]
@@ -443,6 +446,49 @@ services:
     labels:
       - "promtail.scrape=true"
       - "promtail.job=rag-ingestion-worker"
+
+  # ===========================================================================
+  # Parser Lab (Fase 2) — benchmark shadow one-shot sobre la imagen del worker
+  # (target worker: JVM + opendataloader-pdf). No persiste nada: escribe
+  # reportes JSON/MD en /reports.
+  #
+  # Uso:
+  #   docker compose --profile parser-lab run --rm parser-lab
+  #   PARSER_LAB_CORPUS=C:\corpus\atpco docker compose --profile parser-lab run --rm parser-lab
+  #
+  # Corpus: ${PARSER_LAB_CORPUS:-./data/corpus} montado en /corpus:ro
+  # Reportes: ${PARSER_LAB_REPORTS:-./data/reports/parser_shadow} en /reports
+  # ===========================================================================
+  parser-lab:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      target: worker
+    profiles: ["parser-lab"]
+    container_name: rag-parser-lab
+    command:
+      - python
+      - -m
+      - src.scripts.parser_shadow_benchmark
+      - /corpus
+      - --out
+      - /reports
+    volumes:
+      - ${PARSER_LAB_CORPUS:-./data/corpus}:/corpus:ro
+      - ${PARSER_LAB_REPORTS:-./data/reports/parser_shadow}:/reports
+    env_file:
+      - .env
+    environment:
+      <<: *common-env
+      # La imagen worker instala openjdk-21-jre-headless (Debian trixie).
+      RAG_ODL_JAVA_HOME: /usr/lib/jvm/java-21-openjdk-amd64
+      # Heap acotado; subir en Fase 2 después de medir documentos grandes.
+      JAVA_TOOL_OPTIONS: ${PARSER_LAB_JAVA_OPTS:--Xmx1g}
+    healthcheck:
+      disable: true
+    restart: "no"
+    networks:
+      - rag-network
 
   # ===========================================================================
   # Ollama — Embeddings locales (bge-m3, CPU). DESACTIVADO: consume mucha RAM.

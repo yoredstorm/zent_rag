@@ -4,6 +4,10 @@ metadata:
   name: ingestion-worker
   annotations:
     zent.io/dockerfile: Dockerfile.api
+    # OpenDataLoader PDF (Fase 1): construir la imagen del worker con
+    # `docker build --target worker -f Dockerfile.api` (incluye JRE 17).
+    # La imagen default `api` no trae JVM.
+    zent.io/dockerfile-target: worker
   labels:
     app.kubernetes.io/name: zent
     app.kubernetes.io/component: ingestion-worker

@@ -62,9 +62,9 @@ RUN pip install --no-cache-dir \
 # anterior: typesafe-sdk>=0.1.0
 
 # =============================================================================
-# Stage final — Imagen de producción minimalista
+# Stage runtime — base compartida API/worker (sin JVM)
 # =============================================================================
-FROM python:3.11-slim AS final
+FROM python:3.11-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -104,3 +104,27 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
 EXPOSE 8000
 
 CMD ["sh", "-c", "alembic upgrade head && uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --no-access-log"]
+
+# =============================================================================
+# Worker de ingesta con JVM — OpenDataLoader PDF (Fase 1).
+# La JVM solo entra en este target; la API default sigue minimalista.
+# Compose: servicio ingestion-worker con build.target=worker.
+# =============================================================================
+FROM runtime AS worker
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openjdk-21-jre-headless \
+    && rm -rf /var/lib/apt/lists/*
+RUN /opt/venv/bin/pip install --no-cache-dir "opendataloader-pdf>=2.5.12,<3.0" \
+    && chown -R rag:rag /opt/venv
+USER rag
+
+# JAVA_HOME para ODL_JAVA_HOME / diagnóstico; `java` también queda en PATH.
+ENV JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
+
+# =============================================================================
+# Stage API (default): sin JVM. Si RAG_BACKGROUND_INGESTION=true y
+# RAG_PDF_PARSER_MODE != pdfplumber, la API in-process necesita --target worker.
+# =============================================================================
+FROM runtime AS api

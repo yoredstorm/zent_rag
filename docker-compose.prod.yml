@@ -240,6 +240,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
+      target: api
     env_file:
       - path: .env
         required: false
@@ -255,6 +256,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
+      # Con JVM (OpenDataLoader PDF). La API default queda sin JVM.
+      target: worker
     command: ["python", "worker_entry.py"]
     env_file:
       - path: .env
@@ -272,6 +275,37 @@ services:
       api:
         condition: service_healthy
     restart: unless-stopped
+
+  # ===========================================================================
+  # Parser Lab (Fase 2) — benchmark shadow one-shot sobre la imagen worker.
+  # Uso: docker compose -f docker-compose.prod.yml --profile parser-lab run --rm parser-lab
+  # ===========================================================================
+  parser-lab:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+      target: worker
+    profiles: ["parser-lab"]
+    command:
+      - python
+      - -m
+      - src.scripts.parser_shadow_benchmark
+      - /corpus
+      - --out
+      - /reports
+    volumes:
+      - ${PARSER_LAB_CORPUS:-./data/corpus}:/corpus:ro
+      - ${PARSER_LAB_REPORTS:-./data/reports/parser_shadow}:/reports
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      <<: *prod-env
+      RAG_ODL_JAVA_HOME: /usr/lib/jvm/java-21-openjdk-amd64
+      JAVA_TOOL_OPTIONS: ${PARSER_LAB_JAVA_OPTS:--Xmx1g}
+    healthcheck:
+      disable: true
+    restart: "no"
 
   portal:
     build:
