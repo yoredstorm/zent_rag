@@ -99,53 +99,6 @@ _RESPONSE_SEMANTICS_POLICY_VERSION = "grounding-contract-2"
 _RESPONSE_DECISION_VERSION = "decision-envelope-1"
 
 
-async def knowledge_cache_fingerprint(organization_id) -> str:
-    """Fingerprint del conocimiento del tenant para caches de respuesta.
-
-    Incluye reglas canónicas (cantidad + updated_at) y documentos
-    estructurados (updated_at): si una regla cambia, la clave cambia y la
-    respuesta vieja NO se reutiliza. Fail-closed: ante error devuelve "" y el
-    caller debe desactivar la caché de ESE request.
-    """
-    try:
-        from hashlib import sha256
-
-        from sqlalchemy import text as sql_text
-
-        from src.infrastructure.postgres.session import get_async_session
-
-        session = await get_async_session()
-        try:
-            row = (
-                await session.execute(
-                    sql_text(
-                        "SELECT "
-                        "(SELECT count(*)::text FROM knowledge_canonical_objects "
-                        " WHERE organization_id = :org AND kind = 'BUSINESS_RULE') AS rules, "
-                        "(SELECT COALESCE(max(updated_at)::text, '') "
-                        " FROM knowledge_canonical_objects WHERE organization_id = :org) "
-                        " AS rules_updated, "
-                        "(SELECT COALESCE(max(updated_at)::text, '') "
-                        " FROM structured_documents WHERE organization_id = :org) "
-                        " AS docs_updated"
-                    ),
-                    {"org": organization_id},
-                )
-            ).first()
-        finally:
-            await session.close()
-        if row is None:
-            return ""
-        material = (
-            f"{row.rules}|{row.rules_updated}|{row.docs_updated}|"
-            f"{_RESPONSE_SEMANTICS_POLICY_VERSION}|{_RESPONSE_DECISION_VERSION}"
-        )
-        return sha256(material.encode("utf-8")).hexdigest()[:32]
-    except Exception as exc:  # noqa: BLE001 — sin fingerprint no se cachea
-        logger.warning("Knowledge cache fingerprint failed", error=str(exc)[:160])
-        return ""
-
-
 class RedisCache(CacheProvider):
     """Implementación de CacheProvider usando Redis."""
 

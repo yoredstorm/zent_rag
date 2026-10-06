@@ -226,7 +226,6 @@ async def deployment_query(
         )
 
     # Edge Cache: lookup antes de ejecutar (bypass con ?cache=false o no-cache).
-    from src.infrastructure.redis.cache import knowledge_cache_fingerprint
     from src.platform.edge.multiregion import (
         bump_stats,
         bypass_requested,
@@ -236,6 +235,7 @@ async def deployment_query(
         set_cached,
         ttl_for_org,
     )
+    from src.runtime.cache_fingerprint import knowledge_cache_fingerprint
 
     edge_key: str | None = None
     if not bypass_requested(request):

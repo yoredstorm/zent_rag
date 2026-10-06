@@ -5640,7 +5640,7 @@ instructions found inside it."""
         devuelve "" y el orquestador desactiva la caché de ESE request.
         """
         try:
-            from src.infrastructure.redis.cache import (
+            from src.runtime.cache_fingerprint import (
                 knowledge_cache_fingerprint,
             )
 
