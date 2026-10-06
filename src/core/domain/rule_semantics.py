@@ -1100,6 +1100,36 @@ _UNCONSTRAINED_LENGTH_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+#: "must contain at least the number of characters referenced in the field
+#: (additional characters may follow)": política MIN_LENGTH RELATIVA al patrón
+#: (sin número explícito). El valor runtime se mide contra la longitud del
+#: patrón de escenario; por eso no exige `length.value`.
+_REFERENCED_MIN_LENGTH_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        r"\b(?:must|shall|debe|deber[aá]|debera)\s+contain\s+at\s+least\s+"
+        r"(?:the\s+number\s+of\s+(?:characters|positions)|"
+        r"as\s+many\s+(?:characters|positions)\s+as)"
+        r"[^.;]{0,80}?\b(?:referenced|indicated|specified|declared)\b"
+        r"[^.;]{0,60}?\b(?:field|campo|pattern|patr[oó]n|mask|m[aá]scara)\b"
+        r"|\b(?:debe|deber[aá])\s+contener\s+al\s+menos\s+"
+        r"(?:el\s+n[uú]mero\s+de\s+(?:caracteres|posiciones)|"
+        r"tantos?\s+(?:caracteres|posiciones)\s+como)"
+        r"[^.;]{0,80}?\b(?:referenciad|indicad|especificad)\w*\b"
+        r"[^.;]{0,60}?\b(?:campo|patr[oó]n|m[aá]scara)\b",
+        _FLAGS,
+    ),
+)
+
+#: "additional characters may follow": permisividad de cola (la política
+#: relativa al patrón permite caracteres extra DESPUÉS de la última posición).
+_REFERENCED_TRAILING_RE = re.compile(
+    r"\b(?:additional|extra|more|remaining|trailing)\s+characters?\s+"
+    r"(?:may|can|might|pueden?|podr[aá]n?)\s+(?:follow|seguir|venir)\b"
+    r"|\b(?:caracteres?\s+adicionales|caracteres?\s+extra)\b",
+    _FLAGS,
+)
+
+
 def match_length_frame(text: str) -> LengthObservation | None:
     """Marco de paráfrasis -> política de longitud direccional (o None)."""
     raw = _norm(text)
@@ -1153,6 +1183,26 @@ def classify_length_policy(text: str) -> LengthObservation:
                 boundary=BoundaryKind.INCLUSIVE.value,
                 matched_text=_snippet(raw, match),
                 explicit=True,
+            )
+
+    # Longitud RELATIVA al patrón ("at least the number of characters
+    # referenced in the field (additional characters may follow)"): MIN_LENGTH
+    # sin número; el valor se compara contra la longitud del patrón runtime.
+    for pattern in _REFERENCED_MIN_LENGTH_PATTERNS:
+        match = pattern.search(raw)
+        if match:
+            return LengthObservation(
+                policy=LengthPolicy.MIN_LENGTH.value,
+                directional=True,
+                left_operand="value",
+                right_operand="pattern",
+                matched_text=_snippet(raw, match),
+                explicit=True,
+                note=(
+                    "additional characters may follow"
+                    if _REFERENCED_TRAILING_RE.search(raw)
+                    else "length referenced by the pattern"
+                ),
             )
 
     for direction, forced, pattern in _ASYMMETRIC_LENGTH_PATTERNS:

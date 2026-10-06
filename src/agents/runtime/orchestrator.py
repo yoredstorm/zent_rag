@@ -3801,6 +3801,7 @@ class RAGOrchestrator:
                     organization_id=organization_id,
                     question=semantic_query,
                     evidence_items=list(retrieval_context.chunks),
+                    enable_premise_closure=True,
                 )
                 result.steps.extend(prep_pre.steps)
                 grounded_pre = prep_pre.grounded_reasoning
@@ -4110,6 +4111,7 @@ class RAGOrchestrator:
                     organization_id=organization_id,
                     question=semantic_query or query,
                     evidence_items=evidence_selection.items,
+                    enable_premise_closure=True,
                 )
                 result.steps.extend(prep.steps)
                 grounded_reasoning = prep.grounded_reasoning

@@ -1,0 +1,24 @@
+DATA APPLICATION FOR RECORD 2 – CATEGORY CONTROL
+Effective 19 October 2025
+
+Fare Family Match using Exclamation Point (!) or Ampersand (&)
+
+| Fare Family | Match using | Exclamation Point (!) | or Ampersand | (&) |
+| The Exclamation | Point (!) or | Ampersand (&) is | used in | conjunction | with | alphanumeric | characters in the fare | family match | process | to positionally |
+| match fare | class characters. | The | “!” or “&” indicate | a match | to any | alphanumeric character | in that position | of the fare class | (following | the |
+| rules outlined | below). |
+
+When using special characters “!” or “&”, a fare class must contain at least the number of characters referenced in the fare class field (additional characters may follow). There is an assumed match to all characters after the final character, provided those characters adhere to the business rules listed below.
+
+An “&” can be used to indicate a number or alpha in a specific position of the fare class.
+
+| “&”: | | | | | | | | | | | | |
+| o An “&” | can be used | to | indicate a number | or alpha | in a | specific | position of the | fare | class | | |
+| Example | 1: | W&C&M can | be used to | match | WBCDM, | W1C2M, | WBC1M, | W1CBM, | and | WBC2MXRT | (all are |
+| | | valid matches | because the | | positional rules | for “&” are | obeyed | and the | matched | fare | classes are |
+| Example | 2: | &&TEST can | be used to | match | ABTEST, | A1TEST, | and A1TESTA | (all | are | valid matches | because |
+| | | the positional | rules for “&” | are | obeyed and | the matched | fare | classes | are at | least six | characters |
+| Example | 3: | W&2M can be | used to | match | WB2M, WC2M, | and | WB2MXRT | (all | are | valid | matches | because |
+| | | positional rules | for “&” | are | obeyed | and the | matched fare classes | are at | least | four | characters |
+| Example | 8: | W&&2M cannot | be used | to match | WA2M or | W2M (due | to minimal | fare class | length | being five |
+| | | characters to | match and | the | positional rules | are not met) | | | | | | |

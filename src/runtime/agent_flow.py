@@ -191,6 +191,79 @@ _PAYLOAD_KEYS: dict[str, tuple[str, ...]] = {
     "inference_verification": ("inference", "detail", "latency_ms"),
     "analysis_completion": ("completion", "detail", "latency_ms"),
     "memory": ("memory", "detail", "latency_ms"),
+    # Cadena determinista (fail-closed) y build: cada fase con su payload.
+    "build": (
+        "git_sha",
+        "git_sha_display",
+        "build_timestamp",
+        "rule_retrieval_version",
+        "rule_compiler_version",
+        "grounding_version",
+        "decision_envelope_version",
+        "derived_guard_version",
+        "deterministic_authority_version",
+        "query_semantics_version",
+        "premise_closure_version",
+        "rule_evaluation_version",
+        "query_local_rules_version",
+    ),
+    "query_semantics": ("intent", "intent_category", "semantics", "detail", "latency_ms"),
+    "rule_retrieval": (
+        "strategy",
+        "candidates_found",
+        "supported_rules",
+        "rule_ids",
+        "errors",
+        "canonical",
+        "error_code",
+        "why_no_rule",
+        "latency_ms",
+        "duration_ms",
+        "detail",
+    ),
+    "rule_evaluation": (
+        "executable_rules",
+        "missing_requirements",
+        "conflicts",
+        "latency_ms",
+        "detail",
+    ),
+    "requirement_graph": ("missing_premises", "canonical_rules", "detail"),
+    "premise_closure": (
+        "termination",
+        "rounds",
+        "information_gain",
+        "missing_before",
+        "missing_after",
+        "compilation_gaps",
+        "rules_added",
+        "evidence_added",
+        "detail",
+        "latency_ms",
+    ),
+    "grounding": (
+        "answerability",
+        "deterministic",
+        "missing_premises",
+        "conflicts",
+        "latency_ms",
+        "duration_ms",
+        "detail",
+    ),
+    "deterministic_operation": ("operation", "result", "inputs", "detail", "latency_ms"),
+    "derived_claim": (
+        "statement",
+        "operation",
+        "result",
+        "deterministic",
+        "canonical_rule_ids",
+        "evidence_refs",
+        "detail",
+    ),
+    "answer_state": ("state", "error_stage", "error_code", "detail"),
+    "decision_envelope": ("authoritative", "operation", "result", "detail"),
+    "derived_guard": ("verdict", "action", "detail"),
+    "finalization": ("answer", "detail"),
 }
 
 #: Steps que el runtime emite y que NO producen evento canónico por diseño.
@@ -225,6 +298,20 @@ STEP_LABEL: dict[str, str] = {
     "final": "Respuesta final",
     "guardrail": "Límite",
     "error": "Error",
+    # Cadena determinista (fail-closed).
+    "build": "Build",
+    "query_semantics": "Semántica de la pregunta",
+    "rule_retrieval": "Retrieval de reglas",
+    "rule_evaluation": "Evaluación de reglas",
+    "requirement_graph": "Grafo de requisitos",
+    "premise_closure": "Cierre de premisas",
+    "grounding": "Grounding",
+    "deterministic_operation": "Operación determinista",
+    "derived_claim": "DerivedClaim",
+    "answer_state": "Estado de respuesta",
+    "decision_envelope": "DecisionEnvelope",
+    "derived_guard": "Guard de derivados",
+    "finalization": "Finalización",
 }
 
 OMIT_REASON_LABEL: dict[str, str] = {
@@ -368,6 +455,49 @@ def _detail_for(step: dict[str, Any], step_type: str) -> str:
             )
             if part
         )
+    if step_type == "premise_closure":
+        parts = [str(step.get("termination") or "")]
+        rounds = _int(step.get("rounds"))
+        if rounds:
+            parts.append(f"{rounds} ronda{'s' if rounds != 1 else ''}")
+        gain = _int(step.get("information_gain"))
+        parts.append(f"gain {gain}")
+        missing_after = step.get("missing_after")
+        if isinstance(missing_after, list) and missing_after:
+            parts.append("faltan " + ", ".join(str(item) for item in missing_after[:3]))
+        return " · ".join(part for part in parts if part)
+    if step_type == "requirement_graph":
+        missing = step.get("missing_premises")
+        if isinstance(missing, list) and missing:
+            return "premisas: " + ", ".join(str(item) for item in missing[:5])
+        return "sin premisas faltantes"
+    if step_type == "answer_state":
+        state = str(step.get("state") or "")
+        detail = str(step.get("detail") or "")
+        return " · ".join(part for part in (state, detail) if part)[:200]
+    if step_type == "rule_retrieval":
+        strategy = str(step.get("strategy") or "")
+        candidates = _int(step.get("candidates_found"))
+        supported = _int(step.get("supported_rules"))
+        parts = [part for part in (strategy, f"{candidates} candidatas", f"{supported} soportadas") if part]
+        why = step.get("why_no_rule")
+        if isinstance(why, list) and why:
+            parts.append(str(why[0])[:120])
+        return " · ".join(parts)
+    if step_type == "decision_envelope":
+        result = step.get("result")
+        return " · ".join(
+            part
+            for part in (
+                str(step.get("operation") or ""),
+                str(result) if result is not None else "",
+                "autoritativo" if step.get("authoritative") else "",
+            )
+            if part
+        )
+    if step_type == "build":
+        sha = str(step.get("git_sha_display") or step.get("git_sha") or "BUILD_SHA_UNAVAILABLE")
+        return sha[:12]
     return str(step.get("detail") or step.get("status") or "")[:160]
 
 

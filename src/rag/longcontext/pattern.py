@@ -164,6 +164,10 @@ class PatternSemantics:
     length_upper: int | None = None
     length_boundary: str = ""
     anchor_side: str = ""  # start | end | "" (no declarado)
+    #: Política de longitud RELATIVA al patrón ("at least the number of
+    #: characters referenced in the field"): el largo de referencia es la
+    #: longitud del patrón runtime, no un número declarado.
+    length_relative_to_pattern: bool = False
     statements: tuple[str, ...] = ()
     version: str = PATTERN_VERSION
 
@@ -196,6 +200,7 @@ class PatternSemantics:
             "length_upper": self.length_upper,
             "length_boundary": self.length_boundary,
             "length_sensitive": self.length_sensitive,
+            "length_relative_to_pattern": self.length_relative_to_pattern,
             "anchor_side": self.anchor_side,
             "statements": list(self.statements[:6]),
         }
@@ -420,8 +425,22 @@ def extract_pattern_semantics(
         length_value=length_observation.value,
         length_upper=length_observation.upper,
         length_boundary=length_observation.boundary,
+        length_relative_to_pattern=_is_pattern_relative_length(length_observation),
         anchor_side=anchor_side,
         statements=tuple(statements[:6]),
+    )
+
+
+def _is_pattern_relative_length(observation: Any) -> bool:
+    """La observación declara que el largo de referencia es el del patrón."""
+    if observation is None:
+        return False
+    if str(getattr(observation, "right_operand", "") or "").lower() == "pattern":
+        return True
+    note = str(getattr(observation, "note", "") or "").lower()
+    return (
+        "additional characters may follow" in note
+        or "length referenced by the pattern" in note
     )
 
 
@@ -507,7 +526,11 @@ def missing_pattern_premises(
     if value_length is not None and value_length != instance.length:
         if not semantics.length_policy_known and not semantics.anchor_side:
             missing.append("length_semantics")
-        elif numeric_length_policy(semantics.length_policy) and semantics.length_value is None:
+        elif (
+            numeric_length_policy(semantics.length_policy)
+            and semantics.length_value is None
+            and not semantics.length_relative_to_pattern
+        ):
             missing.append("length_semantics")
     return tuple(dict.fromkeys(missing))
 
@@ -522,6 +545,13 @@ def _length_failure(
     length = len(value)
     low = semantics.length_value
     high = semantics.length_upper
+    if (
+        low is None
+        and semantics.length_relative_to_pattern
+        and policy
+        in (LengthPolicy.MIN_LENGTH.value, LengthPolicy.MAX_LENGTH.value)
+    ):
+        low = instance.length
     inclusive = semantics.length_boundary != BoundaryKind.EXCLUSIVE.value
     violation = ""
     if policy == LengthPolicy.MIN_LENGTH.value and low is not None:

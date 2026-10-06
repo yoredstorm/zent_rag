@@ -39,6 +39,7 @@ from src.intelligence.reasoning.operations import (
 
 from .model import CanonicalRule
 from .pattern_bridge import pattern_semantics_from_rule
+from .verify import is_pattern_relative_length
 
 EVALUATION_VERSION = "rule-evaluation-1"
 
@@ -389,6 +390,16 @@ def _check_comparisons(
         prop = operators[name]
         suffix = name[len('comparison.operator') :]
         operator = str(prop.value)
+        # Una política de longitud relativa al patrón ("at least the number of
+        # characters referenced in the field") ya expresa la comparación de
+        # magnitud: no se duplica como comparación de valores del escenario.
+        if is_pattern_relative_length(rule) and operator in (
+            ComparisonOperator.GT.value,
+            ComparisonOperator.GTE.value,
+            ComparisonOperator.LT.value,
+            ComparisonOperator.LTE.value,
+        ):
+            continue
         left_prop = rule.properties.get(f'comparison.left{suffix}')
         right_prop = rule.properties.get(f'comparison.right{suffix}')
         boundary_prop = rule.properties.get(
@@ -460,6 +471,18 @@ def _property_evidence(rule: CanonicalRule, prefixes: Sequence[str]) -> list[str
         if any(key.startswith(prefix) for prefix in prefixes):
             refs.extend(prop.evidence)
     return list(dict.fromkeys(refs))
+
+
+def _pattern_relative_length(
+    rule: CanonicalRule, values: Mapping[str, Any]
+) -> float | None:
+    """(Longitud del patrón runtime) si la regla declara esa referencia."""
+    if not is_pattern_relative_length(rule):
+        return None
+    pattern_value = values.get("pattern")
+    if pattern_value is None:
+        return None
+    return float(len(str(pattern_value)))
 
 
 def _check_length(
@@ -560,10 +583,28 @@ def _check_length(
                 )
             expected = float(len(str(pattern_value)))
         outcome = registry.run("COMPARISON", a=target, b=expected, op="eq")
-    elif policy == LengthPolicy.MIN_LENGTH.value:
-        outcome = registry.run("COMPARISON", a=target, b=_as_number(minimum), op="ge" if inclusive else "gt")
-    elif policy == LengthPolicy.MAX_LENGTH.value:
-        outcome = registry.run("COMPARISON", a=target, b=_as_number(minimum), op="le" if inclusive else "lt")
+    elif policy in (LengthPolicy.MIN_LENGTH.value, LengthPolicy.MAX_LENGTH.value):
+        expected = _as_number(minimum)
+        if expected is None:
+            # "at least the number of characters referenced in the field":
+            # el número de referencia es la longitud del patrón runtime.
+            expected = _pattern_relative_length(rule, values)
+            if expected is None:
+                return RuleCheck(
+                    name="length",
+                    operation="LENGTH_POLICY",
+                    status=RuleEvaluationStatus.UNDETERMINED.value,
+                    missing_premises=["length_value", "input:pattern"],
+                    detail=f"{policy} sin número declarado ni patrón de escenario",
+                )
+        if policy == LengthPolicy.MIN_LENGTH.value:
+            outcome = registry.run(
+                "COMPARISON", a=target, b=expected, op="ge" if inclusive else "gt"
+            )
+        else:
+            outcome = registry.run(
+                "COMPARISON", a=target, b=expected, op="le" if inclusive else "lt"
+            )
     elif policy == LengthPolicy.RANGE.value:
         if minimum is None or maximum is None:
             return RuleCheck(
@@ -1259,6 +1300,34 @@ def evaluate_rule(
             inputs=runtime_values,
             premises_used=premises_used,
             reason=f"regla no ejecutable ({rule.verification_state})",
+            requirements=_requirements_for(rule, ()),
+        )
+
+    # Aplicabilidad de gramática: una regla que declara símbolos de patrón solo
+    # aplica a patrones que USAN alguno de esos símbolos. Una regla de otro
+    # patrón no puede decidir MATCH/NO_MATCH sobre el patrón del escenario.
+    pattern_value = runtime_values.get("pattern")
+    declared_symbols = {
+        name[len("matching.symbol.") :]
+        for name, prop in rule.properties.items()
+        if name.startswith("matching.symbol.")
+        and not name.endswith(".alphabet")
+        and not name.endswith(".unmerged")
+        and prop.known
+    }
+    if (
+        pattern_value is not None
+        and declared_symbols
+        and not any(str(symbol) in str(pattern_value) for symbol in declared_symbols)
+    ):
+        return RuleEvaluation(
+            rule_id=rule.rule_id,
+            status=RuleEvaluationStatus.NOT_APPLICABLE.value,
+            result="NOT_APPLICABLE",
+            evidence_refs=evidence_refs,
+            inputs=runtime_values,
+            premises_used=premises_used,
+            reason="pattern_does_not_use_declared_symbols",
             requirements=_requirements_for(rule, ()),
         )
 

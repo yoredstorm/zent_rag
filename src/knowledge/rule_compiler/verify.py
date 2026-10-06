@@ -246,6 +246,30 @@ def min_state(left: str, right: str) -> str:
     return left if _STATE_ORDER.get(left, 0) <= _STATE_ORDER.get(right, 0) else right
 
 
+def is_pattern_relative_length(rule: CanonicalRule) -> bool:
+    """¿La política de longitud se mide contra la longitud del patrón?
+
+    Políticas como "at least the number of characters referenced in the field
+    (additional characters may follow)" no declaran número: el valor runtime se
+    compara contra la longitud del patrón. Se exige señal explícita (operandos
+    direccionales o nota declarada); jamás se asume.
+    """
+    for name, prop in (getattr(rule, "properties", {}) or {}).items():
+        if not getattr(prop, "known", False):
+            continue
+        value = str(getattr(prop, "value", "") or "").lower()
+        if name.endswith("right_operand") and value == "pattern":
+            return True
+        if name.endswith("left_operand") and value == "value":
+            return True
+        note = str(getattr(prop, "note", "") or "").lower()
+        if "additional characters may follow" in note:
+            return True
+        if "length referenced by the pattern" in note:
+            return True
+    return False
+
+
 def _required_execution_missing(rule: CanonicalRule) -> list[str]:
     """Premisas que impiden ejecución determinista (UNKNOWN no se ejecuta)."""
     missing: list[str] = []
@@ -265,9 +289,16 @@ def _required_execution_missing(rule: CanonicalRule) -> list[str]:
             elif numeric_length_policy(policy) and prop.value is not None:
                 value_prop = rule.properties.get("length.value")
                 upper_prop = rule.properties.get("length.upper")
-                if value_prop is None or not value_prop.known:
+                # Longitud relativa al patrón ("at least the number referenced
+                # in the field"): no exige número; se mide contra el patrón.
+                pattern_relative = is_pattern_relative_length(rule)
+                if (value_prop is None or not value_prop.known) and not pattern_relative:
                     missing.append("length_value")
-                if policy == LengthPolicy.RANGE.value and (upper_prop is None or not upper_prop.known):
+                if (
+                    policy == LengthPolicy.RANGE.value
+                    and (upper_prop is None or not upper_prop.known)
+                    and not pattern_relative
+                ):
                     missing.append("length_upper")
             elif asymmetric_length_policy(policy):
                 has_roles = any(
@@ -627,6 +658,7 @@ def detect_rule_conflicts(rules: Sequence[CanonicalRule]) -> tuple[list[RuleConf
 
 __all__ = [
     "detect_rule_conflicts",
+    "is_pattern_relative_length",
     "min_state",
     "recompute_execution",
     "verify_candidate",

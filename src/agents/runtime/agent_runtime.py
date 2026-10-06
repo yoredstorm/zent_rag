@@ -2470,6 +2470,7 @@ class AgentRuntime:
                     organization_id=request.agent.organization_id,
                     question=request.message,
                     evidence_items=items,
+                    enable_premise_closure=True,
                 )
             except Exception as exc:  # noqa: BLE001 — fallo explícito, no silencio
                 logger.warning("derived authority preparation failed", error=str(exc)[:200])

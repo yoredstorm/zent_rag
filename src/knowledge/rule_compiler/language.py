@@ -526,25 +526,39 @@ def analyze_statement(statement: str, *, evidence_id: str) -> StatementAnalysis:
         analysis.scope_priority = max(analysis.scope_priority, 1)
 
     # Símbolo definido por el propio enunciado ("& represents ...").
+    # Formulaciones reales: "&" represents / is / indicates / can be used to
+    # indicate / can match to... El símbolo va entre comillas o paréntesis; los
+    # caracteres de cita NUNCA son símbolo (evita capturar `”` como símbolo).
     symbol_definitions = list(
         re.finditer(
-            r"[\"'«]?\s*(?P<symbol>[^\w\s]|[A-Z])\s*"
-            r"(?P<verb>represents?|means?|stands?\s+for|denotes?|significa|representa|"
-            r"is|are|es|son)\s+"
-            r"(?P<meaning>[^.;\n]{3,120})",
+            r"[\"'«“(\[]?\s*(?P<symbol>[&*?%#$@!~^]|[A-Z])\s*[\"'»”) \]]?\s*"
+            r"(?P<verb>"
+            r"can\s+be\s+used\s+to\s+(?:indicate|represent|mean|match|specify)|"
+            r"may\s+be\s+used\s+to\s+(?:indicate|represent|mean|match|specify)|"
+            r"is\s+used\s+to\s+(?:indicate|represent|mean|match|specify)|"
+            r"are\s+used\s+to\s+(?:indicate|represent|mean|match|specify)|"
+            r"can\s+match\s+to|may\s+match\s+to|"
+            r"represents?|means?|stands?\s+for|denotes?|indicates?|matches?|"
+            r"significa|representa|indica|permite|"
+            r"is|are|es|son"
+            r")\s+"
+            r"(?P<meaning>[^.;\n]{3,160})",
             text,
+            re.IGNORECASE,
         )
     )
     for symbol_match in symbol_definitions:
         symbol = symbol_match.group("symbol")
+        if symbol in ("\"", "'", "«", "»", "“", "”", "(", ")", "[", "]", " "):
+            continue
         prop_name = f"matching.symbol.{symbol}"
         if prop_name in analysis.properties:
             continue
         meaning = " ".join(symbol_match.group("meaning").split())
         if symbol.isalpha() and not re.match(
             r"(?:(?:a|an|one|un|una)\s+)?"
-            r"(?:letter|digit|character|alphanumeric|position|symbol|"
-            r"letra|d[ií]gito|car[aá]cter|posici[oó]n|s[ií]mbolo)\b",
+            r"(?:letter|digit|character|alphanumeric|position|symbol|number|alpha|"
+            r"letra|d[ií]gito|car[aá]cter|posici[oó]n|s[ií]mbolo|n[uú]mero)\b",
             meaning,
             re.IGNORECASE,
         ):

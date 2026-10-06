@@ -464,6 +464,8 @@ const DECISION_KIND_TITLES: Record<string, string> = {
   // Agent JEV Loop: el juicio del paso, con su veredicto compuesto.
   agent_step: "JEV juzgó el paso",
   guardrail: "Aplicó una regla de seguridad",
+  rule_evaluation: "Evaluó las reglas compiladas",
+  requirement_graph: "Construyó el grafo de requisitos",
 };
 
 const EVIDENCE_KIND_TITLES: Record<string, string> = {
@@ -476,6 +478,8 @@ const EVIDENCE_KIND_TITLES: Record<string, string> = {
   grounding: "Comprobó el respaldo de la respuesta",
   // Búsqueda extra pedida por JEV porque faltaba evidencia para lo preguntado.
   jev_retrieval: "Volvió a buscar: faltaba evidencia",
+  rule_retrieval: "Buscó reglas canónicas",
+  premise_closure: "Cerró las premisas faltantes",
 };
 
 const REASONING_KIND_TITLES: Record<string, string> = {
@@ -483,6 +487,7 @@ const REASONING_KIND_TITLES: Record<string, string> = {
   state_reconstruction: "Reconstruyó los cambios",
   timeline: "Ordenó los eventos",
   hypothesis_test: "Contrastó explicaciones",
+  deterministic_operation: "Ejecutó la operación determinista",
 };
 
 /** §39: la herramienta elegida se nombra en lenguaje humano. */
@@ -502,16 +507,23 @@ export function toolTitle(tool: string): string {
 
 const UNDERSTANDING_KIND_TITLES: Record<string, string> = {
   reasoning_classification: "Entendió qué tipo de análisis necesitaba",
+  query_semantics: "Clasificó la semántica de la pregunta",
 };
 
 /** Fase de contexto: lo que se preparó antes de buscar (embedding de la query). */
 const CONTEXT_KIND_TITLES: Record<string, string> = {
   embedding: "Convirtió la consulta en vector",
+  build: "Build del runtime",
 };
 
 const VERIFICATION_KIND_TITLES: Record<string, string> = {
   inference_verification: "Verificó que la conclusión se desprenda de los hechos",
   analysis_completion: "Verificó que el análisis estuviera completo",
+  derived_claim: "Conclusión derivada por código",
+  answer_state: "Estado de respuesta construido por código",
+  decision_envelope: "Envolvió la decisión autoritativa",
+  derived_guard: "Protegió el resultado determinista",
+  finalization: "Cerró la respuesta final",
 };
 
 export function kindTitle(kind: string): string {
@@ -1308,9 +1320,11 @@ function status(value: unknown): StoryStatus {
 
 const PHASE_BY_KIND: Record<string, StoryPhaseId> = {
   reasoning_classification: "understanding",
+  query_semantics: "understanding",
   context: "context",
   company_context: "context",
   embedding: "context",
+  build: "context",
   reasoning_plan: "planning",
   response_planning: "planning",
   agent_step: "decision",
@@ -1320,6 +1334,8 @@ const PHASE_BY_KIND: Record<string, StoryPhaseId> = {
   tool_filter: "decision",
   router_fallback: "decision",
   termination_gate: "decision",
+  rule_evaluation: "decision",
+  requirement_graph: "decision",
   answer_gate: "verification",
   reasoning_incomplete: "verification",
   answer_revision: "verification",
@@ -1327,6 +1343,7 @@ const PHASE_BY_KIND: Record<string, StoryPhaseId> = {
   state_reconstruction: "reasoning",
   timeline: "reasoning",
   hypothesis_test: "reasoning",
+  deterministic_operation: "reasoning",
   inference_verification: "verification",
   analysis_completion: "verification",
   tool_call: "evidence",
@@ -1335,8 +1352,15 @@ const PHASE_BY_KIND: Record<string, StoryPhaseId> = {
   sql: "evidence",
   sources: "evidence",
   evidence: "evidence",
+  rule_retrieval: "evidence",
+  premise_closure: "evidence",
   fallback: "verification",
   grounding: "verification",
+  derived_claim: "verification",
+  answer_state: "verification",
+  decision_envelope: "verification",
+  derived_guard: "verification",
+  finalization: "generation",
   generation: "generation",
   final: "generation",
   llm: "generation",
@@ -1607,8 +1631,46 @@ export function normalizeLegacyFlow(flow: Flow): StoryEvent[] {
     const kind = str(step.type || step.kind);
     if (!kind) continue;
     const phase = PHASE_BY_KIND[kind];
-    if (!phase) continue;
+    if (!phase) {
+      // Un step sin mapping canónico NO desaparece: se muestra en la sección
+      // técnica como no mapeado (mismo contrato que el builder del backend).
+      events.push({
+        id: str(step.id) || `step-${index}`,
+        phase: "verification",
+        kind,
+        status: step.status ?? "ok",
+        duration_ms: step.duration_ms ?? step.latency_ms ?? step.ms,
+        metrics: { ...record(step) },
+        technical: {
+          tool: step.tool,
+          detail: step.detail,
+          model: step.model,
+          unmapped: true,
+        },
+      });
+      continue;
+    }
     const payload: Flow = { ...record(step[keyForKind(kind)]) };
+    // El builder canónico del backend deja los payloads PLANOS en el step
+    // (termination, rounds, information_gain...). Se conservan para que la
+    // historia no pierda lo que el backend ya decidió.
+    for (const [key, value] of Object.entries(record(step))) {
+      if (
+        key === "type" ||
+        key === "id" ||
+        key === "name" ||
+        key === "status" ||
+        key === "ms" ||
+        key === "latency_ms" ||
+        key === "duration_ms" ||
+        key === "tool" ||
+        key === "detail" ||
+        key === "model"
+      ) {
+        continue;
+      }
+      if (!(key in payload)) payload[key] = value;
+    }
     events.push({
       id: str(step.id) || `step-${index}`,
       phase,

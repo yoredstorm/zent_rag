@@ -231,14 +231,29 @@ def build_indexes(items: Sequence[RuleContextItem]) -> _Indexes:
             indexes.definitions.setdefault(normalized_label, item)
         if item.kind == "symbol" or (
             _is_symbol_label(item.label)
-            and re.search(r"\b(represents?|means?|significa|representa|denotes?)\b", item.text, re.I)
+            and re.search(
+                r"\b(represents?|means?|significa|representa|denotes?|indicates?|"
+                r"can\s+be\s+used\s+to\s+(?:indicate|represent)|is\s+used\s+to|"
+                r"can\s+match\s+to)\b",
+                item.text,
+                re.I,
+            )
         ):
             symbol = item.label.strip()
             if symbol:
                 indexes.symbols.setdefault(symbol, item)
                 # Símbolos nombrados en el texto ("& representa...") también indexan.
         for symbol_match in re.finditer(
-            r"[\"'«]?\s*(?P<sym>&|\*|\?|%|#|\$|@|!|~|\^)\s*(?P<verb>represents?|means?|significa|representa|denotes?|stands?\s+for)",
+            r"[\"'«“(\[]?\s*(?P<sym>&|\*|\?|%|#|\$|@|!|~|\^)\s*[\"'»”) \]]?\s*"
+            r"(?P<verb>"
+            r"can\s+be\s+used\s+to\s+(?:indicate|represent|mean|match|specify)|"
+            r"may\s+be\s+used\s+to\s+(?:indicate|represent|mean|match|specify)|"
+            r"is\s+used\s+to\s+(?:indicate|represent|mean|match|specify)|"
+            r"are\s+used\s+to\s+(?:indicate|represent|mean|match|specify)|"
+            r"can\s+match\s+to|may\s+match\s+to|"
+            r"represents?|means?|significa|representa|denotes?|indicates?|matches?|"
+            r"stands?\s+for|es|son|is|are"
+            r")\b",
             item.text,
             re.IGNORECASE,
         ):

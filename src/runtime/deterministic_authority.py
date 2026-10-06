@@ -87,6 +87,8 @@ STAGE_RULE_EVALUATION = "rule_evaluation"
 STAGE_GROUNDING = "grounding"
 STAGE_DERIVATION = "derivation"
 STAGE_DECISION_ENVELOPE = "decision_envelope"
+STAGE_REQUIREMENT_GRAPH = "requirement_graph"
+STAGE_PREMISE_CLOSURE = "premise_closure"
 
 #: Códigos de error explícitos (operativo vs documental).
 ERROR_RULE_RETRIEVAL_UNAVAILABLE = "RULE_RETRIEVAL_UNAVAILABLE"
@@ -365,6 +367,8 @@ class DerivedPreparationResult:
     missing_premises: tuple[str, ...] = ()
     conflicts: tuple[str, ...] = ()
     steps: list[dict] = field(default_factory=list)
+    premise_closure: Any = None
+    evidence_counters: dict = field(default_factory=dict)
     duration_ms: float = 0.0
     version: str = DETERMINISTIC_AUTHORITY_VERSION
 
@@ -430,6 +434,12 @@ class DerivedPreparationResult:
             "missing_premises": list(self.missing_premises[:12]),
             "conflicts": list(self.conflicts[:8]),
             "steps": list(self.steps),
+            "premise_closure": (
+                self.premise_closure.to_public_dict()
+                if hasattr(self.premise_closure, "to_public_dict")
+                else self.premise_closure
+            ),
+            "evidence_counters": dict(self.evidence_counters),
             "duration_ms": round(float(self.duration_ms or 0.0), 2),
         }
 
@@ -459,6 +469,218 @@ def _first_deterministic_claim(grounded: Any) -> dict[str, Any] | None:
     return None
 
 
+class _ClosureEvidenceItem:
+    """Evidencia recuperada -> item consumible por el grounded engine."""
+
+    def __init__(self, hit: Any) -> None:
+        self.content = str(getattr(hit, "content", "") or "")
+        self.evidence_id = str(getattr(hit, "evidence_id", "") or "")
+        self.source_id = str(getattr(hit, "source_id", "") or "")
+        self.document_id = str(getattr(hit, "document_id", "") or "")
+        self.page = getattr(hit, "page", None)
+        self.section_path = tuple(getattr(hit, "section_path", ()) or ())
+        self.metadata = {
+            "document_id": self.document_id,
+            "source_id": self.source_id,
+            "page": self.page,
+            "section_path": list(self.section_path),
+            "evidence_id": self.evidence_id,
+        }
+
+
+def _evidence_identity(item: Any) -> str:
+    metadata = getattr(item, "metadata", None)
+    metadata = metadata if isinstance(metadata, dict) else {}
+    for attribute in ("evidence_id", "chunk_id"):
+        value = getattr(item, attribute, None) or metadata.get(attribute)
+        if value:
+            return str(value)
+    return ""
+
+
+async def _run_premise_closure_stage(
+    *,
+    organization_id: Any,
+    question: str,
+    evidence_items: Sequence[Any],
+    grounded: Any,
+    rules: Sequence[Any],
+    semantics: Any,
+    rounds_left: int,
+    evidence_search: Callable[..., Any] | None,
+    reason_fn: Callable[..., Any] | None,
+) -> tuple[Any, Any]:
+    """Ejecuta premise closure si hay puerto disponible. Fail-soft total."""
+    try:
+        from src.runtime.premise_closure import (
+            PremiseClosureRequest,
+            PremiseEvaluation,
+            SourceScope,
+            normalize_premises,
+            run_premise_closure,
+        )
+        from src.runtime.premise_search import (
+            RuleIndexPremiseSearch,
+            make_fabric_expander,
+            make_source_local_expander,
+        )
+        from src.runtime.query_local_rules import compile_query_local_rules
+    except Exception as exc:  # noqa: BLE001 — sin motor no hay fase
+        logger.warning("premise closure unavailable", error=str(exc)[:160])
+        return None, grounded
+
+    missing = normalize_premises(getattr(grounded, "missing_premises", ()) or ())
+    if not missing or rounds_left <= 0:
+        return None, grounded
+
+    runtime_pattern = ""
+    for pattern in getattr(semantics, "runtime_patterns", ()) or ():
+        value = str(getattr(pattern, "value", "") or "")
+        if value:
+            runtime_pattern = value
+            break
+    domain_entities = tuple(
+        str(getattr(obj, "value", "") or "")
+        for obj in (getattr(semantics, "objects", ()) or ())
+        if str(getattr(obj, "semantic_role", "")) == "DOMAIN_ENTITY"
+    )
+    field_context = tuple(
+        str(getattr(obj, "value", "") or "")
+        for obj in (getattr(semantics, "field_requirements", ()) or ())
+    )
+
+    document_ids: list[str] = []
+    source_ids: list[str] = []
+    seen_evidence: list[str] = []
+    for item in evidence_items:
+        metadata = getattr(item, "metadata", None)
+        metadata = metadata if isinstance(metadata, dict) else {}
+        document_id = str(
+            getattr(item, "document_id", None) or metadata.get("document_id") or ""
+        )
+        source_id = str(
+            getattr(item, "source_id", None) or metadata.get("source_id") or ""
+        )
+        if document_id and document_id not in document_ids:
+            document_ids.append(document_id)
+        if source_id and source_id not in source_ids:
+            source_ids.append(source_id)
+        identity = _evidence_identity(item)
+        if identity:
+            seen_evidence.append(identity)
+
+    source_scope = SourceScope(
+        organization_id=str(organization_id),
+        document_ids=tuple(document_ids[:12]),
+        source_ids=tuple(source_ids[:12]),
+    )
+    document_id = document_ids[0] if document_ids else ""
+
+    # Compilación provisional de la evidencia YA recuperada: si la ingesta no
+    # compiló la premisa, la consulta no queda inútil.
+    initial_local = compile_query_local_rules(
+        evidence_items,
+        document_id=document_id,
+        document_title=str(getattr(grounded, "document_title", "") or ""),
+        organization_id=str(organization_id),
+    )
+    candidates = [*rules, *initial_local.rules]
+
+    request = PremiseClosureRequest(
+        original_query=question,
+        canonical_rule_candidates=tuple(candidates),
+        missing_premises=missing,
+        runtime_pattern=runtime_pattern,
+        domain_entities=domain_entities,
+        field_context=field_context,
+        source_scope=source_scope,
+        already_seen_evidence=tuple(seen_evidence),
+        already_seen_rule_ids=tuple(
+            str(getattr(rule, "rule_id", "") or "") for rule in candidates
+        ),
+        rounds_left=max(1, min(int(rounds_left), 4)),
+    )
+
+    final_grounded: dict[str, Any] = {"value": grounded}
+
+    async def _evaluate(closure_rules: Sequence[Any], hits: Sequence[Any]) -> Any:
+        items = [*evidence_items, *[_ClosureEvidenceItem(hit) for hit in hits]]
+        reason = reason_fn
+        if reason is None:
+            from src.intelligence.reasoning.grounded_engine import reason_over_evidence
+
+            reason = reason_over_evidence
+        try:
+            grounded_now = reason(
+                question=question,
+                evidence_items=items,
+                canonical_rules=list(closure_rules) or None,
+            )
+        except Exception as exc:  # noqa: BLE001 — evaluación fail-soft
+            logger.warning("premise closure evaluation failed", error=str(exc)[:160])
+            return PremiseEvaluation(missing_premises=missing, conflicts=())
+        final_grounded["value"] = grounded_now
+        derivations = getattr(grounded_now, "derivations", None)
+        return PremiseEvaluation(
+            missing_premises=tuple(
+                str(item) for item in (getattr(grounded_now, "missing_premises", ()) or ())
+            ),
+            conflicts=tuple(
+                str(item) for item in (getattr(grounded_now, "conflicts", ()) or ())
+            ),
+            claims=tuple(getattr(derivations, "claims", ()) or ()),
+            canonical_rules=tuple(
+                getattr(grounded_now, "canonical_rules", ()) or closure_rules
+            ),
+        )
+
+    def _compile_new(hits: Sequence[Any], _request: Any) -> list[Any]:
+        # Compila la evidencia YA recuperada + la nueva: la regla provisional
+        # resultante no depende de qué ronda trajo cada pieza.
+        return compile_query_local_rules(
+            [*evidence_items, *hits],
+            document_id=document_id,
+            organization_id=str(organization_id),
+        ).rules
+
+    source_local = make_source_local_expander(organization_id)
+    fabric = make_fabric_expander(organization_id)
+
+    async def _expand(closure_rules: Sequence[Any], closure_request: Any) -> list[Any]:
+        expanded = list(await source_local(closure_rules, closure_request))
+        expanded.extend(await fabric(closure_rules, closure_request))
+        return expanded
+
+    async def _evidence_search(query: str, scope: Any, limit: int) -> list[Any]:
+        if evidence_search is None:
+            return []
+        return list(await evidence_search(query, scope, limit))
+
+    try:
+        from src.runtime.rule_retrieval import PostgresRuleIndex
+
+        search_port = RuleIndexPremiseSearch(
+            index=PostgresRuleIndex(),
+            organization_id=organization_id,
+            evidence_search=_evidence_search if evidence_search is not None else None,
+            operation_intent=str(getattr(semantics, "intent", "") or ""),
+        )
+        closure = await run_premise_closure(
+            request,
+            search=search_port,
+            evaluate=_evaluate,
+            expand=_expand,
+            compile_evidence=_compile_new,
+        )
+    except Exception as exc:  # noqa: BLE001 — la fase jamás rompe el run
+        logger.warning("premise closure stage failed", error=str(exc)[:200])
+        return None, grounded
+
+    if closure is None:
+        return None, grounded
+    return closure, final_grounded["value"]
+
+
 async def prepare_derived_authority(
     *,
     organization_id: Any,
@@ -468,6 +690,9 @@ async def prepare_derived_authority(
     retrieval_fn: Callable[..., Any] | None = None,
     reason_fn: Callable[..., Any] | None = None,
     envelope_fn: Callable[..., Any] | None = None,
+    enable_premise_closure: bool = False,
+    premise_evidence_search: Callable[..., Any] | None = None,
+    premise_closure_rounds: int = 2,
 ) -> DerivedPreparationResult:
     """Ejecuta la cadena determinista por FASES con telemetría fail-closed.
 
@@ -658,6 +883,103 @@ async def prepare_derived_authority(
             conflicts=list(conflicts[:8]),
         )
     )
+
+    # --- PREMISE CLOSURE: retrieval dirigido por premisas faltantes ----------
+    # JEV/answer gate decide "necesitamos más"; ESTA fase decide exactamente
+    # qué buscar. No repite la búsqueda semántica de la pregunta original.
+    if (
+        enable_premise_closure
+        and prep.requires_deterministic_decision
+        and premisas
+        and prep.grounded_reasoning is not None
+    ):
+        closure, grounded_final = await _run_premise_closure_stage(
+            organization_id=organization_id,
+            question=text_question,
+            evidence_items=list(evidence_items),
+            grounded=prep.grounded_reasoning,
+            rules=rules,
+            semantics=sem,
+            rounds_left=max(0, int(premise_closure_rounds)),
+            evidence_search=premise_evidence_search,
+            reason_fn=reason_fn,
+        )
+        if closure is not None:
+            prep.premise_closure = closure
+            prep.steps.append(
+                stage_step(
+                    STAGE_REQUIREMENT_GRAPH,
+                    "warn" if premisas else "ok",
+                    missing_premises=list(premisas[:12]),
+                    canonical_rules=len(list(getattr(prep.rule_retrieval, "supported_rules", ()) or ())),
+                )
+            )
+            prep.steps.append(
+                stage_step(
+                    STAGE_PREMISE_CLOSURE,
+                    "ok" if closure.satisfied else "warn",
+                    termination=closure.termination,
+                    rounds=len(closure.rounds),
+                    information_gain=closure.total_information_gain,
+                    missing_before=list(closure.missing_before[:12]),
+                    missing_after=list(closure.missing_after[:12]),
+                    compilation_gaps=len(closure.compilation_gaps),
+                    rules_added=len(closure.rules),
+                    evidence_added=len(closure.evidence),
+                    detail=closure.to_public_dict(),
+                )
+            )
+            if grounded_final is not None:
+                prep.grounded_reasoning = grounded_final
+                grounded = grounded_final
+                derivations = getattr(grounded_final, "derivations", None)
+                claims = list(getattr(derivations, "claims", ()) or ())
+                deterministic_claims = [
+                    claim
+                    for claim in claims
+                    if bool(getattr(claim, "deterministic", False))
+                    and str(getattr(claim, "verification_status", "")) == "SUPPORTED"
+                ]
+                premisas = tuple(
+                    str(item)
+                    for item in (getattr(grounded_final, "missing_premises", ()) or ())
+                )
+                conflicts = tuple(
+                    str(item)
+                    for item in (getattr(grounded_final, "conflicts", ()) or ())
+                )
+                prep.derived_claims = claims
+                prep.missing_premises = premisas
+                prep.conflicts = conflicts
+                credible = [
+                    evaluation
+                    for evaluation in (
+                        getattr(grounded_final, "rule_evaluations", ()) or ()
+                    )
+                    if str(getattr(evaluation, "status", "") or "")
+                    in ("MATCH", "NO_MATCH")
+                ]
+            # Contadores de evidencia: una evidencia usada para CERRAR una
+            # premisa cuenta como used_for_reasoning aunque la respuesta final
+            # (p. ej. abstención) no la cite.
+            unique_initial = {
+                _evidence_identity(item)
+                for item in evidence_items
+                if _evidence_identity(item)
+            }
+            decision_refs = {
+                str(ref)
+                for claim in deterministic_claims
+                for ref in (getattr(claim, "evidence_refs", ()) or ())
+                if ref
+            }
+            prep.evidence_counters = {
+                "retrieved": len(evidence_items),
+                "unique": len(unique_initial),
+                "used_for_reasoning": len(unique_initial) + len(closure.evidence),
+                "used_for_decision": len(decision_refs),
+            }
+
     primary = deterministic_claims[0] if deterministic_claims else None
     prep.steps.append(
         stage_step(
@@ -734,7 +1056,9 @@ __all__ = [
     "STAGE_DECISION_ENVELOPE",
     "STAGE_DERIVATION",
     "STAGE_GROUNDING",
+    "STAGE_PREMISE_CLOSURE",
     "STAGE_QUERY_SEMANTICS",
+    "STAGE_REQUIREMENT_GRAPH",
     "STAGE_RULE_EVALUATION",
     "STAGE_RULE_RETRIEVAL",
     "answer_state_for_stage",

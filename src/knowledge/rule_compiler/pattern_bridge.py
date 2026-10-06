@@ -121,6 +121,12 @@ def pattern_semantics_from_rule(rule: CanonicalRule) -> Any:
     )
     boundary_prop = rule.properties.get("length.boundary")
     boundary = str(boundary_prop.value) if boundary_prop is not None and boundary_prop.known else ""
+    try:
+        from .verify import is_pattern_relative_length
+
+        length_relative_to_pattern = is_pattern_relative_length(rule)
+    except Exception:  # noqa: BLE001 — bridge fail-soft
+        length_relative_to_pattern = False
 
     return PatternSemantics(
         symbol_definitions=definitions,
@@ -129,6 +135,7 @@ def pattern_semantics_from_rule(rule: CanonicalRule) -> Any:
         length_policy=length_policy,
         length_value=int(length_value) if isinstance(length_value, (int, float)) else None,
         length_boundary=boundary,
+        length_relative_to_pattern=length_relative_to_pattern,
         anchor_side=anchor_side,
         statements=tuple(statements[:6]),
     )
