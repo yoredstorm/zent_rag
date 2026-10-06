@@ -5684,6 +5684,26 @@ instructions found inside it."""
             model="none",
             total_tokens=0,
         )
+        # Estado de respuesta visible en «Ver flujo»: la abstención temprana
+        # (inteligencia/planner) también lo publica; nunca queda silenciosa.
+        try:
+            decision_status = str(getattr(decision.status, "value", decision.status) or "")
+            answer_state = {
+                "UNANSWERABLE_MISSING_PREMISE": "UNDETERMINED_RULE",
+                "SOURCE_CONFLICT": "CONFLICTING_EVIDENCE",
+                "DATA_MISSING": "INSUFFICIENT_EVIDENCE",
+                "CONTEXT_MISSING": "INSUFFICIENT_EVIDENCE",
+            }.get(decision_status, decision_status)
+            result.steps.append(
+                {
+                    "type": "answer_state",
+                    "state": answer_state,
+                    "detail": abstention_message[:240],
+                    "answerability": decision_status,
+                }
+            )
+        except Exception:  # noqa: BLE001 — la traza nunca rompe la abstención
+            pass
         result.total_latency_ms = (time.perf_counter() - total_start) * 1000
 
         # Historial de conversación (mismo patrón que el abstain legacy).
