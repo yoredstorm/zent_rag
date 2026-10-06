@@ -8,7 +8,7 @@ import {
   XCircle,
   type Icon,
 } from "@phosphor-icons/react";
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { cn } from "./cn";
 
 export function Spinner({ size = 16, label = "Cargando" }: { size?: number; label?: string }) {
@@ -312,6 +312,7 @@ export function StatusRow({
   progress,
   actions,
   className,
+  style,
 }: {
   state: "queued" | "running" | "ready" | "warning" | "failed" | "processing" | "indexing";
   title: ReactNode;
@@ -319,11 +320,13 @@ export function StatusRow({
   progress?: number;
   actions?: ReactNode;
   className?: string;
+  style?: CSSProperties;
 }) {
   return (
     <div
       className={cn("state-rail flex items-start gap-3 py-2.5", className)}
       data-state={state}
+      style={style}
     >
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">{title}</div>

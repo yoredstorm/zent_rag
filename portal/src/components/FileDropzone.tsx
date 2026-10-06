@@ -35,9 +35,9 @@ export function FileDropzone({
   return (
     <label
       data-testid={dropzoneTestId}
+      data-drag={dragOver}
       className={cn(
-        "flex min-h-36 flex-col items-center justify-center rounded-lg border-2 border-dashed px-6 py-8 text-center transition-colors duration-150",
-        dragOver ? "border-accent bg-accent-soft" : "border-border",
+        "zd-shell",
         disabled ? "cursor-not-allowed opacity-60" : "cursor-pointer",
         className,
       )}
@@ -54,9 +54,13 @@ export function FileDropzone({
         if (files.length) onFiles(multiple ? files : files.slice(0, 1));
       }}
     >
-      <UploadSimple size={20} className="text-faint" aria-hidden />
-      <p className="mt-2 text-sm font-medium text-text">{title}</p>
-      <p className="mt-1 text-xs text-muted">{hint}</p>
+      <span className="zd-core">
+        <span className="zd-orb">
+          <UploadSimple size={18} aria-hidden />
+        </span>
+        <p className="mt-3 text-sm font-medium text-text">{title}</p>
+        <p className="mt-1 max-w-sm text-xs leading-relaxed text-muted">{hint}</p>
+      </span>
       <input
         type="file"
         multiple={multiple}

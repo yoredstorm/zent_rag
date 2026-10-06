@@ -67,22 +67,22 @@ export default function TransitionWizardPage() {
         <h1 className="text-2xl font-semibold">Bienvenido a tu espacio de negocio.</h1>
         <p className="text-muted">¿Cómo quieres empezar?</p>
         <div className="grid gap-2">
-          <Link className="btn btn-primary" to="/knowledge/add">
+          <Link className="btn btn-primary" to="/knowledge/add?kind=database">
             Conectar base de datos
           </Link>
-          <Link className="btn btn-secondary" to="/knowledge/add">
+          <Link className="btn btn-secondary" to="/knowledge/sources?new=1">
             Subir archivos
           </Link>
-          <Link className="btn btn-secondary" to="/knowledge/add">
+          <Link className="btn btn-secondary" to="/knowledge/sources?new=1">
             Importar hoja de cálculo
           </Link>
-          <Link className="btn btn-secondary" to="/knowledge/add">
+          <Link className="btn btn-secondary" to="/knowledge/add?kind=drive">
             Conectar Google Drive
           </Link>
-          <Link className="btn btn-secondary" to="/knowledge/add">
+          <Link className="btn btn-secondary" to="/knowledge/add?kind=website">
             Conectar sitio web
           </Link>
-          <Link className="btn btn-secondary" to="/knowledge/add">
+          <Link className="btn btn-secondary" to="/knowledge/add?kind=api">
             Conectar API
           </Link>
           <Link className="btn btn-primary" to="/knowledge/database">

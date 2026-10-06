@@ -42,8 +42,10 @@ import {
   type WizardStep,
 } from "./types";
 
-export default function OnboardingWizardPage() {
-  const { session } = useAuth();
+/** Tipos válidos para la entrada directa `?kind=` (tarjetas de conexión). */
+const KIND_VALUES = ["database", "documents", "spreadsheets", "drive", "website", "api"] as const;
+
+export default function OnboardingWizardPage() {  const { session } = useAuth();
   const { sessionId } = useParams();
   const [search] = useSearchParams();
   const navigate = useNavigate();
@@ -73,6 +75,7 @@ export default function OnboardingWizardPage() {
   const queueRef = useRef<UploadQueueRow[]>([]);
   const pollMarker = useRef<{ cancelled: boolean }>({ cancelled: false });
   const polling = useRef(false);
+  const autoStarted = useRef(false);
 
   useEffect(() => {
     queueRef.current = queue;
@@ -142,6 +145,17 @@ export default function OnboardingWizardPage() {
       load(sessionId).catch((e) => setError(String(e)));
     }
   }, [sessionId, session, load]);
+
+  // Entrada directa `?kind=`: salta la pantalla de elección y abre la conexión.
+  useEffect(() => {
+    const requested = search.get("kind");
+    const valid =
+      requested !== null && (KIND_VALUES as readonly string[]).includes(requested);
+    if (sessionId || current || autoStarted.current || !valid) return;
+    autoStarted.current = true;
+    void startKind(requested as OnboardingKind);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, current, search]);
 
   // Indexado en vivo mientras el usuario mira Analizar (aunque no haya subido en esta pantalla).
   useEffect(() => {

@@ -1,6 +1,16 @@
-import { ArrowsClockwise, Database, MagnifyingGlass, Plus, Trash, X } from "@phosphor-icons/react";
+import {
+  ArrowsClockwise,
+  Database,
+  FolderSimple,
+  Globe,
+  MagnifyingGlass,
+  Plugs,
+  Plus,
+  Trash,
+  X,
+} from "@phosphor-icons/react";
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../../api";
 import { useAuth } from "../../auth";
 import { ConfirmDialog } from "../../components/ConfirmDialog";
@@ -18,6 +28,7 @@ import {
   startLearningSession,
   type LearningSessionDetail,
 } from "../../lib/knowledgeSessions";
+import { useLearningJob } from "../../learningJob";
 import {
   Badge,
   Button,
@@ -53,6 +64,18 @@ const SOURCE_TYPES = ["sql", "web", "s3", "api", "gdrive"] as const;
 type SourceType = (typeof SOURCE_TYPES)[number];
 
 const PAGE_SIZE = 25;
+
+/** Mismo vocabulario que la vista de sesión (LearningSessionView). */
+const SESSION_STATUS_LABEL: Record<string, string> = {
+  preparing: "preparando",
+  learning: "aprendiendo ahora",
+  available: "disponible",
+  optimizing: "optimizando",
+  completed: "completado",
+  partial: "parcial",
+  failed: "no se pudo completar",
+  canceled: "cancelado",
+};
 
 /** Sube UN archivo por request: evita el 413 por suma de tamaños del lote. */
 async function uploadSingleFile(
@@ -126,6 +149,23 @@ const RAIL_STATE: Record<string, RailState> = {
   error: "failed",
 };
 
+/**
+ * Conexiones guiadas: mismo asistente para todos los puntos de entrada.
+ * Los archivos se suben acá mismo; las conexiones abren el asistente con el
+ * tipo ya elegido (`?kind=`), sin pasar por la pantalla de elección.
+ */
+const GUIDED_SOURCES: Array<{
+  kind: "database" | "website" | "api" | "drive";
+  icon: typeof Database;
+  label: string;
+  desc: string;
+}> = [
+  { kind: "database", icon: Database, label: "Base de datos", desc: "ERP o base empresarial" },
+  { kind: "website", icon: Globe, label: "Sitio web", desc: "Zent lee tu sitio" },
+  { kind: "api", icon: Plugs, label: "API", desc: "Sistemas externos" },
+  { kind: "drive", icon: FolderSimple, label: "Google Drive", desc: "Carpeta compartida" },
+];
+
 const PROFILE_COLUMNS: Column<ProfileCol>[] = [
   {
     key: "name",
@@ -180,12 +220,12 @@ const PROFILE_COLUMNS: Column<ProfileCol>[] = [
 
 export default function KnowledgeSourcesPage() {
   const { session } = useAuth();
+  const { version: learningVersion, track: trackLearning } = useLearningJob();
   const [sources, setSources] = useState<SourceRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [msg, setMsg] = useState("");
-  const [showCreate, setShowCreate] = useState(false);
   const [profile, setProfile] = useState<{ sourceId: string; tables: { name: string; columns: ProfileCol[] }[] } | null>(null);
   const [advanced, setAdvanced] = useState(false);
   const [name, setName] = useState("");
@@ -205,13 +245,29 @@ export default function KnowledgeSourcesPage() {
   const [recentSessions, setRecentSessions] = useState<LearningSessionDetail[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // `?new=1` abre el alta: todos los puntos de entrada caen en el mismo flujo.
+  const [showCreate, setShowCreate] = useState(() => searchParams.get("new") === "1");
+
+  const closeCreate = useCallback(() => {
+    setShowCreate(false);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.delete("new");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [setSearchParams]);
+
   const { agents: deleteUsage, loading: deleteUsageLoading } = useSourceUsage(
     pendingDelete?.id ?? null,
   );
 
-  const load = useCallback(() => {
+  const load = useCallback((silent = false) => {
     if (!session) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     setLoadError("");
     Promise.all([
       api<{ sources: SourceRow[] }>("/api/v1/sources", {
@@ -230,12 +286,30 @@ export default function KnowledgeSourcesPage() {
         setRecentSessions(sessionData.sessions || []);
       })
       .catch((err) => setLoadError(err instanceof Error ? err.message : "Error"))
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   }, [session]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  // Vivo: mientras haya fuentes en tránsito, la lista se refresca sola.
+  const livePending = sources.some((row) =>
+    ["created", "discovering", "ingesting"].includes(row.status),
+  );
+  useEffect(() => {
+    if (!livePending) return;
+    const interval = window.setInterval(() => load(true), 5000);
+    return () => window.clearInterval(interval);
+  }, [livePending, load]);
+
+  // El aprendizaje terminó en otra pantalla: refresca sin esperar al poll.
+  useEffect(() => {
+    if (learningVersion === 0) return;
+    load(true);
+  }, [learningVersion, load]);
 
   useEffect(() => {
     setPage(1);
@@ -374,6 +448,7 @@ export default function KnowledgeSourcesPage() {
         });
         sessionId = learning.session_id;
         setActiveSessionId(sessionId);
+        trackLearning(sessionId, learning);
       } catch {
         // Sin sesión de aprendizaje: la carga de archivos sigue funcionando.
       }
@@ -589,7 +664,7 @@ export default function KnowledgeSourcesPage() {
             variant="primary"
             leadingIcon={Plus}
             aria-expanded={showCreate}
-            onClick={() => setShowCreate((s) => !s)}
+            onClick={() => (showCreate ? closeCreate() : setShowCreate(true))}
           >
             Nueva fuente
           </Button>
@@ -609,7 +684,7 @@ export default function KnowledgeSourcesPage() {
                 <IconButton
                   label="Cerrar alta de fuente"
                   icon={X}
-                  onClick={() => setShowCreate(false)}
+                  onClick={closeCreate}
                 />
               }
             />
@@ -665,11 +740,36 @@ export default function KnowledgeSourcesPage() {
                 onRetry={(item) => void retryUpload(item)}
               />
 
+              <div className="border-t border-border-soft pt-3">
+                <p className="eyebrow mb-2">Conectar un sistema</p>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                  {GUIDED_SOURCES.map((item) => (
+                    <Link
+                      key={item.kind}
+                      to={`/knowledge/add?kind=${item.kind}`}
+                      className="group flex items-start gap-2.5 rounded-md border border-border bg-soft px-3 py-2.5 transition-[border-color,background-color,transform] duration-300 ease-[var(--ease-swift)] hover:-translate-y-0.5 hover:border-border-strong"
+                    >
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-border bg-surface text-accent transition-transform duration-300 ease-[var(--ease-swift)] group-hover:scale-105">
+                        <item.icon size={14} aria-hidden />
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block text-[13px] font-medium text-text">
+                          {item.label}
+                        </span>
+                        <span className="block text-[11px] leading-relaxed text-faint">
+                          {item.desc}
+                        </span>
+                      </span>
+                    </Link>
+                  ))}
+                </div>
+              </div>
+
               <div>
                 <Button variant="ghost" size="sm" onClick={() => setAdvanced((v) => !v)}>
                   {advanced
-                    ? "Ocultar conexión avanzada"
-                    : "Conectar otra fuente (base de datos, web, API, Drive)"}
+                    ? "Ocultar conexión directa"
+                    : "Conexión directa (sin asistente)"}
                 </Button>
               </div>
 
@@ -731,7 +831,7 @@ export default function KnowledgeSourcesPage() {
                     >
                       {type === "gdrive" ? "Conectar Google Drive" : "Crear fuente"}
                     </Button>
-                    <Button variant="ghost" onClick={() => setShowCreate(false)}>
+                    <Button variant="ghost" onClick={closeCreate}>
                       Cancelar
                     </Button>
                   </div>
@@ -768,9 +868,7 @@ export default function KnowledgeSourcesPage() {
                             {learning.source_count === 1 ? "" : "s"} ·{" "}
                             {learning.completed_at
                               ? "completado"
-                              : learning.status === "learning"
-                                ? "aprendiendo ahora"
-                                : learning.status}
+                              : SESSION_STATUS_LABEL[learning.status] ?? learning.status}
                           </span>
                         </span>
                         <Badge tone={activeSession ? "accent" : "neutral"}>

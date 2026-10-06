@@ -35,7 +35,7 @@ function FirstSteps() {
     {
       title: "Añade una fuente",
       body: "PDF, Excel, base de datos o API. ZENT la lee y la entiende.",
-      to: "/knowledge/add",
+      to: "/knowledge/sources?new=1",
     },
     {
       title: "Observa cómo aprende",
@@ -89,8 +89,8 @@ export default function KnowledgeHomePage() {
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setError("");
     try {
       const [overviewData, deltaData, graphData] = await Promise.all([
@@ -111,7 +111,7 @@ export default function KnowledgeHomePage() {
           : "No pudimos obtener el conocimiento de tu organización."
       );
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -141,6 +141,7 @@ export default function KnowledgeHomePage() {
   useEffect(() => {
     const connectAt = Date.now();
     let refreshTimer = 0;
+    let fullRefreshTimer = 0;
     const handle = streamKnowledgeEvents({
       sinceSeq: 0,
       onEvent: (event: LearningEvent) => {
@@ -148,13 +149,16 @@ export default function KnowledgeHomePage() {
         if (at && at < connectAt - 15_000) return;
         window.clearTimeout(refreshTimer);
         refreshTimer = window.setTimeout(() => void loadFeed(), 2_000);
+        window.clearTimeout(fullRefreshTimer);
+        fullRefreshTimer = window.setTimeout(() => void load(true), 4_000);
       },
     });
     return () => {
       window.clearTimeout(refreshTimer);
+      window.clearTimeout(fullRefreshTimer);
       handle.close();
     };
-  }, [loadFeed]);
+  }, [loadFeed, load]);
 
   const openObject = useCallback(
     (id: string) => navigate(`/knowledge/objects/${id}`),
@@ -247,7 +251,7 @@ export default function KnowledgeHomePage() {
                 real aparecerá aquí. Sin datos de ejemplo, sin decoración.
               </p>
               <ButtonLink
-                to="/knowledge/add"
+                to="/knowledge/sources?new=1"
                 variant="primary"
                 leadingIcon={Plus}
                 className="self-start"

@@ -184,7 +184,7 @@ export function KnowledgeHero({
           </form>
 
           <div className="mt-4 flex flex-wrap items-center gap-2">
-            <ButtonLink to="/knowledge/add" variant="primary" leadingIcon={Plus}>
+            <ButtonLink to="/knowledge/sources?new=1" variant="primary" leadingIcon={Plus}>
               Añadir fuente
             </ButtonLink>
             <ButtonLink

@@ -62,7 +62,7 @@ export function UploadQueueList({
   if (rows.length === 0) return null;
   return (
     <div className={cn("flex flex-col", className)} data-testid={testId}>
-      {rows.map((row) => {
+      {rows.map((row, index) => {
         const state = ROW_STATE[row.status];
         const showBar = row.status === "uploading" || row.status === "indexing";
         let actions: ReactNode = null;
@@ -105,7 +105,8 @@ export function UploadQueueList({
           <StatusRow
             key={row.id}
             state={state}
-            className="border-b border-border-soft last:border-b-0"
+            className="up-row border-b border-border-soft last:border-b-0"
+            style={{ animationDelay: `${Math.min(index, 8) * 40}ms` }}
             title={
               <>
                 <span
@@ -118,7 +119,7 @@ export function UploadQueueList({
                   {row.size > 0 ? formatKb(row.size) : null}
                 </span>
                 <span
-                  className={cn("text-[11px]", ROW_TONE[row.status])}
+                  className={cn("up-row-status text-[11px]", ROW_TONE[row.status])}
                   data-testid={`upload-row-status-${row.id}`}
                 >
                   {rowLabel(row)}
@@ -154,7 +155,7 @@ export function SelectedFilesList({
       {files.map((item) => (
         <li
           key={`${item.name}-${item.size}`}
-          className="flex flex-wrap items-center gap-2 rounded-sm bg-soft px-2.5 py-1.5 text-[12.5px] text-text"
+          className="animate-rise flex flex-wrap items-center gap-2 rounded-sm bg-soft px-2.5 py-1.5 text-[12.5px] text-text"
         >
           <span className="min-w-0 flex-1 truncate">{item.name}</span>
           <span className="text-[11px] text-faint">
@@ -193,7 +194,7 @@ export function UploadResultsList({
       {items.map((item) => (
         <li
           key={item.filename}
-          className="flex flex-wrap items-center gap-2 rounded-sm border border-border-soft px-2.5 py-2 text-[12.5px]"
+          className="animate-rise flex flex-wrap items-center gap-2 rounded-sm border border-border-soft px-2.5 py-2 text-[12.5px]"
         >
           <span className="min-w-0 flex-1 truncate text-text">
             {item.name || item.filename}

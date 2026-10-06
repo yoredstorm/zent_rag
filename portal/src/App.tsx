@@ -10,6 +10,7 @@ import { useAuth } from "./auth";
 import { IMPERSONATING_KEY } from "./platformAuth";
 import { exitImpersonationToPlatform } from "./lib/impersonation";
 import { SyncBanner, SyncJobProvider } from "./syncJob";
+import { LearningBanner, LearningJobProvider } from "./learningJob";
 import { ToastProvider } from "./Toast";
 import { CommandPaletteRoot, openCommandPalette } from "./components/CommandPalette";
 import { IdleSessionWarning } from "./components/IdleSessionWarning";
@@ -163,7 +164,6 @@ const EvaluationComparePage = lazy(() => import("./pages/evaluation/Compare"));
 const AiQualityPage = lazy(() => import("./pages/AiQuality"));
 const DeploymentsPage = lazy(() => import("./pages/Deployments"));
 const EnvironmentsPage = lazy(() => import("./pages/Environments"));
-const DataSourcesPage = lazy(() => import("./pages/DataSources"));
 const CompanyOverviewPage = lazy(
   () => import("./pages/companyIntelligence/Overview"),
 );
@@ -325,6 +325,7 @@ function ProtectedLayout() {
     <EntitlementsProvider>
       <ToastProvider>
         <SyncJobProvider>
+          <LearningJobProvider>
           {signupKey && (
             <ApiKeyCreatedModal
               apiKey={signupKey}
@@ -430,6 +431,7 @@ function ProtectedLayout() {
                     </button>
                   </div>
                 )}
+                <LearningBanner />
                 <SyncBanner />
                 <motion.div
                   animate={pageControls}
@@ -442,6 +444,7 @@ function ProtectedLayout() {
               </main>
             </div>
           </div>
+          </LearningJobProvider>
         </SyncJobProvider>
       </ToastProvider>
     </EntitlementsProvider>
@@ -606,7 +609,8 @@ export default function App() {
         <Route path="/ai-quality" element={<Suspense fallback={<PageFallback />}><AiQualityPage /></Suspense>} />
         <Route path="/deployments" element={<Suspense fallback={<PageFallback />}><DeploymentsPage /></Suspense>} />
               <Route path="/environments" element={<Suspense fallback={<PageFallback />}><EnvironmentsPage /></Suspense>} />
-        <Route path="/data-sources" element={<Suspense fallback={<PageFallback />}><DataSourcesPage /></Suspense>} />
+        {/* Fuentes: un solo flujo. /data-sources se consolidó en Fuentes. */}
+        <Route path="/data-sources" element={<Navigate to="/knowledge/sources" replace />} />
         <Route path="/security" element={<Suspense fallback={<PageFallback />}><SecurityAuditPage /></Suspense>} />
         <Route path="/audit/compliance" element={<Suspense fallback={<PageFallback />}><AuditCompliancePage /></Suspense>} />
         <Route path="/notifications" element={<Suspense fallback={<PageFallback />}><NotificationsPage /></Suspense>} />

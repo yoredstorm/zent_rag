@@ -148,7 +148,7 @@ function FeedView() {
               title="Sin actividad en este filtro"
               body="Cuando ZENT aprenda de una fuente, cada descubrimiento aparecerá aquí con su evento real."
               action={
-                <ButtonLink to="/knowledge/add" variant="primary" leadingIcon={Plus}>
+                <ButtonLink to="/knowledge/sources?new=1" variant="primary" leadingIcon={Plus}>
                   Añadir fuente
                 </ButtonLink>
               }
@@ -400,7 +400,7 @@ function RunsView() {
             title="Sin aprendizajes ejecutados"
             body="Ejecuta aprendizaje sobre una fuente para descubrir schema, entidades, relaciones y reglas."
             action={
-              <ButtonLink to="/knowledge/add" variant="primary" leadingIcon={Plus}>
+              <ButtonLink to="/knowledge/sources?new=1" variant="primary" leadingIcon={Plus}>
                 Añadir fuente
               </ButtonLink>
             }

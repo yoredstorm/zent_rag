@@ -33,7 +33,6 @@ const ROUTE_TITLES: Record<string, string> = {
   "/assistants": "Asistentes",
   ...KNOWLEDGE_ROUTE_TITLES,
   "/workflows": "Workflows",
-  "/data-sources": "Fuentes de datos",
   "/prompts": "Instrucciones",
   "/usage": "Analítica",
   "/ai-quality": "Calidad de IA",

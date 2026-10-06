@@ -96,6 +96,15 @@ export function SourceTypeStep({
       <p className="mt-1 text-sm text-muted">
         Zent te guía paso a paso. No hace falta saber de conectores ni de SQL.
       </p>
+      <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-md border border-border-soft bg-soft px-4 py-3">
+        <p className="text-[13px] leading-relaxed text-muted">
+          ¿Solo quieres subir archivos (PDF, Excel, CSV)? Van directo en Fuentes,
+          con aprendizaje en vivo.
+        </p>
+        <Link to="/knowledge/sources?new=1" className="btn btn-secondary btn-sm shrink-0">
+          Subir archivos en Fuentes
+        </Link>
+      </div>
       <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {CARDS.map((card) => {
           const Icon = card.icon;

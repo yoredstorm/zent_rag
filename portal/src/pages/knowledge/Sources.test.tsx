@@ -101,8 +101,48 @@ function renderSources() {
 }
 
 describe("KnowledgeSourcesPage", () => {
-  it("pinta español, un hint y no Perfilizar en un PDF", async () => {
-    stubApi([FILE_SOURCE]);
+  it("abre el alta con ?new=1 y ofrece las conexiones guiadas", async () => {
+    stubApi([]);
+    render(
+      <MemoryRouter initialEntries={["/knowledge/sources?new=1"]}>
+        <KnowledgeSourcesPage />
+      </MemoryRouter>,
+    );
+    expect(await screen.findByTestId("source-files")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Base de datos/ })).toHaveAttribute(
+      "href",
+      "/knowledge/add?kind=database",
+    );
+    expect(screen.getByRole("link", { name: /Google Drive/ })).toHaveAttribute(
+      "href",
+      "/knowledge/add?kind=drive",
+    );
+  });
+
+  it("refresca la lista sola mientras la fuente está en tránsito (sin F5)", async () => {
+    const INGESTING = { ...FILE_SOURCE, status: "ingesting", document_count: 0 };
+    let sourceCalls = 0;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/usage")) return Promise.resolve(json({ agents: [], count: 0 }));
+      if (url.includes("/knowledge-bases")) return Promise.resolve(json({ knowledge_bases: KBS }));
+      if (url.includes("/api/v1/sources")) {
+        sourceCalls += 1;
+        return Promise.resolve(json({ sources: [sourceCalls === 1 ? INGESTING : FILE_SOURCE] }));
+      }
+      return Promise.resolve(json({}));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderSources();
+    expect(await screen.findByText("Indexando")).toBeInTheDocument();
+    // El poll de respaldo (5 s) trae la verdad nueva sin recargar la página.
+    await waitFor(() => expect(screen.getByText("Indexada")).toBeInTheDocument(), {
+      timeout: 9_000,
+    });
+    expect(sourceCalls).toBeGreaterThan(1);
+  });
+
+  it("pinta español, un hint y no Perfilizar en un PDF", async () => {    stubApi([FILE_SOURCE]);
     renderSources();
     await waitFor(() => expect(screen.getByTestId("source-card-src-1")).toBeInTheDocument());
     expect(screen.getAllByText(/Los agentes eligen estas fuentes/)).toHaveLength(1);

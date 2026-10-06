@@ -194,7 +194,7 @@ export default function KnowledgeCatalogPage() {
           body="Conecta una fuente SQL y ejecuta la primera exploración. Zent descubre tablas, columnas y relaciones, y las deja listas para revisar."
           hint="La exploración también se puede relanzar por fuente cuando cambia el esquema."
           action={
-            <ButtonLink to="/knowledge/add" variant="primary" leadingIcon={Database}>
+            <ButtonLink to="/knowledge/add?kind=database" variant="primary" leadingIcon={Database}>
               Conectar mis datos
             </ButtonLink>
           }

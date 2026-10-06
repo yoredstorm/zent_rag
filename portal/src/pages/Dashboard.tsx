@@ -612,7 +612,7 @@ export default function DashboardPage() {
 
           <p className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-faint">
             <span className="eyebrow">Atajos</span>
-            <Link to="/knowledge/add" className="inline-flex items-center gap-1 hover:text-text">
+            <Link to="/knowledge/sources?new=1" className="inline-flex items-center gap-1 hover:text-text">
               <Database size={13} aria-hidden />
               Añadir conocimiento
             </Link>

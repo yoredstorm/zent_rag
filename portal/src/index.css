@@ -4443,3 +4443,138 @@ button.km-crumb:hover {
     opacity: 0.25;
   }
 }
+
+/* ==========================================================================
+   Ingesta viva — dropzone, cola de archivos, banner y hero de aprendizaje
+   ========================================================================== */
+
+/* --- Dropzone: doble bisel (bandeja + placa) ---------------------------- */
+.zd-shell {
+  display: block;
+  padding: 6px;
+  border: 1px solid var(--zent-border-soft);
+  border-radius: var(--radius-xl, 16px);
+  background: color-mix(in srgb, var(--zent-raised) 55%, transparent);
+  transition:
+    border-color var(--dur-3) var(--ease-out),
+    background-color var(--dur-3) var(--ease-out),
+    transform var(--dur-4) var(--ease-swift);
+}
+.zd-shell[data-drag="true"] {
+  border-color: color-mix(in srgb, var(--zent-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--zent-accent-soft) 60%, transparent);
+  transform: scale(1.006);
+}
+.zd-core {
+  display: flex;
+  min-height: 9rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 24px;
+  text-align: center;
+  border: 1px dashed var(--zent-border-strong);
+  border-radius: var(--radius-lg, 12px);
+  background: var(--zent-surface);
+  transition:
+    border-color var(--dur-3) var(--ease-out),
+    background-color var(--dur-3) var(--ease-out);
+}
+.zd-shell[data-drag="true"] .zd-core {
+  border-color: color-mix(in srgb, var(--zent-accent) 55%, transparent);
+}
+.zd-orb {
+  display: flex;
+  height: 40px;
+  width: 40px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--zent-border-soft);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--zent-raised) 70%, transparent);
+  color: var(--zent-muted);
+  transition:
+    color var(--dur-3) var(--ease-out),
+    border-color var(--dur-3) var(--ease-out),
+    transform var(--dur-4) var(--ease-swift);
+}
+.zd-shell:hover .zd-orb {
+  transform: translateY(-2px) scale(1.04);
+  color: var(--zent-text);
+}
+.zd-shell[data-drag="true"] .zd-orb {
+  color: var(--zent-accent);
+  border-color: color-mix(in srgb, var(--zent-accent) 45%, transparent);
+  animation: zd-breathe 1.6s var(--ease-in-out) infinite;
+}
+@keyframes zd-breathe {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+
+/* --- Cola de archivos: filas que entran y estados que interpolan ------- */
+.up-row {
+  animation: rise 0.32s var(--ease-swift) both;
+}
+.up-row-status {
+  transition: color var(--dur-4) var(--ease-out);
+}
+
+/* --- Banner global de aprendizaje: vidrio sticky ----------------------- */
+.lj-banner {
+  position: sticky;
+  top: 61px;
+  z-index: 10;
+  animation: rise 0.4s var(--ease-swift) both;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+@media (min-width: 1024px) {
+  .lj-banner {
+    top: 53px;
+  }
+}
+
+/* --- Hero de sesión: entrada escalonada -------------------------------- */
+.ks-hero-metrics > div {
+  animation: rise 0.5s var(--ease-swift) both;
+}
+.ks-hero-metrics > div:nth-child(1) {
+  animation-delay: 40ms;
+}
+.ks-hero-metrics > div:nth-child(2) {
+  animation-delay: 80ms;
+}
+.ks-hero-metrics > div:nth-child(3) {
+  animation-delay: 120ms;
+}
+.ks-hero-metrics > div:nth-child(4) {
+  animation-delay: 160ms;
+}
+.ks-hero-metrics > div:nth-child(5) {
+  animation-delay: 200ms;
+}
+.ks-hero-side {
+  animation: rise 0.5s var(--ease-swift) 120ms both;
+}
+.ks-hero-bar > span {
+  transition: width var(--dur-6) var(--ease-swift);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zd-shell,
+  .zd-core,
+  .zd-orb,
+  .up-row,
+  .lj-banner,
+  .ks-hero-metrics > div,
+  .ks-hero-side {
+    animation: none !important;
+    transition: none !important;
+  }
+}

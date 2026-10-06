@@ -28,6 +28,7 @@ import {
 } from "../../components/ui";
 import { StatusBadge } from "../../components/ui/Badge";
 import SqlRunnerModal from "../../components/SqlRunnerModal";
+import { useLearningJob } from "../../learningJob";
 import { fmtDateTime, fmtNum } from "../../lib/format";
 import {
   fetchKnowledgeCompilations,
@@ -182,6 +183,7 @@ const DOC_COLUMNS: Column<SourceDocument>[] = [
 export default function SourceDetailPage() {
   const { sourceId } = useParams();
   const { session } = useAuth();
+  const { version: learningVersion } = useLearningJob();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = parseSourceTab(searchParams.get("tab"));
@@ -212,9 +214,9 @@ export default function SourceDetailPage() {
     confirmDelete ? sourceId : null,
   );
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (silent = false) => {
     if (!session || !sourceId) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     try {
       const [sourceData, docsData, kbData, tabularData] = await Promise.all([
         api<SourceDetail>(`/api/v1/sources/${sourceId}`, {
@@ -242,13 +244,29 @@ export default function SourceDetailPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [session, sourceId]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Vivo: la fuente se refresca sola mientras esté en tránsito.
+  const livePending = Boolean(
+    source && ["created", "discovering", "ingesting"].includes(source.status),
+  );
+  useEffect(() => {
+    if (!livePending) return;
+    const interval = window.setInterval(() => void load(true), 5000);
+    return () => window.clearInterval(interval);
+  }, [livePending, load]);
+
+  // El aprendizaje terminó en cualquier pantalla: refresca la fuente sin F5.
+  useEffect(() => {
+    if (learningVersion === 0) return;
+    void load(true);
+  }, [learningVersion, load]);
 
   // Aporte real de la fuente al conocimiento (compilaciones + objetos canónicos).
   useEffect(() => {

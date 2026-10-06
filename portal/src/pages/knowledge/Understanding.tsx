@@ -274,7 +274,7 @@ export default function KnowledgeUnderstandingPage() {
         subtitle="Zent mapea nombres físicos a conceptos de negocio. Nada se auto-aprueba."
         actions={
           <>
-            <ButtonLink to="/knowledge/add" size="sm" variant="secondary" leadingIcon={Plus}>
+            <ButtonLink to="/knowledge/sources?new=1" size="sm" variant="secondary" leadingIcon={Plus}>
               Añade fuente
             </ButtonLink>
             <Button
@@ -302,7 +302,7 @@ export default function KnowledgeUnderstandingPage() {
           body="Conecta una base o sube un archivo. Luego confirmá qué significa cada campo."
           hint="El mapeo se hace campo por campo: solo lo que confirmás alimenta las respuestas."
           action={
-            <ButtonLink to="/knowledge/add" variant="primary" leadingIcon={Plus}>
+            <ButtonLink to="/knowledge/sources?new=1" variant="primary" leadingIcon={Plus}>
               Añade fuente
             </ButtonLink>
           }
