@@ -37,7 +37,8 @@ async def knowledge_cache_fingerprint(organization_id: UUID | str) -> str:
                     sql_text(
                         "SELECT "
                         "(SELECT count(*)::text FROM knowledge_canonical_objects "
-                        " WHERE organization_id = :org AND kind = 'BUSINESS_RULE') AS rules, "
+                        " WHERE organization_id = :org AND "
+                        " LOWER(kind) = 'business_rule') AS rules, "
                         "(SELECT COALESCE(max(updated_at)::text, '') "
                         " FROM knowledge_canonical_objects WHERE organization_id = :org) "
                         " AS rules_updated, "

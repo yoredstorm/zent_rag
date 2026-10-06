@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import Any, Iterable, Protocol, Sequence
 from uuid import UUID
 
+from src.core.domain.canonical import CanonicalKind
 from src.infrastructure.observability.logging_config import get_logger
 from src.knowledge.rule_compiler.index import (
     merge_rule_candidates,
@@ -38,7 +39,21 @@ from src.knowledge.rule_compiler.model import CanonicalRule
 
 logger = get_logger(__name__)
 
-RULE_RETRIEVAL_VERSION = "rule-retrieval-2"
+RULE_RETRIEVAL_VERSION = "rule-retrieval-3"
+#: Kind REAL con el que el compilador persiste las reglas canónicas.
+#: El Rule Lane DEBE usar este valor: persistir `business_rule` y consultar
+#: `BUSINESS_RULE` fue un miss total de retrieval (0 candidatas siempre).
+RULE_OBJECT_KIND = CanonicalKind.BUSINESS_RULE.value
+#: Comparación case-insensitive para tolerar datos históricos con otro casing.
+_RULE_KIND_CLAUSE = "LOWER(kind) = :rule_kind"
+#: Consulta de reglas por id: solo se interpola la cláusula constante de kind.
+_LOOKUP_BY_IDS_SQL = (
+    "SELECT id, name, description, confidence, metadata "  # noqa: S608 — cláusula constante
+    "FROM knowledge_canonical_objects "
+    "WHERE organization_id = :org AND "
+    f"{_RULE_KIND_CLAUSE} "
+    "AND id::text IN :ids"
+)
 MAX_RULES_PER_QUERY = 24
 #: Score mínimo para que una regla entre al motor desde la Rule Lane.
 MIN_RULE_SCORE = 2.0
@@ -219,18 +234,15 @@ class PostgresRuleLookup:
 
         session = await get_async_session()
         try:
-            stmt = sql_text(
-                "SELECT id, name, description, confidence, metadata "
-                "FROM knowledge_canonical_objects "
-                "WHERE organization_id = :org AND kind = :kind "
-                "AND id::text IN :ids"
-            ).bindparams(bindparam("ids", expanding=True))
+            stmt = sql_text(_LOOKUP_BY_IDS_SQL).bindparams(
+                bindparam("ids", expanding=True)
+            )
             rows = (
                 await session.execute(
                     stmt,
                     {
                         "org": organization_id,
-                        "kind": "BUSINESS_RULE",
+                        "rule_kind": RULE_OBJECT_KIND,
                         "ids": ids,
                     },
                 )
@@ -395,6 +407,7 @@ class PostgresRuleIndex:
             "org": request.organization_id,
             "patterns": patterns,
             "limit": self._fetch_limit,
+            "rule_kind": RULE_OBJECT_KIND,
         }
         scope = _scope_clause(request, params)
         session = await get_async_session()
@@ -404,7 +417,8 @@ class PostgresRuleIndex:
                     sql_text(
                         "SELECT id, name, description, confidence, metadata "  # noqa: S608
                         "FROM knowledge_canonical_objects "
-                        "WHERE organization_id = :org AND kind = 'BUSINESS_RULE' "
+                        "WHERE organization_id = :org AND "
+                        f"{_RULE_KIND_CLAUSE} "
                         f"AND ({clause}) {scope} "  # fragmentos constantes del módulo
                         "ORDER BY updated_at DESC, id ASC LIMIT :limit"
                     ),
@@ -868,6 +882,7 @@ __all__ = [
     "MIN_RULE_SCORE",
     "PostgresRuleIndex",
     "PostgresRuleLookup",
+    "RULE_OBJECT_KIND",
     "RULE_RETRIEVAL_VERSION",
     "RuleIndexPort",
     "RuleLookupPort",
