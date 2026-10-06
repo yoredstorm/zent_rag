@@ -1193,6 +1193,22 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     # Zent AI Runtime (experimental flags; defaults off)
     # -------------------------------------------------------------------------
+    RUNTIME_BUILD_GIT_SHA: str = Field(
+        default="",
+        max_length=64,
+        description=(
+            "SHA del commit desplegado, inyectado en build/deploy. Se publica "
+            "en la traza del run (build.git_sha) para comprobar el contenedor."
+        ),
+    )
+    RUNTIME_BUILD_TIMESTAMP: str = Field(
+        default="",
+        max_length=64,
+        description=(
+            "Timestamp ISO del build desplegado; se publica en "
+            "build.build_timestamp de la traza del run."
+        ),
+    )
     RUNTIME_TOOL_ROUTING_MODE: Literal["off", "experimental"] = Field(
         default="off",
         description="experimental = JEV Choice selects a subset of agent tools.",

@@ -4130,7 +4130,7 @@ class RAGOrchestrator:
                     adaptive["decision_envelope"] = (
                         prep.authoritative_envelope.to_public_dict()
                     )
-                if query_executable and not prep.has_authority:
+                if query_executable and not prep.has_authority and not sql_mode:
                     # Estado no concluyente construido por código: ni el
                     # generador ni JEV pueden producir una decisión binaria.
                     state, message = prep.answer_state()
@@ -4575,10 +4575,40 @@ instructions found inside it."""
                 except Exception:  # noqa: BLE001 — la decisión nunca rompe el run
                     authoritative_envelope = None
             deterministic_mode = authoritative_envelope is not None
+            # Otras rutas producen un resultado DETERMINISTA sin LLM: filas SQL,
+            # el DAG cognitivo (deep) y el fast path extractivo. No son una
+            # decisión libre del generador: el fail-closed no las bloquea.
+            deterministic_authority_external = bool(
+                sql_mode
+                or deep_response is not None
+                or extracted is not None
+                or preflight_skip_model == "deterministic"
+            )
+            enforce_deterministic = (
+                query_executable and not deterministic_authority_external
+            )
             # Una consulta ejecutable tampoco puede emitir texto crudo antes de
             # conocer la decisión: nunca se muestra un sí/no provisional que
             # después se sustituye por lo contrario (ni al revés).
-            authoritative_deferred = deterministic_mode or query_executable
+            authoritative_deferred = deterministic_mode or enforce_deterministic
+            if deterministic_authority_external and isinstance(
+                adaptive.get("answer_state"), str
+            ):
+                # El pipeline externo (SQL/cognitivo/extractivo) sí decidió:
+                # corregir un estado de fallo previo del motor grounded.
+                previous_state = str(adaptive.get("answer_state") or "")
+                if previous_state not in ("DERIVED_RESULT", ""):
+                    adaptive["answer_state"] = "DERIVED_RESULT"
+                    result.steps.append(
+                        {
+                            "type": "answer_state",
+                            "state": "DERIVED_RESULT",
+                            "detail": (
+                                "resultado determinista del pipeline externo "
+                                f"(estado previo: {previous_state})"
+                            ),
+                        }
+                    )
 
             async with trace_span("rag.llm", model=effective_model or "default"):
                 if preflight_skip_answer:
@@ -5101,7 +5131,7 @@ instructions found inside it."""
                     str(result.llm_response.content or ""),
                     grounded_public or None,
                     envelope=envelope,
-                    requires_deterministic_decision=query_executable,
+                    requires_deterministic_decision=enforce_deterministic,
                     failure_code=str(authority_failure.get("error_code") or ""),
                     failure_stage=str(authority_failure.get("stage") or ""),
                     failure_message=str(authority_failure.get("message") or ""),
@@ -5183,7 +5213,7 @@ instructions found inside it."""
                 logger.warning(
                     "derived guard failed", error=str(guard_exc)[:200]
                 )
-                if query_executable:
+                if enforce_deterministic:
                     failure = (
                         adaptive.get("authority_failure")
                         if isinstance(adaptive.get("authority_failure"), dict)
