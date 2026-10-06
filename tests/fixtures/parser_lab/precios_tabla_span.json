@@ -1,0 +1,218 @@
+{
+  "file name": "lista-precios.pdf",
+  "number of pages": 1,
+  "author": "Comercial",
+  "title": "Lista de Precios",
+  "creation date": null,
+  "modification date": null,
+  "kids": [
+    {
+      "type": "heading",
+      "id": 1,
+      "level": "Doctitle",
+      "page number": 1,
+      "bounding box": [72.0, 700.0, 540.0, 730.0],
+      "heading level": 1,
+      "font": "Helvetica-Bold",
+      "font size": 20.0,
+      "text color": "[0.0]",
+      "content": "Lista de Precios 2026"
+    },
+    {
+      "type": "table",
+      "id": 2,
+      "page number": 1,
+      "bounding box": [72.0, 520.0, 540.0, 690.0],
+      "number of rows": 3,
+      "number of columns": 3,
+      "rows": [
+        {
+          "type": "table row",
+          "row number": 1,
+          "id": 3,
+          "cells": [
+            {
+              "type": "table cell",
+              "pdfua_tag": "TH",
+              "id": 4,
+              "page number": 1,
+              "bounding box": [72.0, 660.0, 200.0, 688.0],
+              "row number": 1,
+              "column number": 1,
+              "row span": 2,
+              "column span": 1,
+              "is_header": true,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 5,
+                  "page number": 1,
+                  "bounding box": [78.0, 668.0, 150.0, 682.0],
+                  "font": "Helvetica-Bold",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "Producto"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TH",
+              "id": 6,
+              "page number": 1,
+              "bounding box": [200.0, 660.0, 540.0, 674.0],
+              "row number": 1,
+              "column number": 2,
+              "row span": 1,
+              "column span": 2,
+              "is_header": true,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 7,
+                  "page number": 1,
+                  "bounding box": [260.0, 662.0, 420.0, 672.0],
+                  "font": "Helvetica-Bold",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "Precio"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "table row",
+          "row number": 2,
+          "id": 8,
+          "cells": [
+            {
+              "type": "table cell",
+              "pdfua_tag": "TH",
+              "id": 9,
+              "page number": 1,
+              "bounding box": [200.0, 646.0, 370.0, 660.0],
+              "row number": 2,
+              "column number": 2,
+              "row span": 1,
+              "column span": 1,
+              "is_header": true,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 10,
+                  "page number": 1,
+                  "bounding box": [206.0, 648.0, 300.0, 658.0],
+                  "font": "Helvetica-Bold",
+                  "font size": 10.0,
+                  "text color": "[0.0]",
+                  "content": "Neto"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TH",
+              "id": 11,
+              "page number": 1,
+              "bounding box": [370.0, 646.0, 540.0, 660.0],
+              "row number": 2,
+              "column number": 3,
+              "row span": 1,
+              "column span": 1,
+              "is_header": true,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 12,
+                  "page number": 1,
+                  "bounding box": [376.0, 648.0, 470.0, 658.0],
+                  "font": "Helvetica-Bold",
+                  "font size": 10.0,
+                  "text color": "[0.0]",
+                  "content": "Con IVA"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "table row",
+          "row number": 3,
+          "id": 13,
+          "cells": [
+            {
+              "type": "table cell",
+              "pdfua_tag": "TD",
+              "id": 14,
+              "page number": 1,
+              "bounding box": [72.0, 620.0, 200.0, 646.0],
+              "row number": 3,
+              "column number": 1,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 15,
+                  "page number": 1,
+                  "bounding box": [78.0, 628.0, 160.0, 640.0],
+                  "font": "Helvetica",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "Plan Básico"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TD",
+              "id": 16,
+              "page number": 1,
+              "bounding box": [200.0, 620.0, 370.0, 646.0],
+              "row number": 3,
+              "column number": 2,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 17,
+                  "page number": 1,
+                  "bounding box": [206.0, 628.0, 280.0, 640.0],
+                  "font": "Helvetica",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "100 EUR"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TD",
+              "id": 18,
+              "page number": 1,
+              "bounding box": [370.0, 620.0, 540.0, 646.0],
+              "row number": 3,
+              "column number": 3,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 19,
+                  "page number": 1,
+                  "bounding box": [376.0, 628.0, 450.0, 640.0],
+                  "font": "Helvetica",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "121 EUR"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

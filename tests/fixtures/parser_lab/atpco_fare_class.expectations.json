@@ -1,0 +1,6 @@
+{
+  "required_units": ["&F1", "14 days", "Bytes 64-67"],
+  "required_rules": ["&F1", "14 days"],
+  "forbidden_rules": [],
+  "min_definitions": 0
+}

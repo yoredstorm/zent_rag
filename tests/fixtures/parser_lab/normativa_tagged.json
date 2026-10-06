@@ -1,0 +1,105 @@
+{
+  "file name": "normativa-tagged.pdf",
+  "number of pages": 2,
+  "author": "Regulador",
+  "title": "Normativa de Cumplimiento",
+  "creation date": null,
+  "modification date": null,
+  "kids": [
+    {
+      "type": "heading",
+      "id": 1,
+      "level": "Doctitle",
+      "page number": 1,
+      "bounding box": [72.0, 700.0, 540.0, 730.0],
+      "heading level": 1,
+      "pdfua_tag": "H1",
+      "font": "Helvetica-Bold",
+      "font size": 22.0,
+      "text color": "[0.0]",
+      "content": "Normativa de Cumplimiento"
+    },
+    {
+      "type": "heading",
+      "id": 2,
+      "level": "1",
+      "page number": 1,
+      "bounding box": [72.0, 660.0, 400.0, 680.0],
+      "heading level": 1,
+      "pdfua_tag": "H2",
+      "font": "Helvetica-Bold",
+      "font size": 14.0,
+      "text color": "[0.0]",
+      "content": "3. Obligaciones"
+    },
+    {
+      "type": "heading",
+      "id": 3,
+      "level": "2",
+      "page number": 1,
+      "bounding box": [90.0, 630.0, 400.0, 648.0],
+      "heading level": 2,
+      "pdfua_tag": "H3",
+      "font": "Helvetica-Bold",
+      "font size": 12.0,
+      "text color": "[0.0]",
+      "content": "3.1 Registro"
+    },
+    {
+      "type": "paragraph",
+      "id": 4,
+      "page number": 1,
+      "bounding box": [90.0, 590.0, 540.0, 620.0],
+      "font": "Helvetica",
+      "font size": 11.0,
+      "text color": "[0.0]",
+      "content": "Toda entidad must registrarse antes del 31/12/2026 y conservar los registros por 5 años."
+    },
+    {
+      "type": "header",
+      "id": 5,
+      "page number": 1,
+      "bounding box": [72.0, 750.0, 300.0, 768.0],
+      "kids": [
+        {
+          "type": "paragraph",
+          "id": 6,
+          "page number": 1,
+          "bounding box": [72.0, 750.0, 300.0, 768.0],
+          "font": "Helvetica",
+          "font size": 8.0,
+          "text color": "[0.0]",
+          "content": "Normativa — vigente 2026"
+        }
+      ]
+    },
+    {
+      "type": "header",
+      "id": 7,
+      "page number": 2,
+      "bounding box": [72.0, 750.0, 300.0, 768.0],
+      "kids": [
+        {
+          "type": "paragraph",
+          "id": 8,
+          "page number": 2,
+          "bounding box": [72.0, 750.0, 300.0, 768.0],
+          "font": "Helvetica",
+          "font size": 8.0,
+          "text color": "[0.0]",
+          "content": "Normativa — vigente 2026"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "id": 9,
+      "page number": 2,
+      "bounding box": [72.0, 640.0, 540.0, 670.0],
+      "font": "Helvetica",
+      "font size": 11.0,
+      "text color": "[0.0]",
+      "content": "La entidad must not compartir datos personales con terceros sin consentimiento."
+    }
+  ]
+}

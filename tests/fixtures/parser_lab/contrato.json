@@ -1,0 +1,62 @@
+{
+  "file name": "contrato-servicios.pdf",
+  "number of pages": 1,
+  "author": "Legal",
+  "title": "Contrato de Servicios",
+  "creation date": null,
+  "modification date": null,
+  "kids": [
+    {
+      "type": "heading",
+      "id": 1,
+      "level": "Doctitle",
+      "page number": 1,
+      "bounding box": [72.0, 700.0, 540.0, 730.0],
+      "heading level": 1,
+      "font": "Helvetica-Bold",
+      "font size": 20.0,
+      "text color": "[0.0]",
+      "content": "Contrato de Servicios"
+    },
+    {
+      "type": "heading",
+      "id": 2,
+      "level": "1",
+      "page number": 1,
+      "bounding box": [72.0, 660.0, 400.0, 680.0],
+      "heading level": 1,
+      "font": "Helvetica-Bold",
+      "font size": 13.0,
+      "text color": "[0.0]",
+      "content": "7. Penalizaciones"
+    },
+    {
+      "type": "paragraph",
+      "id": 3,
+      "page number": 1,
+      "bounding box": [72.0, 620.0, 540.0, 650.0],
+      "font": "Helvetica",
+      "font size": 11.0,
+      "text color": "[0.0]",
+      "content": "El retraso superior a 30 días must generar una penalización del 2% del importe anual."
+    },
+    {
+      "type": "formula",
+      "id": 4,
+      "page number": 1,
+      "bounding box": [200.0, 570.0, 400.0, 600.0],
+      "content": "penalizacion = 0.02 \\times importe_anual"
+    },
+    {
+      "type": "caption",
+      "id": 5,
+      "linked content id": 4,
+      "page number": 1,
+      "bounding box": [200.0, 550.0, 400.0, 566.0],
+      "font": "Helvetica-Oblique",
+      "font size": 9.0,
+      "text color": "[0.0]",
+      "content": "Fórmula de penalización contractual."
+    }
+  ]
+}

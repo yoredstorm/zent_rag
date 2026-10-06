@@ -1,0 +1,570 @@
+{
+  "file name": "atpco-fare-class.pdf",
+  "number of pages": 2,
+  "author": "ATPCO",
+  "title": "Fare Class Rules",
+  "creation date": null,
+  "modification date": null,
+  "kids": [
+    {
+      "type": "heading",
+      "id": 1,
+      "level": "Doctitle",
+      "page number": 1,
+      "bounding box": [72.0, 700.0, 540.0, 730.0],
+      "heading level": 1,
+      "font": "Helvetica-Bold",
+      "font size": 24.0,
+      "text color": "[0.0]",
+      "content": "Fare Class Rules"
+    },
+    {
+      "type": "heading",
+      "id": 2,
+      "level": "1",
+      "page number": 1,
+      "bounding box": [72.0, 670.0, 300.0, 690.0],
+      "heading level": 1,
+      "font": "Helvetica-Bold",
+      "font size": 14.0,
+      "text color": "[0.0]",
+      "content": "4. Fare Class Restrictions"
+    },
+    {
+      "type": "paragraph",
+      "id": 3,
+      "page number": 1,
+      "bounding box": [72.0, 640.0, 540.0, 660.0],
+      "font": "Helvetica",
+      "font size": 12.0,
+      "text color": "[0.0]",
+      "content": "Fare class &F1 requires 14 days advance purchase & is non-refundable."
+    },
+    {
+      "type": "paragraph",
+      "id": 4,
+      "page number": 1,
+      "bounding box": [72.0, 616.0, 540.0, 636.0],
+      "font": "Helvetica",
+      "font size": 12.0,
+      "text color": "[0.0]",
+      "content": "Fare class &F1 must be issued at least 14 days before departure."
+    },
+    {
+      "type": "list",
+      "id": 5,
+      "numbering style": "unordered",
+      "number of list items": 2,
+      "page number": 1,
+      "bounding box": [72.0, 570.0, 400.0, 610.0],
+      "list items": [
+        {
+          "type": "list item",
+          "id": 6,
+          "page number": 1,
+          "bounding box": [72.0, 592.0, 400.0, 608.0],
+          "font": "Helvetica",
+          "font size": 12.0,
+          "text color": "[0.0]",
+          "content": "Advance purchase: 14 days minimum.",
+          "kids": []
+        },
+        {
+          "type": "list item",
+          "id": 7,
+          "page number": 1,
+          "bounding box": [72.0, 572.0, 400.0, 588.0],
+          "font": "Helvetica",
+          "font size": 12.0,
+          "text color": "[0.0]",
+          "content": "Stopover not permitted.",
+          "kids": []
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "id": 8,
+      "page number": 1,
+      "bounding box": [72.0, 480.0, 540.0, 560.0],
+      "number of rows": 3,
+      "number of columns": 3,
+      "rows": [
+        {
+          "type": "table row",
+          "row number": 1,
+          "id": 9,
+          "cells": [
+            {
+              "type": "table cell",
+              "pdfua_tag": "TH",
+              "id": 10,
+              "page number": 1,
+              "bounding box": [72.0, 540.0, 200.0, 558.0],
+              "row number": 1,
+              "column number": 1,
+              "row span": 1,
+              "column span": 1,
+              "is_header": true,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 11,
+                  "page number": 1,
+                  "bounding box": [78.0, 542.0, 150.0, 556.0],
+                  "font": "Helvetica-Bold",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "Fare Class"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TH",
+              "id": 12,
+              "page number": 1,
+              "bounding box": [200.0, 540.0, 420.0, 558.0],
+              "row number": 1,
+              "column number": 2,
+              "row span": 1,
+              "column span": 1,
+              "is_header": true,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 13,
+                  "page number": 1,
+                  "bounding box": [206.0, 542.0, 300.0, 556.0],
+                  "font": "Helvetica-Bold",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "Description"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TH",
+              "id": 14,
+              "page number": 1,
+              "bounding box": [420.0, 540.0, 540.0, 558.0],
+              "row number": 1,
+              "column number": 3,
+              "row span": 1,
+              "column span": 1,
+              "is_header": true,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 15,
+                  "page number": 1,
+                  "bounding box": [426.0, 542.0, 520.0, 556.0],
+                  "font": "Helvetica-Bold",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "Advance Purchase"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "table row",
+          "row number": 2,
+          "id": 16,
+          "cells": [
+            {
+              "type": "table cell",
+              "pdfua_tag": "TD",
+              "id": 17,
+              "page number": 1,
+              "bounding box": [72.0, 520.0, 200.0, 538.0],
+              "row number": 2,
+              "column number": 1,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 18,
+                  "page number": 1,
+                  "bounding box": [78.0, 522.0, 120.0, 536.0],
+                  "font": "Helvetica",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "&F1"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TD",
+              "id": 19,
+              "page number": 1,
+              "bounding box": [200.0, 520.0, 420.0, 538.0],
+              "row number": 2,
+              "column number": 2,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 20,
+                  "page number": 1,
+                  "bounding box": [206.0, 522.0, 380.0, 536.0],
+                  "font": "Helvetica",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "One-way fare class"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TD",
+              "id": 21,
+              "page number": 1,
+              "bounding box": [420.0, 520.0, 540.0, 538.0],
+              "row number": 2,
+              "column number": 3,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 22,
+                  "page number": 1,
+                  "bounding box": [426.0, 522.0, 500.0, 536.0],
+                  "font": "Helvetica",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "14 days"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "table row",
+          "row number": 3,
+          "id": 23,
+          "cells": [
+            {
+              "type": "table cell",
+              "pdfua_tag": "TD",
+              "id": 24,
+              "page number": 1,
+              "bounding box": [72.0, 500.0, 200.0, 518.0],
+              "row number": 3,
+              "column number": 1,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 25,
+                  "page number": 1,
+                  "bounding box": [78.0, 502.0, 120.0, 516.0],
+                  "font": "Helvetica",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "&F2"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TD",
+              "id": 26,
+              "page number": 1,
+              "bounding box": [200.0, 500.0, 420.0, 518.0],
+              "row number": 3,
+              "column number": 2,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 27,
+                  "page number": 1,
+                  "bounding box": [206.0, 502.0, 380.0, 516.0],
+                  "font": "Helvetica",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "Round-trip fare class"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TD",
+              "id": 28,
+              "page number": 1,
+              "bounding box": [420.0, 500.0, 540.0, 518.0],
+              "row number": 3,
+              "column number": 3,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 29,
+                  "page number": 1,
+                  "bounding box": [426.0, 502.0, 500.0, 516.0],
+                  "font": "Helvetica",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "21 days"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "caption",
+      "id": 30,
+      "linked content id": 8,
+      "page number": 1,
+      "bounding box": [72.0, 460.0, 300.0, 478.0],
+      "font": "Helvetica-Oblique",
+      "font size": 10.0,
+      "text color": "[0.0]",
+      "content": "Table 4-1: Fare class restrictions."
+    },
+    {
+      "type": "paragraph",
+      "id": 31,
+      "page number": 1,
+      "bounding box": [72.0, 430.0, 540.0, 450.0],
+      "font": "Helvetica",
+      "font size": 11.0,
+      "text color": "[0.0]",
+      "content": "Bytes 64-67 Exception Time applies to the &F1 fare class."
+    },
+    {
+      "type": "paragraph",
+      "id": 32,
+      "page number": 1,
+      "bounding box": [72.0, 406.0, 540.0, 426.0],
+      "font": "Helvetica",
+      "font size": 11.0,
+      "text color": "[0.0]",
+      "content": "Bytes 68-71 Penalty Amount."
+    },
+    {
+      "type": "footer",
+      "id": 33,
+      "page number": 1,
+      "bounding box": [72.0, 40.0, 300.0, 56.0],
+      "kids": [
+        {
+          "type": "paragraph",
+          "id": 34,
+          "page number": 1,
+          "bounding box": [72.0, 40.0, 300.0, 56.0],
+          "font": "Helvetica",
+          "font size": 8.0,
+          "text color": "[0.0]",
+          "content": "ATPCO — Fare Class Rules — page 1"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "id": 40,
+      "page number": 2,
+      "bounding box": [72.0, 600.0, 540.0, 680.0],
+      "number of rows": 2,
+      "number of columns": 3,
+      "previous table id": 8,
+      "rows": [
+        {
+          "type": "table row",
+          "row number": 1,
+          "id": 41,
+          "cells": [
+            {
+              "type": "table cell",
+              "pdfua_tag": "TH",
+              "id": 42,
+              "page number": 2,
+              "bounding box": [72.0, 660.0, 200.0, 678.0],
+              "row number": 1,
+              "column number": 1,
+              "row span": 1,
+              "column span": 1,
+              "is_header": true,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 43,
+                  "page number": 2,
+                  "bounding box": [78.0, 662.0, 150.0, 676.0],
+                  "font": "Helvetica-Bold",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "Fare Class"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TH",
+              "id": 44,
+              "page number": 2,
+              "bounding box": [200.0, 660.0, 420.0, 678.0],
+              "row number": 1,
+              "column number": 2,
+              "row span": 1,
+              "column span": 1,
+              "is_header": true,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 45,
+                  "page number": 2,
+                  "bounding box": [206.0, 662.0, 300.0, 676.0],
+                  "font": "Helvetica-Bold",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "Description"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TH",
+              "id": 46,
+              "page number": 2,
+              "bounding box": [420.0, 660.0, 540.0, 678.0],
+              "row number": 1,
+              "column number": 3,
+              "row span": 1,
+              "column span": 1,
+              "is_header": true,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 47,
+                  "page number": 2,
+                  "bounding box": [426.0, 662.0, 520.0, 676.0],
+                  "font": "Helvetica-Bold",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "Advance Purchase"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "table row",
+          "row number": 2,
+          "id": 48,
+          "cells": [
+            {
+              "type": "table cell",
+              "pdfua_tag": "TD",
+              "id": 49,
+              "page number": 2,
+              "bounding box": [72.0, 640.0, 200.0, 658.0],
+              "row number": 2,
+              "column number": 1,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 50,
+                  "page number": 2,
+                  "bounding box": [78.0, 642.0, 120.0, 656.0],
+                  "font": "Helvetica",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "&F3"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TD",
+              "id": 51,
+              "page number": 2,
+              "bounding box": [200.0, 640.0, 420.0, 658.0],
+              "row number": 2,
+              "column number": 2,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 52,
+                  "page number": 2,
+                  "bounding box": [206.0, 642.0, 380.0, 656.0],
+                  "font": "Helvetica",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "Multi-city fare class"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TD",
+              "id": 53,
+              "page number": 2,
+              "bounding box": [420.0, 640.0, 540.0, 658.0],
+              "row number": 2,
+              "column number": 3,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 54,
+                  "page number": 2,
+                  "bounding box": [426.0, 642.0, 500.0, 656.0],
+                  "font": "Helvetica",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "28 days"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "id": 55,
+      "page number": 2,
+      "bounding box": [72.0, 560.0, 540.0, 580.0],
+      "font": "Helvetica",
+      "font size": 11.0,
+      "text color": "[0.0]",
+      "content": "Fare class &F3 must be validated against the carrier's tariff before ticketing."
+    },
+    {
+      "type": "footer",
+      "id": 56,
+      "page number": 2,
+      "bounding box": [72.0, 40.0, 300.0, 56.0],
+      "kids": [
+        {
+          "type": "paragraph",
+          "id": 57,
+          "page number": 2,
+          "bounding box": [72.0, 40.0, 300.0, 56.0],
+          "font": "Helvetica",
+          "font size": 8.0,
+          "text color": "[0.0]",
+          "content": "ATPCO — Fare Class Rules — page 2"
+        }
+      ]
+    }
+  ]
+}

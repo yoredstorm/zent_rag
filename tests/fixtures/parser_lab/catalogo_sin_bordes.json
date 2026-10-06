@@ -1,0 +1,193 @@
+{
+  "file name": "catalogo.pdf",
+  "number of pages": 1,
+  "author": "Catálogo",
+  "title": "Catálogo de Referencias",
+  "creation date": null,
+  "modification date": null,
+  "kids": [
+    {
+      "type": "heading",
+      "id": 1,
+      "level": "1",
+      "page number": 1,
+      "bounding box": [72.0, 690.0, 400.0, 715.0],
+      "heading level": 1,
+      "font": "Helvetica-Bold",
+      "font size": 14.0,
+      "text color": "[0.0]",
+      "content": "1. Referencias"
+    },
+    {
+      "type": "table",
+      "id": 2,
+      "page number": 1,
+      "bounding box": [72.0, 560.0, 540.0, 680.0],
+      "number of rows": 3,
+      "number of columns": 2,
+      "rows": [
+        {
+          "type": "table row",
+          "row number": 1,
+          "id": 3,
+          "cells": [
+            {
+              "type": "table cell",
+              "pdfua_tag": "TH",
+              "id": 4,
+              "page number": 1,
+              "bounding box": [72.0, 660.0, 250.0, 678.0],
+              "row number": 1,
+              "column number": 1,
+              "row span": 1,
+              "column span": 1,
+              "is_header": true,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 5,
+                  "page number": 1,
+                  "bounding box": [78.0, 662.0, 150.0, 676.0],
+                  "font": "Helvetica-Bold",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "Referencia"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TH",
+              "id": 6,
+              "page number": 1,
+              "bounding box": [250.0, 660.0, 540.0, 678.0],
+              "row number": 1,
+              "column number": 2,
+              "row span": 1,
+              "column span": 1,
+              "is_header": true,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 7,
+                  "page number": 1,
+                  "bounding box": [256.0, 662.0, 360.0, 676.0],
+                  "font": "Helvetica-Bold",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "Descripción"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "table row",
+          "row number": 2,
+          "id": 8,
+          "cells": [
+            {
+              "type": "table cell",
+              "pdfua_tag": "TD",
+              "id": 9,
+              "page number": 1,
+              "bounding box": [72.0, 630.0, 250.0, 658.0],
+              "row number": 2,
+              "column number": 1,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 10,
+                  "page number": 1,
+                  "bounding box": [78.0, 636.0, 140.0, 650.0],
+                  "font": "Helvetica",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "REF-100"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TD",
+              "id": 11,
+              "page number": 1,
+              "bounding box": [250.0, 630.0, 540.0, 658.0],
+              "row number": 2,
+              "column number": 2,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 12,
+                  "page number": 1,
+                  "bounding box": [256.0, 636.0, 500.0, 650.0],
+                  "font": "Helvetica",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "Cable de alimentación 220V"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "table row",
+          "row number": 3,
+          "id": 13,
+          "cells": [
+            {
+              "type": "table cell",
+              "pdfua_tag": "TD",
+              "id": 14,
+              "page number": 1,
+              "bounding box": [72.0, 600.0, 250.0, 628.0],
+              "row number": 3,
+              "column number": 1,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 15,
+                  "page number": 1,
+                  "bounding box": [78.0, 606.0, 140.0, 620.0],
+                  "font": "Helvetica",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "REF-200"
+                }
+              ]
+            },
+            {
+              "type": "table cell",
+              "pdfua_tag": "TD",
+              "id": 16,
+              "page number": 1,
+              "bounding box": [250.0, 600.0, 540.0, 628.0],
+              "row number": 3,
+              "column number": 2,
+              "row span": 1,
+              "column span": 1,
+              "kids": [
+                {
+                  "type": "paragraph",
+                  "id": 17,
+                  "page number": 1,
+                  "bounding box": [256.0, 606.0, 500.0, 620.0],
+                  "font": "Helvetica",
+                  "font size": 11.0,
+                  "text color": "[0.0]",
+                  "content": "Fusible 5A - 250V"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -733,6 +733,114 @@ class Settings(BaseSettings):
         ),
     )
     # -------------------------------------------------------------------------
+    # PDF Parser Engine — pdfplumber | opendataloader | shadow (A/B)
+    # -------------------------------------------------------------------------
+    # El parser PDF productivo se elige acá. pdfplumber sigue siendo el
+    # default: OpenDataLoader se integra en paralelo y solo pasa a producción
+    # cuando la Fase 2 lo decida. En shadow, el parser de producción no
+    # cambia, y la variante de evaluación se guarda como artefacto, nunca
+    # como Knowledge Objects.
+    PDF_PARSER_MODE: Literal["pdfplumber", "opendataloader", "shadow"] = Field(
+        default="pdfplumber",
+        description=(
+            "Motor PDF productivo. shadow ejecuta dos parsers sobre el mismo "
+            "PDF: uno continúa a producción y el otro se usa para evaluación."
+        ),
+    )
+    PDF_SHADOW_PRODUCTION: Literal["pdfplumber", "opendataloader"] = Field(
+        default="pdfplumber",
+        description=(
+            "En modo shadow, motor cuyo StructuredDocument continúa a "
+            "producción. El otro se evalúa offline."
+        ),
+    )
+    PDF_SHADOW_DIR: str = Field(
+        default="",
+        description=(
+            "Directorio de artefactos shadow (StructuredDocument de "
+            "evaluación + comparación estructural). Vacío = "
+            "<UPLOAD_DIR>/parser_shadow."
+        ),
+    )
+    PDF_SHADOW_ARTIFACTS: bool = Field(
+        default=True,
+        description=(
+            "Escribe el StructuredDocument de evaluación y la comparación "
+            "estructural como JSON en PDF_SHADOW_DIR."
+        ),
+    )
+    ODL_JAVA: str = Field(
+        default="",
+        description=(
+            "Binario java (11+) para OpenDataLoader. Vacío = ODL_JAVA_HOME o "
+            "'java' del PATH."
+        ),
+    )
+    ODL_JAVA_HOME: str = Field(
+        default="",
+        description="JAVA_HOME alternativo solo para OpenDataLoader.",
+    )
+    ODL_MODE: Literal["local", "hybrid"] = Field(
+        default="local",
+        description=(
+            "Modo OpenDataLoader. local = determinista, sin modelos. hybrid "
+            "queda disponible pero no se activa globalmente en la Fase 1."
+        ),
+    )
+    ODL_HYBRID_BACKEND: str = Field(
+        default="docling-fast",
+        description="Backend de OpenDataLoader hybrid (docling-fast | hancom-ai).",
+    )
+    ODL_HYBRID_URL: str = Field(
+        default="",
+        description="URL del servidor hybrid (vacío = default del CLI).",
+    )
+    ODL_HYBRID_MODE: Literal["auto", "full"] = Field(
+        default="auto",
+        description="Triage de OpenDataLoader hybrid.",
+    )
+    ODL_FORCE_OCR: bool = Field(
+        default=False,
+        description=(
+            "Marca que el servidor hybrid corre con OCR forzado. Solo "
+            "etiqueta structure_source=ocr; no cambia flags del cliente."
+        ),
+    )
+    ODL_USE_STRUCT_TREE: Literal["auto", "always", "never"] = Field(
+        default="auto",
+        description=(
+            "Uso del structure tree (PDF tagged). auto = solo si el PDF "
+            "declara StructTreeRoot."
+        ),
+    )
+    ODL_TABLE_METHOD: Literal["default", "cluster"] = Field(
+        default="default",
+        description="Detección de tablas: default (bordes) | cluster (bordes+clusters).",
+    )
+    ODL_READING_ORDER: Literal["xycut", "off"] = Field(
+        default="xycut",
+        description="Orden de lectura OpenDataLoader (default xycut).",
+    )
+    ODL_INCLUDE_HEADER_FOOTER: bool = Field(
+        default=False,
+        description=(
+            "Incluir headers/footers en el JSON de OpenDataLoader. False usa "
+            "el filtrado nativo del parser."
+        ),
+    )
+    ODL_THREADS: int = Field(
+        default=1,
+        ge=1,
+        le=32,
+        description="Threads de OpenDataLoader por página (1 = determinista).",
+    )
+    ODL_TIMEOUT_SECONDS: int = Field(
+        default=180,
+        ge=5,
+        le=3600,
+        description="Timeout del subproceso JVM de OpenDataLoader por documento.",
+    )
+    # -------------------------------------------------------------------------
     # Knowledge Tabular (Excel/CSV como DATOS, no como texto)
     # -------------------------------------------------------------------------
     KNOWLEDGE_TABULAR_MAX_WORKBOOK_BYTES: int = Field(

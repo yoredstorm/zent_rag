@@ -48,6 +48,12 @@ prod = [
     "opentelemetry-instrumentation-fastapi>=0.51b0",
 ]
 
+# OpenDataLoader PDF: motor PDF en evaluación paralela (Fase 1). Requiere
+# Java 11+ en runtime; en Docker ver Dockerfile.api target worker.
+pdf-odl = [
+    "opendataloader-pdf>=2.5.12,<3.0",
+]
+
 # Connector Platform: drivers opcionales de SQL (instalar bajo demanda)
 connectors = [
     "pymysql>=1.1.0",

@@ -1,0 +1,53 @@
+{
+  "file name": "manual-tecnico.pdf",
+  "number of pages": 1,
+  "author": "Ops",
+  "title": "Manual Técnico",
+  "creation date": null,
+  "modification date": null,
+  "kids": [
+    {
+      "type": "heading",
+      "id": 1,
+      "level": "Doctitle",
+      "page number": 1,
+      "bounding box": [72.0, 700.0, 540.0, 730.0],
+      "heading level": 1,
+      "font": "Helvetica-Bold",
+      "font size": 22.0,
+      "text color": "[0.0]",
+      "content": "Manual Técnico del Motor"
+    },
+    {
+      "type": "paragraph",
+      "id": 2,
+      "page number": 1,
+      "bounding box": [72.0, 640.0, 300.0, 690.0],
+      "font": "Helvetica",
+      "font size": 11.0,
+      "text color": "[0.0]",
+      "content": "Columna izquierda: el par de apriete del tornillo A es 12 Nm y el orden de montaje es A, B, C."
+    },
+    {
+      "type": "paragraph",
+      "id": 3,
+      "page number": 1,
+      "bounding box": [320.0, 640.0, 540.0, 690.0],
+      "font": "Helvetica",
+      "font size": 11.0,
+      "text color": "[0.0]",
+      "content": "Columna derecha: verificar la presión de aceite en el rango 2.5-3.5 bar antes de arrancar."
+    },
+    {
+      "type": "image",
+      "id": 4,
+      "page number": 1,
+      "bounding box": [72.0, 480.0, 540.0, 620.0],
+      "format": "png",
+      "source": "images/diagrama.png",
+      "alt": "Diagrama de la secuencia de montaje del motor",
+      "alt_source": "original",
+      "pdfua_tag": "Figure"
+    }
+  ]
+}

@@ -1322,6 +1322,15 @@ class KnowledgeIngestionEngine:
         raw_data = record.raw_data
         record_format = str(record.format or "").strip().lower().lstrip(".")
         parser = get_parser(record_format) if record_format else None
+        if parser is not None and getattr(parser, "kind", None) == "pdf":
+            # PDF Parser Engine: pdfplumber (default) | opendataloader | shadow.
+            # En shadow, el parser de producción no cambia y la variante de
+            # evaluación nunca escribe Knowledge Objects.
+            from src.knowledge.structure.pdf_engine import (
+                resolve_production_pdf_parser,
+            )
+
+            parser = resolve_production_pdf_parser(_document_understanding_settings())
         if parser is None and raw_data is None:
             # Conectores que entregan texto ya extraído (API, JSON, eventos):
             # se parsea como texto estructurado para no perder su conocimiento.

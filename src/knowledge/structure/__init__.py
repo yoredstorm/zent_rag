@@ -22,6 +22,17 @@ from src.knowledge.structure.chunker import (
 from src.knowledge.structure.csv_parser import CsvParser
 from src.knowledge.structure.docx_parser import DocxParser
 from src.knowledge.structure.html_parser import HtmlParser
+from src.knowledge.structure.opendataloader_client import (
+    OpenDataLoaderConversion,
+    OpenDataLoaderOptions,
+    availability,
+)
+from src.knowledge.structure.opendataloader_parser import OpenDataLoaderPdfParser
+from src.knowledge.structure.pdf_engine import (
+    ShadowPdfParser,
+    options_from_settings,
+    resolve_production_pdf_parser,
+)
 from src.knowledge.structure.pdf_parser import PdfParser
 from src.knowledge.structure.text_parser import TextParser
 from src.knowledge.structure.xlsx_parser import XlsxParser
@@ -55,7 +66,14 @@ __all__ = [
     "CsvParser",
     "DocxParser",
     "HtmlParser",
+    "OpenDataLoaderConversion",
+    "OpenDataLoaderOptions",
+    "OpenDataLoaderPdfParser",
     "PdfParser",
+    "ShadowPdfParser",
     "TextParser",
     "XlsxParser",
+    "availability",
+    "options_from_settings",
+    "resolve_production_pdf_parser",
 ]

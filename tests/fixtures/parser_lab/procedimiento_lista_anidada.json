@@ -1,0 +1,87 @@
+{
+  "file name": "procedimiento-operativo.pdf",
+  "number of pages": 1,
+  "author": "PMO",
+  "title": "Procedimiento de Alta",
+  "creation date": null,
+  "modification date": null,
+  "kids": [
+    {
+      "type": "heading",
+      "id": 1,
+      "level": "Doctitle",
+      "page number": 1,
+      "bounding box": [72.0, 700.0, 540.0, 730.0],
+      "heading level": 1,
+      "font": "Helvetica-Bold",
+      "font size": 20.0,
+      "text color": "[0.0]",
+      "content": "Procedimiento de Alta de Cliente"
+    },
+    {
+      "type": "list",
+      "id": 2,
+      "numbering style": "ordered",
+      "number of list items": 2,
+      "page number": 1,
+      "bounding box": [72.0, 560.0, 540.0, 690.0],
+      "list items": [
+        {
+          "type": "list item",
+          "id": 3,
+          "page number": 1,
+          "bounding box": [72.0, 640.0, 540.0, 688.0],
+          "font": "Helvetica",
+          "font size": 11.0,
+          "text color": "[0.0]",
+          "content": "Validar identidad del cliente.",
+          "kids": [
+            {
+              "type": "list",
+              "id": 4,
+              "numbering style": "bullet",
+              "number of list items": 2,
+              "page number": 1,
+              "bounding box": [96.0, 590.0, 540.0, 636.0],
+              "list items": [
+                {
+                  "type": "list item",
+                  "id": 5,
+                  "page number": 1,
+                  "bounding box": [96.0, 612.0, 540.0, 634.0],
+                  "font": "Helvetica",
+                  "font size": 10.0,
+                  "text color": "[0.0]",
+                  "content": "Documento oficial vigente.",
+                  "kids": []
+                },
+                {
+                  "type": "list item",
+                  "id": 6,
+                  "page number": 1,
+                  "bounding box": [96.0, 590.0, 540.0, 610.0],
+                  "font": "Helvetica",
+                  "font size": 10.0,
+                  "text color": "[0.0]",
+                  "content": "Comprobante de domicilio menor a 3 meses.",
+                  "kids": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "list item",
+          "id": 7,
+          "page number": 1,
+          "bounding box": [72.0, 560.0, 540.0, 586.0],
+          "font": "Helvetica",
+          "font size": 11.0,
+          "text color": "[0.0]",
+          "content": "Registrar al cliente en el sistema.",
+          "kids": []
+        }
+      ]
+    }
+  ]
+}
