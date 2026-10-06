@@ -94,7 +94,56 @@ async def close_redis_connection() -> None:
 
 #: Versión de la política semántica/grounding: invalida respuestas cacheadas
 #: del contrato viejo («no aparece en el documento»).
-_RESPONSE_SEMANTICS_POLICY_VERSION = "grounding-contract-1"
+_RESPONSE_SEMANTICS_POLICY_VERSION = "grounding-contract-2"
+#: Versión del contrato de decisión determinista (DecisionEnvelope + guard).
+_RESPONSE_DECISION_VERSION = "decision-envelope-1"
+
+
+async def knowledge_cache_fingerprint(organization_id) -> str:
+    """Fingerprint del conocimiento del tenant para caches de respuesta.
+
+    Incluye reglas canónicas (cantidad + updated_at) y documentos
+    estructurados (updated_at): si una regla cambia, la clave cambia y la
+    respuesta vieja NO se reutiliza. Fail-closed: ante error devuelve "" y el
+    caller debe desactivar la caché de ESE request.
+    """
+    try:
+        from hashlib import sha256
+
+        from sqlalchemy import text as sql_text
+
+        from src.infrastructure.postgres.session import get_async_session
+
+        session = await get_async_session()
+        try:
+            row = (
+                await session.execute(
+                    sql_text(
+                        "SELECT "
+                        "(SELECT count(*)::text FROM knowledge_canonical_objects "
+                        " WHERE organization_id = :org AND kind = 'BUSINESS_RULE') AS rules, "
+                        "(SELECT COALESCE(max(updated_at)::text, '') "
+                        " FROM knowledge_canonical_objects WHERE organization_id = :org) "
+                        " AS rules_updated, "
+                        "(SELECT COALESCE(max(updated_at)::text, '') "
+                        " FROM structured_documents WHERE organization_id = :org) "
+                        " AS docs_updated"
+                    ),
+                    {"org": organization_id},
+                )
+            ).first()
+        finally:
+            await session.close()
+        if row is None:
+            return ""
+        material = (
+            f"{row.rules}|{row.rules_updated}|{row.docs_updated}|"
+            f"{_RESPONSE_SEMANTICS_POLICY_VERSION}|{_RESPONSE_DECISION_VERSION}"
+        )
+        return sha256(material.encode("utf-8")).hexdigest()[:32]
+    except Exception as exc:  # noqa: BLE001 — sin fingerprint no se cachea
+        logger.warning("Knowledge cache fingerprint failed", error=str(exc)[:160])
+        return ""
 
 
 class RedisCache(CacheProvider):
@@ -107,19 +156,32 @@ class RedisCache(CacheProvider):
         return f"rag:{prefix}:{raw}"
 
     @staticmethod
-    def _hash_query(organization_id: str, query: str, model: str, role: str = "") -> str:
+    def _hash_query(
+        organization_id: str,
+        query: str,
+        model: str,
+        role: str = "",
+        *,
+        knowledge_fingerprint: str = "",
+    ) -> str:
         """Genera un hash determinista para la query (caché de respuestas).
 
         Incluye el rol: una respuesta admin (agregados, chunks no públicos)
         no debe servirse a un customer y viceversa.
 
-        Incluye la versión de la política de grounding/semántica: una respuesta
-        negativa («no aparece en el documento») generada por el contrato viejo
-        NO puede sobrevivir a un cambio de semántica de la consulta.
+        Incluye:
+          - versión de la política de grounding/semántica;
+          - versión del contrato de decisión (DecisionEnvelope/guard);
+          - fingerprint del conocimiento (reglas canónicas + documentos): una
+            respuesta creada antes de una modificación de regla NO se reutiliza.
+
+        Sin fingerprint de conocimiento el caller NO debe usar caché (fail-closed
+        documentado en el orquestador).
         """
         raw = (
             f"{organization_id}:{query}:{model}:{role}:"
-            f"{_RESPONSE_SEMANTICS_POLICY_VERSION}"
+            f"{_RESPONSE_SEMANTICS_POLICY_VERSION}:"
+            f"{_RESPONSE_DECISION_VERSION}:{knowledge_fingerprint}"
         )
         return hashlib.sha256(raw.encode()).hexdigest()[:32]
 

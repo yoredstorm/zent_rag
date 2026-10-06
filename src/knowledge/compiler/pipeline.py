@@ -296,6 +296,8 @@ class KnowledgeCompiler:
             "relationships": 0,
             "relationships_related": 0,
             "rules": 0,
+            "rules_created": 0,
+            "rules_reinforced": 0,
             "canonical_rules": 0,
             "canonical_rule_conflicts": 0,
             "fabric_rule_nodes": 0,
@@ -630,6 +632,7 @@ class KnowledgeCompiler:
                     canonical_rule_objects[rule.canonical_rule_id] = str(rule_id)
             if rule_status == "created":
                 counters["rules"] += 1
+                counters["rules_created"] += 1
                 await self._observe(
                     observer,
                     "RULE_DISCOVERED",
@@ -673,6 +676,8 @@ class KnowledgeCompiler:
                         object_id=rule_id,
                         rule_key=rule.rule_key,
                     )
+            else:
+                counters["rules_reinforced"] += 1
             for evidence in rule.evidence:
                 written = await store.add_evidence(
                     organization_id,
@@ -893,6 +898,25 @@ class KnowledgeCompiler:
         await store.refresh_counters(organization_id)
         self._record_quality_metrics(result, counters)
 
+        # Huellas de las reglas canónicas: alimentan el fingerprint de caché
+        # (una respuesta vieja no puede sobrevivir a un cambio de regla).
+        rule_fingerprints: dict[str, str] = {}
+        rule_index_version = ""
+        try:
+            from src.knowledge.rule_compiler.index import (
+                RULE_INDEX_VERSION,
+                rule_fingerprint,
+            )
+
+            rule_index_version = RULE_INDEX_VERSION
+            rule_fingerprints = {
+                str(getattr(rule, "rule_id", "")): rule_fingerprint(rule)
+                for rule in result.canonical_rules
+                if getattr(rule, "rule_id", "")
+            }
+        except Exception:  # noqa: BLE001 — el fingerprint es best-effort
+            rule_fingerprints = {}
+
         return {
             "objects": objects_created,
             "assertions": assertions_written,
@@ -908,6 +932,10 @@ class KnowledgeCompiler:
             },
             "canonical_rule_ids": dict(list(canonical_rule_ids.items())[:100]),
             "canonical_rule_objects": dict(list(canonical_rule_objects.items())[:100]),
+            "canonical_rule_fingerprints": dict(
+                list(rule_fingerprints.items())[:100]
+            ),
+            "rule_index_version": rule_index_version,
             **counters,
         }
 

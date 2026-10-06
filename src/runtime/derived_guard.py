@@ -35,6 +35,11 @@ _POSITIVE_PHRASES: tuple[str, ...] = (
     "verdadero",
     "aprobado",
     "permitido",
+    "está permitido",
+    "esta permitido",
+    "se permite",
+    "pertenece",
+    "dentro del",
 )
 _NEGATIVE_PHRASES: tuple[str, ...] = (
     "no cumple",
@@ -50,6 +55,11 @@ _NEGATIVE_PHRASES: tuple[str, ...] = (
     "falso",
     "rechazado",
     "no permitido",
+    "no está permitido",
+    "no esta permitido",
+    "no se permite",
+    "no pertenece",
+    "no figura",
     "excede",
     "fuera del",
 )

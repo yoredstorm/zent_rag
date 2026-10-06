@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import hashlib
+import json
 import time
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid5
@@ -1603,7 +1604,12 @@ class KnowledgeIngestionEngine:
         persisted = getattr(compile_result, "persisted", {}) or {}
         entity_ids = persisted.get("canonical_entity_ids") or {}
         rule_ids = persisted.get("canonical_rule_ids") or {}
-        if not entity_ids and not rule_ids:
+        rule_objects = persisted.get("canonical_rule_objects") or {}
+        rule_fingerprints = persisted.get("canonical_rule_fingerprints") or {}
+        # La marca de versión se escribe incluso sin reglas: un documento sin
+        # normativa no debe volver a escanearse en cada backfill.
+        await self._mark_rule_index_version(document, persisted)
+        if not entity_ids and not rule_ids and not rule_objects:
             return
         updater = getattr(self._vectors, "update_document_payload", None)
         if not callable(updater):
@@ -1616,6 +1622,15 @@ class KnowledgeIngestionEngine:
                     "compiled_status": str(persisted.get("status") or "completed"),
                     "canonical_entity_ids": dict(list(entity_ids.items())[:64]),
                     "canonical_rule_ids": dict(list(rule_ids.items())[:64]),
+                    # Objetos canónicos y huellas: permiten al retrieval de reglas
+                    # enlazar y versionar sin re-embedding.
+                    "canonical_rule_objects": dict(list(rule_objects.items())[:64]),
+                    "canonical_rule_fingerprints": dict(
+                        list(rule_fingerprints.items())[:64]
+                    ),
+                    "rule_index_version": str(
+                        persisted.get("rule_index_version") or ""
+                    ),
                     "compiled_at": datetime.now(timezone.utc).isoformat(),
                 },
             )
@@ -1624,6 +1639,48 @@ class KnowledgeIngestionEngine:
                 "Knowledge payload update after compile failed",
                 document_id=str(document.id),
                 error=str(exc)[:250],
+            )
+
+    async def _mark_rule_index_version(self, document, persisted: dict) -> None:
+        """Marca el documento como indexado por el compilador de reglas.
+
+        Hace idempotente al backfill: un documento compilado con la versión
+        vigente no vuelve a ser candidato. Best-effort: nunca frena la ingesta.
+        """
+        try:
+            from sqlalchemy import text as sql_text
+
+            from src.infrastructure.postgres.session import get_async_session
+
+            marker = {
+                "rule_index_version": str(
+                    persisted.get("rule_index_version") or ""
+                ),
+                "rule_backfill_version": "rule-backfill-1",
+                "rule_indexed_at": datetime.now(timezone.utc).isoformat(),
+            }
+            session = await get_async_session()
+            try:
+                await session.execute(
+                    sql_text(
+                        "UPDATE structured_documents "
+                        "SET metadata = metadata || CAST(:marker AS jsonb) "
+                        "WHERE id = :did AND organization_id = :oid"
+                    ),
+                    {
+                        "marker": json.dumps(marker),
+                        "did": document.id,
+                        "oid": document.organization_id,
+                    },
+                )
+                await session.commit()
+            finally:
+                await session.close()
+        except Exception as exc:  # noqa: BLE001 — la marca es best-effort
+            logger.warning(
+                "Rule index version mark failed",
+                document_id=str(getattr(document, "id", "")),
+                error=str(exc)[:200],
             )
 
     async def _compile(self, job, source, document, observer=None, *, precomputed=None) -> None:

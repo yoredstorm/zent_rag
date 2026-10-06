@@ -31,6 +31,18 @@ from .evaluate import (
     rule_premises,
 )
 from .fabric import FABRIC_RULE_PROJECTION_VERSION, project_rules_to_fabric
+from .index import (
+    RULE_INDEX_VERSION,
+    merge_rule_candidates,
+    query_symbols,
+    query_tokens,
+    rank_rule,
+    rule_fingerprint,
+    rule_index_document,
+    rule_search_text,
+    rule_symbols,
+    rule_tokens,
+)
 from .language import StatementAnalysis, analyze_statement, classify_statement_kind, detect_formula
 from .merge import merge_distributed_rules, merge_rule_pair, rules_compatible
 from .model import (
@@ -60,6 +72,7 @@ __all__ = [
     "FABRIC_RULE_PROJECTION_VERSION",
     "MAX_CANDIDATES",
     "RULE_COMPILER_VERSION",
+    "RULE_INDEX_VERSION",
     "RequirementState",
     "RuleArgument",
     "RuleCheck",
@@ -87,11 +100,20 @@ __all__ = [
     "evaluate_rule",
     "evaluate_rules",
     "merge_distributed_rules",
+    "merge_rule_candidates",
     "merge_rule_pair",
     "pattern_semantics_from_rule",
     "project_rules_to_fabric",
+    "query_symbols",
+    "query_tokens",
+    "rank_rule",
     "recompute_execution",
+    "rule_fingerprint",
+    "rule_index_document",
     "rule_premises",
+    "rule_search_text",
+    "rule_symbols",
+    "rule_tokens",
     "rules_compatible",
     "stable_id",
     "verify_candidate",

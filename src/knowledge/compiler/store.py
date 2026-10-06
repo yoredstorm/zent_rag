@@ -684,6 +684,33 @@ class PostgresCompilerStore:
             validation=0.85,
         )
         confidence, _detail = compute_confidence(signals)
+        # Representación recuperable de la regla (discovery, no autoridad): se
+        # persiste junto a la semántica para que el Rule Lane la encuentre sin
+        # depender de que un chunk recuperado traiga canonical_rule_ids.
+        index_metadata: dict = {}
+        semantics_payload = getattr(rule, "semantics", None)
+        if isinstance(semantics_payload, dict) and semantics_payload:
+            try:
+                from src.knowledge.rule_compiler.index import (
+                    RULE_INDEX_VERSION,
+                    rule_fingerprint,
+                    rule_index_document,
+                )
+                from src.knowledge.rule_compiler.model import CanonicalRule
+
+                canonical_for_index = CanonicalRule.from_dict(semantics_payload)
+                index_document = rule_index_document(canonical_for_index)
+                # Scope del documento/fuente/workspace que produjo la regla.
+                index_document["source_id"] = str(source_id or "")
+                index_document["document_id"] = str(document_id or "")
+                index_document["workspace_id"] = str(workspace_id or "")
+                index_metadata = {
+                    "retrieval_index": index_document,
+                    "retrieval_index_version": RULE_INDEX_VERSION,
+                    "rule_fingerprint": rule_fingerprint(canonical_for_index),
+                }
+            except Exception:  # noqa: BLE001 — el índice es best-effort
+                index_metadata = {}
         session = await get_async_session()
         try:
             row = (
@@ -747,6 +774,7 @@ class PostgresCompilerStore:
                                 "canonical_rule_id": getattr(rule, "canonical_rule_id", "") or None,
                                 "semantics": getattr(rule, "semantics", None) or None,
                                 "rule_provenance": getattr(rule, "provenance", None) or None,
+                                **index_metadata,
                             }
                         ),
                     },

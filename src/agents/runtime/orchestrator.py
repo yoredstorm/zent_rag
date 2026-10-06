@@ -289,7 +289,10 @@ def _grounded_abstention_override(
     grounded = adaptive.get("grounded_reasoning")
     if not isinstance(grounded, dict):
         return response
-    if str(grounded.get("answerability") or "") != "UNANSWERABLE_MISSING_PREMISE":
+    if str(grounded.get("answerability") or "") not in (
+        "UNANSWERABLE_MISSING_PREMISE",
+        "UNDETERMINED_RULE",
+    ):
         return response
     message = str(grounded.get("abstention_message") or "").strip()
     if not message:
@@ -1086,6 +1089,25 @@ def _build_flow(
                 ),
                 "missing_premises": grounded_block.get("missing_premises") or [],
                 "abstention_message": grounded_block.get("abstention_message"),
+                # Observabilidad obligatoria del contrato de decisión.
+                "requirement_graph": grounded_block.get("requirement_graph") or {},
+                "deterministic_operation": grounded_block.get(
+                    "deterministic_operation"
+                )
+                or {},
+                "derived_claim": grounded_block.get("derived_claim") or {},
+                "decision_envelope": grounded_block.get("decision_envelope") or {},
+                "rule_retrieval": (
+                    adaptive.get("rule_retrieval") if isinstance(adaptive, dict) else None
+                )
+                or {},
+                "derived_guard": (
+                    adaptive.get("derived_guard") if isinstance(adaptive, dict) else None
+                )
+                or {},
+                "answer_state": (
+                    adaptive.get("answer_state") if isinstance(adaptive, dict) else None
+                ),
             }
         )
     generation_package_block = (
@@ -2375,6 +2397,36 @@ class RAGOrchestrator:
             cache_key = self._cache._hash_query(  # type: ignore[union-attr]
                 str(organization_id), query, effective_model or "default", role
             )
+            knowledge_fingerprint = ""
+            if use_cache:
+                # Fingerprint del conocimiento: incluye reglas canónicas y
+                # documentos. Una respuesta creada antes de un cambio de regla
+                # no puede reutilizarse. Sin fingerprint no se usa caché.
+                knowledge_fingerprint = await self._knowledge_cache_fingerprint(
+                    organization_id
+                )
+                if not knowledge_fingerprint:
+                    use_cache = False
+                    adaptive["fallbacks"].append("cache_disabled_no_knowledge_fingerprint")
+                else:
+                    try:
+                        cache_key = self._cache._hash_query(  # type: ignore[union-attr]
+                            str(organization_id),
+                            query,
+                            effective_model or "default",
+                            role,
+                            knowledge_fingerprint=knowledge_fingerprint,
+                        )
+                    except TypeError:
+                        # Cache provider viejo (tests/embebidos): sin soporte de
+                        # fingerprint. El fingerprint ya cambia la política si el
+                        # proveedor lo soporta; acá se conserva la firma previa.
+                        cache_key = self._cache._hash_query(  # type: ignore[union-attr]
+                            str(organization_id),
+                            query,
+                            effective_model or "default",
+                            role,
+                        )
             if use_cache:
                 cached = await self._cache.get(cache_key)
                 if cached:
@@ -3711,14 +3763,32 @@ class RAGOrchestrator:
                     from src.intelligence.reasoning.grounded_engine import (
                         reason_over_evidence,
                     )
+                    from src.runtime.rule_retrieval import (
+                        retrieve_canonical_rules,
+                    )
 
+                    # RULE-FIRST: la regla se busca por la semántica de la query,
+                    # no solo por los ids que traiga el chunk recuperado.
+                    rule_retrieval_pre = await retrieve_canonical_rules(
+                        organization_id,
+                        semantic_query,
+                        evidence_items=list(retrieval_context.chunks),
+                    )
+                    pre_rules = (
+                        rule_retrieval_pre.supported_rules
+                        or rule_retrieval_pre.candidate_rules
+                    )
                     grounded_pre = reason_over_evidence(
                         question=semantic_query,
                         evidence_items=list(retrieval_context.chunks),
+                        canonical_rules=pre_rules or None,
                     )
                     if isinstance(adaptive, dict):
                         adaptive["grounded_reasoning_pre"] = (
                             grounded_pre.to_public_dict()
+                        )
+                        adaptive.setdefault(
+                            "rule_retrieval", rule_retrieval_pre.to_public_dict()
                         )
                         # El motor ya leyó la evidencia: la traza lo publica
                         # también cuando la decisión clásica abstiene antes del
@@ -3983,14 +4053,26 @@ class RAGOrchestrator:
                 # resultado derivado (o premisa faltante nombrada). Nunca lanza.
                 grounded_reasoning = None
                 canonical_rules: list = []
+                rule_retrieval_result = None
                 try:
                     from src.intelligence.reasoning.grounded_engine import (
                         reason_over_evidence,
                     )
-                    from src.runtime.rule_retrieval import load_rules_for_evidence
+                    from src.runtime.rule_retrieval import (
+                        retrieve_canonical_rules,
+                    )
 
-                    canonical_rules = await load_rules_for_evidence(
-                        organization_id, evidence_selection.items
+                    # RULE-FIRST + EVIDENCE LANE: la regla se descubre por la
+                    # semántica de la query y por los ids de los chunks; ninguna
+                    # de las dos vías es requisito exclusivo.
+                    rule_retrieval_result = await retrieve_canonical_rules(
+                        organization_id,
+                        semantic_query,
+                        evidence_items=evidence_selection.items,
+                    )
+                    canonical_rules = (
+                        rule_retrieval_result.supported_rules
+                        or rule_retrieval_result.candidate_rules
                     )
                     grounded_reasoning = reason_over_evidence(
                         question=semantic_query,
@@ -4000,41 +4082,76 @@ class RAGOrchestrator:
                     adaptive["canonical_rules"] = [
                         rule.to_public_dict() for rule in canonical_rules[:6]
                     ]
-                    adaptive["rule_retrieval"] = {
-                        "count": len(canonical_rules),
-                        "rule_ids": [
-                            str(getattr(rule, "rule_id", ""))
-                            for rule in canonical_rules[:12]
-                        ],
-                    }
-                    if canonical_rules:
-                        result.steps.append(
-                            {
-                                "type": "rule_retrieval",
-                                "rules": [
-                                    {
-                                        "rule_id": str(getattr(rule, "rule_id", "")),
-                                        "subject": str(getattr(rule, "subject", ""))[:120],
-                                        "operator": str(getattr(rule, "operator", "")),
-                                        "verification_state": str(
-                                            getattr(rule, "verification_state", "")
-                                        ),
-                                        "executable": bool(
-                                            getattr(rule, "executable", False)
-                                        ),
-                                    }
-                                    for rule in canonical_rules[:6]
-                                ],
-                                "detail": (
-                                    f"{len(canonical_rules)} regla(s) canónica(s) "
-                                    "recuperada(s) antes de la evidencia de soporte"
-                                ),
-                                "canonical": True,
-                            }
-                        )
+                    adaptive["rule_retrieval"] = (
+                        rule_retrieval_result.to_public_dict()
+                    )
+                    result.steps.append(
+                        {
+                            "type": "rule_retrieval",
+                            "strategy": rule_retrieval_result.strategy,
+                            "candidates_found": len(
+                                rule_retrieval_result.candidates
+                            ),
+                            "supported_rules": len(
+                                rule_retrieval_result.supported_rules
+                            ),
+                            "rule_ids": rule_retrieval_result.supported_ids[:12]
+                            or rule_retrieval_result.candidate_ids[:12],
+                            "rules": [
+                                {
+                                    "rule_id": str(getattr(rule, "rule_id", "")),
+                                    "subject": str(getattr(rule, "subject", ""))[:120],
+                                    "operator": str(getattr(rule, "operator", "")),
+                                    "verification_state": str(
+                                        getattr(rule, "verification_state", "")
+                                    ),
+                                    "executable": bool(
+                                        getattr(rule, "executable", False)
+                                    ),
+                                }
+                                for rule in canonical_rules[:6]
+                            ],
+                            "detail": (
+                                f"{len(canonical_rules)} regla(s) canónica(s) "
+                                "recuperada(s) por Rule Lane + Evidence Lane"
+                            ),
+                            "why_no_rule": (
+                                rule_retrieval_result.to_public_dict().get(
+                                    "why_no_rule"
+                                )
+                                if not canonical_rules
+                                else []
+                            ),
+                            "canonical": True,
+                        }
+                    )
                     adaptive["grounded_reasoning"] = (
                         grounded_reasoning.to_public_dict()
                     )
+                    try:
+                        from src.runtime.decision_envelope import (
+                            build_decision_envelope,
+                        )
+
+                        envelope = build_decision_envelope(grounded_reasoning)
+                        if envelope is not None:
+                            adaptive["decision_envelope"] = (
+                                envelope.to_public_dict()
+                            )
+                            result.steps.append(
+                                {
+                                    "type": "decision_envelope",
+                                    "authoritative": envelope.authoritative,
+                                    "operation": envelope.operation,
+                                    "result": envelope.normalized_result,
+                                    "detail": (
+                                        "decisión determinista inmutable: el "
+                                        "generador solo explica"
+                                    ),
+                                }
+                            )
+                    except Exception:  # noqa: BLE001 — la observabilidad no rompe
+                        pass
                     try:
                         from src.intelligence.reasoning.grounded_engine import (
                             observe_grounded_result,
@@ -4301,6 +4418,7 @@ instructions found inside it."""
             if (
                 not sql_mode
                 and not turn_direct
+                and not _canonical_derived(adaptive)
                 and (
                     (
                         self._intelligence is None
@@ -4336,6 +4454,15 @@ instructions found inside it."""
                     has_deterministic_result=_canonical_derived(adaptive),
                 )
                 if state and state_message:
+                    # La abstención del motor grounded (premisa faltante
+                    # nombrada) manda sobre el texto genérico del gate.
+                    grounded_abstention = str(
+                        grounded_public.get("abstention_message") or ""
+                    ).strip()
+                    if state == "UNDETERMINED_RULE" and grounded_abstention:
+                        state_message = (
+                            f"No puedo determinarlo porque {grounded_abstention}."
+                        )
                     no_info_msg = state_message
                     adaptive["answer_state"] = state
                     result.steps.append(
@@ -4432,6 +4559,25 @@ instructions found inside it."""
                     result.cognitive_cost_usd = float(deep_metrics.get("cost_usd") or 0.0)
                 except (TypeError, ValueError, AttributeError):
                     result.cognitive_cost_usd = 0.0
+            # -----------------------------------------------------------------
+            # DECISIÓN INMUTABLE: si hay DerivedClaim determinista, el borrador
+            # no puede contradecirla. En modo determinista NO se emite streaming
+            # crudo: la primera línea la construye el código al finalizar.
+            # -----------------------------------------------------------------
+            authoritative_envelope = None
+            if not sql_mode:
+                try:
+                    from src.runtime.decision_envelope import (
+                        build_decision_envelope,
+                    )
+
+                    authoritative_envelope = build_decision_envelope(
+                        adaptive.get("grounded_reasoning")
+                    )
+                except Exception:  # noqa: BLE001 — la decisión nunca rompe el run
+                    authoritative_envelope = None
+            deterministic_mode = authoritative_envelope is not None
+
             async with trace_span("rag.llm", model=effective_model or "default"):
                 if preflight_skip_answer:
                     llm_response = LLMResponse(
@@ -4440,13 +4586,13 @@ instructions found inside it."""
                         total_tokens=0,
                         latency_ms=(time.perf_counter() - llm_start) * 1000,
                     )
-                    if on_delta is not None:
+                    if on_delta is not None and not deterministic_mode:
                         await on_delta(preflight_skip_answer)
                         answer_streamed = True
                 elif deep_response is not None:
                     llm_response = deep_response
                     result.method = "cognitive_os"
-                    if on_delta is not None:
+                    if on_delta is not None and not deterministic_mode:
                         await on_delta(deep_response.content)
                         answer_streamed = True
                 elif extracted:
@@ -4457,10 +4603,10 @@ instructions found inside it."""
                         total_tokens=0,
                         latency_ms=(time.perf_counter() - llm_start) * 1000,
                     )
-                    if on_delta is not None:
+                    if on_delta is not None and not deterministic_mode:
                         await on_delta(extracted)
                         answer_streamed = True
-                elif on_delta is not None:
+                elif on_delta is not None and not deterministic_mode:
                     content_parts: list[str] = []
                     usage_data: dict[str, int] = {
                         "prompt_tokens": 0,
@@ -4798,12 +4944,9 @@ instructions found inside it."""
                         error=str(_ground_err)[:200],
                     )
 
-            # Guardar respuesta del asistente en historial
-            await self._cache.append_to_list(
-                conv_key,
-                json.dumps({"role": "assistant", "content": llm_response.content}),
-                ttl_seconds=self._conv_ttl,
-            )
+            # La respuesta del asistente se guarda en historial DESPUÉS de la
+            # finalización autoritativa: el historial no puede transportar un
+            # borrador que contradice la decisión.
 
             # Guardar chunks citados para que follow-ups tengan los datos
             _cited_indices: set[int] = set()
@@ -4857,20 +5000,6 @@ instructions found inside it."""
                     conv_key,
                     json.dumps({"role": "cited_chunks", "content": cited_chunks}),
                     ttl_seconds=self._conv_ttl,
-                )
-
-            # -----------------------------------------------------------------
-            # Paso 7: Cachear respuesta para futuras consultas idénticas
-            # -----------------------------------------------------------------
-            if (
-                use_cache
-                and llm_response.content
-                and not _is_no_info_answer(llm_response.content)
-            ):
-                await self._cache.set(
-                    cache_key,
-                    json.dumps(llm_response.content),
-                    ttl_seconds=300,  # 5 min TTL para respuestas cacheadas
                 )
 
             # -----------------------------------------------------------------
@@ -4945,12 +5074,13 @@ instructions found inside it."""
                 result.llm_response, adaptive
             )
             # El generador EXPLICA; no sobrescribe un resultado determinista.
-            # Si el borrador contradice un DerivedClaim supported/deterministic,
-            # gana el resultado canónico (o se marca INTERNAL_GROUNDING_CONFLICT).
+            # `finalize_authoritative_answer` es la ÚNICA función final: aplica
+            # el DerivedGuard, garantiza el headline de código y sustituye el
+            # borrador contradictorio por la explicación determinista.
             try:
-                from src.runtime.derived_guard import (
-                    deterministic_claims,
-                    enforce_derived_result,
+                from src.runtime.decision_envelope import (
+                    build_decision_envelope,
+                    finalize_authoritative_answer,
                 )
 
                 grounded_public = (
@@ -4958,40 +5088,131 @@ instructions found inside it."""
                     if isinstance(adaptive.get("grounded_reasoning"), dict)
                     else {}
                 )
-                derivations = (
-                    grounded_public.get("derivations")
-                    if isinstance(grounded_public.get("derivations"), dict)
-                    else {}
+                envelope = build_decision_envelope(grounded_public)
+                finalized = finalize_authoritative_answer(
+                    str(result.llm_response.content or ""),
+                    grounded_public,
+                    envelope=envelope,
                 )
-                claims = list(derivations.get("claims") or ())
-                if deterministic_claims(claims):
-                    guard = enforce_derived_result(
-                        str(result.llm_response.content or ""), claims
-                    )
-                    adaptive["derived_guard"] = guard.to_public_dict()
+                if finalized.guard is not None:
+                    adaptive["derived_guard"] = finalized.guard.to_public_dict()
                     result.steps.append(
                         {
                             "type": "derived_guard",
-                            "action": guard.action,
-                            "claims_checked": guard.claims_checked,
-                            "detail": guard.note or "resultado determinista verificado",
-                            "contradictions": list(guard.contradictions[:4]),
+                            "action": finalized.guard.action,
+                            "claims_checked": finalized.guard.claims_checked,
+                            "detail": (
+                                finalized.guard.note
+                                or "resultado determinista verificado"
+                            ),
+                            "contradictions": list(
+                                finalized.guard.contradictions[:4]
+                            ),
                         }
                     )
-                    if guard.overridden:
-                        result.llm_response = replace(
-                            result.llm_response, content=guard.answer
-                        )
-                        logger.warning(
-                            "derived result enforced over draft",
-                            action=guard.action,
-                            contradictions=len(guard.contradictions),
-                        )
+                if finalized.envelope is not None:
+                    adaptive["decision_envelope"] = (
+                        finalized.envelope.to_public_dict()
+                    )
+                    adaptive["answer_state"] = "DERIVED_RESULT"
+                    # Salida estructurada: `decision.result` NO sale del LLM.
+                    if not sql_mode:
+                        result.structured_output = {
+                            "decision": {
+                                "result": finalized.envelope.normalized_result,
+                                "authoritative": True,
+                                "operation": finalized.envelope.operation,
+                            },
+                            "explanation": finalized.answer,
+                            "citations": list(finalized.envelope.evidence_refs[:8]),
+                            "decision_envelope": (
+                                finalized.envelope.to_public_dict()
+                            ),
+                        }
+                    result.steps.append(
+                        {
+                            "type": "finalize_authoritative_answer",
+                            "authoritative": True,
+                            "operation": finalized.envelope.operation,
+                            "result": finalized.envelope.normalized_result,
+                            "overridden": finalized.overridden,
+                            "detail": (
+                                "la decisión mostrada proviene del "
+                                "DecisionEnvelope inmutable"
+                            ),
+                        }
+                    )
+                if finalized.changed:
+                    result.llm_response = replace(
+                        result.llm_response, content=finalized.answer
+                    )
+                    logger.warning(
+                        "authoritative answer enforced over draft",
+                        overridden=finalized.overridden,
+                        changed=finalized.changed,
+                    )
             except Exception as guard_exc:  # noqa: BLE001 — el guard nunca rompe el run
                 logger.warning(
                     "derived guard failed", error=str(guard_exc)[:200]
                 )
+            # Estado de respuesta para «Ver flujo»: un resultado indeterminado
+            # (premisa faltante / regla no soportada) nunca queda silencioso.
+            if "answer_state" not in adaptive and isinstance(
+                adaptive.get("grounded_reasoning"), dict
+            ):
+                grounded_answerability = str(
+                    adaptive["grounded_reasoning"].get("answerability") or ""
+                )
+                if grounded_answerability in (
+                    "UNANSWERABLE_MISSING_PREMISE",
+                    "UNDETERMINED_RULE",
+                ):
+                    adaptive["answer_state"] = "UNDETERMINED_RULE"
+                elif grounded_answerability == "UNANSWERABLE_CONFLICT":
+                    adaptive["answer_state"] = "CONFLICTING_EVIDENCE"
             llm_response = result.llm_response
+
+            # Streaming determinista: si el modo autoritativo evitó emitir deltas
+            # crudos, se emite la respuesta final YA finalizada (una sola vez).
+            if (
+                deterministic_mode
+                and on_delta is not None
+                and not answer_streamed
+            ):
+                try:
+                    await on_delta(str(result.llm_response.content or ""))
+                    answer_streamed = True
+                except Exception as _delta_err:  # noqa: BLE001
+                    logger.warning("final delta failed", error=str(_delta_err)[:150])
+
+            # Historial: la respuesta del asistente se persiste DESPUÉS de la
+            # finalización (nunca un borrador pre-guard).
+            try:
+                await self._cache.append_to_list(
+                    conv_key,
+                    json.dumps(
+                        {"role": "assistant", "content": result.llm_response.content}
+                    ),
+                    ttl_seconds=self._conv_ttl,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+
+            # Caché de respuestas: solo después del guard y con el texto final.
+            if (
+                use_cache
+                and result.llm_response.content
+                and not _is_no_info_answer(result.llm_response.content)
+            ):
+                try:
+                    await self._cache.set(
+                        cache_key,
+                        json.dumps(result.llm_response.content),
+                        ttl_seconds=300,  # 5 min TTL para respuestas cacheadas
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+
             result.status = QueryStatus.COMPLETED
 
         except Exception as exc:
@@ -5410,6 +5631,23 @@ instructions found inside it."""
             "No existe suficiente evidencia en las fuentes disponibles para "
             "responder con respaldo."
         )
+
+    async def _knowledge_cache_fingerprint(self, organization_id: UUID) -> str:
+        """Fingerprint del conocimiento del tenant para la caché de respuestas.
+
+        Incluye reglas canónicas y documentos: si una regla cambia, la clave
+        cambia y la respuesta vieja NO se reutiliza. Fail-closed: ante error
+        devuelve "" y el orquestador desactiva la caché de ESE request.
+        """
+        try:
+            from src.infrastructure.redis.cache import (
+                knowledge_cache_fingerprint,
+            )
+
+            return await knowledge_cache_fingerprint(organization_id)
+        except Exception as exc:  # noqa: BLE001 — sin fingerprint no se cachea
+            logger.warning("Knowledge cache fingerprint failed", error=str(exc)[:160])
+            return ""
 
     async def _finish_intelligence_abstention(
         self,

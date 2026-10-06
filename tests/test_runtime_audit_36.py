@@ -23,6 +23,7 @@ from src.intelligence.reasoning.grounded_engine import (
     NOT_APPLICABLE,
     UNANSWERABLE_CONFLICT,
     UNANSWERABLE_MISSING_PREMISE,
+    UNDETERMINED_RULE,
     reason_over_evidence,
 )
 from src.rag.evaluation.grounded_benchmark import (
@@ -455,6 +456,9 @@ class Test19Paraphrases:
             UNANSWERABLE_MISSING_PREMISE,
             NOT_APPLICABLE,
             ANSWERABLE_DERIVED,
+            # La evidencia describe una regla y la pregunta la exige: sin regla
+            # soportada el motor no deja la decisión al LLM (UNDETERMINED_RULE).
+            UNDETERMINED_RULE,
         )
 
     def test_with_value_all_paraphrases_derive(self) -> None:

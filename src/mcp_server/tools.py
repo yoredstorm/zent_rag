@@ -184,12 +184,39 @@ def register_tools(server, deps: McpDeps | None = None) -> None:
                 }
                 for c in result.chunks
             ]
+            # RULE-FIRST: las CanonicalRules viajan con el resultado aunque el
+            # chunk recuperado no traiga canonical_rule_ids. El consumidor recibe
+            # conocimiento de primera clase, no solo texto.
+            canonical_rules: list[dict] = []
+            rule_retrieval: dict = {}
+            try:
+                from src.runtime.rule_retrieval import retrieve_canonical_rules
+
+                retrieval = await retrieve_canonical_rules(
+                    tenant.tenant_id,
+                    query,
+                    evidence_items=list(result.chunks),
+                )
+                canonical_rules = [
+                    rule.to_public_dict()
+                    for rule in (
+                        retrieval.supported_rules or retrieval.candidate_rules
+                    )[:6]
+                ]
+                rule_retrieval = retrieval.to_public_dict()
+            except Exception as exc:  # noqa: BLE001 — el retrieval de reglas no rompe
+                logger.warning("MCP rule retrieval failed", error=str(exc)[:160])
             return {
                 "query": query,
                 "count": len(chunks),
                 "chunks": chunks,
+                "canonical_rules": canonical_rules,
+                "rule_retrieval": rule_retrieval,
                 "retrieval_latency_ms": round(result.retrieval_latency_ms, 2),
-                "_metrics": {"retrieval_count": len(chunks)},
+                "_metrics": {
+                    "retrieval_count": len(chunks),
+                    "canonical_rules": len(canonical_rules),
+                },
             }
 
         return await _execute_tool(

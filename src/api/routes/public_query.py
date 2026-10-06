@@ -226,6 +226,7 @@ async def deployment_query(
         )
 
     # Edge Cache: lookup antes de ejecutar (bypass con ?cache=false o no-cache).
+    from src.infrastructure.redis.cache import knowledge_cache_fingerprint
     from src.platform.edge.multiregion import (
         bump_stats,
         bypass_requested,
@@ -239,29 +240,36 @@ async def deployment_query(
     edge_key: str | None = None
     if not bypass_requested(request):
         generation = await org_cache_generation(organization_id)
-        edge_key = cache_key(
-            organization_id,
-            deployment.id,
-            deployment.agent_version_id,
-            body.input,
-            generation=generation,
-        )
-        cached = await get_cached(edge_key)
-        if cached is not None:
-            await bump_stats(True)
-            response.headers["X-Zent-Cache"] = "HIT"
-            response.headers["Age"] = str(int(cached.get("ttl", 0)))
-            response.headers["Cache-Control"] = "public, max-age=0"
-            return PublicQueryResponse(
-                request_id=str(request_id),
-                answer=cached["answer"],
-                data=cached.get("data"),
-                sources=cached.get("sources", []),
-                confidence=cached.get("confidence"),
-                latency_ms=(time.perf_counter() - start) * 1000,
-                guardrails=cached.get("guardrails"),
+        # El fingerprint de conocimiento invalida respuestas viejas cuando una
+        # regla cambia. Fail-closed: sin fingerprint no se sirve caché edge.
+        fingerprint = await knowledge_cache_fingerprint(organization_id)
+        if not fingerprint:
+            response.headers["X-Zent-Cache"] = "BYPASS"
+            await bump_stats(False)
+        else:
+            edge_key = cache_key(
+                organization_id,
+                deployment.id,
+                deployment.agent_version_id,
+                body.input,
+                generation=f"{generation}:{fingerprint}",
             )
-        await bump_stats(False)
+            cached = await get_cached(edge_key)
+            if cached is not None:
+                await bump_stats(True)
+                response.headers["X-Zent-Cache"] = "HIT"
+                response.headers["Age"] = str(int(cached.get("ttl", 0)))
+                response.headers["Cache-Control"] = "public, max-age=0"
+                return PublicQueryResponse(
+                    request_id=str(request_id),
+                    answer=cached["answer"],
+                    data=cached.get("data"),
+                    sources=cached.get("sources", []),
+                    confidence=cached.get("confidence"),
+                    latency_ms=(time.perf_counter() - start) * 1000,
+                    guardrails=cached.get("guardrails"),
+                )
+            await bump_stats(False)
     else:
         response.headers["X-Zent-Cache"] = "BYPASS"
 

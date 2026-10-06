@@ -56,9 +56,41 @@ ANSWERABLE_WITH_LIMITS = "ANSWERABLE_WITH_LIMITS"
 UNANSWERABLE_MISSING_PREMISE = "UNANSWERABLE_MISSING_PREMISE"
 UNANSWERABLE_CONFLICT = "UNANSWERABLE_CONFLICT"
 NOT_APPLICABLE = "NOT_APPLICABLE"
+#: Consulta ejecutable sin CanonicalRule soportada: el LLM no decide.
+UNDETERMINED_RULE = "UNDETERMINED_RULE"
 #: Fallo OPERATIVO de retrieval (embeddings caídos, timeout, 429). No es
 #: "no hay evidencia" ni NO_MATCH/FALSE: la búsqueda no llegó a ejecutarse.
 RETRIEVAL_UNAVAILABLE = "RETRIEVAL_UNAVAILABLE"
+
+#: Intenciones que EXIGEN una decisión determinista (aplicar/validar/comparar/
+#: calcular). Sin regla soportada => UNDETERMINED_RULE, nunca decisión libre del
+#: LLM ni conclusión factual.
+_DETERMINISTIC_INTENTS: tuple[str, ...] = (
+    "APPLY_RULE",
+    "VALIDATE",
+    "COMPARE",
+    "CALCULATE",
+)
+
+#: Motivo rule:* -> frase de abstención (genérica, sin dominio).
+_RULE_MISSING_MESSAGES: dict[str, str] = {
+    "rule_ids_present": (
+        "la regla documental existe pero no pudo cargarse para ejecutarla"
+    ),
+    "rule_index_missing": (
+        "el índice de reglas del documento está desactualizado; requiere backfill "
+        "antes de concluir"
+    ),
+    "rule_fragment_present": (
+        "la fuente declara fragmentos de regla sin una CanonicalRule ejecutable"
+    ),
+    "not_compiled": "la regla documental aplicable todavía no fue compilada",
+    "not_determined": (
+        "la pregunta exige una regla ejecutable y no hay una CanonicalRule "
+        "soportada que la resuelva"
+    ),
+    "load_failed": "la regla documental no pudo cargarse",
+}
 
 _OPERATIONS_BY_INTENT: Mapping[str, tuple[str, ...]] = {
     "APPLY_RULE": ("POSITIONAL_MATCH", "ENUM_CHECK", "RANGE_CHECK", "SET_MEMBERSHIP"),
@@ -185,6 +217,66 @@ class GroundedReasoningResult:
             "derivations": self.derivations.to_public_dict(),
             "missing_premises": list(self.missing_premises[:12]),
         }
+        # Observabilidad obligatoria (§11): qué exige la query, qué se cumplió y
+        # qué operación determinista se ejecutó. Nunca cadena de pensamiento.
+        requirements: dict[str, list[dict]] = {
+            "satisfied": [],
+            "missing": [],
+            "conflicting": [],
+        }
+        for evaluation in self.rule_evaluations:
+            payload_rule = (
+                evaluation.to_public_dict()
+                if hasattr(evaluation, "to_public_dict")
+                else {}
+            )
+            for requirement in payload_rule.get("requirements") or ():
+                if not isinstance(requirement, dict):
+                    continue
+                state = str(requirement.get("state") or "").upper()
+                entry = {
+                    "requirement_id": str(requirement.get("requirement_id") or ""),
+                    "kind": str(requirement.get("kind") or ""),
+                    "detail": str(requirement.get("detail") or "")[:200],
+                }
+                if state == "SATISFIED":
+                    requirements["satisfied"].append(entry)
+                elif state == "CONFLICTING":
+                    requirements["conflicting"].append(entry)
+                else:
+                    requirements["missing"].append(entry)
+        payload["requirement_graph"] = requirements
+        deterministic = [
+            claim
+            for claim in self.derivations.claims
+            if claim.deterministic
+            and claim.verification_status
+            == "SUPPORTED"
+        ]
+        if deterministic:
+            primary = deterministic[0]
+            payload["deterministic_operation"] = {
+                "operation": primary.operation,
+                "operands": list(primary.user_inputs[:8]),
+                "result": primary.result,
+            }
+            payload["derived_claim"] = {
+                "deterministic": True,
+                "verification_status": primary.verification_status,
+                "operation": primary.operation,
+                "result": primary.result,
+                "canonical_rule_ids": list(primary.canonical_rule_ids[:6]),
+                "evidence_refs": list(primary.evidence_refs[:6]),
+            }
+            try:
+                from src.runtime.decision_envelope import build_decision_envelope
+
+                envelope = build_decision_envelope(self)
+                if envelope is not None:
+                    payload["decision_envelope"] = envelope.to_public_dict()
+            except Exception:  # noqa: BLE001 — la observabilidad no rompe el motor
+                pass
+
         derived = self.derivations.derived_results
         if derived:
             payload["derived_result"] = derived[0].result
@@ -419,6 +511,54 @@ def _first_runtime_value(semantics: QuerySemantics) -> str:
     return ""
 
 
+#: Palabras de pregunta que nunca son el valor de escenario.
+_QUESTION_WORDS = frozenset(
+    {
+        "cumple", "cumplir", "valido", "válido", "valida", "validar",
+        "acepta", "aceptar", "aplica", "aplicar", "satisface", "satisfacer",
+        "permitido", "permitida", "coincide", "coincidir", "matchea", "match",
+        "pasa", "pasar", "contra", "versus", "patron", "patrón", "pattern",
+        "mask", "regla", "rule", "valor", "value", "resultado", "result",
+        "does", "pass", "valid", "against", "check", "would", "según", "segun",
+        "evalua", "evalúa", "confirma", "decime", "tengo", "necesito", "saber",
+        "aplicando", "mi", "the", "is", "it", "que", "qué", "cual", "cuál",
+    }
+)
+
+
+def _question_pattern_token(question: str) -> str:
+    """Patrón presente en la pregunta (comodines), aunque el rol no lo declare.
+
+    La regla compilada DECIDE; los tokens de la pregunta son datos de escenario.
+    Un `?` final suele ser puntuación de la pregunta, no comodín: se descarta
+    sólo si el resto del token ya contiene otro comodín (`&&&F?` -> `&&&F`).
+    """
+    from src.rag.longcontext.pattern import WILDCARD_SYMBOLS
+
+    for match in re.finditer(r"[A-Za-z0-9&*?%#$@!~^]{2,}", str(question or "")):
+        token = match.group(0)
+        if token.endswith("?") and any(
+            char in WILDCARD_SYMBOLS and char != "?" for char in token[:-1]
+        ):
+            token = token[:-1]
+        if any(char in WILDCARD_SYMBOLS for char in token):
+            return token
+    return ""
+
+
+def _question_value_token(question: str, *, pattern: str = "") -> str:
+    """Valor de escenario en la pregunta (mayúsculas/dígitos), no una palabra."""
+    for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9_-]{1,}", str(question or "")):
+        if pattern and token == pattern:
+            continue
+        lowered = token.lower()
+        if lowered in _QUESTION_WORDS:
+            continue
+        if any(char.isdigit() for char in token) or token.isupper():
+            return token
+    return ""
+
+
 def _pattern_premises(
     semantics_statements: Iterable[str],
     items: Sequence[Any],
@@ -520,6 +660,14 @@ def missing_premise_message(missing: Sequence[str]) -> str:
             date_value = text.split(":", 1)[1]
             messages.append(
                 f"no hay una regla vigente en las fuentes para la fecha {date_value}"
+            )
+        elif text.startswith("rule:"):
+            reason = text.split(":", 1)[1]
+            messages.append(
+                _RULE_MISSING_MESSAGES.get(
+                    reason,
+                    "no hay una regla documental soportada que resuelva la consulta",
+                )
             )
         elif text.startswith("input:"):
             messages.append(f"falta el dato «{text.split(':', 1)[1]}» para calcular")
@@ -883,6 +1031,16 @@ def _canonical_rules_from_items(items: Sequence[Any]) -> list[Any]:
     return rules
 
 
+def _rule_signal_from_evidence(items: Sequence[Any]) -> str:
+    """Señal documental de regla (delegada a rule_retrieval, fail-soft)."""
+    try:
+        from src.runtime.rule_retrieval import rule_signal_from_evidence
+
+        return rule_signal_from_evidence(items)
+    except Exception:  # noqa: BLE001 — la señal nunca rompe el motor
+        return ""
+
+
 def retrieval_unavailable_result(
     question: str,
     *,
@@ -979,6 +1137,9 @@ def reason_over_evidence(
     compiled_rules = list(canonical_rules or ())
     if not compiled_rules:
         compiled_rules = _canonical_rules_from_items(items)
+    # Señal documental de regla: si la evidencia referencia reglas pero no se
+    # pudo cargar una CanonicalRule soportada, NO se improvisa desde texto bruto.
+    rule_signal = "" if compiled_rules else _rule_signal_from_evidence(items)
     # Cobertura de excepciones: si la evidencia recuperada declara nodos de
     # excepción (fabric) y la regla compilada no las tiene, la cobertura queda
     # INCOMPLETA: no se afirma una conclusión sin la excepción.
@@ -1000,14 +1161,21 @@ def reason_over_evidence(
         compiled_rules = merge_distributed_rules(compiled_rules)
 
         runtime_values: dict[str, Any] = dict(params)
+        pattern_value = (
+            str(runtime_patterns[0]) if runtime_patterns else _question_pattern_token(question)
+        )
         if runtime_inputs:
             runtime_values.setdefault("value", runtime_inputs[0])
         else:
             first_value = _first_runtime_value(semantics)
+            if not first_value:
+                # La regla decide; el token de escenario se toma de la pregunta
+                # aunque el clasificador lo haya marcado como requirement.
+                first_value = _question_value_token(question, pattern=pattern_value)
             if first_value:
                 runtime_values.setdefault("value", first_value)
-        if runtime_patterns:
-            runtime_values.setdefault("pattern", runtime_patterns[0])
+        if pattern_value:
+            runtime_values.setdefault("pattern", pattern_value)
         for rule in compiled_rules:
             if getattr(rule, "conflicts_with", ()) or str(
                 getattr(rule, "verification_state", "")
@@ -1078,6 +1246,14 @@ def reason_over_evidence(
         # El conocimiento compilado ya decidió (o declaró premisas faltantes).
         # No se reinterpreta el documento con heurísticas por regex.
         pass
+    elif (
+        intent in _DETERMINISTIC_INTENTS
+        and rule_signal in ("rule_ids_present", "rule_index_missing")
+    ):
+        # La evidencia documental referencia una regla canónica (o su índice),
+        # pero no se pudo cargar una CanonicalRule soportada: el resultado queda
+        # UNDETERMINED_RULE. Nunca se decide MATCH/NO_MATCH desde texto bruto.
+        missing.append(f"rule:{rule_signal}")
     elif runtime_patterns and intent in _pattern_intents:
         from src.rag.longcontext.pattern import (
             WILDCARD_SYMBOLS,
@@ -1545,12 +1721,30 @@ def reason_over_evidence(
     # 4. Answerability consciente de la derivación.
     # ------------------------------------------------------------------
     supported = [claim for claim in claims if claim.supported]
+    if (
+        not supported
+        and not missing
+        and not conflicts
+        and intent in _DETERMINISTIC_INTENTS
+        and rule_signal
+    ):
+        # La evidencia documental indica que hay una regla relevante y la
+        # pregunta exige ejecutarla, pero no hay regla soportada ni operación
+        # determinista: el LLM no decide. Sin señal documental de regla se
+        # conserva el camino previo (retrieval/pipeline deciden si hay respuesta).
+        missing.append("rule:not_determined")
     if conflicts:
         answerability = UNANSWERABLE_CONFLICT
     elif supported:
         answerability = ANSWERABLE_DERIVED
     elif missing:
-        answerability = UNANSWERABLE_MISSING_PREMISE
+        rule_only = all(
+            str(item).startswith("rule:") for item in missing
+        )
+        if rule_only and intent in _DETERMINISTIC_INTENTS:
+            answerability = UNDETERMINED_RULE
+        else:
+            answerability = UNANSWERABLE_MISSING_PREMISE
     elif runtime_patterns or runtime_inputs:
         answerability = ANSWERABLE_WITH_LIMITS if premises else NOT_APPLICABLE
     else:
@@ -1575,7 +1769,9 @@ def reason_over_evidence(
         conflicts=graph.conflicts,
         answerability=answerability,
         abstention_message=(
-            missing_premise_message(missing) if answerability == UNANSWERABLE_MISSING_PREMISE else ""
+            missing_premise_message(missing)
+            if answerability in (UNANSWERABLE_MISSING_PREMISE, UNDETERMINED_RULE)
+            else ""
         ),
         canonical_rules=tuple(compiled_rules),
         rule_evaluations=tuple(rule_evaluations),
@@ -1634,6 +1830,7 @@ __all__ = [
     "RETRIEVAL_UNAVAILABLE",
     "UNANSWERABLE_CONFLICT",
     "UNANSWERABLE_MISSING_PREMISE",
+    "UNDETERMINED_RULE",
     "extract_formula_premises",
     "missing_premise_message",
     "observe_grounded_result",

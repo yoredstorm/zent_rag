@@ -2232,6 +2232,8 @@ class AgentRuntime:
         # Claims deterministas vistos por el gate: el texto final no puede
         # contradecirlos (el generador explica; no decide resultados).
         gate_derived_claims: list = []
+        # Proyección pública del motor grounded del gate (DecisionEnvelope).
+        gate_grounded_public: list[dict] = []
         # Evidencia ya vista: repetir una búsqueda que no aporta nada nuevo quema
         # el presupuesto sin mejorar la respuesta (y puede dejarla vacía).
         retrieved_refs: set[str] = set()
@@ -2360,30 +2362,138 @@ class AgentRuntime:
                 logger.warning("disclaimer strip failed", error=str(exc)[:150])
             return limpio
 
+        async def _ensure_derived_claims() -> None:
+            """Puebla el DecisionEnvelope del cierre si el gate no lo hizo.
+
+            Cualquier ruta final (finalize, max_steps, presupuesto) consulta al
+            motor grounded antes de escribir la respuesta.
+            """
+            if gate_derived_claims or gate_grounded_public:
+                return
+            try:
+                active = selection if selection is not None else _refresh_selection()
+                if active is None or not getattr(active, "items", None):
+                    return
+                from src.intelligence.reasoning.grounded_engine import (
+                    reason_over_evidence,
+                )
+                from src.runtime.rule_retrieval import retrieve_canonical_rules
+
+                retrieval = await retrieve_canonical_rules(
+                    request.agent.organization_id,
+                    request.message,
+                    evidence_items=list(active.items),
+                )
+                rules = retrieval.supported_rules or retrieval.candidate_rules
+                grounded = reason_over_evidence(
+                    question=request.message,
+                    evidence_items=list(active.items),
+                    canonical_rules=rules or None,
+                )
+                gate_derived_claims[:] = list(grounded.derivations.claims)
+                gate_grounded_public[:] = [grounded.to_public_dict()]
+                if retrieval.supported_rules:
+                    result.steps.append(
+                        {
+                            "type": "rule_retrieval",
+                            "strategy": retrieval.strategy,
+                            "supported_rules": len(retrieval.supported_rules),
+                            "rule_ids": retrieval.supported_ids[:12],
+                            "detail": (
+                                "reglas recuperadas para la finalización "
+                                "determinista"
+                            ),
+                            "canonical": True,
+                        }
+                    )
+            except Exception as exc:  # noqa: BLE001 — nunca rompe el cierre
+                logger.warning(
+                    "derived claims finalization failed", error=str(exc)[:150]
+                )
+
+        async def _finalize_with_authority(reason: str, *, reasoning=None) -> bool:
+            """Finaliza el run pasando siempre por la autoridad determinista."""
+            try:
+                await _ensure_derived_claims()
+            except Exception:  # noqa: BLE001 — nunca bloquea el cierre
+                pass
+            finalized = await self._try_finalize_answer(
+                request,
+                history,
+                config,
+                result,
+                reason=reason,
+                reasoning=reasoning,
+                plan=run_plan,
+                selection=selection,
+                sufficiency=(
+                    sufficiency.to_public_dict() if sufficiency else None
+                ),
+            )
+            if finalized and result.answer:
+                result.answer = _apply_derived_guard(result.answer)
+            return finalized
+
         def _apply_derived_guard(text: str) -> str:
-            """El texto final no puede contradecir un claim determinista."""
-            if not gate_derived_claims:
+            """El texto final no puede contradecir un claim determinista.
+
+            Pasa por `finalize_authoritative_answer`: headline determinista,
+            override ante contradicción y explicación de código.
+            """
+            if not gate_derived_claims and not gate_grounded_public:
                 return text
             try:
-                from src.runtime.derived_guard import enforce_derived_result
-
-                guard = enforce_derived_result(text, gate_derived_claims)
-                result.steps.append(
-                    {
-                        "type": "derived_guard",
-                        "action": guard.action,
-                        "claims_checked": guard.claims_checked,
-                        "detail": guard.note or "resultado determinista verificado",
-                        "contradictions": list(guard.contradictions[:4]),
-                    }
+                from src.runtime.decision_envelope import (
+                    build_decision_envelope,
+                    finalize_authoritative_answer,
                 )
-                if guard.overridden:
+
+                envelope = (
+                    build_decision_envelope(gate_grounded_public[0])
+                    if gate_grounded_public
+                    else None
+                )
+                finalized = finalize_authoritative_answer(
+                    text,
+                    gate_grounded_public[0] if gate_grounded_public else None,
+                    envelope=envelope,
+                    claims=gate_derived_claims,
+                )
+                if finalized.guard is not None:
+                    result.steps.append(
+                        {
+                            "type": "derived_guard",
+                            "action": finalized.guard.action,
+                            "claims_checked": finalized.guard.claims_checked,
+                            "detail": (
+                                finalized.guard.note
+                                or "resultado determinista verificado"
+                            ),
+                            "contradictions": list(
+                                finalized.guard.contradictions[:4]
+                            ),
+                        }
+                    )
+                if finalized.envelope is not None:
+                    result.steps.append(
+                        {
+                            "type": "finalize_authoritative_answer",
+                            "authoritative": True,
+                            "operation": finalized.envelope.operation,
+                            "result": finalized.envelope.normalized_result,
+                            "overridden": finalized.overridden,
+                            "detail": (
+                                "la decisión mostrada proviene del "
+                                "DecisionEnvelope inmutable"
+                            ),
+                        }
+                    )
+                if finalized.changed:
                     logger.warning(
                         "derived result enforced over draft",
-                        action=guard.action,
-                        contradictions=len(guard.contradictions),
+                        overridden=finalized.overridden,
                     )
-                    return guard.answer
+                    return finalized.answer
             except Exception as exc:  # noqa: BLE001 — el guard no rompe el run
                 logger.warning("derived guard failed", error=str(exc)[:150])
             return text
@@ -2476,11 +2586,20 @@ class AgentRuntime:
                     from src.intelligence.reasoning.grounded_engine import (
                         reason_over_evidence,
                     )
-                    from src.runtime.rule_retrieval import load_rules_for_evidence
+                    from src.runtime.rule_retrieval import (
+                        retrieve_canonical_rules,
+                    )
 
-                    canonical_rules = await load_rules_for_evidence(
+                    rule_retrieval = await retrieve_canonical_rules(
                         request.agent.organization_id,
-                        list(active.items) if evidence_provided else [],
+                        request.message,
+                        evidence_items=(
+                            list(active.items) if evidence_provided else []
+                        ),
+                    )
+                    canonical_rules = (
+                        rule_retrieval.supported_rules
+                        or rule_retrieval.candidate_rules
                     )
                     grounded_reasoning = reason_over_evidence(
                         question=request.message,
@@ -2493,31 +2612,51 @@ class AgentRuntime:
                         gate_derived_claims[:] = list(
                             grounded_reasoning.derivations.claims
                         )
-                        if canonical_rules:
-                            result.steps.append(
-                                {
-                                    "type": "rule_retrieval",
-                                    "rules": [
-                                        {
-                                            "rule_id": str(
-                                                getattr(rule, "rule_id", "")
-                                            ),
-                                            "verification_state": str(
-                                                getattr(rule, "verification_state", "")
-                                            ),
-                                            "executable": bool(
-                                                getattr(rule, "executable", False)
-                                            ),
-                                        }
-                                        for rule in canonical_rules[:6]
-                                    ],
-                                    "detail": (
-                                        f"{len(canonical_rules)} regla(s) canónica(s) "
-                                        "aplicada(s) al gate"
-                                    ),
-                                    "canonical": True,
-                                }
-                            )
+                        gate_grounded_public[:] = [
+                            grounded_reasoning.to_public_dict()
+                        ]
+                        result.steps.append(
+                            {
+                                "type": "rule_retrieval",
+                                "strategy": rule_retrieval.strategy,
+                                "candidates_found": len(
+                                    rule_retrieval.candidates
+                                ),
+                                "supported_rules": len(
+                                    rule_retrieval.supported_rules
+                                ),
+                                "rule_ids": rule_retrieval.supported_ids[:12]
+                                or rule_retrieval.candidate_ids[:12],
+                                "rules": [
+                                    {
+                                        "rule_id": str(
+                                            getattr(rule, "rule_id", "")
+                                        ),
+                                        "verification_state": str(
+                                            getattr(
+                                                rule, "verification_state", ""
+                                            )
+                                        ),
+                                        "executable": bool(
+                                            getattr(rule, "executable", False)
+                                        ),
+                                    }
+                                    for rule in canonical_rules[:6]
+                                ],
+                                "detail": (
+                                    f"{len(rule_retrieval.supported_rules)} "
+                                    "regla(s) canónica(s) soportada(s) en el gate"
+                                ),
+                                "why_no_rule": (
+                                    rule_retrieval.to_public_dict().get(
+                                        "why_no_rule"
+                                    )
+                                    if not canonical_rules
+                                    else []
+                                ),
+                                "canonical": True,
+                            }
+                        )
                 except Exception:  # noqa: BLE001 — el motor nunca rompe el gate
                     grounded_reasoning = None
                 return await judge_answer(
@@ -2900,24 +3039,18 @@ class AgentRuntime:
                 result.steps.append(
                     {"type": "guardrail", "detail": "max_tokens exceeded"}
                 )
-                await self._try_finalize_answer(
-                    request,
-                    history,
-                    config,
-                    result,
-                    reason="max_tokens exceeded",
-                    plan=run_plan,
-                    selection=selection,
-                    sufficiency=(sufficiency.to_public_dict() if sufficiency else None),
-                )
+                await _finalize_with_authority("max_tokens exceeded")
                 self._ensure_answer(result, history, reason="max_tokens exceeded")
+                result.answer = _apply_derived_guard(result.answer)
                 return
             if result.cost > max_cost:
                 result.status = "limit_reached"
                 result.steps.append(
                     {"type": "guardrail", "detail": "max_cost exceeded"}
                 )
+                await _ensure_derived_claims()
                 self._ensure_answer(result, history, reason="max_cost exceeded")
+                result.answer = _apply_derived_guard(result.answer)
                 return
 
             direct = _direct_answer(action)
@@ -3060,6 +3193,9 @@ class AgentRuntime:
                 if gate_verdict == "answer_with_limits":
                     # Respuesta respaldada en parte: se entrega y se declara qué
                     # no cubren las fuentes. No se reemplaza por una abstención.
+                    # El gate pudo cargar el DecisionEnvelope: se re-aplica la
+                    # autoridad determinista antes de exponer el texto.
+                    direct = _apply_derived_guard(direct)
                     limits = list((sufficiency.missing_entities if sufficiency else ()) or ())
                     result.answer = f"{direct}{_limits_note(limits)}"
                     result.citations = _citations_from_evidence(direct, selection)
@@ -3102,6 +3238,9 @@ class AgentRuntime:
                         failure_kind=failure_kind,
                     ).inc()
                     return
+                # Autoridad determinista al aprobar: el gate cargó los claims
+                # del DecisionEnvelope; el texto final no puede contradecirlos.
+                direct = _apply_derived_guard(direct)
                 result.answer = direct
                 result.citations = _citations_from_evidence(direct, selection)
                 _publish_evidence(
@@ -3132,17 +3271,9 @@ class AgentRuntime:
                 result.steps.append(
                     {"type": "guardrail", "detail": "max_tool_calls exceeded"}
                 )
-                await self._try_finalize_answer(
-                    request,
-                    history,
-                    config,
-                    result,
-                    reason="max_tool_calls exceeded",
-                    plan=run_plan,
-                    selection=selection,
-                    sufficiency=(sufficiency.to_public_dict() if sufficiency else None),
-                )
+                await _finalize_with_authority("max_tool_calls exceeded")
                 self._ensure_answer(result, history, reason="max_tool_calls exceeded")
+                result.answer = _apply_derived_guard(result.answer)
                 return
 
             tool = get_tool(tool_name)
@@ -3593,18 +3724,8 @@ class AgentRuntime:
                                 if held is not None:
                                     result.steps.append(held)
                                 else:
-                                    await self._try_finalize_answer(
-                                        request,
-                                        history,
-                                        config,
-                                        result,
-                                        reason="agent_step_batched",
-                                        reasoning=reasoning,
-                                        plan=run_plan,
-                                        selection=selection,
-                                        sufficiency=(
-                                            sufficiency.to_public_dict() if sufficiency else None
-                                        ),
+                                    await _finalize_with_authority(
+                                        "agent_step_batched", reasoning=reasoning
                                     )
                                     return
                             elif jev_loop_active:
@@ -3630,18 +3751,8 @@ class AgentRuntime:
                                     }
                                 )
                                 if held is None:
-                                    await self._try_finalize_answer(
-                                        request,
-                                        history,
-                                        config,
-                                        result,
-                                        reason="termination_gate",
-                                        reasoning=reasoning,
-                                        plan=run_plan,
-                                        selection=selection,
-                                        sufficiency=(
-                                            sufficiency.to_public_dict() if sufficiency else None
-                                        ),
+                                    await _finalize_with_authority(
+                                        "termination_gate", reasoning=reasoning
                                     )
                                     return
                                 result.steps.append(held)
@@ -3666,18 +3777,8 @@ class AgentRuntime:
                                 }
                             )
                             if held is None:
-                                await self._try_finalize_answer(
-                                    request,
-                                    history,
-                                    config,
-                                    result,
-                                    reason="termination_gate",
-                                    reasoning=reasoning,
-                                    plan=run_plan,
-                                    selection=selection,
-                                    sufficiency=(
-                                        sufficiency.to_public_dict() if sufficiency else None
-                                    ),
+                                await _finalize_with_authority(
+                                    "termination_gate", reasoning=reasoning
                                 )
                                 return
                             result.steps.append(held)
@@ -3686,18 +3787,9 @@ class AgentRuntime:
 
         result.status = "limit_reached"
         result.steps.append({"type": "guardrail", "detail": "max_steps reached"})
-        await self._try_finalize_answer(
-            request,
-            history,
-            config,
-            result,
-            reason="max_steps reached",
-            reasoning=reasoning,
-            plan=run_plan,
-            selection=selection,
-            sufficiency=(sufficiency.to_public_dict() if sufficiency else None),
-        )
+        await _finalize_with_authority("max_steps reached", reasoning=reasoning)
         self._ensure_answer(result, history, reason="max_steps reached")
+        result.answer = _apply_derived_guard(result.answer)
 
     @staticmethod
     def _ensure_answer(result: AgentRunResult, history: list[str], *, reason: str) -> None:

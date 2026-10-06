@@ -552,6 +552,7 @@ _GROUNDING_STATUS_MAP: dict[str, AnswerabilityStatus] = {
     "ANSWERABLE_DIRECT": AnswerabilityStatus.ANSWERABLE_DIRECT,
     "ANSWERABLE_WITH_LIMITS": AnswerabilityStatus.ANSWERABLE_WITH_LIMITS,
     "UNANSWERABLE_MISSING_PREMISE": AnswerabilityStatus.UNANSWERABLE_MISSING_PREMISE,
+    "UNDETERMINED_RULE": AnswerabilityStatus.UNANSWERABLE_MISSING_PREMISE,
     "UNANSWERABLE_CONFLICT": AnswerabilityStatus.SOURCE_CONFLICT,
     "NOT_APPLICABLE": AnswerabilityStatus.ANSWERABLE,
 }
@@ -619,6 +620,8 @@ def answerability_from_grounding(
     reason_codes: list[str] = []
     if mapped == AnswerabilityStatus.ANSWERABLE_DERIVED:
         reason_codes = ["DERIVED_FROM_GROUNDED_PREMISES"]
+    elif status == "UNDETERMINED_RULE":
+        reason_codes = ["NO_SUPPORTED_RULE"]
     elif mapped == AnswerabilityStatus.UNANSWERABLE_MISSING_PREMISE:
         reason_codes = ["MISSING_DOMAIN_PREMISE"]
     elif status == "UNANSWERABLE_CONFLICT":
@@ -681,7 +684,7 @@ def apply_grounded_reasoning(
         AnswerabilityStatus.HUMAN_REVIEW_REQUIRED,
     ):
         return grounded
-    if status == "UNANSWERABLE_MISSING_PREMISE":
+    if status in ("UNANSWERABLE_MISSING_PREMISE", "UNDETERMINED_RULE"):
         return grounded
     if status == "UNANSWERABLE_CONFLICT" and decision.status != AnswerabilityStatus.SOURCE_CONFLICT:
         return grounded
