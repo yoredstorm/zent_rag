@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from src.runtime.derived_guard import DerivedGuardOutcome, enforce_derived_result
+from src.runtime.deterministic_authority import undetermined_authoritative_answer
 
 DECISION_ENVELOPE_VERSION = "decision-envelope-1"
 
@@ -289,6 +290,11 @@ class FinalizedAnswer:
     guard: DerivedGuardOutcome | None = None
     overridden: bool = False
     changed: bool = False
+    #: Estado de respuesta (`DERIVED_RESULT`, `UNDETERMINED_RULE`, ...). Vacío si
+    #: el texto pasó sin intervención de la autoridad determinista.
+    state: str = ""
+    #: True cuando una consulta ejecutable se bloqueó por falta de autoridad.
+    blocked: bool = False
     version: str = DECISION_ENVELOPE_VERSION
 
     def to_public_dict(self) -> dict[str, Any]:
@@ -297,6 +303,8 @@ class FinalizedAnswer:
             "authoritative": bool(self.envelope and self.envelope.authoritative),
             "overridden": bool(self.overridden),
             "changed": bool(self.changed),
+            "state": self.state,
+            "blocked": bool(self.blocked),
             "result": self.envelope.normalized_result if self.envelope else None,
             "envelope": self.envelope.to_public_dict() if self.envelope else None,
             "guard": self.guard.to_public_dict() if self.guard else None,
@@ -323,14 +331,23 @@ def finalize_authoritative_answer(
     *,
     envelope: DecisionEnvelope | None = None,
     claims: Sequence[Any] | None = None,
+    requires_deterministic_decision: bool = False,
+    failure_code: str = "",
+    failure_stage: str = "",
+    failure_message: str = "",
+    missing_premises: Sequence[Any] = (),
 ) -> FinalizedAnswer:
     """Única función final: un resultado determinista no puede invertirse.
 
-    - Sin DerivedClaim determinista: aplica el guard histórico si hay claims y
-      devuelve el texto (sin envelope).
-    - Con envelope: aplica `enforce_derived_result`; si el borrador contradice,
-      la respuesta se sustituye por headline + explicación determinista. Si no
-      contradice, se garantiza el headline como primera línea.
+    - Con envelope autoritativo: aplica `enforce_derived_result`; si el borrador
+      contradice, la respuesta se sustituye por headline + explicación
+      determinista. Si no contradice, se garantiza el headline como primera
+      línea. La decisión sale del envelope, jamás del generador.
+    - Sin envelope y `requires_deterministic_decision`: estado no concluyente
+      construido por código (UNDETERMINED_RULE / *_FAILED). Nunca una respuesta
+      binaria libre del LLM.
+    - Sin envelope y sin exigencia determinista: se conserva el texto (con el
+      guard histórico si hay claims).
     """
     resolved = envelope or build_decision_envelope(grounded)
     resolved_claims: list[Any] = list(claims or ())
@@ -343,6 +360,34 @@ def finalize_authoritative_answer(
     guard = enforce_derived_result(str(answer or ""), resolved_claims)
 
     if resolved is None:
+        if requires_deterministic_decision:
+            state = "UNDETERMINED_RULE"
+            if failure_stage == "grounding" or failure_code == "GROUNDING_ENGINE_FAILED":
+                state = "GROUNDING_ENGINE_FAILED"
+            elif failure_stage == "rule_retrieval" or failure_code == "RULE_RETRIEVAL_UNAVAILABLE":
+                state = "RULE_RETRIEVAL_UNAVAILABLE"
+            elif failure_stage == "rule_evaluation" or failure_code == "RULE_EVALUATION_FAILED":
+                state = "RULE_EVALUATION_FAILED"
+            elif failure_stage == "derivation" or failure_code == "DERIVATION_FAILED":
+                state = "DERIVATION_FAILED"
+            if failure_message:
+                message = str(failure_message)
+            elif missing_premises:
+                from src.runtime.answer_gate import undetermined_answer
+
+                message = undetermined_answer(missing_premises)
+            else:
+                message = undetermined_authoritative_answer()
+            if not message.strip():
+                message = undetermined_authoritative_answer(failure_code)
+            return FinalizedAnswer(
+                answer=message,
+                guard=guard,
+                overridden=True,
+                changed=True,
+                state=state,
+                blocked=True,
+            )
         return FinalizedAnswer(
             answer=str(guard.answer or ""),
             guard=guard,
@@ -364,6 +409,7 @@ def finalize_authoritative_answer(
             guard=guard,
             overridden=True,
             changed=True,
+            state="DERIVED_RESULT",
         )
 
     final = _ensure_headline(str(guard.answer or ""), headline)
@@ -373,6 +419,7 @@ def finalize_authoritative_answer(
         guard=guard,
         overridden=False,
         changed=final != str(answer or ""),
+        state="DERIVED_RESULT",
     )
 
 

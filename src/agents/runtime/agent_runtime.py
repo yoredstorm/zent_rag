@@ -34,7 +34,21 @@ from src.infrastructure.observability.metrics import (
     zent_response_section_labels_stripped_total,
 )
 from src.intelligence.loop_guard import LoopGuard
-from src.runtime.answer_gate import INSUFFICIENT_ANSWER, retrieval_unavailable_answer
+from src.runtime.answer_gate import (
+    ANSWER_STATE_UNDETERMINED,
+    INSUFFICIENT_ANSWER,
+    retrieval_unavailable_answer,
+)
+from src.runtime.deterministic_authority import (
+    ERROR_GROUNDING_ENGINE_FAILED,
+    STAGE_GROUNDING,
+    DerivedPreparationResult,
+    contains_binary_conclusion,
+    executable_gate_action,
+    prepare_derived_authority,
+    requires_deterministic_decision,
+    undetermined_authoritative_answer,
+)
 
 logger = get_logger(__name__)
 
@@ -468,6 +482,12 @@ class AgentRunResult:
     #: Turn intent (capa conversacional): intención, distribución JEV, route y
     #: si el turno necesitó evidencia externa. Visible en «Ver flujo».
     turn_intent: dict | None = None
+    #: DecisionEnvelope autoritativo del run (dict público) cuando existe.
+    decision_envelope: dict | None = None
+    #: Estado de respuesta determinista: state + error_code/stage + message.
+    #: Una consulta ejecutable sin autoridad termina acá, nunca en una decisión
+    #: binaria libre del generador.
+    answer_state: dict | None = None
 
 
 _ANSWER_FIELD_RE = re.compile(r'"answer"\s*:\s*"', re.IGNORECASE)
@@ -1356,7 +1376,9 @@ class AgentRuntime:
             response_shape=_response_shape_block(run_plan),
         )
         try:
-            if request.on_delta is not None:
+            if request.on_delta is not None and not requires_deterministic_decision(
+                request.message
+            ):
                 resp = await self._stream_response(
                     prompt=prompt,
                     model=config["model"],
@@ -1428,13 +1450,18 @@ class AgentRuntime:
         if draft_gate is not None and run_selection is not None and not run_selection.empty:
             verdict = await draft_gate(answer, final=True)
             if verdict == "abstain":
-                result.answer = INSUFFICIENT_ANSWER
+                # Fail-closed: si la autoridad determinista ya declaró el estado
+                # (GROUNDING_ENGINE_FAILED / UNDETERMINED_RULE), ese mensaje
+                # manda; nunca se convierte en «no cumple» ni en el genérico.
+                failure = result.answer_state or {}
+                result.answer = str(failure.get("message") or "") or INSUFFICIENT_ANSWER
                 result.status = "completed"
                 result.steps.append(
                     {
                         "type": "final",
                         "answer": result.answer[:500],
                         "detail": "jev_answer_gate: sin evidencia usable (cierre)",
+                        "answer_state": failure.get("state") or ANSWER_STATE_UNDETERMINED,
                     }
                 )
                 return True
@@ -1667,6 +1694,15 @@ class AgentRuntime:
             injection_detected=has_injection_indicators(request.message),
         )
 
+        # Build/versiones del proceso: sin esto no se puede comprobar si el
+        # contenedor realmente ejecuta el commit esperado.
+        try:
+            from src.runtime.build_info import build_info
+
+            result.steps.append({"type": "build", **build_info()})
+        except Exception as exc:  # noqa: BLE001 — telemetría, nunca rompe el run
+            logger.warning("build info failed", error=str(exc)[:150])
+
         # Inference Proxy: rate limit por deployment.
         if request.deployment_id is not None:
             try:
@@ -1795,9 +1831,48 @@ class AgentRuntime:
             except Exception:  # noqa: BLE001
                 pass
 
-        result.total_latency_ms = (time.perf_counter() - start) * 1000
+        # Última barrera estructural: una consulta ejecutable sin DecisionEnvelope
+        # autoritativo no puede salir con una conclusión binaria (ni con un
+        # borrador libre), aunque ninguna ruta anterior la haya finalizado.
+        try:
+            conversational = (
+                isinstance(result.turn_intent, dict)
+                and result.turn_intent.get("needs_external_evidence") is False
+            )
+            if (
+                requires_deterministic_decision(request.message)
+                and not conversational
+                and not result.decision_envelope
+            ):
+                failure = result.answer_state or {}
+                state = str(failure.get("state") or ANSWER_STATE_UNDETERMINED)
+                message = str(failure.get("message") or "") or (
+                    undetermined_authoritative_answer()
+                )
+                if (result.answer or "").strip() != message:
+                    if result.answer and contains_binary_conclusion(result.answer):
+                        logger.warning(
+                            "last-resort binary answer blocked", state=state
+                        )
+                    result.answer = message
+                result.answer_state = {
+                    **failure,
+                    "state": state,
+                    "message": message,
+                }
+                if not any(
+                    step.get("type") == "answer_state" for step in result.steps
+                ):
+                    result.steps.append(
+                        {"type": "answer_state", **result.answer_state}
+                    )
+        except Exception as exc:  # noqa: BLE001 — barrera explícita, no silencio
+            logger.warning(
+                "executable final state enforcement failed", error=str(exc)[:160]
+            )
+            result.answer = undetermined_authoritative_answer()
 
-        # Observabilidad: registrar trace + spans (fail-soft).
+        result.total_latency_ms = (time.perf_counter() - start) * 1000
         try:
             from src.platform.tracing.traces import record_trace
 
@@ -2234,6 +2309,14 @@ class AgentRuntime:
         gate_derived_claims: list = []
         # Proyección pública del motor grounded del gate (DecisionEnvelope).
         gate_grounded_public: list[dict] = []
+        # ¿La consulta exige una decisión determinista? Si sí, no puede salir
+        # una respuesta binaria del LLM sin DecisionEnvelope autoritativo.
+        query_executable = requires_deterministic_decision(request.message)
+        # La autoridad se preparó (aunque no haya dado envelope): a partir de
+        # acá `_apply_derived_guard` puede bloquear una decisión libre.
+        authority_prepared = False
+        # El cierre emitió su texto final por streaming (una sola vez por run).
+        final_streamed = False
         # Evidencia ya vista: repetir una búsqueda que no aporta nada nuevo quema
         # el presupuesto sin mejorar la respuesta (y puede dejarla vacía).
         retrieved_refs: set[str] = set()
@@ -2362,61 +2445,120 @@ class AgentRuntime:
                 logger.warning("disclaimer strip failed", error=str(exc)[:150])
             return limpio
 
-        async def _ensure_derived_claims() -> None:
-            """Puebla el DecisionEnvelope del cierre si el gate no lo hizo.
+        async def _prepare_authority(*, force: bool = False) -> DerivedPreparationResult:
+            """Prepara la autoridad determinista por FASES (fail-closed).
 
-            Cualquier ruta final (finalize, max_steps, presupuesto) consulta al
-            motor grounded antes de escribir la respuesta.
+            Cada fase emite su step (rule_retrieval, rule_evaluation, grounding,
+            derivation, decision_envelope) aunque una fase posterior falle. Si no
+            hay envelope para una consulta ejecutable, deja `result.answer_state`
+            con el estado no concluyente construido por código.
             """
-            if gate_derived_claims or gate_grounded_public:
-                return
-            try:
-                active = selection if selection is not None else _refresh_selection()
-                if active is None or not getattr(active, "items", None):
-                    return
-                from src.intelligence.reasoning.grounded_engine import (
-                    reason_over_evidence,
-                )
-                from src.runtime.rule_retrieval import retrieve_canonical_rules
-
-                retrieval = await retrieve_canonical_rules(
-                    request.agent.organization_id,
-                    request.message,
-                    evidence_items=list(active.items),
-                )
-                rules = retrieval.supported_rules or retrieval.candidate_rules
-                grounded = reason_over_evidence(
+            nonlocal authority_prepared
+            if not force and authority_prepared:
+                grounded_public = gate_grounded_public[0] if gate_grounded_public else None
+                return DerivedPreparationResult(
+                    status="skipped",
                     question=request.message,
-                    evidence_items=list(active.items),
-                    canonical_rules=rules or None,
+                    requires_deterministic_decision=query_executable,
+                    grounded_reasoning=grounded_public,
+                    derived_claims=list(gate_derived_claims),
                 )
-                gate_derived_claims[:] = list(grounded.derivations.claims)
-                gate_grounded_public[:] = [grounded.to_public_dict()]
-                if retrieval.supported_rules:
+            active = selection if selection is not None else _refresh_selection()
+            items = list(getattr(active, "items", ()) or ())
+            try:
+                prep = await prepare_derived_authority(
+                    organization_id=request.agent.organization_id,
+                    question=request.message,
+                    evidence_items=items,
+                )
+            except Exception as exc:  # noqa: BLE001 — fallo explícito, no silencio
+                logger.warning("derived authority preparation failed", error=str(exc)[:200])
+                prep = DerivedPreparationResult(
+                    status="error",
+                    question=request.message,
+                    requires_deterministic_decision=query_executable,
+                    error_stage=STAGE_GROUNDING,
+                    error_code=ERROR_GROUNDING_ENGINE_FAILED,
+                    error_message=str(exc)[:300],
+                    steps=[
+                        {
+                            "type": STAGE_GROUNDING,
+                            "status": "error",
+                            "error_code": ERROR_GROUNDING_ENGINE_FAILED,
+                            "error": str(exc)[:300],
+                        }
+                    ],
+                )
+            authority_prepared = True
+            # La telemetría de las fases SIEMPRE entra al run (incluso al fallar).
+            result.steps.extend(prep.steps)
+            if prep.grounded_reasoning is not None:
+                to_public = getattr(prep.grounded_reasoning, "to_public_dict", None)
+                if callable(to_public):
+                    public = to_public()
+                    gate_grounded_public[:] = [public]
+                    # Observabilidad obligatoria: el mismo bloque que alimenta el
+                    # envelope (requirement_graph, derived_claim, envelope).
                     result.steps.append(
                         {
-                            "type": "rule_retrieval",
-                            "strategy": retrieval.strategy,
-                            "supported_rules": len(retrieval.supported_rules),
-                            "rule_ids": retrieval.supported_ids[:12],
-                            "detail": (
-                                "reglas recuperadas para la finalización "
-                                "determinista"
+                            "type": "grounded_reasoning",
+                            "status": (
+                                "ok"
+                                if prep.has_authority
+                                else (
+                                    "warn"
+                                    if (prep.missing_premises or prep.conflicts)
+                                    else "ok"
+                                )
                             ),
-                            "canonical": True,
+                            "answerability": public.get("answerability"),
+                            "intent": public.get("intent"),
+                            "requirement_graph": public.get("requirement_graph") or {},
+                            "deterministic_operation": public.get(
+                                "deterministic_operation"
+                            )
+                            or {},
+                            "derived_claim": public.get("derived_claim") or {},
+                            "decision_envelope": public.get("decision_envelope") or {},
+                            "missing_premises": list(
+                                public.get("missing_premises") or []
+                            )[:12],
+                            "conflicts": list(public.get("conflicts") or [])[:8],
+                            "detail": (
+                                "motor grounded: premisas + operación determinista"
+                            ),
                         }
                     )
-            except Exception as exc:  # noqa: BLE001 — nunca rompe el cierre
-                logger.warning(
-                    "derived claims finalization failed", error=str(exc)[:150]
+                gate_derived_claims[:] = list(prep.derived_claims)
+            if prep.authoritative_envelope is not None:
+                result.decision_envelope = prep.authoritative_envelope.to_public_dict()
+            if query_executable and not prep.has_authority:
+                state, message = prep.answer_state()
+                result.answer_state = {
+                    "state": state,
+                    "error_stage": prep.error_stage,
+                    "error_code": prep.error_code,
+                    "message": message,
+                    "detail": prep.error_message[:240] if prep.error_message else "",
+                }
+                result.steps.append(
+                    {"type": "answer_state", **result.answer_state}
                 )
+            return prep
+
+        async def _ensure_derived_claims() -> DerivedPreparationResult:
+            """Contrato nuevo: devuelve la preparación estructurada.
+
+            Nunca fail-open: si la cadena determinista no produjo autoridad y la
+            consulta es ejecutable, `result.answer_state` ya quedó en estado no
+            concluyente y la finalización no puede inventar una decisión.
+            """
+            return await _prepare_authority()
 
         async def _finalize_with_authority(reason: str, *, reasoning=None) -> bool:
-            """Finaliza el run pasando siempre por la autoridad determinista."""
-            try:
-                await _ensure_derived_claims()
-            except Exception:  # noqa: BLE001 — nunca bloquea el cierre
-                pass
+            """Finaliza el run pasando SIEMPRE por la autoridad determinista."""
+            nonlocal final_streamed
+            prep = await _ensure_derived_claims()
             finalized = await self._try_finalize_answer(
                 request,
                 history,
@@ -2432,15 +2574,44 @@ class AgentRuntime:
             )
             if finalized and result.answer:
                 result.answer = _apply_derived_guard(result.answer)
+            result.steps.append(
+                {
+                    "type": "finalization",
+                    "status": "ok" if finalized else "error",
+                    "detail": reason,
+                    "authoritative": bool(result.decision_envelope),
+                    "answer_state": (result.answer_state or {}).get("state") or "",
+                    "prep_status": prep.status,
+                }
+            )
+            # Streaming diferido: en consultas ejecutables nada se emitió antes
+            # de conocer la decisión; se emite el texto final UNA sola vez.
+            if (
+                request.on_delta is not None
+                and query_executable
+                and result.answer
+                and not final_streamed
+            ):
+                final_streamed = True
+                try:
+                    await request.on_delta(result.answer)
+                except Exception as exc:  # noqa: BLE001 — el delta nunca rompe el run
+                    logger.warning("final delta failed", error=str(exc)[:150])
             return finalized
 
         def _apply_derived_guard(text: str) -> str:
-            """El texto final no puede contradecir un claim determinista.
+            """El texto final no puede contradecir la autoridad determinista.
 
-            Pasa por `finalize_authoritative_answer`: headline determinista,
-            override ante contradicción y explicación de código.
+            Pasa por `finalize_authoritative_answer` (única salida):
+            - con envelope: headline determinista + override ante contradicción;
+            - consulta ejecutable sin envelope: estado no concluyente de código;
+            - sin exigencia determinista: texto (con guard histórico si hay claims).
             """
-            if not gate_derived_claims and not gate_grounded_public:
+            if (
+                not gate_derived_claims
+                and not gate_grounded_public
+                and not (query_executable and authority_prepared)
+            ):
                 return text
             try:
                 from src.runtime.decision_envelope import (
@@ -2448,16 +2619,21 @@ class AgentRuntime:
                     finalize_authoritative_answer,
                 )
 
-                envelope = (
-                    build_decision_envelope(gate_grounded_public[0])
-                    if gate_grounded_public
-                    else None
-                )
+                grounded_public = gate_grounded_public[0] if gate_grounded_public else None
+                envelope = build_decision_envelope(grounded_public) if grounded_public else None
+                failure = result.answer_state or {}
                 finalized = finalize_authoritative_answer(
                     text,
-                    gate_grounded_public[0] if gate_grounded_public else None,
+                    grounded_public,
                     envelope=envelope,
                     claims=gate_derived_claims,
+                    requires_deterministic_decision=query_executable,
+                    failure_code=str(failure.get("error_code") or ""),
+                    failure_stage=str(failure.get("error_stage") or ""),
+                    failure_message=str(failure.get("message") or ""),
+                    missing_premises=tuple(
+                        (grounded_public or {}).get("missing_premises") or ()
+                    ),
                 )
                 if finalized.guard is not None:
                     result.steps.append(
@@ -2475,6 +2651,7 @@ class AgentRuntime:
                         }
                     )
                 if finalized.envelope is not None:
+                    result.decision_envelope = finalized.envelope.to_public_dict()
                     result.steps.append(
                         {
                             "type": "finalize_authoritative_answer",
@@ -2488,14 +2665,51 @@ class AgentRuntime:
                             ),
                         }
                     )
+                if finalized.state:
+                    if finalized.blocked:
+                        # Nunca se expone una decisión binaria libre: se registra
+                        # que se bloqueó y con qué estado de código.
+                        logger.warning(
+                            "authoritative answer blocked",
+                            state=finalized.state,
+                            binary_draft=contains_binary_conclusion(text),
+                        )
+                        result.answer_state = {
+                            **(result.answer_state or {}),
+                            "state": finalized.state,
+                            "message": finalized.answer,
+                            "blocked": True,
+                        }
+                    elif finalized.envelope is not None:
+                        result.answer_state = {
+                            "state": finalized.state,
+                            "message": "",
+                        }
                 if finalized.changed:
                     logger.warning(
                         "derived result enforced over draft",
                         overridden=finalized.overridden,
+                        blocked=finalized.blocked,
                     )
                     return finalized.answer
-            except Exception as exc:  # noqa: BLE001 — el guard no rompe el run
-                logger.warning("derived guard failed", error=str(exc)[:150])
+            except Exception as exc:  # noqa: BLE001 — fallo del guard = fail-closed
+                logger.warning("derived guard failed", error=str(exc)[:200])
+                if query_executable and authority_prepared:
+                    failure = result.answer_state or {}
+                    message = str(failure.get("message") or "") or (
+                        undetermined_authoritative_answer(str(exc)[:160])
+                    )
+                    result.answer_state = {
+                        "state": failure.get("state") or ANSWER_STATE_UNDETERMINED,
+                        "error_code": failure.get("error_code") or "",
+                        "error_stage": failure.get("error_stage") or "",
+                        "message": message,
+                        "blocked": True,
+                    }
+                    result.steps.append(
+                        {"type": "answer_state", **result.answer_state}
+                    )
+                    return message
             return text
 
         def _refresh_selection():
@@ -2576,89 +2790,26 @@ class AgentRuntime:
         async def _confidence_gate(draft: str):
             from src.decision.judgment import PHASE_ANSWER_GATE, JudgmentContext
             from src.decision.service import get_decision_engine
-            from src.runtime.answer_gate import judge_answer
+            from src.runtime.answer_gate import AnswerGateResult, judge_answer
 
             try:
                 active = selection if selection is not None else _refresh_selection()
                 evidence_provided = not registry.is_empty()
-                grounded_reasoning = None
-                try:
-                    from src.intelligence.reasoning.grounded_engine import (
-                        reason_over_evidence,
+                # FASES deterministas con telemetría fail-closed. Si una fase
+                # falla, la anterior se conserva y la consulta ejecutable NO
+                # llega al LLM para decidir.
+                prep = await _prepare_authority()
+                if query_executable and not prep.has_authority:
+                    state, message = prep.answer_state()
+                    return AnswerGateResult(
+                        verdict="abstain",
+                        provider="authoritative",
+                        mode=answer_mode,
+                        feedback=message,
+                        grounding_verdict="UNSUPPORTED",
+                        claims_summary={},
                     )
-                    from src.runtime.rule_retrieval import (
-                        retrieve_canonical_rules,
-                    )
-
-                    rule_retrieval = await retrieve_canonical_rules(
-                        request.agent.organization_id,
-                        request.message,
-                        evidence_items=(
-                            list(active.items) if evidence_provided else []
-                        ),
-                    )
-                    canonical_rules = (
-                        rule_retrieval.supported_rules
-                        or rule_retrieval.candidate_rules
-                    )
-                    grounded_reasoning = reason_over_evidence(
-                        question=request.message,
-                        evidence_items=(
-                            list(active.items) if evidence_provided else []
-                        ),
-                        canonical_rules=canonical_rules or None,
-                    )
-                    if grounded_reasoning is not None:
-                        gate_derived_claims[:] = list(
-                            grounded_reasoning.derivations.claims
-                        )
-                        gate_grounded_public[:] = [
-                            grounded_reasoning.to_public_dict()
-                        ]
-                        result.steps.append(
-                            {
-                                "type": "rule_retrieval",
-                                "strategy": rule_retrieval.strategy,
-                                "candidates_found": len(
-                                    rule_retrieval.candidates
-                                ),
-                                "supported_rules": len(
-                                    rule_retrieval.supported_rules
-                                ),
-                                "rule_ids": rule_retrieval.supported_ids[:12]
-                                or rule_retrieval.candidate_ids[:12],
-                                "rules": [
-                                    {
-                                        "rule_id": str(
-                                            getattr(rule, "rule_id", "")
-                                        ),
-                                        "verification_state": str(
-                                            getattr(
-                                                rule, "verification_state", ""
-                                            )
-                                        ),
-                                        "executable": bool(
-                                            getattr(rule, "executable", False)
-                                        ),
-                                    }
-                                    for rule in canonical_rules[:6]
-                                ],
-                                "detail": (
-                                    f"{len(rule_retrieval.supported_rules)} "
-                                    "regla(s) canónica(s) soportada(s) en el gate"
-                                ),
-                                "why_no_rule": (
-                                    rule_retrieval.to_public_dict().get(
-                                        "why_no_rule"
-                                    )
-                                    if not canonical_rules
-                                    else []
-                                ),
-                                "canonical": True,
-                            }
-                        )
-                except Exception:  # noqa: BLE001 — el motor nunca rompe el gate
-                    grounded_reasoning = None
+                grounded_reasoning = prep.grounded_reasoning
                 return await judge_answer(
                     engine=get_decision_engine(),
                     mode=answer_mode,
@@ -2818,6 +2969,39 @@ class AgentRuntime:
             if gate.mode != "on":
                 result.steps.append(gate.to_step())
                 return "shadow"
+            if query_executable:
+                # Sin DerivedClaim determinista, JEV NO autoriza al LLM a
+                # decidir: se busca más si hay presupuesto; si no, estado no
+                # concluyente construido por código (nunca revise libre).
+                action = executable_gate_action(
+                    verdict=gate.verdict,
+                    has_authority=bool(result.decision_envelope),
+                    rounds_left=max(0, max_retrieval_rounds - retrieval_rounds),
+                    final=final,
+                    exhausted=retrieval_exhausted,
+                )
+                if action == "abstain" and gate.verdict != "abstain":
+                    if not result.answer_state:
+                        message = undetermined_authoritative_answer()
+                        result.answer_state = {
+                            "state": ANSWER_STATE_UNDETERMINED,
+                            "message": message,
+                            "blocked": True,
+                        }
+                        result.steps.append(
+                            {"type": "answer_state", **result.answer_state}
+                        )
+                    step = gate.to_step()
+                    step["verdict"] = "abstain"
+                    step["detail"] = (
+                        f"{step.get('detail') or ''} (consulta ejecutable sin "
+                        "autoridad determinista: no se responde sí/no)"
+                    ).strip()
+                    result.steps.append(step)
+                    return "abstain"
+                if action == "retrieve_more" and gate.verdict != "retrieve_more":
+                    result.steps.append(gate.to_step())
+                    return "retrieve_more"
             if gate.verdict == "abstain":
                 result.steps.append(gate.to_step())
                 return "abstain"
@@ -2961,7 +3145,11 @@ class AgentRuntime:
                     # En vivo sólo con evidencia ya observada: sin tool calls el
                     # grounding gate puede descartar la respuesta (sería memoria
                     # del modelo) y el usuario vería texto que no se entrega.
-                    if request.on_delta is not None and tool_calls > 0:
+                    if (
+                        request.on_delta is not None
+                        and tool_calls > 0
+                        and not query_executable
+                    ):
                         resp = await self._stream_response(
                             prompt=prompt,
                             model=candidate,
@@ -3120,10 +3308,33 @@ class AgentRuntime:
                         }
                     )
                     continue
+                if query_executable and not authority_prepared and not turn_direct:
+                    # El guard necesita la autoridad ANTES de que el texto se
+                    # exponga (incluye gate apagado): sin envelope no hay sí/no.
+                    await _ensure_derived_claims()
                 gate_verdict = await _gate_draft(direct)
                 if gate_verdict == "abstain":
+                    failure = result.answer_state or {}
+                    authoritative_message = str(failure.get("message") or "")
                     failure_kind, reason = _retrieval_unavailable(failed_tools, retrieved_refs)
-                    if failure_kind:
+                    if authoritative_message:
+                        # Fail-closed: la autoridad determinista ya declaró el
+                        # estado (fallo de fase o regla indeterminada). Ese
+                        # mensaje de código manda; nunca se convierte en un
+                        # «no cumple» ni en una decisión binaria.
+                        result.answer = authoritative_message
+                        result.steps.append(
+                            {
+                                "type": "final",
+                                "answer": result.answer[:500],
+                                "detail": (
+                                    "authoritative_abstention: "
+                                    f"{failure.get('state') or ANSWER_STATE_UNDETERMINED}"
+                                ),
+                                "answer_state": failure.get("state"),
+                            }
+                        )
+                    elif failure_kind:
                         # Fallo operativo: no se pudo buscar. Devolver el mensaje
                         # de "no hay evidencia en las fuentes" acá sería falso.
                         result.answer = retrieval_unavailable_answer(reason)

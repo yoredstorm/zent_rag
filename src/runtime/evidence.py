@@ -34,6 +34,15 @@ DEFAULT_BUDGET_CHARS = 12_000
 MIN_ITEM_CHARS = 400
 MAX_ITEM_CHARS = 4_000
 
+#: Invariantes de evidencia (`cited ⊆ used ⊆ selected ⊆ retrieved`).
+EVIDENCE_INVARIANTS_VERSION = "evidence-invariants-1"
+_EVIDENCE_INVARIANTS = (
+    "cited ⊆ used",
+    "used ⊆ selected",
+    "selected ⊆ unique",
+    "unique ⊆ retrieved",
+)
+
 #: Acción recomendada por la suficiencia.
 ACTION_GENERATE = "generate"
 ACTION_RETRIEVE_MORE = "retrieve_more"
@@ -381,22 +390,48 @@ class EvidenceRegistry:
         `doc_index` es el número `[Doc N]` que el generador vio para ese
         fragmento (orden de la SELECCIÓN); si no entró al contexto, se omite —
         nunca se inventa un índice.
+
+        Invariantes de decisión (§12): `cited ⊆ used ⊆ selected ⊆ retrieved`.
+        Una evidencia citada cuenta automáticamente como usada; una usada, como
+        seleccionada. Los conteos se calculan sobre TODA la evidencia, no sólo
+        sobre la página que se publica.
         """
         cited = set(cited_ids)
-        order = {evidence_id: index + 1 for index, evidence_id in enumerate(selected_ids or ())}
+        all_ids = [item.evidence_id for item in self.items]
+        cited_all = {value for value in cited if value in all_ids}
+        selected_all: set[str] = {
+            value for value in (selected_ids or ()) if value in all_ids
+        }
+        # Una cita implica uso y selección: nunca used=0 con cited=2.
+        selected_all.update(cited_all)
+        used_all = set(selected_all)
+        order = {
+            evidence_id: index + 1
+            for index, evidence_id in enumerate(selected_ids or ())
+        }
         public = []
         for item in self.items[:limit]:
             payload = item.to_public_dict()
+            is_cited = item.evidence_id in cited_all
+            is_selected = item.evidence_id in selected_all
+            is_used = item.evidence_id in used_all
             doc_index = order.get(item.evidence_id)
             if doc_index is not None:
                 payload["doc_index"] = doc_index
-            payload["cited"] = item.evidence_id in cited
-            payload["status"] = "USED" if doc_index is not None else "RETRIEVED"
+            payload["selected"] = is_selected
+            payload["used"] = is_used
+            payload["cited"] = is_cited
+            payload["status"] = "USED" if is_used else "RETRIEVED"
             public.append(payload)
         return {
             "count": len(self.items),
             "chars": self.chars(),
             "items": public,
+            "retrieved_count": len(all_ids),
+            "selected_count": len(selected_all),
+            "used_count": len(used_all),
+            "cited_count": len(cited_all),
+            "version": EVIDENCE_INVARIANTS_VERSION,
         }
 
     def to_eval_dict(self, *, limit: int = 48) -> list[dict[str, Any]]:
@@ -932,6 +967,52 @@ def observe_selection(selection: EvidenceSelection) -> None:
         pass
 
 
+def evidence_invariants(public: dict[str, Any] | None) -> list[str]:
+    """Violaciones de `cited ⊆ used ⊆ selected ⊆ unique ⊆ retrieved`.
+
+    Un payload con `selected=5, used=0, cited=2` es inválido por construcción:
+    la cita implica uso. Devuelve la lista de violaciones ([] = consistente).
+    """
+    if not isinstance(public, dict):
+        return ["payload_missing"]
+    items = [item for item in (public.get("items") or []) if isinstance(item, dict)]
+    violations: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        evidence_id = str(item.get("evidence_id") or "")
+        if not evidence_id:
+            violations.append("item_without_evidence_id")
+            continue
+        if evidence_id in seen:
+            violations.append(f"duplicate_id:{evidence_id}")
+            continue
+        seen.add(evidence_id)
+        cited = bool(item.get("cited"))
+        used = bool(item.get("used"))
+        selected = bool(item.get("selected"))
+        if cited and not used:
+            violations.append(f"cited_not_used:{evidence_id}")
+        if used and not selected:
+            violations.append(f"used_not_selected:{evidence_id}")
+    try:
+        retrieved = int(public.get("retrieved_count") or len(items))
+        selected_count = int(public.get("selected_count") or 0)
+        used_count = int(public.get("used_count") or 0)
+        cited_count = int(public.get("cited_count") or 0)
+    except (TypeError, ValueError):
+        return violations + ["counts_not_numeric"]
+    if selected_count > retrieved:
+        violations.append("selected_gt_retrieved")
+    if used_count > selected_count:
+        violations.append("used_gt_selected")
+    if cited_count > used_count:
+        violations.append(f"used_lt_cited:{used_count}<{cited_count}")
+    flagged_cited = sum(1 for item in items if item.get("cited"))
+    if flagged_cited > cited_count:
+        violations.append("cited_flags_gt_count")
+    return violations
+
+
 def citations_payload(
     selection: EvidenceSelection,
     *,
@@ -1010,6 +1091,7 @@ __all__ = [
     "ACTION_RETRIEVE_MORE",
     "ACTION_REVISE",
     "DEFAULT_BUDGET_CHARS",
+    "EVIDENCE_INVARIANTS_VERSION",
     "MAX_ITEM_CHARS",
     "MIN_ITEM_CHARS",
     "SECTION_RETRIEVALS",
@@ -1021,6 +1103,7 @@ __all__ = [
     "citations_payload",
     "classify_item",
     "evidence_index_block",
+    "evidence_invariants",
     "evidence_state_text",
     "observe_selection",
     "observe_sufficiency",

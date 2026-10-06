@@ -719,7 +719,11 @@ class Test35CanonicalAnswerQuality:
             f"{call.get('system_prompt') or ''}\n{call.get('prompt') or ''}"
             for call in llm.calls
         )
-        assert "RESULT FIRST" in prompt
+        # El prompt lleva el bloque de resultados deterministas (el generador
+        # explica; no decide). Con DerivedClaim determinista el contrato es
+        # AUTHORITATIVE DERIVED RESULTS (el viejo RESULT FIRST era para claims
+        # no autoritativos).
+        assert "AUTHORITATIVE DERIVED RESULTS" in prompt
 
 
 class Test36FailureQuality:

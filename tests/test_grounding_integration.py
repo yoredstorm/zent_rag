@@ -140,8 +140,12 @@ class TestGenerationPackage:
             question=CANONICAL, evidence_items=[_item(GRAMMAR)]
         )
         block = render_grounding_block(grounded.to_public_dict())
-        assert "DERIVED RESULT" in block
-        assert "RESULT FIRST" in block
+        # Claim determinista SUPPORTED: el bloque autoritativo (código decide,
+        # el generador explica y cita). El viejo RESULT FIRST aplicaba a claims
+        # no deterministas.
+        assert "AUTHORITATIVE DERIVED RESULTS" in block
+        assert "RESULT: MATCH" in block
+        assert "never reinterpret" in block
         assert "do NOT search them as source evidence" in block
         assert "chain" not in block.lower()
 

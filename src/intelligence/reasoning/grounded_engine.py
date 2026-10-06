@@ -1318,6 +1318,7 @@ def reason_over_evidence(
                     contract=resolved_contract,
                     claim_type=GroundingCategory.DERIVED_CLAIM.value,
                     confidence=0.9 if result.status == "MATCH" else 0.85,
+                    deterministic=True,
                 )
                 claims.append(claim)
 
@@ -1373,6 +1374,7 @@ def reason_over_evidence(
                     contract=resolved_contract,
                     claim_type=GroundingCategory.DERIVED_CLAIM.value,
                     confidence=0.9,
+                    deterministic=True,
                 )
                 claims.append(claim)
             else:
@@ -1443,6 +1445,7 @@ def reason_over_evidence(
                         contract=resolved_contract,
                         claim_type=GroundingCategory.DERIVED_CLAIM.value,
                         confidence=0.9,
+                        deterministic=True,
                     )
                     claims.append(claim)
                 else:
@@ -1468,6 +1471,7 @@ def reason_over_evidence(
                 user_inputs=(expression,),
                 contract=resolved_contract,
                 confidence=0.95,
+                deterministic=True,
             )
             claims.append(claim)
         else:
@@ -1530,6 +1534,7 @@ def reason_over_evidence(
                 contract=resolved_contract,
                 claim_type=GroundingCategory.DERIVED_CLAIM.value,
                 confidence=0.9,
+                deterministic=True,
             )
             claims.append(claim)
     # ------------------------------------------------------------------
@@ -1575,6 +1580,7 @@ def reason_over_evidence(
                     contract=resolved_contract,
                     claim_type=GroundingCategory.DERIVED_CLAIM.value,
                     confidence=0.85,
+                    deterministic=True,
                 )
                 claims.append(claim)
     elif formulas and not params and intent == "CALCULATE":
@@ -1666,6 +1672,7 @@ def reason_over_evidence(
                     evidence_refs=selected.refs,
                     contract=resolved_contract,
                     confidence=0.9,
+                    deterministic=True,
                 )
                 claims.append(claim)
         elif options and status_values and not conflicts:
@@ -1700,6 +1707,7 @@ def reason_over_evidence(
                     evidence_refs=enum_refs,
                     contract=resolved_contract,
                     confidence=0.9,
+                    deterministic=True,
                 )
                 claims.append(claim)
 
